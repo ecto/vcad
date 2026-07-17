@@ -163,3 +163,29 @@ running; result to be logged when in.
   Receipts must not carry these as settled numbers yet.
 - Program impact: records lane unaffected (10–15× margin even taxed);
   Q-lane multipliers must be priced self-consistently from now on.
+
+## 2026-07-17 — settled verdict + two-species neutralization (updates prior entry)
+
+Re-ran the self-consistency probe with the damped-update convergence
+metric and settled parameters (128 particles, relax 0.25, 8 iterations) —
+supersedes the noisy numbers in the previous verdict entry:
+
+| current | vacuum | self-consistent | correction | state |
+|---|---|---|---|---|
+| 8 mA | 5.3×10⁷ | **4.5×10⁷ (9.0×)** | 0.85 | stationary (ratio flat 0.051→0.055) |
+| 30 mA | 2.0×10⁸ | **8.4×10⁷ (16.7×)** | 0.42 | still creeping (ratio 0.192→0.217) |
+
+- Metric lesson: max-norm node-density deltas floor at ensemble shot
+  noise (~0.1 at N=128) even when every physical observable is flat —
+  `converged` should track observables (ratio, passes), not raw ρ.
+  Flagged for the next loop revision; until then the flag stays
+  conservative (false) by design.
+- Record margin after the audit: **9× at 8 mA, ~15–17× at 30 mA** —
+  the record attempt survives self-consistency with room.
+- **`space_charge::neutralized` landed** (`e0db4a69`): the
+  perfect-injection electron-cloud bound — ion loop → electrons traced in
+  applied+beam fields → net density → ions re-traced. Test-verified: the
+  electron cloud reduces the net beam potential and moves confinement
+  back toward vacuum. Explicitly an upper bound: injector efficiency,
+  cusp electron losses, and e-thermalization (the polywell's demons) are
+  unmodeled and every claim built on it must say so.
