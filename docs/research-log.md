@@ -143,3 +143,23 @@ Kernel modules the three-lane plan stands on (PR #564):
 
 Verdict probe on the ceiling-hunt winner (100 kV + 584 kA·t, 8 vs 30 mA)
 running; result to be logged when in.
+
+## 2026-07-17 — self-consistency verdict: 46× deflates to ~15×, record intact
+
+`self_consistent_probe` at the ceiling winner (100 kV + 584 kA·t, 4 mTorr):
+
+| current | vacuum (linear) | self-consistent | correction |
+|---|---|---|---|
+| 8 mA | 5.8×10⁷ (11.6×) | **5.2×10⁷ (10.5×)** | 0.90 |
+| 30 mA | 2.2×10⁸ (43×) | **7.4×10⁷ (15×)** | **0.34** |
+
+- The space-charge gauge was right: two-thirds of the linear 30 mA claim
+  was fiction. The gauge-valid 8 mA regime survives nearly intact.
+- Self-limiting observed: the self-consistent ratio settles ~0.23 (naive
+  gauge said 0.36) — the beam partially disperses its own charge.
+- **Both runs `converged: false`** (dRho 0.4–0.7 at 5 iterations,
+  relax 0.5): ensemble noise dominates the update. Treat as unsettled;
+  refinement path = more particles, relax ~0.25, trailing-average dwell.
+  Receipts must not carry these as settled numbers yet.
+- Program impact: records lane unaffected (10–15× margin even taxed);
+  Q-lane multipliers must be priced self-consistently from now on.
