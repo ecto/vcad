@@ -1,10 +1,12 @@
 //! Figures of merit over trace ensembles.
 
+use serde::{Deserialize, Serialize};
+
 use crate::device::Device;
 use crate::trace::{Fate, TraceOutcome};
 
 /// Ensemble statistics for an electrode design.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EnsembleStats {
     /// Ensemble size.
     pub n: usize,
