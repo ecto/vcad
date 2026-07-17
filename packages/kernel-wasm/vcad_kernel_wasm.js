@@ -5716,6 +5716,61 @@ export function parseVcadFile(content) {
 }
 
 /**
+ * Optimize named device parameters against predicted D-D yield per ion.
+ *
+ * `optimize_json`: `{ variables: [{name, lo, hi, start?}], nr?, nz?,
+ * particles?, max_passes?, max_iters?, multi_start? }`. Multi-start FD
+ * ascent (the yield landscape is multimodal — see
+ * `docs/particle-optics-m0.md`); candidate configurations that fail to
+ * resolve or converge score 0 instead of aborting the search.
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @param {string} optimize_json
+ * @returns {any}
+ */
+export function particleOptimize(spec_json, params_json, optimize_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(optimize_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.particleOptimize(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Charged-particle optics simulation: solve the device's fields, trace a
+ * deuteron ensemble, and return figures of merit plus predicted claims.
+ *
+ * `spec_json` is a `vcad_kernel_particle::spec::DeviceSpec` (named
+ * parameters allowed), `params_json` a `{name: value}` map binding them
+ * (fail-closed: unbound names error), `options_json` a
+ * [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
+ * unified-receipt claims (basis `predicted` — Provisional by contract).
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function particleSimulate(spec_json, params_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.particleSimulate(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * @param {string} tool
  * @param {string} args_json
  * @param {string} doc_json
@@ -8598,12 +8653,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3435, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3436, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3446, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3447, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3460, function: Function { arguments: [Externref], shim_idx: 3461, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3471, function: Function { arguments: [Externref], shim_idx: 3472, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
