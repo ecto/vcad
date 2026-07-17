@@ -179,16 +179,22 @@ Findings:
   Zero-power sources get a stated `theta_ja_undefined`, never NaN.
   Cross-crate `vcad-receipt`/MCP registration flagged as the follow-up
   PR, same as particle.
-- **M5 — benchmark + convergence + paper draft.** A published JEDEC-style
-  θ_ja comparison (JESD51 boards are exactly this geometry family) with the
-  package-model caveat stated, a grid-convergence table that names its
-  floor, `docs/thermal-paper-draft.md`.
-- **M6 — measurement pack.** `compare()` binding thermal-camera and
-  thermocouple measurements to predicted claims with Holds / Violated /
-  Unmeasured verdicts, fail-closed (an unmeasured receipt never passes);
-  emissivity (camera reads ε·T⁴-ish, boards are ε ≈ 0.9 but bare copper is
-  ε ≈ 0.05 — a shiny plane reads *cold*), thermocouple contact resistance,
-  and the h-uncertainty band spelled out.
+- **M5 — benchmark + convergence + paper draft. DONE**
+  (`docs/thermal-m5-m6.md`, `examples/convergence.rs`,
+  `docs/thermal-paper-draft.md`). Grid-convergence table that names its
+  floor (die-footprint representation, ±5–13% until the pitch resolves
+  it; ~1.3%/halving after — quote with a ~2% grid band); JEDEC-style
+  2s2p consistency check landing θ_ja = 24.6–28.5 K/W inside the
+  published 20–30 band across plausible still-air h, labeled consistency
+  not validation (h bundles radiation; no package model).
+- **M6 — measurement pack. DONE** (`receipt::compare`,
+  `docs/thermal-m5-m6.md`). Holds / Violated / Unmeasured verdicts,
+  fail-closed (unmeasured never passes; a measurement of nothing is an
+  error; Violated is a result, not an embarrassment); emissivity
+  (ε ≈ 0.05 copper reads the room — a hot plane shows *cold*),
+  thermocouple contact/lead losses, and the h-uncertainty band written
+  into the `Measurement` type's documentation, plus a bench protocol for
+  the hot_chip demo board.
 
 ## Non-goals
 

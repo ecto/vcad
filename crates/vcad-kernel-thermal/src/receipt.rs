@@ -238,6 +238,141 @@ pub fn predicted_claims(
     }
 }
 
+/// A bench measurement to bind against a predicted claim (M6).
+///
+/// The two instruments this pack expects, and their traps:
+///
+/// - **Thermal camera**: reads radiance, not temperature. A board at
+///   ε ≈ 0.9 reads honestly; bare copper or solder at ε ≈ 0.05 reads the
+///   *reflection of the room* and shows a hot plane as cold. Paint or
+///   tape (known-ε target) the spots you will compare, and record the ε
+///   the camera was set to in `instrument`.
+/// - **Thermocouple**: reads its own junction, which a contact
+///   resistance and a lead that conducts heat away both pull toward
+///   ambient — a bare TC pressed on a small hot spot reads *low* by
+///   several K. Glue or solder the junction and derate the band
+///   accordingly.
+///
+/// The film coefficient is the third instrument nobody calibrates: a
+/// prediction priced at h = 10 compared against a bench with a draft is
+/// not a model error. Bands should be set with all three in mind — θ
+/// through natural convection honestly carries ±20–30%.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Measurement {
+    /// Claim name this measures (must match a claim).
+    pub name: String,
+    /// Measured value, in the claim's unit.
+    pub value: f64,
+    /// One-sigma absolute uncertainty, same unit.
+    pub uncertainty: f64,
+    /// Instrument provenance ("FLIR E8, ε=0.95 tape target", "type-K TC
+    /// epoxied, meter s/n …").
+    pub instrument: String,
+    /// Acceptance band as a multiplicative factor: the claim holds when
+    /// the measurement lies in [predicted/band − u, predicted·band + u].
+    /// h-dominated claims (θ, T_max under natural convection) warrant a
+    /// generous band (1.3+); the energy residual a tight one.
+    pub band_factor: f64,
+}
+
+/// Verdict for one claim, in the repo's receipt vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Verdict {
+    /// Measurement inside the stated band.
+    Holds,
+    /// Measurement outside the stated band.
+    Violated,
+    /// No measurement bound to this claim (fail-closed: unmeasured is
+    /// never silently passing).
+    Unmeasured,
+}
+
+/// One row of the predicted-vs-measured comparison.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonEntry {
+    /// Claim name.
+    pub name: String,
+    /// Predicted value.
+    pub predicted: f64,
+    /// Measured value (`None` when unmeasured).
+    pub measured: Option<f64>,
+    /// measured / predicted (`None` when unmeasured or predicted = 0).
+    pub ratio: Option<f64>,
+    /// Verdict.
+    pub verdict: Verdict,
+}
+
+/// The comparison report: every claim gets a row; a measurement matching
+/// no claim is an error (a measurement of nothing is a bookkeeping bug).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonReport {
+    /// Schema tag.
+    pub schema: String,
+    /// Per-claim rows.
+    pub entries: Vec<ComparisonEntry>,
+    /// True only when every measured claim holds AND at least one
+    /// measurement exists — an unmeasured receipt never passes.
+    pub all_hold: bool,
+}
+
+/// Bind bench measurements to a claim set, fail-closed.
+pub fn compare(
+    claims: &ClaimSet,
+    measurements: &[Measurement],
+) -> Result<ComparisonReport, String> {
+    for m in measurements {
+        if !claims.claims.iter().any(|c| c.name == m.name) {
+            return Err(format!("measurement {:?} matches no claim", m.name));
+        }
+    }
+    let mut entries = Vec::with_capacity(claims.claims.len());
+    let mut measured_any = false;
+    let mut all_hold = true;
+    for c in &claims.claims {
+        let m = measurements.iter().find(|m| m.name == c.name);
+        let entry = match m {
+            None => ComparisonEntry {
+                name: c.name.clone(),
+                predicted: c.value,
+                measured: None,
+                ratio: None,
+                verdict: Verdict::Unmeasured,
+            },
+            Some(m) => {
+                measured_any = true;
+                let ratio = if c.value != 0.0 {
+                    Some(m.value / c.value)
+                } else {
+                    None
+                };
+                let lo = c.value / m.band_factor - m.uncertainty;
+                let hi = c.value * m.band_factor + m.uncertainty;
+                let holds = (lo..=hi).contains(&m.value);
+                if !holds {
+                    all_hold = false;
+                }
+                ComparisonEntry {
+                    name: c.name.clone(),
+                    predicted: c.value,
+                    measured: Some(m.value),
+                    ratio,
+                    verdict: if holds {
+                        Verdict::Holds
+                    } else {
+                        Verdict::Violated
+                    },
+                }
+            }
+        };
+        entries.push(entry);
+    }
+    Ok(ComparisonReport {
+        schema: "vcad.thermal-compare/1".to_string(),
+        entries,
+        all_hold: all_hold && measured_any,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +466,102 @@ mod tests {
         // No NaN sneaks into a receipt.
         for c in &back.claims {
             assert!(c.value.is_finite(), "non-finite claim {}", c.name);
+        }
+    }
+
+    #[test]
+    fn compare_binds_measurements_fail_closed() {
+        let m = chip_model();
+        let opts = SolveOptions::default();
+        let sol = solve_steady(&m, &opts).unwrap();
+        let set = predicted_claims(&m, &sol, &opts);
+
+        // Unmeasured receipt never passes.
+        let empty = compare(&set, &[]).unwrap();
+        assert!(!empty.all_hold);
+        assert!(empty
+            .entries
+            .iter()
+            .all(|e| e.verdict == Verdict::Unmeasured));
+
+        // A measurement of nothing is an error.
+        let bogus = Measurement {
+            name: "vibes_c".into(),
+            value: 42.0,
+            uncertainty: 0.1,
+            instrument: "gut".into(),
+            band_factor: 2.0,
+        };
+        assert!(compare(&set, &[bogus]).is_err());
+
+        // Camera within band → Holds; a wildly wrong theta → Violated;
+        // everything else stays Unmeasured.
+        let t_pred = get(&set, "t_max_c");
+        let camera = Measurement {
+            name: "t_max_c".into(),
+            value: t_pred * 1.08,
+            uncertainty: 2.0,
+            instrument: "thermal camera, eps=0.95 tape target".into(),
+            band_factor: 1.25,
+        };
+        let bad_theta = Measurement {
+            name: "theta_ja_c_per_w".into(),
+            value: get(&set, "theta_ja_c_per_w") * 3.0,
+            uncertainty: 0.5,
+            instrument: "type-K TC epoxied to die".into(),
+            band_factor: 1.3,
+        };
+        let report = compare(&set, &[camera, bad_theta]).unwrap();
+        assert!(!report.all_hold);
+        let verdict = |name: &str| {
+            report
+                .entries
+                .iter()
+                .find(|e| e.name == name)
+                .unwrap()
+                .verdict
+        };
+        assert_eq!(verdict("t_max_c"), Verdict::Holds);
+        assert_eq!(verdict("theta_ja_c_per_w"), Verdict::Violated);
+        assert_eq!(verdict("energy_balance_residual"), Verdict::Unmeasured);
+
+        // All measured and holding → passes.
+        let good_theta = Measurement {
+            name: "theta_ja_c_per_w".into(),
+            value: get(&set, "theta_ja_c_per_w") * 1.15,
+            uncertainty: 0.5,
+            instrument: "type-K TC epoxied to die".into(),
+            band_factor: 1.3,
+        };
+        let camera2 = Measurement {
+            name: "t_max_c".into(),
+            value: t_pred * 0.95,
+            uncertainty: 2.0,
+            instrument: "thermal camera, eps=0.95 tape target".into(),
+            band_factor: 1.25,
+        };
+        let resid = Measurement {
+            name: "energy_balance_residual".into(),
+            value: get(&set, "energy_balance_residual"),
+            uncertainty: 1e-9,
+            instrument: "solver self-audit".into(),
+            band_factor: 10.0,
+        };
+        let ok = compare(&set, &[good_theta, camera2, resid]).unwrap();
+        assert!(ok.all_hold);
+        // Round trip: structural with a float tolerance — JSON shortest-
+        // form printing can move the last ULP (the particle-crate gotcha).
+        let json = serde_json::to_string(&ok).unwrap();
+        assert!(json.contains("vcad.thermal-compare/1"));
+        let back: ComparisonReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.schema, ok.schema);
+        assert_eq!(back.all_hold, ok.all_hold);
+        assert_eq!(back.entries.len(), ok.entries.len());
+        for (a, b) in back.entries.iter().zip(&ok.entries) {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.verdict, b.verdict);
+            let scale = b.predicted.abs().max(1e-300);
+            assert!((a.predicted - b.predicted).abs() / scale < 1e-12);
         }
     }
 
