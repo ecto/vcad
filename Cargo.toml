@@ -79,6 +79,7 @@ members = [
     "crates/vcad-ffi",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
+    "crates/vcad-torture",
     "mecheval/graders",
 ]
 
@@ -164,6 +165,7 @@ default-members = [
     "crates/vcad-ffi",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
+    "crates/vcad-torture",
     "mecheval/graders",
 ]
 

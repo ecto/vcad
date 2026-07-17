@@ -7782,6 +7782,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-torture"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
