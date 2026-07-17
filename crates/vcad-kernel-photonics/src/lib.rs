@@ -74,6 +74,7 @@ pub mod grid;
 pub mod material;
 pub mod modes;
 pub mod monitor;
+pub mod receipt;
 pub mod sim;
 pub mod source;
 pub mod spec;
@@ -89,6 +90,10 @@ pub use grid::{Field2, GridSpec};
 pub use material::Shape2;
 pub use modes::{solve_slab_mode_even, ModeError, SlabMode};
 pub use monitor::{dft_of_series, Cplx, FluxSpec};
+pub use receipt::{
+    splitter_claims, Claim, ClaimError, ClaimSet, SolverProvenance, SplitterMeasurement,
+    CLAIM_SCHEMA,
+};
 pub use sim::{BoundarySpec, FluxId, Polarization, ProbeId, Simulation, Wall};
 pub use source::{Source, SourcePlacement};
 pub use spec::{ParamValue, ResolvedTopology, SpecError, TopologyProblemSpec, SPEC_SCHEMA};
