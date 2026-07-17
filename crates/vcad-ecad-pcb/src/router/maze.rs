@@ -328,6 +328,13 @@ pub fn route_net_maze3d(
                     center: grid.world(ix, iy),
                     r: 0.0,
                 };
+                // Strict overlap certificate: a trace disc (radius half_w) at
+                // this cell centre physically overlaps the tree element, so
+                // terminating here is guaranteed electrical contact. Elements
+                // smaller than a grid cell may mark no cells — that is the
+                // safe direction (degrades to the exact pad goal); loosening
+                // the test would let routes "connect" to copper they never
+                // touch.
                 if geom.distance_to(&probe_pt) < half_w {
                     tree_goal[li * plane + grid.index(ix, iy)] = true;
                 }

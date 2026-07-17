@@ -736,6 +736,7 @@ fn route_pass(
             use_push_shove,
             max_expansions,
             &mut fail_cache,
+            &corridors,
         );
         log::info!(
             "ripup round: placed {} -> {} pending={} in {:.1}s",
@@ -798,6 +799,7 @@ fn incremental_round(
         use_push_shove,
         max_expansions,
         &mut fail_cache,
+        &HashMap::new(),
     );
     let _ = fine_retry;
     log::info!(
@@ -1245,6 +1247,11 @@ fn to_component(
             {
                 continue;
             }
+            // Exact-geometry contact: d == 0 means the copper physically
+            // touches (metal-on-metal is electrically joined — same-net
+            // islands merely NEAR each other keep d > 0 and stay separate).
+            // The bbox gate above is only a broadphase; its looser slop
+            // admits more pairs to this exact check, never unions them.
             if a.0.distance_to(&b.0) <= 1e-6 {
                 let (ra, rb) = (find(&mut parent, i), find(&mut parent, j));
                 if ra != rb {
@@ -1849,6 +1856,7 @@ fn ripup_pass(
     use_push_shove: bool,
     max_expansions: usize,
     fail_cache: &mut FailCache,
+    corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
     let hw = width / 2.0;
     let copper = copper_layers(pcb);
@@ -1949,7 +1957,7 @@ fn ripup_pass(
             max_expansions,
             true,
             fail_cache,
-            &HashMap::new(),
+            corridors,
         ) {
             let restored = originals
                 .remove(&conn_key(&net, from, to))
