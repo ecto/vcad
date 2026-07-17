@@ -92,7 +92,7 @@ Cloud sync uses Supabase (Postgres + Auth). Config and migrations live in `supab
 
 ```
 vcad/
-├── crates/                        # Rust workspace (~35K LOC)
+├── crates/                        # Rust workspace (~285K LOC)
 │   ├── vcad-kernel-math/          # Linear algebra, transforms, exact predicates
 │   ├── vcad-kernel-topo/          # Half-edge BRep topology
 │   ├── vcad-kernel-geom/          # Curves and surfaces
@@ -122,7 +122,10 @@ vcad/
 │   ├── vcad-render/               # Standalone .vcad → isometric SVG renderer
 │   └── vcad/                      # Legacy CSG library (manifold-based)
 │
-│   # Work-in-progress crates (built but not yet wired to any consumer):
+│   # Analysis/solver crates beyond the app's modeling surface (consumer wiring
+│   # noted per entry; most are self-contained pending vcad-receipt/MCP
+│   # registration — each ships its own fail-closed predicted-basis claim
+│   # family and a docs/<domain>-m0.md milestone ladder):
 │   # - vcad-kernel-diff         # Differentiable seam, COMPLETE (M0–M11 + closeout):
 │   #                            # dx/dθ of frozen tessellations, mass-property QoIs,
 │   #                            # differentiable fillet radius, reverse-mode adjoint,
@@ -137,22 +140,51 @@ vcad/
 │   #                            # priced through the seam) and vcad-eval::diff
 │   #                            # (document_parameter_gradient — d(mass props)/d(named
 │   #                            # .vcad parameter))
-│   # - vcad-kernel-particle     # Charged-particle optics, M0–M6 COMPLETE:
-│   #                            # axisym Poisson (SOR, conservative patch-E)
-│   #                            # + exact ring-coil B (elliptic, grid-cached)
+│   # - vcad-kernel-particle     # Charged-particle optics (fusors, shielded-
+│   #                            # grid IEC), M0–M6 COMPLETE + wired: axisym
+│   #                            # Poisson (SOR) + exact ring-coil B (elliptic)
 │   #                            # + Boris tracing + Bosch-Hale D-D yield +
-│   #                            # charge-exchange channels + discrete adjoint
-│   #                            # (FD-validated 0.1–0.8%, adjoint Poisson via
-│   #                            # radial-weight symmetrization) + DeviceSpec
-│   #                            # param seam + receipt claims (Q, distance-
-│   #                            # to-Lawson, Holds/Violated/Unmeasured
-│   #                            # compare) + analytic benchmarks + paper
-│   #                            # draft + experiment BOM. Reproduces the
-│   #                            # shielded-grid effect (arXiv:1510.01788),
-│   #                            # r_L ∝ √V, multimodal yield landscape.
+│   #                            # charge exchange + discrete adjoint (FD-
+│   #                            # validated 0.1–0.8%) + DeviceSpec seam.
+│   #                            # Reproduces the shielded-grid effect
+│   #                            # (arXiv:1510.01788), r_L ∝ √V. Claims ride
+│   #                            # vcad-receipt's open domain vocabulary
+│   #                            # (vcad.particle-claims/1: Q, distance-to-
+│   #                            # Lawson; predicted → Provisional, never
+│   #                            # Pass) and the MCP tools
+│   #                            # simulate_charged_particles /
+│   #                            # optimize_electrodes (multi-start FD search;
+│   #                            # adjoint optimizer in-crate) are live.
 │   #                            # (docs/particle-optics-m0.md, -paper-draft,
-│   #                            # shielded-grid-experiment.md). Follow-up:
-│   #                            # vcad-receipt registration + MCP tools.
+│   #                            # shielded-grid-experiment.md)
+│   # - vcad-kernel-tolerance    # Tolerance stackups: WC/RSS/seeded-MC +
+│   #                            # exact closed-form sensitivities, GD&T
+│   #                            # gauged fits, min-cost allocation,
+│   #                            # measurement binding; vcad.tolerance-claims/1
+│   #                            # (docs/tolerance-m0.md)
+│   # - vcad-kernel-thermal      # Voxel FV heat conduction, steady + transient
+│   #                            # (PCG, harmonic-mean faces) + one-extra-solve
+│   #                            # adjoint; vcad.thermal-claims/1
+│   #                            # (docs/thermal-m0.md … thermal-m5-m6.md)
+│   # - vcad-kernel-photonics    # 2D FDTD (Yee, CPML) + discrete adjoint +
+│   #                            # density topology optimization → fab-ready
+│   #                            # GDS; vcad.photonics-claims/1
+│   #                            # (docs/photonics-m0.md, photonics-tapeout.md)
+│   # - vcad-kernel-em           # 2D FV magneto/electrostatics (axisym ψ,
+│   #                            # planar A_z, electro φ), two-route QoIs with
+│   #                            # cross_route_residual, nonlinear B–H, AC
+│   #                            # eddy, discrete adjoint; vcad.em-claims/1
+│   #                            # (docs/em-m0.md, em-measurement-pack.md)
+│   # - vcad-kernel-antenna      # Thin-wire MoM (EFIE, Galerkin): Z_in/S11/
+│   #                            # gain, NEC-2-benchmarked, fail-closed thin-
+│   #                            # wire gates, adjoint dZ_in/dp, NanoVNA
+│   #                            # measurement pack; vcad.antenna-claims/1
+│   #                            # (docs/antenna-m0.md, -measurement-pack.md)
+│   # - vcad-kernel-neutronics   # 5-group analog MC neutron transport (exact
+│   #                            # elastic kinematics) + H*(10) dose + adjoint-
+│   #                            # diffusion thickness gradients; fission
+│   #                            # refused permanently; vcad.neutronics-claims/1
+│   #                            # (docs/neutronics-m0.md)
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

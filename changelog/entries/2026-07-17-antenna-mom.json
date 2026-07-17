@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-antenna-mom",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Antenna solver: thin-wire MoM Z_in, S11, and gain",
+  "summary": "New vcad-kernel-antenna crate: thin-wire EFIE MoM within 4% of NEC-2 references, fail-closed outside the thin-wire regime, adjoint impedance gradients, NanoVNA measurement pack, vcad.antenna-claims/1.",
+  "features": ["antenna", "mom", "rf", "adjoint", "receipts"]
+}

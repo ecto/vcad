@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-thermal-conduction",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Thermal analysis: voxel heat conduction with adjoint",
+  "summary": "New vcad-kernel-thermal crate: steady + transient voxel conduction (FV + PCG), one-extra-solve adjoint gradients, fail-closed vcad.thermal-claims/1. Conduction only; convection is a supplied film h.",
+  "features": ["thermal", "fea", "adjoint", "receipts"]
+}
