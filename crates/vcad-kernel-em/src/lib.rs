@@ -53,6 +53,8 @@ pub mod electro;
 pub mod grid;
 pub mod material;
 pub mod planar;
+pub mod receipt;
+pub mod spec;
 
 /// Physical constants (SI; CODATA 2018).
 pub mod constants {

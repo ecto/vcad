@@ -34,7 +34,8 @@
 //! fixing their nodes.
 
 /// Truncation condition for one side of a solve domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Bc {
     /// Fix the unknown to zero on that side (Dirichlet). For magnetics
     /// this excludes flux from crossing the boundary; for potentials it

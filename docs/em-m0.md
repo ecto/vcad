@@ -175,13 +175,25 @@ estimate with stated omissions, not a measurement (that's M6's job).
   same role split as the particle crate. A test lesson kept: gradient
   comparisons must sit on quantities of honest size — a mirror-symmetric
   test machine had torque ≈ 0 and both routes compared solver dust.
-- **M3 — parameter seam.** Serde `DeviceSpec` with literal-or-named
-  values, fail-closed resolution, `parameter_roles()` classifying
-  adjoint-capable vs FD parameters.
-- **M4 — receipt claims.** `vcad.em-claims/1`: inductance_h,
-  capacitance_f, torque_nm, force_n with grid/tolerance/energy-balance
-  provenance and spelled-out caveats; fail-closed compare() with
-  Holds/Violated/Unmeasured.
+- **M3 — parameter seam. DONE** (`spec.rs`). `AxisymSpec` /
+  `PlanarSpec`: every numeric field literal-or-named, fail-closed
+  resolution (unbound name = error, never a default),
+  `parameter_roles()` classifying by what the adjoint *actually
+  implements* — currents, magnet remanence, and linear-material μ are
+  `Adjoint`; geometry, turns, magnet recoil, and saturable-material μ
+  are `FiniteDifference`; a name shared across roles demotes
+  conservatively. JSON round-trip incl. saturation and Neumann BCs.
+  BRep extraction stays on the vcad side of the seam.
+- **M4 — receipt claims. DONE** (`receipt.rs`, `vcad.em-claims/1`).
+  inductance_h, stored_energy_j, force_n, torque_nm, capacitance_f —
+  every claim with formulation/grid/tolerance/sweeps provenance,
+  spelled-out caveats, and the crate's signature
+  **`cross_route_residual`**: the two-independent-routes gap (energy vs
+  linkage, charge vs energy, Maxwell stress vs J×B) carried on the
+  receipt itself. Fail-closed `compare()`: Holds/Violated/Unmeasured,
+  an unmeasured receipt never passes, a measurement matching no claim
+  is an error. Registering the family in `crates/vcad-receipt` + MCP
+  tools is the flagged cross-crate follow-up PR.
 - **M5 — external benchmark + convergence + paper draft.** A published
   reference problem, the convergence table as an example, paper skeleton.
 - **M6 — measurement pack.** Kt via back-EMF spin-down on the real 70 mm
