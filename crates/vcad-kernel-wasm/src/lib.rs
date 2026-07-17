@@ -7381,7 +7381,10 @@ pub fn particle_simulate(
         receipt_claims,
         geometric_transparency: pk::fom::geometric_transparency(&device),
     };
-    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+    // json_compatible: maps serialize as plain objects (a JS `Map` would
+    // vanish under JSON.stringify on the TS side).
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[derive(serde::Deserialize)]
@@ -7544,5 +7547,6 @@ pub fn particle_optimize(
         history: best.history,
         starts,
     };
-    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
 }
