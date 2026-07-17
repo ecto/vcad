@@ -45,10 +45,12 @@
 //! sampling accessors take SI meters and return tesla / volts per meter.
 //! Planar quantities are per meter of depth.
 
+pub mod ac;
 pub mod analytic;
 pub mod axisym;
 pub mod electro;
 pub mod grid;
+pub mod material;
 pub mod planar;
 
 /// Physical constants (SI; CODATA 2018).

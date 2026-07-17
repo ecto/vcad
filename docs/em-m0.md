@@ -132,10 +132,29 @@ estimate with stated omissions, not a measurement (that's M6's job).
   document). Shared symmetric FV core; axisym + planar magnetostatics;
   electrostatics; inductance/capacitance/force/torque each by two routes;
   the ladder above; the motor benchmark.
-- **M1 — nonlinear μ (B–H) + AC phasor eddy currents.** Picard/Newton on
-  ν(B²) per cell (the cell-based material layout is already in place);
-  complex-A phasor solve with jωσ for eddy currents, AC resistance, skin
-  depth vs the analytic slab.
+- **M1 — nonlinear μ (B–H) + AC phasor eddy currents. DONE.**
+  Saturation via the arctangent B–H law (initial slope μ₀μ_ri, correct
+  deep-saturation slope μ₀), iterated per cell by Picard **damped on the
+  solved H** — two schemes failed first and are documented in the code:
+  damping ν has map derivative ~μ_r (measured 64×/iteration swing);
+  damping B explodes on the low-B branch of MMF-driven cores (slope
+  H/H_curve ≈ 50). The H update is exact in one step when Ampère pins H.
+  Validated against an **exact nonlinear anchor**: the Neumann-bounded
+  infinite solenoid, where flux linkage is `N·B_curve(n·I)·πR²` in
+  closed form — held to <1% from the linear region through the knee into
+  deep saturation, plus linear-limit equivalence and monotone secant-L
+  droop. Phasor eddy currents (`−jωσ·A` diagonal on the same stencil,
+  complex Gauss–Seidel — the Chebyshev-optimal ω is *defective* and even
+  a 1.4% imaginary diagonal makes it diverge, hence ω = 1 guaranteed by
+  diagonal dominance, and NaN now fails closed in both solvers):
+  analytic slab skin depth (magnitude e⁻¹ and 1 rad per δ, <3%),
+  field-vs-circuit eddy-loss agreement to 2 ppm, `L_ac → L_dc` and
+  `R_eddy ∝ ω²` low-frequency limits, and the conducting rod at R/δ = 2
+  against the complex-Bessel closed form `2J₁(kR)/(kR·J₀(kR))` (<2%,
+  amplitude and phase). Honesty: single-valued isotropic curve (no
+  hysteresis), phasor solve is linear-materials-only (saturation + AC =
+  harmonic balance, out of scope), source windings carry no internal
+  skin effect.
 - **M2 — discrete adjoint.** The operator is symmetric by construction
   (shared face conductances), so the adjoint solve reuses the forward
   SOR with a dJ/du right-hand side; dJ/dG_face = −Δu·Δλ per face rolls up

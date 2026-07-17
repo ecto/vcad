@@ -303,3 +303,98 @@ fn neumann_midplane_reproduces_the_full_domain() {
         "energy ratio full/half = {ratio}"
     );
 }
+
+/// Rung 7 (M1) — AC rod in a solenoid against the complex Bessel closed
+/// form. A conducting cylinder (σ, radius R) in a uniform AC applied
+/// field admits `Φ(ω)/Φ_dc = 2·J₁(kR)/(kR·J₀(kR))` with `k² = −jωμ₀σ`
+/// (Stoll, *The Analysis of Eddy Currents*, 1974, §2; Lammeraner &
+/// Štafl). Exercises the phasor solver's flux amplitude AND phase at
+/// R/δ = 2, where both are far from their DC values.
+#[test]
+fn ac_rod_flux_matches_the_bessel_solution() {
+    use vcad_kernel_em::ac::{solve_axisym_ac, AxisymSigma};
+    use vcad_kernel_em::constants::MU_0;
+
+    // Complex arithmetic on (re, im) pairs, enough for the series.
+    type C = (f64, f64);
+    fn cmul(a: C, b: C) -> C {
+        (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+    }
+    fn cdiv(a: C, b: C) -> C {
+        let m = b.0 * b.0 + b.1 * b.1;
+        ((a.0 * b.0 + a.1 * b.1) / m, (a.1 * b.0 - a.0 * b.1) / m)
+    }
+    /// J_n(z) by the power series — fine for |z| ≲ 10.
+    fn bessel_j(n: u32, z: C) -> C {
+        let half = (z.0 / 2.0, z.1 / 2.0);
+        let mut term = (1.0, 0.0);
+        for k in 1..=n {
+            term = cmul(term, cdiv(half, (k as f64, 0.0)));
+        }
+        let z2 = cmul(half, half);
+        let mut sum = term;
+        let mut tk = term;
+        for m in 1..40 {
+            tk = cmul(tk, z2);
+            tk = cdiv(tk, (-(m as f64) * (m as f64 + n as f64), 0.0));
+            sum = (sum.0 + tk.0, sum.1 + tk.1);
+        }
+        sum
+    }
+
+    let sigma = 3.5e7; // aluminum
+    let r_rod = 0.010;
+    let delta = 0.005; // skin depth → R/δ = 2
+    let omega = 2.0 / (MU_0 * sigma * delta * delta);
+
+    // Infinite solenoid via Neumann boundaries, rod filling r < 10 mm.
+    let mut dev = AxisymMagnetostatics::new(40.0, 0.0, 30.0);
+    dev.bc_r_outer = Bc::Neumann;
+    dev.bc_z_low = Bc::Neumann;
+    dev.bc_z_high = Bc::Neumann;
+    dev.coils.push(Coil {
+        region: Annulus {
+            r_inner_mm: 20.0,
+            r_outer_mm: 22.0,
+            z_min_mm: 0.0,
+            z_max_mm: 30.0,
+        },
+        turns: 300.0,
+        current_a: 1.0,
+    });
+    let rod = AxisymSigma {
+        region: Annulus {
+            r_inner_mm: 0.0,
+            r_outer_mm: 10.0,
+            z_min_mm: 0.0,
+            z_max_mm: 30.0,
+        },
+        sigma_s_m: sigma,
+    };
+
+    let opts = SolveOptions::default();
+    let dc = dev.solve(81, 7, &opts).unwrap();
+    let phi_dc = dc.system.grid.value_at(&dc.psi, r_rod, 0.015);
+    let sol = solve_axisym_ac(&dev, &[rod], omega, 81, 7, &opts).unwrap();
+    let (pr, pi) = sol.value_at(r_rod, 0.015);
+    let got = (pr / phi_dc, pi / phi_dc);
+
+    // 2·J₁(kR)/(kR·J₀(kR)), k = √(−jωμ₀σ) = (1−j)/δ.
+    let kr = (r_rod / delta, -r_rod / delta);
+    let j0 = bessel_j(0, kr);
+    let j1 = bessel_j(1, kr);
+    let want = cdiv(cmul((2.0, 0.0), j1), cmul(kr, j0));
+    let mag_w = (want.0 * want.0 + want.1 * want.1).sqrt();
+
+    let err = ((got.0 - want.0).powi(2) + (got.1 - want.1).powi(2)).sqrt() / mag_w;
+    assert!(
+        err < 0.02,
+        "rod flux ratio ({:.4}, {:.4}) vs Bessel ({:.4}, {:.4}), rel {err:.3e}",
+        got.0,
+        got.1,
+        want.0,
+        want.1
+    );
+    // The flux must lag the drive and be attenuated at R/δ = 2.
+    assert!(mag_w < 0.75 && got.1 < 0.0, "attenuation/lag sanity");
+}

@@ -37,6 +37,7 @@
 
 use crate::constants::MU_0;
 use crate::grid::{Bc, FvSystem, Grid2D, SolveError, SolveOptions};
+use crate::material::{b_of_h, Saturation};
 
 /// Rectangular region of the (r, z) half-plane, mm.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,13 +78,69 @@ pub struct Coil {
     pub current_a: f64,
 }
 
-/// A linear magnetic material region.
+/// A magnetic material region: linear μ_r, optionally saturating.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     /// Region it occupies.
     pub region: Annulus,
-    /// Relative permeability (constant — M0 is linear; B–H curves are M1).
+    /// Relative permeability — the constant value when `sat` is `None`,
+    /// the initial (small-signal) permeability when saturating.
     pub mu_r: f64,
+    /// Saturation law (M1). `None` = linear. [`AxisymMagnetostatics::solve`]
+    /// always uses the initial slope; [`AxisymMagnetostatics::solve_nonlinear`]
+    /// iterates the secant reluctivity per cell.
+    pub sat: Option<Saturation>,
+}
+
+impl Material {
+    /// A linear material.
+    pub fn linear(region: Annulus, mu_r: f64) -> Self {
+        Self {
+            region,
+            mu_r,
+            sat: None,
+        }
+    }
+
+    /// A saturating material with initial permeability `mu_ri` and
+    /// saturation polarization `js_t` (tesla).
+    pub fn saturable(region: Annulus, mu_ri: f64, js_t: f64) -> Self {
+        Self {
+            region,
+            mu_r: mu_ri,
+            sat: Some(Saturation { js_t }),
+        }
+    }
+}
+
+/// Options for the Picard (successive-substitution) nonlinear loop.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PicardOptions {
+    /// Hard cap on outer iterations.
+    pub max_iters: usize,
+    /// Convergence: largest relative change of any cell's reluctivity.
+    pub tol: f64,
+    /// Under-relaxation on the reluctivity update, in (0, 1].
+    pub relax: f64,
+}
+
+impl Default for PicardOptions {
+    fn default() -> Self {
+        Self {
+            max_iters: 80,
+            tol: 1e-4,
+            relax: 0.7,
+        }
+    }
+}
+
+/// Convergence report of a nonlinear solve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PicardReport {
+    /// Outer iterations used (0 = the device had no saturable cells).
+    pub iterations: usize,
+    /// Final largest relative reluctivity update.
+    pub max_rel_delta: f64,
 }
 
 /// An axisymmetric magnetostatic device.
@@ -133,13 +190,51 @@ impl AxisymMagnetostatics {
         mu
     }
 
-    /// Solve on an `nr × nz` node grid.
-    pub fn solve(
+    /// Initial (linear / small-signal) reluctivity of every cell, row
+    /// major `ci·(nz−1) + cj`.
+    pub(crate) fn initial_nu_cells(&self, nr: usize, nz: usize) -> Vec<f64> {
+        let dx = self.r_max_mm * 1e-3 / (nr - 1) as f64;
+        let dy = (self.z_max_mm - self.z_min_mm) * 1e-3 / (nz - 1) as f64;
+        let z_min = self.z_min_mm * 1e-3;
+        let mut nu = vec![0.0; (nr - 1) * (nz - 1)];
+        for ci in 0..nr - 1 {
+            for cj in 0..nz - 1 {
+                let rc = (ci as f64 + 0.5) * dx;
+                let zc = z_min + (cj as f64 + 0.5) * dy;
+                nu[ci * (nz - 1) + cj] = 1.0 / (MU_0 * self.mu_r_at(rc, zc));
+            }
+        }
+        nu
+    }
+
+    /// Saturation law per cell (`None` = linear cell).
+    fn sat_cells(&self, nr: usize, nz: usize) -> Vec<Option<(f64, Saturation)>> {
+        let dx = self.r_max_mm * 1e-3 / (nr - 1) as f64;
+        let dy = (self.z_max_mm - self.z_min_mm) * 1e-3 / (nz - 1) as f64;
+        let z_min = self.z_min_mm * 1e-3;
+        let mut cells = vec![None; (nr - 1) * (nz - 1)];
+        for ci in 0..nr - 1 {
+            for cj in 0..nz - 1 {
+                let rc = (ci as f64 + 0.5) * dx;
+                let zc = z_min + (cj as f64 + 0.5) * dy;
+                let mut hit = None;
+                for m in &self.materials {
+                    if m.region.contains_m(rc, zc) {
+                        hit = m.sat.map(|s| (m.mu_r, s));
+                    }
+                }
+                cells[ci * (nz - 1) + cj] = hit;
+            }
+        }
+        cells
+    }
+
+    pub(crate) fn build_system(
         &self,
         nr: usize,
         nz: usize,
-        opts: &SolveOptions,
-    ) -> Result<AxisymMagSolution, SolveError> {
+        nu_cells: &[f64],
+    ) -> Result<(FvSystem, Vec<Vec<f64>>), SolveError> {
         if nr < 3 || nz < 3 {
             return Err(SolveError::GridTooSmall);
         }
@@ -165,11 +260,7 @@ impl AxisymMagnetostatics {
         // point can never land on a region boundary — point-on-edge float
         // ties are how symmetry quietly breaks). Every face conductance
         // is the parallel sum of its two flanking half-cells.
-        let nu_cell = |ci: usize, cj: usize| -> f64 {
-            let rc = (ci as f64 + 0.5) * dx;
-            let zc = z_min + (cj as f64 + 0.5) * dy;
-            1.0 / (MU_0 * self.mu_r_at(rc, zc))
-        };
+        let nu_cell = |ci: usize, cj: usize| -> f64 { nu_cells[ci * (nz - 1) + cj] };
         // Radial faces: G = 2π·ν·(z extent)/(r_face·dx).
         for i in 0..nr - 1 {
             let r_f = (i as f64 + 0.5) * dx;
@@ -262,8 +353,16 @@ impl AxisymMagnetostatics {
             unit_sources.push(unit);
         }
 
-        let sol = sys.solve(opts)?;
-        Ok(AxisymMagSolution {
+        Ok((sys, unit_sources))
+    }
+
+    fn wrap_solution(
+        &self,
+        sys: FvSystem,
+        unit_sources: Vec<Vec<f64>>,
+        sol: crate::grid::FvSolve,
+    ) -> AxisymMagSolution {
+        AxisymMagSolution {
             currents: self.coils.iter().map(|c| c.current_a).collect(),
             coil_regions: self.coils.iter().map(|c| c.region).collect(),
             unit_sources,
@@ -271,6 +370,129 @@ impl AxisymMagnetostatics {
             sweeps: sol.sweeps,
             residual: sol.residual,
             system: sys,
+        }
+    }
+
+    /// Solve on an `nr × nz` node grid. Saturating materials are frozen
+    /// at their initial permeability — use [`Self::solve_nonlinear`] to
+    /// iterate the B–H law.
+    pub fn solve(
+        &self,
+        nr: usize,
+        nz: usize,
+        opts: &SolveOptions,
+    ) -> Result<AxisymMagSolution, SolveError> {
+        let (sys, unit_sources) = self.build_system(nr, nz, &self.initial_nu_cells(nr, nz))?;
+        let sol = sys.solve(opts)?;
+        Ok(self.wrap_solution(sys, unit_sources, sol))
+    }
+
+    /// Solve with the B–H law: Picard iteration damped **on the solved
+    /// field intensity** — per saturable cell, `H_solved = ν·|B|`,
+    /// `H_est ← H_est + relax·(H_solved − H_est)`, `ν = H_est/B(H_est)`
+    /// (forward curve evaluation only, no inversion). Two schemes failed
+    /// before this one and are worth remembering: damping ν has map
+    /// derivative ~μ_r ≫ 1 (measured 64×/iteration); damping B explodes
+    /// on the low-B branch of MMF-driven devices (H/H_curve ≈ 50 here).
+    /// The H update is exact in one step when Ampère's law pins H, and
+    /// contractive in the flux-driven limit.
+    /// Every inner solve warm-starts from the previous field. Fails
+    /// closed when the outer loop does not converge.
+    ///
+    /// For nonlinear materials the returned [`AxisymMagSolution::energy`]
+    /// forms are those of the converged *secant* system (`½∫H·B`), which
+    /// is neither the stored energy `∫H dB` nor the coenergy — use flux
+    /// linkage vs current sweeps to price energies. Flux linkage itself
+    /// remains exact in meaning.
+    pub fn solve_nonlinear(
+        &self,
+        nr: usize,
+        nz: usize,
+        opts: &SolveOptions,
+        popts: &PicardOptions,
+    ) -> Result<(AxisymMagSolution, PicardReport), SolveError> {
+        let sat = self.sat_cells(nr, nz);
+        if sat.iter().all(|c| c.is_none()) {
+            let solution = self.solve(nr, nz, opts)?;
+            return Ok((
+                solution,
+                PicardReport {
+                    iterations: 0,
+                    max_rel_delta: 0.0,
+                },
+            ));
+        }
+        let mut nu = self.initial_nu_cells(nr, nz);
+        let mut h_est = vec![0.0_f64; (nr - 1) * (nz - 1)];
+        let mut warm: Option<Vec<f64>> = None;
+        let mut report = PicardReport {
+            iterations: 0,
+            max_rel_delta: f64::MAX,
+        };
+        // While materials are still moving, the inner solve runs at a
+        // loosened tolerance (high-contrast SOR sweeps are the whole
+        // cost); the returned solution is re-solved at the caller's
+        // tolerance below.
+        let loose = SolveOptions {
+            tol: opts.tol.max(1e-6),
+            ..*opts
+        };
+        for it in 1..=popts.max_iters {
+            let (mut sys, unit_sources) = self.build_system(nr, nz, &nu)?;
+            if let Some(prev) = &warm {
+                for (id, v) in prev.iter().enumerate() {
+                    if !sys.fixed[id] {
+                        sys.u0[id] = *v;
+                    }
+                }
+            }
+            let sol = sys.solve(&loose)?;
+            let solution = self.wrap_solution(sys, unit_sources, sol);
+            let g = &solution.system.grid;
+            let mut max_db: f64 = 0.0;
+            let mut b_scale: f64 = 1e-12;
+            for ci in 0..nr - 1 {
+                for cj in 0..nz - 1 {
+                    let id = ci * (nz - 1) + cj;
+                    let Some((mu_ri, s)) = sat[id] else {
+                        continue;
+                    };
+                    let rc = (ci as f64 + 0.5) * g.dx;
+                    let zc = g.y0 + (cj as f64 + 0.5) * g.dy;
+                    let (br, bz) = solution.b_at(rc, zc);
+                    let b = (br * br + bz * bz).sqrt();
+                    let h_solved = nu[id] * b;
+                    let delta = h_solved - h_est[id];
+                    h_est[id] += popts.relax * delta;
+                    nu[id] = if h_est[id] > 1e-9 {
+                        h_est[id] / b_of_h(mu_ri, s, h_est[id])
+                    } else {
+                        1.0 / (MU_0 * mu_ri)
+                    };
+                    max_db = max_db.max((popts.relax * delta).abs());
+                    b_scale = b_scale.max(h_est[id].abs());
+                }
+            }
+            let rel = max_db / b_scale;
+            report = PicardReport {
+                iterations: it,
+                max_rel_delta: rel,
+            };
+            if rel < popts.tol {
+                let (mut fsys, funit) = self.build_system(nr, nz, &nu)?;
+                for (id, v) in solution.psi.iter().enumerate() {
+                    if !fsys.fixed[id] {
+                        fsys.u0[id] = *v;
+                    }
+                }
+                let fsol = fsys.solve(opts)?;
+                return Ok((self.wrap_solution(fsys, funit, fsol), report));
+            }
+            warm = Some(solution.psi);
+        }
+        Err(SolveError::NonlinearNotConverged {
+            max_rel_delta: report.max_rel_delta,
+            iterations: report.iterations,
         })
     }
 }
@@ -481,17 +703,144 @@ mod tests {
             current_a: 1.0,
         });
         if let Some((rc_mm, mu_r)) = mu_core {
-            dev.materials.push(Material {
-                region: Annulus {
+            dev.materials.push(Material::linear(
+                Annulus {
                     r_inner_mm: 0.0,
                     r_outer_mm: rc_mm,
                     z_min_mm: 0.0,
                     z_max_mm: 100.0,
                 },
                 mu_r,
-            });
+            ));
         }
         dev
+    }
+
+    #[test]
+    fn nonlinear_solenoid_matches_the_exact_bh_law() {
+        // The infinite solenoid is an EXACT nonlinear anchor: Ampère's
+        // law fixes H = n·I in the bore regardless of the material, so
+        // the core flux is B(n·I)·π·R_c² from the B–H law directly. The
+        // Picard loop must land on it at every drive level, from linear
+        // through the knee into saturation.
+        use crate::material::b_of_h;
+        let (mu_ri, js) = (1000.0, 0.45);
+        let n_per_m = 10_000.0; // 1000 turns over 0.1 m at 1 A/A
+        let rc = 0.015;
+        let popts = PicardOptions::default();
+        for i_a in [0.02, 0.5, 2.0] {
+            let mut dev = solenoid_device(None);
+            dev.materials.push(Material::saturable(
+                Annulus {
+                    r_inner_mm: 0.0,
+                    r_outer_mm: 15.0,
+                    z_min_mm: 0.0,
+                    z_max_mm: 100.0,
+                },
+                mu_ri,
+                js,
+            ));
+            dev.coils[0].current_a = i_a;
+            let (sol, report) = dev
+                .solve_nonlinear(41, 7, &SolveOptions::default(), &popts)
+                .unwrap();
+            assert!(report.max_rel_delta < popts.tol);
+            // Exact flux linkage: N·(core + bore-annulus + winding term),
+            // every piece from Ampère's law.
+            let h = n_per_m * i_a;
+            let b_core = b_of_h(mu_ri, Saturation { js_t: js }, h);
+            let b_air = MU_0 * h;
+            let r1 = 0.020;
+            // Linkage ≈ N·Φ(bore edge); the winding-annulus self-term
+            // (turns distributed through the 2 mm winding, H falling
+            // linearly) is ≤ 0.1% of the core term at every drive here —
+            // inside the assert band, not silently ignored.
+            let expect =
+                1000.0 * std::f64::consts::PI * (b_core * rc * rc + b_air * (r1 * r1 - rc * rc));
+            let got = sol.flux_linkage(0);
+            let rel = (got - expect).abs() / expect;
+            assert!(
+                rel < 0.01,
+                "I = {i_a}: linkage {got:.5e} vs exact {expect:.5e} (rel {rel:.2e}, \
+                 picard {} iters)",
+                report.iterations
+            );
+        }
+    }
+
+    #[test]
+    fn nonlinear_with_huge_saturation_matches_linear() {
+        // Same grid as the nonlinear solve — a compared quantity must
+        // never straddle two discretizations (the frozen-discretization
+        // lesson from the particle crate's FD validation).
+        let mut lin = solenoid_device(Some((15.0, 1000.0)));
+        lin.coils[0].current_a = 0.5;
+        let sol_lin = lin.solve(41, 7, &SolveOptions::default()).unwrap();
+
+        let mut sat = solenoid_device(None);
+        sat.materials.push(Material::saturable(
+            Annulus {
+                r_inner_mm: 0.0,
+                r_outer_mm: 15.0,
+                z_min_mm: 0.0,
+                z_max_mm: 100.0,
+            },
+            1000.0,
+            1e6, // absurd J_s: never leaves the initial slope
+        ));
+        sat.coils[0].current_a = 0.5;
+        let (sol_sat, _) = sat
+            .solve_nonlinear(41, 7, &SolveOptions::default(), &PicardOptions::default())
+            .unwrap();
+        let (a, b) = (sol_lin.flux_linkage(0), sol_sat.flux_linkage(0));
+        assert!(
+            ((a - b) / a).abs() < 1e-4,
+            "linear limit broken: {a} vs {b}"
+        );
+    }
+
+    #[test]
+    fn secant_inductance_droops_into_saturation() {
+        let build = |i_a: f64| {
+            let mut dev = solenoid_device(None);
+            dev.materials.push(Material::saturable(
+                Annulus {
+                    r_inner_mm: 0.0,
+                    r_outer_mm: 15.0,
+                    z_min_mm: 0.0,
+                    z_max_mm: 100.0,
+                },
+                1000.0,
+                0.45,
+            ));
+            dev.coils[0].current_a = i_a;
+            let (sol, _) = dev
+                .solve_nonlinear(41, 7, &SolveOptions::default(), &PicardOptions::default())
+                .unwrap();
+            sol.flux_linkage(0) / i_a
+        };
+        // "Small signal" must actually be small on THIS curve: H₀ ≈ 228
+        // A/m, and at H = 50 the atan law already sits 1.5% under its
+        // initial slope (a first version of this test asserted equality
+        // there and correctly failed). H = 5 A/m keeps the deviation at
+        // the 1e-4 level.
+        let l_small = build(0.0005);
+        let l_mid = build(0.2);
+        let l_deep = build(2.0);
+        assert!(
+            l_small > l_mid && l_mid > l_deep,
+            "secant L must droop: {l_small:.4e} → {l_mid:.4e} → {l_deep:.4e}"
+        );
+        // And the small-signal value sits at the initial-permeability
+        // linear solve.
+        let mut lin = solenoid_device(Some((15.0, 1000.0)));
+        lin.coils[0].current_a = 0.0005;
+        let l_lin = lin
+            .solve(41, 7, &SolveOptions::default())
+            .unwrap()
+            .flux_linkage(0)
+            / 0.0005;
+        assert!(((l_small - l_lin) / l_lin).abs() < 5e-3);
     }
 
     #[test]

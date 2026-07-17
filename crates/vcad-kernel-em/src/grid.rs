@@ -202,7 +202,8 @@ impl Default for SolveOptions {
     }
 }
 
-/// Failure modes of [`FvSystem::solve`].
+/// Failure modes of [`FvSystem::solve`] and the nonlinear drivers built
+/// on it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SolveError {
     /// The grid must be at least 3×3 nodes.
@@ -214,6 +215,13 @@ pub enum SolveError {
         /// Sweeps performed.
         sweeps: usize,
     },
+    /// The outer Picard loop of a nonlinear solve did not converge.
+    NonlinearNotConverged {
+        /// Final largest relative reluctivity update.
+        max_rel_delta: f64,
+        /// Outer iterations performed.
+        iterations: usize,
+    },
 }
 
 impl std::fmt::Display for SolveError {
@@ -223,6 +231,14 @@ impl std::fmt::Display for SolveError {
             SolveError::NotConverged { residual, sweeps } => write!(
                 f,
                 "SOR not converged after {sweeps} sweeps (relative residual {residual:.3e})"
+            ),
+            SolveError::NonlinearNotConverged {
+                max_rel_delta,
+                iterations,
+            } => write!(
+                f,
+                "Picard not converged after {iterations} iterations \
+                 (largest reluctivity update {max_rel_delta:.3e})"
             ),
         }
     }
@@ -360,7 +376,12 @@ impl FvSystem {
                     let delta = updated - u[id];
                     u[id] += omega * delta;
                     let ad = delta.abs();
-                    if ad > residual {
+                    // NaN fails closed (all NaN comparisons are false —
+                    // without this a poisoned sweep can read as
+                    // converged).
+                    if !ad.is_finite() {
+                        residual = f64::MAX;
+                    } else if ad > residual {
                         residual = ad;
                     }
                     let au = u[id].abs();

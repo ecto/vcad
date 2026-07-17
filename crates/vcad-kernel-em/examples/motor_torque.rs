@@ -65,15 +65,16 @@ fn build(phi_e_deg: f64, i_peak: f64) -> PlanarMagnetostatics {
     dev.periodic_x = true;
 
     for (lo, hi) in [y_iron_s, y_iron_r] {
-        dev.materials.push(vcad_kernel_em::planar::PlanarMaterial {
-            region: Rect {
-                x_min_mm: -1.0,
-                x_max_mm: circumference + 1.0,
-                y_min_mm: lo,
-                y_max_mm: hi,
-            },
-            mu_r: IRON_MU_R,
-        });
+        dev.materials
+            .push(vcad_kernel_em::planar::PlanarMaterial::linear(
+                Rect {
+                    x_min_mm: -1.0,
+                    x_max_mm: circumference + 1.0,
+                    y_min_mm: lo,
+                    y_max_mm: hi,
+                },
+                IRON_MU_R,
+            ));
     }
 
     // Six alternating poles: Ø15 discs as area-equivalent rectangles.

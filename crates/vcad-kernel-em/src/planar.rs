@@ -29,8 +29,10 @@
 //! depth**; multiply by the stack length. Not modeled at M0: curvature of
 //! the unrolled annulus, radial end effects, saturation, eddy currents.
 
+use crate::axisym::{PicardOptions, PicardReport};
 use crate::constants::MU_0;
 use crate::grid::{Bc, EnergyBalance, FvSystem, Grid2D, SolveError, SolveOptions};
+use crate::material::{b_of_h, Saturation};
 
 /// Axis-aligned rectangle in the (x, y) plane, mm.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -82,13 +84,37 @@ pub struct MagnetBlock {
     pub mu_r: f64,
 }
 
-/// A linear magnetic material region.
+/// A magnetic material region: linear μ_r, optionally saturating.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlanarMaterial {
     /// Region it occupies.
     pub region: Rect,
-    /// Relative permeability.
+    /// Relative permeability — constant when `sat` is `None`, initial
+    /// (small-signal) permeability when saturating.
     pub mu_r: f64,
+    /// Saturation law (M1). `None` = linear; magnets stay linear recoil.
+    pub sat: Option<Saturation>,
+}
+
+impl PlanarMaterial {
+    /// A linear material.
+    pub fn linear(region: Rect, mu_r: f64) -> Self {
+        Self {
+            region,
+            mu_r,
+            sat: None,
+        }
+    }
+
+    /// A saturating material with initial permeability `mu_ri` and
+    /// saturation polarization `js_t` (tesla).
+    pub fn saturable(region: Rect, mu_ri: f64, js_t: f64) -> Self {
+        Self {
+            region,
+            mu_r: mu_ri,
+            sat: Some(Saturation { js_t }),
+        }
+    }
 }
 
 /// A planar magnetostatic device.
@@ -159,13 +185,67 @@ impl PlanarMagnetostatics {
         mu
     }
 
-    /// Solve on an `nx × ny` node grid.
-    pub fn solve(
+    fn cell_geometry(&self, nx: usize, ny: usize) -> (usize, usize, f64, f64) {
+        let dx = if self.periodic_x {
+            (self.x_max_mm - self.x_min_mm) * 1e-3 / nx as f64
+        } else {
+            (self.x_max_mm - self.x_min_mm) * 1e-3 / (nx - 1) as f64
+        };
+        let dy = (self.y_max_mm - self.y_min_mm) * 1e-3 / (ny - 1) as f64;
+        let x_cells = if self.periodic_x { nx } else { nx - 1 };
+        (x_cells, ny - 1, dx, dy)
+    }
+
+    /// Initial (linear / small-signal) reluctivity per cell, row major
+    /// `ci·(ny−1) + cj`.
+    pub(crate) fn initial_nu_cells(&self, nx: usize, ny: usize) -> Vec<f64> {
+        let (x_cells, y_cells, dx, dy) = self.cell_geometry(nx, ny);
+        let (x_min, y_min) = (self.x_min_mm * 1e-3, self.y_min_mm * 1e-3);
+        let mut nu = vec![0.0; x_cells * y_cells];
+        for ci in 0..x_cells {
+            for cj in 0..y_cells {
+                let xc = x_min + (ci as f64 + 0.5) * dx;
+                let yc = y_min + (cj as f64 + 0.5) * dy;
+                nu[ci * y_cells + cj] = 1.0 / (MU_0 * self.mu_r_at(xc, yc));
+            }
+        }
+        nu
+    }
+
+    /// Saturation law per cell (`None` = linear; magnets never saturate
+    /// here — recoil is linear).
+    fn sat_cells(&self, nx: usize, ny: usize) -> Vec<Option<(f64, Saturation)>> {
+        let (x_cells, y_cells, dx, dy) = self.cell_geometry(nx, ny);
+        let (x_min, y_min) = (self.x_min_mm * 1e-3, self.y_min_mm * 1e-3);
+        let mut cells = vec![None; x_cells * y_cells];
+        for ci in 0..x_cells {
+            for cj in 0..y_cells {
+                let xc = x_min + (ci as f64 + 0.5) * dx;
+                let yc = y_min + (cj as f64 + 0.5) * dy;
+                let mut hit = None;
+                for m in &self.materials {
+                    if m.region.contains_m(xc, yc) {
+                        hit = m.sat.map(|s| (m.mu_r, s));
+                    }
+                }
+                for m in &self.magnets {
+                    if m.region.contains_m(xc, yc) {
+                        hit = None;
+                    }
+                }
+                cells[ci * y_cells + cj] = hit;
+            }
+        }
+        cells
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn build_system(
         &self,
         nx: usize,
         ny: usize,
-        opts: &SolveOptions,
-    ) -> Result<PlanarMagSolution, SolveError> {
+        nu_cells: &[f64],
+    ) -> Result<(FvSystem, Vec<Vec<f64>>, Vec<Vec<f64>>), SolveError> {
         if nx < 3 || ny < 3 {
             return Err(SolveError::GridTooSmall);
         }
@@ -200,11 +280,7 @@ impl PlanarMagnetostatics {
         // conductance is the parallel sum of its two flanking half-cells.
         let x_cells = if self.periodic_x { nx } else { nx - 1 };
         let y_cells = ny - 1;
-        let nu_cell = |ci: usize, cj: usize| -> f64 {
-            let xc = x_min + (ci as f64 + 0.5) * dx;
-            let yc = y_min + (cj as f64 + 0.5) * dy;
-            1.0 / (MU_0 * self.mu_r_at(xc, yc))
-        };
+        let nu_cell = |ci: usize, cj: usize| -> f64 { nu_cells[ci * y_cells + cj] };
         for i in 0..x_cells {
             for j in 0..ny {
                 // Flux tube of the x-face at row j: lower half of cell
@@ -358,8 +434,17 @@ impl PlanarMagnetostatics {
             magnet_sources.push(dep);
         }
 
-        let sol = sys.solve(opts)?;
-        Ok(PlanarMagSolution {
+        Ok((sys, unit_sources, magnet_sources))
+    }
+
+    fn wrap_solution(
+        &self,
+        sys: FvSystem,
+        unit_sources: Vec<Vec<f64>>,
+        magnet_sources: Vec<Vec<f64>>,
+        sol: crate::grid::FvSolve,
+    ) -> PlanarMagSolution {
+        PlanarMagSolution {
             currents: self.conductors.iter().map(|c| c.total_current_a).collect(),
             unit_sources,
             magnet_sources,
@@ -367,6 +452,120 @@ impl PlanarMagnetostatics {
             sweeps: sol.sweeps,
             residual: sol.residual,
             system: sys,
+        }
+    }
+
+    /// Solve on an `nx × ny` node grid. Saturating materials are frozen
+    /// at their initial permeability — use [`Self::solve_nonlinear`] to
+    /// iterate the B–H law.
+    pub fn solve(
+        &self,
+        nx: usize,
+        ny: usize,
+        opts: &SolveOptions,
+    ) -> Result<PlanarMagSolution, SolveError> {
+        let (sys, unit, mag) = self.build_system(nx, ny, &self.initial_nu_cells(nx, ny))?;
+        let sol = sys.solve(opts)?;
+        Ok(self.wrap_solution(sys, unit, mag, sol))
+    }
+
+    /// Solve with the B–H law: Picard on the per-cell secant reluctivity,
+    /// under-relaxed and warm-started, exactly as in
+    /// [`crate::axisym::AxisymMagnetostatics::solve_nonlinear`]. The
+    /// energy forms of the result are those of the converged secant
+    /// system (see the axisym docs).
+    pub fn solve_nonlinear(
+        &self,
+        nx: usize,
+        ny: usize,
+        opts: &SolveOptions,
+        popts: &PicardOptions,
+    ) -> Result<(PlanarMagSolution, PicardReport), SolveError> {
+        let sat = self.sat_cells(nx, ny);
+        if sat.iter().all(|c| c.is_none()) {
+            let solution = self.solve(nx, ny, opts)?;
+            return Ok((
+                solution,
+                PicardReport {
+                    iterations: 0,
+                    max_rel_delta: 0.0,
+                },
+            ));
+        }
+        let (x_cells, y_cells, dx, dy) = self.cell_geometry(nx, ny);
+        let (x_min, y_min) = (self.x_min_mm * 1e-3, self.y_min_mm * 1e-3);
+        let mut nu = self.initial_nu_cells(nx, ny);
+        // Damped on the solved H — see the axisym driver for why both
+        // ν-damping and B-damping diverge.
+        let mut h_est = vec![0.0_f64; x_cells * y_cells];
+        let mut warm: Option<Vec<f64>> = None;
+        let mut report = PicardReport {
+            iterations: 0,
+            max_rel_delta: f64::MAX,
+        };
+        // While materials are still moving, the inner solve runs at a
+        // loosened tolerance (high-contrast SOR sweeps are the whole
+        // cost); the returned solution is re-solved at the caller's
+        // tolerance below.
+        let loose = SolveOptions {
+            tol: opts.tol.max(1e-6),
+            ..*opts
+        };
+        for it in 1..=popts.max_iters {
+            let (mut sys, unit, mag) = self.build_system(nx, ny, &nu)?;
+            if let Some(prev) = &warm {
+                for (id, v) in prev.iter().enumerate() {
+                    if !sys.fixed[id] {
+                        sys.u0[id] = *v;
+                    }
+                }
+            }
+            let sol = sys.solve(&loose)?;
+            let solution = self.wrap_solution(sys, unit, mag, sol);
+            let mut max_db: f64 = 0.0;
+            let mut b_scale: f64 = 1e-12;
+            for ci in 0..x_cells {
+                for cj in 0..y_cells {
+                    let id = ci * y_cells + cj;
+                    let Some((mu_ri, s)) = sat[id] else {
+                        continue;
+                    };
+                    let xc = x_min + (ci as f64 + 0.5) * dx;
+                    let yc = y_min + (cj as f64 + 0.5) * dy;
+                    let (bx, by) = solution.b_at(xc, yc);
+                    let b = (bx * bx + by * by).sqrt();
+                    let h_solved = nu[id] * b;
+                    let delta = h_solved - h_est[id];
+                    h_est[id] += popts.relax * delta;
+                    nu[id] = if h_est[id] > 1e-9 {
+                        h_est[id] / b_of_h(mu_ri, s, h_est[id])
+                    } else {
+                        1.0 / (MU_0 * mu_ri)
+                    };
+                    max_db = max_db.max((popts.relax * delta).abs());
+                    b_scale = b_scale.max(h_est[id].abs());
+                }
+            }
+            let rel = max_db / b_scale;
+            report = PicardReport {
+                iterations: it,
+                max_rel_delta: rel,
+            };
+            if rel < popts.tol {
+                let (mut fsys, funit, fmag) = self.build_system(nx, ny, &nu)?;
+                for (id, v) in solution.a.iter().enumerate() {
+                    if !fsys.fixed[id] {
+                        fsys.u0[id] = *v;
+                    }
+                }
+                let fsol = fsys.solve(opts)?;
+                return Ok((self.wrap_solution(fsys, funit, fmag, fsol), report));
+            }
+            warm = Some(solution.a);
+        }
+        Err(SolveError::NonlinearNotConverged {
+            max_rel_delta: report.max_rel_delta,
+            iterations: report.iterations,
         })
     }
 }
