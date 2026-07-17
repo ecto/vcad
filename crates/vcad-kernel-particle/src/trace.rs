@@ -141,6 +141,7 @@ struct WireHit {
 pub struct Tracer<'a> {
     fields: &'a FieldMap<'a>,
     wires: Vec<WireHit>,
+    grid: (usize, usize, f64, f64, f64),
     r_wall: f64,
     z_wall: f64,
     core_radius: f64,
@@ -176,6 +177,13 @@ impl<'a> Tracer<'a> {
                 }
             })
             .collect();
+        let grid = (
+            solution.nr,
+            solution.nz,
+            solution.dr,
+            solution.dz,
+            solution.z_half,
+        );
         let r_wall = device.chamber_radius_mm * 1e-3 - 0.6 * solution.dr;
         let z_wall = device.chamber_half_height_mm * 1e-3 - 0.6 * solution.dz;
         let min_dim = (device.chamber_radius_mm.min(device.chamber_half_height_mm)) * 1e-3;
@@ -185,6 +193,7 @@ impl<'a> Tracer<'a> {
         Self {
             fields,
             wires,
+            grid,
             r_wall,
             z_wall,
             core_radius,
@@ -197,6 +206,16 @@ impl<'a> Tracer<'a> {
 
     /// Trace one particle from `pos` (m) with velocity `vel` (m/s).
     pub fn trace_from(&self, species: Species, pos: [f64; 3], vel: [f64; 3]) -> TraceOutcome {
+        self.trace_impl(species, pos, vel, None)
+    }
+
+    fn trace_impl(
+        &self,
+        species: Species,
+        pos: [f64; 3],
+        vel: [f64; 3],
+        mut dwell: Option<&mut [f64]>,
+    ) -> TraceOutcome {
         let mut p = pos;
         let mut v = vel;
         let qm = species.charge_c / species.mass_kg;
@@ -261,6 +280,15 @@ impl<'a> Tracer<'a> {
                 p = add(p, scale(v, dth));
                 time += dth;
                 steps += 1;
+
+                if let Some(d) = dwell.as_deref_mut() {
+                    let (nr, nz, dr, dz, z_half) = self.grid;
+                    let i = ((p[0] * p[0] + p[1] * p[1]).sqrt() / dr).round() as usize;
+                    let j = (((p[2] + z_half) / dz).round().max(0.0)) as usize;
+                    if i < nr && j < nz {
+                        d[i * nz + j] += dth;
+                    }
+                }
 
                 if deuteron_like {
                     let v2 = dot(v, v);
@@ -377,6 +405,29 @@ impl<'a> Tracer<'a> {
             f64::INFINITY
         };
         t_cyl.min(t_cap.max(0.0)).max(0.0)
+    }
+
+    /// [`Self::launch_ensemble`], additionally accumulating per-node dwell
+    /// time (seconds, nearest-node deposit, row-major `i·nz + j`) — the
+    /// input to the space-charge estimator.
+    pub fn launch_ensemble_dwell(
+        &self,
+        species: Species,
+        n: usize,
+    ) -> (Vec<TraceOutcome>, Vec<f64>) {
+        let (nr, nz, _, _, _) = self.grid;
+        let mut dwell = vec![0.0_f64; nr * nz];
+        let n = n.max(2);
+        let outcomes = (0..n)
+            .map(|k| {
+                let c = -self.opts.launch_cos_max
+                    + 2.0 * self.opts.launch_cos_max * k as f64 / (n - 1) as f64;
+                let s = (1.0 - c * c).max(0.0).sqrt();
+                let pos = [self.shell_radius * s, 0.0, self.shell_radius * c];
+                self.trace_impl(species, pos, [0.0, 0.0, 0.0], Some(&mut dwell))
+            })
+            .collect();
+        (outcomes, dwell)
     }
 
     /// Launch `n` particles at rest on the launch shell, on a deterministic
