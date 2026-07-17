@@ -263,6 +263,17 @@ pub enum StackupError {
         /// Minimum accepted.
         min: usize,
     },
+    /// A tolerance-allocation target yield cannot be met even with
+    /// every allocatable tolerance at its tightest.
+    Infeasible {
+        /// The requested yield floor.
+        target_yield: f64,
+        /// The best yield achievable inside the boxes.
+        best_yield: f64,
+    },
+    /// A contributor named for allocation cannot be allocated (not an
+    /// assumed-normal contributor, or not in the chain).
+    NotAllocatable(String),
 }
 
 impl std::fmt::Display for StackupError {
@@ -300,6 +311,16 @@ impl std::fmt::Display for StackupError {
             }
             StackupError::TooFewSamples { n, min } => {
                 write!(f, "monte carlo needs at least {min} samples, got {n}")
+            }
+            StackupError::Infeasible {
+                target_yield,
+                best_yield,
+            } => write!(
+                f,
+                "target yield {target_yield} is infeasible; best achievable is {best_yield}"
+            ),
+            StackupError::NotAllocatable(name) => {
+                write!(f, "contributor {name:?} is not allocatable")
             }
         }
     }

@@ -62,6 +62,7 @@
 //! Units: millimeters throughout (vcad convention); probabilities are
 //! dimensionless in [0, 1]; angles enter rotation legs in radians.
 
+pub mod allocate;
 pub mod analysis;
 pub mod capability;
 pub mod dist;
