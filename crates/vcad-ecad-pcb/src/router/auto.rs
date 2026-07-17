@@ -408,6 +408,21 @@ pub fn route_all_with_opts(
         }
     }
 
+    // Escalating-window joint repair: the last-resort untangler for local
+    // knots that per-net rip-up and negotiation provably cannot solve (they
+    // require deciding a clique of routes together).
+    if !still_unrouted.is_empty() {
+        still_unrouted = joint_window_repair(
+            &mut session,
+            pcb,
+            width,
+            &mut placed,
+            still_unrouted,
+            &cong,
+            opts.effective_expansions(),
+        );
+    }
+
     // Stitch the planed nets' pads down to their planes (issue #289 part 2).
     // Runs after signal routing so each stitching via avoids the routed copper
     // and is probed on every copper layer it spans before being committed.
@@ -1935,62 +1950,216 @@ fn ripup_pass(
             still.push((net, from, to));
         }
 
-        // Re-route every victim — speculatively parallel, like the greedy
-        // pass. A victim that can't find a NEW route gets its ORIGINAL copper
-        // restored when that copper is still legal (the stuck net may not
-        // have taken its space after all) — rip-up is then non-destructive
-        // by construction; only a victim whose exact old path was genuinely
-        // claimed becomes unrouted.
-        let mut originals: HashMap<ConnKey, Placed> = victims
-            .iter()
-            .map(|v| (conn_key(&v.net, v.from, v.to), v.clone()))
-            .collect();
-        let victim_conns: Vec<Conn> = victims.into_iter().map(|v| (v.net, v.from, v.to)).collect();
-        for (net, from, to) in route_batch(
+        // Re-route every victim; failures restore their original copper.
+        still.extend(reroute_victims_with_restore(
             session,
             pcb,
             width,
-            victim_conns,
+            victims,
             placed,
             cong,
             use_push_shove,
             max_expansions,
-            true,
             fail_cache,
             corridors,
-        ) {
-            let restored = originals
-                .remove(&conn_key(&net, from, to))
-                // A fan-out victim's dog-bone stubs can't ride a Candidate;
-                // restoring without them would report a broken route as
-                // placed. Those (rare) victims stay unrouted instead.
-                .filter(|orig| orig.stubs.is_empty())
-                .and_then(|orig| {
-                    validate_and_commit(
-                        session,
-                        pcb,
-                        Candidate {
-                            net: orig.net.clone(),
-                            from: orig.from,
-                            to: orig.to,
-                            width: orig.width,
-                            segments: orig.segments.clone(),
-                            vias: orig.via_pts.clone(),
-                        },
-                        placed,
-                    )
-                });
-            match restored {
-                Some(p) => {
-                    log::debug!("ripup: restored original route for {}", p.net);
-                    placed.push(p);
-                }
-                None => still.push((net, from, to)),
-            }
-        }
+        ));
     }
 
     still
+}
+
+/// Re-route ripped victims (speculatively parallel), restoring each failed
+/// victim's ORIGINAL copper when it is still legal — so ripping is
+/// non-destructive by construction. Returns the connections that neither
+/// re-routed nor restored. Fan-out victims (dog-bone stubs can't ride a
+/// Candidate) are never restored broken; they come back as unrouted.
+#[allow(clippy::too_many_arguments)]
+fn reroute_victims_with_restore(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    victims: Vec<Placed>,
+    placed: &mut Vec<Placed>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fail_cache: &mut FailCache,
+    corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+) -> Vec<Conn> {
+    let mut originals: HashMap<ConnKey, Placed> = victims
+        .iter()
+        .map(|v| (conn_key(&v.net, v.from, v.to), v.clone()))
+        .collect();
+    let victim_conns: Vec<Conn> = victims.into_iter().map(|v| (v.net, v.from, v.to)).collect();
+    let mut lost = Vec::new();
+    for (net, from, to) in route_batch(
+        session,
+        pcb,
+        width,
+        victim_conns,
+        placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+        true,
+        fail_cache,
+        corridors,
+    ) {
+        let restored = originals
+            .remove(&conn_key(&net, from, to))
+            .filter(|orig| orig.stubs.is_empty())
+            .and_then(|orig| {
+                validate_and_commit(
+                    session,
+                    pcb,
+                    Candidate {
+                        net: orig.net.clone(),
+                        from: orig.from,
+                        to: orig.to,
+                        width: orig.width,
+                        segments: orig.segments.clone(),
+                        vias: orig.via_pts.clone(),
+                    },
+                    placed,
+                )
+            });
+        match restored {
+            Some(p) => {
+                log::debug!("restored original route for {}", p.net);
+                placed.push(p);
+            }
+            None => lost.push((net, from, to)),
+        }
+    }
+    lost
+}
+
+/// Escalating-window joint reroute — the "when negotiation stalls" rescue
+/// (TritonRoute's search-and-repair, adapted): group still-unrouted
+/// connections whose neighborhoods overlap, rip EVERY placed route
+/// intersecting the group's window, and re-route the whole clique jointly —
+/// stuck connections first, victims after, failed victims restored. If a
+/// group still has failures, escalate to a larger window and try again.
+///
+/// This is the treatment for local knots (e.g. a short crossing bus between
+/// two components) where per-net rip-up thrashes: the routes must be decided
+/// TOGETHER, and the window guarantees every entangled neighbor is in play.
+#[allow(clippy::too_many_arguments)]
+fn joint_window_repair(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    placed: &mut Vec<Placed>,
+    pending: Vec<Conn>,
+    cong: &Congestion,
+    max_expansions: usize,
+) -> Vec<Conn> {
+    const ESCALATIONS: [f64; 3] = [3.0, 6.0, 12.0];
+    let mut pending = pending;
+    let mut fail_cache = FailCache::new();
+    for (round, margin) in ESCALATIONS.iter().enumerate() {
+        if pending.is_empty() {
+            break;
+        }
+        let sw = Stopwatch::start();
+        // Group pending connections into overlapping windows.
+        let win = |c: &Conn| -> ([f64; 2], [f64; 2]) {
+            (
+                [c.1.x.min(c.2.x) - margin, c.1.y.min(c.2.y) - margin],
+                [c.1.x.max(c.2.x) + margin, c.1.y.max(c.2.y) + margin],
+            )
+        };
+        let overlaps = |a: &([f64; 2], [f64; 2]), b: &([f64; 2], [f64; 2])| -> bool {
+            a.0[0] <= b.1[0] && b.0[0] <= a.1[0] && a.0[1] <= b.1[1] && b.0[1] <= a.1[1]
+        };
+        let mut groups: Vec<(([f64; 2], [f64; 2]), Vec<Conn>)> = Vec::new();
+        'conn: for c in pending.drain(..) {
+            let w = win(&c);
+            for (gw, gc) in groups.iter_mut() {
+                if overlaps(gw, &w) {
+                    gw.0[0] = gw.0[0].min(w.0[0]);
+                    gw.0[1] = gw.0[1].min(w.0[1]);
+                    gw.1[0] = gw.1[0].max(w.1[0]);
+                    gw.1[1] = gw.1[1].max(w.1[1]);
+                    gc.push(c);
+                    continue 'conn;
+                }
+            }
+            groups.push((w, vec![c]));
+        }
+
+        let mut still = Vec::new();
+        let n_groups = groups.len();
+        for (gw, stuck) in groups {
+            // Rip every placed route whose copper enters the window.
+            let in_window = |p: &Placed| {
+                p.segments.iter().any(|(a, b, _)| {
+                    let lo = [a.x.min(b.x), a.y.min(b.y)];
+                    let hi = [a.x.max(b.x), a.y.max(b.y)];
+                    lo[0] <= gw.1[0] && gw.0[0] <= hi[0] && lo[1] <= gw.1[1] && gw.0[1] <= hi[1]
+                })
+            };
+            let mut victims = Vec::new();
+            let mut kept = Vec::new();
+            for p in std::mem::take(placed) {
+                if in_window(&p) {
+                    for &s in &p.spans {
+                        session.remove(s);
+                    }
+                    victims.push(p);
+                } else {
+                    kept.push(p);
+                }
+            }
+            *placed = kept;
+            let n_stuck = stuck.len();
+            let n_victims = victims.len();
+
+            // Joint re-route: stuck first (they get first pick), then victims
+            // with original-copper restore.
+            let mut lost = route_batch(
+                session,
+                pcb,
+                width,
+                stuck,
+                placed,
+                cong,
+                true,
+                max_expansions,
+                true,
+                &mut fail_cache,
+                &HashMap::new(),
+            );
+            lost.extend(reroute_victims_with_restore(
+                session,
+                pcb,
+                width,
+                victims,
+                placed,
+                cong,
+                true,
+                max_expansions,
+                &mut fail_cache,
+                &HashMap::new(),
+            ));
+            log::debug!(
+                "joint repair window ({:.0},{:.0})..({:.0},{:.0}): stuck={n_stuck} victims={n_victims} lost={}",
+                gw.0[0], gw.0[1], gw.1[0], gw.1[1],
+                lost.len(),
+            );
+            still.extend(lost);
+        }
+        log::info!(
+            "joint repair round {} (margin {margin}mm): {n_groups} windows -> {} still unrouted in {:.1}s",
+            round + 1,
+            still.len(),
+            sw.ms() / 1000.0,
+        );
+        pending = still;
+        // Fresh failure cache per escalation: the windows change shape.
+        fail_cache = FailCache::new();
+    }
+    pending
 }
 
 /// Synthesize a netlist from pad net assignments for ratsnest computation.
