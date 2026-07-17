@@ -2860,6 +2860,34 @@ export function analyzeStaticsMesh(spec_json, positions, indices) {
 }
 
 /**
+ * Thin-wire MoM antenna analysis: sweep Z_in and S11 over a band, find
+ * the in-band resonance, scan the far-field pattern for peak gain, and
+ * return the `vcad.antenna-claims/1` set + unified-receipt claims.
+ *
+ * `spec_json` is a `vcad_kernel_antenna::spec::AntennaSpec` (named
+ * parameters allowed), `params_json` a `{name: value}` map binding them,
+ * `options_json` an [`AntennaOptions`] (the frequency `band` is
+ * required).
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function antennaAnalyze(spec_json, params_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.antennaAnalyze(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Build a reproducibility receipt JSON for a completed run.
  * @param {string} molecule_json
  * @param {string} force_field
@@ -4717,6 +4745,36 @@ export function ecadVerifySubstitution(pcb_json, reference, candidate_query) {
 }
 
 /**
+ * Electromagnetic field simulation: 2D/axisymmetric finite-volume
+ * magnetostatics and electrostatics with L / force / torque / C
+ * extraction and predicted claims.
+ *
+ * `spec_json` must carry a `problem` tag: `axisym_magnetostatics`
+ * (rest of spec = `vcad_kernel_em::spec::AxisymSpec`, named parameters
+ * allowed), `planar_magnetostatics` (`PlanarSpec`, named parameters
+ * allowed), or `electrostatics` (a literal-only electrode/dielectric
+ * DTO — the crate has no serde seam for that class yet). `params_json`
+ * binds named parameters; `options_json` is [`EmSimOptions`].
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function emSimulate(spec_json, params_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.emSimulate(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Estimate print cost from volume (instant, pre-slice).
  * @param {number} volume_mm3
  * @param {number} infill_density
@@ -5459,6 +5517,31 @@ export function nestedSheetMetalDxf(placements_json) {
 }
 
 /**
+ * Monte Carlo neutron shielding run: spherical layer stack, D-D-band
+ * point source, dose at detector shells WITH statistical error bars, and
+ * predicted claims (fail-closed: truncated histories or unscored tallies
+ * refuse to price claims).
+ *
+ * `spec_json` is a `vcad_kernel_neutronics::spec::ShieldSpec` (named
+ * parameters allowed; histories/batches/seed ride inside its `run`
+ * block), `params_json` a `{name: value}` map binding them.
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @returns {any}
+ */
+export function neutronicsSimulate(spec_json, params_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.neutronicsSimulate(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Chamfer all edges of a solid by the given distance.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
@@ -5764,6 +5847,27 @@ export function particleSimulate(spec_json, params_json, options_json) {
     const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
     const ret = wasm.particleSimulate(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Forward 2D TM FDTD run of a rect-composed photonic device: slab-mode
+ * line source, input + output flux monitors, transmission spectrum, and
+ * predicted claims (the splitter claim family; a single-output device
+ * reads arm B as zero).
+ * @param {string} spec_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function photonicsSimulate(spec_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.photonicsSimulate(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -6737,6 +6841,34 @@ export function textBounds(text, height, font, letter_spacing, line_spacing) {
 }
 
 /**
+ * Steady heat-conduction solve on a voxel grid: temperature summary,
+ * per-source T_max and theta (junction-to-ambient), energy balance, and
+ * predicted claims. The full temperature field is not returned (use the
+ * claims + summaries; fields are grid-sized).
+ *
+ * `spec_json` is a `vcad_kernel_thermal::spec::ThermalSpec` (named
+ * parameters allowed), `params_json` a `{name: value}` map binding them,
+ * `options_json` a [`ThermalOptions`].
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function thermalSolve(spec_json, params_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.thermalSolve(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Convert a vcad IR Document (JSON) to VCode text format.
  *
  * # Arguments
@@ -6772,6 +6904,34 @@ export function toVCode(doc_json) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * Tolerance stackup analysis: worst-case, RSS, and seeded Monte Carlo over
+ * a linear assembly chain, plus exact sensitivities and predicted claims.
+ *
+ * `spec_json` is a `vcad_kernel_tolerance::spec::StackupSpec` (named
+ * parameters allowed), `params_json` a `{name: value}` map binding them
+ * (fail-closed: unbound names error), `options_json` a
+ * [`ToleranceOptions`]. Returns all three analyses +
+ * `vcad.tolerance-claims/1` + unified-receipt claims (basis `predicted`).
+ * @param {string} spec_json
+ * @param {string} params_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function toleranceAnalyze(spec_json, params_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.toleranceAnalyze(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -8653,12 +8813,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3446, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3447, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3572, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3573, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3471, function: Function { arguments: [Externref], shim_idx: 3472, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3597, function: Function { arguments: [Externref], shim_idx: 3598, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
