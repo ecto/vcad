@@ -99,6 +99,11 @@ pub enum AntennaError {
     },
     /// The impedance matrix is numerically singular.
     SingularSystem,
+    /// A named spec parameter had no binding at resolve time.
+    UnboundParameter {
+        /// The parameter name.
+        name: String,
+    },
     /// A parameter velocity has the wrong number of node entries.
     ParamVelocityMismatch {
         /// Nodes in the mesh.
@@ -212,6 +217,9 @@ impl std::fmt::Display for AntennaError {
             }
             AntennaError::SingularSystem => {
                 write!(f, "impedance matrix is numerically singular")
+            }
+            AntennaError::UnboundParameter { name } => {
+                write!(f, "unbound antenna parameter: {name:?}")
             }
             AntennaError::ParamVelocityMismatch { nodes, velocities } => {
                 write!(

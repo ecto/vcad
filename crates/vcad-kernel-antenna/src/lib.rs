@@ -44,12 +44,15 @@
 
 pub mod adjoint;
 pub mod complex;
+pub mod ecad;
 pub mod error;
 pub mod farfield;
 pub mod geometry;
 pub mod linalg;
 pub mod mom;
 pub mod quad;
+pub mod receipt;
+pub mod spec;
 
 pub use complex::Complex;
 pub use error::AntennaError;
