@@ -1102,7 +1102,10 @@ fn search_route(
     }
     if r3.success && r3.segments.is_empty() && r3.vias.is_empty() {
         // The two components already touch (earlier commits joined them):
-        // the connection is satisfied with zero new copper.
+        // the connection is satisfied with zero new copper. Log it so a
+        // resume run's "routed" count can be read honestly (these repeat on
+        // every resume because the ratsnest keys completion off traces).
+        log::debug!("{net}: connection already satisfied by existing copper contact");
         return Some(Candidate {
             net: net.to_string(),
             from,
