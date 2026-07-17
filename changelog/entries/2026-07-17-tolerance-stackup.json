@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-tolerance-stackup",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Tolerance stackups: WC/RSS/MC with exact sensitivities",
+  "summary": "New vcad-kernel-tolerance crate: worst-case, RSS, seeded Monte Carlo stack analysis with closed-form sensitivities, GD&T gauged fits, min-cost allocation, and predicted-basis vcad.tolerance-claims/1.",
+  "features": ["tolerance", "stackup", "gdt", "monte-carlo", "receipts"]
+}

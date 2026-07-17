@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-particle-optics",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Charged-particle optics: IEC fusor sim with adjoint",
+  "summary": "New vcad-kernel-particle crate: axisym Poisson + ring-coil B + Boris tracing + Bosch-Hale D-D yield, discrete adjoint FD-validated 0.1-0.8%; vcad.particle-claims/1 rolls up Provisional until measured.",
+  "features": ["particle", "iec-fusion", "adjoint", "receipts"]
+}

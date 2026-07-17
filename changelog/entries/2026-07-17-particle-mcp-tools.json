@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-17-particle-mcp-tools",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "MCP: simulate_charged_particles, optimize_electrodes",
+  "summary": "Charged-particle optics via MCP: simulate_charged_particles traces deuteron ensembles and emits predicted-basis claims inline; optimize_electrodes runs a multi-start yield search over electrode specs.",
+  "features": ["particle", "mcp", "receipts"],
+  "mcpTools": ["simulate_charged_particles", "optimize_electrodes"]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-neutronics-shielding",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Neutronics: Monte Carlo shielding and dose",
+  "summary": "New vcad-kernel-neutronics crate: 5-group analog MC neutron transport, exact elastic kinematics, H*(10) dose, adjoint-diffusion gradients, fail-closed vcad.neutronics-claims/1. No fission, ever.",
+  "features": ["neutronics", "monte-carlo", "shielding", "dose", "receipts"]
+}

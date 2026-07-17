@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-em-field-solver",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "EM field solver: magnetostatics + electrostatics",
+  "summary": "New vcad-kernel-em crate: axisymmetric/planar magnetostatics and electrostatics on one finite-volume core, every QoI computed by two routes with the gap reported, discrete adjoint, vcad.em-claims/1.",
+  "features": ["em", "magnetostatics", "electrostatics", "adjoint", "receipts"]
+}
