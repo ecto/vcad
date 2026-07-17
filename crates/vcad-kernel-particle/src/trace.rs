@@ -58,6 +58,12 @@ pub struct TraceOutcome {
     pub energy_drift_rel: f64,
     /// cos θ of the launch direction (θ from +z), for post-hoc binning.
     pub launch_cos_theta: f64,
+    /// Path integral ∫ σ_DDn(E)·v dt over the whole trace, m³ — the
+    /// beam-on-background D(d,n)³He reaction volume. Multiply by target
+    /// deuteron density for expected neutrons per ion; zero for
+    /// non-deuteron species. Beam–beam and fast-neutral channels are not
+    /// modeled (M1 scope).
+    pub ddn_sigma_v_m3: f64,
 }
 
 /// Tracing options.
@@ -91,6 +97,7 @@ impl Default for TraceOptions {
 struct WireHit {
     r0: f64,
     z0: f64,
+    a: f64,
     a2: f64,
 }
 
@@ -129,6 +136,7 @@ impl<'a> Tracer<'a> {
                 WireHit {
                     r0: ring.ring_radius_mm * 1e-3,
                     z0: ring.z_mm * 1e-3,
+                    a,
                     a2: a * a,
                 }
             })
@@ -172,11 +180,29 @@ impl<'a> Tracer<'a> {
         let mut time = 0.0_f64;
         let mut steps = 0_u64;
         let mut drift = 0.0_f64;
+        let mut sigv = 0.0_f64;
         let launch_cos_theta = p[2] / sq_len(p).sqrt().max(1e-300);
+        let deuteron_like =
+            species.charge_c > 0.0 && (species.mass_kg / DEUTERON.mass_kg - 1.0).abs() < 0.01;
 
         'outer: while time < t_max && steps < MAX_STEPS {
             let speed = dot(v, v).sqrt();
-            let dt = self.opts.step_fraction * self.h / speed.max(0.05 * v_ref);
+            let mut dt = self.opts.step_fraction * self.h / speed.max(0.05 * v_ref);
+            // Refine the step near wires, where field gradients are the
+            // steepest thing in the problem (bounds the energy drift).
+            if !self.wires.is_empty() {
+                let r_now = (p[0] * p[0] + p[1] * p[1]).sqrt();
+                let mut factor = 1.0_f64;
+                for w in &self.wires {
+                    let drw = r_now - w.r0;
+                    let dzw = p[2] - w.z0;
+                    let ratio = ((drw * drw + dzw * dzw).sqrt() - w.a) / (6.0 * w.a);
+                    if ratio < factor {
+                        factor = ratio;
+                    }
+                }
+                dt *= factor.clamp(0.1, 1.0);
+            }
             let b = self.fields.b_cart(p);
             let bmag = dot(b, b).sqrt();
             let n_sub = ((qm.abs() * bmag * dt / 0.3).ceil() as u64).clamp(1, 64);
@@ -195,6 +221,16 @@ impl<'a> Tracer<'a> {
                 p = add(p, scale(v, dth));
                 time += dth;
                 steps += 1;
+
+                if deuteron_like {
+                    let v2 = dot(v, v);
+                    let e_lab_kev =
+                        0.5 * species.mass_kg * v2 / (crate::constants::ELEMENTARY_CHARGE * 1.0e3);
+                    let sig = crate::xsection::dd_n_sigma_m2(0.5 * e_lab_kev);
+                    if sig > 0.0 {
+                        sigv += sig * v2.sqrt() * dth;
+                    }
+                }
 
                 let r2 = p[0] * p[0] + p[1] * p[1];
                 if r2 > self.r_wall * self.r_wall || p[2].abs() > self.z_wall {
@@ -237,6 +273,7 @@ impl<'a> Tracer<'a> {
             steps,
             energy_drift_rel: drift,
             launch_cos_theta,
+            ddn_sigma_v_m3: sigv,
         }
     }
 
@@ -339,6 +376,31 @@ mod tests {
                 o.core_passes
             );
         }
+    }
+
+    #[test]
+    fn fusion_yield_rewards_voltage() {
+        // Same geometry, 6x the bias: the σ(E) integral must explode —
+        // this is why fusors chase voltage.
+        let yield_at = |volts: f64| {
+            let device = Device::classic_fusor(120.0, 40.0, 5, 1.0, volts);
+            let sol = solve(&device, 81, 161, &SolveOptions::default()).unwrap();
+            let fields = FieldMap::new(&device, &sol);
+            let opts = TraceOptions {
+                max_passes: 8,
+                ..TraceOptions::default()
+            };
+            let tracer = Tracer::new(&device, &fields, &sol, opts);
+            let outcomes = tracer.launch_ensemble(DEUTERON, 8);
+            outcomes.iter().map(|o| o.ddn_sigma_v_m3).sum::<f64>() / outcomes.len() as f64
+        };
+        let lo = yield_at(-5_000.0);
+        let hi = yield_at(-30_000.0);
+        assert!(hi > 0.0, "no yield at -30 kV");
+        assert!(
+            hi > 1.0e4 * lo.max(1e-60),
+            "yield must rise steeply with voltage: lo {lo:.3e}, hi {hi:.3e}"
+        );
     }
 
     #[test]

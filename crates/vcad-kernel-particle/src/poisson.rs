@@ -85,8 +85,6 @@ pub struct Solution {
     pub fixed: Vec<bool>,
     /// SOR sweeps actually used.
     pub sweeps: usize,
-    er: Vec<f64>,
-    ez: Vec<f64>,
 }
 
 impl Solution {
@@ -113,11 +111,28 @@ impl Solution {
     }
 
     /// Electric field `(E_r, E_z)` at `(r, z)` in meters, V/m.
+    ///
+    /// The **exact gradient of the bilinear potential patch** — not an
+    /// interpolation of node-difference fields. This makes the sampled
+    /// field conservative (its line integral between any two points equals
+    /// the potential difference of the continuous interpolant), so
+    /// integrator energy error is governed by the time step alone.
     pub fn e_at(&self, r_m: f64, z_m: f64) -> (f64, f64) {
-        (
-            self.bilinear(&self.er, r_m, z_m),
-            self.bilinear(&self.ez, r_m, z_m),
-        )
+        let eps = 1e-9;
+        let u = (r_m.abs() / self.dr).clamp(0.0, (self.nr - 1) as f64 - eps);
+        let w = ((z_m + self.z_half) / self.dz).clamp(0.0, (self.nz - 1) as f64 - eps);
+        let i0 = u.floor() as usize;
+        let j0 = w.floor() as usize;
+        let fu = u - i0 as f64;
+        let fw = w - j0 as f64;
+        let idx = |i: usize, j: usize| i * self.nz + j;
+        let p00 = self.phi[idx(i0, j0)];
+        let p10 = self.phi[idx(i0 + 1, j0)];
+        let p01 = self.phi[idx(i0, j0 + 1)];
+        let p11 = self.phi[idx(i0 + 1, j0 + 1)];
+        let er = -((p10 - p00) * (1.0 - fw) + (p11 - p01) * fw) / self.dr;
+        let ez = -((p01 - p00) * (1.0 - fu) + (p11 - p10) * fu) / self.dz;
+        (er, ez)
     }
 }
 
@@ -234,30 +249,6 @@ pub fn solve(
         });
     }
 
-    // E = −∇φ, central differences (one-sided at the domain edges).
-    let mut er = vec![0.0_f64; nr * nz];
-    let mut ez = vec![0.0_f64; nr * nz];
-    for i in 0..nr {
-        for j in 0..nz {
-            let dphi_dr = if i == 0 {
-                (phi[idx(1, j)] - phi[idx(0, j)]) / dr
-            } else if i == nr - 1 {
-                (phi[idx(nr - 1, j)] - phi[idx(nr - 2, j)]) / dr
-            } else {
-                (phi[idx(i + 1, j)] - phi[idx(i - 1, j)]) / (2.0 * dr)
-            };
-            let dphi_dz = if j == 0 {
-                (phi[idx(i, 1)] - phi[idx(i, 0)]) / dz
-            } else if j == nz - 1 {
-                (phi[idx(i, nz - 1)] - phi[idx(i, nz - 2)]) / dz
-            } else {
-                (phi[idx(i, j + 1)] - phi[idx(i, j - 1)]) / (2.0 * dz)
-            };
-            er[idx(i, j)] = -dphi_dr;
-            ez[idx(i, j)] = -dphi_dz;
-        }
-    }
-
     Ok(Solution {
         nr,
         nz,
@@ -268,8 +259,6 @@ pub fn solve(
         phi,
         fixed,
         sweeps,
-        er,
-        ez,
     })
 }
 

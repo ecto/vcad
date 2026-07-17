@@ -1,4 +1,4 @@
-# Charged-particle optics M0: vacuum fields, Boris tracing, electrode figures of merit
+# Charged-particle optics M0–M1: vacuum fields, Boris tracing, fusion-yield figures of merit
 
 `vcad-kernel-particle` makes vcad a design tool for the electrode-geometry
 family of devices: fusors and magnetically shielded IEC machines, ion traps,
@@ -60,58 +60,101 @@ limits) out of these traces.
   (Hedditch/Bowden-Reid/Khachan 2015, arXiv:1510.01788), reproduced from
   first principles.
 
-## M0 benchmark: the simulated ammeter
+## Benchmark: the simulated ammeter and neutron counter
 
 `cargo run --release -p vcad-kernel-particle --example fusor_baseline`
 
 96 deuterons/config launched at rest from an 85% shell, 40-pass cap,
-121×241 grid. Classic 5-ring fusor control: 9.65 mean passes, 100% eventual
-wire interception, effective transparency 0.906 vs 0.925 geometric — the
-lensing penalty, visible in a simulation for the first time in this repo.
+121×241 grid, conservative field sampler (see below). Classic 5-ring fusor
+control at −30 kV: 9.45 mean passes, 100% eventual wire interception,
+effective transparency 0.904 vs 0.925 geometric (the lensing penalty), and
+a **predicted beam-on-background neutron rate of 1.9×10⁵ n/s at the 10 mA /
+2 mTorr reference point** — a first-principles floor sitting ~25× under the
+5×10⁶ n/s amateur DIY record (real fusors add fast-neutral and beam–beam
+channels on top; landing under the record by one order with the
+conservative channel only is the physically correct place to land).
 
 Two-ring shielded cathode (45 mm rings at z = ±25 mm, 3 mm wire, opposed
-currents), interception fraction vs ampere-turns:
+currents), interception fraction and D-D yield vs ampere-turns:
 
-| A·turns | −3 kV bias | −30 kV bias |
-|---:|---:|---:|
-| 0 | 1.000 | 1.000 |
-| 5 k | 1.000 | 1.000 |
-| 10 k | 0.958 | 1.000 |
-| 20 k | 0.792 | 1.000 |
-| 40 k | 0.365 | 0.854 |
-| 80 k | 0.260 | 0.688 |
-| 160 k | 0.073 | 0.406 |
+| A·turns | intercept −3 kV | intercept −30 kV | yield −30 kV (σv, m³) |
+|---:|---:|---:|---:|
+| 0 | 1.000 | 1.000 | 1.04e−32 |
+| 5 k | 1.000 | 1.000 | 1.04e−32 |
+| 10 k | 0.979 | 1.000 | 1.07e−32 |
+| 20 k | 0.833 | 1.000 | 1.80e−32 |
+| 40 k | 0.521 | 0.917 | 1.70e−32 |
+| 80 k | 0.594 | 0.938 | 5.79e−32 |
+| 160 k | 0.115 | 0.740 | 6.20e−32 |
 
-Findings the sweep hands us for free:
+(−3 kV yields are ~10⁻⁴¹ — nine orders below −30 kV: low-voltage
+commissioning genuinely produces zero neutrons, and now the sim says so
+quantitatively.)
 
-1. **Shielding works and is enormous** — interception falls 100% → 7% at
-   −3 kV / 160 kA·t; recirculation peaks at ~21 mean passes (5× the
-   unshielded cathode).
-2. **The √V law falls out.** The −30 kV curve is the −3 kV curve shifted
-   ~3–4× right in current, matching r_L ∝ √V. Commissioning a real device
-   at low voltage with pulsed copper, then climbing, is quantitatively
-   supported.
-3. **There is an optimal shield current.** Past it, mean passes *falls*
-   while interception keeps dropping: the cusp begins reflecting ions away
-   from the core itself (magnetic aperture). Shield strength trades
-   transparency against core access — a real, non-obvious optimization
-   target for the gradient loop. (Note: the 40-pass censor also biases the
-   high-current mean down; both effects are real, disentangling them is an
-   M1 diagnostic task.)
+Findings:
 
-Known M0 limitation: worst-case per-trace energy drift reaches ~0.5·qΔV for
-the extreme long-lived trajectories that repeatedly graze wire masks at high
-B — the interpolated E field near a masked wire is under-resolved. Mean
-behavior is unaffected (drift is diagnosed per trace, and the classic-fusor
-acceptance test holds it < 8%), but M1 should add local grid refinement or
-an analytic near-wire E model before quantitative loss budgets are claimed.
+1. **Shielding works and is enormous** — interception falls 100% → 12% at
+   −3 kV / 160 kA·t, and at −30 kV the shield buys **6× fusion yield**
+   (5×10⁵ n/s predicted at the reference point).
+2. **The √V law falls out.** The −30 kV interception curve is the −3 kV
+   curve shifted ~3–4× right in current, matching r_L ∝ √V. Commissioning
+   real hardware at low voltage with pulsed copper, then climbing, is
+   quantitatively supported.
+3. **There is an optimal shield configuration, and passes ≠ yield.**
+   Recirculation (mean passes) peaks and then falls as the cusp starts
+   reflecting ions off the core (magnetic aperture), while the σ(E)-weighted
+   yield keeps different books — it rewards core passages at full energy.
+   Optimizing the right objective is exactly what `optimize_shield` does
+   (below). Interception wiggles non-monotonically at intermediate currents
+   (deterministic launch grid through a chaotic lens), which is itself
+   physical.
+
+**M1 field-fidelity fix:** `Solution::e_at` now returns the exact gradient
+of the bilinear potential patch (not an interpolation of node-difference
+fields), making the sampled E conservative — its line integral between any
+two points equals the interpolant's potential difference — so integrator
+energy error is set by the time step alone. Near-wire time-step refinement
+(dt shrinks within ~6 wire radii) bounds that. Worst-single-trace drift in
+the ensemble max column is dominated by extreme 40-pass wire-grazers;
+typical traces sit far below the 8% acceptance test.
+
+## The optimizer designs the cathode
+
+`cargo run --release -p vcad-kernel-particle --example optimize_shield` —
+multi-start FD ascent over (ampere-turns × ring spacing) at −30 kV, 64-ion
+ensembles on a 101×201 mesh. Findings:
+
+- **The yield landscape is multimodal.** A low-current recirculation hill
+  (local optimum ≈26 kA·t, 2.0× unshielded yield) is separated from a
+  high-current energy-quality hill that single-start gradient ascent never
+  reaches. This also exposed an optimizer bug worth remembering: an
+  absolute gradient-norm epsilon read a 1e-32-scale objective as
+  "converged" after 5 evals — stopping criteria must be scale-invariant
+  (regression-tested now).
+- **Multi-start finds the real basin:** ≈165 kA·t with ring spacing driven
+  to the ±15 mm box bound — **6.2× unshielded yield**, still rising slowly
+  when stopped. The bound binding is a design lesson: the M3 geometry seam
+  should widen the parameterization (ring radius, asymmetric pairs) rather
+  than trust hand-chosen boxes.
+- **Perf scaling:** objective evaluations at ≥150 kA·t cost ~100× the
+  low-current ones — the gyration substepper resolves ~0.5 T across most
+  of the chamber. An adaptive substep budget (coarsen gyration resolution
+  away from wires, where only drift matters) is queued in M1.5.
 
 ## Milestone ladder
 
-- **M1 — near-field fidelity + loss budget.** Mask-aware near-wire E
-  (analytic wire-in-external-field patch or local refinement), censoring
-  diagnostics, fusion-rate weighting along trajectories (beam–background
-  σ(E) integral) so runs report relative fusion yield, not just passes.
+- **M1 — fusion yield + field fidelity. DONE.** Bosch–Hale D-D cross
+  sections (both branches, `xsection`), per-trace ∫σv dt accumulation and
+  `neutron_rate_per_s` (beam-on-background floor with stated caveats),
+  conservative bilinear-patch field sampling, near-wire dt refinement,
+  scale-invariant optimizer stopping (objectives at 1e-32 must not read as
+  converged — regression-tested). `optimize_shield` example: the optimizer
+  designs the cathode (ampere-turns + ring spacing) against predicted
+  yield.
+- **M1.5 — loss-budget honesty.** Censoring-aware statistics
+  (uncensored-only means, per-fate yield attribution), fast-neutral
+  (charge-exchange) channel estimate so the neutron-rate floor tightens
+  toward measured fusor reality.
 - **M2 — discrete adjoint.** Reverse-mode differentiation of the Boris loop
   (checkpointed; Boris is symplectic and its reverse pass is clean) and of
   the bilinear field sampler; adjoint of SOR via the adjoint Poisson solve

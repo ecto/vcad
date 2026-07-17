@@ -23,6 +23,10 @@ pub struct EnsembleStats {
     pub effective_transparency: f64,
     /// Worst energy drift across the ensemble (integration quality).
     pub max_energy_drift_rel: f64,
+    /// Mean D(d,n)³He reaction volume per ion, m³ — see
+    /// [`crate::trace::TraceOutcome::ddn_sigma_v_m3`]. Multiply by target
+    /// deuteron density for expected neutrons per injected ion.
+    pub mean_ddn_sigma_v_m3: f64,
 }
 
 /// Reduce trace outcomes to [`EnsembleStats`].
@@ -43,7 +47,26 @@ pub fn stats(outcomes: &[TraceOutcome]) -> EnsembleStats {
             .iter()
             .map(|o| o.energy_drift_rel)
             .fold(0.0, f64::max),
+        mean_ddn_sigma_v_m3: outcomes.iter().map(|o| o.ddn_sigma_v_m3).sum::<f64>() / n as f64,
     }
+}
+
+/// Steady-state D-D neutron rate estimate, neutrons/s.
+///
+/// `(I/e) × n_d × ⟨∫σv dt⟩`: ions injected per second, times expected
+/// neutrons per ion against a background deuteron density `n_d` (see
+/// [`crate::xsection::d2_deuteron_density_m3`]). Beam-on-background only —
+/// beam–beam and fast-neutral (charge-exchange) channels, which matter in
+/// real fusors, are not included, so treat this as a floor with ~order-of-
+/// magnitude confidence.
+pub fn neutron_rate_per_s(
+    mean_ddn_sigma_v_m3: f64,
+    ion_current_a: f64,
+    deuteron_density_m3: f64,
+) -> f64 {
+    (ion_current_a / crate::constants::ELEMENTARY_CHARGE)
+        * deuteron_density_m3
+        * mean_ddn_sigma_v_m3
 }
 
 /// Thin-wire geometric transparency of the ring cathode: the fraction of
@@ -79,6 +102,7 @@ mod tests {
             steps: 1000,
             energy_drift_rel: 0.01,
             launch_cos_theta: 0.0,
+            ddn_sigma_v_m3: 2.0e-31,
         }
     }
 
@@ -97,6 +121,15 @@ mod tests {
         assert!((s.wall_fraction - 0.25).abs() < 1e-12);
         assert!((s.survivor_fraction - 0.25).abs() < 1e-12);
         assert!((s.effective_transparency - 5.0 / 6.0).abs() < 1e-12);
+        assert!((s.mean_ddn_sigma_v_m3 - 2.0e-31).abs() < 1e-40);
+    }
+
+    #[test]
+    fn neutron_rate_arithmetic() {
+        // 10 mA of ions, 1e20 deuterons/m³, 5e-31 m³ per ion:
+        // (0.01/1.6e-19) × 1e20 × 5e-31 ≈ 3.1e6 n/s.
+        let rate = neutron_rate_per_s(5.0e-31, 0.01, 1.0e20);
+        assert!((2.0e6..5.0e6).contains(&rate), "rate = {rate:.3e} n/s");
     }
 
     #[test]

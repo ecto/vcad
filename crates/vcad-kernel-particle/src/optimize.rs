@@ -98,7 +98,11 @@ pub fn maximize(
             gnorm += grad[i] * grad[i];
         }
         gnorm = gnorm.sqrt();
-        if gnorm < 1e-15 {
+        // Scale-invariant stop: the gradient (per unit of scaled parameter)
+        // is negligible relative to the objective's own magnitude. An
+        // absolute epsilon here silently kills objectives that live at
+        // 1e-32 (e.g. cross-section integrals in SI units).
+        if gnorm <= 1e-12 * value.abs() || gnorm == 0.0 {
             break;
         }
 
@@ -161,6 +165,29 @@ mod tests {
         assert!((r.x[1] + 1.0).abs() < 0.05, "x = {:?}", r.x);
         assert!(r.value > -0.01);
         assert!(r.history.windows(2).all(|w| w[1] >= w[0]));
+    }
+
+    #[test]
+    fn survives_astronomically_small_objectives() {
+        // Cross-section-integral scale: values around 1e-30. The optimizer
+        // must not mistake "tiny units" for "converged".
+        let mut f = |x: &[f64]| 1.0e-30 * (4.0 - (x[0] - 2.0).powi(2));
+        let r = maximize(
+            &mut f,
+            &[-3.0],
+            &[-5.0],
+            &[5.0],
+            &FdOptions {
+                max_iters: 60,
+                ..FdOptions::default()
+            },
+        );
+        assert!((r.x[0] - 2.0).abs() < 0.05, "x = {:?}", r.x);
+        assert!(
+            r.evals > 10,
+            "stopped suspiciously early: {} evals",
+            r.evals
+        );
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub mod fom;
 pub mod optimize;
 pub mod poisson;
 pub mod trace;
+pub mod xsection;
 
 /// Physical constants (SI).
 pub mod constants {
