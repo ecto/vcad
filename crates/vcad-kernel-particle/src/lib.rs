@@ -34,6 +34,7 @@
 //! internal is SI (meters, volts, tesla, seconds); particle energies are
 //! reported in electron-volts.
 
+pub mod adjoint;
 pub mod device;
 pub mod elliptic;
 pub mod field;

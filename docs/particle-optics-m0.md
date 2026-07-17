@@ -166,12 +166,27 @@ ensembles on a 101×201 mesh. Findings:
   pressure-independent (each ion fuses over ~one CX mean free path of
   track regardless of density) — voltage and current set the rate, which
   matches fusor lore.
-- **M2 — discrete adjoint.** Reverse-mode differentiation of the Boris loop
-  (checkpointed; Boris is symplectic and its reverse pass is clean) and of
-  the bilinear field sampler; adjoint of SOR via the adjoint Poisson solve
-  (self-adjoint operator — one extra solve per objective). Replaces
-  `optimize::maximize`'s FD gradient behind the same API; wires into the
-  existing `vcad-kernel-diff` L-BFGS.
+- **M2 — discrete adjoint. DONE** (`adjoint::yield_gradient`). Reverse-mode
+  gradient of the ensemble yield w.r.t. every ring potential, the wall
+  potential, and every coil's ampere-turns: backprop through the Boris
+  loop (fixed-step self-consistent forward, full trajectory storage),
+  PIC-style adjoint deposits into the potential grid through the exact
+  bilinear-patch weights, then one **adjoint Poisson solve** using the
+  radial-weight symmetrization of the axisymmetric operator (`w_i = r_i`,
+  axis row `Δr/8` — the adjoint system reuses the forward SOR stencil with
+  a RHS). Coil gradients via ⟨λ_B, B(I=1)⟩ (loop field linear in current).
+  FD-validated end-to-end: dJ/dI to 0.1%, dJ/dV to 0.8%, plus a gauge test
+  (Σ over all conductors of dJ/dV ≈ 0, since only potential differences
+  matter). Two validation lessons preserved in the tests: (1) freeze the
+  time discretization against a reference drop when comparing across
+  parameter perturbations, or the integration window becomes a hidden
+  parameter; (2) J is genuinely rough on long horizons (cusp-lens chaos) —
+  FD at practical h under-reads by 3–4× there, which is precisely the
+  regime where the adjoint is the only trustworthy gradient.
+  `optimize::maximize_with_gradient` consumes it (same line search, no FD
+  probes). Shape parameters (ring position/radius) remain FD/hybrid — the
+  Dirichlet mask is discrete; smooth shape adjoints are the M3+ seam
+  (boundary-value differentiation on a frozen mask).
 - **M3 — geometry seam.** Electrode cross-sections from vcad sketches /
   revolved BRep sections instead of hand-parameterized rings; parameters
   become named `.vcad` document parameters (same contract as

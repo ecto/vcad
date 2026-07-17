@@ -143,9 +143,113 @@ pub fn maximize(
     }
 }
 
+/// An objective that returns its value and gradient together.
+pub type ValueAndGradFn = dyn FnMut(&[f64]) -> (f64, Vec<f64>);
+
+/// Maximize using a caller-supplied gradient (e.g. the discrete adjoint
+/// from [`crate::adjoint::yield_gradient`]): projected ascent with the
+/// same backtracking line search as [`maximize`], but no FD probes —
+/// one gradient evaluation replaces `2·dim` objective calls per step.
+pub fn maximize_with_gradient(
+    fg: &mut ValueAndGradFn,
+    x0: &[f64],
+    lo: &[f64],
+    hi: &[f64],
+    opts: &FdOptions,
+) -> FdResult {
+    assert_eq!(x0.len(), lo.len());
+    assert_eq!(x0.len(), hi.len());
+    let dim = x0.len();
+    let range: Vec<f64> = lo
+        .iter()
+        .zip(hi)
+        .map(|(a, b)| (b - a).abs().max(1e-12))
+        .collect();
+    let clamp = |x: &mut [f64]| {
+        for i in 0..dim {
+            x[i] = x[i].clamp(lo[i].min(hi[i]), hi[i].max(lo[i]));
+        }
+    };
+
+    let mut x: Vec<f64> = x0.to_vec();
+    clamp(&mut x);
+    let (mut value, mut grad) = fg(&x);
+    let mut evals = 1;
+    let mut history = vec![value];
+    let mut step = opts.initial_step;
+
+    for _ in 0..opts.max_iters {
+        let scaled: Vec<f64> = grad.iter().zip(&range).map(|(g, r)| g * r).collect();
+        let gnorm = scaled.iter().map(|g| g * g).sum::<f64>().sqrt();
+        if gnorm <= 1e-12 * value.abs() || gnorm == 0.0 {
+            break;
+        }
+        let mut improved = false;
+        let mut s = step;
+        for _ in 0..8 {
+            let mut xt = x.clone();
+            for i in 0..dim {
+                xt[i] += s * range[i] * scaled[i] / gnorm;
+            }
+            clamp(&mut xt);
+            let (vt, gt) = fg(&xt);
+            evals += 1;
+            if vt > value {
+                x = xt;
+                value = vt;
+                grad = gt;
+                history.push(value);
+                step = s * 1.5;
+                improved = true;
+                break;
+            }
+            s *= 0.5;
+        }
+        if !improved {
+            step *= 0.25;
+            if step < opts.min_step {
+                break;
+            }
+        }
+    }
+
+    FdResult {
+        x,
+        value,
+        evals,
+        history,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gradient_driven_ascent_climbs() {
+        // Same bowl as the FD test, but with supplied gradients.
+        let mut fg = |x: &[f64]| {
+            let v = -(x[0] - 2.0).powi(2) - 3.0 * (x[1] + 1.0).powi(2);
+            let g = vec![-2.0 * (x[0] - 2.0), -6.0 * (x[1] + 1.0)];
+            (v, g)
+        };
+        let r = maximize_with_gradient(
+            &mut fg,
+            &[-4.0, 4.0],
+            &[-5.0, -5.0],
+            &[5.0, 5.0],
+            &FdOptions {
+                max_iters: 60,
+                ..FdOptions::default()
+            },
+        );
+        assert!((r.x[0] - 2.0).abs() < 0.05, "x = {:?}", r.x);
+        assert!((r.x[1] + 1.0).abs() < 0.05, "x = {:?}", r.x);
+        // Far fewer evals than the FD path needs for the same bowl
+        // (FD at 2 params spends ~5 evals per accepted step; this spends
+        // 1 + line-search retries).
+        assert!(r.evals < 200, "evals = {}", r.evals);
+    }
 
     #[test]
     fn climbs_a_smooth_bowl() {
