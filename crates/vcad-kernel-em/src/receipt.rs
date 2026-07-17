@@ -364,6 +364,63 @@ pub fn compare(
     })
 }
 
+/// Domain tag for EM claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "em";
+
+/// The oracle reference for this crate's finite-volume field solver.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-em/fv", env!("CARGO_PKG_VERSION"))
+}
+
+fn quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// field solve ran for real, but the claims describe hardware that has
+/// not been measured, so a receipt built from these **rolls up
+/// Provisional, never Pass** (the same contract as
+/// `predict_physics`/`predict_print`). The computed value rides in
+/// `measured` ("what the oracle computed"); formulation, grid, and the
+/// two-independent-routes residual ride in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let mut provenance = format!(
+        "{}, grid {}x{}, sor tol {:.1e} sweeps {}",
+        set.provenance.formulation,
+        set.provenance.grid[0],
+        set.provenance.grid[1],
+        set.provenance.sor_tol,
+        set.provenance.sor_sweeps,
+    );
+    if let Some(r) = set.provenance.cross_route_residual {
+        provenance.push_str(&format!("; cross_route_residual {r:.3e}"));
+    }
+    if let Some(n) = set.provenance.nonlinear_iterations {
+        provenance.push_str(&format!("; picard_iterations {n}"));
+    }
+    set.claims
+        .iter()
+        .map(|c| {
+            vcad_receipt::ReceiptClaim::pass(
+                format!("em.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(quantity(c.value, &c.unit))
+            .with_details(provenance.clone())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,6 +445,28 @@ mod tests {
         let opts = SolveOptions::default();
         let sol = dev.solve(41, 7, &opts).unwrap();
         axisym_inductance_claims(&sol, 0, opts.tol, None)
+    }
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let set = solenoid_claims();
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("em."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            let details = c.details.as_deref().unwrap_or("");
+            assert!(details.contains("axisym-magnetostatics"));
+            assert!(details.contains("cross_route_residual"));
+        }
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted em claims must never read as verified"
+        );
     }
 
     #[test]
