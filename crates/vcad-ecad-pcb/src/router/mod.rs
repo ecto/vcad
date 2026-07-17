@@ -39,6 +39,7 @@ impl Stopwatch {
     }
 }
 
+pub(crate) mod complete;
 pub mod congestion;
 pub mod diff_pair;
 pub(crate) mod escape;
@@ -48,6 +49,7 @@ pub mod length_match;
 pub mod length_tune;
 pub mod maze;
 pub mod push_shove;
+pub(crate) mod shove;
 
 pub use auto::{
     route_all, route_all_with_opts, RouteAllResult, RouteOptions, RoutedTrace, RoutedVia,
