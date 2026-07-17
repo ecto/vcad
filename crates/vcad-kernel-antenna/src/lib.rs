@@ -50,6 +50,7 @@ pub mod farfield;
 pub mod geometry;
 pub mod linalg;
 pub mod mom;
+pub mod nanovna;
 pub mod quad;
 pub mod receipt;
 pub mod spec;

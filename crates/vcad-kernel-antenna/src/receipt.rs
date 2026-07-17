@@ -330,6 +330,111 @@ pub fn predicted_claims(
     })
 }
 
+/// One bench measurement bound to a named claim. The tolerance belongs
+/// to the measurer (instrument accuracy + design acceptance): the claim
+/// Holds when `|measured − predicted| ≤ tolerance`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Measurement {
+    /// Name of the claim this measurement tests.
+    pub claim: String,
+    /// Measured value, in the claim's unit.
+    pub value: f64,
+    /// Acceptance half-width, same unit.
+    pub tolerance: f64,
+}
+
+/// Verdict for one claim after comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Verdict {
+    /// Measured within tolerance of the prediction.
+    Holds,
+    /// Measured outside tolerance — a result about the model, worth as
+    /// much as a Holds (the expected first Violated on a PCB antenna is
+    /// the substrate downshift, which *is* the M1.5 measurement).
+    Violated,
+    /// No measurement bound to this claim. An unmeasured receipt never
+    /// passes.
+    Unmeasured,
+}
+
+/// The comparison report: one verdict per claim, in claim order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompareReport {
+    /// `(claim name, predicted, measured (NaN when unmeasured), verdict)`.
+    pub rows: Vec<CompareRow>,
+    /// Count of Violated rows.
+    pub violated: usize,
+    /// Count of Unmeasured rows.
+    pub unmeasured: usize,
+    /// True only when every claim is measured AND holds — the only state
+    /// that counts as verification (fail-closed).
+    pub fully_verified: bool,
+}
+
+/// One row of a [`CompareReport`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompareRow {
+    /// Claim name.
+    pub claim: String,
+    /// Predicted value.
+    pub predicted: f64,
+    /// Measured value (`None` when unmeasured).
+    pub measured: Option<f64>,
+    /// Verdict.
+    pub verdict: Verdict,
+}
+
+/// Bind measurements to a predicted claim set — fail-closed.
+///
+/// Every measurement must name an existing claim (a stray name is an
+/// **error**, not an ignore); every claim without a measurement reads
+/// Unmeasured; `fully_verified` is true only when all claims are
+/// measured and hold.
+pub fn compare(
+    claims: &ClaimSet,
+    measurements: &[Measurement],
+) -> Result<CompareReport, AntennaError> {
+    for m in measurements {
+        if claims.claim(&m.claim).is_none() {
+            return Err(AntennaError::UnknownMeasurement {
+                name: m.claim.clone(),
+            });
+        }
+    }
+    let mut rows = Vec::with_capacity(claims.claims.len());
+    let mut violated = 0;
+    let mut unmeasured = 0;
+    for c in &claims.claims {
+        let m = measurements.iter().find(|m| m.claim == c.name);
+        let (measured, verdict) = match m {
+            Some(m) => {
+                if (m.value - c.value).abs() <= m.tolerance {
+                    (Some(m.value), Verdict::Holds)
+                } else {
+                    violated += 1;
+                    (Some(m.value), Verdict::Violated)
+                }
+            }
+            None => {
+                unmeasured += 1;
+                (None, Verdict::Unmeasured)
+            }
+        };
+        rows.push(CompareRow {
+            claim: c.name.clone(),
+            predicted: c.value,
+            measured,
+            verdict,
+        });
+    }
+    Ok(CompareReport {
+        fully_verified: violated == 0 && unmeasured == 0,
+        rows,
+        violated,
+        unmeasured,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

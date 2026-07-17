@@ -170,12 +170,23 @@ A 2 × 0.5 m-arm dipole (1 mm wire radius, 40 segments, ℓ/a = 1000), swept
   standard-kernel gates **refuse it fail-closed by name** — the correct
   answer until the extended kernel lands (queued). Paper-draft skeleton
   with every number reproducible from `cargo test`.
-- **M6 — measurement pack.** Design a 915 MHz (or 2.45 GHz) PCB
-  monopole/IFA as a board the repo's ecad pipeline can emit, plus
-  `compare()` binding NanoVNA S11 sweeps to predicted claims with
-  Holds / Violated / Unmeasured verdicts — fail-closed, Violated is a
-  publishable result about the model, and the whole loop costs about as
-  much as a nice lunch.
+- **M6 — measurement pack. DONE** (`nanovna`, `receipt::compare`,
+  `docs/antenna-measurement-pack.md`). A 915 MHz PCB monopole (78 ×
+  1.6 mm trace over a pour, emitted-through-ecad board spec'd in the
+  pack doc) whose free-space claims land **on band by geometry**:
+  resonance 913.1 MHz, S11 −16.2 dB, Z = 37.5 + j5.5 Ω, 107 MHz
+  bandwidth, 5.16 dBi. Touchstone `.s1p` parsing (RI/MA/DB, Hz–GHz,
+  fail-closed by line number), `measurements_from_s1p` reducing a sweep
+  to claim-named measurements through the implied impedance (any
+  reference renormalized), and `compare()` with Holds / Violated /
+  Unmeasured verdicts: stray measurement names are errors, one-port
+  unmeasurables (gain, efficiency) read Unmeasured every time, and
+  `fully_verified` requires all-measured-all-holding. The whole loop is
+  rehearsed in `tests/measurement_pack.rs` against model-generated
+  sweeps — including the **0.72× substrate-downshift rehearsal** where
+  the frequency claims read Violated, which is exactly what the real
+  FR-4 board is expected to do: that violation is the M1.5 ε_eff
+  measurement, named in advance. Hardware BOM ≈ $100 (NanoVNA + boards).
 
 ## Non-goals
 

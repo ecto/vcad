@@ -117,6 +117,18 @@ pub enum AntennaError {
         /// Node index.
         node: usize,
     },
+    /// A measurement file (.s1p) could not be parsed — fail-closed.
+    MeasurementFormat {
+        /// 1-based line number (0 for whole-file problems).
+        line: usize,
+        /// What was wrong.
+        reason: &'static str,
+    },
+    /// A measurement names a claim that does not exist in the claim set.
+    UnknownMeasurement {
+        /// The offending claim name.
+        name: String,
+    },
     /// Resonance search: `Im(Z)` does not change sign over the bracket.
     ResonanceNotBracketed {
         /// Reactance at the lower frequency, Ω.
@@ -232,6 +244,16 @@ impl std::fmt::Display for AntennaError {
                     f,
                     "parameter would move grounded node {node} off the z = 0 plane; \
                      ground-contact geometry must keep v_z = 0 there"
+                )
+            }
+            AntennaError::MeasurementFormat { line, reason } => {
+                write!(f, "measurement file rejected at line {line}: {reason}")
+            }
+            AntennaError::UnknownMeasurement { name } => {
+                write!(
+                    f,
+                    "measurement {name:?} matches no claim in the set — refusing to \
+                     ignore it (fail-closed)"
                 )
             }
             AntennaError::ResonanceNotBracketed { x_lo, x_hi } => {
