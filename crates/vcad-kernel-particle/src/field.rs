@@ -71,18 +71,37 @@ pub fn b_ring(coil: &RingCoil, r_m: f64, z_m: f64) -> (f64, f64) {
     (br, bz)
 }
 
+/// Multiplier on the wire radius inside which coil B is evaluated
+/// analytically instead of from the cached grid (matches the tracer's
+/// near-wire step refinement zone, where the 1/ρ field must be exact).
+const B_NEAR_WIRE_FACTOR: f64 = 8.0;
+
+#[derive(Debug, Clone)]
+struct BGrid {
+    br: Vec<f64>,
+    bz: Vec<f64>,
+}
+
 /// Field sampler for a solved device: E from the grid, B from the coils.
+///
+/// Coil B is precomputed on the Poisson grid once (analytic elliptic
+/// integrals at every node) and bilinearly sampled during tracing — except
+/// within [`B_NEAR_WIRE_FACTOR`] wire radii of a conductor, where the
+/// exact analytic sum is used so the shielding sheath keeps its 1/ρ
+/// structure. This removes the per-substep elliptic-integral cost that
+/// dominated high-current traces.
 #[derive(Debug, Clone)]
 pub struct FieldMap<'a> {
     solution: &'a Solution,
     coils: Vec<RingCoil>,
+    bgrid: Option<BGrid>,
 }
 
 impl<'a> FieldMap<'a> {
     /// Build the sampler from a device and its Poisson solution. Rings with
     /// zero ampere-turns contribute no coil.
     pub fn new(device: &Device, solution: &'a Solution) -> Self {
-        let coils = device
+        let coils: Vec<RingCoil> = device
             .rings
             .iter()
             .filter(|r| r.ampere_turns != 0.0)
@@ -93,7 +112,34 @@ impl<'a> FieldMap<'a> {
                 wire_radius_m: (r.wire_radius_mm * 1e-3).max(1e-6),
             })
             .collect();
-        Self { solution, coils }
+        let bgrid = if coils.is_empty() {
+            None
+        } else {
+            let (nr, nz) = (solution.nr, solution.nz);
+            let mut br = vec![0.0_f64; nr * nz];
+            let mut bz = vec![0.0_f64; nr * nz];
+            for i in 0..nr {
+                let r = i as f64 * solution.dr;
+                for j in 0..nz {
+                    let z = -solution.z_half + j as f64 * solution.dz;
+                    let mut sr = 0.0;
+                    let mut sz = 0.0;
+                    for c in &coils {
+                        let (cr, cz) = b_ring(c, r, z);
+                        sr += cr;
+                        sz += cz;
+                    }
+                    br[i * nz + j] = sr;
+                    bz[i * nz + j] = sz;
+                }
+            }
+            Some(BGrid { br, bz })
+        };
+        Self {
+            solution,
+            coils,
+            bgrid,
+        }
     }
 
     /// Whether any coil carries current (skips B math when false).
@@ -118,19 +164,50 @@ impl<'a> FieldMap<'a> {
         [er * p[0] / r, er * p[1] / r, ez]
     }
 
-    /// Magnetic field at a Cartesian point, tesla.
+    /// Magnetic field at a Cartesian point, tesla. Grid-cached far from
+    /// conductors, exact analytic within the near-wire zone.
     pub fn b_cart(&self, p: [f64; 3]) -> [f64; 3] {
         if self.coils.is_empty() {
             return [0.0, 0.0, 0.0];
         }
         let r = (p[0] * p[0] + p[1] * p[1]).sqrt();
-        let mut br = 0.0;
-        let mut bz = 0.0;
-        for c in &self.coils {
-            let (cr, cz) = b_ring(c, r, p[2]);
-            br += cr;
-            bz += cz;
-        }
+        let z = p[2];
+
+        let near_wire = self.coils.iter().any(|c| {
+            let dr = r - c.radius_m;
+            let dz = z - c.z_m;
+            let lim = B_NEAR_WIRE_FACTOR * c.wire_radius_m;
+            dr * dr + dz * dz < lim * lim
+        });
+
+        let (br, bz) = if let (Some(g), false) = (&self.bgrid, near_wire) {
+            let s = self.solution;
+            let eps = 1e-12;
+            let u = (r / s.dr).clamp(0.0, (s.nr - 1) as f64 - eps);
+            let w = ((z + s.z_half) / s.dz).clamp(0.0, (s.nz - 1) as f64 - eps);
+            let i0 = u.floor() as usize;
+            let j0 = w.floor() as usize;
+            let fu = u - i0 as f64;
+            let fw = w - j0 as f64;
+            let idx = |i: usize, j: usize| i * s.nz + j;
+            let samp = |d: &[f64]| {
+                d[idx(i0, j0)] * (1.0 - fu) * (1.0 - fw)
+                    + d[idx(i0 + 1, j0)] * fu * (1.0 - fw)
+                    + d[idx(i0, j0 + 1)] * (1.0 - fu) * fw
+                    + d[idx(i0 + 1, j0 + 1)] * fu * fw
+            };
+            (samp(&g.br), samp(&g.bz))
+        } else {
+            let mut sr = 0.0;
+            let mut sz = 0.0;
+            for c in &self.coils {
+                let (cr, cz) = b_ring(c, r, z);
+                sr += cr;
+                sz += cz;
+            }
+            (sr, sz)
+        };
+
         if r < 1e-12 {
             return [0.0, 0.0, bz];
         }
@@ -184,6 +261,41 @@ mod tests {
         let (br_dn, bz_dn) = b_ring(&c, 0.03, -0.02);
         assert!((br_up + br_dn).abs() < 1e-12, "B_r must be odd in z");
         assert!((bz_up - bz_dn).abs() < 1e-12, "B_z must be even in z");
+    }
+
+    #[test]
+    fn cached_grid_matches_analytic_far_from_wires() {
+        use crate::device::Device;
+        use crate::poisson::{solve, SolveOptions};
+        let device = Device::shielded_two_ring(120.0, 40.0, 22.0, 4.0, -500.0, 20_000.0);
+        let sol = solve(&device, 81, 161, &SolveOptions::default()).unwrap();
+        let fields = FieldMap::new(&device, &sol);
+        let coils: Vec<RingCoil> = device
+            .rings
+            .iter()
+            .map(|r| RingCoil {
+                radius_m: r.ring_radius_mm * 1e-3,
+                z_m: r.z_mm * 1e-3,
+                ampere_turns: r.ampere_turns,
+                wire_radius_m: r.wire_radius_mm * 1e-3,
+            })
+            .collect();
+        // Far-field points (well outside the near-wire analytic zone).
+        for (x, z) in [(0.005, 0.0), (0.02, 0.06), (0.08, -0.04), (0.06, 0.08)] {
+            let got = fields.b_cart([x, 0.0, z]);
+            let mut want_r = 0.0;
+            let mut want_z = 0.0;
+            for c in &coils {
+                let (cr, cz) = b_ring(c, x, z);
+                want_r += cr;
+                want_z += cz;
+            }
+            let scale = (want_r * want_r + want_z * want_z).sqrt().max(1e-9);
+            assert!(
+                ((got[0] - want_r).powi(2) + (got[2] - want_z).powi(2)).sqrt() < 0.05 * scale,
+                "grid B off at ({x},{z}): got {got:?}, want ({want_r},{want_z})"
+            );
+        }
     }
 
     #[test]

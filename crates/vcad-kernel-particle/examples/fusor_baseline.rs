@@ -11,9 +11,11 @@
 
 use vcad_kernel_particle::device::Device;
 use vcad_kernel_particle::field::FieldMap;
-use vcad_kernel_particle::fom::{geometric_transparency, neutron_rate_per_s, stats};
+use vcad_kernel_particle::fom::{
+    geometric_transparency, neutron_rate_from_counts, neutron_rate_per_s, stats,
+};
 use vcad_kernel_particle::poisson::{solve, SolveOptions};
-use vcad_kernel_particle::trace::{TraceOptions, Tracer, DEUTERON};
+use vcad_kernel_particle::trace::{CxModel, TraceOptions, Tracer, DEUTERON};
 use vcad_kernel_particle::xsection::d2_deuteron_density_m3;
 
 const REF_ION_CURRENT_A: f64 = 0.010;
@@ -61,6 +63,32 @@ fn main() {
         REF_PRESSURE_MTORR
     );
     bench(&fusor, "classic_fusor_5ring", -30_000.0, 0.0);
+
+    // Charge-exchange reality check on the classic fusor: at glow-fusor
+    // pressure the surviving-ion channel collapses and the fast-neutral
+    // channel takes over — both reported per injected ion.
+    {
+        let n_bg = d2_deuteron_density_m3(REF_PRESSURE_MTORR, 300.0);
+        let sol = solve(&fusor, 121, 241, &SolveOptions::default()).expect("poisson");
+        let fields = FieldMap::new(&fusor, &sol);
+        let opts = TraceOptions {
+            max_passes: 40,
+            cx: Some(CxModel {
+                sigma_cx_m2: 1.0e-19,
+                background_deuteron_density_m3: n_bg,
+            }),
+            ..TraceOptions::default()
+        };
+        let tracer = Tracer::new(&fusor, &fields, &sol, opts);
+        let s = stats(&tracer.launch_ensemble(DEUTERON, 96));
+        let total = s.mean_neutrons_ion_channel + s.mean_neutrons_cx_channel;
+        eprintln!(
+            "# cx reality check (sigma_cx 1e-19 m^2): ion-channel {:.3e} n/s, fast-neutral {:.3e} n/s, total {:.3e} n/s",
+            neutron_rate_from_counts(s.mean_neutrons_ion_channel, REF_ION_CURRENT_A),
+            neutron_rate_from_counts(s.mean_neutrons_cx_channel, REF_ION_CURRENT_A),
+            neutron_rate_from_counts(total, REF_ION_CURRENT_A)
+        );
+    }
 
     // Shielded two-ring cathode: sweep ampere-turns at two biases.
     for &volts in &[-3_000.0_f64, -30_000.0] {

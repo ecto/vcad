@@ -151,10 +151,21 @@ ensembles on a 101×201 mesh. Findings:
   converged — regression-tested). `optimize_shield` example: the optimizer
   designs the cathode (ampere-turns + ring spacing) against predicted
   yield.
-- **M1.5 — loss-budget honesty.** Censoring-aware statistics
-  (uncensored-only means, per-fate yield attribution), fast-neutral
-  (charge-exchange) channel estimate so the neutron-rate floor tightens
-  toward measured fusor reality.
+- **M1.5 — loss-budget honesty + perf. DONE.** Censoring-aware statistics
+  (uncensored means, mean drift); coil B cached on the Poisson grid
+  (analytic within 8 wire radii, bilinear beyond — kills the per-substep
+  elliptic cost; consistency-tested against the analytic sum);
+  charge-exchange model (`CxModel`, constant-σ approximation): traces
+  report expected neutrons/ion in a survival-weighted ion channel + a
+  fast-neutral straight-line channel. Reality check at 2 mTorr: the ion
+  channel collapses (CX mean free path < one pass) and single-generation
+  totals land at 1.9×10⁴ n/s vs 1.9×10⁵ no-CX — the ~30× gap to measured
+  fusor rates is the **CX chain** (every event births a cold ion that
+  re-accelerates) + volume ionization, both explicitly not yet modeled.
+  Corollary the model hands us: with CX on, yield is nearly
+  pressure-independent (each ion fuses over ~one CX mean free path of
+  track regardless of density) — voltage and current set the rate, which
+  matches fusor lore.
 - **M2 — discrete adjoint.** Reverse-mode differentiation of the Boris loop
   (checkpointed; Boris is symplectic and its reverse pass is clean) and of
   the bilinear field sampler; adjoint of SOR via the adjoint Poisson solve

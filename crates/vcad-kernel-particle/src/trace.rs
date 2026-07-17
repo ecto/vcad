@@ -59,11 +59,40 @@ pub struct TraceOutcome {
     /// cos θ of the launch direction (θ from +z), for post-hoc binning.
     pub launch_cos_theta: f64,
     /// Path integral ∫ σ_DDn(E)·v dt over the whole trace, m³ — the
-    /// beam-on-background D(d,n)³He reaction volume. Multiply by target
-    /// deuteron density for expected neutrons per ion; zero for
-    /// non-deuteron species. Beam–beam and fast-neutral channels are not
-    /// modeled (M1 scope).
+    /// beam-on-background D(d,n)³He reaction volume with **no
+    /// charge-exchange attrition** (kept raw for cross-config
+    /// comparability). Multiply by target deuteron density for expected
+    /// neutrons per ion; zero for non-deuteron species.
     pub ddn_sigma_v_m3: f64,
+    /// Expected D-D neutrons per injected ion from the surviving-ion
+    /// channel (CX-survival-weighted). Zero unless a [`CxModel`] is set.
+    pub neutrons_ion_channel: f64,
+    /// Expected D-D neutrons per injected ion from fast neutrals born at
+    /// charge-exchange events (straight-line continuation at full energy).
+    /// Zero unless a [`CxModel`] is set.
+    pub neutrons_cx_channel: f64,
+}
+
+/// Charge-exchange model: constant cross-section approximation for
+/// D⁺ + D₂ → fast D⁰ + slow D₂⁺ against a uniform background gas.
+///
+/// σ_cx for deuterons on D₂ is of order 1×10⁻¹⁹ m² across the 1–30 keV
+/// band (falling slowly with energy); supply your own value — tabulated
+/// energy-dependent data is a receipts-milestone upgrade. With a model
+/// present, traces report **expected neutrons per injected ion** in two
+/// channels: the surviving-ion channel (beam-on-background fusion,
+/// weighted by the probability the ion has not yet charge-exchanged) and
+/// the fast-neutral channel (the CX product flies straight at full energy
+/// and keeps fusing until it exits). The CX chain (each event also births
+/// a cold ion that re-accelerates) is not yet modeled, so both channels
+/// are floors.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CxModel {
+    /// Charge-exchange cross section, m².
+    pub sigma_cx_m2: f64,
+    /// Background deuteron density, m⁻³ (see
+    /// [`crate::xsection::d2_deuteron_density_m3`]).
+    pub background_deuteron_density_m3: f64,
 }
 
 /// Tracing options.
@@ -79,6 +108,8 @@ pub struct TraceOptions {
     pub launch_cos_max: f64,
     /// Flight-time budget in units of `max_passes` ideal crossing times.
     pub time_budget_factor: f64,
+    /// Optional charge-exchange model; `None` leaves the CX channels zero.
+    pub cx: Option<CxModel>,
 }
 
 impl Default for TraceOptions {
@@ -89,6 +120,7 @@ impl Default for TraceOptions {
             launch_shell_fraction: 0.85,
             launch_cos_max: 0.95,
             time_budget_factor: 12.0,
+            cx: None,
         }
     }
 }
@@ -181,9 +213,13 @@ impl<'a> Tracer<'a> {
         let mut steps = 0_u64;
         let mut drift = 0.0_f64;
         let mut sigv = 0.0_f64;
+        let mut survival = 1.0_f64;
+        let mut n_ion = 0.0_f64;
+        let mut n_cx = 0.0_f64;
         let launch_cos_theta = p[2] / sq_len(p).sqrt().max(1e-300);
         let deuteron_like =
             species.charge_c > 0.0 && (species.mass_kg / DEUTERON.mass_kg - 1.0).abs() < 0.01;
+        let cx = if deuteron_like { self.opts.cx } else { None };
 
         'outer: while time < t_max && steps < MAX_STEPS {
             let speed = dot(v, v).sqrt();
@@ -228,7 +264,25 @@ impl<'a> Tracer<'a> {
                         0.5 * species.mass_kg * v2 / (crate::constants::ELEMENTARY_CHARGE * 1.0e3);
                     let sig = crate::xsection::dd_n_sigma_m2(0.5 * e_lab_kev);
                     if sig > 0.0 {
-                        sigv += sig * v2.sqrt() * dth;
+                        let speed_now = v2.sqrt();
+                        sigv += sig * speed_now * dth;
+                        if let Some(cxm) = &cx {
+                            let n_bg = cxm.background_deuteron_density_m3;
+                            n_ion += survival * n_bg * sig * speed_now * dth;
+                            let rate_cx = n_bg * cxm.sigma_cx_m2 * speed_now;
+                            let p_birth = survival * rate_cx * dth;
+                            if p_birth > 0.0 {
+                                let l_exit = self.exit_distance(p, v);
+                                n_cx += p_birth * n_bg * sig * l_exit;
+                            }
+                            survival *= (-rate_cx * dth).exp();
+                        }
+                    } else if let Some(cxm) = &cx {
+                        // Below the fusion floor, CX attrition still runs.
+                        let speed_now = v2.sqrt();
+                        let rate_cx =
+                            cxm.background_deuteron_density_m3 * cxm.sigma_cx_m2 * speed_now;
+                        survival *= (-rate_cx * dth).exp();
                     }
                 }
 
@@ -274,7 +328,48 @@ impl<'a> Tracer<'a> {
             energy_drift_rel: drift,
             launch_cos_theta,
             ddn_sigma_v_m3: sigv,
+            neutrons_ion_channel: n_ion,
+            neutrons_cx_channel: n_cx,
         }
+    }
+
+    /// Straight-line distance from `p` along `v` to the chamber boundary
+    /// (cylinder wall or either end cap), meters. Used for fast-neutral
+    /// continuation after charge exchange.
+    fn exit_distance(&self, p: [f64; 3], v: [f64; 3]) -> f64 {
+        let speed = dot(v, v).sqrt();
+        if speed < 1e-12 {
+            return 0.0;
+        }
+        let d = scale(v, 1.0 / speed);
+        // Cylinder r = r_wall in the xy plane.
+        let a = d[0] * d[0] + d[1] * d[1];
+        let t_cyl = if a > 1e-18 {
+            let b = p[0] * d[0] + p[1] * d[1];
+            let c = p[0] * p[0] + p[1] * p[1] - self.r_wall * self.r_wall;
+            let disc = b * b - a * c;
+            if disc > 0.0 {
+                let t = (-b + disc.sqrt()) / a;
+                if t > 0.0 {
+                    t
+                } else {
+                    f64::INFINITY
+                }
+            } else {
+                f64::INFINITY
+            }
+        } else {
+            f64::INFINITY
+        };
+        // End caps z = ±z_wall.
+        let t_cap = if d[2] > 1e-18 {
+            (self.z_wall - p[2]) / d[2]
+        } else if d[2] < -1e-18 {
+            (-self.z_wall - p[2]) / d[2]
+        } else {
+            f64::INFINITY
+        };
+        t_cyl.min(t_cap.max(0.0)).max(0.0)
     }
 
     /// Launch `n` particles at rest on the launch shell, on a deterministic
@@ -376,6 +471,39 @@ mod tests {
                 o.core_passes
             );
         }
+    }
+
+    #[test]
+    fn charge_exchange_splits_the_yield() {
+        // At 2 mTorr D₂ the CX mean free path (~4 cm at 1e-19 m²) is
+        // shorter than one pass: the surviving-ion channel must be heavily
+        // suppressed relative to the raw no-CX integral, and the
+        // fast-neutral channel must be alive.
+        let device = Device::classic_fusor(120.0, 40.0, 5, 1.0, -30_000.0);
+        let sol = solve(&device, 81, 161, &SolveOptions::default()).unwrap();
+        let fields = FieldMap::new(&device, &sol);
+        let n_bg = crate::xsection::d2_deuteron_density_m3(2.0, 300.0);
+        let opts = TraceOptions {
+            max_passes: 8,
+            cx: Some(CxModel {
+                sigma_cx_m2: 1.0e-19,
+                background_deuteron_density_m3: n_bg,
+            }),
+            ..TraceOptions::default()
+        };
+        let tracer = Tracer::new(&device, &fields, &sol, opts);
+        let outs = tracer.launch_ensemble(DEUTERON, 8);
+        let mean =
+            |f: &dyn Fn(&TraceOutcome) -> f64| outs.iter().map(f).sum::<f64>() / outs.len() as f64;
+        let ion = mean(&|o| o.neutrons_ion_channel);
+        let cxc = mean(&|o| o.neutrons_cx_channel);
+        let raw = mean(&|o| o.ddn_sigma_v_m3) * n_bg;
+        assert!(ion > 0.0, "ion channel dead");
+        assert!(cxc > 0.0, "cx channel dead");
+        assert!(
+            ion < 0.8 * raw,
+            "survival weighting must suppress the ion channel: ion {ion:.3e} vs raw {raw:.3e}"
+        );
     }
 
     #[test]

@@ -23,10 +23,22 @@ pub struct EnsembleStats {
     pub effective_transparency: f64,
     /// Worst energy drift across the ensemble (integration quality).
     pub max_energy_drift_rel: f64,
+    /// Mean energy drift across the ensemble — the fairer quality metric
+    /// (the max is dominated by extreme long-lived wire-grazers).
+    pub mean_energy_drift_rel: f64,
+    /// Mean core passes over **terminated** traces only (censored
+    /// survivors excluded). 0 when every trace was censored.
+    pub mean_passes_uncensored: f64,
     /// Mean D(d,n)³He reaction volume per ion, m³ — see
     /// [`crate::trace::TraceOutcome::ddn_sigma_v_m3`]. Multiply by target
     /// deuteron density for expected neutrons per injected ion.
     pub mean_ddn_sigma_v_m3: f64,
+    /// Mean expected neutrons per injected ion, surviving-ion channel
+    /// (zero unless traced with a [`crate::trace::CxModel`]).
+    pub mean_neutrons_ion_channel: f64,
+    /// Mean expected neutrons per injected ion, fast-neutral channel
+    /// (zero unless traced with a [`crate::trace::CxModel`]).
+    pub mean_neutrons_cx_channel: f64,
 }
 
 /// Reduce trace outcomes to [`EnsembleStats`].
@@ -47,8 +59,31 @@ pub fn stats(outcomes: &[TraceOutcome]) -> EnsembleStats {
             .iter()
             .map(|o| o.energy_drift_rel)
             .fold(0.0, f64::max),
+        mean_energy_drift_rel: outcomes.iter().map(|o| o.energy_drift_rel).sum::<f64>() / n as f64,
+        mean_passes_uncensored: {
+            let dead: Vec<f64> = outcomes
+                .iter()
+                .filter(|o| o.fate != Fate::Survived)
+                .map(|o| o.core_passes as f64)
+                .collect();
+            if dead.is_empty() {
+                0.0
+            } else {
+                dead.iter().sum::<f64>() / dead.len() as f64
+            }
+        },
         mean_ddn_sigma_v_m3: outcomes.iter().map(|o| o.ddn_sigma_v_m3).sum::<f64>() / n as f64,
+        mean_neutrons_ion_channel: outcomes.iter().map(|o| o.neutrons_ion_channel).sum::<f64>()
+            / n as f64,
+        mean_neutrons_cx_channel: outcomes.iter().map(|o| o.neutrons_cx_channel).sum::<f64>()
+            / n as f64,
     }
+}
+
+/// Neutron rate from expected-neutrons-per-ion counts (the CX-aware path):
+/// `(I/e) × neutrons_per_ion`, neutrons/s.
+pub fn neutron_rate_from_counts(neutrons_per_ion: f64, ion_current_a: f64) -> f64 {
+    (ion_current_a / crate::constants::ELEMENTARY_CHARGE) * neutrons_per_ion
 }
 
 /// Steady-state D-D neutron rate estimate, neutrons/s.
@@ -103,6 +138,8 @@ mod tests {
             energy_drift_rel: 0.01,
             launch_cos_theta: 0.0,
             ddn_sigma_v_m3: 2.0e-31,
+            neutrons_ion_channel: 1.0e-12,
+            neutrons_cx_channel: 3.0e-12,
         }
     }
 
@@ -122,6 +159,18 @@ mod tests {
         assert!((s.survivor_fraction - 0.25).abs() < 1e-12);
         assert!((s.effective_transparency - 5.0 / 6.0).abs() < 1e-12);
         assert!((s.mean_ddn_sigma_v_m3 - 2.0e-31).abs() < 1e-40);
+        // Uncensored mean excludes the surviving 10-pass trace: (3+5+2)/3.
+        assert!((s.mean_passes_uncensored - 10.0 / 3.0).abs() < 1e-12);
+        assert!((s.mean_energy_drift_rel - 0.01).abs() < 1e-12);
+        assert!((s.mean_neutrons_ion_channel - 1.0e-12).abs() < 1e-20);
+        assert!((s.mean_neutrons_cx_channel - 3.0e-12).abs() < 1e-20);
+    }
+
+    #[test]
+    fn count_based_rate_arithmetic() {
+        // 10 mA × 5e-11 neutrons/ion ≈ 3.1e6 n/s.
+        let rate = neutron_rate_from_counts(5.0e-11, 0.010);
+        assert!((2.0e6..5.0e6).contains(&rate), "rate = {rate:.3e}");
     }
 
     #[test]
