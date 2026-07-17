@@ -345,7 +345,6 @@ pub(crate) fn route_window_complete(
         terms: &terms,
         plane,
         nx: grid.nx,
-        nl,
         occ: BitSet::new(n_nodes),
         paths: vec![Vec::new(); conns.len()],
         expansions: 0,
@@ -405,7 +404,6 @@ struct Search<'a> {
     terms: &'a [(usize, usize)],
     plane: usize,
     nx: usize,
-    nl: usize,
     /// Nodes occupied by committed paths of earlier nets AND the current
     /// net's partial path — together the full search state.
     occ: BitSet,
