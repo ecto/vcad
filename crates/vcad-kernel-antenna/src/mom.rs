@@ -225,18 +225,21 @@ pub fn fill_impedance_matrix(mesh: &Mesh, k: f64, opts: &SolveOptions) -> CMatri
     // both (test, source) orientations from the same numbers — the double
     // integral is one quantity, and reusing it makes the Galerkin matrix
     // symmetric to machine precision (not merely to quadrature error).
-    let assemble = |z: &mut CMatrix, p: usize, q: usize, m: &[[Complex; 2]; 2], tt: f64| {
-        let s_total = m[0][0] + m[0][1] + m[1][0] + m[1][1];
-        for tm in &touch[p] {
-            for tn in &touch[q] {
-                // Ramp peaking at the basis node: index = end.
-                let vector = m[tm.end as usize][tn.end as usize].scale(k * tt * tm.sign * tn.sign);
-                let scalar = s_total.scale(tm.slope * tn.slope / k);
-                let contrib = jeta * (vector - scalar);
-                *z.at_mut(tm.basis, tn.basis) += contrib;
+    // `sign` is +1 for direct terms, −1 for ground-plane image sources.
+    let assemble =
+        |z: &mut CMatrix, p: usize, q: usize, m: &[[Complex; 2]; 2], tt: f64, sign: f64| {
+            let s_total = m[0][0] + m[0][1] + m[1][0] + m[1][1];
+            for tm in &touch[p] {
+                for tn in &touch[q] {
+                    // Ramp peaking at the basis node: index = end.
+                    let vector =
+                        m[tm.end as usize][tn.end as usize].scale(k * tt * tm.sign * tn.sign);
+                    let scalar = s_total.scale(tm.slope * tn.slope / k);
+                    let contrib = (jeta * (vector - scalar)).scale(sign);
+                    *z.at_mut(tm.basis, tn.basis) += contrib;
+                }
             }
-        }
-    };
+        };
 
     for p in 0..ns {
         for q in p..ns {
@@ -247,14 +250,56 @@ pub fn fill_impedance_matrix(mesh: &Mesh, k: f64, opts: &SolveOptions) -> CMatri
             let sq = &mesh.segments[q];
             let m = pair_integrals(sp, sq, k, &outer, &inner);
             let tt = dot(sp.tangent, sq.tangent);
-            assemble(&mut z, p, q, &m, tt);
+            assemble(&mut z, p, q, &m, tt, 1.0);
             if p != q {
                 let mt = [[m[0][0], m[1][0]], [m[0][1], m[1][1]]];
-                assemble(&mut z, q, p, &mt, tt);
+                assemble(&mut z, q, p, &mt, tt, 1.0);
+            }
+
+            if mesh.ground_plane {
+                // Image sources: mirror the source segment in z = 0 and
+                // flip the current (the PEC image of (Jx, Jy, Jz) at
+                // (x, y, z) is (−Jx, −Jy, +Jz) at (x, y, −z), which equals
+                // MINUS the same-ramp current on the mirrored
+                // parametrization). Testing stays on the real conductor.
+                // The mirror is an isometry, so ⟨p, img q⟩ = ⟨q, img p⟩ᵀ
+                // and the matrix stays exactly symmetric.
+                let sq_img = mirror_segment(sq);
+                let mut mi = pair_integrals(sp, &sq_img, k, &outer, &inner);
+                let tti = dot(sp.tangent, sq_img.tangent);
+                if p == q {
+                    // ⟨p, img p⟩ is exactly symmetric in its ramp indices
+                    // (mirror isometry), but the quadrature treats test and
+                    // source roles differently and — unlike the direct self
+                    // term, whose |s − t| kernel cancels the discrepancy at
+                    // the symmetric Gauss nodes — a self-image kernel
+                    // depends on s + t. Restore the exact symmetry.
+                    let off = (mi[0][1] + mi[1][0]).scale(0.5);
+                    mi[0][1] = off;
+                    mi[1][0] = off;
+                }
+                assemble(&mut z, p, q, &mi, tti, -1.0);
+                if p != q {
+                    let mit = [[mi[0][0], mi[1][0]], [mi[0][1], mi[1][1]]];
+                    assemble(&mut z, q, p, &mit, tti, -1.0);
+                }
             }
         }
     }
     z
+}
+
+/// The z = 0 mirror of a segment (same parametrization order, reflected
+/// geometry). Used for ground-plane image sources.
+pub(crate) fn mirror_segment(s: &Segment) -> Segment {
+    Segment {
+        n0: s.n0,
+        n1: s.n1,
+        p0: [s.p0[0], s.p0[1], -s.p0[2]],
+        tangent: [s.tangent[0], s.tangent[1], -s.tangent[2]],
+        len: s.len,
+        radius: s.radius,
+    }
 }
 
 /// Solve a delta-gap-driven mesh at `freq_hz` with a 1 V gap at

@@ -27,6 +27,7 @@ pub struct WireGrid {
     nodes_mm: Vec<[f64; 3]>,
     /// (node0, node1, radius_mm) per segment.
     segments: Vec<(usize, usize, f64)>,
+    ground_plane: bool,
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -159,6 +160,15 @@ impl WireGrid {
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
+
+    /// Model a perfect electric conductor at z = 0 via image theory.
+    ///
+    /// All geometry must then satisfy z ≥ 0. A wire *endpoint* at z = 0 is
+    /// electrically connected to the plane (monopole base); wires lying in
+    /// the plane or passing junctions through it fail closed.
+    pub fn set_ground_plane(&mut self, on: bool) {
+        self.ground_plane = on;
+    }
 }
 
 /// One straight wire segment, SI units (meters).
@@ -192,13 +202,20 @@ pub struct BasisHalf {
     pub sign: f64,
 }
 
-/// A triangular current basis centered on an interior node.
+/// A triangular current basis centered on a node.
+///
+/// A degree-2 (interior) node carries one basis with two halves. A
+/// degree-`d` junction carries `d − 1` bases — each routes current from a
+/// common reference branch into one other branch, which spans exactly the
+/// KCL-constrained current space at the junction. A wire endpoint on the
+/// ground plane carries a one-half basis: its other half is the image
+/// current below the plane, supplied by the image-source fill.
 #[derive(Debug, Clone)]
 pub struct Basis {
     /// The node the basis peaks at.
     pub node: usize,
-    /// The two segment halves it spans (upstream, downstream).
-    pub halves: [BasisHalf; 2],
+    /// The segment halves it spans (2 normally, 1 for a grounded end).
+    pub halves: Vec<BasisHalf>,
 }
 
 /// Compiled wire mesh in SI units, ready for the MoM fill.
@@ -208,21 +225,60 @@ pub struct Mesh {
     pub nodes: Vec<[f64; 3]>,
     /// Straight segments.
     pub segments: Vec<Segment>,
-    /// Triangular bases, one per interior (degree-2) node.
+    /// Triangular bases (interior nodes, junctions, grounded ends).
     pub bases: Vec<Basis>,
+    /// Perfect electric conductor at z = 0, modeled by image theory.
+    pub ground_plane: bool,
+}
+
+fn toward(seg: usize, end: u8) -> BasisHalf {
+    BasisHalf {
+        seg,
+        end,
+        sign: if end == 1 { 1.0 } else { -1.0 },
+    }
+}
+
+fn away(seg: usize, end: u8) -> BasisHalf {
+    BasisHalf {
+        seg,
+        end,
+        sign: if end == 0 { 1.0 } else { -1.0 },
+    }
 }
 
 impl Mesh {
     /// Compile a wire grid: convert to meters, derive per-node degrees, and
-    /// build the triangular bases. Fails closed on junctions (degree ≥ 3).
+    /// build the triangular bases (interior nodes, KCL junction bases, and
+    /// — with a ground plane — grounded-end bases).
     pub fn build(grid: &WireGrid) -> Result<Mesh, AntennaError> {
-        let nodes: Vec<[f64; 3]> = grid
+        let ground = grid.ground_plane;
+        let mut nodes: Vec<[f64; 3]> = grid
             .nodes_mm
             .iter()
             .map(|p| [p[0] * 1e-3, p[1] * 1e-3, p[2] * 1e-3])
             .collect();
+        let tol = NODE_TOL_MM * 1e-3;
+        let mut grounded = vec![false; nodes.len()];
+        if ground {
+            for (i, n) in nodes.iter_mut().enumerate() {
+                if n[2] < -tol {
+                    return Err(AntennaError::BelowGroundPlane {
+                        node: i,
+                        z_mm: n[2] * 1e3,
+                    });
+                }
+                if n[2].abs() <= tol {
+                    n[2] = 0.0; // snap for a clean mirror
+                    grounded[i] = true;
+                }
+            }
+        }
         let mut segments = Vec::with_capacity(grid.segments.len());
-        for &(n0, n1, r_mm) in &grid.segments {
+        for (si, &(n0, n1, r_mm)) in grid.segments.iter().enumerate() {
+            if ground && grounded[n0] && grounded[n1] {
+                return Err(AntennaError::SegmentOnGroundPlane { segment: si });
+            }
             let p0 = nodes[n0];
             let d = sub(nodes[n1], p0);
             let len = norm(d);
@@ -245,34 +301,50 @@ impl Mesh {
 
         let mut bases = Vec::new();
         for (node, inc) in incident.iter().enumerate() {
+            if grounded[node] {
+                // A wire end on the ground plane: current continues into
+                // the image. One real half; the mirror is supplied by the
+                // image-source fill. Interior/junction ground contacts are
+                // out of scope (the plane would need its own port model).
+                match inc.len() {
+                    0 => {}
+                    1 => {
+                        let (s, e) = inc[0];
+                        bases.push(Basis {
+                            node,
+                            halves: vec![away(s, e)],
+                        });
+                    }
+                    degree => {
+                        return Err(AntennaError::GroundContactUnsupported { node, degree });
+                    }
+                }
+                continue;
+            }
             match inc.len() {
                 0 | 1 => {} // isolated (unreachable) or free end: current = 0
                 2 => {
                     // Reference direction: through the node from inc[0]'s
-                    // side into inc[1]'s side. Flow *toward* the node on the
-                    // upstream half runs along the segment when the node is
-                    // its n1; flow *away* on the downstream half runs along
-                    // the segment when the node is its n0.
+                    // side into inc[1]'s side.
                     let (s_a, e_a) = inc[0];
                     let (s_b, e_b) = inc[1];
                     bases.push(Basis {
                         node,
-                        halves: [
-                            BasisHalf {
-                                seg: s_a,
-                                end: e_a,
-                                sign: if e_a == 1 { 1.0 } else { -1.0 },
-                            },
-                            BasisHalf {
-                                seg: s_b,
-                                end: e_b,
-                                sign: if e_b == 0 { 1.0 } else { -1.0 },
-                            },
-                        ],
+                        halves: vec![toward(s_a, e_a), away(s_b, e_b)],
                     });
                 }
-                degree => {
-                    return Err(AntennaError::JunctionUnsupported { node, degree });
+                d => {
+                    // Junction: d − 1 bases, each carrying current from the
+                    // reference branch inc[0] into branch i. Any KCL-legal
+                    // current split is a combination of these; continuity
+                    // per basis makes charge bookkeeping automatic.
+                    let (s_ref, e_ref) = inc[0];
+                    for &(s_i, e_i) in &inc[1..d] {
+                        bases.push(Basis {
+                            node,
+                            halves: vec![toward(s_ref, e_ref), away(s_i, e_i)],
+                        });
+                    }
                 }
             }
         }
@@ -284,6 +356,7 @@ impl Mesh {
             nodes,
             segments,
             bases,
+            ground_plane: ground,
         })
     }
 
@@ -431,7 +504,9 @@ mod tests {
     }
 
     #[test]
-    fn junction_fails_closed() {
+    fn junction_gets_kcl_spanning_bases() {
+        // Three wires meeting at the origin: degree 3 → 2 junction bases,
+        // each pairing the reference branch with one other branch.
         let mut g = WireGrid::new();
         g.add_wire([0.0, 0.0, 0.0], [100.0, 0.0, 0.0], 1.0, 2)
             .unwrap();
@@ -439,10 +514,70 @@ mod tests {
             .unwrap();
         g.add_wire([0.0, 0.0, 0.0], [0.0, 0.0, 100.0], 1.0, 2)
             .unwrap();
-        match Mesh::build(&g) {
-            Err(AntennaError::JunctionUnsupported { degree: 3, .. }) => {}
-            other => panic!("expected junction error, got {other:?}"),
+        let m = Mesh::build(&g).unwrap();
+        // 6 segments; 3 interior mid-wire nodes + 2 junction bases.
+        assert_eq!(m.segments.len(), 6);
+        assert_eq!(m.bases.len(), 5);
+        let at_origin = m.bases.iter().filter(|b| b.node == 0).count();
+        assert_eq!(at_origin, 2);
+        // KCL: with any coefficients, the signed endpoint currents at the
+        // junction node must sum to zero (inflow = outflow).
+        let coeffs: Vec<crate::complex::Complex> = (0..m.bases.len())
+            .map(|i| crate::complex::Complex::new(1.0 + i as f64, 0.5 * i as f64))
+            .collect();
+        let ends = m.segment_endpoint_currents(&coeffs);
+        let mut net = crate::complex::Complex::ZERO;
+        for (si, s) in m.segments.iter().enumerate() {
+            // Current flowing INTO the junction node along each segment.
+            if s.n0 == 0 {
+                net -= ends[si].0; // tangent points away from the node
+            }
+            if s.n1 == 0 {
+                net += ends[si].1; // tangent points into the node
+            }
         }
+        assert!(net.abs() < 1e-12, "KCL violated at junction: {net:?}");
+    }
+
+    #[test]
+    fn ground_plane_gates_and_grounded_base() {
+        // Below-plane geometry fails closed.
+        let mut g = WireGrid::new();
+        g.set_ground_plane(true);
+        g.add_wire([0.0, 0.0, -50.0], [0.0, 0.0, 500.0], 1.0, 4)
+            .unwrap();
+        assert!(matches!(
+            Mesh::build(&g),
+            Err(AntennaError::BelowGroundPlane { .. })
+        ));
+
+        // A wire lying in the plane is shorted by its own image.
+        let mut g = WireGrid::new();
+        g.set_ground_plane(true);
+        g.add_wire([0.0, 0.0, 0.0], [100.0, 0.0, 0.0], 1.0, 2)
+            .unwrap();
+        assert!(matches!(
+            Mesh::build(&g),
+            Err(AntennaError::SegmentOnGroundPlane { .. })
+        ));
+
+        // A monopole: base node gets a one-half basis, so the base carries
+        // current (feed point), and the count is nseg (not nseg − 1).
+        let mut g = WireGrid::new();
+        g.set_ground_plane(true);
+        g.add_wire([0.0, 0.0, 0.0], [0.0, 0.0, 500.0], 1.0, 10)
+            .unwrap();
+        let m = Mesh::build(&g).unwrap();
+        assert!(m.ground_plane);
+        assert_eq!(m.bases.len(), 10);
+        let base = m.nearest_basis([0.0, 0.0, 0.0]).unwrap();
+        assert_eq!(m.bases[base].halves.len(), 1);
+
+        // Without the plane, the same wire has free ends: nseg − 1 bases.
+        let mut g = WireGrid::new();
+        g.add_wire([0.0, 0.0, 0.0], [0.0, 0.0, 500.0], 1.0, 10)
+            .unwrap();
+        assert_eq!(Mesh::build(&g).unwrap().bases.len(), 9);
     }
 
     #[test]

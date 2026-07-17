@@ -92,10 +92,27 @@ A 2 × 0.5 m-arm dipole (1 mm wire radius, 40 segments, ℓ/a = 1000), swept
 
 ## Milestone ladder
 
-- **M1 — bent wires and junctions.** Degree-≥3 junction bases (KCL by
-  construction from the same signed-half machinery), yagi
-  (parasitic-element) and inverted-F validation, perfect ground plane via
-  image theory (monopole = half-impedance dipole as the test).
+- **M1 — junctions + ground plane. DONE.** Degree-`d` junctions carry
+  `d − 1` KCL-spanning bases (reference-branch pairing — the signed-half
+  machinery from M0, unchanged); perfect ground plane via image sources
+  (mirrored geometry, flipped current, testing on the real conductor
+  only), with grounded wire-end bases so a monopole feeds at its base.
+  Validation (`tests/ground_and_junctions.rs`): quarter-wave monopole
+  resonates at ℓ/λ = **0.2395** — exactly half the dipole's 0.4790 — with
+  R = **35.95 Ω** (= Z_dip/2 to 2%), **5.15 dBi** at the horizon
+  (published 5.16), zero field below the PEC horizon; horizontal dipole
+  R(h) tracks R_self − R_mutual(2h) including the h = 0.1 λ collapse;
+  **image theory asserted as an algebraic identity** (ground solve ≡
+  antisymmetric-twin solve through a different code path, to 1e−6);
+  3-element yagi beams **7.51 dBi forward, F/B 19.3 dB** off parasitic
+  coupling alone; folded dipole steps up to **285 Ω** (published 4 × 73 ≈
+  292); a T-hat junction drags monopole resonance 143.7 → 82.8 MHz;
+  reciprocity and the 1.0000 energy balance survive junctions and images.
+  Numerical lesson preserved in the fill: a segment's kernel to its own
+  image depends on s + t (not |s − t|), so the Gauss-node reflection
+  symmetry that protects direct self terms does not apply — the
+  self-image block is explicitly symmetrized (the exact integrals are
+  equal by mirror isometry; the discretization just dropped it).
 - **M1.5 — substrate honesty for PCB antennas.** Effective-permittivity
   correction for traces over a dielectric (quasi-static ε_eff), stated as
   a correction with its own validity limits — this is what turns "PCB

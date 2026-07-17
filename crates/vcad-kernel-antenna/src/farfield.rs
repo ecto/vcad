@@ -45,7 +45,17 @@ impl FarFieldSample {
 
 /// Evaluate the far-field pattern at polar angle `theta` (from +z) and
 /// azimuth `phi` (from +x), radians. Z-up, matching the vcad frame.
+///
+/// With a ground plane, the pattern includes the image contribution and is
+/// identically zero below the horizon (θ > π/2) — the PEC half-space
+/// admits no field.
 pub fn far_field(mesh: &Mesh, sol: &DrivenSolution, theta: f64, phi: f64) -> FarFieldSample {
+    if mesh.ground_plane && theta > std::f64::consts::FRAC_PI_2 {
+        return FarFieldSample {
+            e_theta: Complex::ZERO,
+            e_phi: Complex::ZERO,
+        };
+    }
     let (st, ct) = (theta.sin(), theta.cos());
     let (sp, cp) = (phi.sin(), phi.cos());
     let rhat = [st * cp, st * sp, ct];
@@ -55,25 +65,37 @@ pub fn far_field(mesh: &Mesh, sol: &DrivenSolution, theta: f64, phi: f64) -> Far
     let ends = mesh.segment_endpoint_currents(&sol.currents);
     let (gx, gw) = gauss_legendre(4);
 
-    // F = Σ_seg û ∫ I(t) e^{+jk r̂·y(t)} dt
+    // F = Σ_seg û ∫ I(t) e^{+jk r̂·y(t)} dt, plus mirrored segments with
+    // flipped current when a ground plane is present.
     let mut f = [Complex::ZERO; 3];
+    let mut add = |p0: [f64; 3], u: [f64; 3], len: f64, c0: Complex, c1: Complex| {
+        let phase0 = sol.k * (rhat[0] * p0[0] + rhat[1] * p0[1] + rhat[2] * p0[2]);
+        let beta = sol.k * (rhat[0] * u[0] + rhat[1] * u[1] + rhat[2] * u[2]);
+        let mut acc = Complex::ZERO;
+        for (&x, &w) in gx.iter().zip(&gw) {
+            let t = 0.5 * len * (x + 1.0);
+            let wt = w * 0.5 * len;
+            let ramp = t / len;
+            let cur = c0.scale(1.0 - ramp) + c1.scale(ramp);
+            acc += cur * Complex::expj(phase0 + beta * t).scale(wt);
+        }
+        for (fi, &ui) in f.iter_mut().zip(&u) {
+            *fi += acc.scale(ui);
+        }
+    };
     for (s, &(c0, c1)) in mesh.segments.iter().zip(&ends) {
         if c0 == Complex::ZERO && c1 == Complex::ZERO {
             continue;
         }
-        let phase0 = sol.k * (rhat[0] * s.p0[0] + rhat[1] * s.p0[1] + rhat[2] * s.p0[2]);
-        let beta =
-            sol.k * (rhat[0] * s.tangent[0] + rhat[1] * s.tangent[1] + rhat[2] * s.tangent[2]);
-        let mut acc = Complex::ZERO;
-        for (&x, &w) in gx.iter().zip(&gw) {
-            let t = 0.5 * s.len * (x + 1.0);
-            let wt = w * 0.5 * s.len;
-            let ramp = t / s.len;
-            let cur = c0.scale(1.0 - ramp) + c1.scale(ramp);
-            acc += cur * Complex::expj(phase0 + beta * t).scale(wt);
-        }
-        for (fi, &u) in f.iter_mut().zip(&s.tangent) {
-            *fi += acc.scale(u);
+        add(s.p0, s.tangent, s.len, c0, c1);
+        if mesh.ground_plane {
+            add(
+                [s.p0[0], s.p0[1], -s.p0[2]],
+                [s.tangent[0], s.tangent[1], -s.tangent[2]],
+                s.len,
+                -c0,
+                -c1,
+            );
         }
     }
 
@@ -88,19 +110,25 @@ pub fn far_field(mesh: &Mesh, sol: &DrivenSolution, theta: f64, phi: f64) -> Far
     }
 }
 
-/// Total radiated power by integrating `U` over the sphere:
-/// Gauss–Legendre with `n_polar` nodes in cos θ × `2·n_polar` uniform
-/// azimuth samples.
+/// Total radiated power by integrating `U` over the sphere (upper
+/// hemisphere only when a ground plane is present): Gauss–Legendre with
+/// `n_polar` nodes in cos θ × `2·n_polar` uniform azimuth samples.
 pub fn radiated_power(mesh: &Mesh, sol: &DrivenSolution, n_polar: usize) -> f64 {
     let (cx, cw) = gauss_legendre(n_polar);
     let n_phi = 2 * n_polar;
     let dphi = std::f64::consts::TAU / n_phi as f64;
+    // Map cos θ nodes from [−1, 1] to [0, 1] for the hemisphere.
+    let (offset, scale) = if mesh.ground_plane {
+        (0.5, 0.5)
+    } else {
+        (0.0, 1.0)
+    };
     let mut p = 0.0;
     for (&c, &w) in cx.iter().zip(&cw) {
-        let theta = c.acos();
+        let theta = (offset + scale * c).acos();
         for i in 0..n_phi {
             let phi = dphi * i as f64;
-            p += w * dphi * far_field(mesh, sol, theta, phi).intensity();
+            p += scale * w * dphi * far_field(mesh, sol, theta, phi).intensity();
         }
     }
     p

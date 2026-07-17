@@ -31,12 +31,26 @@ pub enum AntennaError {
         /// Number of per-leg segment counts supplied.
         counts: usize,
     },
-    /// A node joins three or more wire segments (M1 scope, fail-closed at M0).
-    JunctionUnsupported {
+    /// With a ground plane enabled, all geometry must satisfy z ≥ 0.
+    BelowGroundPlane {
+        /// Node index.
+        node: usize,
+        /// Offending height, mm.
+        z_mm: f64,
+    },
+    /// A grounded node must be a plain wire endpoint (degree 1): interior
+    /// nodes or junctions touching the plane are not modeled (fail-closed).
+    GroundContactUnsupported {
         /// Node index.
         node: usize,
         /// Number of segments meeting there.
         degree: usize,
+    },
+    /// A segment lies in the ground plane (both endpoints at z = 0) — it
+    /// would be shorted by its own image.
+    SegmentOnGroundPlane {
+        /// Segment index.
+        segment: usize,
     },
     /// The mesh has no interior nodes, hence no current unknowns.
     NoBases,
@@ -118,11 +132,25 @@ impl std::fmt::Display for AntennaError {
                     "path has {legs} legs but {counts} per-leg segment counts were supplied"
                 )
             }
-            AntennaError::JunctionUnsupported { node, degree } => {
+            AntennaError::BelowGroundPlane { node, z_mm } => {
                 write!(
                     f,
-                    "node {node} joins {degree} segments; multi-wire junctions are not \
-                     modeled at M0 (fail-closed) — see the milestone ladder"
+                    "node {node} sits at z = {z_mm:.4} mm below the z = 0 ground plane; \
+                     all geometry must satisfy z ≥ 0 when the plane is enabled"
+                )
+            }
+            AntennaError::GroundContactUnsupported { node, degree } => {
+                write!(
+                    f,
+                    "grounded node {node} joins {degree} segments; only a plain wire \
+                     endpoint (degree 1) may touch the ground plane (fail-closed)"
+                )
+            }
+            AntennaError::SegmentOnGroundPlane { segment } => {
+                write!(
+                    f,
+                    "segment {segment} lies in the z = 0 ground plane and would be \
+                     shorted by its own image; raise it or remove it"
                 )
             }
             AntennaError::NoBases => {
