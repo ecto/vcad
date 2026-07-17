@@ -7309,6 +7309,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-neutronics"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-nurbs"
 version = "0.9.4"
 dependencies = [

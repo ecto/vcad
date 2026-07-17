@@ -82,7 +82,15 @@ document so the sim and the hardware share provenance.
 - **HV:** single-point ground, grounding stick discipline, no lone
   operation, supply current limit set to the experiment's need.
 - **Neutrons:** dose budget and distance plan before Phase B; detectors
-  calibrated; logbook doses.
+  calibrated; logbook doses. **The plan exists**
+  (`docs/neutronics-phase-b-dose-plan.md`, computed by
+  `vcad-kernel-neutronics`): at the 5×10⁶ n/s record-scale point —
+  an order above the predicted floor — **15 cm HDPE** holds the 2 m
+  operator position to 1.62 ± 0.3% µSv/h against a stated 2.5 µSv/h
+  design budget (mean + 2σ pass). Neutron-only number: budget capture
+  gammas separately (poly + outer lead is the pairing), survey meter
+  regardless. `vcad.neutronics-claims/1` binds the survey readings via
+  `receipt::compare`; a Violated dose claim is stop-work.
 - **Gas:** D₂ is flammable; lecture-bottle handling, no accumulation
   paths.
 - **Regulatory:** D-D amateur fusion is legal in the US (no special
