@@ -82,6 +82,12 @@ fn beam_rho(
     (rho, beam_charge_c)
 }
 
+/// Estimate the space-charge validity gauge from a dwell map.
+///
+/// `dwell` is the node-indexed dwell-time map from
+/// [`crate::trace::Tracer::launch_ensemble_dwell`] over `n_particles`
+/// simulated ions, and `ion_current_a` the physical injected current the
+/// configuration claims.
 pub fn estimate(
     solution: &Solution,
     dwell: &[f64],
@@ -90,9 +96,6 @@ pub fn estimate(
     opts: &SolveOptions,
 ) -> Result<SpaceChargeReport, SolveError> {
     assert_eq!(dwell.len(), solution.nr * solution.nz, "dwell map size");
-    let (nr, nz) = (solution.nr, solution.nz);
-    let (dr, dz) = (solution.dr, solution.dz);
-    let idx = |i: usize, j: usize| i * nz + j;
     let _ = (dr, dz, idx);
 
     // Beam charge density: each simulated ion represents I/(e·N) real
@@ -255,6 +258,7 @@ impl SelfConsistentReport {
 /// back on its own well. Steady-state, single species, and inherits every
 /// M0 scope caveat; censored traces under-weight the longest-lived charge,
 /// so treat converged densities as floors.
+#[allow(clippy::too_many_arguments)]
 pub fn self_consistent(
     device: &crate::device::Device,
     nr: usize,
