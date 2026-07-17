@@ -1,0 +1,3 @@
+; Radius exactly half the feature size: opposite fillets meet.
+[let body [cube 10.0 10.0 10.0]]
+#[[fillet 5.0 body] body]

@@ -1,0 +1,4 @@
+; Open notch across the top: reentrant (concave) edges, no inner loops.
+[let tool [translate 6.0 -1.0 14.0 [cube 8.0 22.0 8.0]]]
+[let body [difference tool [cube 20.0 20.0 20.0]]]
+#[[fillet 1.0 body] body]

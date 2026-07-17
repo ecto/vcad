@@ -1,0 +1,9 @@
+; Extruded stadium (slot) profile: cap edges chain across line-arc
+; tangencies; side walls alternate plane / cylinder.
+[let sk [sketch 0.0 0.0 0.0  1.0 0.0 0.0  0.0 1.0 0.0
+  #[[line 0.0 0.0 20.0 0.0]
+    [arc 20.0 0.0 20.0 10.0 20.0 5.0 true]
+    [line 20.0 10.0 0.0 10.0]
+    [arc 0.0 10.0 0.0 0.0 0.0 5.0 true]]]]
+[let body [extrude 0.0 0.0 5.0 sk]]
+#[[fillet 1.0 body] body]

@@ -1,0 +1,5 @@
+; Post unioned onto a plate: seam ring where the post meets the plate top.
+[let plate [cube 20.0 20.0 5.0]]
+[let post [translate 7.5 7.5 5.0 [cube 5.0 5.0 15.0]]]
+[let body [union post plate]]
+#[[fillet 1.0 body] body]

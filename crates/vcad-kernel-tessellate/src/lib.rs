@@ -2865,7 +2865,11 @@ fn tessellate_cylindrical_face(
             let subdivs = if anchors_are_dense {
                 1
             } else {
-                ((span * target_density).ceil() as usize).max(1)
+                // Epsilon-tolerant ceil — must agree with the sphere-cap
+                // boundary densifier when a blend arc angle lands exactly
+                // on an integer segment count (see
+                // tessellate_small_spherical_cap).
+                (((span * target_density) - 1e-9).ceil() as usize).max(1)
             };
             for i in 1..=subdivs {
                 u_samples.push(w[0] + span * (i as f64 / subdivs as f64));
@@ -2876,7 +2880,7 @@ fn tessellate_cylindrical_face(
         // Evenly-spaced fallback (full cylinder or loop with <2 unique angles).
         let effective_n_circ = if is_partial {
             let fraction = u_range / (2.0 * PI);
-            (n_circ as f64 * fraction).ceil().max(2.0) as usize
+            (n_circ as f64 * fraction - 1e-9).ceil().max(2.0) as usize
         } else {
             n_circ
         };
@@ -3609,7 +3613,12 @@ fn tessellate_small_spherical_cap(
             // Per-arc sample count scales with the arc angle so a 90°
             // boundary gets ~circle_segments/4, a 180° boundary
             // ~circle_segments/2, etc.
-            let segments = ((params.circle_segments as f64) * theta / (2.0 * PI))
+            // Epsilon-tolerant ceil: a 135° arc at 32 segments lands
+            // exactly on 12.0, and float jitter must not round this side
+            // to 13 while the adjacent cylinder blend rounds to 12 (the
+            // resulting sample-count mismatch cracks the weld along the
+            // shared boundary arc).
+            let segments = ((params.circle_segments as f64) * theta / (2.0 * PI) - 1e-9)
                 .ceil()
                 .max(1.0) as usize;
             out.push(p_i);

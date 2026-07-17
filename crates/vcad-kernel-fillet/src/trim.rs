@@ -11,13 +11,73 @@ use crate::topology::{compute_centroid, quantize, CylinderInfo, EdgeInfo, FaceIn
 /// Key for a trim vertex: (original_vertex, face_id).
 pub(crate) type TrimKey = (VertexId, FaceId);
 
+/// Key for a per-edge trim setback: the edge's vertex pair, ordered.
+pub(crate) type EdgeSetbackKey = (VertexId, VertexId);
+
+fn edge_setback_key(a: VertexId, b: VertexId) -> EdgeSetbackKey {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// Per-edge tangent setback for a fillet of radius `r`.
+///
+/// A cylinder of radius `r` tangent to two planes meeting at an interior
+/// dihedral θ touches each plane at distance `r / tan(θ/2)` from the edge.
+/// With α = angle between the *outward* normals (θ = π − α) this is
+/// `r · tan(α/2)`. The uniform-`r` setback the trim code used before is
+/// only correct for orthogonal dihedrals (α = 90°); on a 45° wedge edge it
+/// understates the setback by 2.4×, leaving trim corners off the blend
+/// cylinder and cracking the shell.
+///
+/// Edges whose setback would exceed `max_setback` (knife edges, α → π)
+/// map to `f64::INFINITY` so callers can refuse cleanly.
+pub(crate) fn fillet_edge_setbacks(
+    faces: &[FaceInfo],
+    edges: &[EdgeInfo],
+    radius: f64,
+    max_setback: f64,
+) -> HashMap<EdgeSetbackKey, f64> {
+    let face_map: HashMap<FaceId, &FaceInfo> = faces.iter().map(|f| (f.face_id, f)).collect();
+    let mut out = HashMap::new();
+    for edge in edges {
+        let (Some(fa), Some(fb)) = (face_map.get(&edge.face_a), face_map.get(&edge.face_b)) else {
+            continue;
+        };
+        let dot = fa.normal.dot(fb.normal).clamp(-1.0, 1.0);
+        let alpha = dot.acos();
+        let s = radius * (alpha * 0.5).tan();
+        let s = if s.is_finite() && s <= max_setback {
+            s
+        } else {
+            f64::INFINITY
+        };
+        out.insert(edge_setback_key(edge.v_start, edge.v_end), s);
+    }
+    out
+}
+
+/// Compute trim vertices for all vertices on all faces with a uniform
+/// setback (chamfer semantics — the chamfer leg is `distance` along each
+/// face regardless of the dihedral angle).
+pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMap<TrimKey, Point3> {
+    compute_trim_vertices_with_setbacks(faces, distance, &HashMap::new())
+}
+
 /// Compute trim vertices for all vertices on all faces.
 ///
 /// For each vertex V on face F:
 /// - The entering edge E_enter and leaving edge E_leave define two trim lines
-///   (parallel to each edge, offset inward by `distance`)
+///   (parallel to each edge, offset inward by that edge's setback from
+///   `setbacks`, falling back to `distance`)
 /// - The trim vertex is at the intersection of these two trim lines
-pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMap<TrimKey, Point3> {
+pub(crate) fn compute_trim_vertices_with_setbacks(
+    faces: &[FaceInfo],
+    distance: f64,
+    setbacks: &HashMap<EdgeSetbackKey, f64>,
+) -> HashMap<TrimKey, Point3> {
     let mut trims = HashMap::new();
 
     for face in faces {
@@ -46,6 +106,15 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let v_pos = face.positions[i];
             let prev_idx = (i + n - 1) % n;
             let next_idx = (i + 1) % n;
+
+            let s_enter = setbacks
+                .get(&edge_setback_key(face.vertex_ids[prev_idx], v_id))
+                .copied()
+                .unwrap_or(distance);
+            let s_leave = setbacks
+                .get(&edge_setback_key(v_id, face.vertex_ids[next_idx]))
+                .copied()
+                .unwrap_or(distance);
 
             let prev_pos = face.positions[prev_idx];
             let d_enter = v_pos - prev_pos;
@@ -76,7 +145,7 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
             let perp_enter = perp_enter / pe_len;
             let perp_leave = perp_leave / pl_len;
 
-            let delta = distance * (perp_enter - perp_leave);
+            let delta = s_enter * perp_enter - s_leave * perp_leave;
             let cross_dirs = d_enter.cross(d_leave);
             let denom = cross_dirs.dot(normal);
 
@@ -98,12 +167,12 @@ pub(crate) fn compute_trim_vertices(faces: &[FaceInfo], distance: f64) -> HashMa
                 -cross_delta.dot(normal) / denom
             };
             if !t1.is_finite() || t1.abs() > t1_safe_limit {
-                let p = v_pos + distance * 0.5 * (perp_enter + perp_leave);
+                let p = v_pos + 0.5 * (s_enter * perp_enter + s_leave * perp_leave);
                 trims.insert((v_id, face.face_id), p);
                 continue;
             }
 
-            let p1 = v_pos + distance * perp_enter;
+            let p1 = v_pos + s_enter * perp_enter;
             let trim_point = Point3::from(p1.to_vec() + t1 * d_enter);
             trims.insert((v_id, face.face_id), trim_point);
         }
@@ -178,24 +247,33 @@ fn try_sphere_blend(face_normals: &[Vec3], v_pos: Point3, radius: f64) -> Option
     if face_normals.len() != 3 {
         return None;
     }
-    // All three pairs must be near-orthogonal. 1e-4 tolerance covers the
-    // floating-point slop from quantized cube edges.
-    for i in 0..3 {
-        for j in (i + 1)..3 {
-            if face_normals[i].dot(face_normals[j]).abs() > 1e-4 {
-                return None;
-            }
-        }
+    // The center is the point at signed distance −r from all three face
+    // planes through v: solve nᵢ·(c − v) = −r. Cramer via the standard
+    // three-plane intersection formula; a small determinant means the
+    // three normals are nearly coplanar (a degenerate corner) — fall back
+    // to the planar patch.
+    let [n1, n2, n3] = [face_normals[0], face_normals[1], face_normals[2]];
+    let det = n1.dot(n2.cross(n3));
+    if det.abs() < 1e-6 {
+        return None;
     }
-
-    let n_sum = face_normals[0] + face_normals[1] + face_normals[2];
-    let center = Point3::from(v_pos.to_vec() - radius * n_sum);
+    let offset = -radius * (n2.cross(n3) + n3.cross(n1) + n1.cross(n2)) / det;
+    // A wildly skewed corner puts the tangency center far from the
+    // vertex; refuse rather than emit a huge patch.
+    if !offset.norm().is_finite() || offset.norm() > 10.0 * radius {
+        return None;
+    }
+    let center = Point3::from(v_pos.to_vec() + offset);
 
     // Pick ref/axis so the surface is properly oriented. Any orthonormal
-    // pair works for tessellation; using one of the face normals keeps
-    // the parameterization aligned with the cube.
-    let axis = Dir3::new_normalize(face_normals[0]);
-    let ref_axis = Dir3::new_normalize(face_normals[1]);
+    // pair works for tessellation; orthonormalize the first two face
+    // normals so non-orthogonal corners still get a valid frame.
+    let axis = Dir3::new_normalize(n1);
+    let ref_raw = n2 - n2.dot(n1) / n1.norm_squared() * n1;
+    if ref_raw.norm() < 1e-9 {
+        return None;
+    }
+    let ref_axis = Dir3::new_normalize(ref_raw);
     Some(SphereSurface {
         center,
         radius,

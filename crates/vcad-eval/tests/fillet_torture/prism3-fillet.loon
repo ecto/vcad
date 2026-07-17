@@ -1,0 +1,3 @@
+; Triangular prism: 60-degree corners, three edges meet at each vertex.
+[let body [prism 3.0 8.0 10.0]]
+#[[fillet 1.0 body] body]

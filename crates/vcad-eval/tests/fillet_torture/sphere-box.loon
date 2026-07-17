@@ -1,0 +1,4 @@
+; Sphere poking out of a cube corner: sphere-plane seam edges.
+[let body [union [translate 10.0 10.0 10.0 [sphere 6.0]]
+                 [cube 10.0 10.0 10.0]]]
+#[[fillet 0.8 body] body]

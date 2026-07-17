@@ -404,10 +404,12 @@ impl Solid {
                 if brep_has_inner_loops(brep) {
                     return self.clone();
                 }
+                let chamfered = vcad_kernel_fillet::chamfer_all_edges(brep, distance);
+                if !blend_result_is_valid(brep, &chamfered, true) {
+                    return self.clone();
+                }
                 Solid {
-                    repr: SolidRepr::BRep(Box::new(vcad_kernel_fillet::chamfer_all_edges(
-                        brep, distance,
-                    ))),
+                    repr: SolidRepr::BRep(Box::new(chamfered)),
                     segments: self.segments,
                 }
             }
@@ -442,7 +444,8 @@ impl Solid {
                 if brep_has_inner_loops(brep) {
                     return self.clone();
                 }
-                let filleted = if brep_is_all_planar(brep) {
+                let is_planar = brep_is_all_planar(brep);
+                let filleted = if is_planar {
                     vcad_kernel_fillet::fillet_all_edges(brep, radius)
                 } else {
                     let target_edges = collect_fillet_target_edges(brep);
@@ -455,6 +458,16 @@ impl Solid {
                 // any vertex falls outside, some blend diverged — discard
                 // the result and return the input unchanged.
                 if !fillet_aabb_is_reasonable(brep, &filleted, radius) {
+                    return self.clone();
+                }
+                // A cracked or volume-gaining result is silently-bad
+                // geometry — prefer the clean sharp-edged input. The
+                // planar all-edges pipeline is expected to produce a
+                // perfectly watertight shell; the curved per-edge path
+                // intentionally tolerates residual corner-blend gaps
+                // (arc-extrude sphere vertex blends), so it only gets the
+                // volume-sanity check.
+                if !blend_result_is_valid(brep, &filleted, is_planar) {
                     return self.clone();
                 }
                 Solid {
@@ -512,6 +525,9 @@ impl Solid {
         }
 
         let (blended, _outcome) = vcad_kernel_fillet::apply_edge_blend(brep, query, keys);
+        if !blend_result_is_valid(brep, &blended, true) {
+            return self.clone();
+        }
         Solid {
             repr: SolidRepr::BRep(Box::new(blended)),
             segments: self.segments,
@@ -1337,6 +1353,57 @@ fn fillet_aabb_is_reasonable(input: &BRepSolid, filleted: &BRepSolid, radius: f6
         }
     }
     true
+}
+
+/// Post-flight validity gate for edge-blend results. The blend output
+/// must not *gain* volume (fillets and chamfers only remove material)
+/// nor collapse most of it, and — when `require_watertight` — must
+/// tessellate with no boundary edges. A result failing these checks is
+/// silently-bad geometry (cracked shell, inverted inset faces) and
+/// callers should fall back to the unmodified input instead.
+/// In strict mode (planar all-edges pipeline) the mesh must be perfectly
+/// watertight and the volume must shrink (within tolerance) but not
+/// collapse. In lenient mode (curved per-edge pipeline, which today
+/// intentionally tolerates residual corner-blend gaps at sphere/torus
+/// junctions — see the arc-profile regression test) the mesh volume is
+/// unreliable, so the gate instead bounds the *total length* of open
+/// boundary edges relative to the input's bbox diagonal: shipped-good
+/// curved fillets measure ≈1.4×, while broken rebuilds (cracked cap
+/// rims, fillet-of-fillet) measure 2.6–26×.
+fn blend_result_is_valid(input: &BRepSolid, blended: &BRepSolid, strict: bool) -> bool {
+    let mesh = tessellate_brep(blended, 32);
+    if strict {
+        if !mesh.boundary_edges().is_empty() {
+            return false;
+        }
+        let vol_out = compute_volume(&mesh);
+        if !vol_out.is_finite() || vol_out <= 0.0 {
+            return false;
+        }
+        let vol_in = compute_volume(&tessellate_brep(input, 32));
+        return vol_out <= vol_in * (1.0 + 1e-6) && vol_out >= vol_in * 0.5;
+    }
+    let mut open_len = 0.0;
+    for (a, b) in mesh.boundary_edges() {
+        let (a, b) = (a as usize * 3, b as usize * 3);
+        let dx = (mesh.vertices[a] - mesh.vertices[b]) as f64;
+        let dy = (mesh.vertices[a + 1] - mesh.vertices[b + 1]) as f64;
+        let dz = (mesh.vertices[a + 2] - mesh.vertices[b + 2]) as f64;
+        open_len += (dx * dx + dy * dy + dz * dz).sqrt();
+    }
+    let mut min = [f64::MAX; 3];
+    let mut max = [f64::MIN; 3];
+    for (_id, v) in &input.topology.vertices {
+        let p = [v.point.x, v.point.y, v.point.z];
+        for i in 0..3 {
+            min[i] = min[i].min(p[i]);
+            max[i] = max[i].max(p[i]);
+        }
+    }
+    let diag = ((max[0] - min[0]).powi(2) + (max[1] - min[1]).powi(2) + (max[2] - min[2]).powi(2))
+        .sqrt()
+        .max(1e-9);
+    open_len <= 2.0 * diag
 }
 
 fn brep_is_all_planar(brep: &BRepSolid) -> bool {
