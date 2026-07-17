@@ -99,6 +99,19 @@ pub enum AntennaError {
     },
     /// The impedance matrix is numerically singular.
     SingularSystem,
+    /// A parameter velocity has the wrong number of node entries.
+    ParamVelocityMismatch {
+        /// Nodes in the mesh.
+        nodes: usize,
+        /// Velocity entries supplied.
+        velocities: usize,
+    },
+    /// A parameter would move a node off the ground plane, changing the
+    /// image structure discontinuously.
+    GroundedNodeMoved {
+        /// Node index.
+        node: usize,
+    },
     /// Resonance search: `Im(Z)` does not change sign over the bracket.
     ResonanceNotBracketed {
         /// Reactance at the lower frequency, Ω.
@@ -199,6 +212,19 @@ impl std::fmt::Display for AntennaError {
             }
             AntennaError::SingularSystem => {
                 write!(f, "impedance matrix is numerically singular")
+            }
+            AntennaError::ParamVelocityMismatch { nodes, velocities } => {
+                write!(
+                    f,
+                    "parameter velocity has {velocities} entries for a mesh with {nodes} nodes"
+                )
+            }
+            AntennaError::GroundedNodeMoved { node } => {
+                write!(
+                    f,
+                    "parameter would move grounded node {node} off the z = 0 plane; \
+                     ground-contact geometry must keep v_z = 0 there"
+                )
             }
             AntennaError::ResonanceNotBracketed { x_lo, x_hi } => {
                 write!(

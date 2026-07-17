@@ -117,12 +117,22 @@ A 2 × 0.5 m-arm dipole (1 mm wire radius, 40 segments, ℓ/a = 1000), swept
   correction for traces over a dielectric (quasi-static ε_eff), stated as
   a correction with its own validity limits — this is what turns "PCB
   antenna trends" into "PCB antenna predictions".
-- **M2 — gradients.** The MoM matrix is symmetric (reciprocity), so the
-  adjoint current solve is *the same factorization*: dZ_in/d(geometry) via
-  `∂Z/∂p` contracted with forward and adjoint currents, one extra O(N²)
-  solve per objective. FD-validated with **frozen segmentation** across
-  probes (the hidden-parameter lesson from the particle crate's M2), then
-  used to auto-tune an antenna onto a target frequency.
+- **M2 — gradients. DONE** (`adjoint::z_in_gradient`). The symmetric
+  matrix makes the input-impedance adjoint *free*: `Zᵀλ = e_f` with
+  `Z = Zᵀ` gives `λ = I/V₀`, so the gradient is the variational identity
+  `dZ_in/dp = Iᵀ(∂Z/∂p)I / I_f²` — one solve total, any number of
+  parameters, each priced at two matrix fills (central FD **on the fill
+  only**, never through the LU). Parameters are per-node velocity fields;
+  `perturbed_mesh` moves coordinates under a **frozen topology**, so the
+  hidden-parameter lesson from the particle crate is structural here, not
+  procedural. Fails closed if a parameter would move a grounded node off
+  the plane. Validated: adjoint = frozen-segmentation FD through the full
+  solve to < 1e−4 (free space, and through images + junctions on the
+  hatted monopole); rigid-translation gauge (zero gradient); sign physics
+  (stretch → inductive; hat growth → dX/dp > 0, i.e. f_res down, why
+  short verticals wear hats). Then the gradient designs the antenna:
+  **Newton on arm strain retunes a 10%-detuned dipole to X = 0 in 3–4
+  steps**, landing within 0.01% of the bisection resonance.
 - **M3 — the `.vcad` seam.** Serde `AntennaSpec` with named parameters,
   fail-closed resolution (unbound name = error), plus the PCB-trace →
   wire-grid adapter (equivalent-radius rule a ≈ 0.335·w for flat traces)

@@ -42,6 +42,7 @@
 //! Units: public geometry is **millimeters** (vcad convention); everything
 //! internal is SI (meters, hertz, ohms, watts). Time convention `e^{+jωt}`.
 
+pub mod adjoint;
 pub mod complex;
 pub mod error;
 pub mod farfield;
