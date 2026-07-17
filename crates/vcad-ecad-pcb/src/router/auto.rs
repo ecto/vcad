@@ -2055,6 +2055,10 @@ fn joint_window_repair(
     max_expansions: usize,
 ) -> Vec<Conn> {
     const ESCALATIONS: [f64; 3] = [3.0, 6.0, 12.0];
+    /// Never let coalesced windows exceed this area (mm²): a quadrant-sized
+    /// rip is a demolition, not a repair (measured: one mega-window took the
+    /// CM5 from 0.93 to 0.69 before this cap + transactions existed).
+    const MAX_WINDOW_AREA: f64 = 400.0;
     let mut pending = pending;
     let mut fail_cache = FailCache::new();
     for (round, margin) in ESCALATIONS.iter().enumerate() {
@@ -2077,10 +2081,15 @@ fn joint_window_repair(
             let w = win(&c);
             for (gw, gc) in groups.iter_mut() {
                 if overlaps(gw, &w) {
-                    gw.0[0] = gw.0[0].min(w.0[0]);
-                    gw.0[1] = gw.0[1].min(w.0[1]);
-                    gw.1[0] = gw.1[0].max(w.1[0]);
-                    gw.1[1] = gw.1[1].max(w.1[1]);
+                    let merged = (
+                        [gw.0[0].min(w.0[0]), gw.0[1].min(w.0[1])],
+                        [gw.1[0].max(w.1[0]), gw.1[1].max(w.1[1])],
+                    );
+                    let area = (merged.1[0] - merged.0[0]) * (merged.1[1] - merged.0[1]);
+                    if area > MAX_WINDOW_AREA {
+                        continue; // stay a separate window; transactions make overlap safe
+                    }
+                    *gw = merged;
                     gc.push(c);
                     continue 'conn;
                 }
@@ -2091,6 +2100,13 @@ fn joint_window_repair(
         let mut still = Vec::new();
         let n_groups = groups.len();
         for (gw, stuck) in groups {
+            // Transactional: snapshot the world; a window that ends
+            // net-negative is rolled back wholesale, so this stage can only
+            // ever improve the board.
+            let session_snapshot = session.clone();
+            let placed_snapshot = placed.clone();
+            let stuck_backup = stuck.clone();
+            let placed_before = placed.len();
             // Rip every placed route whose copper enters the window.
             let in_window = |p: &Placed| {
                 p.segments.iter().any(|(a, b, _)| {
@@ -2142,12 +2158,24 @@ fn joint_window_repair(
                 &mut fail_cache,
                 &HashMap::new(),
             ));
-            log::debug!(
-                "joint repair window ({:.0},{:.0})..({:.0},{:.0}): stuck={n_stuck} victims={n_victims} lost={}",
-                gw.0[0], gw.0[1], gw.1[0], gw.1[1],
-                lost.len(),
-            );
-            still.extend(lost);
+            if placed.len() <= placed_before {
+                // Net-negative (or neutral): roll back the entire window.
+                *session = session_snapshot;
+                *placed = placed_snapshot;
+                log::debug!(
+                    "joint repair window ({:.0},{:.0})..({:.0},{:.0}): rolled back (stuck={n_stuck} victims={n_victims})",
+                    gw.0[0], gw.0[1], gw.1[0], gw.1[1],
+                );
+                still.extend(stuck_backup);
+            } else {
+                log::debug!(
+                    "joint repair window ({:.0},{:.0})..({:.0},{:.0}): stuck={n_stuck} victims={n_victims} gained={} lost={}",
+                    gw.0[0], gw.0[1], gw.1[0], gw.1[1],
+                    placed.len() - placed_before,
+                    lost.len(),
+                );
+                still.extend(lost);
+            }
         }
         log::info!(
             "joint repair round {} (margin {margin}mm): {n_groups} windows -> {} still unrouted in {:.1}s",
