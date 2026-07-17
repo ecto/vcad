@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-semantic-diff-merge",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Semantic diff and merge for .vcad files",
+  "summary": "vcad diff and vcad merge compare documents at the feature level (id-matched nodes, parameters, joints) and three-way merge with fail-closed conflict reports — git for CAD.",
+  "features": ["cli", "diff", "merge", "version-control"]
+}
