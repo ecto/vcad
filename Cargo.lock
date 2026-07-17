@@ -7139,15 +7139,19 @@ name = "vcad-kernel"
 version = "0.9.4"
 dependencies = [
  "serde_json",
+ "vcad-kernel-antenna",
  "vcad-kernel-booleans",
  "vcad-kernel-cam",
  "vcad-kernel-constraints",
  "vcad-kernel-cost",
  "vcad-kernel-dfm",
+ "vcad-kernel-em",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
+ "vcad-kernel-neutronics",
  "vcad-kernel-particle",
+ "vcad-kernel-photonics",
  "vcad-kernel-primitives",
  "vcad-kernel-sheet",
  "vcad-kernel-shell",
@@ -7157,6 +7161,8 @@ dependencies = [
  "vcad-kernel-sweep",
  "vcad-kernel-tessellate",
  "vcad-kernel-text",
+ "vcad-kernel-thermal",
+ "vcad-kernel-tolerance",
  "vcad-kernel-topo",
  "vcad-kernel-topopt",
 ]
@@ -7167,6 +7173,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7282,6 +7289,7 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-kernel-particle",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7331,6 +7339,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7358,6 +7367,7 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-gdsii",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7513,6 +7523,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7521,6 +7532,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-receipt",
 ]
 
 [[package]]

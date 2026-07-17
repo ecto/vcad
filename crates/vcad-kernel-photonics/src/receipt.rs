@@ -370,11 +370,7 @@ mod tests {
             assert_eq!(c.domain, RECEIPT_DOMAIN);
             assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
             assert!(c.measured.is_some());
-            assert!(c
-                .details
-                .as_deref()
-                .unwrap_or("")
-                .contains("grid 300x200"));
+            assert!(c.details.as_deref().unwrap_or("").contains("grid 300x200"));
         }
         let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
         assert_eq!(
