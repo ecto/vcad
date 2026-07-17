@@ -822,10 +822,42 @@ impl Simulation {
         self.pol
     }
 
+    /// The CPML configuration.
+    pub fn cpml_spec(&self) -> &CpmlSpec {
+        &self.cpml
+    }
+
+    /// The registered sources.
+    pub fn sources(&self) -> &[Source] {
+        &self.sources
+    }
+
     /// Ez at node `(i, j)` (TM only).
     pub fn ez_at(&self, i: usize, j: usize) -> f64 {
         assert_eq!(self.pol, Polarization::Tm);
         self.ez.at(i, j)
+    }
+
+    /// Add `dv` to Ez at node `(i, j)` (TM only) — an externally driven
+    /// soft source. Calling between steps is time-equivalent to a soft
+    /// source applied at the end of the previous step; the adjoint driver
+    /// ([`crate::adjoint`]) uses this to inject per-sample,
+    /// per-ε-scaled monitor sources that the [`crate::source::Source`]
+    /// list cannot express.
+    pub fn inject_ez(&mut self, i: usize, j: usize, dv: f64) {
+        assert_eq!(self.pol, Polarization::Tm);
+        *self.ez.at_mut(i, j) += dv;
+    }
+
+    /// Perturb the committed-to-be ε_z sample at `(i, j)` by `d_eps`
+    /// (TM only, before the first step): the finite-difference probe used
+    /// to validate adjoint gradients cell by cell.
+    pub fn perturb_epsilon_at(&mut self, i: usize, j: usize, d_eps: f64) {
+        self.assert_configurable();
+        assert_eq!(self.pol, Polarization::Tm);
+        let v = self.eps_z.at(i, j) + d_eps;
+        assert!(v >= 1.0, "perturbed ε must stay ≥ 1");
+        *self.eps_z.at_mut(i, j) = v;
     }
 
     /// Hz at sample `(i+½, j+½)` (TE only).

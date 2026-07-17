@@ -66,6 +66,7 @@
 //! PMC per side) behind the CPML. See `docs/photonics-m0.md` for the
 //! milestone ladder.
 
+pub mod adjoint;
 pub mod cpml;
 pub mod dispersion;
 pub mod grid;
@@ -76,6 +77,9 @@ pub mod sim;
 pub mod source;
 pub mod waveform;
 
+pub use adjoint::{
+    objective_and_gradient, run_objective, DesignRegion, GradientResult, ModeOverlap,
+};
 pub use cpml::CpmlSpec;
 pub use dispersion::{fdtd_phase_velocity, fdtd_wavenumber, fdtd_wavenumber_in_medium};
 pub use grid::{Field2, GridSpec};

@@ -18,8 +18,9 @@
 //! physics instead of by geometry compromises.
 
 use vcad_kernel_photonics::{
-    dft_of_series, fdtd_wavenumber, fdtd_wavenumber_in_medium, solve_slab_mode_even, BoundarySpec,
-    CpmlSpec, FluxSpec, GridSpec, Polarization, Shape2, Simulation, Source, Waveform,
+    dft_of_series, fdtd_wavenumber, fdtd_wavenumber_in_medium, objective_and_gradient,
+    run_objective, solve_slab_mode_even, BoundarySpec, CpmlSpec, DesignRegion, FluxSpec, GridSpec,
+    ModeOverlap, Polarization, Shape2, Simulation, Source, Waveform,
 };
 
 /// Unwrap a phase difference to the branch nearest `expected`.
@@ -674,4 +675,121 @@ fn bend_loss_decreases_with_radius() {
         t_gentle > 0.8 && t_gentle < 1.02,
         "gentle-bend T out of range: {t_gentle}"
     );
+}
+
+/// Rung 8 (M2) — the discrete adjoint against central differences, cell
+/// by cell. One forward + one adjoint run produce dJ/dε for all ~200
+/// design cells; three probe cells (core center, core edge, cladding)
+/// are then checked against (J(ε+h) − J(ε−h))/2h with h = 1e−3 and the
+/// **same frozen step count** for every run (comparing runs with
+/// different windows contaminates gradients — the particle-optics
+/// lesson).
+///
+/// Tolerance floor (named): FD truncation O(h²), FD roundoff on J
+/// differences (~1e−10 relative), and the untransposed-CPML
+/// approximation at the −95 dB reflection floor. 0.5 % relative on
+/// probe cells clears all three with margin; measured agreement is
+/// printed.
+#[test]
+fn adjoint_gradient_matches_finite_differences() {
+    let lambda0 = 1.55;
+    let f0 = 1.0 / lambda0;
+    let (n_core, n_clad, half_w) = (3.48, 1.44, 0.11);
+    let delta = lambda0 / 30.0;
+    let (nx, ny) = (100, 40);
+    let jc = 20usize;
+    let yc = jc as f64 * delta;
+    let steps = 1400;
+
+    let mode = solve_slab_mode_even(n_core, n_clad, half_w, lambda0, Polarization::Tm).unwrap();
+    let (j0s, j1s) = (8usize, 32usize);
+    let src_profile: Vec<f64> = (j0s..=j1s)
+        .map(|j| mode.profile((j as f64 - jc as f64) * delta))
+        .collect();
+
+    let mut build = |with_sources: bool| -> Simulation {
+        let mut sim = Simulation::new(GridSpec::new(nx, ny, delta), Polarization::Tm);
+        sim.set_cpml(CpmlSpec::uniform(10));
+        sim.fill_epsilon(n_clad * n_clad);
+        sim.paint(
+            &Shape2::rect(-1.0, yc - half_w, 1e9, yc + half_w),
+            n_core * n_core,
+        );
+        if with_sources {
+            sim.add_source(Source::mode_tfsf(
+                14,
+                j0s,
+                src_profile.clone(),
+                mode.n_eff,
+                Waveform::gaussian(f0, f0 / 4.0),
+            ));
+        }
+        sim
+    };
+
+    let region = DesignRegion {
+        i0: 40,
+        i1: 54,
+        j0: 14,
+        j1: 26,
+    };
+    // Monitor rows must clear the 10-cell y-CPML (asserted by the
+    // adjoint): overlap against the mode profile on rows 12..=28 only.
+    let (j0m, j1m) = (12usize, 28usize);
+    let mon_weights: Vec<f64> = (j0m..=j1m)
+        .map(|j| mode.profile((j as f64 - jc as f64) * delta))
+        .collect();
+    let obj = ModeOverlap {
+        i: 85,
+        j0: j0m,
+        weights: mon_weights,
+        freq: f0,
+    };
+
+    let result = objective_and_gradient(&mut build, &region, &obj, steps);
+    assert!(result.objective > 0.0, "objective vanished");
+
+    // The gradient must live where the mode lives: the strongest cell
+    // sits in the core rows.
+    let mut best = (0usize, 0usize, 0.0f64);
+    for di in 0..region.ns_x() {
+        for dj in 0..region.ns_y() {
+            let g = result.grad.at(di, dj).abs();
+            if g > best.2 {
+                best = (di, dj, g);
+            }
+        }
+    }
+    let core_lo = jc - 3 - region.j0;
+    let core_hi = jc + 3 - region.j0;
+    assert!(
+        best.1 >= core_lo && best.1 <= core_hi,
+        "strongest gradient at region row {} — outside the core band",
+        best.1
+    );
+
+    // Central differences at three physically distinct cells.
+    let h = 1e-3;
+    let probes = [
+        (48usize, 20usize, "core center"),
+        (48usize, 22usize, "core edge"),
+        (48usize, 25usize, "cladding"),
+    ];
+    let gmax = best.2;
+    for (pi, pj, name) in probes {
+        let mut plus = build(true);
+        plus.perturb_epsilon_at(pi, pj, h);
+        let (jp, _) = run_objective(plus, &obj, steps);
+        let mut minus = build(true);
+        minus.perturb_epsilon_at(pi, pj, -h);
+        let (jm, _) = run_objective(minus, &obj, steps);
+        let fd = (jp - jm) / (2.0 * h);
+        let adj = result.grad.at(pi - region.i0, pj - region.j0);
+        let rel = ((adj - fd) / fd).abs();
+        println!("adjoint: {name} ({pi},{pj})  adj {adj:+.6e}  fd {fd:+.6e}  rel {rel:.2e}");
+        assert!(
+            (adj - fd).abs() <= 1e-4 * fd.abs().max(1e-3 * gmax),
+            "{name}: adjoint {adj:e} vs FD {fd:e}"
+        );
+    }
 }

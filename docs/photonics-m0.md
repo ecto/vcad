@@ -139,6 +139,43 @@ qualitative monotonicity is a debug-speed test, the table is the
 release-mode example.) TF/SF is TM-only at M1 — the flagship splitter's
 polarization; TE injection stays soft-source.
 
+## M2 (landed): the discrete adjoint, FD-validated to 5×10⁻⁷
+
+`adjoint::objective_and_gradient` returns dJ/dε at **every Ez sample in a
+design region** for the mode-overlap objective J = |Σ w·Êz(ω)|², at the
+cost of one extra FDTD run. The derivation rides the same identity as the
+energy invariant: with `C_H = C_Eᵀ`, the transposed leapfrog —
+time-reversed, with λ_E rescaled by ε — **is the forward stepper**, so
+the adjoint pass is a second `Simulation` driven by soft sources on the
+monitor line, and the gradient is the exact time-domain pairing
+`dJ/dε_i = −Σ φ_i·ΔE_i` against stored forward increments (design-region
+snapshots only).
+
+Measured agreement with central differences (frozen step count across
+forward, adjoint, and every probe): **4.8×10⁻⁷ / 4.6×10⁻⁶ / 1.6×10⁻⁶**
+relative at core / core-edge / cladding probe cells, with the FD referee
+h-stable to five digits.
+
+Two failures that taught (now impossible by assertion):
+
+1. **A monitor line that dips into the CPML poisons the adjoint.** The
+   forward objective is fine, but the adjoint injects sources on those
+   rows, where untransposed-ψ dynamics are first-order wrong — a 17 %
+   gradient error from two rows of overlap. `validate_geometry` now
+   rejects monitors that touch the slabs (and design regions, and
+   forward sources overlapping the region).
+2. **Adjoint bookkeeping errors hide in near-cancellation.** The
+   source-phase index and the pairing index were each off by one — and
+   *compensating*, producing a plausible-looking 13 % error; fixing only
+   one blew the gradient up 2500×. The discriminating experiment was a
+   closed PEC box, where the transposition is provably exact: it isolated
+   the derivation (exact) from the geometry traps (the real bugs).
+
+The untransposed-CPML approximation (the adjoint reuses the same
+absorber) prices in at the measured reflection floor: ~4×10⁻¹⁰ absolute
+on the gradient in the discrimination experiment — negligible, and now
+stated rather than assumed.
+
 ## Milestone ladder
 - **M2 — the adjoint:** reverse-time run with adjoint sources at the
   objective monitor; ∂T/∂ε per design cell; validated against central
