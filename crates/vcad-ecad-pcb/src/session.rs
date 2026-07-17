@@ -361,6 +361,37 @@ impl RouteSession {
         }
     }
 
+    /// Visit every live element OF `net` on any copper layer: geometry, AABB,
+    /// and layer. Used to build the route-to-tree goal set (a connection may
+    /// legally terminate on any copper already belonging to its net).
+    pub fn for_each_of_net(
+        &self,
+        net: &str,
+        mut f: impl FnMut(&CopperGeom, [f64; 2], [f64; 2], PcbLayer),
+    ) {
+        for se in self.tree.iter() {
+            if !self.live[se.id] || se.elem.net != net {
+                continue;
+            }
+            f(&se.elem.geom, se.elem.min, se.elem.max, se.elem.layer);
+        }
+    }
+
+    /// Total live copper bbox area (mm², summed across layers) clipped to the
+    /// window `lo..hi` — the capacity mesh's density estimate. Bboxes, not
+    /// exact geometry: capacity is a budget, not a legality answer.
+    pub fn copper_area_in(&self, lo: [f64; 2], hi: [f64; 2]) -> f64 {
+        self.tree
+            .locate_in_envelope_intersecting(&AABB::from_corners(lo, hi))
+            .filter(|se| self.live[se.id])
+            .map(|se| {
+                let w = (se.elem.max[0].min(hi[0]) - se.elem.min[0].max(lo[0])).max(0.0);
+                let h = (se.elem.max[1].min(hi[1]) - se.elem.min[1].max(lo[1])).max(0.0);
+                w * h
+            })
+            .sum()
+    }
+
     /// Probe a candidate geometry against every live other-net element on
     /// `layer`: legal iff nothing sits closer than the required clearance
     /// (the larger of the candidate's and each blocker's rule), with

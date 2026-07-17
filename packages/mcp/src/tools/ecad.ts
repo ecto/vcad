@@ -2936,12 +2936,17 @@ function detectStaleNets(pcb: Pcb): Set<string> {
   const TOL = 0.05; // mm — far tighter than a pad pitch, far looser than float error
   const near = (a: Vec2, b: Vec2) => Math.abs(a.x - b.x) < TOL && Math.abs(a.y - b.y) < TOL;
 
-  const padsByNet = new Map<string, { pos: Vec2; layers: PcbLayer[] }[]>();
+  const padsByNet = new Map<string, { pos: Vec2; layers: PcbLayer[]; halfExtent: number }[]>();
   for (const fp of pcb.footprints) {
     for (const pad of fp.pads) {
       if (!pad.net) continue;
       const arr = padsByNet.get(pad.net) ?? [];
-      arr.push({ pos: padWorld(fp, pad), layers: pad.layers });
+      // Conservative pad reach: half its largest dimension. A trace endpoint
+      // anywhere on the pad body is anchored copper (route-to-tree terminates
+      // on pad bodies, not only pad centres).
+      const sh = pad.shape as { width?: number; height?: number; diameter?: number };
+      const halfExtent = Math.max(sh.width ?? 0, sh.height ?? 0, sh.diameter ?? 0) / 2;
+      arr.push({ pos: padWorld(fp, pad), layers: pad.layers, halfExtent });
       padsByNet.set(pad.net, arr);
     }
   }
@@ -2974,13 +2979,25 @@ function detectStaleNets(pcb: Pcb): Set<string> {
     // and other free copper (their nets have <2 pads).
     if (pads.length < 2) continue;
 
+    // Distance from a point to a segment body — route-to-tree termination
+    // legitimately ends a trace ON another trace's copper (mid-segment), not
+    // only at endpoints, and that is an anchored, electrically-joined end.
+    const segDist = (p: Vec2, t: Trace): number => {
+      const dx = t.end.x - t.start.x;
+      const dy = t.end.y - t.start.y;
+      const len2 = dx * dx + dy * dy;
+      const u = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - t.start.x) * dx + (p.y - t.start.y) * dy) / len2));
+      return Math.hypot(p.x - (t.start.x + u * dx), p.y - (t.start.y + u * dy));
+    };
+    const onSegBody = (p: Vec2, t: Trace): boolean => segDist(p, t) <= t.width / 2 + 0.02;
     // (1) Any loose trace endpoint?
     const anchored = (p: Vec2, selfIdx: number): boolean => {
-      if (pads.some((q) => near(p, q.pos))) return true;
+      if (pads.some((q) => near(p, q.pos) || Math.hypot(p.x - q.pos.x, p.y - q.pos.y) <= q.halfExtent + 0.02)) return true;
       if (vias.some((q) => near(p, q))) return true;
       for (let j = 0; j < traces.length; j++) {
         if (j === selfIdx) continue;
         if (near(p, traces[j].start) || near(p, traces[j].end)) return true;
+        if (onSegBody(p, traces[j])) return true;
       }
       return false;
     };
@@ -2991,8 +3008,14 @@ function detectStaleNets(pcb: Pcb): Set<string> {
       const zoneLayers = zoneLayersByNet.get(net);
       isStale = pads.some((pad) => {
         if (zoneLayers && pad.layers.some((l) => zoneLayers.has(l))) return false;
-        const onTrace = traces.some((t) => near(pad.pos, t.start) || near(pad.pos, t.end));
-        const onVia = vias.some((v) => near(pad.pos, v));
+        // Covered = trace copper overlaps pad copper (route-to-tree endpoints
+        // legally stop at the pad's edge, not its centre).
+        const onTrace = traces.some(
+          (t) => segDist(pad.pos, t) <= pad.halfExtent + t.width / 2 + 0.02,
+        );
+        const onVia = vias.some((v) =>
+          Math.hypot(pad.pos.x - v.x, pad.pos.y - v.y) <= pad.halfExtent + 0.02 ? true : near(pad.pos, v),
+        );
         return !onTrace && !onVia;
       });
     }

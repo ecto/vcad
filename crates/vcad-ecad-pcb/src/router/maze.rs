@@ -239,6 +239,7 @@ pub fn route_net_maze3d(
     max_expansions: usize,
     pitch_scale: f64,
     window: Option<(Vec2, Vec2)>,
+    tree_goals: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
 ) -> RouteResult3d {
     let nl = layers.len();
     if nl == 0 {
@@ -306,7 +307,43 @@ pub fn route_net_maze3d(
     let mut heap = BinaryHeap::new();
 
     let goal_cell = grid.index(ex, ey);
-    let is_goal = |node: usize| node % plane == goal_cell && end_lis.contains(&(node / plane));
+    // Route-to-tree goals: any cell whose centre lands ON copper of the
+    // target pad's connected component (overlap, not proximity — a trace
+    // ending there is electrically joined). Terminating on the tree needs no
+    // endpoint via: the copper is already on that layer.
+    let mut tree_goal = vec![false; n];
+    for (geom, emin, emax, glayer) in tree_goals {
+        let Some(li) = layers.iter().position(|l| l == glayer) else {
+            continue;
+        };
+        let ix0 = (((emin[0] - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
+        let iy0 = (((emin[1] - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
+        let ix1 = ((((emax[0] - grid.origin.x) / grid.pitch).ceil()) as usize)
+            .min(grid.nx.saturating_sub(1));
+        let iy1 = ((((emax[1] - grid.origin.y) / grid.pitch).ceil()) as usize)
+            .min(grid.ny.saturating_sub(1));
+        for iy in iy0..=iy1 {
+            for ix in ix0..=ix1 {
+                let probe_pt = CopperGeom::Disc {
+                    center: grid.world(ix, iy),
+                    r: 0.0,
+                };
+                // Strict overlap certificate: a trace disc (radius half_w) at
+                // this cell centre physically overlaps the tree element, so
+                // terminating here is guaranteed electrical contact. Elements
+                // smaller than a grid cell may mark no cells — that is the
+                // safe direction (degrades to the exact pad goal); loosening
+                // the test would let routes "connect" to copper they never
+                // touch.
+                if geom.distance_to(&probe_pt) < half_w {
+                    tree_goal[li * plane + grid.index(ix, iy)] = true;
+                }
+            }
+        }
+    }
+    let is_goal = |node: usize| {
+        (node % plane == goal_cell && end_lis.contains(&(node / plane))) || tree_goal[node]
+    };
 
     for &li in &start_lis {
         let node = li * plane + grid.index(sx, sy);
@@ -509,7 +546,8 @@ pub fn route_net_maze3d(
             run.push(w);
         }
     }
-    if run.last().map(|p| dist(*p, end) > 1e-9).unwrap_or(true) {
+    let landed_on_tree = tree_goal[goal_node] && goal_node % plane != grid.index(ex, ey);
+    if !landed_on_tree && run.last().map(|p| dist(*p, end) > 1e-9).unwrap_or(true) {
         run.push(end);
     }
     flush_run(&mut run, layers[run_layer], &mut segments);
@@ -1086,6 +1124,7 @@ mod tests {
             0,
             1.0,
             None,
+            &[],
         );
         assert!(r.success);
         assert!(r.vias.is_empty(), "no reason to leave the start layer");
@@ -1118,6 +1157,7 @@ mod tests {
             0,
             1.0,
             None,
+            &[],
         );
         assert!(r.success, "3D search must cross under the wall");
         assert!(
@@ -1177,6 +1217,7 @@ mod tests {
             0,
             1.0,
             None,
+            &[],
         );
         assert!(r.success);
         assert!(!r.vias.is_empty());
@@ -1210,6 +1251,7 @@ mod tests {
             0,
             1.0,
             None,
+            &[],
         );
         assert!(r.success);
         assert!(!r.vias.is_empty(), "front→back must place a via");

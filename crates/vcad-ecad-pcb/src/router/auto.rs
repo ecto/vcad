@@ -22,6 +22,7 @@ use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
 use super::congestion::Congestion;
+use super::global::plan_corridors;
 use super::maze::route_net_maze3d;
 use super::push_shove::{Obstacle, PushShoveRouter};
 use super::route_net_maze;
@@ -673,6 +674,32 @@ fn route_pass(
         .filter(|l| nets_filter.is_empty() || nets_filter.iter().any(|n| n == &l.net))
         .map(|l| (l.net.clone(), l.from, l.to))
         .collect();
+
+    // Global stage: negotiate corridors at GCell scale so bundles spread
+    // across channels that actually fit them BEFORE detailed routing pays
+    // to discover the contention one net at a time.
+    let corridors: HashMap<ConnKey, (Vec2, Vec2)> = {
+        let mut lo = [f64::INFINITY; 2];
+        let mut hi = [f64::NEG_INFINITY; 2];
+        for v in &pcb.outline.vertices {
+            lo[0] = lo[0].min(v.x);
+            lo[1] = lo[1].min(v.y);
+            hi[0] = hi[0].max(v.x);
+            hi[1] = hi[1].max(v.y);
+        }
+        if !lo[0].is_finite() || conns.is_empty() {
+            HashMap::new()
+        } else {
+            let pitch = width + pcb.rules.default_rules.clearance;
+            let layers = copper_layers(pcb).len().max(1);
+            plan_corridors(&session, lo, hi, pitch, layers, &conns)
+                .into_iter()
+                .zip(conns.iter())
+                .filter_map(|(c, (net, from, to))| c.map(|w| (conn_key(net, *from, *to), w)))
+                .collect()
+        }
+    };
+
     let unrouted_conns = route_batch(
         &mut session,
         pcb,
@@ -684,6 +711,7 @@ fn route_pass(
         max_expansions,
         fine_retry,
         &mut fail_cache,
+        &corridors,
     );
 
     // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
@@ -708,6 +736,7 @@ fn route_pass(
             use_push_shove,
             max_expansions,
             &mut fail_cache,
+            &corridors,
         );
         log::info!(
             "ripup round: placed {} -> {} pending={} in {:.1}s",
@@ -770,6 +799,7 @@ fn incremental_round(
         use_push_shove,
         max_expansions,
         &mut fail_cache,
+        &HashMap::new(),
     );
     let _ = fine_retry;
     log::info!(
@@ -803,6 +833,7 @@ fn route_batch(
     max_expansions: usize,
     fine_retry: bool,
     fail_cache: &mut FailCache,
+    corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
     const MAX_COMMIT_RETRIES: usize = 3;
     let sw = Stopwatch::start();
@@ -847,6 +878,7 @@ fn route_batch(
                     use_push_shove,
                     max_expansions,
                     fine_retry,
+                    corridors.get(&conn_key(net, *from, *to)).copied(),
                 )
             })
             .collect();
@@ -947,6 +979,7 @@ fn try_route(
         use_push_shove,
         max_expansions,
         true,
+        None,
     )?;
     validate_and_commit(session, pcb, cand, placed)
 }
@@ -978,6 +1011,7 @@ fn search_route(
     use_push_shove: bool,
     max_expansions: usize,
     fine_retry: bool,
+    corridor: Option<(Vec2, Vec2)>,
 ) -> Option<Candidate> {
     // Net-class width if the net has one (wider power/ground), else the caller's
     // default. The same width drives the maze search, the committed copper, and
@@ -992,6 +1026,14 @@ fn search_route(
     // Layer-aware maze A* first, biased away from contested regions by the
     // history field. The search prices vias (VIA_COST) so it stays on one
     // layer when it can and dives only when a detour would cost more.
+    // Route-to-tree goal set: the copper already connected to the TARGET pad
+    // (its union-find component over the net's live elements). Terminating on
+    // any of it merges from's and to's components — exactly what this MST
+    // edge exists to do — and is how the reference designs route power nets:
+    // as trees tapped wherever convenient, not pad-to-pad threads. (The gap
+    // analysis showed the human spending ~2/3 of the board's vias on the nets
+    // our pad-pair decomposition could not close.)
+    let tree_goals = to_component(session, net, to);
     let maze = |pitch_scale: f64, window: Option<(Vec2, Vec2)>| {
         route_net_maze3d(
             session,
@@ -1008,9 +1050,16 @@ fn search_route(
             max_expansions,
             pitch_scale,
             window,
+            &tree_goals,
         )
     };
-    let mut r3 = maze(1.0, None);
+    // Corridor-first: the global plan says where this connection FITS —
+    // search there. Unbounded fallback keeps the corridor advisory: a bad
+    // global assignment costs one extra (smaller) search, never a route.
+    let mut r3 = maze(1.0, corridor);
+    if !r3.success && corridor.is_some() {
+        r3 = maze(1.0, None);
+    }
     if !r3.success && fine_retry {
         // Fine-grid retry: on an HDI board the clear channel between BGA pads
         // can be narrower than the default `width + clearance` pitch, so the
@@ -1153,6 +1202,80 @@ fn validate_and_commit(
         via_pts: new_vias,
         spans,
     })
+}
+
+/// The connected component of `net`'s live copper containing the point `to`
+/// (bbox-prefiltered union-find over exact geometry contact). Returns the
+/// component's elements as route-to-tree goals; empty when nothing of the
+/// net touches `to` yet (then the exact pad cell remains the only goal).
+fn to_component(
+    session: &RouteSession,
+    net: &str,
+    to: Vec2,
+) -> Vec<(CopperGeom, [f64; 2], [f64; 2], PcbLayer)> {
+    let mut elems: Vec<(CopperGeom, [f64; 2], [f64; 2], PcbLayer)> = Vec::new();
+    session.for_each_of_net(net, |g, lo, hi, layer| {
+        elems.push((*g, lo, hi, layer));
+    });
+    if elems.is_empty() {
+        return Vec::new();
+    }
+    // Union-find by geometric contact (same layer, touching or overlapping).
+    let n = elems.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(p: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while p[r] != r {
+            p[r] = p[p[r]];
+            r = p[r];
+        }
+        r
+    }
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (a, b) = (&elems[i], &elems[j]);
+            if a.3 != b.3 {
+                // Different layers connect through vias — which appear as an
+                // element per spanned layer at the same spot, so same-layer
+                // contact transitively links the stack.
+                continue;
+            }
+            if a.2[0] < b.1[0] - 0.01
+                || b.2[0] < a.1[0] - 0.01
+                || a.2[1] < b.1[1] - 0.01
+                || b.2[1] < a.1[1] - 0.01
+            {
+                continue;
+            }
+            // Exact-geometry contact: d == 0 means the copper physically
+            // touches (metal-on-metal is electrically joined — same-net
+            // islands merely NEAR each other keep d > 0 and stay separate).
+            // The bbox gate above is only a broadphase; its looser slop
+            // admits more pairs to this exact check, never unions them.
+            if a.0.distance_to(&b.0) <= 1e-6 {
+                let (ra, rb) = (find(&mut parent, i), find(&mut parent, j));
+                if ra != rb {
+                    parent[ra] = rb;
+                }
+            }
+        }
+    }
+    // The component containing `to`: elements whose geometry contains it.
+    let probe = CopperGeom::Disc { center: to, r: 0.0 };
+    let mut root = None;
+    for (i, e) in elems.iter().enumerate() {
+        if e.0.distance_to(&probe) <= 1e-6 {
+            root = Some(find(&mut parent, i));
+            break;
+        }
+    }
+    let Some(root) = root else {
+        return Vec::new();
+    };
+    (0..n)
+        .filter(|&i| find(&mut parent, i) == root)
+        .map(|i| elems[i])
+        .collect()
 }
 
 /// Copper layers the pad at `p` (if any) actually occupies — the layers a
@@ -1733,6 +1856,7 @@ fn ripup_pass(
     use_push_shove: bool,
     max_expansions: usize,
     fail_cache: &mut FailCache,
+    corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
     let hw = width / 2.0;
     let copper = copper_layers(pcb);
@@ -1833,6 +1957,7 @@ fn ripup_pass(
             max_expansions,
             true,
             fail_cache,
+            corridors,
         ) {
             let restored = originals
                 .remove(&conn_key(&net, from, to))
