@@ -355,3 +355,99 @@ pub fn compare(
         all_hold: all_hold && measured_any,
     })
 }
+
+/// Domain tag for neutronics claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "neutronics";
+
+/// The oracle reference for this crate's Monte Carlo transport solver.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-neutronics/mc", env!("CARGO_PKG_VERSION"))
+}
+
+fn quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// transport ran for real, but the claims describe a shield that has not
+/// been measured, so a receipt built from these **rolls up Provisional,
+/// never Pass** (the same contract as `predict_physics`/`predict_print`).
+/// The computed value rides in `measured` ("what the oracle computed");
+/// run provenance and the per-claim Monte Carlo relative standard error
+/// ride in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let provenance = format!(
+        "mc {}x{} histories seed {}, {} groups, {}, library {}; source {:.3e} n/s @ {:.3e} eV",
+        set.provenance.histories_per_batch,
+        set.provenance.batches,
+        set.provenance.seed,
+        set.provenance.groups,
+        set.provenance.energy_model,
+        set.provenance.library,
+        set.source.rate_n_per_s,
+        set.source.energy_ev,
+    );
+    set.claims
+        .iter()
+        .map(|c| {
+            vcad_receipt::ReceiptClaim::pass(
+                format!("neutronics.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(quantity(c.value, &c.unit))
+            .with_details(format!("{provenance}; rse {:.4}", c.rse))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::ShieldSpec;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let spec: ShieldSpec = serde_json::from_str(
+            r#"{
+              "layers": [
+                {"material": "air",  "thickness_mm": 100},
+                {"material": "hdpe", "thickness_mm": 100},
+                {"material": "air",  "thickness_mm": 400}
+              ],
+              "source": {"rate_n_per_s": 1.0e6, "energy_ev": 2.45e6},
+              "detectors": [{"label": "operator", "radius_mm": 400}],
+              "run": {"histories_per_batch": 500, "batches": 4, "seed": 7}
+            }"#,
+        )
+        .unwrap();
+        let set = predicted_claims(&spec, &BTreeMap::new()).unwrap();
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("neutronics."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            let details = c.details.as_deref().unwrap_or("");
+            assert!(details.contains("mc 500x4 histories seed 7"));
+            assert!(details.contains("rse "));
+        }
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted neutronics claims must never read as verified"
+        );
+    }
+}
