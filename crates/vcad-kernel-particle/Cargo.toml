@@ -1,0 +1,9 @@
+[package]
+name = "vcad-kernel-particle"
+description = "Charged-particle optics: axisymmetric electrostatics, ring-coil magnetics, Boris tracing, and electrode figures of merit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

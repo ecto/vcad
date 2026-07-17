@@ -137,6 +137,13 @@ vcad/
 │   #                            # priced through the seam) and vcad-eval::diff
 │   #                            # (document_parameter_gradient — d(mass props)/d(named
 │   #                            # .vcad parameter))
+│   # - vcad-kernel-particle     # Charged-particle optics, M0: axisymmetric
+│   #                            # Poisson (SOR) + exact ring-coil B (elliptic
+│   #                            # integrals) + Boris tracing + electrode FoMs
+│   #                            # (interception/recirculation/transparency) +
+│   #                            # FD optimizer. Fusor & magnetically-shielded-
+│   #                            # grid IEC benchmark; reproduces r_L ∝ √V
+│   #                            # shield scaling (docs/particle-optics-m0.md)
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

@@ -1,0 +1,59 @@
+//! Fusor-baseline benchmark: the simulated ammeter.
+//!
+//! Traces ion ensembles through (a) a classic 5-ring fusor and (b) the
+//! two-ring magnetically shielded cathode across a shield-current sweep at
+//! two bias voltages, printing CSV. Interception fraction is what a
+//! cathode ammeter sees; mean passes is the recirculation the shield buys.
+//!
+//! Run: `cargo run --release -p vcad-kernel-particle --example fusor_baseline`
+
+use vcad_kernel_particle::device::Device;
+use vcad_kernel_particle::field::FieldMap;
+use vcad_kernel_particle::fom::{geometric_transparency, stats};
+use vcad_kernel_particle::poisson::{solve, SolveOptions};
+use vcad_kernel_particle::trace::{TraceOptions, Tracer, DEUTERON};
+
+fn bench(device: &Device, label: &str, volts: f64, amp_turns: f64) {
+    let sol = solve(device, 121, 241, &SolveOptions::default()).expect("poisson solve");
+    let fields = FieldMap::new(device, &sol);
+    let opts = TraceOptions {
+        max_passes: 40,
+        ..TraceOptions::default()
+    };
+    let tracer = Tracer::new(device, &fields, &sol, opts);
+    let outcomes = tracer.launch_ensemble(DEUTERON, 96);
+    let s = stats(&outcomes);
+    println!(
+        "{label},{volts},{amp_turns},{:.2},{:.3},{:.3},{:.3},{:.3},{:.4}",
+        s.mean_passes,
+        s.interception_fraction,
+        s.wall_fraction,
+        s.survivor_fraction,
+        s.effective_transparency,
+        s.max_energy_drift_rel
+    );
+}
+
+fn main() {
+    println!(
+        "config,bias_v,ampere_turns,mean_passes,intercept_frac,wall_frac,survive_frac,eff_transparency,max_energy_drift"
+    );
+
+    // Classic fusor control: 5 rings on a 50 mm cathode sphere, 1 mm wire.
+    let fusor = Device::classic_fusor(150.0, 50.0, 5, 1.0, -30_000.0);
+    eprintln!(
+        "# classic fusor geometric transparency: {:.3}",
+        geometric_transparency(&fusor)
+    );
+    bench(&fusor, "classic_fusor_5ring", -30_000.0, 0.0);
+
+    // Shielded two-ring cathode: sweep ampere-turns at two biases.
+    for &volts in &[-3_000.0_f64, -30_000.0] {
+        for &at in &[
+            0.0_f64, 5_000.0, 10_000.0, 20_000.0, 40_000.0, 80_000.0, 160_000.0,
+        ] {
+            let device = Device::shielded_two_ring(150.0, 45.0, 25.0, 3.0, volts, at);
+            bench(&device, "shielded_two_ring", volts, at);
+        }
+    }
+}

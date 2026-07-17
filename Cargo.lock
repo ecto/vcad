@@ -7317,6 +7317,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-particle"
+version = "0.9.4"
+
+[[package]]
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
