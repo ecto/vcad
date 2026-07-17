@@ -217,6 +217,9 @@ fn conn_region(from: Vec2, to: Vec2) -> ([f64; 2], [f64; 2]) {
 /// search failed: skip re-searching until copper actually changes nearby.
 type FailCache = HashMap<ConnKey, u64>;
 
+/// An axis-aligned window (mm) used by the joint-repair grouping.
+type RepairWindow = ([f64; 2], [f64; 2]);
+
 /// The product of one routing pass: the grown session, the placed connections,
 /// and the connections still unrouted after rip-up.
 type Pass = (RouteSession, Vec<Placed>, Vec<Conn>);
@@ -1066,6 +1069,10 @@ fn search_route(
             pitch_scale,
             window,
             &tree_goals,
+            // Off-grid via candidates cost up to 16 extra probes per cache
+            // miss — reserved for the searches that need them (fine retry
+            // and repair passes), out of the greedy hot path.
+            pitch_scale < 1.0 || fine_retry,
         )
     };
     // Corridor-first: the global plan says where this connection FITS —
@@ -2067,16 +2074,16 @@ fn joint_window_repair(
         }
         let sw = Stopwatch::start();
         // Group pending connections into overlapping windows.
-        let win = |c: &Conn| -> ([f64; 2], [f64; 2]) {
+        let win = |c: &Conn| -> RepairWindow {
             (
                 [c.1.x.min(c.2.x) - margin, c.1.y.min(c.2.y) - margin],
                 [c.1.x.max(c.2.x) + margin, c.1.y.max(c.2.y) + margin],
             )
         };
-        let overlaps = |a: &([f64; 2], [f64; 2]), b: &([f64; 2], [f64; 2])| -> bool {
+        let overlaps = |a: &RepairWindow, b: &RepairWindow| -> bool {
             a.0[0] <= b.1[0] && b.0[0] <= a.1[0] && a.0[1] <= b.1[1] && b.0[1] <= a.1[1]
         };
-        let mut groups: Vec<(([f64; 2], [f64; 2]), Vec<Conn>)> = Vec::new();
+        let mut groups: Vec<(RepairWindow, Vec<Conn>)> = Vec::new();
         'conn: for c in pending.drain(..) {
             let w = win(&c);
             for (gw, gc) in groups.iter_mut() {
