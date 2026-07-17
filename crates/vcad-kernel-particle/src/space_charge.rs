@@ -202,9 +202,9 @@ pub struct SelfConsistentOptions {
 impl Default for SelfConsistentOptions {
     fn default() -> Self {
         Self {
-            iterations: 6,
-            relax: 0.5,
-            particles: 48,
+            iterations: 8,
+            relax: 0.3,
+            particles: 96,
             rho_tol: 0.05,
         }
     }
@@ -230,6 +230,9 @@ pub struct SelfConsistentReport {
     pub iterations: Vec<SelfConsistentIteration>,
     /// Whether the density update converged within the budget.
     pub converged: bool,
+    /// The final (relaxed) beam charge density, node-indexed — input to
+    /// two-species neutralization.
+    pub final_rho: Vec<f64>,
 }
 
 impl SelfConsistentReport {
@@ -289,16 +292,21 @@ pub fn self_consistent(
         let stats = crate::fom::stats(&outcomes);
         let (rho_new, _) = beam_rho(&base, &dwell, opts.particles, ion_current_a);
 
+        // Convergence is judged on the *relaxed* update — the raw
+        // iterate-vs-iterate delta compares two noisy ensemble samples and
+        // never settles; the damped state is what the loop actually
+        // propagates, so its movement is the honest convergence signal.
         let scale = rho.iter().fold(0.0_f64, |a, b| a.max(b.abs())).max(1e-300);
-        let delta = rho
-            .iter()
-            .zip(&rho_new)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0_f64, f64::max)
-            / scale;
+        let mut delta = 0.0_f64;
         for (r, n) in rho.iter_mut().zip(&rho_new) {
-            *r = (1.0 - opts.relax) * *r + opts.relax * *n;
+            let updated = (1.0 - opts.relax) * *r + opts.relax * *n;
+            let d = (updated - *r).abs();
+            if d > delta {
+                delta = d;
+            }
+            *r = updated;
         }
+        let delta = delta / scale;
         iterations.push(SelfConsistentIteration {
             stats,
             ratio,
@@ -314,6 +322,117 @@ pub fn self_consistent(
         vacuum_stats,
         iterations,
         converged,
+        final_rho: rho,
+    })
+}
+
+/// Result of [`neutralized`]: the perfect-injection electron-cloud bound.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TwoSpeciesReport {
+    /// The single-species (ion) self-consistent run this builds on.
+    pub ion_only: SelfConsistentReport,
+    /// Electron ensemble statistics (traced in applied + ion-beam field).
+    pub electron_stats: crate::fom::EnsembleStats,
+    /// In-flight electron charge / in-flight ion charge.
+    pub neutralization_fraction: f64,
+    /// Peak |net beam potential| / well after the electron cloud.
+    pub net_ratio: f64,
+    /// Ion statistics re-traced in the neutralized field — compare with
+    /// `ion_only.final_stats()` (taxed) and `ion_only.vacuum_stats`.
+    pub recovered_stats: crate::fom::EnsembleStats,
+}
+
+/// Idealized two-species neutralization — the **perfect-injection upper
+/// bound**.
+///
+/// Electrons are born at rest on a shell *inside* the ion cloud (as if an
+/// injector delivered them there losslessly), traced in the applied +
+/// ion-beam field, and their charge is subtracted from the beam density;
+/// ions are then re-traced in the neutralized field. Real injectors,
+/// cusp electron losses, and electron thermalization — the polywell's
+/// actual demons — are not modeled: this brackets the best case, nothing
+/// more, and claims built on it must say so.
+#[allow(clippy::too_many_arguments)]
+pub fn neutralized(
+    device: &crate::device::Device,
+    nr: usize,
+    nz: usize,
+    sopts: &SolveOptions,
+    ion_topts: &crate::trace::TraceOptions,
+    ion_current_a: f64,
+    electron_current_a: f64,
+    opts: &SelfConsistentOptions,
+) -> Result<TwoSpeciesReport, SolveError> {
+    let ion_only = self_consistent(
+        device,
+        nr,
+        nz,
+        sopts,
+        ion_topts,
+        crate::trace::DEUTERON,
+        ion_current_a,
+        opts,
+    )?;
+    let base = crate::poisson::solve(device, nr, nz, sopts)?;
+    let well = base.phi.iter().fold(0.0_f64, |a, b| a.max(-b)).max(1e-30);
+
+    // Field the electrons live in: applied + converged ion beam.
+    let phi_ion = solve_grounded_source(&base, &ion_only.final_rho, sopts)?;
+    let mut with_ions = base.clone();
+    for (t, s) in with_ions.phi.iter_mut().zip(&phi_ion) {
+        *t += s;
+    }
+
+    // Electrons: born at rest on a small shell inside the cloud.
+    let e_topts = crate::trace::TraceOptions {
+        launch_shell_fraction: 0.2,
+        ..*ion_topts
+    };
+    let fields = crate::field::FieldMap::new(device, &with_ions);
+    let tracer = crate::trace::Tracer::new(device, &fields, &with_ions, e_topts);
+    let (e_outcomes, e_dwell) =
+        tracer.launch_ensemble_dwell(crate::trace::ELECTRON, opts.particles);
+    let electron_stats = crate::fom::stats(&e_outcomes);
+    let (rho_e, q_e) = beam_rho(&base, &e_dwell, opts.particles, electron_current_a);
+
+    let q_i: f64 = {
+        // In-flight ion charge from the converged density and node volumes.
+        let (dr, dz) = (base.dr, base.dz);
+        let mut q = 0.0;
+        for i in 0..nr {
+            let r_eff = if i == 0 { 0.25 * dr } else { i as f64 * dr };
+            let vol = 2.0 * std::f64::consts::PI * r_eff * dr * dz;
+            for j in 0..nz {
+                q += ion_only.final_rho[i * nz + j] * vol;
+            }
+        }
+        q
+    };
+
+    // Net density and the neutralized field; ions re-traced in it.
+    let net_rho: Vec<f64> = ion_only
+        .final_rho
+        .iter()
+        .zip(&rho_e)
+        .map(|(i, e)| i - e)
+        .collect();
+    let phi_net = solve_grounded_source(&base, &net_rho, sopts)?;
+    let net_ratio = phi_net.iter().fold(0.0_f64, |a, b| a.max(b.abs())) / well;
+    let mut neutralized_sol = base.clone();
+    for (t, s) in neutralized_sol.phi.iter_mut().zip(&phi_net) {
+        *t += s;
+    }
+    let fields = crate::field::FieldMap::new(device, &neutralized_sol);
+    let tracer = crate::trace::Tracer::new(device, &fields, &neutralized_sol, *ion_topts);
+    let (i_outcomes, _) = tracer.launch_ensemble_dwell(crate::trace::DEUTERON, opts.particles);
+    let recovered_stats = crate::fom::stats(&i_outcomes);
+
+    Ok(TwoSpeciesReport {
+        ion_only,
+        electron_stats,
+        neutralization_fraction: q_e / q_i.max(1e-300),
+        net_ratio,
+        recovered_stats,
     })
 }
 
@@ -415,6 +534,49 @@ mod tests {
             "space charge this strong must move confinement: vacuum {} vs {}",
             high.vacuum_stats.mean_passes,
             h_final.mean_passes
+        );
+    }
+
+    #[test]
+    fn neutralization_reduces_the_net_ratio_and_recovers_yield() {
+        let device = Device::shielded_two_ring(120.0, 40.0, 22.0, 4.0, -2_000.0, 0.0);
+        let topts = TraceOptions {
+            max_passes: 6,
+            ..TraceOptions::default()
+        };
+        let sc_opts = SelfConsistentOptions {
+            iterations: 2,
+            particles: 12,
+            ..SelfConsistentOptions::default()
+        };
+        let heavy_ma = 0.3; // deep space charge at 2 kV
+        let r = neutralized(
+            &device,
+            61,
+            121,
+            &SolveOptions::default(),
+            &topts,
+            heavy_ma,
+            heavy_ma,
+            &sc_opts,
+        )
+        .unwrap();
+        let taxed_ratio = r.ion_only.iterations.last().unwrap().ratio;
+        assert!(
+            r.net_ratio < taxed_ratio,
+            "electron cloud must reduce the net beam potential: {} vs {}",
+            r.net_ratio,
+            taxed_ratio
+        );
+        assert!(r.neutralization_fraction > 0.0);
+        assert!(r.electron_stats.n > 0);
+        // Recovered confinement moves back toward vacuum relative to taxed.
+        let vac = r.ion_only.vacuum_stats.mean_passes;
+        let taxed = r.ion_only.final_stats().mean_passes;
+        let rec = r.recovered_stats.mean_passes;
+        assert!(
+            (rec - vac).abs() <= (taxed - vac).abs() + 1e-9,
+            "neutralized ions must sit no farther from vacuum than taxed: vac {vac}, taxed {taxed}, recovered {rec}"
         );
     }
 

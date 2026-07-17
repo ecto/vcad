@@ -27,8 +27,9 @@ fn main() {
         ..TraceOptions::default()
     };
     let sc = SelfConsistentOptions {
-        iterations: 5,
-        particles: 48,
+        iterations: 8,
+        relax: 0.25,
+        particles: 128,
         ..SelfConsistentOptions::default()
     };
     let n_d = d2_deuteron_density_m3(PRESSURE_MTORR, 300.0);
