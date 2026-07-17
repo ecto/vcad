@@ -53,6 +53,7 @@
 
 pub mod adjoint;
 pub mod model;
+pub mod receipt;
 pub mod solve;
 pub mod spec;
 pub mod transient;

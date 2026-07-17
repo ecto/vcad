@@ -170,12 +170,15 @@ Findings:
   documented honestly — today's card has density and elastic constants
   only, so the k / ρc_p mapping is specified but *not wired to fields
   that don't exist*.
-- **M4 — receipt claims.** `vcad.thermal-claims/1`: `t_max_c`,
-  `theta_ja_c_per_w` per source, `energy_balance_residual`, with full
-  provenance (grid, CG tolerance and iterations, BC set, anisotropy state)
-  and the missing-physics caveats on every claim note — conduction only, h
-  supplied, no radiation. Fail-closed like the particle claims: nothing
-  defaulted silently.
+- **M4 — receipt claims. DONE** (`docs/thermal-m4.md`,
+  `receipt::predicted_claims`). `vcad.thermal-claims/1`: `t_max_c`,
+  per-source `theta_ja_c_per_w`, `energy_balance_residual`, full
+  provenance (grid + pitch, CG tol/iters/residual, the entire BC set as
+  text, anisotropy state, voxelized-seam flag). Every temperature claim's
+  note names its h values and the unmodeled radiation — enforced by test.
+  Zero-power sources get a stated `theta_ja_undefined`, never NaN.
+  Cross-crate `vcad-receipt`/MCP registration flagged as the follow-up
+  PR, same as particle.
 - **M5 — benchmark + convergence + paper draft.** A published JEDEC-style
   θ_ja comparison (JESD51 boards are exactly this geometry family) with the
   package-model caveat stated, a grid-convergence table that names its
