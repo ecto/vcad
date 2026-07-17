@@ -22,6 +22,7 @@ use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
 use super::congestion::Congestion;
+use super::escape;
 use super::global::plan_corridors;
 use super::maze::route_net_maze3d;
 use super::push_shove::{Obstacle, PushShoveRouter};
@@ -986,7 +987,7 @@ fn try_route(
     use_push_shove: bool,
     max_expansions: usize,
 ) -> Option<Placed> {
-    let cand = search_route(
+    if let Some(cand) = search_route(
         session,
         pcb,
         width,
@@ -998,8 +999,119 @@ fn try_route(
         max_expansions,
         true,
         None,
-    )?;
-    validate_and_commit(session, pcb, cand, placed)
+    ) {
+        return validate_and_commit(session, pcb, cand, placed);
+    }
+    // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
+    // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
+    // flow-based escape out of the field and re-search from the egress point.
+    try_route_escape(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+    )
+}
+
+/// Escape-assisted retry for a connection the direct maze could not place
+/// (tier-2 BGA escape stage; see [`super::escape`]).
+///
+/// When an endpoint lies inside a detected dense pin field, the min-cost
+/// max-flow escape planner assigns it an interstitial polyline from the pad
+/// to an egress point just outside the field; the maze is then re-run from
+/// the egress point(s) and the escape copper is prepended to the candidate,
+/// so [`validate_and_commit`] probes escape and route as one unit. Tried
+/// escalating: escape `from` only, then `to` only, then both. Commits
+/// nothing on failure.
+#[allow(clippy::too_many_arguments)]
+fn try_route_escape(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    placed: &[Placed],
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+) -> Option<Placed> {
+    let fields = escape::detect_pin_fields(pcb);
+    if fields.is_empty() {
+        return None;
+    }
+    let from_field = escape::field_containing(&fields, from);
+    let to_field = escape::field_containing(&fields, to);
+    if from_field.is_none() && to_field.is_none() {
+        return None;
+    }
+
+    for (esc_from, esc_to) in [(true, false), (false, true), (true, true)] {
+        let ef = if esc_from {
+            let Some(field) = from_field else { continue };
+            let Some(plan) = escape::plan_escape(session, pcb, field, net, from, width) else {
+                continue;
+            };
+            Some(plan)
+        } else {
+            None
+        };
+        let et = if esc_to {
+            let Some(field) = to_field else { continue };
+            let Some(plan) = escape::plan_escape(session, pcb, field, net, to, width) else {
+                continue;
+            };
+            Some(plan)
+        } else {
+            None
+        };
+
+        let f2 = ef.as_ref().map(|p| p.egress).unwrap_or(from);
+        let t2 = et.as_ref().map(|p| p.egress).unwrap_or(to);
+        let Some(mut cand) = search_route(
+            session,
+            pcb,
+            width,
+            net,
+            f2,
+            t2,
+            cong,
+            use_push_shove,
+            max_expansions,
+            true,
+            None,
+        ) else {
+            continue;
+        };
+        // Prepend/append the escape copper so validate_and_commit probes the
+        // whole connection (pad → egress → route → egress → pad) as one unit.
+        let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
+        if let Some(p) = &ef {
+            segments.extend(p.segments.iter().map(|&(a, b)| (a, b, p.layer)));
+        }
+        segments.append(&mut cand.segments);
+        if let Some(p) = &et {
+            segments.extend(p.segments.iter().map(|&(a, b)| (a, b, p.layer)));
+        }
+        cand.segments = segments;
+        cand.from = from;
+        cand.to = to;
+        if let Some(placed_conn) = validate_and_commit(session, pcb, cand, placed) {
+            log::info!(
+                "escape: {net} routed via pin-field escape (from={} to={})",
+                esc_from,
+                esc_to
+            );
+            return Some(placed_conn);
+        }
+    }
+    None
 }
 
 /// A route found by [`search_route`] but not yet committed: the copper it
@@ -2357,6 +2469,110 @@ mod tests {
                 net: v.net.clone(),
                 source: None,
             });
+        }
+    }
+
+    #[test]
+    fn escape_rescues_pad_ringed_by_dense_field() {
+        // A source pad boxed in by a tight ring of other-net pads (a dense pin
+        // field), passable only through a single two-pad gap. With a small
+        // expansion budget the direct maze fails inside the field; the
+        // flow-based escape planner must get the connection out through the
+        // gap and try_route must then succeed.
+        let pitch = 0.65;
+        let pad_d = 0.3;
+        let n = 14;
+        let origin = Vec2::new(20.0, 10.0);
+        let mut pads = Vec::new();
+        // Two-pad gap in the top-RIGHT of the wall; the target sits up-LEFT
+        // of the box, so the direct maze floods the scatter labyrinth toward
+        // the sealed left wall while the flow planner walks to the top-right
+        // egress, from which the outside path to the target runs above the
+        // box and never tempts the search back inside.
+        let gaps = [(11usize, 13usize), (12, 13)];
+        let mut push = |i: usize, j: usize, net: &str, num: String| {
+            pads.push(Pad {
+                number: num,
+                pad_type: PadType::SMD,
+                shape: PadShape::Circle { diameter: pad_d },
+                position: Vec2::new(i as f64 * pitch, j as f64 * pitch),
+                rotation: 0.0,
+                drill: None,
+                net: Some(net.into()),
+                layers: vec![PcbLayer::FCu],
+            });
+        };
+        for j in 0..n {
+            for i in 0..n {
+                let perimeter = i == 0 || j == 0 || i == n - 1 || j == n - 1;
+                if !perimeter || gaps.contains(&(i, j)) {
+                    continue;
+                }
+                push(i, j, "B", format!("W{i}_{j}"));
+            }
+        }
+        // The trapped source pad at the box center.
+        push(6, 6, "S", "S".into());
+        let field_fp = Footprint {
+            reference: "U1".into(),
+            value: "ring".into(),
+            footprint_name: "RING".into(),
+            position: origin,
+            rotation: 0.0,
+            front: true,
+            pads,
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        };
+        // Free-standing target pad left of the box, outside the field.
+        let target = fp(
+            "R1",
+            origin.x - 5.0,
+            origin.y + 14.0 * pitch + 1.5,
+            vec![pad("1", 0.0, 0.0, "S")],
+        );
+        let pcb = board(vec![field_fp, target]);
+        let from = Vec2::new(origin.x + 6.0 * pitch, origin.y + 6.0 * pitch);
+        let to = Vec2::new(origin.x - 5.0, origin.y + 14.0 * pitch + 1.5);
+
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let _ = env_logger::builder().is_test(true).try_init();
+        // Small budget: the direct maze exhausts it inside the pin field.
+        let budget = 400;
+        assert!(
+            search_route(&session, &pcb, 0.25, "S", from, to, &cong, false, budget, true, None)
+                .is_none(),
+            "direct maze must fail with a small expansion budget"
+        );
+        let placed = try_route(
+            &mut session,
+            &pcb,
+            0.25,
+            "S",
+            from,
+            to,
+            &[],
+            &cong,
+            false,
+            budget,
+        );
+        let placed = placed.expect("try_route must succeed via the pin-field escape");
+        assert!(!placed.segments.is_empty());
+        // Every committed segment must be clearance-legal against the pads
+        // (probe on a fresh session so the route's own copper doesn't mask).
+        let fresh = RouteSession::from_pcb(&pcb);
+        for (a, b, l) in &placed.segments {
+            let seg = CopperGeom::Segment {
+                a: *a,
+                b: *b,
+                half_w: placed.width / 2.0,
+            };
+            assert!(
+                fresh.probe(&seg, *l, "S", fresh.clearance_for("S")).legal,
+                "escape-assisted route emitted illegal copper: {a:?}->{b:?}"
+            );
         }
     }
 
