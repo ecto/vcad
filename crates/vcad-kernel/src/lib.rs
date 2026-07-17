@@ -25,6 +25,7 @@ pub use vcad_kernel_dfm;
 pub use vcad_kernel_fillet;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
+pub use vcad_kernel_particle;
 pub use vcad_kernel_primitives;
 pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
