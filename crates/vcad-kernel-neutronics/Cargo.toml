@@ -1,0 +1,13 @@
+[package]
+name = "vcad-kernel-neutronics"
+description = "Monte Carlo neutron transport for shielding and dosimetry design: multigroup analog transport in 1D layered geometries with batch-statistics tallies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

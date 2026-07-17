@@ -87,16 +87,23 @@ pub struct Solution {
     pub sweeps: usize,
 }
 
+/// Locate `x` (in node units) on an `n`-node axis: the lower cell index
+/// (always ≤ n−2, so the stencil's `+1` neighbour is in range for any
+/// grid size) and the in-cell fraction (exact 1.0 at the far edge).
+/// Index-space clamping — a float-epsilon ceiling breaks down once the
+/// axis size approaches 1/ulp of the epsilon.
+#[inline]
+pub(crate) fn cell_index(x: f64, n: usize) -> (usize, f64) {
+    let x = x.clamp(0.0, (n - 1) as f64);
+    let i0 = (x as usize).min(n - 2);
+    (i0, (x - i0 as f64).clamp(0.0, 1.0))
+}
+
 impl Solution {
     #[inline]
     fn bilinear(&self, field: &[f64], r_m: f64, z_m: f64) -> f64 {
-        let eps = 1e-12;
-        let u = (r_m.abs() / self.dr).clamp(0.0, (self.nr - 1) as f64 - eps);
-        let w = ((z_m + self.z_half) / self.dz).clamp(0.0, (self.nz - 1) as f64 - eps);
-        let i0 = u.floor() as usize;
-        let j0 = w.floor() as usize;
-        let fu = u - i0 as f64;
-        let fw = w - j0 as f64;
+        let (i0, fu) = cell_index(r_m.abs() / self.dr, self.nr);
+        let (j0, fw) = cell_index((z_m + self.z_half) / self.dz, self.nz);
         let idx = |i: usize, j: usize| i * self.nz + j;
         field[idx(i0, j0)] * (1.0 - fu) * (1.0 - fw)
             + field[idx(i0 + 1, j0)] * fu * (1.0 - fw)
@@ -118,13 +125,8 @@ impl Solution {
     /// the potential difference of the continuous interpolant), so
     /// integrator energy error is governed by the time step alone.
     pub fn e_at(&self, r_m: f64, z_m: f64) -> (f64, f64) {
-        let eps = 1e-9;
-        let u = (r_m.abs() / self.dr).clamp(0.0, (self.nr - 1) as f64 - eps);
-        let w = ((z_m + self.z_half) / self.dz).clamp(0.0, (self.nz - 1) as f64 - eps);
-        let i0 = u.floor() as usize;
-        let j0 = w.floor() as usize;
-        let fu = u - i0 as f64;
-        let fw = w - j0 as f64;
+        let (i0, fu) = cell_index(r_m.abs() / self.dr, self.nr);
+        let (j0, fw) = cell_index((z_m + self.z_half) / self.dz, self.nz);
         let idx = |i: usize, j: usize| i * self.nz + j;
         let p00 = self.phi[idx(i0, j0)];
         let p10 = self.phi[idx(i0 + 1, j0)];
@@ -269,6 +271,49 @@ mod tests {
 
     fn test_device() -> Device {
         Device::shielded_two_ring(100.0, 40.0, 20.0, 3.0, -1_000.0, 0.0)
+    }
+
+    #[test]
+    fn cell_index_is_in_range_for_any_axis_size() {
+        // The old float-epsilon ceiling ((n−1) − 1e−12) rounds back to n−1
+        // once ulp(n−1) exceeds the epsilon (n ≳ 4100), sending the
+        // stencil's +1 neighbour out of bounds. Index-space clamping must
+        // hold everywhere, including exactly at and beyond the far edge.
+        for n in [3usize, 61, 4097, 8193, 1_000_000] {
+            let (i0, f) = cell_index((n - 1) as f64, n);
+            assert_eq!(i0, n - 2, "far edge lands in the last cell (n={n})");
+            assert_eq!(f, 1.0, "far edge fraction is exact (n={n})");
+            let (i0, f) = cell_index((n as f64) * 2.0, n);
+            assert_eq!(i0, n - 2, "beyond-domain clamps (n={n})");
+            assert_eq!(f, 1.0);
+            let (i0, f) = cell_index(-3.5, n);
+            assert_eq!(i0, 0, "below-domain clamps (n={n})");
+            assert_eq!(f, 0.0);
+        }
+    }
+
+    #[test]
+    fn sampling_at_the_exact_domain_edges_is_safe_and_exact() {
+        let sol = solve(&test_device(), 61, 121, &SolveOptions::default()).unwrap();
+        // Exactly at the outer corners and edges: no panic, and the
+        // potential equals the wall boundary value (fu/fw = 1 path).
+        for &(r, z) in &[
+            (sol.r_max, 0.0),
+            (sol.r_max, sol.z_half),
+            (sol.r_max, -sol.z_half),
+            (0.0, sol.z_half),
+            (0.0, -sol.z_half),
+        ] {
+            let p = sol.potential_at(r, z);
+            assert!(
+                p.abs() < 1e-9,
+                "wall potential must be exactly ground at ({r},{z}): {p}"
+            );
+            let (er, ez) = sol.e_at(r, z);
+            assert!(er.is_finite() && ez.is_finite());
+        }
+        // Far beyond the domain clamps to the boundary value.
+        assert!(sol.potential_at(10.0 * sol.r_max, 0.0).abs() < 1e-9);
     }
 
     #[test]

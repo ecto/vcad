@@ -182,13 +182,8 @@ impl<'a> FieldMap<'a> {
 
         let (br, bz) = if let (Some(g), false) = (&self.bgrid, near_wire) {
             let s = self.solution;
-            let eps = 1e-12;
-            let u = (r / s.dr).clamp(0.0, (s.nr - 1) as f64 - eps);
-            let w = ((z + s.z_half) / s.dz).clamp(0.0, (s.nz - 1) as f64 - eps);
-            let i0 = u.floor() as usize;
-            let j0 = w.floor() as usize;
-            let fu = u - i0 as f64;
-            let fw = w - j0 as f64;
+            let (i0, fu) = crate::poisson::cell_index(r / s.dr, s.nr);
+            let (j0, fw) = crate::poisson::cell_index((z + s.z_half) / s.dz, s.nz);
             let idx = |i: usize, j: usize| i * s.nz + j;
             let samp = |d: &[f64]| {
                 d[idx(i0, j0)] * (1.0 - fu) * (1.0 - fw)

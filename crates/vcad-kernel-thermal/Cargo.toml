@@ -1,0 +1,13 @@
+[package]
+name = "vcad-kernel-thermal"
+description = "Heat-conduction FEA on voxel grids: harmonic-mean finite volumes, matrix-free PCG, T_max and theta_ja figures of merit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
