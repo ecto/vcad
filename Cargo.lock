@@ -7022,6 +7022,7 @@ dependencies = [
  "tang-expr",
  "thiserror 2.0.18",
  "vcad-ir",
+ "vcad-receipt",
 ]
 
 [[package]]

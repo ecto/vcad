@@ -106,7 +106,7 @@ pub enum Device {
 }
 
 /// Conductance stamp for a 2-terminal element between `p` and `n`.
-fn stamp_conductance(a: &mut [f64], m: usize, p: usize, n: usize, g: f64) {
+pub(crate) fn stamp_conductance(a: &mut [f64], m: usize, p: usize, n: usize, g: f64) {
     let mut add = |i: usize, j: usize, v: f64| {
         if i != 0 && j != 0 {
             a[(i - 1) * m + (j - 1)] += v;
@@ -119,7 +119,7 @@ fn stamp_conductance(a: &mut [f64], m: usize, p: usize, n: usize, g: f64) {
 }
 
 /// Inject a current `i` into node `p` and out of node `n` (a current source).
-fn inject(rhs: &mut [f64], p: usize, n: usize, i: f64) {
+pub(crate) fn inject(rhs: &mut [f64], p: usize, n: usize, i: f64) {
     if p != 0 {
         rhs[p - 1] += i;
     }
@@ -131,7 +131,7 @@ fn inject(rhs: &mut [f64], p: usize, n: usize, i: f64) {
 /// SPICE-style pn-junction limiting: damp a Newton step in junction voltage so
 /// the exponential can't explode. `vnew` is this iteration's raw junction
 /// voltage, `vold` the previous iteration's (limited) value.
-fn pnjlim(vnew: f64, vold: f64, vte: f64, vcrit: f64) -> f64 {
+pub(crate) fn pnjlim(vnew: f64, vold: f64, vte: f64, vcrit: f64) -> f64 {
     if vnew > vcrit && (vnew - vold).abs() > 2.0 * vte {
         if vold > 0.0 {
             let arg = 1.0 + (vnew - vold) / vte;
@@ -151,6 +151,19 @@ fn pnjlim(vnew: f64, vold: f64, vte: f64, vcrit: f64) -> f64 {
 }
 
 impl Device {
+    /// The (`p`, `n`) terminal node ids of this device.
+    pub fn terminals(&self) -> (usize, usize) {
+        match *self {
+            Device::Resistor { p, n, .. }
+            | Device::Capacitor { p, n, .. }
+            | Device::Inductor { p, n, .. }
+            | Device::VSource { p, n, .. }
+            | Device::ISource { p, n, .. }
+            | Device::Diode { p, n, .. }
+            | Device::Motor { p, n, .. } => (p, n),
+        }
+    }
+
     /// Whether this device needs its own MNA branch-current unknown.
     pub fn needs_branch(&self) -> bool {
         matches!(self, Device::VSource { .. } | Device::Motor { .. })
