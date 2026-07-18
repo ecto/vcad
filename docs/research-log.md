@@ -317,6 +317,71 @@ sweeping electron current:
   receipted. This is the Q-lane's road: e-cloud self-consistency, loss
   accounting, then the neutralized machine priced honestly.
 
+## 2026-07-17 — differentiable circuit simulation: extend vcad-ecad-sim, not a new crate
+
+Recon for a "differentiable SPICE" M0. Phase-0 verdict: **extend
+`vcad-ecad-sim::circuit`**, no `vcad-kernel-spice` crate. Reasons, so a
+changed mind stays distinguishable from a forgotten one:
+
+- The circuit module is already a real MNA core, not a narrow SI tool:
+  node+branch modified nodal analysis, backward-Euler companion models for
+  C/L, Newton–Raphson with SPICE's `pnjlim` junction limiting for the
+  Shockley diode, dense partial-pivot LU (`circuit/linalg.rs`), and even an
+  electromechanical motor branch. ~1,100 lines of exactly the substrate M0
+  needs.
+- It has live consumers: `vcad-kernel-wasm::circuit_sim` exposes it to the
+  app as a steppable JS class. A parallel crate would duplicate the stamps
+  and orphan that wiring; extending means the app inherits DC operating
+  point, trapezoidal accuracy, and adjoints for free.
+- Prior art, honestly: ngspice exists and is good. The gap is NOT raw
+  simulation quality — it is (a) exact adjoint sensitivities
+  d(output)/d(every component), (b) fail-closed receipts, (c) agent-native
+  workspace integration (netlist-from-ecad seam, MCP). All three land as
+  additive modules inside `circuit/`; none require re-deriving what
+  Nagel/Pederson wrote down in 1973 (SPICE2 memo, UCB ERL-M520, 1975).
+
+M0 scope on top of the existing core: `dc.rs` (operating point, gmin
+stepping), trapezoidal integration option (BE stays default for existing
+consumers; motor stays BE), `ac.rs` (complex MNA, hand-rolled (re,im)),
+`adjoint.rs` (transposed-system sensitivities, FD-validated per element
+kind), Tellegen power-balance gates, `receipt.rs`
+(`vcad.spice-claims/1`), `examples/filter_autotune.rs`. Transient adjoint
+and MOSFET level-1 deferred to M1. `vcad-kernel-tolerance` flagged as the
+natural partner (adjoint sensitivities × tolerance stackup = component
+tolerance yield by gradient).
+
+## 2026-07-17 — circuit M0 lands: MNA gets a DC solve, trapezoidal accuracy, and an adjoint
+
+Extends `vcad_ecad_sim::circuit` per the decision above (branch
+`claude/kernel-spice-m0`; details in `docs/spice-m0.md`). Results table,
+all gates in CI:
+
+| gate | oracle | result |
+|---|---|---|
+| divider | Ohm's law | exact (1e-13) |
+| RC step, trapezoidal | V(1−e^{−t/RC}) | max err 2.5e-6 V of 5 V at dt = τ/1000; dt-halving error ratios 3.97 → 3.99 → 3.99 → 4.00 (2nd order clean) |
+| RC step, backward Euler | same | ratios ≈ 2.0 — honestly 1st order, both integrators bracket the claim |
+| RLC ringdown | ω_d, α closed forms | < 1e-3 / < 2e-2 rel |
+| diode + R | Lambert-W (Corless 1996) | 1e-9 rel |
+| Tellegen | Σv·i = 0 | < 1e-9 rel, every timestep, both integrators |
+| adjoint vs central FD | frozen network | < 1e-5 every element kind (DC + AC); < 1e-4 through the diode Newton system |
+
+- **The adjoint pays immediately**: `filter_autotune` drives a detuned RLC
+  (15.9 kHz, Q = 0.5) to the 10 kHz / Q = 1/√2 Butterworth target —
+  J: 1.16e-1 → 5.8e-17 in 104 gradient iterations, each costing one
+  forward + one transposed complex solve per probe frequency. Final f0 =
+  10000.0 Hz, Q = 0.7071 (< 0.1% error on both).
+- **Bug the physics caught**: first trapezoidal run showed error 2.5e-3 =
+  V·dt/2τ exactly — first-order-sized, not second. Cause: the t = 0 source
+  discontinuity hands the trap companion a wrong initial history current
+  (i₀ = 0, truth V/R). Fix is the standard SPICE startup rule — first step
+  backward Euler — after which the 4.00 ratios appeared. The
+  convergence-order gate, not eyeballing, caught it.
+- **Test artifact worth remembering**: FD-validating d|H|/dL at exact
+  resonance compares two zeros (it's a stationary point) and the FD term
+  is pure truncation noise; probe off-resonance.
+- `vcad.spice-claims/1` claims (predicted → Provisional) ride the unified
+  receipt; closing instruments: $30 USB scope + signal generator.
 ## 2026-07-17 — Phase 0 recon: air-side acoustics is a GO (a new domain)
 
 Scouting a new domain for the sim→measurement loop the workspace has run five

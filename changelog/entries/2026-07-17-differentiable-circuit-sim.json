@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-differentiable-circuit-sim",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Differentiable circuit simulation (DC, AC, adjoints)",
+  "summary": "Circuit sim gains DC operating point, trapezoidal accuracy, AC analysis, and exact adjoint sensitivities d(output)/d(every component) with fail-closed receipts.",
+  "features": ["circuit", "simulation", "adjoint", "receipts"]
+}
