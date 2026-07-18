@@ -39,7 +39,7 @@ impl Stopwatch {
     }
 }
 
-pub(crate) mod complete;
+pub mod complete;
 pub mod congestion;
 pub mod diff_pair;
 pub(crate) mod escape;

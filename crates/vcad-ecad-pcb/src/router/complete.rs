@@ -92,7 +92,7 @@ const MAX_AXIS_CELLS: usize = 48;
 
 /// Outcome of the complete window router.
 #[derive(Debug, Clone)]
-pub(crate) enum CompleteOutcome {
+pub enum CompleteOutcome {
     /// A joint routing was found: per-connection segment lists, in the same
     /// order as the input `conns`. Layer transitions within a connection are
     /// vias at the shared segment endpoint (adjacent-layer span).
@@ -121,7 +121,7 @@ pub(crate) enum CompleteOutcome {
 /// * `budget` — maximum DFS node expansions. A result of
 ///   [`CompleteOutcome::ProvedInfeasible`] is only ever returned when the
 ///   full space was enumerated within the budget (or the flow cut fired).
-pub(crate) fn route_window_complete(
+pub fn route_window_complete(
     session: &RouteSession,
     window: (Vec2, Vec2),
     layers: &[PcbLayer],
