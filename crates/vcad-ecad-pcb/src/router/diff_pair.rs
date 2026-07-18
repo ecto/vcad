@@ -201,7 +201,7 @@ fn midpoint(a: Vec2, b: Vec2) -> Vec2 {
 /// Positive distance offsets to the left of the travel direction (which is
 /// the `perp()` side), negative to the right. Corners are handled with
 /// mitered joins -- the intersection of adjacent offset edges.
-fn offset_polyline(points: &[Vec2], distance: f64) -> Vec<Vec2> {
+pub(super) fn offset_polyline(points: &[Vec2], distance: f64) -> Vec<Vec2> {
     if points.len() < 2 {
         return points.to_vec();
     }

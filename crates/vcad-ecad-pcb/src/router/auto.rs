@@ -21,6 +21,7 @@ use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, Rats
 use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
+use super::complete::{route_window_complete, CompleteOutcome};
 use super::congestion::Congestion;
 use super::escape;
 use super::global::plan_corridors;
@@ -228,19 +229,19 @@ type Pass = (RouteSession, Vec<Placed>, Vec<Conn>);
 /// A connection that has been routed, plus the session spans it occupies —
 /// enough to rip it back out and re-route it.
 #[derive(Clone)]
-struct Placed {
-    net: String,
-    from: Vec2,
-    to: Vec2,
-    width: f64,
+pub(super) struct Placed {
+    pub(super) net: String,
+    pub(super) from: Vec2,
+    pub(super) to: Vec2,
+    pub(super) width: f64,
     /// Routed segments, each on its own copper layer (the 3D maze changes
     /// layers mid-route).
-    segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    pub(super) segments: Vec<(Vec2, Vec2, PcbLayer)>,
     /// Fan-out / dog-bone stubs that escape a fine-pitch pad to its via, each on
     /// its own copper layer (the pad's layer). Emitted as traces, not on `layer`.
-    stubs: Vec<(Vec2, Vec2, PcbLayer)>,
-    via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
-    spans: Vec<SpanId>,
+    pub(super) stubs: Vec<(Vec2, Vec2, PcbLayer)>,
+    pub(super) via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
+    pub(super) spans: Vec<SpanId>,
 }
 
 /// Route every unrouted net on `pcb` (optionally restricted to `nets_filter`).
@@ -1003,7 +1004,7 @@ fn try_route(
     net: &str,
     from: Vec2,
     to: Vec2,
-    placed: &[Placed],
+    placed: &mut Vec<Placed>,
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
@@ -1026,7 +1027,7 @@ fn try_route(
     // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
     // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
     // flow-based escape out of the field and re-search from the egress point.
-    try_route_escape(
+    if let Some(p) = try_route_escape(
         session,
         pcb,
         width,
@@ -1036,6 +1037,43 @@ fn try_route(
         placed,
         cong,
         use_push_shove,
+        max_expansions,
+    ) {
+        return Some(p);
+    }
+    // Coupled differential-pair stage: a `_P`/`_N` (or `_C`/`_T`) net whose
+    // lone placement failed is exactly the anti-pattern — route it WITH its
+    // twin as one phantom fat trace realized as two coupled legs, committed
+    // atomically. The partner's Placed lands in `placed` here; the net's own
+    // is returned like any other route.
+    if super::pair::pair_partner(net).is_some() {
+        if let Some((mine, theirs)) = super::pair::try_route_pair(
+            session,
+            pcb,
+            width,
+            net,
+            from,
+            to,
+            placed,
+            cong,
+            max_expansions,
+        ) {
+            placed.push(theirs);
+            return Some(mine);
+        }
+    }
+    // Last resort — true shove: displace the routed traces blocking the
+    // corridor sideways (bounded, transactional) instead of ripping them,
+    // then re-search. A shoved victim stays routed in its new position.
+    super::shove::try_route_shove(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        placed,
+        cong,
         max_expansions,
     )
 }
@@ -1139,19 +1177,19 @@ fn try_route_escape(
 /// wants to place, valid against the session it was searched on. Committing
 /// re-validates against the *current* session, so candidates can be searched
 /// in parallel against a frozen snapshot and committed sequentially.
-struct Candidate {
-    net: String,
-    from: Vec2,
-    to: Vec2,
-    width: f64,
-    segments: Vec<(Vec2, Vec2, PcbLayer)>,
-    vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+pub(super) struct Candidate {
+    pub(super) net: String,
+    pub(super) from: Vec2,
+    pub(super) to: Vec2,
+    pub(super) width: f64,
+    pub(super) segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    pub(super) vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
 }
 
 /// The pure-search half of [`try_route`]: find a clearance-legal route
 /// against `session` without mutating anything.
 #[allow(clippy::too_many_arguments)]
-fn search_route(
+pub(super) fn search_route(
     session: &RouteSession,
     pcb: &Pcb,
     width: f64,
@@ -1292,7 +1330,7 @@ fn search_route(
 /// *current* session (which may have grown since the search) and commit it.
 /// Returns `None` — mutating nothing — if any of its copper is no longer
 /// legal; the caller re-searches or reports the connection unrouted.
-fn validate_and_commit(
+pub(super) fn validate_and_commit(
     session: &mut RouteSession,
     pcb: &Pcb,
     cand: Candidate,
@@ -1810,7 +1848,7 @@ const ESCAPE_RINGS: usize = 10;
 const FINE_PITCH_MM: f64 = 0.65;
 
 /// Commit a trace segment span on `layer`, returning its [`SpanId`].
-fn commit_seg(
+pub(super) fn commit_seg(
     session: &mut RouteSession,
     net: &str,
     a: Vec2,
@@ -1840,7 +1878,7 @@ fn commit_stub(
 }
 
 /// Commit a via as a disc on every copper layer it spans (a through via).
-fn commit_via(
+pub(super) fn commit_via(
     session: &mut RouteSession,
     net: &str,
     p: Vec2,
@@ -1870,7 +1908,7 @@ fn rollback(session: &mut RouteSession, spans: &[SpanId]) {
 }
 
 /// Copper layers present in the stackup, top → bottom (FCu/BCu fallback).
-fn copper_layers(pcb: &Pcb) -> Vec<PcbLayer> {
+pub(super) fn copper_layers(pcb: &Pcb) -> Vec<PcbLayer> {
     let v: Vec<PcbLayer> = pcb
         .stackup
         .layers
@@ -2316,6 +2354,67 @@ fn joint_window_repair(
                 &mut fail_cache,
                 &HashMap::new(),
             ));
+            // Last resort for a small surviving clique: the COMPLETE window
+            // router — either a joint routing the heuristics missed, or a
+            // proof (named bottleneck cut) that none exists at these rules.
+            if !lost.is_empty() && lost.len() <= 10 {
+                let win_w = gw.1[0] - gw.0[0];
+                let win_h = gw.1[1] - gw.0[1];
+                if win_w <= 20.0 && win_h <= 20.0 {
+                    let copper = copper_layers(pcb);
+                    // All copper layers: the flow pre-pass stays cheap and the
+                    // DFS budget-caps honestly (BudgetExhausted, never a fake
+                    // proof) if 10 layers is too much for exhaustion.
+                    let cl: Vec<PcbLayer> = copper;
+                    match route_window_complete(
+                        session,
+                        (Vec2::new(gw.0[0], gw.0[1]), Vec2::new(gw.1[0], gw.1[1])),
+                        &cl,
+                        &lost,
+                        width,
+                        2_000_000,
+                    ) {
+                        CompleteOutcome::Routed(paths) => {
+                            let mut still_lost = Vec::new();
+                            for (conn, segs) in lost.drain(..).zip(paths) {
+                                // Vias sit at shared endpoints of consecutive
+                                // segments on different layers (adjacent span).
+                                let mut vias = Vec::new();
+                                for w2 in segs.windows(2) {
+                                    if w2[0].2 != w2[1].2 {
+                                        vias.push((w2[0].1, w2[0].2, w2[1].2));
+                                    }
+                                }
+                                let cand = Candidate {
+                                    net: conn.0.clone(),
+                                    from: conn.1,
+                                    to: conn.2,
+                                    width: session.width_for(&conn.0, width),
+                                    segments: segs,
+                                    vias,
+                                };
+                                match validate_and_commit(session, pcb, cand, placed) {
+                                    Some(p) => {
+                                        log::info!("complete window: jointly routed {}", p.net);
+                                        placed.push(p);
+                                    }
+                                    None => still_lost.push(conn),
+                                }
+                            }
+                            lost = still_lost;
+                        }
+                        CompleteOutcome::ProvedInfeasible { reason } => {
+                            log::warn!(
+                                "complete window PROOF: {} connection(s) infeasible at current rules — {reason}",
+                                lost.len()
+                            );
+                        }
+                        CompleteOutcome::BudgetExhausted => {
+                            log::debug!("complete window: budget exhausted, unknown");
+                        }
+                    }
+                }
+            }
             if placed.len() <= placed_before {
                 // Net-negative (or neutral): roll back the entire window.
                 *session = session_snapshot;
@@ -2369,7 +2468,7 @@ fn netlist_from_pads(pcb: &Pcb) -> Netlist {
     }
 }
 
-fn dist(a: Vec2, b: Vec2) -> f64 {
+pub(super) fn dist(a: Vec2, b: Vec2) -> f64 {
     ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt()
 }
 
@@ -2574,7 +2673,7 @@ mod tests {
             "S",
             from,
             to,
-            &[],
+            &mut Vec::new(),
             &cong,
             false,
             budget,
@@ -2595,6 +2694,62 @@ mod tests {
                 "escape-assisted route emitted illegal copper: {a:?}->{b:?}"
             );
         }
+    }
+
+    #[test]
+    fn try_route_pairs_p_net_with_partner() {
+        // A `_P` net whose lone maze fails (tiny expansion budget) must be
+        // routed as a coupled pair via the pair stage: try_route returns the
+        // P leg and pushes the N leg into `placed` — both nets end up routed.
+        let small = |num: &str, y: f64, net: &str| Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Circle { diameter: 0.3 },
+            position: Vec2::new(0.0, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        };
+        let pcb = board(vec![
+            fp(
+                "J1",
+                5.0,
+                15.0,
+                vec![small("1", 0.325, "LVDS_P"), small("2", -0.325, "LVDS_N")],
+            ),
+            fp(
+                "U1",
+                45.0,
+                15.0,
+                vec![small("1", 0.325, "LVDS_P"), small("2", -0.325, "LVDS_N")],
+            ),
+        ]);
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let mut placed: Vec<Placed> = Vec::new();
+        let from = Vec2::new(5.0, 15.325);
+        let to = Vec2::new(45.0, 15.325);
+        // Budget too small for the ~90-cell direct maze — forces the fallback
+        // ladder down to the pair stage (which uses its own generous floor).
+        let p = try_route(
+            &mut session,
+            &pcb,
+            0.25,
+            "LVDS_P",
+            from,
+            to,
+            &mut placed,
+            &cong,
+            false,
+            20,
+        )
+        .expect("pair stage must route the P net with its partner");
+        assert_eq!(p.net, "LVDS_P");
+        assert!(!p.segments.is_empty());
+        assert_eq!(placed.len(), 1, "partner leg must land in placed");
+        assert_eq!(placed[0].net, "LVDS_N");
+        assert!(!placed[0].segments.is_empty());
     }
 
     #[test]
@@ -3292,5 +3447,243 @@ mod tests {
         assert_eq!(a.unrouted_nets, b.unrouted_nets);
         assert_eq!(a.traces.len(), b.traces.len());
         assert_eq!(a.vias.len(), b.vias.len());
+    }
+
+    /// The shove fixture: a walled channel with a stuck horizontal net "A"
+    /// and a routed U-shaped victim "B" whose long middle segment seals the
+    /// channel. Returns `(pcb, session, placed_with_victim, from, to)`.
+    ///
+    /// Geometry (single layer, channel between wall rows at y=12 and y=18):
+    /// B runs pad(10,16.8) -> joint(10,MID_Y) -> joint(40,MID_Y) ->
+    /// pad(40,16.8). With MID_Y=13.2 the gap under the middle (to the wall
+    /// copper edge at y=12.5) is too narrow for A's trace, and the pocket
+    /// above is sealed by B's flanks and pads — A is stuck until the middle
+    /// segment moves up.
+    fn shove_fixture(
+        mid_y: f64,
+        victim_pads_at_joints: bool,
+    ) -> (Pcb, RouteSession, Vec<Placed>, Vec2, Vec2) {
+        let mut fps = vec![
+            fp("A1", 5.0, 15.0, vec![pad("1", 0.0, 0.0, "A")]),
+            fp("A2", 45.0, 15.0, vec![pad("1", 0.0, 0.0, "A")]),
+        ];
+        // Solid pad walls across the full board width at y=12 and y=18.
+        for i in 0..50 {
+            let x = 0.5 + i as f64;
+            fps.push(fp(
+                &format!("WT{i}"),
+                x,
+                18.0,
+                vec![pad("1", 0.0, 0.0, "W")],
+            ));
+            fps.push(fp(
+                &format!("WB{i}"),
+                x,
+                12.0,
+                vec![pad("1", 0.0, 0.0, "W")],
+            ));
+        }
+        let (b_from, b_to, segments) = if victim_pads_at_joints {
+            // Negative fixture: B is a single pad-to-pad segment — both
+            // crossing-segment endpoints are anchors. Seal the space above it
+            // with wall-pad columns at x=10 and x=40 so A stays stuck.
+            fps.push(fp("B1", 10.0, mid_y, vec![pad("1", 0.0, 0.0, "B")]));
+            fps.push(fp("B2", 40.0, mid_y, vec![pad("1", 0.0, 0.0, "B")]));
+            for (i, &x) in [10.0f64, 40.0].iter().enumerate() {
+                for (j, &y) in [14.5f64, 15.5, 16.5].iter().enumerate() {
+                    fps.push(fp(
+                        &format!("WC{i}_{j}"),
+                        x,
+                        y,
+                        vec![pad("1", 0.0, 0.0, "W")],
+                    ));
+                }
+            }
+            let a = Vec2::new(10.0, mid_y);
+            let b = Vec2::new(40.0, mid_y);
+            (a, b, vec![(a, b, PcbLayer::FCu)])
+        } else {
+            fps.push(fp("B1", 10.0, 16.8, vec![pad("1", 0.0, 0.0, "B")]));
+            fps.push(fp("B2", 40.0, 16.8, vec![pad("1", 0.0, 0.0, "B")]));
+            let p1 = Vec2::new(10.0, 16.8);
+            let j1 = Vec2::new(10.0, mid_y);
+            let j2 = Vec2::new(40.0, mid_y);
+            let p2 = Vec2::new(40.0, 16.8);
+            (
+                p1,
+                p2,
+                vec![
+                    (p1, j1, PcbLayer::FCu),
+                    (j1, j2, PcbLayer::FCu),
+                    (j2, p2, PcbLayer::FCu),
+                ],
+            )
+        };
+        let pcb = single_layer(board(fps));
+        let mut session = RouteSession::from_pcb(&pcb);
+        // Commit the victim's route as the router would have.
+        let mut spans = Vec::new();
+        for &(a, b, l) in &segments {
+            spans.push(commit_seg(&mut session, "B", a, b, 0.125, l));
+        }
+        let placed = vec![Placed {
+            net: "B".into(),
+            from: b_from,
+            to: b_to,
+            width: 0.25,
+            segments,
+            stubs: Vec::new(),
+            via_pts: Vec::new(),
+            spans,
+        }];
+        (
+            pcb,
+            session,
+            placed,
+            Vec2::new(5.0, 15.0),
+            Vec2::new(45.0, 15.0),
+        )
+    }
+
+    #[test]
+    fn shove_fixture_routes_once_victim_removed() {
+        // Sanity for the fixture itself: with the victim lifted out, the
+        // direct search must succeed.
+        let (pcb, mut session, placed, from, to) = shove_fixture(13.2, false);
+        for &s in &placed[0].spans {
+            session.remove(s);
+        }
+        let cong = Congestion::new(&pcb.outline.vertices);
+        assert!(
+            search_route(&session, &pcb, 0.25, "A", from, to, &cong, false, 50_000, true, None)
+                .is_some(),
+            "fixture broken: A must route on an empty channel"
+        );
+    }
+
+    #[test]
+    fn shove_displaces_blocking_trace_and_routes_stuck_net() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (pcb, mut session, mut placed, from, to) = shove_fixture(13.2, false);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let budget = 50_000;
+
+        // Without shove, every direct search fails: the channel is sealed.
+        assert!(
+            search_route(&session, &pcb, 0.25, "A", from, to, &cong, false, budget, true, None)
+                .is_none(),
+            "fixture broken: direct search must fail before the shove"
+        );
+
+        let original_segments = placed[0].segments.clone();
+        let p = try_route(
+            &mut session,
+            &pcb,
+            0.25,
+            "A",
+            from,
+            to,
+            &mut placed,
+            &cong,
+            false,
+            budget,
+        )
+        .expect("try_route must succeed via the shove stage");
+        assert!(!p.segments.is_empty());
+        assert_ne!(
+            placed[0].segments, original_segments,
+            "the victim must have been displaced"
+        );
+
+        // The shoved victim's copper must re-probe legal against a session
+        // holding everything EXCEPT the victim itself (fresh board + A's
+        // new route), and the whole applied board must be DRC-clean.
+        let mut check = RouteSession::from_pcb(&pcb);
+        for &(a, b, l) in &p.segments {
+            commit_seg(&mut check, "A", a, b, p.width / 2.0, l);
+        }
+        for &(a, b, l) in &placed[0].segments {
+            let seg = CopperGeom::Segment {
+                a,
+                b,
+                half_w: 0.125,
+            };
+            assert!(
+                check.probe(&seg, l, "B", check.clearance_for("B")).legal,
+                "shoved victim copper is illegal: {a:?}->{b:?}"
+            );
+        }
+        let mut applied = pcb.clone();
+        for (net, segs, w) in [
+            ("B", &placed[0].segments, 0.25),
+            ("A", &p.segments, p.width),
+        ] {
+            for &(a, b, l) in segs.iter() {
+                applied.traces.push(Trace {
+                    start: a,
+                    end: b,
+                    width: w,
+                    layer: l,
+                    net: net.into(),
+                    source: None,
+                });
+            }
+        }
+        let bad: Vec<_> = check_drc(&applied)
+            .into_iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Short | crate::drc::DrcRuleType::Clearance
+                )
+            })
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "board after shove must be short/clearance clean, got: {:?}",
+            bad.iter().map(|v| &v.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn shove_refuses_pad_anchored_victim() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (pcb, mut session, mut placed, from, to) = shove_fixture(13.2, true);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let budget = 50_000;
+
+        let original_segments = placed[0].segments.clone();
+        let original_spans = placed[0].spans.clone();
+        assert!(
+            try_route(
+                &mut session,
+                &pcb,
+                0.25,
+                "A",
+                from,
+                to,
+                &mut placed,
+                &cong,
+                false,
+                budget,
+            )
+            .is_none(),
+            "a pad-anchored blocker must refuse the shove and leave A unrouted"
+        );
+        // Victim untouched: same geometry, same live spans.
+        assert_eq!(placed[0].segments, original_segments);
+        assert_eq!(placed[0].spans, original_spans);
+        let seg = CopperGeom::Segment {
+            a: placed[0].segments[0].0,
+            b: placed[0].segments[0].1,
+            half_w: 0.125,
+        };
+        // Its copper is still committed: an other-net probe on it is illegal.
+        assert!(
+            !session
+                .probe(&seg, PcbLayer::FCu, "A", session.clearance_for("A"))
+                .legal,
+            "the victim's original copper must still be in the session"
+        );
     }
 }
