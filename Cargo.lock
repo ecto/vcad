@@ -7394,6 +7394,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-orbit"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-receipt",
+]
+
+[[package]]
 name = "vcad-kernel-particle"
 version = "0.9.4"
 dependencies = [
