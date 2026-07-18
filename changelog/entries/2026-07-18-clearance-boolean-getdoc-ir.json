@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-clearance-boolean-getdoc-ir",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "fix",
+  "title": "check_clearance allow_contact and get_document IR reliability",
+  "summary": "check_clearance now honors allow_contact (and render_view's axes/labels/dims/highlight_changed) even when a client serializes booleans as strings, and get_document returns the full IR in structuredContent so clients that surface it no longer see only a {document_id} stub.",
+  "features": ["clearance", "render", "mcp"],
+  "mcpTools": ["check_clearance", "render_view", "get_document"]
+}

@@ -27,6 +27,7 @@ import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import { transformMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
 import { getSession } from "./session-core.js";
+import { asBool } from "./arg-coerce.js";
 
 /** Claim-id prefix shared with the Rust mech adapter (`vcad-receipt`). */
 export const CLEARANCE_CLAIM_PREFIX = "mech.clearance.";
@@ -285,7 +286,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   const minMm = typeof args.min_mm === "number" ? args.min_mm : NaN;
   if (!Number.isFinite(minMm)) return err("Pass `min_mm`, the required minimum separation in mm.");
   const label = typeof args.label === "string" && args.label.trim() ? args.label.trim() : undefined;
-  const allowContact = args.allow_contact === true;
+  const allowContact = asBool(args.allow_contact);
 
   const doc = getSession(documentId);
   const { result, error } = computeGroupClearance(doc, engine, groupA, groupB);

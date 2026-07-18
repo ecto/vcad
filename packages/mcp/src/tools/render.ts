@@ -25,6 +25,7 @@ import {
   renderAssetSummary,
   withRenderAssets,
 } from "./render-assets.js";
+import { asBool } from "./arg-coerce.js";
 
 export const renderViewSchema = {
   type: "object" as const,
@@ -272,9 +273,9 @@ export async function renderView(
   }
 
   const annotations = {
-    axes: args.axes === true,
-    labels: args.labels === true,
-    dims: args.dims === true,
+    axes: asBool(args.axes),
+    labels: asBool(args.labels),
+    dims: asBool(args.dims),
   };
   const wantAnnotations =
     annotations.axes || annotations.labels || annotations.dims;
@@ -286,7 +287,7 @@ export async function renderView(
   let highlight: string[] = Array.isArray(args.highlight)
     ? (args.highlight as unknown[]).map(String)
     : [];
-  if (highlight.length === 0 && args.highlight_changed === true) {
+  if (highlight.length === 0 && asBool(args.highlight_changed)) {
     const last = documentId ? getLastChanged(documentId) : null;
     if (!last || last.length === 0) {
       return {

@@ -184,6 +184,7 @@ export const getDocumentSchema = {
 
 export function getDocumentTool(args: Record<string, unknown>): {
   content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
 } {
   const id = String(args.document_id ?? "");
   const doc = getSession(id);
@@ -196,31 +197,36 @@ export function getDocumentTool(args: Record<string, unknown>): {
   const cap = maxInlineArtifactBytes();
   if (Buffer.byteLength(inline, "utf8") > cap) {
     const handle = storeArtifact([{ name: `${id}.vcad`, content: inline }]);
+    const overflow = {
+      document_id: id,
+      parts: doc.roots?.length ?? 0,
+      nodes: Object.keys(doc.nodes ?? {}).length,
+      bytes: handle.bytes,
+      artifact_id: handle.artifact_id,
+      artifact_url: handle.artifact_url,
+      manifest: handle.manifest,
+      expires_at: handle.expires_at,
+      note:
+        `Document IR is ${handle.bytes} bytes — over the ${cap}-byte inline ` +
+        "limit, so the full IR was written to the artifact store. Download " +
+        "it at artifact_url (sha256 in the manifest verifies the snapshot); " +
+        "the session stays live via document_id.",
+    };
     return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: id,
-            parts: doc.roots?.length ?? 0,
-            nodes: Object.keys(doc.nodes ?? {}).length,
-            bytes: handle.bytes,
-            artifact_id: handle.artifact_id,
-            artifact_url: handle.artifact_url,
-            manifest: handle.manifest,
-            expires_at: handle.expires_at,
-            note:
-              `Document IR is ${handle.bytes} bytes — over the ${cap}-byte inline ` +
-              "limit, so the full IR was written to the artifact store. Download " +
-              "it at artifact_url (sha256 in the manifest verifies the snapshot); " +
-              "the session stays live via document_id.",
-          }),
-        },
-      ],
+      content: [{ type: "text", text: JSON.stringify(overflow) }],
+      structuredContent: overflow,
     };
   }
+  // Mirror the IR into structuredContent as well as the text body. The
+  // dispatch layer stamps geometry results' structuredContent with a
+  // {document_id, document_version} preview handle; clients that surface
+  // structuredContent instead of the text block would otherwise see only
+  // that stub and never the document the tool exists to return. Carrying
+  // the IR in both places makes get_document return the document on every
+  // client. (Large docs offload above, so this never duplicates megabytes.)
   return {
     content: [{ type: "text", text: inline }],
+    structuredContent: { document: doc, document_id: id },
   };
 }
 
