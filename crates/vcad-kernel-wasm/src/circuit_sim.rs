@@ -11,21 +11,76 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use vcad_ecad_sim::circuit::{Circuit, CircuitEnv, Device, DiodeModel, MotorParams};
+use vcad_ecad_sim::circuit::{
+    BjtModel, Circuit, CircuitEnv, Device, DiodeModel, MosfetModel, MotorParams,
+};
 use wasm_bindgen::prelude::*;
 
 /// One device in a [`CircuitSpec`]. `p`/`n` are node ids (0 = ground).
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum DeviceSpec {
-    Resistor { p: usize, n: usize, value: f64 },
-    Capacitor { p: usize, n: usize, value: f64 },
-    Inductor { p: usize, n: usize, value: f64 },
-    Vsource { p: usize, n: usize, value: f64 },
-    Isource { p: usize, n: usize, value: f64 },
-    Diode { p: usize, n: usize },
-    Led { p: usize, n: usize },
-    Motor { p: usize, n: usize },
+    Resistor {
+        p: usize,
+        n: usize,
+        value: f64,
+    },
+    Capacitor {
+        p: usize,
+        n: usize,
+        value: f64,
+    },
+    Inductor {
+        p: usize,
+        n: usize,
+        value: f64,
+    },
+    Vsource {
+        p: usize,
+        n: usize,
+        value: f64,
+    },
+    Isource {
+        p: usize,
+        n: usize,
+        value: f64,
+    },
+    Diode {
+        p: usize,
+        n: usize,
+    },
+    Led {
+        p: usize,
+        n: usize,
+    },
+    Motor {
+        p: usize,
+        n: usize,
+    },
+    /// N-channel level-1 MOSFET (drain / gate / source node ids).
+    Nmos {
+        d: usize,
+        g: usize,
+        s: usize,
+    },
+    /// P-channel level-1 MOSFET.
+    Pmos {
+        d: usize,
+        g: usize,
+        s: usize,
+    },
+    /// NPN BJT (collector / base / emitter node ids).
+    Npn {
+        c: usize,
+        b: usize,
+        e: usize,
+    },
+    /// PNP BJT.
+    Pnp {
+        c: usize,
+        b: usize,
+        e: usize,
+    },
 }
 
 impl DeviceSpec {
@@ -39,6 +94,8 @@ impl DeviceSpec {
             | DeviceSpec::Diode { p, n }
             | DeviceSpec::Led { p, n }
             | DeviceSpec::Motor { p, n } => p.max(n),
+            DeviceSpec::Nmos { d, g, s } | DeviceSpec::Pmos { d, g, s } => d.max(g).max(s),
+            DeviceSpec::Npn { c, b, e } | DeviceSpec::Pnp { c, b, e } => c.max(b).max(e),
         }
     }
 
@@ -63,6 +120,30 @@ impl DeviceSpec {
                 p,
                 n,
                 params: MotorParams::small_dc(),
+            },
+            DeviceSpec::Nmos { d, g, s } => Device::Mosfet {
+                d,
+                g,
+                s,
+                model: MosfetModel::nmos(),
+            },
+            DeviceSpec::Pmos { d, g, s } => Device::Mosfet {
+                d,
+                g,
+                s,
+                model: MosfetModel::pmos(),
+            },
+            DeviceSpec::Npn { c, b, e } => Device::Bjt {
+                c,
+                b,
+                e,
+                model: BjtModel::npn(),
+            },
+            DeviceSpec::Pnp { c, b, e } => Device::Bjt {
+                c,
+                b,
+                e,
+                model: BjtModel::pnp(),
             },
         }
     }

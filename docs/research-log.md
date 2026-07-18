@@ -494,3 +494,47 @@ New crate (branch `claude/kernel-orbit-m0`), details in
   24 h (max el 75.0° at 08:03 UTC), stated honest to ±minutes.
 - M1 queued: drag + SGP4-compat (or a seam to the `sgp4` crate) +
   TEME↔ICRF, then the differentiable propagator (ΔV optimization).
+
+## 2026-07-17 — circuit M1.1: transistors, and the Tellegen gate learns three terminals
+
+Level-1 MOSFET (Shichman–Hodges, SPICE2 UCB ERL-M520 §2) and Ebers–Moll
+BJT (transport form) land in `vcad-ecad-sim::circuit`, both polarities via
+the sign transformation, wired through all four analyses (transient, DC,
+AC, adjoint) plus the WASM `DeviceSpec`. Branch
+`claude/circuit-m1-transistors`.
+
+| rung | oracle | result |
+|---|---|---|
+| MOSFET saturation | (kp/2)·vov²·(1+λ·vds) square law | < 1e-9 rel |
+| common-source gain | −gm·(Rd ∥ ro) at the op point | < 1e-9 rel, phase exactly real |
+| CMOS inverter transfer | rail-to-rail, monotone, VDD/2 switch point | passes through the gmin ladder |
+| BJT current mirror | I_out/I_ref = 1/(1 + 2/βF) | < 5e-3 abs |
+| DC adjoint vs FD | central differences: kp, vt0, Is, βF + all linear slots | < 1e-4 rel |
+| AC diode chain term vs FD | d\|H\|/dR and d\|H\|/dIs through the op-point shift | < 1e-4 rel |
+| Tellegen with transistors | Σ (all-terminal) v·i, 2000 steps × 2 integrators | < 1e-9 rel |
+
+- **The 3-terminal seam was the real work, not the I–V curves.** `Device`
+  was structurally two-terminal: `terminals() → (p, n)` and power =
+  `(v_p − v_n)·i` everywhere. A MOSFET survives that fiction (the gate
+  draws nothing) but a BJT does not — its base current carries real power,
+  and the Tellegen gate caught the miscount immediately. Fix:
+  `Device::power()` sums over *all* terminals; `terminals()` documents its
+  meaning as the current-carrying pair (drain/source, collector/emitter).
+- **One eval, four consumers**: `MosfetModel::eval` returns
+  (ids, gm, gds, ∂ids/∂kp, ∂ids/∂vt0) in external convention with polarity
+  and the vds < 0 source-drain swap folded in; `BjtModel::eval` likewise
+  returns the three branch currents + four conductances. Transient, DC,
+  AC, and the adjoint all read the same numbers — no per-analysis model
+  drift possible.
+- **M0's flagged gap is closed**: the AC diode sensitivity slot was an
+  honest placeholder; it now carries the full chain term
+  dH/dp = ∂H/∂p + Σ (∂H/∂g_d)·(dg_d/dv_d)·(dv_d/dp), with ∂H/∂g_d from
+  the AC adjoint and dv_d/dp from one DC adjoint solve per diode node.
+  `deferred` now lists exactly the transistors (their version needs model
+  second derivatives — deferred honestly, same pattern).
+- Newton hygiene: BJT junctions get `pnjlim` on both vbe and vbc (in the
+  internal N-frame so PNP limits correctly); FET voltages get a ±2 V step
+  clamp (the square law can't explode, but undamped steps oscillate across
+  the triode/saturation boundary).
+- Next on the M1 ladder: transient adjoint, then the netlist-from-ecad
+  seam so schematics simulate without re-entry.

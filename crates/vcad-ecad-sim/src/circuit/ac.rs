@@ -16,7 +16,7 @@
 //! dependency, and the dense complex LU is a line-for-line sibling of the
 //! real one in [`super::linalg`].
 
-use super::dc::{operating_point, DcError};
+use super::dc::{operating_point, DcError, DcSolution};
 use super::devices::VT;
 use super::{Circuit, Device};
 
@@ -183,6 +183,20 @@ pub fn solve_dense_c(a: &mut [Cplx], b: &mut [Cplx], n: usize) -> Option<Vec<Cpl
     Some(x)
 }
 
+/// Complex VCCS stamp: current `g·(v(cp) − v(cn))` drawn out of node `op`
+/// into node `on` (mirrors `devices::stamp_vccs`).
+fn stamp_vccs_c(a: &mut [Cplx], m: usize, op: usize, on: usize, cp: usize, cn: usize, g: Cplx) {
+    let mut add = |row: usize, col: usize, v: Cplx| {
+        if row != 0 && col != 0 {
+            a[(row - 1) * m + (col - 1)] += v;
+        }
+    };
+    add(op, cp, g);
+    add(op, cn, -g);
+    add(on, cp, -g);
+    add(on, cn, g);
+}
+
 /// Why an AC solve failed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AcError {
@@ -238,6 +252,9 @@ pub(crate) struct AcSystem {
     pub x: Vec<Cplx>,
     /// Branch index (into the branch block) per device id, for branch devices.
     pub branch_of: Vec<Option<usize>>,
+    /// The DC operating point the nonlinear devices were linearized at
+    /// (`None` for an all-linear network, where none was needed).
+    pub op: Option<DcSolution>,
 }
 
 /// Number of AC branch unknowns: voltage sources and inductors.
@@ -268,22 +285,18 @@ pub(crate) fn build_and_solve(
         _ => return Err(AcError::BadSource),
     }
 
-    // Diode small-signal conductances need the DC operating point.
-    let mut diode_g = vec![0.0f64; circuit.devices.len()];
-    if circuit
-        .devices
-        .iter()
-        .any(|d| matches!(d, Device::Diode { .. }))
-    {
-        let dc = operating_point(circuit)?;
-        for (id, dev) in circuit.devices.iter().enumerate() {
-            if let Device::Diode { p, n, model } = *dev {
-                let vte = model.n * VT;
-                let vd = dc.node_voltages[p] - dc.node_voltages[n];
-                diode_g[id] = (model.is / vte) * (vd / vte).min(60.0).exp();
-            }
-        }
-    }
+    // Nonlinear devices linearize about the DC operating point.
+    let op = if circuit.devices.iter().any(|d| {
+        matches!(
+            d,
+            Device::Diode { .. } | Device::Mosfet { .. } | Device::Bjt { .. }
+        )
+    }) {
+        Some(operating_point(circuit)?)
+    } else {
+        None
+    };
+    let opv = |node: usize| op.as_ref().map_or(0.0, |o| o.node_voltages[node]);
 
     let nn = circuit.num_nodes;
     let nb = ac_branches(circuit);
@@ -310,7 +323,25 @@ pub(crate) fn build_and_solve(
         match *dev {
             Device::Resistor { p, n, r } => stamp_g(&mut a, p, n, Cplx::real(1.0 / r)),
             Device::Capacitor { p, n, c } => stamp_g(&mut a, p, n, Cplx::imag(omega * c)),
-            Device::Diode { p, n, .. } => stamp_g(&mut a, p, n, Cplx::real(diode_g[id])),
+            Device::Diode { p, n, model } => {
+                let vte = model.n * VT;
+                let vd = opv(p) - opv(n);
+                let g = (model.is / vte) * (vd / vte).min(60.0).exp();
+                stamp_g(&mut a, p, n, Cplx::real(g));
+            }
+            Device::Mosfet { d, g, s, model } => {
+                // gm / gds linearization at the DC operating point.
+                let (_, gm, gds, _, _) = model.eval(opv(g) - opv(s), opv(d) - opv(s));
+                stamp_g(&mut a, d, s, Cplx::real(gds));
+                stamp_vccs_c(&mut a, m, d, s, g, s, Cplx::real(gm));
+            }
+            Device::Bjt { c, b, e, model } => {
+                let ev = model.eval(opv(b) - opv(e), opv(b) - opv(c));
+                stamp_g(&mut a, b, e, Cplx::real(ev.gpi));
+                stamp_g(&mut a, b, c, Cplx::real(ev.gmu));
+                stamp_vccs_c(&mut a, m, c, e, b, e, Cplx::real(ev.gmf));
+                stamp_vccs_c(&mut a, m, c, e, b, c, Cplx::real(-ev.gmr));
+            }
             Device::Inductor { p, n, l } => {
                 let br = (nn - 1) + branch;
                 branch_of[id] = Some(branch);
@@ -365,6 +396,7 @@ pub(crate) fn build_and_solve(
         a,
         x,
         branch_of,
+        op,
     })
 }
 

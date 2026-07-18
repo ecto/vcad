@@ -96,7 +96,7 @@ pub fn operating_point(circuit: &Circuit) -> Result<DcSolution, DcError> {
     // gmin ladder: heavy shunt first, then relax, then remove entirely.
     let gmins = [1e-3, 1e-6, 1e-9, 1e-12, 0.0];
     let mut node_v = vec![0.0f64; nn];
-    let mut nl_state = vec![0.0f64; circuit.devices.len()];
+    let mut nl_state = vec![[0.0f64; 2]; circuit.devices.len()];
     let mut branch_i = vec![0.0f64; nb];
     let mut final_iters = 0usize;
 
@@ -156,6 +156,9 @@ pub fn operating_point(circuit: &Circuit) -> Result<DcSolution, DcError> {
             Device::Diode { p, n, model } => {
                 device_currents[id] = model.current(node_v[p] - node_v[n]);
             }
+            Device::Mosfet { .. } | Device::Bjt { .. } => {
+                device_currents[id] = dev.current(&node_v);
+            }
             Device::Motor { .. } => unreachable!("rejected above"),
         }
     }
@@ -164,10 +167,7 @@ pub fn operating_point(circuit: &Circuit) -> Result<DcSolution, DcError> {
         .devices
         .iter()
         .enumerate()
-        .map(|(id, d)| {
-            let (p, n) = d.terminals();
-            (node_v[p] - node_v[n]) * device_currents[id]
-        })
+        .map(|(id, d)| d.power(&node_v, device_currents[id]))
         .sum();
 
     Ok(DcSolution {
@@ -178,8 +178,9 @@ pub fn operating_point(circuit: &Circuit) -> Result<DcSolution, DcError> {
     })
 }
 
-/// Stamp one device into the DC MNA system. `nl_state` carries the diode's
-/// limited junction voltage across Newton iterations.
+/// Stamp one device into the DC MNA system. `nl_state` carries the device's
+/// limited nonlinear voltages across Newton iterations (diode: `[v_d, –]`,
+/// MOSFET: `[vgs, vds]`, BJT: `[vbe, vbc]`).
 #[allow(clippy::too_many_arguments)]
 fn stamp_dc(
     dev: &Device,
@@ -189,7 +190,7 @@ fn stamp_dc(
     nn: usize,
     branch: &mut usize,
     guess: &[f64],
-    nl_state: &mut f64,
+    nl_state: &mut [f64; 2],
 ) {
     let mut stamp_branch = |a: &mut [f64], rhs: &mut [f64], p: usize, n: usize, v: f64| {
         let br = (nn - 1) + *branch;
@@ -216,14 +217,20 @@ fn stamp_dc(
             let vte = model.n * super::devices::VT;
             let vcrit = vte * (vte / (std::f64::consts::SQRT_2 * model.is)).ln();
             let vd_raw = guess[p] - guess[n];
-            let vd = super::devices::pnjlim(vd_raw, *nl_state, vte, vcrit);
-            *nl_state = vd;
+            let vd = super::devices::pnjlim(vd_raw, nl_state[0], vte, vcrit);
+            nl_state[0] = vd;
             let ev = (vd / vte).min(60.0).exp();
             let id = model.is * (ev - 1.0);
             let geq = (model.is / vte) * ev;
             let ieq = id - geq * vd;
             stamp_conductance(a, m, p, n, geq);
             inject(rhs, p, n, -ieq);
+        }
+        Device::Mosfet { d, g, s, model } => {
+            super::devices::stamp_mosfet(a, rhs, m, d, g, s, &model, nl_state, guess);
+        }
+        Device::Bjt { c, b, e, model } => {
+            super::devices::stamp_bjt(a, rhs, m, c, b, e, &model, nl_state, guess);
         }
         Device::Motor { .. } => unreachable!("rejected before stamping"),
     }
@@ -308,6 +315,63 @@ mod tests {
         let sol = operating_point(&c).unwrap();
         assert!((sol.node_voltages[top] - 9.0).abs() < 1e-9);
         assert!(sol.device_currents[r].abs() < 1e-12);
+    }
+
+    #[test]
+    fn cmos_inverter_transfers_and_converges_through_the_gmin_ladder() {
+        // NMOS pull-down + PMOS pull-up, 5 V rail. The strongly nonlinear
+        // switching region is exactly what the gmin ladder exists for.
+        use crate::circuit::MosfetModel;
+        let solve = |vin_v: f64| {
+            let mut c = Circuit::new();
+            let vdd = c.node();
+            let vin = c.node();
+            let out = c.node();
+            c.add(Device::VSource {
+                p: vdd,
+                n: 0,
+                v: 5.0,
+            });
+            c.add(Device::VSource {
+                p: vin,
+                n: 0,
+                v: vin_v,
+            });
+            c.add(Device::Mosfet {
+                d: out,
+                g: vin,
+                s: 0,
+                model: MosfetModel::nmos(),
+            });
+            c.add(Device::Mosfet {
+                d: out,
+                g: vin,
+                s: vdd,
+                model: MosfetModel::pmos(),
+            });
+            // Weak load so the off-state output node is never floating.
+            c.add(Device::Resistor {
+                p: out,
+                n: 0,
+                r: 1e9,
+            });
+            operating_point(&c).unwrap().node_voltages[out]
+        };
+        // Input low → output at the rail; input high → output at ground.
+        assert!(solve(0.0) > 4.9, "low in must pull out to VDD");
+        assert!(solve(5.0) < 0.1, "high in must pull out to ground");
+        // Midpoint: both devices on; with symmetric N/P models the output
+        // sits at the switching point near VDD/2.
+        let mid = solve(2.5);
+        assert!(
+            (1.5..3.5).contains(&mid),
+            "switching-point output {mid} should be near VDD/2"
+        );
+        // The transfer curve is monotonically non-increasing.
+        let vs: Vec<f64> = (0..=10).map(|k| solve(0.5 * k as f64)).collect();
+        for w in vs.windows(2) {
+            assert!(w[1] <= w[0] + 1e-9, "inverter transfer must be monotone");
+        }
     }
 
     #[test]
