@@ -12,7 +12,7 @@
 
 import type { Engine, StaticAnalysisSpec, StaticAnalysisResult } from "@vcad/engine";
 import type { DesignReceipt, ReceiptClaim, OracleRef } from "@vcad/ir";
-import { getSession } from "./session.js";
+import { getSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { resolvePartMesh } from "./topopt.js";
 import { RECEIPT_SCHEMA, summarize, unverifiableClaim } from "../receipt-unified.js";

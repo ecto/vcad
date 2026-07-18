@@ -11,7 +11,7 @@
 import { transformMesh, type Engine, type TriangleMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { isoperimetricViolation } from "./integrity.js";
-import { resolveDocInput } from "./session.js";
+import { resolveDocInput } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 export const inspectCadSchema = {

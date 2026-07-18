@@ -32,6 +32,12 @@ import {
   SET_DOCUMENT_NAME_TOOL,
   executeAiDocumentTool,
 } from "@/lib/ai-document-tools";
+import {
+  MCP_CHAT_TOOL_NAMES,
+  MCP_TOOLS_SYSTEM_PROMPT_APPENDIX,
+  mcpChatTools,
+  executeMcpChatTool,
+} from "@/lib/mcp-chat-tools";
 
 /**
  * Parse a rate-limit error body emitted by streamChat with LIMIT_ERROR_PREFIX.
@@ -244,6 +250,7 @@ function runTurn(
 
     const tools = [
       ...commandRegistry.toAnthropicTools(),
+      ...mcpChatTools(),
       SCREENSHOT_VIEWPORT_TOOL,
       GET_DOCUMENT_NAME_TOOL,
       SET_DOCUMENT_NAME_TOOL,
@@ -254,6 +261,7 @@ function runTurn(
       SCREENSHOT_SYSTEM_PROMPT_APPENDIX +
       AI_CAMERA_SYSTEM_PROMPT_APPENDIX +
       AI_DOCUMENT_SYSTEM_PROMPT_APPENDIX +
+      MCP_TOOLS_SYSTEM_PROMPT_APPENDIX +
       buildSceneSnapshot();
 
     streamChat(history, context, {
@@ -571,6 +579,16 @@ export function useChatHandler() {
               }
             } else if (AI_CAMERA_TOOL_NAMES.has(tool.name)) {
               const exec = executeAiCamera(tool);
+              toolResults.push({ id: tool.id, content: exec.result, status: exec.status });
+              const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
+              if (entry) {
+                entry.result = exec.result;
+                entry.status = exec.status;
+                entry.display = exec.display;
+                entry.duration = exec.duration;
+              }
+            } else if (MCP_CHAT_TOOL_NAMES.has(tool.name)) {
+              const exec = await executeMcpChatTool(tool);
               toolResults.push({ id: tool.id, content: exec.result, status: exec.status });
               const entry = accumulatedToolCalls.find((t) => t.id === tool.id);
               if (entry) {

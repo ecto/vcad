@@ -24,7 +24,7 @@ import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import { transformMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { computeMeshProperties, type BoundingBox } from "./inspect.js";
-import { getSession } from "./session.js";
+import { getSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Round to micron precision so payloads don't carry float noise. */

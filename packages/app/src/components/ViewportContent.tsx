@@ -33,6 +33,7 @@ import { BoundaryEdgeOverlay } from "./BoundaryEdgeOverlay";
 import { useDebugOverlayStore } from "../stores/debug-overlay-store";
 import { InspectedTriangleMarker } from "./TriangleInspector";
 import { ClashMesh } from "./ClashMesh";
+import { ClearanceIndicatorOverlay } from "./ClearanceIndicatorOverlay";
 import { PreviewMesh } from "./PreviewMesh";
 import { SketchPlane3D } from "./SketchPlane3D";
 import { PlaneGizmo } from "./PlaneGizmo";
@@ -1920,6 +1921,9 @@ export function ViewportContent({
           {scene?.clashes.map((clashMesh, idx) => (
             <ClashMesh key={`clash-${idx}`} mesh={clashMesh} />
           ))}
+
+          {/* Min-distance line from a chat check_clearance call */}
+          <ClearanceIndicatorOverlay />
 
           {/* Extrusion preview (semi-transparent) */}
           {previewMesh && <PreviewMesh mesh={previewMesh} />}

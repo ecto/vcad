@@ -26,7 +26,7 @@ import type {
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import { transformMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
-import { getSession } from "./session.js";
+import { getSession } from "./session-core.js";
 
 /** Claim-id prefix shared with the Rust mech adapter (`vcad-receipt`). */
 export const CLEARANCE_CLAIM_PREFIX = "mech.clearance.";

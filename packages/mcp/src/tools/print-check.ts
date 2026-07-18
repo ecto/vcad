@@ -30,7 +30,7 @@ import {
   type MeasurementContext,
   type PrintPrediction,
 } from "@vcad/core";
-import { getSession } from "./session.js";
+import { getSession } from "./session-core.js";
 import { computeInspection } from "./inspect.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
