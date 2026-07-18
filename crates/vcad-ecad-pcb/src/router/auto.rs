@@ -1004,7 +1004,7 @@ fn try_route(
     net: &str,
     from: Vec2,
     to: Vec2,
-    placed: &mut [Placed],
+    placed: &mut Vec<Placed>,
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
@@ -1040,6 +1040,27 @@ fn try_route(
         max_expansions,
     ) {
         return Some(p);
+    }
+    // Coupled differential-pair stage: a `_P`/`_N` (or `_C`/`_T`) net whose
+    // lone placement failed is exactly the anti-pattern — route it WITH its
+    // twin as one phantom fat trace realized as two coupled legs, committed
+    // atomically. The partner's Placed lands in `placed` here; the net's own
+    // is returned like any other route.
+    if super::pair::pair_partner(net).is_some() {
+        if let Some((mine, theirs)) = super::pair::try_route_pair(
+            session,
+            pcb,
+            width,
+            net,
+            from,
+            to,
+            placed,
+            cong,
+            max_expansions,
+        ) {
+            placed.push(theirs);
+            return Some(mine);
+        }
     }
     // Last resort — true shove: displace the routed traces blocking the
     // corridor sideways (bounded, transactional) instead of ripping them,
@@ -1157,12 +1178,12 @@ fn try_route_escape(
 /// re-validates against the *current* session, so candidates can be searched
 /// in parallel against a frozen snapshot and committed sequentially.
 pub(super) struct Candidate {
-    net: String,
-    from: Vec2,
-    to: Vec2,
-    width: f64,
-    segments: Vec<(Vec2, Vec2, PcbLayer)>,
-    vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+    pub(super) net: String,
+    pub(super) from: Vec2,
+    pub(super) to: Vec2,
+    pub(super) width: f64,
+    pub(super) segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    pub(super) vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
 }
 
 /// The pure-search half of [`try_route`]: find a clearance-legal route
@@ -2673,6 +2694,62 @@ mod tests {
                 "escape-assisted route emitted illegal copper: {a:?}->{b:?}"
             );
         }
+    }
+
+    #[test]
+    fn try_route_pairs_p_net_with_partner() {
+        // A `_P` net whose lone maze fails (tiny expansion budget) must be
+        // routed as a coupled pair via the pair stage: try_route returns the
+        // P leg and pushes the N leg into `placed` — both nets end up routed.
+        let small = |num: &str, y: f64, net: &str| Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Circle { diameter: 0.3 },
+            position: Vec2::new(0.0, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        };
+        let pcb = board(vec![
+            fp(
+                "J1",
+                5.0,
+                15.0,
+                vec![small("1", 0.325, "LVDS_P"), small("2", -0.325, "LVDS_N")],
+            ),
+            fp(
+                "U1",
+                45.0,
+                15.0,
+                vec![small("1", 0.325, "LVDS_P"), small("2", -0.325, "LVDS_N")],
+            ),
+        ]);
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let mut placed: Vec<Placed> = Vec::new();
+        let from = Vec2::new(5.0, 15.325);
+        let to = Vec2::new(45.0, 15.325);
+        // Budget too small for the ~90-cell direct maze — forces the fallback
+        // ladder down to the pair stage (which uses its own generous floor).
+        let p = try_route(
+            &mut session,
+            &pcb,
+            0.25,
+            "LVDS_P",
+            from,
+            to,
+            &mut placed,
+            &cong,
+            false,
+            20,
+        )
+        .expect("pair stage must route the P net with its partner");
+        assert_eq!(p.net, "LVDS_P");
+        assert!(!p.segments.is_empty());
+        assert_eq!(placed.len(), 1, "partner leg must land in placed");
+        assert_eq!(placed[0].net, "LVDS_N");
+        assert!(!placed[0].segments.is_empty());
     }
 
     #[test]

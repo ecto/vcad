@@ -48,6 +48,7 @@ pub mod grid;
 pub mod length_match;
 pub mod length_tune;
 pub mod maze;
+pub(crate) mod pair;
 pub mod push_shove;
 pub(crate) mod shove;
 
