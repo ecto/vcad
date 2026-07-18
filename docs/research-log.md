@@ -316,3 +316,63 @@ sweeping electron current:
   polywell-scale electron currents**. Four self-corrections, all
   receipted. This is the Q-lane's road: e-cloud self-consistency, loss
   accounting, then the neutralized machine priced honestly.
+
+## 2026-07-17 — Phase 0 recon: air-side acoustics is a GO (a new domain)
+
+Scouting a new domain for the sim→measurement loop the workspace has run five
+times (fusion/IEC, thermal, EM, photonics, neutronics). Triad confirmed for
+**air-side acoustics** (cavities, ports, horns, rooms):
+
+1. **Real domain, bad tooling**: loudspeaker enclosure / Helmholtz-resonator
+   design. Incumbents are 1990s freeware ([Hornresp](https://www.hornresp.net/),
+   BassBox) or five-figure FEA — a scatter of one-off calculators in between.
+2. **Analytic ground truth**: rigid-cylinder axial modes `fₙ = n·c/2L`
+   (exact), Helmholtz/bass-reflex tuning `f = (c/2π)√(S/(V·L_eff))` with
+   end corrections (Beranek; Kinsler & Frey §10.5), baffled-piston on-axis
+   Rayleigh closed form (Kinsler & Frey §7.4).
+3. **$20 instrument**: a calibrated measurement microphone + swept sine — the
+   exact loop the glockenspiel closed (`simulate_strike`, verified to −5 cents).
+
+**Non-overlap with `simulate_strike` is clean.** `simulate_strike`
+(`packages/mcp/src/tools/acoustics.ts`) is a *structural* 1-D Euler–Bernoulli /
+Hermite beam FEM **in TypeScript** — how a solid bar bends. The new crate is the
+*air-side* Helmholtz field in Rust — how the air resonates and radiates. They
+meet at one BC (structural mode shape → surface velocity → Neumann datum for the
+air solve); coupling is M2. Verdict: **GO**.
+
+## 2026-07-17 — vcad-kernel-acoustics M0: the field solver reproduces the closed forms
+
+New crate: axisymmetric Helmholtz field solve (vertex-centred finite volume,
+direct block-Thomas — the operator is indefinite, so SOR would diverge), lumped
+duct/cavity/Helmholtz oracles, baffled-piston radiation (Rayleigh + closed
+form), port-sizing optimizer, `vcad.acoustics-claims/1`. Validation ladder
+(`cargo test -p vcad-kernel-acoustics`, `docs/acoustics-m0.md`):
+
+| check | result | oracle |
+|---|---|---|
+| closed cylinder axial mode 1 | **0.10%** err | `f₁ = c/2L` |
+| closed cylinder axial mode 2 | **0.04%** err | `f₂ = 2c/2L` |
+| grid convergence (dz 17→8.5→4.25 mm) | 0.104% → 0.025% → **0.005%** (2nd order, floor named) | — |
+| reciprocity (source↔receiver) | **4.5×10⁻¹⁶** | symmetric FV |
+| Rayleigh integrator vs on-axis | < 2% | piston closed form |
+| Rayleigh directivity null | at `ka·sinθ = 3.8317` | first zero of `J₁` |
+
+- **The finite-volume assembly pays off exactly as designed**: reciprocity to
+  machine epsilon (4.5e-16) is the receipt that the operator is symmetric, and
+  second-order convergence to a 0.005% floor confirms the discretisation is
+  consistent. The floor was sweep-resolution, not grid — named and measured.
+- **Flagship `examples/ported_box.rs`**: a 9.4 L bass-reflex box. Lumped `f_b`
+  band 61.9/63.0/66.3 Hz at a 120 mm port; the field sweep reads **72.4 Hz**
+  (port-velocity peak). The FD optimizer then sizes the port **120 → 339 mm**
+  to hit a 45 Hz target, retuning the field solve **72.4 → 45.0 Hz** (residual
+  0.14 Hz) — the loop closed against the sim, not the formula.
+- **Negative result, logged proudly**: the pressure-release mouth reads tuning
+  **~15% high** (resonator +18% on nominal, +11% over the interior-only bound;
+  ported box +15%). It omits the exterior radiation mass and under-resolves the
+  interior junction mass at M0 neck resolution. Not a bug — a known BC gap a
+  radiation-impedance mouth closes (M1). The lumped band ships next to every
+  field tuning so the gap is never hidden, and `distance`-style honesty is in
+  the claim notes: lossless ⇒ Q is an upper bound, stated on every claim.
+- Same pattern as the five prior domains: analytic ladder with citations,
+  conservative/symmetric discretisation, fail-closed `predicted` claims that
+  roll up Provisional (never Pass) until a mic measures them.

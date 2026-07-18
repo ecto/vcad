@@ -185,6 +185,26 @@ vcad/
 │   #                            # diffusion thickness gradients; fission
 │   #                            # refused permanently; vcad.neutronics-claims/1
 │   #                            # (docs/neutronics-m0.md)
+│   # - vcad-kernel-acoustics    # Air-side acoustics, M0 COMPLETE: axisym
+│   #                            # (r,z) Helmholtz field solve (vertex-centred
+│   #                            # finite volume — conservative, symmetric →
+│   #                            # reciprocal to 4.5e-16; direct block-Thomas
+│   #                            # since the operator is indefinite, SOR would
+│   #                            # diverge) + lumped duct-mass/cavity-
+│   #                            # compliance/Helmholtz-tuning oracles +
+│   #                            # baffled-piston radiation (Rayleigh + closed
+│   #                            # form) + port-sizing optimizer. Reproduces
+│   #                            # cylinder axial modes fₙ=n·c/2L (0.04-0.1%),
+│   #                            # 2nd-order convergence to a 0.005% floor.
+│   #                            # Complements the *structural* simulate_strike
+│   #                            # (TS beam FEM): seam is surface-velocity-in,
+│   #                            # pressure-out — coupling is M2. Lossless (Q
+│   #                            # optimistic), pressure-release mouth reads
+│   #                            # tuning ~15% high (M1 radiation mouth closes
+│   #                            # it). vcad.acoustics-claims/1 (predicted →
+│   #                            # Provisional; mic + swept sine close it, the
+│   #                            # glockenspiel precedent). Flagship
+│   #                            # examples/ported_box.rs. (docs/acoustics-m0.md)
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics
