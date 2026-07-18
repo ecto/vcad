@@ -103,7 +103,16 @@ binds them is M-next, mirroring the antenna/EM measurement packs.
    time, overshoot) become differentiable.
 3. LTE-based adaptive timestep (with the frozen-discretization caveat for
    gradient runs, per the particle crate's scar tissue).
-4. Netlist-from-ecad seam: `vcad-ecad-schematic` nets → `Circuit`, so the
-   PCB stack's schematics simulate and differentiate without re-entry.
+4. ~~Netlist-from-ecad seam~~ — **DONE** (`circuit::netlist`, 2026-07-17):
+   `circuit_from_schematic` maps a `SchematicSheet` (components + nets via
+   `vcad_ecad_schematic::generate_netlist`) onto `Circuit` nodes/devices.
+   Refdes-prefix convention (R/C/L/V/I/D), SI value parsing (`4.7k`,
+   `100n`, `4R7`, case-sensitive `m`/`M`), ground-family nets → node 0,
+   fail-closed per-component blockers for ICs/connectors with an explicit
+   `stub_as_open` allowlist. Round-trip validated against the ladder's
+   closed forms (DC divider, AC RC corner, both to 1e-12). **No layout
+   parasitics** — trace R/L/C extraction from the routed board is M2.
+   The `simulate_circuit`/`tune_circuit` MCP tools (item 6) should accept
+   `{document_id}` and ride this seam.
 5. Tolerance-yield bridge to `vcad-kernel-tolerance`.
 6. MCP tools (`simulate_circuit`, `tune_circuit`) riding the WASM binding.
