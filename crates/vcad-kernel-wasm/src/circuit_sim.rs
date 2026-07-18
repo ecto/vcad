@@ -922,3 +922,261 @@ fn tune_dc(
         receipt_claims,
     })
 }
+
+// ---------------------------------------------------------------------------
+// Schematic → circuit mapping (the #583 netlist seam, over WASM).
+// ---------------------------------------------------------------------------
+
+/// One supply rail to inject as an independent voltage source (net → node,
+/// referenced to ground).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupplySpec {
+    net: String,
+    volts: f64,
+}
+
+/// Options for [`circuit_from_schematic_wasm`], all optional.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MapOptions {
+    /// Reference designators stubbed as open circuits (connectors, power
+    /// symbols, unpopulated ICs).
+    #[serde(default)]
+    stub_as_open: Vec<String>,
+    /// Extra net names to collapse onto ground (node 0) beyond the
+    /// GND/VSS/0-style names the converter recognizes on its own — the app
+    /// resolves ground by power *symbol*, not net name, and passes the result
+    /// here.
+    #[serde(default)]
+    ground_nets: Vec<String>,
+    /// Supply rails: each net listed here (if any mapped device touches it)
+    /// gets an injected `vsource` to ground at the given voltage.
+    #[serde(default)]
+    supplies: Vec<SupplySpec>,
+}
+
+/// One serialized device of the mapped circuit, in the same `{kind,p,n,value}`
+/// shape every `circuit*` analysis entry point parses.
+#[derive(Debug, Serialize)]
+struct SpecDeviceOut {
+    kind: &'static str,
+    p: usize,
+    n: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
+}
+
+/// One component that blocked the conversion (fail-closed: if any component
+/// can't be mapped, nothing simulates and every blocker is listed).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockerOut {
+    reference: String,
+    message: String,
+}
+
+/// Result of [`circuit_from_schematic_wasm`]: either the mapped circuit spec
+/// plus the name↔id bookkeeping, or the full blocker list. Failure is data,
+/// not an exception, so the app can pin each blocker on its component.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MappedCircuitOut {
+    ok: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    blockers: Vec<BlockerOut>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    devices: Vec<SpecDeviceOut>,
+    num_nodes: usize,
+    node_of_net: std::collections::BTreeMap<String, usize>,
+    device_of_ref: std::collections::BTreeMap<String, usize>,
+    ground_nets: Vec<String>,
+    stubbed: Vec<String>,
+    /// Injected supply rails: net name → device id of the added vsource.
+    supply_source_of_net: std::collections::BTreeMap<String, usize>,
+    /// Supplies requested but touching no mapped device (nothing injected).
+    unconnected_supplies: Vec<String>,
+}
+
+/// Map a schematic sheet to a simulatable circuit spec via the fail-closed
+/// netlist seam (`vcad-ecad-sim::circuit::netlist`).
+///
+/// * `sch_json` — JSON-serialized `SchematicSheet` (same shape as
+///   `ecadGenerateNetlist` takes).
+/// * `options_json` — JSON [`MapOptions`] (`{}` for defaults).
+///
+/// Returns `{ok: true, devices, nodeOfNet, deviceOfRef, ...}` on success, or
+/// `{ok: false, blockers: [{reference, message}]}` when any component can't
+/// be mapped — nothing is silently skipped.
+#[wasm_bindgen(js_name = circuitFromSchematic)]
+pub fn circuit_from_schematic_wasm(sch_json: &str, options_json: &str) -> Result<JsValue, JsError> {
+    use vcad_ecad_sim::circuit::netlist::{
+        circuit_from_netlist, ConvertError, ConvertOptions, SimComponent,
+    };
+
+    let sheet: vcad_ir::ecad::SchematicSheet = serde_json::from_str(sch_json)
+        .map_err(|e| JsError::new(&format!("bad schematic JSON: {e}")))?;
+    let options: MapOptions = serde_json::from_str(if options_json.trim().is_empty() {
+        "{}"
+    } else {
+        options_json
+    })
+    .map_err(|e| JsError::new(&format!("bad options JSON: {e}")))?;
+
+    let mut netlist = vcad_ecad_schematic::generate_netlist(&sheet);
+
+    // Collapse caller-declared ground nets onto a canonical ground name so the
+    // converter maps them to node 0. Remember the aliases so the returned
+    // node map still answers by the original net name.
+    let ground_aliases: std::collections::BTreeSet<String> =
+        options.ground_nets.iter().cloned().collect();
+    for net in &mut netlist.nets {
+        if ground_aliases.contains(&net.name) {
+            net.name = "GND".to_string();
+        }
+    }
+
+    let components: Vec<SimComponent> = sheet
+        .components
+        .iter()
+        .map(|c| SimComponent {
+            reference: c.reference.clone(),
+            value: c.value.clone(),
+        })
+        .collect();
+
+    let convert_options = ConvertOptions {
+        stub_as_open: options.stub_as_open.clone(),
+    };
+    let mut mapped = match circuit_from_netlist(&components, &netlist, &convert_options) {
+        Ok(m) => m,
+        Err(ConvertError::Unmappable { blockers }) => {
+            return json_out(&MappedCircuitOut {
+                ok: false,
+                blockers: blockers
+                    .into_iter()
+                    .map(|b| BlockerOut {
+                        message: b.reason.to_string(),
+                        reference: b.reference,
+                    })
+                    .collect(),
+                devices: Vec::new(),
+                num_nodes: 0,
+                node_of_net: Default::default(),
+                device_of_ref: Default::default(),
+                ground_nets: Vec::new(),
+                stubbed: Vec::new(),
+                supply_source_of_net: Default::default(),
+                unconnected_supplies: Vec::new(),
+            });
+        }
+        Err(e @ ConvertError::UnknownStub(_)) => return Err(JsError::new(&e.to_string())),
+    };
+
+    // Inject one vsource-to-ground per supply rail that a mapped device
+    // actually touches (an untouched supply must not become a dangling node).
+    let mut supply_source_of_net = std::collections::BTreeMap::new();
+    let mut unconnected_supplies = Vec::new();
+    for supply in &options.supplies {
+        match mapped.node_of_net.get(&supply.net).copied() {
+            Some(node) if node != 0 => {
+                let id = mapped.circuit.add(Device::VSource {
+                    p: node,
+                    n: 0,
+                    v: supply.volts,
+                });
+                supply_source_of_net.insert(supply.net.clone(), id);
+            }
+            _ => unconnected_supplies.push(supply.net.clone()),
+        }
+    }
+
+    // Serialize devices in the `{kind,p,n,value}` spec vocabulary. The
+    // converter only emits R/C/L/V/I/diode; LED-valued diodes keep the LED
+    // model by reporting kind "led" (matched by the component value string,
+    // the same rule the converter used to pick the model).
+    let led_refs: std::collections::BTreeSet<usize> = mapped
+        .device_of_ref
+        .iter()
+        .filter_map(|(reference, &id)| {
+            let comp = components.iter().find(|c| &c.reference == reference)?;
+            comp.value
+                .to_ascii_uppercase()
+                .contains("LED")
+                .then_some(id)
+        })
+        .collect();
+    let devices: Vec<SpecDeviceOut> = mapped
+        .circuit
+        .devices
+        .iter()
+        .enumerate()
+        .map(|(id, d)| match *d {
+            Device::Resistor { p, n, r } => SpecDeviceOut {
+                kind: "resistor",
+                p,
+                n,
+                value: Some(r),
+            },
+            Device::Capacitor { p, n, c } => SpecDeviceOut {
+                kind: "capacitor",
+                p,
+                n,
+                value: Some(c),
+            },
+            Device::Inductor { p, n, l } => SpecDeviceOut {
+                kind: "inductor",
+                p,
+                n,
+                value: Some(l),
+            },
+            Device::VSource { p, n, v } => SpecDeviceOut {
+                kind: "vsource",
+                p,
+                n,
+                value: Some(v),
+            },
+            Device::ISource { p, n, i } => SpecDeviceOut {
+                kind: "isource",
+                p,
+                n,
+                value: Some(i),
+            },
+            Device::Diode { p, n, .. } => SpecDeviceOut {
+                kind: if led_refs.contains(&id) {
+                    "led"
+                } else {
+                    "diode"
+                },
+                p,
+                n,
+                value: None,
+            },
+            ref other => unreachable!("netlist seam emitted unexpected device {other:?}"),
+        })
+        .collect();
+
+    // Answer node lookups by the original net names too (ground aliases → 0).
+    let mut node_of_net = mapped.node_of_net.clone();
+    for alias in &ground_aliases {
+        node_of_net.insert(alias.clone(), 0);
+    }
+    let mut ground_nets = mapped.ground_nets.clone();
+    for alias in &ground_aliases {
+        if !ground_nets.contains(alias) {
+            ground_nets.push(alias.clone());
+        }
+    }
+    json_out(&MappedCircuitOut {
+        ok: true,
+        blockers: Vec::new(),
+        devices,
+        num_nodes: mapped.circuit.num_nodes,
+        node_of_net,
+        device_of_ref: mapped.device_of_ref,
+        ground_nets,
+        stubbed: mapped.stubbed,
+        supply_source_of_net,
+        unconnected_supplies,
+    })
+}

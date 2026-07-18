@@ -25,6 +25,7 @@ import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import { ArrowSquareDown } from "@phosphor-icons/react/dist/ssr/ArrowSquareDown";
 import { Lightning } from "@phosphor-icons/react/dist/ssr/Lightning";
+import { ChartLine } from "@phosphor-icons/react/dist/ssr/ChartLine";
 import { ToolbarButton } from "@/components/ui/toolbar";
 import { ELECTRONICS_TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useElectronicsStore } from "@/stores/electronics-store";
@@ -33,6 +34,7 @@ import type { PcbLayer } from "@vcad/ir";
 import { useSymbolLibrary } from "./symbol-library";
 import { SymbolIcon } from "./symbol-icons";
 import { autorouteRatsnest } from "@/lib/pcb-autoroute";
+import { runCircuitAnalysis } from "@/lib/circuit-analysis";
 
 const Divider = () => <div className="mx-1 h-5 w-px bg-border shrink-0" />;
 
@@ -52,6 +54,7 @@ export function CircuitTabTools() {
   const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
   const simulating = useElectronicsStore((s) => s.simulating);
+  const analysisOpen = useElectronicsStore((s) => s.analysis.showPanel);
 
   const setSimulating = useElectronicsStore((s) => s.setSimulating);
   const setSchTool = useElectronicsStore((s) => s.setSchTool);
@@ -110,6 +113,22 @@ export function CircuitTabTools() {
           iconColor={simulating ? "#ff5a36" : ELECTRONICS_TAB_COLORS.schematic}
         >
           <Lightning size={20} weight={simulating ? "fill" : "regular"} />
+        </ToolbarButton>
+        <ToolbarButton
+          tooltip="Analyze — DC operating point + Bode plot"
+          active={analysisOpen}
+          onClick={() => {
+            const el = useElectronicsStore.getState();
+            if (analysisOpen) {
+              el.setAnalysis({ showPanel: false });
+            } else {
+              el.setAnalysis({ showPanel: true });
+              void runCircuitAnalysis();
+            }
+          }}
+          iconColor={ELECTRONICS_TAB_COLORS.schematic}
+        >
+          <ChartLine size={20} />
         </ToolbarButton>
         <ToolbarButton
           tooltip="Select (V)"
