@@ -24,7 +24,7 @@ use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 use super::complete::{route_window_complete, CompleteOutcome};
 use super::congestion::Congestion;
 use super::escape;
-use super::global::plan_corridors;
+use super::global::plan_with_scarcity;
 use super::maze::route_net_maze3d;
 use super::push_shove::{Obstacle, PushShoveRouter};
 use super::route_net_maze;
@@ -349,6 +349,7 @@ pub fn route_all_with_opts(
                 opts.effective_ripup_rounds(),
                 opts.effective_expansions(),
                 last_round_flag,
+                &opts.priority_nets,
             )
         } else {
             // Incremental negotiation: instead of re-routing the whole board
@@ -695,13 +696,14 @@ fn route_pass(
     ripup_rounds: usize,
     max_expansions: usize,
     fine_retry: bool,
+    opts_priority: &[String],
 ) -> Pass {
     let mut session = RouteSession::from_pcb(pcb);
     let mut placed: Vec<Placed> = Vec::new();
     let mut fail_cache: FailCache = FailCache::new();
 
     // Greedy pass, speculatively parallel (see [`route_batch`]).
-    let conns: Vec<Conn> = rats
+    let mut conns: Vec<Conn> = rats
         .iter()
         .filter(|l| nets_filter.is_empty() || nets_filter.iter().any(|n| n == &l.net))
         .map(|l| (l.net.clone(), l.from, l.to))
@@ -724,11 +726,39 @@ fn route_pass(
         } else {
             let pitch = width + pcb.rules.default_rules.clearance;
             let layers = copper_layers(pcb).len().max(1);
-            plan_corridors(&session, lo, hi, pitch, layers, &conns)
+            let (cs, scarcity) = plan_with_scarcity(&session, lo, hi, pitch, layers, &conns);
+            // Corridor map keyed BEFORE reordering (cs aligns with the
+            // original conns order).
+            let map: HashMap<ConnKey, (Vec2, Vec2)> = cs
                 .into_iter()
                 .zip(conns.iter())
                 .filter_map(|(c, (net, from, to))| c.map(|w| (conn_key(net, *from, *to), w)))
-                .collect()
+                .collect();
+            // Scarcest-first ordering (the campaign's decisive lesson,
+            // proven by the graft test + apex run): nets with the least
+            // corridor slack route on the emptiest board; flexible nets
+            // route around them. Priority nets stay in front; constraint
+            // degree breaks residual ties; length breaks the rest.
+            let mut order: Vec<usize> = (0..conns.len()).collect();
+            order.sort_by(|&a, &b| {
+                let pa = opts_priority.contains(&conns[a].0);
+                let pb = opts_priority.contains(&conns[b].0);
+                pb.cmp(&pa)
+                    .then_with(|| {
+                        scarcity[a]
+                            .min_residual
+                            .partial_cmp(&scarcity[b].min_residual)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| scarcity[b].overlap_degree.cmp(&scarcity[a].overlap_degree))
+                    .then_with(|| {
+                        dist(conns[b].1, conns[b].2)
+                            .partial_cmp(&dist(conns[a].1, conns[a].2))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            });
+            conns = order.iter().map(|&i| conns[i].clone()).collect();
+            map
         }
     };
 
