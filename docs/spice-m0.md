@@ -80,10 +80,12 @@ common-source gain vs −gm·(Rd ∥ ro) (1e-9), BJT current-mirror ratio vs
   (reverse sweep over companion states) is M1. *(Closed 2026-07-17:
   `circuit::transient_adjoint`, linear devices — see the M1 ladder.)*
 - **Fixed timestep at M0** — LTE-based adaptive stepping flagged for M1.
-- **No noise, no Monte Carlo.** `vcad-kernel-tolerance` is the natural
-  partner: its stackup engine consumes exactly the sensitivities the
-  adjoint produces — component-tolerance yield of a circuit by gradient
-  instead of sampling is the killer combo, unbuilt.
+- **No noise.** ~~No Monte Carlo~~ — the tolerance-yield bridge
+  (`circuit::tolerance`, first M1 item landed) now feeds the adjoint
+  gradient into `vcad-kernel-tolerance`'s stackup engine (WC/RSS/min-cost
+  allocation) and checks the linearization with a seeded Monte Carlo that
+  re-runs the actual solver; the discrepancy is reported on every result.
+  Flagship: `examples/filter_yield.rs`.
 - **Motor devices are rejected** by DC/AC analysis (their DC state couples
   to a mechanical equilibrium; transient handles them as before).
 
@@ -127,5 +129,13 @@ binds them is M-next, mirroring the antenna/EM measurement packs.
    parasitics** — trace R/L/C extraction from the routed board is M2.
    The `simulate_circuit`/`tune_circuit` MCP tools (item 6) should accept
    `{document_id}` and ride this seam.
-5. Tolerance-yield bridge to `vcad-kernel-tolerance`.
+5. ~~Tolerance-yield bridge to `vcad-kernel-tolerance`~~ — **shipped**
+   (`circuit::tolerance`): adjoint-linearized worst case + RSS through the
+   kernel-tolerance stackup engine, solver-in-the-loop seeded MC with the
+   linearization error reported (holds to ~5% σ agreement at ±5% parts on a
+   Q = 5 resonance, honestly breaks at ±20% — asserted in tests), min-cost
+   allocation answering "which part must be the 1% part", and
+   `yield_fraction` / `worst_case_deviation` claims on `vcad.spice-claims/1`.
+   Flagship `examples/filter_yield.rs`. Remaining in this lane: tolerancing
+   diodes (blocked on the AC operating-point chain term above).
 6. MCP tools (`simulate_circuit`, `tune_circuit`) riding the WASM binding.

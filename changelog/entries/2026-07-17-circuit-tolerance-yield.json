@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-circuit-tolerance-yield",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Circuit tolerance-yield bridge",
+  "summary": "Component-tolerance yield of a circuit: adjoint-linearized WC/RSS via the stackup engine, solver-in-the-loop Monte Carlo check, and min-cost tolerance allocation.",
+  "features": ["circuit", "simulation", "tolerance", "yield"]
+}

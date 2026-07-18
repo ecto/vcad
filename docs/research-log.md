@@ -823,3 +823,54 @@ discretization, per the particle crate's adaptive-dt scar tissue.
   control flow), time-aware sources inside a step (sources are
   zeroth-order-held between accepted steps — a `VSin` device is the clean
   fix and queued with M1's MOSFET work).
+
+## 2026-07-17 — circuit tolerance-yield bridge: the killer combo, built
+
+The spice-m0 honesty list called component-tolerance yield by gradient "the
+killer combo, unbuilt". Built (branch `claude/circuit-m1-tolerance-yield`),
+as `vcad_ecad_sim::circuit::tolerance`.
+
+**Home decision**: module inside `vcad-ecad-sim`, new workspace dep
+`vcad-ecad-sim → vcad-kernel-tolerance` — not a bridge crate. Reasons:
+(1) the dep direction is clean (kernel-tolerance is serde + vcad-receipt
+only, no cycle); (2) the bridge is thin because the stackup engine's API
+was built for exactly this shape — the adjoint gradient *is* the
+contributor coefficient, so WC, RSS, Φ-yield, and the KKT min-cost
+allocator are reused verbatim, zero duplication; (3) the circuit module's
+consumers (WASM `circuit_sim`, future MCP tools) inherit it for free, the
+same argument that put M0 here instead of a `vcad-kernel-spice` crate.
+
+**What the MC is**: not the linearization. Every sample perturbs device
+primaries and re-runs the actual solver (full Newton DC / complex MNA AC);
+the linear prediction is evaluated on the same sample and the discrepancy
+(max + RMS |y_full − y_lin|, σ_lin vs σ_MC) rides on every result. Seeded
+xoshiro256++ (kernel-tolerance's Rng), bit-reproducible, seed in the
+receipt note. Fail-closed refusals: AC-deferred diode slots (the M0
+placeholder-zero list) cannot be toleranced; nor can diodes/motors (no
+primary scalar); a failed MC re-solve aborts rather than biasing yield.
+
+**Results** (flagship `examples/filter_yield.rs`, 10 kHz Butterworth,
+spec |H(f₀)| within ±4% of 1/√2, n = 20 000, seed 0x5EED_C1AC):
+
+| tol (R,L,C) | σ_lin | σ_MC | yield_RSS | yield_MC (±SE) | lin err max |
+|---|---|---|---|---|---|
+| ±1% | 0.00333 | 0.00334 | 1.00000 | 1.00000 ±0.00007 | 1.7e-4 |
+| ±2% | 0.00667 | 0.00668 | 0.99998 | 1.00000 ±0.00007 | 7.0e-4 |
+| ±5% | 0.01667 | 0.01671 | 0.91031 | 0.91100 ±0.00201 | 4.6e-3 |
+| ±10% | 0.03333 | 0.03350 | 0.60386 | 0.60195 ±0.00346 | 2.0e-2 |
+
+Physics found by the bridge, not assumed: at exactly f₀ the Butterworth's
+|H| = 1/(ω₀CR) — **L's sensitivity is legitimately zero** (the stationary
+point the adjoint tests dodge when FD-checking) and the response is so
+mildly nonlinear that the linearization holds through ±20%. The honest
+break lives on a **Q = 5 resonance probed at its peak**: σ agreement 0.04%
+/ 0.13% / 4.5% at ±0.5/1/5% parts, then 18% at ±20% with lin_err_max ≈ 6σ
+— asserted as a negative-result test (the stated 5% bound must FAIL at
+±20%).
+
+**Allocation** (which part must be the expensive 1% part): reciprocal cost
+curves (R cheap, L dear, C mid), 99% RSS yield target → R1 ±2.35%,
+C3 ±4.02%, L2 ±20% (its variance share is 0 at f₀), total $0.313 vs $0.418
+proportional baseline; solver-in-the-loop check 0.9886 ±0.0008. Receipts:
+`yield_fraction` + `worst_case_deviation` on `vcad.spice-claims/1`,
+predicted basis, Provisional rollup, MC seed in the note.

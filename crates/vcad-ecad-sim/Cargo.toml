@@ -16,6 +16,10 @@ serde = { workspace = true }
 # Scalar trait — lets the closed-form leaves be generic so ExprId can flow
 # through them for symbolic autodiff (the differentiable-design foothold).
 tang = { workspace = true }
+# Stackup engine reused by the circuit tolerance-yield bridge: the adjoint
+# gradient linearizes the response, kernel-tolerance rolls it up (WC/RSS/
+# allocation); only the solver-in-the-loop Monte Carlo is circuit-specific.
+vcad-kernel-tolerance = { workspace = true }
 
 [dev-dependencies]
 # Used only to prove differentiability: trace a leaf, diff it, and check the
