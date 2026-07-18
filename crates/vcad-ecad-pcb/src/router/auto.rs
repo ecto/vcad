@@ -2336,12 +2336,15 @@ fn joint_window_repair(
             // Last resort for a small surviving clique: the COMPLETE window
             // router — either a joint routing the heuristics missed, or a
             // proof (named bottleneck cut) that none exists at these rules.
-            if !lost.is_empty() && lost.len() <= 6 {
+            if !lost.is_empty() && lost.len() <= 10 {
                 let win_w = gw.1[0] - gw.0[0];
                 let win_h = gw.1[1] - gw.0[1];
                 if win_w <= 20.0 && win_h <= 20.0 {
                     let copper = copper_layers(pcb);
-                    let cl: Vec<PcbLayer> = copper.into_iter().take(4).collect();
+                    // All copper layers: the flow pre-pass stays cheap and the
+                    // DFS budget-caps honestly (BudgetExhausted, never a fake
+                    // proof) if 10 layers is too much for exhaustion.
+                    let cl: Vec<PcbLayer> = copper;
                     match route_window_complete(
                         session,
                         (Vec2::new(gw.0[0], gw.0[1]), Vec2::new(gw.1[0], gw.1[1])),
