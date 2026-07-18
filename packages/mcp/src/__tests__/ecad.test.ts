@@ -2491,7 +2491,11 @@ describe("route_nets idempotency", () => {
     const board = getPcbBoard(getSession(id));
     expect(board.traces.filter((t) => t.net === "COIL").length).toBe(coilTraces);
     expect((r.stale_nets_cleared as string[] | undefined) ?? []).not.toContain("COIL");
-  });
+    // A 4-turn coil (20+ spiral traces) routed twice is uniquely heavy — ~1.8 s
+    // locally, ~3.6 s under suite load, and it timed out at 5.2 s on the shared
+    // CI runner. Its siblings finish in single-digit ms; only this one needs the
+    // headroom. 20 s is far above any real run yet still catches a genuine hang.
+  }, 20_000);
 });
 
 describe("schematic label diagnostics", () => {
