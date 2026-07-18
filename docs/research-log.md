@@ -874,3 +874,31 @@ C3 ±4.02%, L2 ±20% (its variance share is 0 at f₀), total $0.313 vs $0.418
 proportional baseline; solver-in-the-loop check 0.9886 ±0.0008. Receipts:
 `yield_fraction` + `worst_case_deviation` on `vcad.spice-claims/1`,
 predicted basis, Provisional rollup, MC seed in the note.
+
+## 2026-07-17 — Circuit M1: the differentiable SPICE seam reaches agents
+
+The M0 analyses (PR #577) are now callable end-to-end: WASM bindings
+(`circuitDcOperatingPoint` / `circuitAcResponse` / `circuitSensitivities` /
+`circuitTransient` / `circuitTune`) plus two MCP tools, `simulate_circuit`
+and `tune_circuit`.
+
+- **Netlists as data**: `{devices: [{kind, p, n, value}]}`, node 0 =
+  ground, device id = array index — the same spec the app's `CircuitSim`
+  transient class already took, now shared by every analysis.
+- **The residual rides in public**: every DC and transient result carries
+  the Tellegen power-balance residual; it measures solver error and
+  nothing else, so it ships as the honesty signal next to the claims.
+- **Tuning is the adjoint earning its keep**: `tune_circuit` ports the
+  `filter_autotune` loop (log-space gradient descent, backtracking line
+  search, scale-invariant stop) behind a target-as-data interface —
+  `{cutoffHz, qFactor}` or `{node, dcVoltage}` with optional bounds. The
+  e2e test drives the detuned RLC to 10 kHz / Q = 0.707; the DC case
+  lands the divider resistor at exactly 1500 Ω.
+- **Achieved ≠ assumed**: the tuned cutoff is measured off the response
+  by −3 dB bisection and Q from the −90° phase crossing (exact for a
+  2nd-order section) — no closed forms trusted, so the claims describe
+  the circuit as solved, not the formula we hoped for.
+- **Fail-closed on placeholders**: a free device whose AC sensitivity
+  slot is deferred (diodes at M0) errors instead of silently not moving.
+- Claims land under `vcad.spice-claims/1`, basis predicted, Provisional
+  rollup — the $30-scope measurement pack remains the closing move.

@@ -1,0 +1,19 @@
+{
+  "id": "2026-07-17-circuit-mcp-tools",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Circuit simulation and adjoint tuning over MCP",
+  "summary": "Agents can now run SPICE-style DC/AC/transient analyses on netlists-as-data and tune component values toward filter or DC targets with adjoint gradients, with vcad.spice-claims/1 receipts and the power-balance residual as the honesty signal.",
+  "features": [
+    "circuit",
+    "spice",
+    "adjoint",
+    "receipts",
+    "mcp"
+  ],
+  "mcpTools": [
+    "simulate_circuit",
+    "tune_circuit"
+  ]
+}
