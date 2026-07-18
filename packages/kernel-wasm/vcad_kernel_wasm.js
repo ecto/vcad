@@ -6393,6 +6393,47 @@ export function render_svg_camera(vcad_json, scale, view, focus, axes, labels, d
 }
 
 /**
+ * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * surface expressed as one JSON options object — the forward-compatible
+ * companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
+ * so new render options never need another positional-arg binding.
+ *
+ * `opts_json` (empty string = defaults):
+ * `{"view":"iso","focus":"rotor","axes":false,"labels":false,"dims":false,
+ *   "section":"z=10","highlight":["part_3"],"style":"shaded"}`.
+ * `view` accepts everything [`render_svg_view`] does, including
+ * `"orbit:<azimuth>,<elevation>"`. `style` is `"drafting"` (default, navy
+ * tonal family) or `"shaded"` (full material colour). Unknown option keys
+ * and unknown style names are errors, never silently ignored.
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} opts_json
+ * @returns {string}
+ */
+export function render_svg_camera_opts(vcad_json, scale, opts_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(opts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_camera_opts(ptr0, len0, scale, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Render raw `.vcad` document JSON to an SVG from a named orthographic view.
  *
  * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`,
@@ -8942,12 +8983,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3612, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3613, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3615, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3616, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3637, function: Function { arguments: [Externref], shim_idx: 3638, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3640, function: Function { arguments: [Externref], shim_idx: 3641, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
