@@ -1747,6 +1747,71 @@ pub struct SceneSettings {
     pub camera_presets: Option<Vec<CameraPreset>>,
 }
 
+/// Title block fields for a technical drawing sheet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct DrawingTitleBlock {
+    /// Part or assembly name.
+    #[serde(default)]
+    pub part_name: String,
+    /// Author (drawn by).
+    #[serde(default)]
+    pub author: String,
+    /// Date string (caller-formatted, e.g. "2026-07-18").
+    #[serde(default)]
+    pub date: String,
+    /// Drawing scale note (e.g. "1:1").
+    #[serde(default)]
+    pub scale: String,
+    /// Material specification (e.g. "6061-T6 AL").
+    #[serde(default)]
+    pub material: String,
+    /// Revision letter (e.g. "A").
+    #[serde(default)]
+    pub revision: String,
+}
+
+/// A section cut line drawn on an orthographic drawing view. The polyline
+/// runs vertically in view coordinates; horizontal jogs produce an offset
+/// (stepped) section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct DrawingSectionLine {
+    /// Unique id within the drawing.
+    pub id: String,
+    /// View direction the line was drawn on ("front", "top", "right", …).
+    pub view: String,
+    /// Section label letter (e.g. "A" → "SECTION A-A").
+    pub label: String,
+    /// Polyline points in 2D view coordinates (mm).
+    pub points: Vec<[f64; 2]>,
+}
+
+/// Drawing (drafting) settings persisted on the document: title block,
+/// section lines, and BOM table visibility for the 2D drawing sheet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct DrawingSettings {
+    /// Title block fields shown on the sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub title_block: Option<DrawingTitleBlock>,
+    /// Section cut lines defined on drawing views.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub sections: Option<Vec<DrawingSectionLine>>,
+    /// Whether the BOM table is placed on the sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub show_bom: Option<bool>,
+}
+
 /// A vcad document — the `.vcad` file format.
 ///
 /// Contains the full IR DAG, material definitions, and scene assembly.
@@ -1824,6 +1889,12 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clearance_specs: Vec<ClearanceSpec>,
 
+    // Drafting (optional, zero-cost when absent)
+    /// Drawing sheet settings: title block, section lines, BOM visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub drawing: Option<DrawingSettings>,
+
     // Animation (optional, zero-cost when absent)
     /// Animation timeline: keyframed parameters/joints/visibility plus
     /// camera shots. Absent for static models.
@@ -1878,6 +1949,7 @@ impl Default for Document {
             parameters: HashMap::new(),
             bindings: Bindings::new(),
             clearance_specs: Vec::new(),
+            drawing: None,
             timeline: None,
         }
     }

@@ -133,6 +133,10 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
                 materialize_scene_settings(&mut doc, feature);
                 continue;
             }
+            "drawing-settings" => {
+                materialize_drawing_settings(&mut doc, feature);
+                continue;
+            }
             "schematic" => {
                 materialize_schematic(&mut doc, feature);
                 continue;
@@ -190,6 +194,7 @@ fn materialize_feature(
         | FeatureInput::Instance { .. }
         | FeatureInput::Joint { .. }
         | FeatureInput::SceneSettings { .. }
+        | FeatureInput::DrawingSettings { .. }
         | FeatureInput::Schematic { .. }
         | FeatureInput::Molecule { .. } => return None,
         _ => {}
@@ -1287,6 +1292,29 @@ fn materialize_molecule(doc: &mut Document, feature: &FeatureState) {
     {
         doc.molecule = serde_json::from_str(&json).ok();
     }
+}
+
+fn materialize_drawing_settings(doc: &mut Document, feature: &FeatureState) {
+    let Some(FeatureInput::DrawingSettings {
+        title_block,
+        sections,
+        show_bom,
+    }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
+    else {
+        return;
+    };
+
+    let mut drawing = vcad_ir::DrawingSettings::default();
+    if let Some(json) = title_block {
+        drawing.title_block = serde_json::from_str(&json).ok();
+    }
+    if let Some(json) = sections {
+        drawing.sections = serde_json::from_str(&json).ok();
+    }
+    if let Some(json) = show_bom {
+        drawing.show_bom = serde_json::from_str(&json).ok();
+    }
+    doc.drawing = Some(drawing);
 }
 
 fn materialize_scene_settings(doc: &mut Document, feature: &FeatureState) {

@@ -6,8 +6,17 @@ import {
   type ProjectedView,
   type RenderedDimension,
   type DetailView,
+  type SectionView,
+  type RenderedBlock,
 } from "@vcad/core";
-import { useDrawingStore, type DetailViewDef } from "../stores/drawing-store";
+import type { DrawingSectionLine } from "@vcad/ir";
+import { useDrawingStore, type DetailViewDef, type ViewDirection } from "../stores/drawing-store";
+import {
+  sectionPlaneFromLine,
+  combineSceneMeshes,
+  toKernelTitleBlock,
+  buildBomRows,
+} from "@/lib/drawing-sheet";
 import { useTheme } from "@/hooks/useTheme";
 
 // Color schemes for light and dark modes
@@ -22,6 +31,8 @@ const COLORS = {
     selectionFill: "rgba(59, 130, 246, 0.1)",
     detailRegion: "#e11d48",
     detailRegionFill: "rgba(225, 29, 72, 0.05)",
+    section: "#d97706",
+    sheet: "#444444",
   },
   dark: {
     background: "#0a0a0a",
@@ -33,8 +44,67 @@ const COLORS = {
     selectionFill: "rgba(0, 212, 170, 0.1)",
     detailRegion: "#f43f5e",
     detailRegionFill: "rgba(244, 63, 94, 0.08)",
+    section: "#fbbf24",
+    sheet: "#aaaaaa",
   },
 };
+
+/** Render a kernel-drawn block (title block / BOM table) anchored with its
+ * bottom-left corner at (`ax`, `aySvg`) in SVG coordinates, scaled by `sb`. */
+function renderBlock(
+  block: RenderedBlock,
+  ax: number,
+  aySvg: number,
+  sb: number,
+  color: string,
+  strokeWidth: number,
+  keyPrefix: string,
+) {
+  const mx = (x: number) => ax + x * sb;
+  const my = (y: number) => aySvg - y * sb;
+  return (
+    <g key={keyPrefix} pointerEvents="none">
+      {block.rendered.lines.map(([a, b], i) => (
+        <line
+          key={`${keyPrefix}-l-${i}`}
+          x1={mx(a.x)}
+          y1={my(a.y)}
+          x2={mx(b.x)}
+          y2={my(b.y)}
+          stroke={color}
+          strokeWidth={strokeWidth}
+        />
+      ))}
+      {block.rendered.texts.map((t, i) => {
+        const alignment = String(t.alignment);
+        const anchor = alignment.includes("Left")
+          ? "start"
+          : alignment.includes("Right")
+            ? "end"
+            : "middle";
+        const baseline = alignment.startsWith("Top")
+          ? "hanging"
+          : alignment.startsWith("Bottom")
+            ? "auto"
+            : "middle";
+        return (
+          <text
+            key={`${keyPrefix}-t-${i}`}
+            x={mx(t.position.x)}
+            y={my(t.position.y)}
+            fontSize={t.height * sb}
+            fill={color}
+            textAnchor={anchor}
+            dominantBaseline={baseline}
+            fontFamily="monospace"
+          >
+            {t.text}
+          </text>
+        );
+      })}
+    </g>
+  );
+}
 
 /**
  * SVG-based 2D technical drawing view.
@@ -64,6 +134,8 @@ export function DrawingView() {
   const scene = useEngineStore((s) => s.scene);
   const engine = useEngineStore((s) => s.engine);
   const parts = useDocumentStore((s) => s.parts);
+  const drawing = useDocumentStore((s) => s.document.drawing);
+  const setDrawingSettings = useDocumentStore((s) => s.setDrawingSettings);
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const select = useUiStore((s) => s.select);
   const clearSelection = useUiStore((s) => s.clearSelection);
@@ -81,6 +153,11 @@ export function DrawingView() {
   const [isCreatingDetail, setIsCreatingDetail] = useState(false);
   const [detailStart, setDetailStart] = useState<{ x: number; y: number } | null>(null);
   const [detailEnd, setDetailEnd] = useState<{ x: number; y: number } | null>(null);
+
+  // Section line creation state
+  const [isCreatingSection, setIsCreatingSection] = useState(false);
+  const [sectionPoints, setSectionPoints] = useState<Array<[number, number]>>([]);
+  const [sectionCursor, setSectionCursor] = useState<{ x: number; y: number } | null>(null);
 
   const colors = isDark ? COLORS.dark : COLORS.light;
 
@@ -153,6 +230,53 @@ export function DrawingView() {
       })
       .filter((v): v is { def: DetailViewDef; view: DetailView } => v !== null);
   }, [combinedView, engine, detailViews]);
+
+  // Section cut lines for the current view + their computed section views
+  const computedSections = useMemo<
+    Array<{ def: DrawingSectionLine; view: SectionView }>
+  >(() => {
+    if (!engine || !scene?.parts?.length) return [];
+    const defs = (drawing?.sections ?? []).filter((s) => s.view === viewDirection);
+    if (defs.length === 0) return [];
+    const mesh = combineSceneMeshes();
+    if (!mesh) return [];
+
+    return defs
+      .map((def) => {
+        const plane = sectionPlaneFromLine(
+          def.view as ViewDirection,
+          def.points as Array<[number, number]>,
+        );
+        if (!plane) return null;
+        const view = engine.offsetSectionMesh(mesh, plane, {
+          spacing: 3,
+          angle: Math.PI / 4,
+        });
+        return view ? { def, view } : null;
+      })
+      .filter((v): v is { def: DrawingSectionLine; view: SectionView } => v !== null);
+  }, [engine, scene, drawing, viewDirection]);
+
+  // Kernel-rendered title block (matches the exported PDF)
+  const titleBlock = useMemo<RenderedBlock | null>(() => {
+    if (!engine || !drawing?.titleBlock) return null;
+    try {
+      return engine.renderTitleBlock(toKernelTitleBlock(drawing.titleBlock, ""));
+    } catch {
+      return null;
+    }
+  }, [engine, drawing]);
+
+  // Kernel-rendered BOM table for assembly drawings
+  const bomBlock = useMemo<RenderedBlock | null>(() => {
+    if (!engine || !drawing?.showBom || parts.length === 0) return null;
+    try {
+      const rows = buildBomRows();
+      return rows.length > 0 ? engine.renderBomTable(rows) : null;
+    } catch {
+      return null;
+    }
+  }, [engine, drawing, parts]);
 
   // Generate dimension annotations from combined bounding box
   const dimensions = useMemo<RenderedDimension[]>(() => {
@@ -478,6 +602,71 @@ export function DrawingView() {
     return () => window.removeEventListener("vcad:start-detail-view", handleStartDetailView);
   }, [startDetailCreation]);
 
+  // Listen for start-section-view event from toolbar
+  useEffect(() => {
+    const handleStartSection = () => {
+      setIsCreatingSection(true);
+      setSectionPoints([]);
+      setSectionCursor(null);
+    };
+    window.addEventListener("vcad:start-section-view", handleStartSection);
+    return () => window.removeEventListener("vcad:start-section-view", handleStartSection);
+  }, []);
+
+  // Commit the in-progress section line to the document
+  const commitSection = useCallback(() => {
+    if (sectionPoints.length >= 2) {
+      const existing = drawing?.sections ?? [];
+      const label = String.fromCharCode(65 + (existing.length % 26));
+      setDrawingSettings({
+        sections: [
+          ...existing,
+          {
+            id: `section-${label}-${Date.now()}`,
+            view: viewDirection,
+            label,
+            points: sectionPoints,
+          },
+        ],
+      });
+    }
+    setIsCreatingSection(false);
+    setSectionPoints([]);
+    setSectionCursor(null);
+  }, [sectionPoints, drawing, setDrawingSettings, viewDirection]);
+
+  // Section creation: click adds a point, Enter commits, Escape cancels
+  const handleSectionClick = useCallback(
+    (e: React.MouseEvent) => {
+      const pos = screenToSvg(e.clientX, e.clientY);
+      if (pos) setSectionPoints((pts) => [...pts, [pos.x, pos.y]]);
+    },
+    [screenToSvg],
+  );
+
+  const handleSectionMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      const pos = screenToSvg(e.clientX, e.clientY);
+      if (pos) setSectionCursor(pos);
+    },
+    [screenToSvg],
+  );
+
+  useEffect(() => {
+    if (!isCreatingSection) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsCreatingSection(false);
+        setSectionPoints([]);
+        setSectionCursor(null);
+      } else if (e.key === "Enter") {
+        commitSection();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isCreatingSection, commitSection]);
+
   if (!combinedBounds || projectedViews.length === 0) {
     return (
       <div
@@ -507,6 +696,13 @@ export function DrawingView() {
   const hiddenStrokeWidth = strokeWidth * 0.6;
   const dimStrokeWidth = strokeWidth * 0.4;
 
+  // Sheet furniture layout (title block bottom-right, BOM above it)
+  const sheetPad = viewWidth * 0.015;
+  const tbScale = titleBlock ? (viewWidth * 0.3) / titleBlock.width : 0;
+  const tbHeightSvg = titleBlock ? titleBlock.height * tbScale : 0;
+  const tbClearance = titleBlock ? tbHeightSvg + sheetPad : 0;
+  const bomScale = bomBlock ? (viewWidth * 0.3) / bomBlock.width : 0;
+
   return (
     <svg
       ref={svgRef}
@@ -515,17 +711,34 @@ export function DrawingView() {
       preserveAspectRatio="xMidYMid meet"
       style={{
         backgroundColor: colors.background,
-        cursor: isCreatingDetail ? "crosshair" : isPanning ? "grabbing" : "default",
+        cursor:
+          isCreatingDetail || isCreatingSection
+            ? "crosshair"
+            : isPanning
+              ? "grabbing"
+              : "default",
       }}
-      onPointerDown={isCreatingDetail ? undefined : handlePointerDown}
-      onPointerMove={isCreatingDetail ? undefined : handlePointerMove}
-      onPointerUp={isCreatingDetail ? undefined : handlePointerUp}
-      onPointerLeave={isCreatingDetail ? undefined : handlePointerUp}
+      onPointerDown={isCreatingDetail || isCreatingSection ? undefined : handlePointerDown}
+      onPointerMove={isCreatingDetail || isCreatingSection ? undefined : handlePointerMove}
+      onPointerUp={isCreatingDetail || isCreatingSection ? undefined : handlePointerUp}
+      onPointerLeave={isCreatingDetail || isCreatingSection ? undefined : handlePointerUp}
       onMouseDown={isCreatingDetail ? handleDetailMouseDown : undefined}
-      onMouseMove={isCreatingDetail ? handleDetailMouseMove : undefined}
+      onMouseMove={
+        isCreatingDetail
+          ? handleDetailMouseMove
+          : isCreatingSection
+            ? handleSectionMouseMove
+            : undefined
+      }
       onMouseUp={isCreatingDetail ? handleDetailMouseUp : undefined}
-      onClick={isCreatingDetail ? undefined : handleBackgroundClick}
-      onDoubleClick={handleDoubleClick}
+      onClick={
+        isCreatingDetail
+          ? undefined
+          : isCreatingSection
+            ? handleSectionClick
+            : handleBackgroundClick
+      }
+      onDoubleClick={isCreatingSection ? commitSection : handleDoubleClick}
     >
       {/* Grid pattern for dark mode */}
       {isDark && (
@@ -733,6 +946,57 @@ export function DrawingView() {
         );
       })}
 
+      {/* Section cut lines on the main view */}
+      {computedSections.map(({ def }) => {
+        const pts = def.points as Array<[number, number]>;
+        if (pts.length < 2) return null;
+        const first = pts[0]!;
+        const last = pts[pts.length - 1]!;
+        return (
+          <g key={`cut-${def.id}`} pointerEvents="none">
+            <polyline
+              points={pts.map(([x, y]) => `${x},${-y}`).join(" ")}
+              fill="none"
+              stroke={colors.section}
+              strokeWidth={strokeWidth}
+              strokeDasharray={`${strokeWidth * 6},${strokeWidth * 2},${strokeWidth * 2},${strokeWidth * 2}`}
+            />
+            {[first, last].map(([x, y], i) => (
+              <text
+                key={`cut-${def.id}-t-${i}`}
+                x={x}
+                y={-y - strokeWidth * 4}
+                fontSize={strokeWidth * 6}
+                fill={colors.section}
+                textAnchor="middle"
+                fontFamily="monospace"
+                fontWeight="600"
+              >
+                {def.label}
+              </text>
+            ))}
+          </g>
+        );
+      })}
+
+      {/* In-progress section polyline */}
+      {isCreatingSection && sectionPoints.length > 0 && (
+        <g pointerEvents="none">
+          <polyline
+            points={[...sectionPoints, ...(sectionCursor ? [[sectionCursor.x, sectionCursor.y]] : [])]
+              .map(([x, y]) => `${x},${-(y as number)}`)
+              .join(" ")}
+            fill="none"
+            stroke={colors.section}
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${strokeWidth * 3},${strokeWidth * 2}`}
+          />
+          {sectionPoints.map(([x, y], i) => (
+            <circle key={`sp-${i}`} cx={x} cy={-y} r={strokeWidth * 2} fill={colors.section} />
+          ))}
+        </g>
+      )}
+
       {/* Selection rectangle while creating detail view */}
       {isCreatingDetail && detailStart && detailEnd && (
         <rect
@@ -783,7 +1047,8 @@ export function DrawingView() {
         const detailSize = Math.min(viewWidth, viewHeight) * 0.25;
         const padding = detailSize * 0.1;
         const detailX = viewX + viewWidth - detailSize - padding;
-        const detailY = viewY + viewHeight - detailSize * (idx + 1) - padding * (idx + 1);
+        const detailY =
+          viewY + viewHeight - detailSize * (idx + 1) - padding * (idx + 1) - tbClearance;
 
         // Scale to fit in the detail box
         const detailWidth = view.bounds.max_x - view.bounds.min_x;
@@ -858,6 +1123,103 @@ export function DrawingView() {
           </g>
         );
       })}
+
+      {/* Section view insets, stacked bottom-left */}
+      {computedSections.map(({ def, view }, idx) => {
+        const boxSize = Math.min(viewWidth, viewHeight) * 0.28;
+        const pad = boxSize * 0.1;
+        const boxX = viewX + pad;
+        const boxY = viewY + viewHeight - boxSize * (idx + 1) - pad * (idx + 1);
+
+        const secW = view.bounds.max_x - view.bounds.min_x;
+        const secH = view.bounds.max_y - view.bounds.min_y;
+        const fitScale = Math.min(
+          (boxSize * 0.8) / (secW || 1),
+          (boxSize * 0.8) / (secH || 1),
+        );
+        const cx = (view.bounds.min_x + view.bounds.max_x) / 2;
+        const cy = (view.bounds.min_y + view.bounds.max_y) / 2;
+        const boxCx = boxX + boxSize / 2;
+        const boxCy = boxY + boxSize / 2;
+
+        return (
+          <g key={`sec-${def.id}`} pointerEvents="none">
+            <rect
+              x={boxX}
+              y={boxY}
+              width={boxSize}
+              height={boxSize}
+              fill={colors.background}
+              stroke={colors.section}
+              strokeWidth={strokeWidth}
+            />
+            <text
+              x={boxX + strokeWidth * 2}
+              y={boxY + strokeWidth * 5}
+              fontSize={strokeWidth * 5}
+              fill={colors.section}
+              fontFamily="monospace"
+              fontWeight="600"
+            >
+              SECTION {def.label}-{def.label}
+            </text>
+            <g
+              transform={`translate(${boxCx - cx * fitScale}, ${boxCy + cy * fitScale}) scale(${fitScale})`}
+            >
+              {view.curves.map((curve, ci) => (
+                <polyline
+                  key={`sec-${def.id}-c-${ci}`}
+                  points={[
+                    ...curve.points,
+                    ...(curve.is_closed && curve.points.length > 0 ? [curve.points[0]!] : []),
+                  ]
+                    .map((p) => `${p.x},${-p.y}`)
+                    .join(" ")}
+                  fill="none"
+                  stroke={colors.edge}
+                  strokeWidth={(strokeWidth * 1.2) / fitScale}
+                  strokeLinecap="round"
+                />
+              ))}
+              {view.hatch_lines.map(([a, b], hi) => (
+                <line
+                  key={`sec-${def.id}-h-${hi}`}
+                  x1={a.x}
+                  y1={-a.y}
+                  x2={b.x}
+                  y2={-b.y}
+                  stroke={colors.section}
+                  strokeWidth={(strokeWidth * 0.5) / fitScale}
+                />
+              ))}
+            </g>
+          </g>
+        );
+      })}
+
+      {/* Title block, bottom-right (kernel-rendered, matches the PDF) */}
+      {titleBlock &&
+        renderBlock(
+          titleBlock,
+          viewX + viewWidth - titleBlock.width * tbScale - sheetPad,
+          viewY + viewHeight - sheetPad,
+          tbScale,
+          colors.sheet,
+          strokeWidth * 0.5,
+          "titleblock",
+        )}
+
+      {/* BOM table, above the title block */}
+      {bomBlock &&
+        renderBlock(
+          bomBlock,
+          viewX + viewWidth - bomBlock.width * bomScale - sheetPad,
+          viewY + viewHeight - tbClearance - sheetPad * 2,
+          bomScale,
+          colors.sheet,
+          strokeWidth * 0.5,
+          "bom",
+        )}
     </svg>
   );
 }
