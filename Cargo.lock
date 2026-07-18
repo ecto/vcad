@@ -7021,6 +7021,7 @@ dependencies = [
  "tang",
  "tang-expr",
  "thiserror 2.0.18",
+ "vcad-ecad-schematic",
  "vcad-ir",
  "vcad-receipt",
 ]

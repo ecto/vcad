@@ -711,3 +711,48 @@ Arc close: the Q-lane triple priced all three roads honestly. Records:
 197× (dial optimum), 140× (virtual cathode), 179× (bare TiD). Physics:
 harmonicity 0.545, optimizable. Q: no lever here moves it — direct
 recovery is the next module, and the ledger is ready for it.
+
+## 2026-07-17 — circuit M1: netlist-from-ecad seam (Rust-side, decided)
+
+Where should schematic→Circuit conversion live — Rust or TypeScript?
+**Rust** (`vcad_ecad_sim::circuit::netlist`), decided after recon, for
+three reasons that could each have gone the other way:
+
+1. The schematic model's source of truth is Rust: `create_schematic`
+   deserializes into `vcad_ir::ecad::SchematicSheet`, and net extraction
+   (union-find over wires/labels/junctions + the explicit `nets` map)
+   already exists as `vcad_ecad_schematic::generate_netlist`. A TS-side
+   converter would have to re-derive connectivity the ERC path already
+   owns.
+2. The consumer is Rust: `Circuit`, `dc::operating_point`, `ac::ac_response`
+   and the adjoint all live in `vcad-ecad-sim`. Converting where the
+   consumer lives keeps the seam one hop wide and WASM inherits it for
+   free (same argument that put the M0 module in `vcad-ecad-sim` rather
+   than a new crate).
+3. No `simulate_circuit` MCP tool has landed yet (checked: nothing in
+   `packages/mcp` or the WASM bindings), so there was no TS chip to
+   coordinate with — the scope's "ship standalone with a clean public
+   API" branch applied. When that tool lands, `{document_id}` →
+   `circuit_from_schematic` is a thin wire.
+
+Dependency direction checked before committing: `vcad-ecad-schematic`
+depends only on `vcad-ir`, so `vcad-ecad-sim → vcad-ecad-schematic` adds
+no cycle.
+
+What shipped: refdes-prefix mapping (R/C/L/V/I/D) + SI value parser
+(suffix, infix `4R7`/`4k7`, case-sensitive `m`/`M`, typed rejections),
+ground-family nets → node 0, **fail-closed** per-component blocker list
+(ICs/connectors refuse simulation; explicit `stub_as_open` allowlist
+with typo rejection), round-trip test: `create_schematic`-shaped sheet
+(divider + RC) → DC exact to 1e-12 vs Ohm's law, AC corner |H| and phase
+to 1e-12 vs the Thévenin closed form.
+
+Scar earned: nodes must be allocated only for nets a mapped device
+touches — a floating net (stubbed connector pins, netlist singletons)
+that gets an MNA node makes the matrix singular. First cut allocated
+every net and failed exactly that way in the stub test.
+
+Honest gaps: no layout parasitics (that's M2 — trace R/L/C from the
+routed board), distinct ground rails (AGND/DGND) collapse onto node 0 at
+M1 (reported in `MappedCircuit::ground_nets`), diode model is chosen by
+value-string sniffing ("LED" → LED model, else silicon).

@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 vcad-ir = { workspace = true }
+vcad-ecad-schematic = { workspace = true }
 vcad-receipt = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
