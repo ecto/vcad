@@ -216,17 +216,10 @@ export function computeIntegrity(
   doc: Document,
   engine: Engine,
 ): IntegrityReport | null {
-  let scene: {
-    parts: Array<{ mesh: TriangleMesh }>;
-    instances?: Array<{
-      mesh: TriangleMesh;
-      transform?: {
-        translation: [number, number, number];
-        rotation: [number, number, number, number];
-        scale: [number, number, number];
-      };
-    }>;
-  };
+  // Infer the scene type from the engine rather than hand-annotating it, so
+  // the instance transform shape (kernel-native {x,y,z}) stays in sync with
+  // @vcad/engine — the same untyped pattern check_clearance uses.
+  let scene: ReturnType<Engine["evaluate"]>;
   try {
     scene = engine.evaluate(doc);
   } catch {
