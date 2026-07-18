@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-18-typst-plugin",
+  "version": "0.9.3",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Typst plugin: CAD rendered and measured in documents",
+  "summary": "New Typst WASM plugin renders .vcad/loon models to drafting views and sheets, and exposes exact measurements and compile-time assertions inside Typst documents.",
+  "features": ["typst", "render", "drafting", "loon", "verification"]
+}

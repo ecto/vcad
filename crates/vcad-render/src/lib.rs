@@ -103,7 +103,9 @@ const VERT_DEDUP_MM: f64 = 1e-3;
 /// Light direction in kernel space (Z-up).
 const LIGHT: [f64; 3] = [-0.6, -0.7, 0.8];
 
+#[cfg_attr(not(feature = "raster"), allow(dead_code))]
 const FILL_DARK: [u8; 3] = [14, 57, 96];
+#[cfg_attr(not(feature = "raster"), allow(dead_code))]
 const FILL_LIGHT: [u8; 3] = [200, 220, 235];
 
 /// Visible linework ink — a touch warmer and darker than the fill navy so
@@ -861,6 +863,7 @@ struct SolidArtifacts {
     src: usize,
     verts: Vec<[f64; 3]>,
     tris: Vec<[usize; 3]>,
+    #[cfg_attr(not(feature = "raster"), allow(dead_code))]
     normals: Vec<[f64; 3]>,
     /// Per-triangle, per-corner smoothed normals (angle-grouped: averaged
     /// only across facets within the smoothing tolerance, so curved
@@ -1216,6 +1219,7 @@ fn normalize(v: [f64; 3]) -> [f64; 3] {
     }
 }
 
+#[cfg_attr(not(feature = "raster"), allow(dead_code))]
 fn lambertian(n: [f64; 3], light: [f64; 3]) -> f64 {
     let d = dot(n, light);
     (d * 0.5 + 0.5).powf(0.85)

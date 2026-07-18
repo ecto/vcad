@@ -51,3 +51,8 @@ tasks/
 # Golden test fixtures are checked in despite *.dxf above
 !crates/vcad-kernel-sheet/tests/golden/*.dxf
 .wf-*.mjs
+
+# Typst plugin build artifacts (built by scripts/build-typst-plugin.sh)
+typst/vcad/vcad.wasm
+typst/vcad/examples/*.pdf
+typst/vcad/examples/*.png
