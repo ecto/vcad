@@ -979,6 +979,7 @@ impl EdgeRules {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_artifacts(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
@@ -987,6 +988,7 @@ fn build_artifacts(
     segments: u32,
     rules: &EdgeRules,
     section: Option<SectionPlane>,
+    style: RenderStyle,
 ) -> Vec<SolidArtifacts> {
     let highlighting = accents.iter().any(|&a| a);
     let mut out = Vec::new();
@@ -1002,7 +1004,10 @@ fn build_artifacts(
             .get(si)
             .copied()
             .flatten()
-            .map(tint_ramp)
+            .map(match style {
+                RenderStyle::Drafting => tint_ramp,
+                RenderStyle::Shaded => shaded_ramp,
+            })
             .unwrap_or(RAMP);
         if emphasis == Emphasis::Ghost {
             ramp = ghost_ramp(ramp);
@@ -1263,6 +1268,20 @@ fn tint_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
                               // every preset at ≤20% material contribution, so even fully
                               // saturated red rendered as navy with the faintest pink hint.
     let k = sat.clamp(0.0, 0.85);
+    tint_ramp_k(color, k)
+}
+
+/// Full-material-colour ramp for [`RenderStyle::Shaded`]: the material colour
+/// drives every stop outright (k = 1), rescaled to each stop's luminance so
+/// the lighting ladder is preserved. Achromatic materials (steel, aluminium)
+/// therefore render as true greys instead of staying in the navy family.
+fn shaded_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
+    tint_ramp_k(color, 1.0)
+}
+
+/// Shared ramp construction: blend the navy [`RAMP`] toward the material
+/// colour (rescaled per-stop to the stop's luminance) by strength `k`.
+fn tint_ramp_k(color: [f64; 3], k: f64) -> [[u8; 3]; 4] {
     let ml = luma(color).max(1e-3);
     let mut out = RAMP;
     for stop in out.iter_mut() {
@@ -1745,6 +1764,36 @@ pub struct SvgOptions {
     /// view. Empty renders normally; a non-empty set matching no part is an
     /// error (never a silently unhighlighted render).
     pub highlight: Vec<String>,
+    /// Shading style: [`RenderStyle::Drafting`] (default) keeps material
+    /// colours in the disciplined navy tonal family;
+    /// [`RenderStyle::Shaded`] renders each part in its full material
+    /// colour (luminance-laddered so lighting is preserved).
+    pub style: RenderStyle,
+}
+
+/// Shading style for the SVG render path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderStyle {
+    /// Drafting look: material colours tinted toward the navy tonal family
+    /// in proportion to their saturation (the historical default).
+    #[default]
+    Drafting,
+    /// Full material colour: parts render in their assigned material colour
+    /// with the same Lambertian shading ladder.
+    Shaded,
+}
+
+impl std::str::FromStr for RenderStyle {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "drafting" => Ok(RenderStyle::Drafting),
+            "shaded" => Ok(RenderStyle::Shaded),
+            other => Err(format!(
+                "unknown render style '{other}' — supported: 'drafting', 'shaded'"
+            )),
+        }
+    }
 }
 
 /// Render raw `.vcad` document JSON to a self-contained SVG with full
@@ -1918,6 +1967,7 @@ fn render_svg_impl(
         TESSELLATION_SEGMENTS,
         &EdgeRules::svg(),
         section,
+        opts.style,
     );
 
     // First pass: screen-space bbox + 3D bbox (for the depth-cue bias),
@@ -2827,6 +2877,7 @@ mod raster {
                 keep_occluded: false,
             },
             opts.section,
+            RenderStyle::Drafting,
         );
 
         // Screen-plane (mm) and 3D bounding boxes over all vertices.
@@ -3691,6 +3742,52 @@ mod raytrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_style_parses_known_names_and_rejects_unknown() {
+        assert_eq!("drafting".parse::<RenderStyle>(), Ok(RenderStyle::Drafting));
+        assert_eq!("".parse::<RenderStyle>(), Ok(RenderStyle::Drafting));
+        assert_eq!("Shaded".parse::<RenderStyle>(), Ok(RenderStyle::Shaded));
+        let err = "raytrace".parse::<RenderStyle>().unwrap_err();
+        assert!(err.contains("unknown render style"), "{err}");
+        assert!(err.contains("shaded"), "{err}");
+    }
+
+    #[test]
+    fn shaded_ramp_uses_full_material_color() {
+        // Achromatic steel grey: drafting keeps navy (blue-dominant stops),
+        // shaded must produce true greys (r ≈ g ≈ b at every stop).
+        let grey = [0.5, 0.5, 0.5];
+        let drafting = tint_ramp(grey);
+        let shaded = shaded_ramp(grey);
+        assert!(
+            drafting.iter().any(|s| s[2] > s[0] + 10),
+            "drafting ramp should stay navy for achromatic materials: {drafting:?}"
+        );
+        for stop in shaded {
+            let (r, g, b) = (stop[0] as i32, stop[1] as i32, stop[2] as i32);
+            assert!(
+                (r - g).abs() <= 2 && (g - b).abs() <= 2,
+                "shaded ramp for grey must be grey: {stop:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shaded_style_renders_material_color_svg() {
+        let doc = cube_vcad(10.0, 10.0, 10.0);
+        let drafting = render_svg_str_opts(&doc, 2.0, &SvgOptions::default()).unwrap();
+        let shaded = render_svg_str_opts(
+            &doc,
+            2.0,
+            &SvgOptions {
+                style: RenderStyle::Shaded,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(drafting, shaded, "shaded style must change the output");
+    }
 
     fn cube_vcad(sx: f64, sy: f64, sz: f64) -> String {
         format!(

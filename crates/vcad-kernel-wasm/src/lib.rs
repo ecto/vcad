@@ -298,6 +298,94 @@ pub fn render_svg_camera(
     vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }
 
+/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// surface expressed as one JSON options object — the forward-compatible
+/// companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
+/// so new render options never need another positional-arg binding.
+///
+/// `opts_json` (empty string = defaults):
+/// `{"view":"iso","focus":"rotor","axes":false,"labels":false,"dims":false,
+///   "section":"z=10","highlight":["part_3"],"style":"shaded"}`.
+/// `view` accepts everything [`render_svg_view`] does, including
+/// `"orbit:<azimuth>,<elevation>"`. `style` is `"drafting"` (default, navy
+/// tonal family) or `"shaded"` (full material colour). Unknown option keys
+/// and unknown style names are errors, never silently ignored.
+#[wasm_bindgen]
+pub fn render_svg_camera_opts(
+    vcad_json: &str,
+    scale: f64,
+    opts_json: &str,
+) -> Result<String, JsError> {
+    #[derive(serde::Deserialize, Default)]
+    #[serde(deny_unknown_fields)]
+    struct CameraOptsJson {
+        #[serde(default)]
+        view: Option<String>,
+        #[serde(default)]
+        focus: Option<String>,
+        #[serde(default)]
+        axes: bool,
+        #[serde(default)]
+        labels: bool,
+        #[serde(default)]
+        dims: bool,
+        #[serde(default)]
+        section: Option<String>,
+        #[serde(default)]
+        highlight: Vec<String>,
+        #[serde(default)]
+        style: Option<String>,
+        #[serde(default)]
+        transparent: bool,
+    }
+    let o: CameraOptsJson = if opts_json.trim().is_empty() {
+        CameraOptsJson::default()
+    } else {
+        serde_json::from_str(opts_json)
+            .map_err(|e| JsError::new(&format!("invalid render options: {e}")))?
+    };
+    let view = o
+        .view
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("iso")
+        .parse::<vcad_render::View>()
+        .map_err(|e| JsError::new(&e))?;
+    let section = match o
+        .section
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) => Some(
+            s.parse::<vcad_render::SectionPlane>()
+                .map_err(|e| JsError::new(&e))?,
+        ),
+        None => None,
+    };
+    let style = o
+        .style
+        .as_deref()
+        .unwrap_or("")
+        .parse::<vcad_render::RenderStyle>()
+        .map_err(|e| JsError::new(&e))?;
+    let opts = vcad_render::SvgOptions {
+        view,
+        transparent: o.transparent,
+        focus: o.focus.filter(|f| !f.trim().is_empty()),
+        section,
+        highlight: o.highlight,
+        annotations: vcad_render::RenderAnnotations {
+            axes: o.axes,
+            labels: o.labels,
+            dims: o.dims,
+        },
+        style,
+        ..Default::default()
+    };
+    vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
+}
+
 /// Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for
 /// boards — copper, silk, drills, outline).
 ///

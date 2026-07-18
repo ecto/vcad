@@ -21,6 +21,7 @@
  */
 
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
+import { transformMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { computeMeshProperties, type BoundingBox } from "./inspect.js";
 import { getSession } from "./session.js";
@@ -62,6 +63,25 @@ function evaluateParts(doc: Document, engine: Engine): ResolvedPart[] {
       id: rootId,
       name: node?.name ?? undefined,
       material: root.material ?? partMaterials?.[rootId] ?? undefined,
+      mesh,
+    });
+  }
+  // Assembly instances: bake the FK world transform into the part-local mesh
+  // so measurements report poses, not part-local geometry — the same
+  // candidate population check_clearance uses. Without this, assembly-only
+  // documents answered every measure/inspect_part query with "Available: none".
+  for (const inst of scene.instances ?? []) {
+    const mesh = inst.transform
+      ? transformMesh(inst.mesh, {
+          translate: inst.transform.translation,
+          rotate: inst.transform.rotation,
+          scale: inst.transform.scale,
+        })
+      : inst.mesh;
+    if (!mesh || mesh.positions.length === 0) continue;
+    out.push({
+      id: inst.instanceId,
+      name: inst.name ?? undefined,
       mesh,
     });
   }

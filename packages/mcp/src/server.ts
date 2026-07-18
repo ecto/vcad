@@ -104,6 +104,7 @@ import {
   type ToolContext,
 } from "./tools/tool-def.js";
 import { TOOL_METADATA } from "./tools/tool-metadata.js";
+import { unknownArgKeys, unknownArgsError } from "./tools/validate-args.js";
 import type { ToolResult } from "./tools/tool-result.js";
 import { buildKernelEventPayload } from "./tools/kernel-event.js";
 
@@ -1364,6 +1365,22 @@ export async function createServer(
         };
         fireToolAlert(name, args, unknownResult);
         return unknownResult;
+      }
+
+      // ── Strict arguments ───────────────────────────────────────────
+      // Any top-level argument key the tool's schema doesn't declare is a
+      // loud error, never a silent no-op — a misspelled or unsupported
+      // option must not vanish into a successful-looking result.
+      const unknown = unknownArgKeys(def.inputSchema, args);
+      if (unknown.length > 0) {
+        const rejection: ToolResult = {
+          content: [
+            { type: "text", text: unknownArgsError(name, unknown, def.inputSchema) },
+          ],
+          isError: true,
+        };
+        fireToolAlert(name, args, rejection);
+        return rejection;
       }
 
       // ── Trust boundary (commerce plane) ────────────────────────────

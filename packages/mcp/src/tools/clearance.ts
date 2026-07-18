@@ -43,6 +43,33 @@ const CLEARANCE_ORACLE: OracleRef = {
  *  geometry"; beyond it (but still passing) the receipt reads Stale. */
 const STALE_EPS_MM = 1e-6;
 
+/** Tolerance (mm) around zero within which parts count as "touching" rather
+ *  than clear or intersecting. Keep in sync with `CONTACT_EPS_MM` in
+ *  crates/vcad-receipt/src/mechanical.rs. */
+const CONTACT_EPS_MM = 1e-3;
+
+/** Three-way contact verdict derived from the signed minimum distance. */
+export type ClearanceVerdict = "clear" | "touching" | "intersecting";
+
+/** Classify a signed distance into clear / touching / intersecting. */
+export function clearanceVerdict(distanceMm: number): ClearanceVerdict {
+  if (distanceMm < -CONTACT_EPS_MM) return "intersecting";
+  if (distanceMm <= CONTACT_EPS_MM) return "touching";
+  return "clear";
+}
+
+/** Does the measurement satisfy the spec, honoring allowed contact? */
+export function clearanceHolds(
+  distanceMm: number,
+  minMm: number,
+  allowContact: boolean,
+): boolean {
+  return (
+    distanceMm >= minMm ||
+    (allowContact && clearanceVerdict(distanceMm) === "touching")
+  );
+}
+
 /** Round distances so payloads don't carry float noise. */
 const round6 = (v: number) => Math.round(v * 1e6) / 1e6;
 
@@ -71,6 +98,11 @@ export const checkClearanceSchema = {
       type: "string" as const,
       description:
         "Optional assertion name (e.g. 'air-gap'). When given, the spec is persisted on the document and re-verified by build_receipt / verify_receipt whenever geometry changes.",
+    },
+    allow_contact: {
+      type: "boolean" as const,
+      description:
+        "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given.",
     },
   },
   required: ["document_id", "group_a", "group_b", "min_mm"],
@@ -253,12 +285,14 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   const minMm = typeof args.min_mm === "number" ? args.min_mm : NaN;
   if (!Number.isFinite(minMm)) return err("Pass `min_mm`, the required minimum separation in mm.");
   const label = typeof args.label === "string" && args.label.trim() ? args.label.trim() : undefined;
+  const allowContact = args.allow_contact === true;
 
   const doc = getSession(documentId);
   const { result, error } = computeGroupClearance(doc, engine, groupA, groupB);
   if (error || !result) return err(error ?? "Clearance could not be computed.");
 
-  const pass = result.distance_mm >= minMm;
+  const verdict = clearanceVerdict(result.distance_mm);
+  const pass = clearanceHolds(result.distance_mm, minMm, allowContact);
   let specSaved = false;
   if (label) {
     // Persist by resolved part ids so the assertion survives renames.
@@ -267,6 +301,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
       group_a: result.group_a.map((p) => p.id),
       group_b: result.group_b.map((p) => p.id),
       min_mm: minMm,
+      ...(allowContact ? { allow_contact: true } : {}),
     });
     specSaved = true;
   }
@@ -278,6 +313,8 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
     required_mm: minMm,
     measured_mm: result.distance_mm,
     pass,
+    verdict,
+    ...(allowContact ? { allow_contact: true } : {}),
     intersecting: result.intersecting,
     worst_pair: result.worst_pair,
     pairs_checked: result.pairs_checked,
@@ -339,13 +376,15 @@ export function clearanceReceiptClaims(doc: Document, engine: Engine | undefined
         subject,
       };
     }
+    const allowContact = spec.allow_contact === true;
     const assertion: ClearanceClaim = {
       label: spec.label,
       group_a: spec.group_a,
       group_b: spec.group_b,
       required_mm: spec.min_mm,
       measured_mm: result.distance_mm,
-      holds: result.distance_mm >= spec.min_mm,
+      holds: clearanceHolds(result.distance_mm, spec.min_mm, allowContact),
+      ...(allowContact ? { allow_contact: true } : {}),
     };
     return {
       id,
@@ -410,7 +449,7 @@ export function verifyClearanceClaims(
       continue;
     }
     const measured = result.distance_mm;
-    if (measured < stored.required_mm) {
+    if (!clearanceHolds(measured, stored.required_mm, stored.allow_contact === true)) {
       checks.push({
         label,
         status: "Violated",
@@ -487,7 +526,7 @@ export const toolDefs: ToolDef[] = [
     name: "check_clearance",
     pack: null,
     description:
-      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), the worst part pair, and pass/fail. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
     inputSchema: checkClearanceSchema,
     handler: (a, c) => checkClearance(a, c.engine),
     behavior: behavior({ writesDoc: true }),

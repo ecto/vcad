@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-shaded-render-style",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Shaded render style with full material colors",
+  "summary": "render_view accepts style: 'shaded' to render parts in their full assigned material colors instead of the navy drafting look; unknown styles and unknown tool arguments now error instead of being silently ignored.",
+  "features": ["render", "materials", "mcp"],
+  "mcpTools": ["render_view"]
+}
