@@ -115,8 +115,15 @@ fn bundle_rays(pupil_radius_mm: f64, rings: usize, field_deg: f64) -> Vec<Ray> {
     pupil_points(pupil_radius_mm, rings)
         .into_iter()
         .map(|(px, py)| Ray {
-            // Through (px, py, 0) with direction (0, sinθ, cosθ), started
-            // one unit before the front tangent plane.
+            // M0 pupil model: parallel rays at the field angle, each passing
+            // through its pupil-grid point on the FRONT VERTEX PLANE (z = 0).
+            // Launch at z = -1 and back the origin off by tanθ in y so that
+            // at z = 0 the ray lands exactly on (px, py): the entrance-pupil
+            // footprint is the fixed grid, independent of field. This takes
+            // the pupil at the front vertex — exact for front-stop systems,
+            // unweighted (but correctly vignetting) for internal stops. M1
+            // replaces this with paraxial entrance-pupil imaging, at which
+            // point the pupil plane, not the front vertex, sets the origin.
             p: Vec3::new(px, py - s / c, -1.0),
             d: Vec3::new(0.0, s, c),
         })

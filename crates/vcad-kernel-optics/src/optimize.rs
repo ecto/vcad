@@ -113,14 +113,19 @@ pub fn minimize(
             gnorm += grad[i] * grad[i];
         }
         gnorm = gnorm.sqrt();
+        // No usable descent direction: every component is zero (a genuine
+        // flat spot, or all probes clamped/infeasible). Break before the
+        // line search, which would otherwise divide by gnorm. This guard is
+        // unconditional — the scale-invariant test below is skipped when a
+        // probe was infeasible, so it cannot be relied on to catch gnorm==0.
+        if gnorm == 0.0 {
+            break;
+        }
         // Scale-invariant stop (the particle crate's 1e-32 lesson): the
         // gradient is negligible relative to the objective's own scale.
         // Skipped when a probe was infeasible — the boundary is real,
         // keep line-searching along whatever gradient survives.
-        if finite && (gnorm <= 1e-12 * value.abs() || gnorm == 0.0) {
-            break;
-        }
-        if gnorm == 0.0 {
+        if finite && gnorm <= 1e-12 * value.abs() {
             break;
         }
 
