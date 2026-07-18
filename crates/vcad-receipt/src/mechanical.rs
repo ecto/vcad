@@ -73,7 +73,18 @@ pub struct ClearanceClaim {
     pub measured_mm: f64,
     /// Whether the measured distance satisfies the requirement.
     pub holds: bool,
+    /// Named allowed contact: when true, a measured distance within
+    /// [`CONTACT_EPS_MM`] of zero (surfaces touching, e.g. a part bolted
+    /// flush to another) satisfies the assertion even below `required_mm`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub allow_contact: Option<bool>,
 }
+
+/// Tolerance (mm) around zero within which two parts count as "touching"
+/// rather than clear or intersecting. Absorbs tessellation noise on flush
+/// faces; 1 µm is far below any manufacturable clearance.
+pub const CONTACT_EPS_MM: f64 = 1e-3;
 
 impl ClearanceClaim {
     /// Build a claim, deriving `holds` from the measurement.
@@ -91,7 +102,17 @@ impl ClearanceClaim {
             required_mm,
             measured_mm: if measured_mm == 0.0 { 0.0 } else { measured_mm },
             holds: measured_mm.is_finite() && measured_mm >= required_mm,
+            allow_contact: None,
         }
+    }
+
+    /// Mark contact as allowed and re-derive `holds` accordingly: a
+    /// measurement within [`CONTACT_EPS_MM`] of zero passes.
+    pub fn with_allow_contact(mut self) -> Self {
+        self.allow_contact = Some(true);
+        self.holds = self.measured_mm.is_finite()
+            && (self.measured_mm >= self.required_mm || self.measured_mm.abs() <= CONTACT_EPS_MM);
+        self
     }
 }
 
@@ -122,7 +143,9 @@ pub fn clearance_claims(assertions: &[ClearanceClaim], oracle: &OracleRef) -> Ve
                 )
                 .with_subject(subject);
             }
-            let holds = a.holds && a.measured_mm >= a.required_mm;
+            let contact_ok =
+                a.allow_contact.unwrap_or(false) && a.measured_mm.abs() <= CONTACT_EPS_MM;
+            let holds = a.holds && (a.measured_mm >= a.required_mm || contact_ok);
             let mut c = ReceiptClaim::pass(id, DOMAIN, description, oracle.clone())
                 .with_subject(subject)
                 .with_predicted(ClaimQuantity::new(a.required_mm, "mm"))
@@ -397,6 +420,21 @@ mod tests {
         };
         let claims = mass_properties_claims(&measured, &MassSpec::default(), &oracle());
         assert_eq!(claims[0].verdict, ClaimVerdict::Unverifiable);
+    }
+
+    #[test]
+    fn allow_contact_passes_touching_but_not_penetration() {
+        let touching = ClearanceClaim::new("bolted", vec!["1".into()], vec!["2".into()], 0.5, 0.0)
+            .with_allow_contact();
+        assert!(touching.holds);
+        let claims = clearance_claims(&[touching], &oracle());
+        assert_eq!(claims[0].verdict, crate::ClaimVerdict::Pass);
+
+        let penetrating = ClearanceClaim::new("bad", vec!["1".into()], vec!["2".into()], 0.5, -1.0)
+            .with_allow_contact();
+        assert!(!penetrating.holds);
+        let claims = clearance_claims(&[penetrating], &oracle());
+        assert_eq!(claims[0].verdict, crate::ClaimVerdict::Fail);
     }
 
     #[test]

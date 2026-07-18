@@ -5029,7 +5029,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5094,6 +5094,14 @@
         "highlight_changed": {
           "type": "boolean",
           "description": "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly."
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "drafting",
+            "shaded"
+          ],
+          "description": "Shading style: 'drafting' (default) keeps part colors in the navy drafting tonal family; 'shaded' renders each part in its full assigned material color (same Lambertian shading). Any other value is an error."
         }
       }
     },
@@ -7513,7 +7521,7 @@
   {
     "name": "check_clearance",
     "title": "Check Clearance",
-    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), the worst part pair, and pass/fail. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7542,6 +7550,10 @@
         "label": {
           "type": "string",
           "description": "Optional assertion name (e.g. 'air-gap'). When given, the spec is persisted on the document and re-verified by build_receipt / verify_receipt whenever geometry changes."
+        },
+        "allow_contact": {
+          "type": "boolean",
+          "description": "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given."
         }
       },
       "required": [

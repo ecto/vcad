@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-clearance-touching-verdict",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "check_clearance touching verdict and allowed contact",
+  "summary": "check_clearance reports a clear/touching/intersecting verdict and accepts allow_contact for parts designed to touch (e.g. bolted flush); allowed contact persists on labeled specs and is honored by receipt verification.",
+  "features": ["clearance", "receipts", "mcp"],
+  "mcpTools": ["check_clearance"]
+}

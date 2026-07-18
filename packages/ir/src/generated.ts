@@ -381,7 +381,13 @@ measured_mm: number,
 /**
  * Whether the measured distance satisfies the requirement.
  */
-holds: boolean, };
+holds: boolean, 
+/**
+ * Named allowed contact: when true, a measured distance within
+ * [`CONTACT_EPS_MM`] of zero (surfaces touching, e.g. a part bolted
+ * flush to another) satisfies the assertion even below `required_mm`.
+ */
+allow_contact?: boolean, };
 
 /**
  * A named minimum-clearance assertion between two groups of parts.
@@ -407,7 +413,14 @@ group_b: Array<string>,
  * Required minimum separation in mm: the assertion holds when the
  * measured minimum distance between the groups is at least this value.
  */
-min_mm: number, };
+min_mm: number, 
+/**
+ * Named allowed contact: when true, surfaces touching (measured
+ * distance within the contact tolerance of zero) satisfy the assertion
+ * even though it is below `min_mm` — e.g. a stage bolted flush to the
+ * chamber floor. Penetration beyond the tolerance still fails.
+ */
+allow_contact?: boolean, };
 
 /**
  * Provenance of a piece of copper: who placed it.

@@ -1850,6 +1850,13 @@ pub struct ClearanceSpec {
     /// Required minimum separation in mm: the assertion holds when the
     /// measured minimum distance between the groups is at least this value.
     pub min_mm: f64,
+    /// Named allowed contact: when true, surfaces touching (measured
+    /// distance within the contact tolerance of zero) satisfy the assertion
+    /// even though it is below `min_mm` — e.g. a stage bolted flush to the
+    /// chamber floor. Penetration beyond the tolerance still fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub allow_contact: Option<bool>,
 }
 
 impl Default for Document {
