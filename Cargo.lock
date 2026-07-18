@@ -7644,6 +7644,7 @@ dependencies = [
  "vcad-app",
  "vcad-chat",
  "vcad-crdt",
+ "vcad-diff",
  "vcad-ecad-export",
  "vcad-ecad-parts",
  "vcad-ecad-pcb",

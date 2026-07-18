@@ -91,6 +91,19 @@ export {
 export type { GpuGeometryResult } from "./gpu.js";
 
 // Caching and incremental evaluation
+export {
+  semanticDiff,
+  semanticDiffFallback,
+  threeWayMerge,
+  mergeAvailable,
+  type DocumentDiff,
+  type EntityChange,
+  type EntityKind as DiffEntityKind,
+  type FieldChange,
+  type MergeConflict,
+  type MergeResolution,
+  type MergeOutcome,
+} from "./diff.js";
 export { SolidCache, hashCsgOp } from "./solid-cache.js";
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
@@ -466,6 +479,19 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
+  documentDiff?: (oldJson: string, newJson: string) => unknown;
+  /** Apply a `DocumentDiff` to a document, returning the patched document. */
+  documentDiffApply?: (oldJson: string, diffJson: string) => unknown;
+  /** Fail-closed three-way merge with optional conflict resolutions. */
+  documentMerge?: (
+    baseJson: string,
+    oursJson: string,
+    theirsJson: string,
+    resolutionsJson?: string | null,
+  ) => unknown;
+  /** Human-readable rendering of a `DocumentDiff` JSON string. */
+  documentDiffHuman?: (diffJson: string) => string;
   /** Circuit DC operating point (`{devices:[...]}` spec JSON). */
   circuitDcOperatingPoint?: (specJson: string) => unknown;
   /** Circuit small-signal AC sweep at the given angular frequencies. */
@@ -888,6 +914,10 @@ export class Engine {
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
+      documentDiff: (wasmModule as Record<string, unknown>).documentDiff as KernelModule["documentDiff"],
+      documentDiffApply: (wasmModule as Record<string, unknown>).documentDiffApply as KernelModule["documentDiffApply"],
+      documentMerge: (wasmModule as Record<string, unknown>).documentMerge as KernelModule["documentMerge"],
+      documentDiffHuman: (wasmModule as Record<string, unknown>).documentDiffHuman as KernelModule["documentDiffHuman"],
       circuitDcOperatingPoint: (wasmModule as Record<string, unknown>).circuitDcOperatingPoint as KernelModule["circuitDcOperatingPoint"],
       circuitAcResponse: (wasmModule as Record<string, unknown>).circuitAcResponse as KernelModule["circuitAcResponse"],
       circuitSensitivities: (wasmModule as Record<string, unknown>).circuitSensitivities as KernelModule["circuitSensitivities"],

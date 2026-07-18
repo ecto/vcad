@@ -65,7 +65,7 @@ interface HeaderProps {
   /** Opens the ContinueDialog (hand off this part to Claude/ChatGPT/an editor).
    *  Enabled only when signed in + cloud-synced. */
   onContinueOpen: () => void;
-  /** Opens the VersionHistoryModal. Enabled only when signed in. */
+  /** Opens the version timeline sidebar. Enabled only when signed in. */
   onVersionHistoryOpen: () => void;
   /** Tool palette (tab strip + icon row) docked directly under the menu bar. */
   children?: React.ReactNode;
