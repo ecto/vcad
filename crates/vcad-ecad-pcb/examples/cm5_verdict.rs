@@ -8,21 +8,29 @@
 //! cargo run --release -p vcad-ecad-pcb --example cm5_verdict -- routed.pcb.json [budget]
 //! ```
 
-use vcad_ecad_pcb::router::complete::{route_window_complete, CompleteOutcome};
+use std::collections::BTreeMap;
 use vcad_ecad_pcb::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet};
+use vcad_ecad_pcb::router::complete::{route_window_complete, CompleteOutcome};
 use vcad_ecad_pcb::session::RouteSession;
 use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
-use std::collections::BTreeMap;
+
+type Cluster = (Vec2, Vec2, Vec<(String, Vec2, Vec2)>);
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: cm5_verdict <routed.pcb.json> [budget]");
-    let budget: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(5_000_000);
-    let pcb: Pcb = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
+    let path = args
+        .next()
+        .expect("usage: cm5_verdict <routed.pcb.json> [budget]");
+    let budget: usize = args
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5_000_000);
+    let pcb: Pcb =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
 
     // Unrouted connections = ratsnest over the routed board.
     let mut map: BTreeMap<String, Vec<NetConnection>> = BTreeMap::new();
@@ -58,7 +66,7 @@ fn main() {
     let width = pcb.rules.default_rules.trace_width;
 
     // Cluster connections whose bboxes (inflated 4mm) overlap.
-    let mut clusters: Vec<(Vec2, Vec2, Vec<(String, Vec2, Vec2)>)> = Vec::new();
+    let mut clusters: Vec<Cluster> = Vec::new();
     'c: for l in &rats {
         let (lo, hi) = (
             Vec2::new(l.from.x.min(l.to.x) - 4.0, l.from.y.min(l.to.y) - 4.0),

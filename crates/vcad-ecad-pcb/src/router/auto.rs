@@ -124,6 +124,13 @@ pub struct RouteOptions {
     /// negotiation round 1 onward (round 0 is the pure historical baseline), so
     /// the result can never regress below greedy + rip-up — only close more nets.
     pub use_push_shove: bool,
+    /// Nets to route FIRST in the opening greedy pass, before everything
+    /// else — the cure for path dependence: connections whose only viable
+    /// corridors get consumed by flexible nets (measured on the CM5 via the
+    /// graft test: 1097 conflicts between our easy nets' copper and the
+    /// reference routing of our stuck nets). Hard nets take the virgin
+    /// board; the flexible ones route around them.
+    pub priority_nets: Vec<String>,
     /// Effort multiplier ≥ 0: one scalar that scales every iteration budget
     /// (negotiation rounds and rip-up rounds). `1.0` is the default budget;
     /// `2.0` lets a congested board negotiate twice as long; values below 1
@@ -168,6 +175,7 @@ impl Default for RouteOptions {
             negotiation_rounds: DEFAULT_NEGOTIATION_ROUNDS,
             use_push_shove: true,
             effort: 1.0,
+            priority_nets: Vec::new(),
         }
     }
 }
@@ -323,9 +331,13 @@ pub fn route_all_with_opts(
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
             ordered.sort_by(|a, b| {
-                dist(b.from, b.to)
-                    .partial_cmp(&dist(a.from, a.to))
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                let pa = opts.priority_nets.contains(&a.net);
+                let pb = opts.priority_nets.contains(&b.net);
+                pb.cmp(&pa).then_with(|| {
+                    dist(b.from, b.to)
+                        .partial_cmp(&dist(a.from, a.to))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
             });
             route_pass(
                 pcb,
@@ -3286,6 +3298,7 @@ mod tests {
                 negotiation_rounds: 1,
                 use_push_shove: false,
                 effort: 1.0,
+                priority_nets: Vec::new(),
             },
         );
         assert_eq!(
@@ -3323,6 +3336,7 @@ mod tests {
                 negotiation_rounds: 1,
                 use_push_shove: false,
                 effort: 1.0,
+                priority_nets: Vec::new(),
             },
         );
         // The shipped default: negotiated congestion + validated push-shove.
@@ -3415,6 +3429,7 @@ mod tests {
                 negotiation_rounds: 1,
                 use_push_shove: false,
                 effort: 1.0,
+                priority_nets: Vec::new(),
             },
         );
         let default = route_all(&pcb, 0.25, &[]);
