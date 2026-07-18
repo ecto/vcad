@@ -264,6 +264,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     title: "Analyze Tolerance Stackup",
     annotations: RO,
   },
+  simulate_circuit: { title: "Simulate Circuit", annotations: RO },
+  tune_circuit: { title: "Tune Circuit", annotations: RO },
   predict_physics: { title: "Predict Physics", annotations: RO },
   define_loon: { title: "Define Loon Macro", annotations: RW },
   call_loon: { title: "Call Loon Macro", annotations: RW },

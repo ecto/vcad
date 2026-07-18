@@ -4476,6 +4476,239 @@
     }
   },
   {
+    "name": "simulate_circuit",
+    "title": "Simulate Circuit",
+    "description": "SPICE-style lumped-element circuit simulation (MNA): DC operating point (gmin-stepped Newton, exact at gmin=0), small-signal AC sweep (complex MNA, per-frequency complex node voltages + Bode magnitude/phase for outNode), and transient (trapezoidal, SPICE2's integrator). Netlist is data: {devices:[{kind,p,n,value}]}, node 0 = ground, device id = array index. Returns node voltages/currents and `vcad.spice-claims/1` + unified-receipt claims (basis \"predicted\", rolls up Provisional until measured — a $30 USB scope + signal generator close them). The Tellegen power-balance residual is reported as the honesty signal: it is solver error and nothing else. Limits: diode AC uses the DC-linearized small-signal model; motors are transient-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "p",
+              "n"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "resistor",
+                  "capacitor",
+                  "inductor",
+                  "vsource",
+                  "isource",
+                  "diode",
+                  "led",
+                  "motor"
+                ],
+                "description": "Device kind. `diode`/`led` use built-in Shockley models; `motor` a small-DC model (transient only)."
+              },
+              "p": {
+                "type": "number",
+                "description": "Positive node id (0 = ground)."
+              },
+              "n": {
+                "type": "number",
+                "description": "Negative node id (0 = ground)."
+              },
+              "value": {
+                "type": "number",
+                "description": "Primary value: R in ohms, C in farads, L in henries, V in volts, I in amps. Ignored for diode/led/motor."
+              }
+            }
+          },
+          "description": "Netlist as data. Node ids are dense integers with 0 = ground; the device's index in this array is its device id (used by sourceId / freeDevices / outNode references)."
+        },
+        "analyses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "dc",
+              "ac",
+              "transient"
+            ]
+          },
+          "description": "Which analyses to run."
+        },
+        "ac": {
+          "type": "object",
+          "properties": {
+            "sourceId": {
+              "type": "number",
+              "description": "Device id of the driving V/I source (unit amplitude)."
+            },
+            "outNode": {
+              "type": "number",
+              "description": "Node whose transfer magnitude/phase to tabulate (Bode points)."
+            },
+            "frequenciesHz": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "description": "Explicit frequency list (Hz). Overrides the sweep."
+            },
+            "startHz": {
+              "type": "number",
+              "description": "Sweep start (default 10)."
+            },
+            "stopHz": {
+              "type": "number",
+              "description": "Sweep stop (default 1e6)."
+            },
+            "points": {
+              "type": "number",
+              "description": "Log-spaced sweep points (default 40, max 500)."
+            }
+          },
+          "description": "Required when analyses includes \"ac\"."
+        },
+        "transient": {
+          "type": "object",
+          "properties": {
+            "dt": {
+              "type": "number",
+              "description": "Timestep (s)."
+            },
+            "steps": {
+              "type": "number",
+              "description": "Step count (max 2e6)."
+            },
+            "sampleEvery": {
+              "type": "number",
+              "description": "Record every Nth step (sample cap 5000). Default 1."
+            }
+          },
+          "description": "Required when analyses includes \"transient\"."
+        }
+      },
+      "required": [
+        "devices",
+        "analyses"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "tune_circuit",
+    "title": "Tune Circuit",
+    "description": "Adjoint-driven circuit tuning: gradient descent in log-parameter space (backtracking line search, scale-invariant stop) moves the freeDevices' values toward a target — either a 2nd-order filter target {cutoffHz, qFactor, sourceId, outNode} or a DC target {node, dcVoltage}. Each gradient costs one transposed MNA solve per probe regardless of component count. Returns tuned values, before/after response points, iteration count, the achieved target (cutoff measured by −3 dB bisection, Q from the −90° phase crossing, or the achieved DC voltage), and `vcad.spice-claims/1` + unified-receipt claims (predicted basis, Provisional rollup). Fails closed if a free device's sensitivity is a deferred placeholder (diodes at AC) or non-positive (log-space needs positive values).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "p",
+              "n"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "resistor",
+                  "capacitor",
+                  "inductor",
+                  "vsource",
+                  "isource",
+                  "diode",
+                  "led",
+                  "motor"
+                ],
+                "description": "Device kind. `diode`/`led` use built-in Shockley models; `motor` a small-DC model (transient only)."
+              },
+              "p": {
+                "type": "number",
+                "description": "Positive node id (0 = ground)."
+              },
+              "n": {
+                "type": "number",
+                "description": "Negative node id (0 = ground)."
+              },
+              "value": {
+                "type": "number",
+                "description": "Primary value: R in ohms, C in farads, L in henries, V in volts, I in amps. Ignored for diode/led/motor."
+              }
+            }
+          },
+          "description": "Netlist as data. Node ids are dense integers with 0 = ground; the device's index in this array is its device id (used by sourceId / freeDevices / outNode references)."
+        },
+        "target": {
+          "type": "object",
+          "description": "Either a filter target {cutoffHz, qFactor, sourceId, outNode} (sourceId = driving source device id, outNode = response node) or a DC target {node, dcVoltage}.",
+          "properties": {
+            "cutoffHz": {
+              "type": "number"
+            },
+            "qFactor": {
+              "type": "number"
+            },
+            "sourceId": {
+              "type": "number"
+            },
+            "outNode": {
+              "type": "number"
+            },
+            "node": {
+              "type": "number"
+            },
+            "dcVoltage": {
+              "type": "number"
+            }
+          }
+        },
+        "freeDevices": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "device"
+            ],
+            "properties": {
+              "device": {
+                "type": "number",
+                "description": "Device id (index into devices) allowed to move."
+              },
+              "min": {
+                "type": "number",
+                "description": "Lower bound (> 0)."
+              },
+              "max": {
+                "type": "number",
+                "description": "Upper bound."
+              }
+            }
+          }
+        },
+        "maxIters": {
+          "type": "number",
+          "description": "Gradient iteration cap (default 500, max 5000)."
+        }
+      },
+      "required": [
+        "devices",
+        "freeDevices",
+        "target"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "predict_physics",
     "title": "Predict Physics",
     "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",

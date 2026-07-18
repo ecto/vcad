@@ -466,6 +466,28 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Circuit DC operating point (`{devices:[...]}` spec JSON). */
+  circuitDcOperatingPoint?: (specJson: string) => unknown;
+  /** Circuit small-signal AC sweep at the given angular frequencies. */
+  circuitAcResponse?: (
+    specJson: string,
+    sourceId: number,
+    omegas: Float64Array | number[],
+  ) => unknown;
+  /** Circuit adjoint sensitivities (`{"dc":true}` or `{"ac":{...}}`). */
+  circuitSensitivities?: (
+    specJson: string,
+    outNode: number,
+    analysisJson: string,
+  ) => unknown;
+  /** Batched circuit transient run (trapezoidal). */
+  circuitTransient?: (
+    specJson: string,
+    steps: number,
+    sampleEvery: number,
+  ) => unknown;
+  /** Adjoint gradient-descent circuit tuning (TuneSpec JSON). */
+  circuitTune?: (specJson: string, tuneJson: string) => unknown;
   /** Static structural FEA with convergence gating (FeaSpec/options JSON + mesh). */
   feaAnalyzeMesh?: (
     specJson: string,
@@ -866,6 +888,11 @@ export class Engine {
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
+      circuitDcOperatingPoint: (wasmModule as Record<string, unknown>).circuitDcOperatingPoint as KernelModule["circuitDcOperatingPoint"],
+      circuitAcResponse: (wasmModule as Record<string, unknown>).circuitAcResponse as KernelModule["circuitAcResponse"],
+      circuitSensitivities: (wasmModule as Record<string, unknown>).circuitSensitivities as KernelModule["circuitSensitivities"],
+      circuitTransient: (wasmModule as Record<string, unknown>).circuitTransient as KernelModule["circuitTransient"],
+      circuitTune: (wasmModule as Record<string, unknown>).circuitTune as KernelModule["circuitTune"],
       feaAnalyzeMesh: (wasmModule as Record<string, unknown>).feaAnalyzeMesh as KernelModule["feaAnalyzeMesh"],
       emSimulate: (wasmModule as Record<string, unknown>).emSimulate as KernelModule["emSimulate"],
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
@@ -1193,6 +1220,62 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson, optionsJson);
+  }
+
+  private circuitFn<K extends keyof KernelModule>(name: K): NonNullable<KernelModule[K]> {
+    const fn = this.kernel[name];
+    if (typeof fn !== "function") {
+      throw new Error(
+        `${String(name)} is not exported by this kernel WASM build — rebuild packages/kernel-wasm`,
+      );
+    }
+    return fn as NonNullable<KernelModule[K]>;
+  }
+
+  /**
+   * Circuit DC operating point: node voltages, device currents, the Tellegen
+   * power-balance residual, and predicted `vcad.spice-claims/1` claims.
+   * `specJson` is the same `{devices:[{kind,p,n,value}]}` shape `CircuitSim`
+   * takes; see `vcad-ecad-sim::circuit`.
+   */
+  circuitDcOperatingPoint(specJson: string): unknown {
+    return this.circuitFn("circuitDcOperatingPoint")(specJson);
+  }
+
+  /** Small-signal AC sweep: per-omega complex node voltages (re/im arrays). */
+  circuitAcResponse(
+    specJson: string,
+    sourceId: number,
+    omegas: number[],
+  ): unknown {
+    return this.circuitFn("circuitAcResponse")(
+      specJson,
+      sourceId,
+      new Float64Array(omegas),
+    );
+  }
+
+  /** Adjoint sensitivities of the voltage at `outNode` to every device primary. */
+  circuitSensitivities(
+    specJson: string,
+    outNode: number,
+    analysisJson: string,
+  ): unknown {
+    return this.circuitFn("circuitSensitivities")(specJson, outNode, analysisJson);
+  }
+
+  /** Batched circuit transient run (trapezoidal integrator). */
+  circuitTransient(
+    specJson: string,
+    steps: number,
+    sampleEvery: number,
+  ): unknown {
+    return this.circuitFn("circuitTransient")(specJson, steps, sampleEvery);
+  }
+
+  /** Adjoint gradient-descent tuning toward a filter or DC target. */
+  circuitTune(specJson: string, tuneJson: string): unknown {
+    return this.circuitFn("circuitTune")(specJson, tuneJson);
   }
 
   /**

@@ -132,6 +132,7 @@ import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
 import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as circuitToolDefs } from "./tools/circuit.js";
 import { toolDefs as structureToolDefs } from "./tools/structure.js";
 import { toolDefs as emToolDefs } from "./tools/em.js";
 import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
@@ -318,6 +319,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...particleToolDefs,
   ...toleranceToolDefs,
   ...thermalToolDefs,
+  ...circuitToolDefs,
   ...structureToolDefs,
   ...emToolDefs,
   ...antennaToolDefs,
@@ -414,6 +416,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "analyze_structure",
   "simulate_neutron_shield",
   "analyze_tolerance_stackup",
+  "simulate_circuit",
+  "tune_circuit",
   // ── Two-tier static physics (predict fast, verify to certify) ──
   "predict_physics",
   // ── Print-then-measure calibration loop (3DP) ──────────────
