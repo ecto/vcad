@@ -3593,6 +3593,104 @@ export function checkSheetMetal(chain_json, shop_json) {
 }
 
 /**
+ * Small-signal AC response driven by device `source_id` (a V or I source)
+ * with unit amplitude, solved at each angular frequency in `omegas` (rad/s).
+ * Returns per-omega complex node voltages as re/im arrays.
+ * @param {string} spec_json
+ * @param {number} source_id
+ * @param {Float64Array} omegas
+ * @returns {any}
+ */
+export function circuitAcResponse(spec_json, source_id, omegas) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF64ToWasm0(omegas, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.circuitAcResponse(ptr0, len0, source_id, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * DC operating point of a `{ devices: [...] }` circuit spec: node voltages,
+ * device currents, the Tellegen power-balance residual, and predicted
+ * `vcad.spice-claims/1` claims (Provisional rollup, never Pass).
+ * @param {string} spec_json
+ * @returns {any}
+ */
+export function circuitDcOperatingPoint(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.circuitDcOperatingPoint(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Adjoint sensitivities of the voltage at `out_node` to every device primary
+ * — one extra transposed solve for the whole gradient. `analysis_json`
+ * selects `{"dc": true}` or `{"ac": {"sourceId", "omega"}}`.
+ * @param {string} spec_json
+ * @param {number} out_node
+ * @param {string} analysis_json
+ * @returns {any}
+ */
+export function circuitSensitivities(spec_json, out_node, analysis_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(analysis_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.circuitSensitivities(ptr0, len0, out_node, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Batched transient run (trapezoidal integrator): step `steps` times from
+ * the power-on state, sampling every `sample_every` steps. Sample count is
+ * capped at 5000 — raise `sample_every` for long runs.
+ * @param {string} spec_json
+ * @param {number} steps
+ * @param {number} sample_every
+ * @returns {any}
+ */
+export function circuitTransient(spec_json, steps, sample_every) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.circuitTransient(ptr0, len0, steps, sample_every);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Tune the free devices toward the target by adjoint gradient descent.
+ * Fails closed if any free device's sensitivity slot is deferred
+ * (a placeholder, not a computed gradient — at M0, diodes at AC).
+ * @param {string} spec_json
+ * @param {string} tune_json
+ * @returns {any}
+ */
+export function circuitTune(spec_json, tune_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tune_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.circuitTune(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Compute creased normals using GPU acceleration.
  *
  * # Arguments
@@ -8844,12 +8942,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3604, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3605, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3612, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3613, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3629, function: Function { arguments: [Externref], shim_idx: 3630, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3637, function: Function { arguments: [Externref], shim_idx: 3638, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
