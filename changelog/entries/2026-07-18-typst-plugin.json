@@ -1,6 +1,6 @@
 {
   "id": "2026-07-18-typst-plugin",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "date": "2026-07-18",
   "category": "feat",
   "title": "Typst plugin: CAD rendered and measured in documents",

@@ -9,7 +9,7 @@ description = "Typst WASM plugin: render, sheet, and inspect .vcad documents and
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-vcad-render = { workspace = true, default-features = false }
+vcad-render = { path = "../vcad-render", default-features = false }
 vcad-loon = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }

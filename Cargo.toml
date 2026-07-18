@@ -253,7 +253,6 @@ vcad-crdt = { path = "crates/vcad-crdt", version = "0.9.4" }
 vcad-app = { path = "crates/vcad-app", version = "0.9.4" }
 vcad-eval = { path = "crates/vcad-eval", version = "0.9.4" }
 vcad-loon = { path = "crates/vcad-loon", version = "0.9.4" }
-vcad-render = { path = "crates/vcad-render", version = "0.9.3", default-features = false }
 vcad-sim = { path = "crates/vcad-sim", version = "0.9.4" }
 vcad-ecad-package = { path = "crates/vcad-ecad-package", version = "0.9.4" }
 vcad-ecad-parts = { path = "crates/vcad-ecad-parts", version = "0.9.4" }

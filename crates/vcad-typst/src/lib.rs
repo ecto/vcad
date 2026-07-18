@@ -229,7 +229,7 @@ impl MeshProps {
         let mut volume = 0.0;
         let mut area = 0.0;
         let mut com = [0.0; 3];
-        for tri in mesh.indices.chunks_exact(3) {
+        for tri in mesh.indices.as_chunks::<3>().0 {
             let (a, b, c) = (vert(tri[0]), vert(tri[1]), vert(tri[2]));
             let cross = [
                 (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]),
@@ -254,7 +254,7 @@ impl MeshProps {
         };
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
-        for v in p.chunks_exact(3) {
+        for v in p.as_chunks::<3>().0 {
             for axis in 0..3 {
                 lo[axis] = lo[axis].min(v[axis] as f64);
                 hi[axis] = hi[axis].max(v[axis] as f64);
