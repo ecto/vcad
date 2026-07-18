@@ -32,6 +32,29 @@ pub use linalg::solve_dense;
 mod devices;
 pub use devices::{Device, DiodeModel, MotorParams};
 
+pub mod ac;
+pub mod adjoint;
+pub mod dc;
+pub mod receipt;
+
+/// Companion-model integration method for reactive elements (C, L).
+///
+/// - [`Integrator::BackwardEuler`] — first-order, L-stable, the historical
+///   default of this module. Error is O(dt).
+/// - [`Integrator::Trapezoidal`] — second-order, the SPICE2 default
+///   (Nagel, "SPICE2: A Computer Program to Simulate Semiconductor
+///   Circuits", UCB ERL-M520, 1975, §4). Error is O(dt²): halving dt
+///   quarters the local truncation error, which the validation suite
+///   verifies against the analytic RC step response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Integrator {
+    /// Backward Euler (first order). Default, kept for existing consumers.
+    #[default]
+    BackwardEuler,
+    /// Trapezoidal rule (second order, SPICE2 default).
+    Trapezoidal,
+}
+
 /// A lumped-element circuit: a set of [`Device`]s connecting numbered nodes.
 ///
 /// Node `0` is always ground (the voltage reference). Allocate other nodes with
@@ -95,10 +118,23 @@ pub struct CircuitEnv {
     circuit: Circuit,
     dt: f64,
     time: f64,
+    integrator: Integrator,
+    /// True until the first step completes. The trapezoidal rule needs a
+    /// consistent history current, which a t = 0 source discontinuity denies
+    /// it — so the first step always runs backward Euler (standard SPICE
+    /// startup practice; one O(dt²) local error does not break global
+    /// second-order accuracy).
+    first_step: bool,
     /// Per-device companion history: previous capacitor voltage (device id → V).
     cap_v: Vec<f64>,
+    /// Per-device companion history: previous capacitor current (device id → A).
+    /// Used only by the trapezoidal integrator.
+    cap_i: Vec<f64>,
     /// Per-device companion history: previous inductor current (device id → A).
     ind_i: Vec<f64>,
+    /// Per-device companion history: previous inductor voltage (device id → V).
+    /// Used only by the trapezoidal integrator.
+    ind_v: Vec<f64>,
     /// Per-device nonlinear junction voltage (device id → V), warm-started across
     /// steps and limited across Newton iterations.
     nl_state: Vec<f64>,
@@ -123,8 +159,12 @@ impl CircuitEnv {
             circuit,
             dt,
             time: 0.0,
+            integrator: Integrator::default(),
+            first_step: true,
             cap_v: vec![0.0; nd],
+            cap_i: vec![0.0; nd],
             ind_i: vec![0.0; nd],
+            ind_v: vec![0.0; nd],
             nl_state: vec![0.0; nd],
             mech_omega: vec![0.0; nd],
             mech_theta: vec![0.0; nd],
@@ -138,8 +178,11 @@ impl CircuitEnv {
     /// no current, all nodes at 0 V.
     pub fn reset(&mut self) {
         self.time = 0.0;
+        self.first_step = true;
         self.cap_v.fill(0.0);
+        self.cap_i.fill(0.0);
         self.ind_i.fill(0.0);
+        self.ind_v.fill(0.0);
         self.nl_state.fill(0.0);
         self.mech_omega.fill(0.0);
         self.mech_theta.fill(0.0);
@@ -155,6 +198,35 @@ impl CircuitEnv {
     /// Change the timestep (s).
     pub fn set_dt(&mut self, dt: f64) {
         self.dt = dt;
+    }
+
+    /// The active companion-model integration method.
+    pub fn integrator(&self) -> Integrator {
+        self.integrator
+    }
+
+    /// Select the companion-model integration method. Call before stepping
+    /// (or after [`CircuitEnv::reset`]) — switching mid-run mixes histories.
+    pub fn set_integrator(&mut self, integrator: Integrator) {
+        self.integrator = integrator;
+    }
+
+    /// Tellegen power-balance residual (W) of the latest solved state:
+    /// Σ over devices of (v_p − v_n)·i, with i the device current the KCL
+    /// solve actually used. Tellegen's theorem says this is exactly zero for
+    /// any circuit satisfying KCL/KVL, so the residual measures nothing but
+    /// solver error — the energy conscience of this module. Meaningful only
+    /// after a [`CircuitEnv::step`].
+    pub fn power_balance(&self) -> f64 {
+        self.circuit
+            .devices
+            .iter()
+            .enumerate()
+            .map(|(id, d)| {
+                let (p, n) = d.terminals();
+                (self.node_v[p] - self.node_v[n]) * self.dev_i[id]
+            })
+            .sum()
     }
 
     /// Mutate a device's primary scalar (resistance, source value, …). Lets a
@@ -175,6 +247,12 @@ impl CircuitEnv {
         let nn = self.circuit.num_nodes;
         let nb = self.circuit.num_branches();
         let m = (nn - 1) + nb;
+        // First step always runs backward Euler (see `first_step` docs).
+        let integ = if self.first_step {
+            Integrator::BackwardEuler
+        } else {
+            self.integrator
+        };
 
         // Newton-Raphson outer loop: nonlinear devices linearise around the
         // current node-voltage guess each iteration. Linear circuits converge in
@@ -189,6 +267,27 @@ impl CircuitEnv {
             // and lets us update `nl_state[id]` in the same pass.
             for id in 0..self.circuit.devices.len() {
                 let dev = self.circuit.devices[id];
+                // Trapezoidal companions for C and L (Nagel, SPICE2, §4):
+                //   C: i_n = (2C/dt)(v_n − v_{n−1}) − i_{n−1}
+                //   L: i_n = (dt/2L)(v_n + v_{n−1}) + i_{n−1}
+                // Everything else shares the backward-Euler stamps.
+                if integ == Integrator::Trapezoidal {
+                    match dev {
+                        Device::Capacitor { p, n, c } => {
+                            let g = 2.0 * c / self.dt;
+                            devices::stamp_conductance(&mut a, m, p, n, g);
+                            devices::inject(&mut rhs, p, n, g * self.cap_v[id] + self.cap_i[id]);
+                            continue;
+                        }
+                        Device::Inductor { p, n, l } => {
+                            let g = self.dt / (2.0 * l);
+                            devices::stamp_conductance(&mut a, m, p, n, g);
+                            devices::inject(&mut rhs, p, n, -(self.ind_i[id] + g * self.ind_v[id]));
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
                 if let Some(vd) = dev.stamp(
                     &mut a,
                     &mut rhs,
@@ -242,17 +341,28 @@ impl CircuitEnv {
             match *dev {
                 Device::Capacitor { p, n, c } => {
                     let v_new = self.node_v[p] - self.node_v[n];
-                    let gc = c / self.dt;
-                    // companion current = gc·(v_new − v_prev) = C·dv/dt
-                    self.dev_i[id] = gc * (v_new - self.cap_v[id]);
+                    let i_new = match integ {
+                        // companion current = gc·(v_new − v_prev) = C·dv/dt
+                        Integrator::BackwardEuler => (c / self.dt) * (v_new - self.cap_v[id]),
+                        Integrator::Trapezoidal => {
+                            (2.0 * c / self.dt) * (v_new - self.cap_v[id]) - self.cap_i[id]
+                        }
+                    };
+                    self.dev_i[id] = i_new;
                     self.cap_v[id] = v_new;
+                    self.cap_i[id] = i_new;
                 }
                 Device::Inductor { p, n, l } => {
                     let v = self.node_v[p] - self.node_v[n];
-                    let geq = self.dt / l;
-                    let i_new = geq * v + self.ind_i[id];
+                    let i_new = match integ {
+                        Integrator::BackwardEuler => (self.dt / l) * v + self.ind_i[id],
+                        Integrator::Trapezoidal => {
+                            (self.dt / (2.0 * l)) * (v + self.ind_v[id]) + self.ind_i[id]
+                        }
+                    };
                     self.dev_i[id] = i_new;
                     self.ind_i[id] = i_new;
+                    self.ind_v[id] = v;
                 }
                 Device::Motor { params, .. } => {
                     // Armature current solved as the branch current (already in
@@ -275,6 +385,7 @@ impl CircuitEnv {
         }
 
         self.time += self.dt;
+        self.first_step = false;
         self.observe()
     }
 

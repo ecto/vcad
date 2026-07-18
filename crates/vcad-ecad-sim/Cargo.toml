@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 vcad-ir = { workspace = true }
+vcad-receipt = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 # Scalar trait — lets the closed-form leaves be generic so ExprId can flow
