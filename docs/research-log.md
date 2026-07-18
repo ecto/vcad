@@ -637,3 +637,77 @@ AC, adjoint) plus the WASM `DeviceSpec`. Branch
   the triode/saturation boundary).
 - Next on the M1 ladder: transient adjoint, then the netlist-from-ecad
   seam so schematics simulate without re-entry.
+
+## 2026-07-17 — the Q-lane triple: records 197×, POPS quantified, honest Q (PR #575)
+
+Three lanes built on one branch, following the virtual-cathode arc.
+
+**Lane C — TiD beam-target (records lane).** `beam_target` calibrates
+thick-target D-D yield once to the published Ti drive-in anchor (1.9×10⁸
+n/s at 7.6 mA / 94 keV) and predicts by cross-section ratio. `records_dial`
+result at 100 kV / 30 mA onto TiD-coated rings:
+
+| shield A·t | interception | beam-target n/s | gas n/s | total | vs record |
+|---|---|---|---|---|---|
+| 0 | 1.00 | 8.9×10⁸ | 2.2×10⁷ | 9.2×10⁸ | 183× |
+| 160 k | 0.92 | 8.2×10⁸ | 1.6×10⁸ | **9.8×10⁸** | **197×** |
+| 400 k | 0.70 | 6.2×10⁸ | 2.0×10⁸ | 8.3×10⁸ | 166× |
+| 1.17 M | 0.08 | 7.5×10⁷ | 2.1×10⁸ | 2.8×10⁸ | 57× |
+
+- **The dial has a combined-channel optimum**: total yield peaks at a
+  *middle* shield current (160 kA·t → 197× the amateur record), where
+  residual interception still feeds the solid-density TiD target while the
+  shield boosts gas recirculation. No other machine has this knob.
+- Beam-target Q ≈ 1.6×10⁻⁷ — correctly tiny (stopping-power-capped). This
+  is a record/neutron-source lane, never a gain lane, and the module says
+  so.
+
+**Lane B — POPS harmonic well (physics lane).** `pops` measures the well's
+harmonicity (min/max bounce frequency across launch amplitudes). Baseline
+two-ring well: **harmonicity 0.545, 44% frequency droop** (big-amplitude
+ions bounce 44% slower — strongly anharmonic, so a single drive can't
+phase-lock the population → POPS-blocked). `pops_harmonic_well`: the
+optimizer maximizes harmonicity over electrode geometry (+9% with two
+knobs, 0.545→0.593); large gains need more electrode freedom. The finding:
+harmonicity is measurable, optimizable, and is now the concrete FoM for
+POPS electrode design — the thing only a differentiable field-solver can
+target.
+
+**Lane A — power ledger (honest Q).** `power` prices fusion vs ion beam +
+electron sustain + magnet. Key physics: in steady state electron sustain
+power = I_e · V (the injector replaces every cusp loss). `sustained_q`
+verdict logged next.
+
+## 2026-07-17 — the honest Q verdict: neutralization is a rate lever, not a Q lever
+
+`sustained_q` at 100 kV / 30 mA ions; electron confinement τ = 0.88 µs
+(enhancement **704×**, 83% survivors — strong cusp trapping confirmed at
+full field). Ledger vs electron current:
+
+| e-current | neutron n/s | vs record | P_fusion | P_e-sustain | Q |
+|---|---|---|---|---|---|
+| 30 mA | 8.4×10⁷ | 17× | 9.8×10⁻⁵ W | 3 kW | **1.6×10⁻⁸** |
+| 1 A | 9.4×10⁷ | 19× | 1.1×10⁻⁴ W | 100 kW | 1.1×10⁻⁹ |
+| 3 A | 1.7×10⁸ | 33× | 2.0×10⁻⁴ W | 300 kW | 6.4×10⁻¹⁰ |
+| 10 A | 7.0×10⁸ | **140×** | 8.2×10⁻⁴ W | 1 MW | 8.2×10⁻¹⁰ |
+
+- **The decisive result**: the virtual cathode raises neutron RATE up to
+  140× the record, but **Q falls ~20× as the cloud grows** — Q is *best*
+  at the smallest electron current. Electron sustain power (I_e · V)
+  dominates the input the moment I_e exceeds the ion current, and it grows
+  faster than fusion power. And the magnet term is still unpriced (MA·turn
+  scale — needs the em+thermal crates), so these Q's are over-estimates.
+- **Strategic redirect**: neutralization belongs to the records and
+  physics lanes (rate, density, the polywell story), **not** the Q lane.
+  The Q lane's real lever is **direct energy recovery on the losses**
+  (venetian-blind, 59–75% demonstrated) — recovering the ion/electron
+  power that currently exits to the walls. The ledger is now built to
+  price exactly that: add a recovery-efficiency term on the loss channels.
+- Cross-check: beam-target Q (~1.6×10⁻⁷) is the *highest* Q of any config
+  we've priced — an order above the best neutralized-gas Q — consistent
+  with "solid density beats everything on yield-per-input."
+
+Arc close: the Q-lane triple priced all three roads honestly. Records:
+197× (dial optimum), 140× (virtual cathode), 179× (bare TiD). Physics:
+harmonicity 0.545, optimizable. Q: no lever here moves it — direct
+recovery is the next module, and the ledger is ready for it.
