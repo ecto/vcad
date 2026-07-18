@@ -176,13 +176,27 @@ fn stamp_jacobian_dc(
 pub struct AcSensitivity {
     /// The complex transfer H(jω) = V(out) per unit source amplitude.
     pub h: Cplx,
-    /// dH/dp per device primary, in device order. Diode slots are zero (the
-    /// operating-point chain term is deferred to M1).
+    /// dH/dp per device primary, in device order. A slot listed in
+    /// [`AcSensitivity::deferred`] is a **placeholder zero**, not a computed
+    /// value — see [`AcSensitivity::is_deferred`].
     pub gradient: Vec<Cplx>,
+    /// Device ids whose gradient slot is a placeholder, not a computed
+    /// sensitivity. At M0 this is exactly the diodes (their AC sensitivity
+    /// runs through the operating-point shift, deferred to M1). Callers that
+    /// must distinguish "sensitivity is genuinely zero" from "sensitivity was
+    /// not computed" consult this; M1 shrinks the list without an API break.
+    pub deferred: Vec<usize>,
 }
 
 impl AcSensitivity {
-    /// d|H|/dp for parameter slot `i`: `Re(conj(H)·dH/dpᵢ)/|H|`.
+    /// Whether device `id`'s gradient slot is a deferred placeholder rather
+    /// than a computed value.
+    pub fn is_deferred(&self, id: usize) -> bool {
+        self.deferred.contains(&id)
+    }
+
+    /// d|H|/dp for parameter slot `i`: `Re(conj(H)·dH/dpᵢ)/|H|`. Returns 0 for
+    /// a deferred slot (the value is not available at M0).
     pub fn d_magnitude(&self, i: usize) -> f64 {
         let habs = self.h.abs();
         if habs == 0.0 {
@@ -236,6 +250,7 @@ pub fn ac_sensitivities(
 
     let h = xv(out_node);
     let mut gradient = vec![Cplx::ZERO; circuit.devices.len()];
+    let mut deferred = Vec::new();
     for (id, dev) in circuit.devices.iter().enumerate() {
         gradient[id] = match *dev {
             Device::Resistor { p, n, r } => {
@@ -277,12 +292,21 @@ pub fn ac_sensitivities(
                 }
             }
             // Operating-point chain term deferred (M1); see module docs.
-            Device::Diode { .. } => Cplx::ZERO,
+            // Flagged in `deferred` so the placeholder zero is distinguishable
+            // from a genuine zero sensitivity.
+            Device::Diode { .. } => {
+                deferred.push(id);
+                Cplx::ZERO
+            }
             Device::Motor { .. } => unreachable!("rejected by build_and_solve"),
         };
     }
 
-    Ok(AcSensitivity { h, gradient })
+    Ok(AcSensitivity {
+        h,
+        gradient,
+        deferred,
+    })
 }
 
 #[cfg(test)]
@@ -462,5 +486,43 @@ mod tests {
         }
         // Source amplitude: H scales linearly, so d|H|/dA at A=1 is |H|.
         assert!((sens.d_magnitude(0) - sens.h.abs()).abs() < 1e-9);
+        // No diode here, so nothing is deferred.
+        assert!(sens.deferred.is_empty());
+    }
+
+    #[test]
+    fn ac_diode_slot_is_flagged_deferred_not_silently_zero() {
+        // A diode's AC sensitivity slot is a placeholder at M0. It must be
+        // reported as deferred so a caller can tell it apart from a genuine
+        // zero — the linear elements around it are not deferred.
+        let mut c = Circuit::new();
+        let vin = c.node();
+        let out = c.node();
+        let src = c.add(Device::VSource {
+            p: vin,
+            n: 0,
+            v: 0.0,
+        });
+        let rid = c.add(Device::Resistor {
+            p: vin,
+            n: out,
+            r: 1_000.0,
+        });
+        let did = c.add(Device::Diode {
+            p: out,
+            n: 0,
+            model: DiodeModel::silicon(),
+        });
+        let sens = ac_sensitivities(&c, src, 2.0 * std::f64::consts::PI * 1_000.0, out).unwrap();
+        assert!(sens.is_deferred(did), "diode slot must be flagged deferred");
+        assert!(
+            !sens.is_deferred(rid),
+            "resistor slot is computed, not deferred"
+        );
+        assert!(
+            !sens.is_deferred(src),
+            "source slot is computed, not deferred"
+        );
+        assert_eq!(sens.deferred, vec![did]);
     }
 }

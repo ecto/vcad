@@ -205,9 +205,20 @@ impl CircuitEnv {
         self.integrator
     }
 
-    /// Select the companion-model integration method. Call before stepping
-    /// (or after [`CircuitEnv::reset`]) — switching mid-run mixes histories.
+    /// Select the companion-model integration method.
+    ///
+    /// Call before the first [`CircuitEnv::step`] or after a
+    /// [`CircuitEnv::reset`]. Switching mid-run is rejected in debug builds:
+    /// the trapezoidal companion recurrence assumes its history current was
+    /// itself produced by the trapezoidal rule, so a mid-run swap injects a
+    /// spurious startup transient. The `first_step` guard machine-checks the
+    /// contract the doc used to only describe.
     pub fn set_integrator(&mut self, integrator: Integrator) {
+        debug_assert!(
+            self.first_step,
+            "set_integrator must be called before stepping or after reset(); \
+             switching mid-run corrupts the companion history"
+        );
         self.integrator = integrator;
     }
 
