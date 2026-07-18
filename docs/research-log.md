@@ -376,3 +376,56 @@ form), port-sizing optimizer, `vcad.acoustics-claims/1`. Validation ladder
 - Same pattern as the five prior domains: analytic ladder with citations,
   conservative/symmetric discretisation, fail-closed `predicted` claims that
   roll up Provisional (never Pass) until a mic measures them.
+
+## 2026-07-17 — orbit recon: does astrodynamics earn the ladder? (verdict: yes)
+
+Scouted the triad for `vcad-kernel-orbit`:
+
+1. **Ground truth, free and always on**: analytic ladder (vis-viva,
+   Kepler, J2 secular rates — Vallado 4th ed. Eqs. 9-38/9-39) *plus* the
+   real sky. Fetched during recon and checked in as fixtures: a live ISS
+   TLE (Celestrak, epoch 2026-198.573 — same day) and 72 h of JPL
+   Horizons geocentric ICRF state vectors at 5-min steps
+   (`crates/vcad-kernel-orbit/tests/fixtures/`). Tests never touch the
+   network; the provenance headers are checked in raw.
+2. **Prior art**: crates.io `sgp4` 2.4.0 (~272k downloads) — SGP4 is a
+   solved problem and we will not reimplement it. Our lane: exact + J2
+   propagation with receipts, headed differentiable (station-keeping ΔV
+   adjoints), co-designed with the antenna/thermal/neutronics crates
+   (receipted smallsat).
+3. **Incumbents**: STK closed/expensive; GMAT non-differentiable, not
+   agent-native. The crusty-incumbent + free-ground-truth + falsifiable-
+   claims pattern holds — this is the only domain where the measured
+   side of the receipt costs zero hardware.
+
+Recon correction, logged with pride: the mission brief's "sun-synchronous
+≈ 97.8° at 700 km" is folklore drift — Eq. 9-38 gives **98.19° at
+700 km** (97.79° belongs to 600 km). The test asserts both values.
+
+## 2026-07-17 — vcad-kernel-orbit M0: J2 tracks the real ISS to 10 km/day
+
+New crate (branch `claude/kernel-orbit-m0`), details in
+[orbit-m0.md](orbit-m0.md). 38 tests; clippy/fmt clean.
+
+- **The sky graded us**: real Horizons ISS state propagated two-body+J2
+  for 72 h vs the checked-in ephemeris — position error 0.44 km @ 1 h,
+  **9.77 km @ 24 h**, 39.6 km @ 72 h. Two-body-only: 487 km @ 24 h; the
+  J2 term buys **50×** against reality. The residual ~10 km/day is the
+  honest M0 model gap (drag, above all) and is now a CI regression gate
+  at measured × ~2.5 (2/8/25 km @ 1/6/24 h).
+- **Headline validation**: least-squares nodal drift of the RK4+J2
+  propagator over 10 orbits matches Vallado Eq. 9-38 to <1% at 51.63°,
+  30°, 98.2°; conservation conscience: energy + h to 1e-9 over 10 orbits
+  (two-body), J2-energy + h_z under J2.
+- **Frame honesty made visible**: the fixture's ICRF inclination differs
+  from the TLE's true-of-date 51.6316° by ~0.07° — 26 years of precession
+  showing up in a unit test, tolerated and commented rather than hidden.
+- **First measured-basis claim family**: `vcad.orbit-claims/1` ships with
+  `orbit.position_error_km_at_24h` = 9.8 km vs a 25 km budget, `basis:
+  Measured` (real sky data), Pass/Fail with no third outcome; predicted
+  claims (period, dΩ/dt = −4.936 °/day for the ISS, passes) roll up
+  Provisional as always.
+- Flagship `examples/iss_pass.rs` also predicts 4 SF passes in the next
+  24 h (max el 75.0° at 08:03 UTC), stated honest to ±minutes.
+- M1 queued: drag + SGP4-compat (or a seam to the `sgp4` crate) +
+  TEME↔ICRF, then the differentiable propagator (ΔV optimization).
