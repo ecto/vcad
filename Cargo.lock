@@ -7182,6 +7182,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-acoustics"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-receipt",
+]
+
+[[package]]
 name = "vcad-kernel-antenna"
 version = "0.9.4"
 dependencies = [
