@@ -316,3 +316,103 @@ sweeping electron current:
   polywell-scale electron currents**. Four self-corrections, all
   receipted. This is the Q-lane's road: e-cloud self-consistency, loss
   accounting, then the neutralized machine priced honestly.
+
+## 2026-07-17 — optics recon: does lens design earn the ladder? Verdict: GO
+
+Phase-0 scout for `vcad-kernel-optics` (sequential ray-tracing lens
+design), testing the precondition triad that launched particle/em/
+thermal/photonics:
+
+1. **Crusty incumbent** — yes, the crustiest yet. Zemax/OpticStudio
+   (acquired by Ansys, 2021) and Code V (Synopsys): closed, five-figure
+   annual licenses, 1960s–80s cores, and the standard optimizer (damped
+   least squares over FD derivatives) is non-differentiable end-to-end.
+   The optics community's grumbling is public and perennial.
+2. **Cheap analytic ground truth** — the *best* of any domain so far:
+   sequential ray tracing IS the physics. No PDE, no grid, no
+   discretization debate — each surface intersection is a closed-form
+   quadratic (conics are quadrics) and vector-Snell refraction is exact
+   in f64. The validation ladder writes itself, all with citations:
+   thin-lens lensmaker's equation, thick-lens EFL/BFD closed forms
+   (Hecht §6.1), the paraxial y-u trace + Lagrange invariant, the
+   third-order Seidel spherical-aberration U-curve of a thin lens
+   (Jenkins & White §9.5: best-form q = 2(n²−1)/(n+2) ≈ 0.714 at
+   n = 1.5), the achromat condition φ₁/φ = V₁/(V₁−V₂) (Dollond, 1758),
+   chromatic focal shift f/V from the Abbe number, and Schott Sellmeier
+   dispersion data. A **published prescription** for the bench:
+   Thorlabs AC254-075-A cemented doublet (R 46.5 / −33.9 / −95.5 mm,
+   tc 7.0 / 2.5 mm, N-BK7/SF5, EFL 74.9 mm; [3DOptix catalog mirror of
+   Thorlabs data](https://www.3doptix.com/catalog/optics/lens/thorlabs/AC254-075-A),
+   fetched 2026-07-17) — the paraxial EFL of that prescription is a
+   falsifiable claim against a $80 part anyone can buy.
+3. **Differentiability + receipts story** — every operation in the
+   Snell chain is smooth (intersection root, refraction, transfer):
+   the adjoint is *easier* than particle's (no Dirichlet mask, no
+   discrete grid). Prior art proves the gradient path works — dO
+   (Wang et al., IEEE Trans. Comput. Imaging 2022), DeepLens curriculum
+   design (Yang et al.), Mitsuba 3 — but none is receipts-native or
+   lives next to the BRep that will mount the lens. RMS spot, EFL, BFD
+   are bench-measurable (beam profiler, focimeter) → `basis: predicted`
+   claims with a real measurement path.
+
+Boundaries stated up front: **geometric optics only** — no diffraction,
+no physical optics; RMS spot is a geometric claim and every receipt must
+carry the Airy radius (1.22·λ·N) next to it so a sub-diffraction spot
+number can't overreach. Distinct domain from `vcad-kernel-photonics`
+(wave optics / FDTD — features ≈ λ); this crate is the features ≫ λ
+regime. Tolerancing hooks belong to `vcad-kernel-tolerance`, later.
+
+Transferable scar tissue encoded from day one: scale-invariant optimizer
+stopping (the 1e-32 lesson), deterministic pupil ray sets frozen across
+FD probes (the freeze-the-discretization lesson — here the image plane
+follows the *paraxial* BFD, a smooth function of parameters, never a
+re-gridded one), fail-closed ray fates (TIR and surface-miss are
+reported outcomes, never dropped rays), and unfiltered exit-code gates.
+Proceeding to M0.
+
+## 2026-07-17 — vcad-kernel-optics M0: the optimizer rediscovers 1758
+
+Same-day follow-through on the GO verdict above; details in
+[optics-m0.md](optics-m0.md). New crate: exact sequential conic tracing
+(closed-form quadric intersection, no iteration anywhere), vector Snell
+with a per-ray |n·sinθ| invariant residual (~1e-16), fail-closed ray
+fates, Sellmeier glasses gated by catalog n_d/V_d tests, independent
+paraxial y-u + matrix traces, equal-area pupil lattice with
+⟨ρ²⟩ = R²/2 exact, `vcad.optics-claims/1` receipts (Predicted →
+Provisional). 40 tests, clippy/fmt clean.
+
+Ladder results (all in `cargo test -p vcad-kernel-optics`):
+
+- Thick-lens EFL/BFD closed forms (Hecht §6.1) to 1e-9; exact-trace
+  h→0 limit = paraxial focus to 1e-6 mm with h² convergence.
+- **Thorlabs AC254-075-A traces to its catalog EFL 74.9 mm** and shows
+  <0.2 mm F→C shift — a falsifiable claim against an $80 part.
+- **Seidel U-curve**: exact LSA vs Jenkins & White §9.5 within 8%
+  across q ∈ [−2,2] (sub-1% over most of the range; e.g. q=−2:
+  0.8284 vs 0.8203 mm); traced best-form minimum at the textbook
+  q = 2(n²−1)/(n+2) ≈ 0.714.
+- BK7 chromatic shift = f/V within 2%.
+
+Flagship (`achromat_design`, multi-start FD at f/5, EFL pinned 100 mm,
+poly F/d/C RMS objective): singlet optimizer independently finds the
+best-form bending (R 60.2/−357.4, q ≈ 0.71); the BK7/F2 doublet lands
+at R 48.2/−41.1/−347.8 with **8.14 µm poly RMS vs the singlet's
+79.8 µm (9.8×)** and chromatic shift 1.534 → 0.050 mm (31×). The
+optimized power split **φ₁/φ = 2.329 vs Dollond's V₁/(V₁−V₂) = 2.308
+(0.9%)** — the 1758 achromat condition emerging from raw ray tracing
+with no chromatic theory in the objective. Airy at f/5 is 3.58 µm:
+the doublet is ~2.3× diffraction, and the receipt says "geometric"
+next to every spot number.
+
+Two build lessons, both caught by the ladder: (1) the first pupil
+lattice (hexapolar, rim ring at R) had ⟨ρ²⟩ = 0.54R² — the
+uniform-disk test caught the 8% rim bias, replaced by equal-area rings
+exact by construction; (2) the defocus similar-triangles check
+initially failed at 2.2% — the residual was *real physics* (the
+third-order marginal-focus shift, 0.03·h² mm), reproduced by the
+Seidel formula; the test now runs at f/100 where the closed form is
+clean, and the effect is documented rather than tolerated away.
+
+Next rungs queued: M1 aspheres + pupil imaging, M2 adjoint through the
+Snell chain (every op smooth — easier than particle's), M3 wavefront/
+Zernike, M4 tolerance seam, M5 MCP + lens-solid BRep.
