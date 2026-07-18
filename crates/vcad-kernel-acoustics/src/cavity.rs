@@ -68,6 +68,17 @@ pub enum EndCondition {
         /// Piston (driver) radius, mm.
         radius_mm: f64,
     },
+    /// A locally-reacting impedance termination over the end-segment disk:
+    /// `∂p/∂n = −jk·β·p` with `β` the **normalized admittance** `ρc/Z`. The
+    /// span from rigid to release: `β = 0` is rigid, `β = 1` is a matched
+    /// (anechoic) termination that absorbs a normally-incident wave with no
+    /// reflection, larger `β` tends toward pressure-release. The imaginary
+    /// diagonal term it adds regularizes the otherwise-singular resonance —
+    /// this is how M1's absorptive materials and radiating mouth will enter.
+    Impedance {
+        /// Normalized admittance `β = ρc/Z` (dimensionless).
+        admittance: f64,
+    },
 }
 
 /// A complete axisymmetric acoustic cavity.

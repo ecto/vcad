@@ -84,6 +84,10 @@ directivity out of these solves yet.
 - **Reciprocity**: swapping source and receiver leaves the transfer function
   unchanged to **4.5×10⁻¹⁶** — the payoff of the symmetric FV assembly, and the
   discretisation's conscience.
+- **Impedance absorption**: a matched termination (`β = ρc/Z = 1`) cuts the
+  resonant response a nearly-rigid end (`β = 0.02`) sustains by **~50×**, and
+  every solve stays finite — the imaginary diagonal term regularizes the pole.
+  This is the boundary M1's absorptive materials and radiating mouth ride on.
 - **Grid convergence**: the axial-mode error falls **second order** — 0.104% →
   0.025% → 0.005% over `dz` = 17 → 8.5 → 4.25 mm (19× over 4× refinement),
   with the **0.005% floor named**.

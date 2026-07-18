@@ -3,7 +3,7 @@
 //! Each test cites the analytic result it must reproduce. Reciprocity and
 //! grid convergence are the discretisation's conscience.
 
-use vcad_kernel_acoustics::cavity::Cavity;
+use vcad_kernel_acoustics::cavity::{Cavity, EndCondition, Segment};
 use vcad_kernel_acoustics::complex::Cplx;
 use vcad_kernel_acoustics::fom;
 use vcad_kernel_acoustics::helmholtz::{solve_driven, Source};
@@ -182,6 +182,45 @@ fn grid_convergence_is_second_order() {
         errs[0] / errs[2]
     );
     eprintln!("floor (nz=81): {:.4}%", errs[2] * 100.0);
+}
+
+/// An impedance termination absorbs: a matched (β = 1) end kills the
+/// resonance a nearly-rigid (β → 0) end sustains, and every solve stays
+/// finite (the imaginary diagonal regularizes the pole).
+#[test]
+fn impedance_termination_absorbs_the_resonance() {
+    let air = Medium::air(20.0);
+    let l = 300.0;
+    let make = |beta: f64| Cavity {
+        segments: vec![Segment {
+            z0_mm: 0.0,
+            z1_mm: l,
+            radius_mm: 20.0,
+        }],
+        bottom: EndCondition::Rigid,
+        top: EndCondition::Impedance { admittance: beta },
+        medium: air,
+    };
+    // The closed-closed axial resonance (β = 0 is rigid at both ends).
+    let f1 = lumped::closed_cylinder_axial_hz(&air, l, 1);
+    let src = Source::Monopole {
+        r_mm: 3.0,
+        z_mm: 8.0,
+        q: Cplx::ONE,
+    };
+    let probe = Probe {
+        r_mm: 0.0,
+        z_mm: l - 8.0,
+    };
+    let resp = |beta: f64| probe_response(&make(beta), 9, 121, src, probe, f1).map(|p| p.abs());
+    let near_rigid = resp(0.02).unwrap();
+    let matched = resp(1.0).unwrap();
+    eprintln!("impedance: |p|(β=0.02)={near_rigid:.3}  |p|(β=1)={matched:.3}");
+    assert!(near_rigid.is_finite() && matched.is_finite());
+    assert!(
+        matched < 0.25 * near_rigid,
+        "matched {matched:.3} not << near-rigid {near_rigid:.3}"
+    );
 }
 
 /// Free-air baffled piston built into a solve-free sanity: the numeric

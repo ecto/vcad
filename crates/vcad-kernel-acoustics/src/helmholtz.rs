@@ -268,7 +268,8 @@ pub fn solve_driven(
                 }
                 NodeKind::Fluid => {
                     let mut d = k2 * (w(i) * zext(j)); // k²·V_ij (real)
-                                                       // +r face
+                    let mut d_im = 0.0_f64; // imaginary diagonal (impedance BCs)
+                                            // +r face
                     if i + 1 < nr {
                         match kind_at(i + 1, j) {
                             NodeKind::Fluid => {
@@ -303,6 +304,10 @@ pub fn solve_driven(
                             NodeKind::Open => d -= w(i) / dz,
                             NodeKind::Solid => {}
                         }
+                    } else if let EndCondition::Impedance { admittance } = cavity.top {
+                        // Top boundary face of a j = nz−1 fluid node:
+                        // ∂p/∂n = −jk·β·p adds −k·β·A to the imaginary diagonal.
+                        d_im += -k * admittance * w(i);
                     }
                     // −z face
                     if j > 0 {
@@ -325,9 +330,11 @@ pub fn solve_driven(
                                 let flux = Cplx::J.scale(omega * rho) * *velocity;
                                 rhs[g] += flux.scale(w(i));
                             }
+                        } else if let EndCondition::Impedance { admittance } = cavity.bottom {
+                            d_im += -k * admittance * w(i);
                         }
                     }
-                    diag[j][i * bs + i] = Cplx::real(d);
+                    diag[j][i * bs + i] = Cplx::new(d, d_im);
                 }
             }
         }

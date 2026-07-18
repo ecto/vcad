@@ -79,6 +79,11 @@ pub enum EndSpec {
         /// Piston radius, mm.
         radius_mm: ParamValue,
     },
+    /// Locally-reacting impedance termination, normalized admittance `β = ρc/Z`.
+    Impedance {
+        /// Normalized admittance `β` (dimensionless).
+        admittance: ParamValue,
+    },
 }
 
 /// Serializable axisymmetric cavity with named parameters.
@@ -129,6 +134,9 @@ impl EndSpec {
             EndSpec::Piston { radius_mm } => EndCondition::Piston {
                 radius_mm: radius_mm.resolve(params)?,
             },
+            EndSpec::Impedance { admittance } => EndCondition::Impedance {
+                admittance: admittance.resolve(params)?,
+            },
         })
     }
 }
@@ -173,8 +181,10 @@ impl CavitySpec {
             put(&s.radius_mm);
         }
         for e in [&self.bottom, &self.top] {
-            if let EndSpec::Piston { radius_mm } = e {
-                put(radius_mm);
+            match e {
+                EndSpec::Piston { radius_mm } => put(radius_mm),
+                EndSpec::Impedance { admittance } => put(admittance),
+                EndSpec::Rigid | EndSpec::Open => {}
             }
         }
         put(&self.temp_c);
@@ -212,6 +222,23 @@ mod tests {
         let round = serde_json::to_string(&spec).unwrap();
         let spec2: CavitySpec = serde_json::from_str(&round).unwrap();
         assert_eq!(spec, spec2);
+    }
+
+    #[test]
+    fn impedance_end_round_trips() {
+        let json = r#"{
+            "segments": [{ "z0_mm": 0.0, "z1_mm": 100.0, "radius_mm": 30.0 }],
+            "bottom": { "kind": "rigid" },
+            "top": { "kind": "impedance", "admittance": "beta" },
+            "temp_c": 20.0
+        }"#;
+        let spec: CavitySpec = serde_json::from_str(json).expect("parse");
+        assert_eq!(spec.parameter_roles()["beta"], ParamRole::FiniteDifference);
+        let cav = spec.resolve(&params(&[("beta", 1.0)])).expect("resolve");
+        assert_eq!(cav.top, EndCondition::Impedance { admittance: 1.0 });
+        // Serialize → reparse is stable.
+        let round = serde_json::to_string(&spec).unwrap();
+        assert_eq!(spec, serde_json::from_str::<CavitySpec>(&round).unwrap());
     }
 
     #[test]
