@@ -14,7 +14,9 @@
 //! 5. Tellegen power balance: Σ v·i over all devices stays below 1e-9 of
 //!    dissipated power at **every** timestep — the energy conscience.
 
-use vcad_ecad_sim::circuit::{dc, Circuit, CircuitEnv, Device, DiodeModel, Integrator};
+use vcad_ecad_sim::circuit::{
+    ac, dc, BjtModel, Circuit, CircuitEnv, Device, DiodeModel, Integrator, MosfetModel, Polarity,
+};
 
 /// Lambert W₀ by Halley iteration (Corless et al. 1996, §3). Machine
 /// precision in < 10 iterations for x > 0 (our x is always positive).
@@ -294,6 +296,234 @@ fn rung5_tellegen_power_balance_every_timestep() {
             let obs = env.step();
             // Scale: the source power |V·I| (device 0 is the 5 V source).
             let dissipated = (5.0 * obs.device_currents[0].abs()).max(1e-6);
+            let residual = env.power_balance().abs();
+            assert!(
+                residual / dissipated < 1e-9,
+                "{integ:?} step {step}: Tellegen residual {residual:.3e} vs scale {dissipated:.3e}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rung6_mosfet_saturation_matches_square_law() {
+    // Gate and drain held by ideal sources → the drain current must equal
+    // the Shichman–Hodges closed form (kp/2)·(vgs − vt0)²·(1 + λ·vds)
+    // exactly (SPICE2: Nagel, UCB ERL-M520, 1975, §2).
+    let model = MosfetModel {
+        kp: 0.05,
+        vt0: 1.5,
+        lambda: 0.02,
+        polarity: Polarity::N,
+    };
+    let (vgs, vds) = (3.0, 8.0); // vds > vov = 1.5 → saturation
+    let mut c = Circuit::new();
+    let gate = c.node();
+    let drain = c.node();
+    c.add(Device::VSource {
+        p: gate,
+        n: 0,
+        v: vgs,
+    });
+    c.add(Device::VSource {
+        p: drain,
+        n: 0,
+        v: vds,
+    });
+    let mid = c.add(Device::Mosfet {
+        d: drain,
+        g: gate,
+        s: 0,
+        model,
+    });
+    let sol = dc::operating_point(&c).unwrap();
+
+    let vov = vgs - model.vt0;
+    let i_exact = 0.5 * model.kp * vov * vov * (1.0 + model.lambda * vds);
+    let rel = (sol.device_currents[mid] - i_exact).abs() / i_exact;
+    assert!(
+        rel < 1e-9,
+        "saturation current {} vs square law {i_exact}, rel {rel:.2e}",
+        sol.device_currents[mid]
+    );
+}
+
+#[test]
+fn rung7_common_source_gain_matches_gm_rd_parallel_ro() {
+    // Resistor-loaded common-source amplifier: small-signal gain from the
+    // AC solve must equal −gm·(Rd ∥ ro) with gm and ro from the same op
+    // point — two independent code paths to one closed form.
+    let model = MosfetModel {
+        kp: 2e-3,
+        vt0: 1.5,
+        lambda: 0.02,
+        polarity: Polarity::N,
+    };
+    let (vdd, vbias, rd) = (12.0, 2.5, 1_000.0);
+    let mut c = Circuit::new();
+    let ndd = c.node();
+    let gate = c.node();
+    let drain = c.node();
+    c.add(Device::VSource {
+        p: ndd,
+        n: 0,
+        v: vdd,
+    });
+    let src = c.add(Device::VSource {
+        p: gate,
+        n: 0,
+        v: vbias,
+    });
+    c.add(Device::Resistor {
+        p: ndd,
+        n: drain,
+        r: rd,
+    });
+    c.add(Device::Mosfet {
+        d: drain,
+        g: gate,
+        s: 0,
+        model,
+    });
+
+    let op = dc::operating_point(&c).unwrap();
+    let (vgs, vds) = (vbias, op.node_voltages[drain]);
+    assert!(vds > vgs - model.vt0, "stage must bias into saturation");
+    let vov = vgs - model.vt0;
+    let gm = model.kp * vov * (1.0 + model.lambda * vds);
+    let gds = 0.5 * model.kp * vov * vov * model.lambda;
+    let gain_exact = -gm / (1.0 / rd + gds); // −gm·(Rd ∥ ro)
+
+    // AC at a low frequency (purely resistive network → gain is real).
+    let sol = ac::ac_response(&c, src, 1.0).unwrap();
+    let h = sol.node_voltages[drain];
+    assert!(h.im.abs() < 1e-12, "resistive stage: gain must be real");
+    let rel = (h.re - gain_exact).abs() / gain_exact.abs();
+    assert!(
+        rel < 1e-9,
+        "CS gain {} vs −gm·(Rd∥ro) = {gain_exact}, rel {rel:.2e}",
+        h.re
+    );
+}
+
+#[test]
+fn rung8_bjt_current_mirror_ratio() {
+    // Two matched NPNs, Q1 diode-connected with a reference resistor. The
+    // mirror copies I_ref up to the base-current error: with both bases fed
+    // from Q1's collector, I_out/I_ref = 1/(1 + 2/βF) exactly for matched
+    // devices at equal collector voltage (Ebers–Moll, no Early effect).
+    let model = BjtModel::npn();
+    let (vcc, rref) = (12.0, 10_000.0);
+    let mut c = Circuit::new();
+    let ncc = c.node();
+    let nref = c.node(); // Q1 collector = both bases
+    let nout = c.node(); // Q2 collector
+    c.add(Device::VSource {
+        p: ncc,
+        n: 0,
+        v: vcc,
+    });
+    let rid = c.add(Device::Resistor {
+        p: ncc,
+        n: nref,
+        r: rref,
+    });
+    c.add(Device::Bjt {
+        c: nref,
+        b: nref,
+        e: 0,
+        model,
+    });
+    let q2 = c.add(Device::Bjt {
+        c: nout,
+        b: nref,
+        e: 0,
+        model,
+    });
+    // Hold Q2's collector at Q1's diode voltage scale so vbc matches too
+    // (kills the Early-free reverse-transport mismatch).
+    c.add(Device::VSource {
+        p: nout,
+        n: 0,
+        v: 0.65,
+    });
+    let sol = dc::operating_point(&c).unwrap();
+
+    let i_ref = sol.device_currents[rid];
+    let i_out = sol.device_currents[q2];
+    let ratio = i_out / i_ref;
+    let expected = 1.0 / (1.0 + 2.0 / model.beta_f);
+    assert!(
+        (ratio - expected).abs() < 5e-3,
+        "mirror ratio {ratio} vs {expected} (βF = {})",
+        model.beta_f
+    );
+    assert!(i_ref > 1e-3 / 1.2 && i_ref < 1.2e-3, "I_ref ≈ (Vcc−Vbe)/R");
+}
+
+#[test]
+fn rung9_tellegen_holds_with_transistors_in_the_network() {
+    // The Tellegen gate must keep holding once transistors join: a MOSFET
+    // stage and a BJT stage in one network, stepped through a transient
+    // with both integrators. Σ v·i (all terminals!) < 1e-9 of source power.
+    for integ in [Integrator::BackwardEuler, Integrator::Trapezoidal] {
+        let mut ckt = Circuit::new();
+        let vdd = ckt.node();
+        let gate = ckt.node();
+        let drain = ckt.node();
+        let base = ckt.node();
+        let coll = ckt.node();
+        ckt.add(Device::VSource {
+            p: vdd,
+            n: 0,
+            v: 8.0,
+        });
+        // RC-delayed gate drive → the MOSFET sweeps cutoff → saturation.
+        ckt.add(Device::Resistor {
+            p: vdd,
+            n: gate,
+            r: 10_000.0,
+        });
+        ckt.add(Device::Capacitor {
+            p: gate,
+            n: 0,
+            c: 1e-7,
+        });
+        ckt.add(Device::Resistor {
+            p: vdd,
+            n: drain,
+            r: 2_200.0,
+        });
+        ckt.add(Device::Mosfet {
+            d: drain,
+            g: gate,
+            s: 0,
+            model: MosfetModel::nmos(),
+        });
+        // BJT stage biased from the drain node.
+        ckt.add(Device::Resistor {
+            p: drain,
+            n: base,
+            r: 47_000.0,
+        });
+        ckt.add(Device::Resistor {
+            p: vdd,
+            n: coll,
+            r: 4_700.0,
+        });
+        ckt.add(Device::Bjt {
+            c: coll,
+            b: base,
+            e: 0,
+            model: BjtModel::npn(),
+        });
+        let mut env = CircuitEnv::new(ckt, 1e-6);
+        env.set_integrator(integ);
+        env.reset();
+
+        for step in 0..2000 {
+            let obs = env.step();
+            let dissipated = (8.0 * obs.device_currents[0].abs()).max(1e-6);
             let residual = env.power_balance().abs();
             assert!(
                 residual / dissipated < 1e-9,

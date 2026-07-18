@@ -45,14 +45,37 @@ MNA core, companion models, Newton + `pnjlim`, and a live WASM consumer
 | Tellegen | Σ v·i = 0 | < 1e-9 rel at every one of 2000 steps × 2 integrators |
 | adjoint vs FD | central differences, frozen network | < 1e-5 rel on every element kind (DC and AC), < 1e-4 through the diode Newton system |
 
-## Honesty (what M0 does not claim)
+## M1 progress (2026-07-17): transistors
 
-- **Diode is the only nonlinear model.** No BJT, no MOSFET — level-1 MOSFET
-  is the first M1 item. A "nonlinear circuit simulator" claim would be
-  oversold; this is a linear-network simulator with one honest junction.
-- **AC diode sensitivity is zero-filled**: the operating-point chain term
-  (op point moves when R changes, which moves g_d) is deferred to M1 and
-  documented at the definition site.
+M1 item 1 landed. `Device::Mosfet` (Shichman–Hodges level-1: cutoff /
+triode / saturation, kp / vt0 / λ, source-drain swap for vds < 0 — SPICE2,
+UCB ERL-M520, 1975, §2) and `Device::Bjt` (Ebers–Moll transport form:
+Is / βF / βR), both polarities (NMOS/PMOS, NPN/PNP) via the sign
+transformation. Wired everywhere: transient Newton (`pnjlim` on both BJT
+junctions, step-clamped FET voltages), DC (gmin ladder verified on a real
+CMOS inverter transfer curve), AC (gm/gds/gπ/gµ at the DC op point), and
+the DC adjoint (d/dkp + d/dvt0, d/dIs + d/dβF via `gradient_aux`,
+FD-validated to < 1e-4). The Tellegen gate learned multi-terminal power
+(`Device::power`) — a BJT's base current carries power the (c, e) pair
+alone would miss — and holds < 1e-9 with transistors in the network.
+The M0 AC-diode placeholder is closed: `AcSensitivity` diode slots now
+carry the full operating-point chain term (∂H/∂g_d from the AC adjoint ×
+dv_d/dp from the DC adjoint), FD-validated; `deferred` now lists exactly
+the transistors (their AC sensitivities need model second derivatives).
+New validation rungs: MOSFET saturation vs the square law (1e-9),
+common-source gain vs −gm·(Rd ∥ ro) (1e-9), BJT current-mirror ratio vs
+1/(1 + 2/βF).
+
+## Honesty (what is not claimed)
+
+- **Transistor models are level-1 / Ebers–Moll only.** No body effect, no
+  subthreshold, no capacitances (transistors are memoryless here), no
+  Early effect (BJT), no Gummel–Poon. Good for topology-level design and
+  gradients, not for nanometer accuracy.
+- **Transistor AC sensitivities are deferred placeholders** (flagged in
+  `AcSensitivity::deferred`): they need d(gm, gds)/d(op point) — second
+  derivatives of the models. Diode AC sensitivities are now computed,
+  including the operating-point chain term.
 - **No transient adjoint** — DC and AC gradients only. Transient adjoint
   (reverse sweep over companion states) is M1.
 - **Fixed timestep at M0** — LTE-based adaptive stepping flagged for M1.
@@ -73,8 +96,9 @@ binds them is M-next, mirroring the antenna/EM measurement packs.
 
 ## M1 ladder
 
-1. MOSFET level-1 (Shichman–Hodges) + BJT Ebers–Moll, with the same
-   FD-validated adjoint treatment.
+1. ~~MOSFET level-1 (Shichman–Hodges) + BJT Ebers–Moll, with the same
+   FD-validated adjoint treatment.~~ **Done** (see "M1 progress" above);
+   transistor *AC* sensitivities remain deferred.
 2. Transient adjoint (reverse sweep) → time-domain objectives (settling
    time, overshoot) become differentiable.
 3. LTE-based adaptive timestep (with the frozen-discretization caveat for

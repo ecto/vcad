@@ -30,7 +30,7 @@ mod linalg;
 pub use linalg::solve_dense;
 
 mod devices;
-pub use devices::{Device, DiodeModel, MotorParams};
+pub use devices::{BjtModel, Device, DiodeModel, MosfetModel, MotorParams, Polarity};
 
 pub mod ac;
 pub mod adjoint;
@@ -135,9 +135,10 @@ pub struct CircuitEnv {
     /// Per-device companion history: previous inductor voltage (device id → V).
     /// Used only by the trapezoidal integrator.
     ind_v: Vec<f64>,
-    /// Per-device nonlinear junction voltage (device id → V), warm-started across
-    /// steps and limited across Newton iterations.
-    nl_state: Vec<f64>,
+    /// Per-device nonlinear state (device id → up to two junction/terminal
+    /// voltages), warm-started across steps and limited across Newton
+    /// iterations. Diode: `[v_d, –]`; MOSFET: `[vgs, vds]`; BJT: `[vbe, vbc]`.
+    nl_state: Vec<[f64; 2]>,
     /// Per-device rotor angular velocity (device id → rad/s) for motors.
     mech_omega: Vec<f64>,
     /// Per-device rotor angle (device id → rad) for motors.
@@ -165,7 +166,7 @@ impl CircuitEnv {
             cap_i: vec![0.0; nd],
             ind_i: vec![0.0; nd],
             ind_v: vec![0.0; nd],
-            nl_state: vec![0.0; nd],
+            nl_state: vec![[0.0; 2]; nd],
             mech_omega: vec![0.0; nd],
             mech_theta: vec![0.0; nd],
             node_v: vec![0.0; nn],
@@ -183,7 +184,7 @@ impl CircuitEnv {
         self.cap_i.fill(0.0);
         self.ind_i.fill(0.0);
         self.ind_v.fill(0.0);
-        self.nl_state.fill(0.0);
+        self.nl_state.fill([0.0; 2]);
         self.mech_omega.fill(0.0);
         self.mech_theta.fill(0.0);
         self.node_v.fill(0.0);
@@ -233,10 +234,7 @@ impl CircuitEnv {
             .devices
             .iter()
             .enumerate()
-            .map(|(id, d)| {
-                let (p, n) = d.terminals();
-                (self.node_v[p] - self.node_v[n]) * self.dev_i[id]
-            })
+            .map(|(id, d)| d.power(&self.node_v, self.dev_i[id]))
             .sum()
     }
 

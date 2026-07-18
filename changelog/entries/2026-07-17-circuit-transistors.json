@@ -1,0 +1,15 @@
+{
+  "id": "2026-07-17-circuit-transistors",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Transistors in the circuit simulator",
+  "summary": "Level-1 MOSFET (Shichman-Hodges) and Ebers-Moll BJT models, both polarities, in transient, DC, AC, and adjoint-sensitivity analyses; the AC diode sensitivity placeholder is now computed.",
+  "features": [
+    "circuit-sim",
+    "mosfet",
+    "bjt",
+    "adjoint",
+    "ecad"
+  ]
+}
