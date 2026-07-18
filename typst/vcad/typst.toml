@@ -1,0 +1,13 @@
+[package]
+name = "vcad"
+version = "0.1.0"
+entrypoint = "lib.typ"
+authors = ["Cam Pedersen <cam@campedersen.com>"]
+license = "MIT"
+description = "Parametric CAD in your document: render .vcad/loon models to drafting-quality views and sheets, and measure them (volume, mass, bbox, center of mass) at compile time — numbers that can never go stale."
+homepage = "https://vcad.io"
+repository = "https://github.com/ecto/vcad"
+keywords = ["cad", "engineering", "drafting", "3d", "mechanical", "brep"]
+categories = ["visualization", "components"]
+compiler = "0.13.0"
+exclude = ["examples"]

@@ -40,6 +40,7 @@ members = [
     "crates/vcad-kernel-physics",
     "crates/vcad-kernel-atoms",
     "crates/vcad-render",
+    "crates/vcad-typst",
     "crates/wasmosis",
     "crates/wasmosis/wasmosis-macro",
     "crates/vcad-slicer",
@@ -289,6 +290,16 @@ panic = "unwind"
 
 [profile.dev]
 panic = "unwind"
+
+# Size-optimized profile for the Typst plugin WASM
+# (scripts/build-typst-plugin.sh).
+[profile.typst-wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 
 # The FEA refinement studies run PCG on ~100k-DOF systems in their tests;
 # unoptimized they take minutes, optimized seconds.
