@@ -29,6 +29,7 @@ import { Export } from "@phosphor-icons/react/dist/ssr/Export";
 import { Sparkle } from "@phosphor-icons/react/dist/ssr/Sparkle";
 import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { Circuitry } from "@phosphor-icons/react/dist/ssr/Circuitry";
+import { Gauge } from "@phosphor-icons/react/dist/ssr/Gauge";
 import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
 import { TextT } from "@phosphor-icons/react/dist/ssr/TextT";
 import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
@@ -70,6 +71,7 @@ import { TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useDrawingStore } from "@/stores/drawing-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
+import { useAnalyzeStore } from "@/stores/analyze-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 import { useOutputStore } from "@/stores/output-store";
@@ -613,6 +615,16 @@ export function useToolDefinitions(): {
             }
           }
         },
+      },
+      {
+        id: "simulate-analyze",
+        tab: "simulate",
+        label: "Analyze",
+        tooltip: "Open Analyze Panel (FEA, tolerance stackup)",
+        icon: Gauge,
+        enabled: !sketchActive,
+        iconColor: color("simulate"),
+        onClick: () => useAnalyzeStore.getState().openPanel(),
       },
     ];
 

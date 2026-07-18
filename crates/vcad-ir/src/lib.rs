@@ -1824,6 +1824,13 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clearance_specs: Vec<ClearanceSpec>,
 
+    /// Persisted solver studies (structural FEA, tolerance stackup, …) for
+    /// the unified Analyze mode. Like `clearance_specs`, studies are
+    /// re-verified against the current geometry rather than computed once —
+    /// a study whose stored baseline no longer reproduces is Stale/Violated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub analysis_studies: Vec<AnalysisStudy>,
+
     // Animation (optional, zero-cost when absent)
     /// Animation timeline: keyframed parameters/joints/visibility plus
     /// camera shots. Absent for static models.
@@ -1859,6 +1866,166 @@ pub struct ClearanceSpec {
     pub allow_contact: Option<bool>,
 }
 
+/// A persisted solver study for the unified Analyze mode (#592).
+///
+/// The spec (loads, supports, contributors, …) lives on the document so the
+/// study re-runs and re-verifies whenever geometry changes; the optional
+/// `baseline` records the quantities from the last accepted run so a re-run
+/// can report Holds (reproduced), Stale (drifted), or Violated (requirement
+/// failed).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct AnalysisStudy {
+    /// Stable unique id (UUID-ish string).
+    pub id: String,
+    /// Human-readable name, e.g. "bracket load case".
+    pub name: String,
+    /// The study definition.
+    pub study: AnalysisStudyKind,
+    /// Quantities from the last accepted run, for Holds/Stale detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub baseline: Option<AnalysisBaseline>,
+}
+
+/// The per-domain study definition. New solver domains land as new variants.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub enum AnalysisStudyKind {
+    /// Static structural FEA (`vcad-kernel-fea`), fail-closed convergence.
+    #[serde(rename_all = "camelCase")]
+    Structural {
+        /// Part id (stringified root node id) the study meshes and solves.
+        part_id: String,
+        /// Lattice cells along the longest axis at the coarsest level.
+        resolution: u32,
+        /// Young's modulus, MPa.
+        youngs_modulus_mpa: f64,
+        /// Poisson's ratio.
+        poisson: f64,
+        /// Yield strength for the safety-factor claim, MPa.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        yield_strength_mpa: Option<f64>,
+        /// Point/region loads.
+        loads: Vec<StudyLoad>,
+        /// Fixed supports.
+        supports: Vec<StudySupport>,
+    },
+    /// Linear tolerance stackup (`vcad-kernel-tolerance`).
+    #[serde(rename_all = "camelCase")]
+    Tolerance {
+        /// Dimension-chain contributors.
+        contributors: Vec<StudyContributor>,
+        /// The requirement the chain must satisfy.
+        requirement: StudyRequirement,
+    },
+}
+
+/// A load applied over a world-frame AABB region (kernel node-selection
+/// contract; fail-closed — an empty region errors, surfaced as Stale).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct StudyLoad {
+    /// Region selecting mesh nodes.
+    pub region: StudyRegion,
+    /// Total force vector in N, split evenly over selected nodes.
+    pub force: [f64; 3],
+}
+
+/// A fixed support over a world-frame AABB region.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct StudySupport {
+    /// Region selecting mesh nodes.
+    pub region: StudyRegion,
+    /// Which translational DOFs are fixed (x, y, z).
+    pub fix: [bool; 3],
+}
+
+/// World-frame axis-aligned box region, mm.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct StudyRegion {
+    /// Minimum corner.
+    pub min: [f64; 3],
+    /// Maximum corner.
+    pub max: [f64; 3],
+}
+
+/// One contributor in a linear tolerance chain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct StudyContributor {
+    /// Contributor name, e.g. "shaft length".
+    pub name: String,
+    /// Signed sensitivity coefficient (usually ±1).
+    pub coeff: f64,
+    /// Nominal dimension, mm.
+    pub nominal: f64,
+    /// Lower tolerance (magnitude), mm.
+    pub tol_minus: f64,
+    /// Upper tolerance, mm.
+    pub tol_plus: f64,
+    /// Distribution: "normal" (default; σ derived from the tolerance band
+    /// at ±tol = 3σ) or "uniform".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub dist: Option<String>,
+}
+
+/// The requirement a tolerance chain must satisfy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct StudyRequirement {
+    /// Requirement name, e.g. "end gap".
+    pub name: String,
+    /// Lower bound, mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub lower_mm: Option<f64>,
+    /// Upper bound, mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub upper_mm: Option<f64>,
+}
+
+/// Quantities recorded from the last accepted run of a study.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct AnalysisBaseline {
+    /// ISO-8601 timestamp of the run.
+    pub recorded_at_iso: String,
+    /// Recorded quantities (claim id → value).
+    pub quantities: Vec<BaselineQuantity>,
+}
+
+/// One recorded quantity in an [`AnalysisBaseline`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct BaselineQuantity {
+    /// Quantity id, e.g. "fea.max_displacement_mm".
+    pub id: String,
+    /// Recorded value.
+    pub value: f64,
+    /// Unit label, e.g. "mm", "MPa".
+    pub unit: String,
+}
+
 impl Default for Document {
     fn default() -> Self {
         Self {
@@ -1878,6 +2045,7 @@ impl Default for Document {
             parameters: HashMap::new(),
             bindings: Bindings::new(),
             clearance_specs: Vec::new(),
+            analysis_studies: Vec::new(),
             timeline: None,
         }
     }

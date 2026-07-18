@@ -337,6 +337,13 @@ pub enum FeatureInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         system: Option<String>,
     },
+    /// Persisted Analyze-mode solver studies (singleton, like scene
+    /// settings): JSON-serialized `Vec<AnalysisStudy>`.
+    AnalysisStudies {
+        /// Studies data (JSON-serialized `Vec<AnalysisStudy>`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        studies: Option<String>,
+    },
 }
 
 impl FeatureInput {
@@ -369,6 +376,7 @@ impl FeatureInput {
             Self::SceneSettings { .. } => "scene-settings",
             Self::Schematic { .. } => "schematic",
             Self::Molecule { .. } => "molecule",
+            Self::AnalysisStudies { .. } => "analysis-studies",
         }
     }
 
@@ -682,6 +690,11 @@ impl FeatureInput {
                     p.insert("system".into(), Value::String(v.clone()));
                 }
             }
+            Self::AnalysisStudies { studies } => {
+                if let Some(v) = studies {
+                    p.insert("studies".into(), Value::String(v.clone()));
+                }
+            }
         }
 
         (kind, p)
@@ -838,6 +851,9 @@ impl FeatureInput {
             },
             "molecule" => Self::Molecule {
                 system: get_str(params, "system"),
+            },
+            "analysis-studies" => Self::AnalysisStudies {
+                studies: get_str(params, "studies"),
             },
             _ => return None,
         })

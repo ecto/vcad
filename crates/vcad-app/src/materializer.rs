@@ -141,6 +141,10 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
                 materialize_molecule(&mut doc, feature);
                 continue;
             }
+            "analysis-studies" => {
+                materialize_analysis_studies(&mut doc, feature);
+                continue;
+            }
             _ => {}
         }
 
@@ -191,7 +195,8 @@ fn materialize_feature(
         | FeatureInput::Joint { .. }
         | FeatureInput::SceneSettings { .. }
         | FeatureInput::Schematic { .. }
-        | FeatureInput::Molecule { .. } => return None,
+        | FeatureInput::Molecule { .. }
+        | FeatureInput::AnalysisStudies { .. } => return None,
         _ => {}
     }
 
@@ -1286,6 +1291,16 @@ fn materialize_molecule(doc: &mut Document, feature: &FeatureState) {
     }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
     {
         doc.molecule = serde_json::from_str(&json).ok();
+    }
+}
+
+fn materialize_analysis_studies(doc: &mut Document, feature: &FeatureState) {
+    if let Some(FeatureInput::AnalysisStudies {
+        studies: Some(json),
+        ..
+    }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
+    {
+        doc.analysis_studies = serde_json::from_str(&json).unwrap_or_default();
     }
 }
 
