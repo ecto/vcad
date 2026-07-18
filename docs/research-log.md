@@ -784,3 +784,42 @@ with a typed error (`TransientAdjointError::Unsupported`); the diode's
 reverse sweep needs per-step converged-Newton-Jacobian storage and rides
 the MOSFET/BJT ladder item. Storage is O(N·m) full-trajectory — fine at
 lumped scale, checkpointing deliberately not built.
+
+## 2026-07-17 — circuit M1: LTE-based adaptive timestep, 977× fewer steps on a stiff pair
+
+`vcad_ecad_sim::circuit` grows opt-in adaptive stepping
+(`CircuitEnv::set_adaptive(AdaptiveConfig { reltol, abstol, dt_min,
+dt_max })`); the fixed-step path stays the default and is now gated
+**bit-identical** to M0 (golden `to_bits()` patterns captured pre-change,
+both integrators) — the adjoint and WASM consumers keep their frozen
+discretization, per the particle crate's adaptive-dt scar tissue.
+
+- **LTE estimate** (Nagel, UCB ERL-M520, §4.4): per capacitor voltage and
+  inductor current, trapezoidal corrector vs the explicit
+  divided-difference predictor from the stored companion derivative;
+  accept when every estimate is within `reltol·|x| + abstol`.
+- **Controller**: `dt' = dt·min(2, 0.9·(tol/LTE)^{1/3})` (3rd-order trap
+  LTE), halve-and-redo on reject, clamped to `[dt_min, dt_max]`. A reject
+  rolls back the *entire* transient state (companion history, Newton
+  warm-start, rotor state, time) — no partial state, ever.
+- **Newton non-convergence** now triggers the same halve-and-redo rescue
+  instead of silently breaking (adaptive path only; fixed path unchanged).
+- **Stiff RC pair** (τ = 1 ms and 100 ns, ratio 1e4, 5 τ_slow horizon):
+
+  | run | steps | max error vs analytic |
+  |---|---|---|
+  | fixed trap, dt = τ_fast/10 | 500 001 | 2.13e-2 (BE first step on the fast pole) |
+  | adaptive, reltol 1e-4 | **512** | **5.12e-5** |
+
+  977× fewer steps *and* ~400× lower error — the fixed grid pays for the
+  fast pole everywhere, the controller only where it lives.
+- RLC ringdown keeps the fixed-gate accuracy (ω_d < 1e-3 rel, envelope
+  < 2e-2 rel); a half-wave rectifier under a stepped sine spreads accepted
+  dt > 10× between conduction knee and flat; Tellegen < 1e-9 of source
+  power at every accepted step. `step_to(t_end)` lands exactly on t_end
+  (adaptive) and returns the full non-uniform observation train
+  (`obs.time` was already honest).
+- Deliberately not done: adaptivity under gradient runs (non-differentiated
+  control flow), time-aware sources inside a step (sources are
+  zeroth-order-held between accepted steps — a `VSin` device is the clean
+  fix and queued with M1's MOSFET work).

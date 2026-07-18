@@ -108,8 +108,14 @@ binds them is M-next, mirroring the antenna/EM measurement packs.
    `examples/step_shaper` (69.4% → 4.6% overshoot in 59 reverse sweeps).
    Linear devices only — the diode's reverse sweep (per-step Newton
    Jacobian storage) stays on this ladder with the MOSFET/BJT item.
-3. LTE-based adaptive timestep (with the frozen-discretization caveat for
-   gradient runs, per the particle crate's scar tissue).
+3. ~~LTE-based adaptive timestep~~ — **shipped** (2026-07-17, see the
+   research log). Opt-in `CircuitEnv::set_adaptive(AdaptiveConfig)`:
+   trapezoidal-vs-predictor LTE per reactive state (Nagel §4.4), 1/3-power
+   step controller, Newton-failure dt-halving rescue, full rollback on
+   reject, `step_to(t_end)`. Fixed-step stays the default and is gated
+   bit-identical to M0 (golden bit patterns in
+   `tests/circuit_adaptive.rs`) — gradient runs keep the frozen
+   discretization, per the particle crate's scar tissue.
 4. ~~Netlist-from-ecad seam~~ — **DONE** (`circuit::netlist`, 2026-07-17):
    `circuit_from_schematic` maps a `SchematicSheet` (components + nets via
    `vcad_ecad_schematic::generate_netlist`) onto `Circuit` nodes/devices.

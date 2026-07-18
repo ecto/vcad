@@ -57,6 +57,49 @@ pub enum Integrator {
     Trapezoidal,
 }
 
+/// Configuration for LTE-based adaptive timestep control (opt-in via
+/// [`CircuitEnv::set_adaptive`]).
+///
+/// Per accepted step the local truncation error (LTE) of every capacitor
+/// voltage and inductor current is estimated by comparing the trapezoidal
+/// corrector against a lower-order explicit predictor built from the stored
+/// companion derivative (the divided-difference approach of Nagel, SPICE2,
+/// UCB ERL-M520, 1975, §4.4). A step is accepted when every estimate is
+/// within `reltol·|x| + abstol`; the next step size follows the standard
+/// third-order controller `dt·min(2, 0.9·(tol/LTE)^{1/3})`, and a rejected
+/// step is redone at half the size. All step sizes are clamped to
+/// `[dt_min, dt_max]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdaptiveConfig {
+    /// Relative tolerance on each state variable (dimensionless).
+    pub reltol: f64,
+    /// Absolute tolerance floor (V for capacitor voltages, A for inductor
+    /// currents).
+    pub abstol: f64,
+    /// Smallest allowed step (s). A step that still fails at `dt_min` is
+    /// accepted anyway — there is nothing smaller to try.
+    pub dt_min: f64,
+    /// Largest allowed step (s).
+    pub dt_max: f64,
+}
+
+/// A snapshot of every piece of mutable transient state, so a rejected
+/// adaptive step can be rolled back with no partial companion history.
+#[derive(Debug, Clone)]
+struct StateSnapshot {
+    time: f64,
+    first_step: bool,
+    cap_v: Vec<f64>,
+    cap_i: Vec<f64>,
+    ind_i: Vec<f64>,
+    ind_v: Vec<f64>,
+    nl_state: Vec<[f64; 2]>,
+    mech_omega: Vec<f64>,
+    mech_theta: Vec<f64>,
+    node_v: Vec<f64>,
+    dev_i: Vec<f64>,
+}
+
 /// A lumped-element circuit: a set of [`Device`]s connecting numbered nodes.
 ///
 /// Node `0` is always ground (the voltage reference). Allocate other nodes with
@@ -151,6 +194,14 @@ pub struct CircuitEnv {
     dev_i: Vec<f64>,
     /// Newton iteration cap for nonlinear devices.
     max_newton: usize,
+    /// Adaptive-timestep control; `None` (the default) keeps the historical
+    /// fixed-step behavior bit-for-bit. The adjoint machinery and existing
+    /// WASM consumers depend on the frozen fixed-dt discretization (the
+    /// accept/reject control flow is not differentiated — see the particle
+    /// crate's adjoint docs), so adaptivity is strictly opt-in.
+    adaptive: Option<AdaptiveConfig>,
+    /// Current adaptive step size (s); meaningful only when `adaptive` is set.
+    adaptive_dt: f64,
 }
 
 impl CircuitEnv {
@@ -174,6 +225,8 @@ impl CircuitEnv {
             node_v: vec![0.0; nn],
             dev_i: vec![0.0; nd],
             max_newton: 50,
+            adaptive: None,
+            adaptive_dt: dt,
         }
     }
 
@@ -191,6 +244,9 @@ impl CircuitEnv {
         self.mech_theta.fill(0.0);
         self.node_v.fill(0.0);
         self.dev_i.fill(0.0);
+        if let Some(cfg) = self.adaptive {
+            self.adaptive_dt = self.dt.clamp(cfg.dt_min, cfg.dt_max);
+        }
     }
 
     /// The configured timestep (s).
@@ -225,6 +281,45 @@ impl CircuitEnv {
         self.integrator = integrator;
     }
 
+    /// Enable LTE-based adaptive timestep control (see [`AdaptiveConfig`]).
+    ///
+    /// Adaptivity implies the trapezoidal integrator (the LTE estimate and
+    /// the 1/3-power controller both assume its third-order local error), so
+    /// this also selects [`Integrator::Trapezoidal`]. Call before the first
+    /// [`CircuitEnv::step`] or after a [`CircuitEnv::reset`], like
+    /// [`CircuitEnv::set_integrator`]. Observation timestamps become
+    /// non-uniform; `Observation::time` carries the true simulated time.
+    ///
+    /// # Panics
+    /// Panics if the config is malformed (`dt_min ≤ 0`, `dt_min > dt_max`,
+    /// or non-positive tolerances).
+    pub fn set_adaptive(&mut self, cfg: AdaptiveConfig) {
+        assert!(
+            cfg.dt_min > 0.0 && cfg.dt_min <= cfg.dt_max,
+            "AdaptiveConfig requires 0 < dt_min <= dt_max"
+        );
+        assert!(
+            cfg.reltol > 0.0 && cfg.abstol > 0.0,
+            "AdaptiveConfig requires positive tolerances"
+        );
+        debug_assert!(
+            self.first_step,
+            "set_adaptive must be called before stepping or after reset()"
+        );
+        self.integrator = Integrator::Trapezoidal;
+        self.adaptive = Some(cfg);
+        self.adaptive_dt = self.dt.clamp(cfg.dt_min, cfg.dt_max);
+    }
+
+    /// Disable adaptive stepping, returning to the fixed-dt path.
+    pub fn clear_adaptive(&mut self) {
+        debug_assert!(
+            self.first_step,
+            "clear_adaptive must be called before stepping or after reset()"
+        );
+        self.adaptive = None;
+    }
+
     /// Tellegen power-balance residual (W) of the latest solved state:
     /// Σ over devices of (v_p − v_n)·i, with i the device current the KCL
     /// solve actually used. Tellegen's theorem says this is exactly zero for
@@ -254,16 +349,157 @@ impl CircuitEnv {
     }
 
     /// Advance the simulation by one timestep and return the new observation.
+    ///
+    /// On the default fixed-step path this advances by exactly `dt`. With
+    /// adaptive control enabled ([`CircuitEnv::set_adaptive`]) it advances by
+    /// one *accepted* step — internally the step may be halved and redone
+    /// (LTE too large, or Newton non-convergence) before it is committed.
     pub fn step(&mut self) -> Observation {
-        let nn = self.circuit.num_nodes;
-        let nb = self.circuit.num_branches();
-        let m = (nn - 1) + nb;
+        if self.adaptive.is_some() {
+            return self.step_adaptive(None);
+        }
         // First step always runs backward Euler (see `first_step` docs).
         let integ = if self.first_step {
             Integrator::BackwardEuler
         } else {
             self.integrator
         };
+        self.attempt_step(self.dt, integ);
+        self.observe()
+    }
+
+    /// Step repeatedly until simulated time reaches `t_end`, returning every
+    /// observation along the way. With adaptive control the final step is
+    /// shortened to land exactly on `t_end`; on the fixed-step path the last
+    /// observation may overshoot by up to one `dt` (the fixed grid is never
+    /// distorted).
+    pub fn step_to(&mut self, t_end: f64) -> Vec<Observation> {
+        let mut out = Vec::new();
+        while self.time < t_end * (1.0 - 1e-12) {
+            let obs = if self.adaptive.is_some() {
+                self.step_adaptive(Some(t_end - self.time))
+            } else {
+                self.step()
+            };
+            out.push(obs);
+        }
+        out
+    }
+
+    /// One accepted adaptive step: attempt at the current step size, estimate
+    /// the LTE of every reactive state, and shrink-and-redo until the step
+    /// passes (or `dt_min` says nothing smaller is possible). `cap` bounds the
+    /// step so [`CircuitEnv::step_to`] can land exactly on its end time.
+    fn step_adaptive(&mut self, cap: Option<f64>) -> Observation {
+        let cfg = self.adaptive.expect("adaptive config present");
+        let mut dt = self.adaptive_dt.clamp(cfg.dt_min, cfg.dt_max);
+        if let Some(c) = cap {
+            dt = dt.min(c.max(cfg.dt_min));
+        }
+
+        loop {
+            let integ = if self.first_step {
+                Integrator::BackwardEuler
+            } else {
+                self.integrator
+            };
+            let snap = self.snapshot();
+
+            // Explicit predictor per reactive state from the stored companion
+            // derivative (divided differences — Nagel §4.4): the corrector-
+            // minus-predictor gap is the LTE estimate.
+            let preds: Vec<(usize, f64, f64)> = self
+                .circuit
+                .devices
+                .iter()
+                .enumerate()
+                .filter_map(|(id, d)| match *d {
+                    Device::Capacitor { c, .. } => Some((id, self.cap_v[id], self.cap_i[id] / c)),
+                    Device::Inductor { l, .. } => Some((id, self.ind_i[id], self.ind_v[id] / l)),
+                    _ => None,
+                })
+                .collect();
+
+            let converged = self.attempt_step(dt, integ);
+            let at_floor = dt <= cfg.dt_min * (1.0 + 1e-12);
+
+            if !converged && !at_floor {
+                // The classic transient-convergence rescue: Newton failed, so
+                // roll everything back and retry at half the step.
+                self.restore(snap);
+                dt = (dt * 0.5).max(cfg.dt_min);
+                continue;
+            }
+
+            // Worst LTE-to-tolerance ratio over all reactive states.
+            let mut ratio = 0.0f64;
+            for &(id, x_prev, dxdt) in &preds {
+                let x_new = match self.circuit.devices[id] {
+                    Device::Capacitor { .. } => self.cap_v[id],
+                    _ => self.ind_i[id],
+                };
+                let est = (x_new - (x_prev + dt * dxdt)).abs();
+                let tol = cfg.reltol * x_new.abs().max(x_prev.abs()) + cfg.abstol;
+                ratio = ratio.max(est / tol);
+            }
+
+            if ratio > 1.0 && !at_floor {
+                self.restore(snap);
+                dt = (dt * 0.5).max(cfg.dt_min);
+                continue;
+            }
+
+            // Accepted. Third-order controller for the trapezoidal rule:
+            // dt' = dt·min(2, 0.9·(tol/LTE)^{1/3}), clamped to [dt_min, dt_max].
+            let grow = if ratio > 0.0 {
+                (0.9 * ratio.powf(-1.0 / 3.0)).min(2.0)
+            } else {
+                2.0
+            };
+            self.adaptive_dt = (dt * grow).clamp(cfg.dt_min, cfg.dt_max);
+            return self.observe();
+        }
+    }
+
+    fn snapshot(&self) -> StateSnapshot {
+        StateSnapshot {
+            time: self.time,
+            first_step: self.first_step,
+            cap_v: self.cap_v.clone(),
+            cap_i: self.cap_i.clone(),
+            ind_i: self.ind_i.clone(),
+            ind_v: self.ind_v.clone(),
+            nl_state: self.nl_state.clone(),
+            mech_omega: self.mech_omega.clone(),
+            mech_theta: self.mech_theta.clone(),
+            node_v: self.node_v.clone(),
+            dev_i: self.dev_i.clone(),
+        }
+    }
+
+    fn restore(&mut self, s: StateSnapshot) {
+        self.time = s.time;
+        self.first_step = s.first_step;
+        self.cap_v = s.cap_v;
+        self.cap_i = s.cap_i;
+        self.ind_i = s.ind_i;
+        self.ind_v = s.ind_v;
+        self.nl_state = s.nl_state;
+        self.mech_omega = s.mech_omega;
+        self.mech_theta = s.mech_theta;
+        self.node_v = s.node_v;
+        self.dev_i = s.dev_i;
+    }
+
+    /// The full solve-and-commit body of one transient step at step size `dt`
+    /// with integrator `integ`. Returns whether the Newton loop converged
+    /// (`true` for linear circuits after their exact solve). The fixed-step
+    /// path ignores the flag — its behavior is unchanged from M0.
+    fn attempt_step(&mut self, dt: f64, integ: Integrator) -> bool {
+        let nn = self.circuit.num_nodes;
+        let nb = self.circuit.num_branches();
+        let m = (nn - 1) + nb;
+        let mut converged = false;
 
         // Newton-Raphson outer loop: nonlinear devices linearise around the
         // current node-voltage guess each iteration. Linear circuits converge in
@@ -285,13 +521,13 @@ impl CircuitEnv {
                 if integ == Integrator::Trapezoidal {
                     match dev {
                         Device::Capacitor { p, n, c } => {
-                            let g = 2.0 * c / self.dt;
+                            let g = 2.0 * c / dt;
                             devices::stamp_conductance(&mut a, m, p, n, g);
                             devices::inject(&mut rhs, p, n, g * self.cap_v[id] + self.cap_i[id]);
                             continue;
                         }
                         Device::Inductor { p, n, l } => {
-                            let g = self.dt / (2.0 * l);
+                            let g = dt / (2.0 * l);
                             devices::stamp_conductance(&mut a, m, p, n, g);
                             devices::inject(&mut rhs, p, n, -(self.ind_i[id] + g * self.ind_v[id]));
                             continue;
@@ -305,7 +541,7 @@ impl CircuitEnv {
                     m,
                     nn,
                     &mut branch,
-                    self.dt,
+                    dt,
                     self.cap_v[id],
                     self.ind_i[id],
                     self.nl_state[id],
@@ -318,7 +554,7 @@ impl CircuitEnv {
 
             let solution = match solve_dense(&mut a, &mut rhs, m) {
                 Some(x) => x,
-                None => break, // singular — keep previous guess
+                None => break, // singular — keep previous guess (not converged)
             };
 
             let mut next = vec![0.0; nn];
@@ -341,6 +577,7 @@ impl CircuitEnv {
             }
 
             if delta < 1e-9 {
+                converged = true;
                 break;
             }
         }
@@ -354,9 +591,9 @@ impl CircuitEnv {
                     let v_new = self.node_v[p] - self.node_v[n];
                     let i_new = match integ {
                         // companion current = gc·(v_new − v_prev) = C·dv/dt
-                        Integrator::BackwardEuler => (c / self.dt) * (v_new - self.cap_v[id]),
+                        Integrator::BackwardEuler => (c / dt) * (v_new - self.cap_v[id]),
                         Integrator::Trapezoidal => {
-                            (2.0 * c / self.dt) * (v_new - self.cap_v[id]) - self.cap_i[id]
+                            (2.0 * c / dt) * (v_new - self.cap_v[id]) - self.cap_i[id]
                         }
                     };
                     self.dev_i[id] = i_new;
@@ -366,9 +603,9 @@ impl CircuitEnv {
                 Device::Inductor { p, n, l } => {
                     let v = self.node_v[p] - self.node_v[n];
                     let i_new = match integ {
-                        Integrator::BackwardEuler => (self.dt / l) * v + self.ind_i[id],
+                        Integrator::BackwardEuler => (dt / l) * v + self.ind_i[id],
                         Integrator::Trapezoidal => {
-                            (self.dt / (2.0 * l)) * (v + self.ind_v[id]) + self.ind_i[id]
+                            (dt / (2.0 * l)) * (v + self.ind_v[id]) + self.ind_i[id]
                         }
                     };
                     self.dev_i[id] = i_new;
@@ -382,8 +619,8 @@ impl CircuitEnv {
                     let i_m = self.dev_i[id];
                     let omega_prev = self.mech_omega[id];
                     let torque = params.kt * i_m - params.b * omega_prev - params.load;
-                    let omega_new = omega_prev + (self.dt / params.j) * torque;
-                    self.mech_theta[id] += self.dt * omega_new;
+                    let omega_new = omega_prev + (dt / params.j) * torque;
+                    self.mech_theta[id] += dt * omega_new;
                     self.mech_omega[id] = omega_new;
                     self.ind_i[id] = i_m;
                 }
@@ -395,9 +632,9 @@ impl CircuitEnv {
             }
         }
 
-        self.time += self.dt;
+        self.time += dt;
         self.first_step = false;
-        self.observe()
+        converged
     }
 
     /// The current state without advancing time.
