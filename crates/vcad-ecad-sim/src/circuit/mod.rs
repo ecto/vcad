@@ -37,6 +37,7 @@ pub mod adjoint;
 pub mod dc;
 pub mod netlist;
 pub mod receipt;
+pub mod tolerance;
 pub mod transient_adjoint;
 
 /// Companion-model integration method for reactive elements (C, L).

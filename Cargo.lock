@@ -7023,6 +7023,7 @@ dependencies = [
  "thiserror 2.0.18",
  "vcad-ecad-schematic",
  "vcad-ir",
+ "vcad-kernel-tolerance",
  "vcad-receipt",
 ]
 

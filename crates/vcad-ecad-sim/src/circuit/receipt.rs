@@ -156,6 +156,55 @@ pub fn filter_claims(
     }
 }
 
+/// Claims from a tolerance-yield analysis (`circuit::tolerance`): the
+/// solver-in-the-loop Monte Carlo yield and the linearized worst-case
+/// deviation of the output.
+///
+/// Predicted basis, Provisional rollup, like every claim in this family. The
+/// MC seed and sample count ride in the note — the yield is seeded and
+/// bit-reproducible, and the receipt says so instead of leaving the number
+/// unanchored.
+pub fn yield_claims(
+    analysis: &super::tolerance::ToleranceAnalysis,
+    num_nodes: usize,
+    num_devices: usize,
+) -> ClaimSet {
+    let mc = &analysis.mc;
+    ClaimSet {
+        schema: CLAIM_SCHEMA.to_string(),
+        provenance: SolverProvenance {
+            analysis: "tolerance-yield".into(),
+            integrator: "n/a".into(),
+            newton_vntol: 1e-12,
+            newton_iterations: 1,
+            gmin_final: 0.0,
+            num_nodes,
+            num_devices,
+        },
+        claims: vec![
+            predicted(
+                "yield_fraction",
+                mc.yield_est.p,
+                "1",
+                format!(
+                    "in-spec fraction from {} full-solver Monte Carlo re-solves, \
+                     seed {:#x} (reproducible), standard error {:.2e}; linearization \
+                     checked against the same samples (max err {:.2e})",
+                    mc.n, mc.seed, mc.yield_est.standard_error, mc.lin_err_max
+                ),
+            ),
+            predicted(
+                "worst_case_deviation",
+                analysis.worst_case_deviation,
+                "1",
+                "largest adjoint-linearized worst-case deviation of the output from \
+                 nominal, every toleranced device at its drawing limit simultaneously; \
+                 linearized bound, not a global one — see the MC discrepancy numbers",
+            ),
+        ],
+    }
+}
+
 /// Which solver produced these claims.
 pub fn oracle() -> vcad_receipt::OracleRef {
     vcad_receipt::OracleRef::new("vcad-ecad-sim/circuit", env!("CARGO_PKG_VERSION"))
