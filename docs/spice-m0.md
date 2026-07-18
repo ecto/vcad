@@ -77,7 +77,8 @@ common-source gain vs −gm·(Rd ∥ ro) (1e-9), BJT current-mirror ratio vs
   derivatives of the models. Diode AC sensitivities are now computed,
   including the operating-point chain term.
 - **No transient adjoint** — DC and AC gradients only. Transient adjoint
-  (reverse sweep over companion states) is M1.
+  (reverse sweep over companion states) is M1. *(Closed 2026-07-17:
+  `circuit::transient_adjoint`, linear devices — see the M1 ladder.)*
 - **Fixed timestep at M0** — LTE-based adaptive stepping flagged for M1.
 - **No noise, no Monte Carlo.** `vcad-kernel-tolerance` is the natural
   partner: its stackup engine consumes exactly the sensitivities the
@@ -99,8 +100,14 @@ binds them is M-next, mirroring the antenna/EM measurement packs.
 1. ~~MOSFET level-1 (Shichman–Hodges) + BJT Ebers–Moll, with the same
    FD-validated adjoint treatment.~~ **Done** (see "M1 progress" above);
    transistor *AC* sensitivities remain deferred.
-2. Transient adjoint (reverse sweep) → time-domain objectives (settling
-   time, overshoot) become differentiable.
+2. ~~Transient adjoint (reverse sweep) → time-domain objectives (settling
+   time, overshoot) become differentiable.~~ **Done** (2026-07-17):
+   `circuit::transient_adjoint` — discrete adjoint of the companion-model
+   recurrence, both integrators (first step BE, matching `CircuitEnv`),
+   FD-validated on every linear element kind; flagship
+   `examples/step_shaper` (69.4% → 4.6% overshoot in 59 reverse sweeps).
+   Linear devices only — the diode's reverse sweep (per-step Newton
+   Jacobian storage) stays on this ladder with the MOSFET/BJT item.
 3. LTE-based adaptive timestep (with the frozen-discretization caveat for
    gradient runs, per the particle crate's scar tissue).
 4. ~~Netlist-from-ecad seam~~ — **DONE** (`circuit::netlist`, 2026-07-17):

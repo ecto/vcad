@@ -756,3 +756,31 @@ Honest gaps: no layout parasitics (that's M2 — trace R/L/C from the
 routed board), distinct ground rails (AGND/DGND) collapse onto node 0 at
 M1 (reported in `MappedCircuit::ground_nets`), diode model is chosen by
 value-string sniffing ("LED" → LED model, else silicon).
+
+## 2026-07-17 — Transient adjoint: time-domain circuit objectives become differentiable
+
+`circuit::transient_adjoint` (branch `claude/circuit-m1-transient-adjoint`)
+closes M1 item 2 of the spice ladder: d(time-domain objective)/d(every
+component value) by discrete adjoint of the companion-model recurrence
+(Director & Rohrer 1969 extended over the trajectory; derivation in the
+module docs). The adjoint runs its **own forward pass with frozen
+discretization** (fixed dt, first step always BE, exactly `CircuitEnv`'s
+rule — verified step-for-step to 1e-12 in a test), stores the full
+trajectory, then reverse-sweeps `Aᵀλ_k = ∂J/∂x_k + (∂U/∂x_k)ᵀĥ_k`. The
+per-parameter accumulation includes both the companion-conductance terms
+(dg/dC = 2/dt trap, 1/dt BE; dg/dL = −g/L) and the history-current terms —
+FD flags the gradient immediately if either is dropped.
+
+| check | oracle | result |
+|---|---|---|
+| RC gradient, BE + trap | central FD, frozen dt/steps/integrator | < 1e-5 rel, every device |
+| RLC + I-source (every linear element kind), BE + trap | same | < 1e-5 rel, every device |
+| forward pass ≡ CircuitEnv | step-by-step voltage compare | < 1e-12, both integrators |
+| RC time-constant recovery | gradient descent, log-space, scale-invariant stop | R → 2200 Ω to < 0.1% |
+| flagship `examples/step_shaper` | 2nd-order step shaping to f_n = 10 kHz, ζ = 0.7 | overshoot 69.4% → 4.6% (target ≤ 5%), J 6.7e3 → 3.9e-7, 59 reverse sweeps |
+
+Honesty: linear devices only (R, L, C, V, I) — diode/motor are rejected
+with a typed error (`TransientAdjointError::Unsupported`); the diode's
+reverse sweep needs per-step converged-Newton-Jacobian storage and rides
+the MOSFET/BJT ladder item. Storage is O(N·m) full-trajectory — fine at
+lumped scale, checkpointing deliberately not built.

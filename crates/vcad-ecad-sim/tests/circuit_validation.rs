@@ -576,3 +576,65 @@ fn dc_and_transient_agree_at_steady_state() {
         dcsol.node_voltages[out]
     );
 }
+
+#[test]
+fn transient_adjoint_matches_fd_on_rlc_both_integrators() {
+    // Transient adjoint rung: dJ/dp of a full-transient tracking objective
+    // vs central finite differences with the discretization frozen across
+    // probes (same dt, step count, integrator) — every element kind, both
+    // integrators. The module's own tests cover this in depth; this rung
+    // keeps it in the validation ladder alongside the DC/AC adjoint rungs.
+    use vcad_ecad_sim::circuit::transient_adjoint::transient_sensitivities;
+
+    let build = |r: f64, l: f64, cv: f64| {
+        let mut ckt = Circuit::new();
+        let vin = ckt.node();
+        let mid = ckt.node();
+        let out = ckt.node();
+        ckt.add(Device::VSource {
+            p: vin,
+            n: 0,
+            v: 5.0,
+        });
+        ckt.add(Device::Resistor { p: vin, n: mid, r });
+        ckt.add(Device::Inductor { p: mid, n: out, l });
+        ckt.add(Device::Capacitor {
+            p: out,
+            n: 0,
+            c: cv,
+        });
+        (ckt, out)
+    };
+
+    let (dt, n) = (2e-7, 300);
+    for integ in [Integrator::BackwardEuler, Integrator::Trapezoidal] {
+        let (ckt, out) = build(50.0, 1e-3, 1e-7);
+        let weights = vec![1.0; n];
+        // Track 60% of the network's own response: every step contributes.
+        let free = transient_sensitivities(&ckt, dt, integ, out, &vec![0.0; n], &weights).unwrap();
+        let targets: Vec<f64> = free.v_out.iter().map(|v| 0.6 * v).collect();
+        let sens = transient_sensitivities(&ckt, dt, integ, out, &targets, &weights).unwrap();
+
+        for id in 0..ckt.devices.len() {
+            let base = ckt.devices[id].primary();
+            let h = base.abs() * 1e-6;
+            let mut lo = ckt.clone();
+            let mut hi = ckt.clone();
+            lo.devices[id].set_primary(base - h);
+            hi.devices[id].set_primary(base + h);
+            let jlo = transient_sensitivities(&lo, dt, integ, out, &targets, &weights)
+                .unwrap()
+                .value;
+            let jhi = transient_sensitivities(&hi, dt, integ, out, &targets, &weights)
+                .unwrap()
+                .value;
+            let fd = (jhi - jlo) / (2.0 * h);
+            let ad = sens.gradient[id];
+            let scale = fd.abs().max(ad.abs()).max(1e-12);
+            assert!(
+                (fd - ad).abs() / scale < 1e-5,
+                "{integ:?} device {id}: adjoint {ad} vs FD {fd}"
+            );
+        }
+    }
+}

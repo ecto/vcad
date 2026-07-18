@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-transient-adjoint",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Circuit sim: transient adjoint gradients",
+  "summary": "d(time-domain objective)/d(R, L, C, sources) by reverse sweep over the transient — step-response shaping and waveform tracking are now differentiable (linear circuits, both integrators).",
+  "features": ["circuit", "adjoint", "differentiable"]
+}
