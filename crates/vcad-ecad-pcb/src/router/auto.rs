@@ -2337,7 +2337,16 @@ fn joint_window_repair(
 
         let mut still = Vec::new();
         let n_groups = groups.len();
+        // Wall-clock budget per escalation round: the arsenal per window is
+        // expensive (measured 100min/round on the CM5); past the budget the
+        // remaining windows carry to the next escalation or the final report.
+        let round_budget_ms = 300_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
+        let sw_round = Stopwatch::start();
         for (gw, stuck) in groups {
+            if sw_round.ms() > round_budget_ms {
+                still.extend(stuck);
+                continue;
+            }
             // Transactional: snapshot the world; a window that ends
             // net-negative is rolled back wholesale, so this stage can only
             // ever improve the board.
@@ -2345,6 +2354,8 @@ fn joint_window_repair(
             let placed_snapshot = placed.clone();
             let stuck_backup = stuck.clone();
             let placed_before = placed.len();
+            let nets_before: std::collections::HashSet<String> =
+                placed.iter().map(|p| p.net.clone()).collect();
             // Rip every placed route whose copper enters the window.
             let in_window = |p: &Placed| {
                 p.segments.iter().any(|(a, b, _)| {
@@ -2457,8 +2468,16 @@ fn joint_window_repair(
                     }
                 }
             }
-            if placed.len() <= placed_before {
-                // Net-negative (or neutral): roll back the entire window.
+            // Identity guard (the apex lesson): a window that trades a
+            // previously-routed net away for a different one scores
+            // "neutral" by count but destroys the scarce winners the
+            // ordering fought for. Every net routed before the window must
+            // still be routed after, AND the count must strictly increase.
+            let nets_after: std::collections::HashSet<String> =
+                placed.iter().map(|p| p.net.clone()).collect();
+            let lost_identity = !nets_before.is_subset(&nets_after);
+            if placed.len() <= placed_before || lost_identity {
+                // Net-negative, neutral, or identity-losing: roll back.
                 *session = session_snapshot;
                 *placed = placed_snapshot;
                 log::debug!(
