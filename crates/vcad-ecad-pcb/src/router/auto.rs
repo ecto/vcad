@@ -780,14 +780,18 @@ fn route_pass(
         .get(super::classes::DIFF_PAIR_CLASS)
         .map(|v| v.iter().map(|s| s.as_str()).collect())
         .unwrap_or_default();
-    let mut conns = conns;
     if !pair_nets.is_empty() {
         let mut routed_pairs: std::collections::BTreeSet<String> = Default::default();
         let mut deferred = Vec::with_capacity(conns.len());
         let mut coupled = 0usize;
         for (net, from, to) in std::mem::take(&mut conns) {
-            let base = super::pair::pair_partner(&net)
-                .map(|p| if p < net { format!("{p}|{net}") } else { format!("{net}|{p}") });
+            let base = super::pair::pair_partner(&net).map(|p| {
+                if p < net {
+                    format!("{p}|{net}")
+                } else {
+                    format!("{net}|{p}")
+                }
+            });
             let done = base.as_ref().is_some_and(|b| routed_pairs.contains(b));
             if !done && pair_nets.contains(net.as_str()) {
                 if let Some((mine, theirs)) = super::pair::try_route_pair(
