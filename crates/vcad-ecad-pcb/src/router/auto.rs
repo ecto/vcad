@@ -768,6 +768,56 @@ fn route_pass(
         }
     };
 
+    // Pair-first stage: differential-pair legs route FIRST and COUPLED, on
+    // the emptiest board — the anti-pattern proven by the CM5 campaign was
+    // pairs entering the batch as independent singles and the pair stage
+    // firing only as a rescue. Membership comes from the declared diff-pair
+    // class (see router::classes). A pair that fails coupled routing falls
+    // back into the batch as singles, so routability can never regress.
+    let pair_nets: std::collections::BTreeSet<&str> = pcb
+        .rules
+        .net_class_assignments
+        .get(super::classes::DIFF_PAIR_CLASS)
+        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    let mut conns = conns;
+    if !pair_nets.is_empty() {
+        let mut routed_pairs: std::collections::BTreeSet<String> = Default::default();
+        let mut deferred = Vec::with_capacity(conns.len());
+        let mut coupled = 0usize;
+        for (net, from, to) in std::mem::take(&mut conns) {
+            let base = super::pair::pair_partner(&net)
+                .map(|p| if p < net { format!("{p}|{net}") } else { format!("{net}|{p}") });
+            let done = base.as_ref().is_some_and(|b| routed_pairs.contains(b));
+            if !done && pair_nets.contains(net.as_str()) {
+                if let Some((mine, theirs)) = super::pair::try_route_pair(
+                    &mut session,
+                    pcb,
+                    width,
+                    &net,
+                    from,
+                    to,
+                    &mut placed,
+                    cong,
+                    max_expansions,
+                ) {
+                    placed.push(mine);
+                    placed.push(theirs);
+                    coupled += 1;
+                    if let Some(b) = base {
+                        routed_pairs.insert(b);
+                    }
+                    continue;
+                }
+            }
+            deferred.push((net, from, to));
+        }
+        conns = deferred;
+        if coupled > 0 {
+            log::info!("pair-first: {coupled} pairs routed coupled");
+        }
+    }
+
     let unrouted_conns = route_batch(
         &mut session,
         pcb,
