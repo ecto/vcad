@@ -5,7 +5,7 @@
 //! argument: every connection ends accounted for.
 //!
 //! ```bash
-//! cargo run --release -p vcad-ecad-pcb --example cm5_verdict -- routed.pcb.json [budget]
+//! cargo run --release -p vcad-ecad-pcb --example cm5_verdict -- routed.pcb.json [budget] [out.pcb.json]
 //! ```
 
 use std::collections::BTreeMap;
@@ -29,7 +29,8 @@ fn main() {
         .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(5_000_000);
-    let pcb: Pcb =
+    let out_json = args.next();
+    let mut pcb: Pcb =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
 
     // Unrouted connections = ratsnest over the routed board.
@@ -120,6 +121,36 @@ fn main() {
                 routed += conns.len();
                 let segs: usize = paths.iter().map(|p| p.len()).sum();
                 println!("ROUTED   {names:?} ({segs} segments found)");
+                // Commit the found copper so the board file carries the win:
+                // traces per segment, a via wherever consecutive segments of
+                // one connection meet at the same point on different layers.
+                for ((net, _, _), path) in conns.iter().zip(&paths) {
+                    for (a, b, layer) in path {
+                        pcb.traces.push(vcad_ir::ecad::Trace {
+                            start: *a,
+                            end: *b,
+                            width,
+                            layer: *layer,
+                            net: net.clone(),
+                            source: None,
+                        });
+                    }
+                    for w in path.windows(2) {
+                        let (_, b0, l0) = w[0];
+                        let (a1, _, l1) = w[1];
+                        if l0 != l1 && (b0.x - a1.x).abs() < 1e-9 && (b0.y - a1.y).abs() < 1e-9 {
+                            pcb.vias.push(vcad_ir::ecad::Via {
+                                position: b0,
+                                diameter: pcb.rules.default_rules.via_diameter,
+                                drill: pcb.rules.default_rules.via_drill,
+                                start_layer: l0,
+                                end_layer: l1,
+                                net: net.clone(),
+                                source: None,
+                            });
+                        }
+                    }
+                }
             }
             CompleteOutcome::ProvedInfeasible { reason } => {
                 proved += conns.len();
@@ -132,4 +163,8 @@ fn main() {
         }
     }
     println!("\n== VERDICT: routed {routed} / proved-infeasible {proved} / unknown {unknown} ==");
+    if let Some(out) = out_json {
+        std::fs::write(&out, serde_json::to_string(&pcb).expect("serialize")).expect("write");
+        eprintln!("wrote {out}");
+    }
 }
