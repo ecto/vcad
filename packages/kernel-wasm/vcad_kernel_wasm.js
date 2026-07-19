@@ -3631,6 +3631,33 @@ export function circuitDcOperatingPoint(spec_json) {
 }
 
 /**
+ * Map a schematic sheet to a simulatable circuit spec via the fail-closed
+ * netlist seam (`vcad-ecad-sim::circuit::netlist`).
+ *
+ * * `sch_json` — JSON-serialized `SchematicSheet` (same shape as
+ *   `ecadGenerateNetlist` takes).
+ * * `options_json` — JSON [`MapOptions`] (`{}` for defaults).
+ *
+ * Returns `{ok: true, devices, nodeOfNet, deviceOfRef, ...}` on success, or
+ * `{ok: false, blockers: [{reference, message}]}` when any component can't
+ * be mapped — nothing is silently skipped.
+ * @param {string} sch_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function circuitFromSchematic(sch_json, options_json) {
+    const ptr0 = passStringToWasm0(sch_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.circuitFromSchematic(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Adjoint sensitivities of the voltage at `out_node` to every device primary
  * — one extra transposed solve for the whole gradient. `analysis_json`
  * selects `{"dc": true}` or `{"ac": {"sourceId", "omega"}}`.
@@ -3905,6 +3932,103 @@ export function digitizeText(text, height, options_json) {
 }
 
 /**
+ * Semantic (entity-level) diff of two `.vcad` documents.
+ *
+ * Returns a `DocumentDiff` JSON value: `{ changes: [{ kind, id, name?,
+ * type: "added"|"removed"|"modified", value?|fields? }] }`. Entities are
+ * matched by stable id, so reordering alone yields an empty diff.
+ * @param {string} old_json
+ * @param {string} new_json
+ * @returns {any}
+ */
+export function documentDiff(old_json, new_json) {
+    const ptr0 = passStringToWasm0(old_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(new_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.documentDiff(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Apply a `DocumentDiff` (as produced by [`document_diff`]) to a document,
+ * returning the patched document JSON.
+ * @param {string} old_json
+ * @param {string} diff_json
+ * @returns {any}
+ */
+export function documentDiffApply(old_json, diff_json) {
+    const ptr0 = passStringToWasm0(old_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(diff_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.documentDiffApply(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Human-readable one-line-per-change rendering of a `DocumentDiff`.
+ * @param {string} diff_json
+ * @returns {string}
+ */
+export function documentDiffHuman(diff_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(diff_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.documentDiffHuman(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Fail-closed three-way merge of two documents against a common ancestor.
+ *
+ * `resolutions_json` is an optional JSON array of user decisions
+ * (`[{ kind, id, path?, side: "ours"|"theirs" }]`) settling previously
+ * reported conflicts; pass `null`/empty for a plain merge. Returns
+ * `{ merged }` on success or `{ conflicts }` when unresolved conflicts
+ * remain — never both.
+ * @param {string} base_json
+ * @param {string} ours_json
+ * @param {string} theirs_json
+ * @param {string | null} [resolutions_json]
+ * @returns {any}
+ */
+export function documentMerge(base_json, ours_json, theirs_json, resolutions_json) {
+    const ptr0 = passStringToWasm0(base_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(ours_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(theirs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    var ptr3 = isLikeNone(resolutions_json) ? 0 : passStringToWasm0(resolutions_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len3 = WASM_VECTOR_LEN;
+    const ret = wasm.documentMerge(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Differentiate a document's mass-property + bounding-box QoIs with respect
  * to a single named parameter (`d QoI / dθ`) via the differentiable seam.
  *
@@ -3985,6 +4109,30 @@ export function documentToLoonChecked(doc_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Compose a drawing sheet from projected views, sections, annotations,
+ * title block, and BOM table, and export it as a PDF.
+ *
+ * # Arguments
+ * * `spec_json` - JSON `SheetSpec` (see the struct docs above).
+ *
+ * # Returns
+ * PDF file bytes (deterministic PDF 1.4 from the kernel's drafting crate).
+ * @param {string} spec_json
+ * @returns {Uint8Array}
+ */
+export function drawingSheetToPdf(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.drawingSheetToPdf(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**
@@ -5671,6 +5819,30 @@ export function neutronicsSimulate(spec_json, params_json) {
 }
 
 /**
+ * Generate an offset (stepped) section view from a triangle mesh.
+ *
+ * # Arguments
+ * * `mesh_js` - Mesh data as JS object with `positions` (Float32Array) and `indices` (Uint32Array)
+ * * `plane_json` - JSON `OffsetSectionPlane`: `{"base": {"origin": [x,y,z], "normal": [x,y,z], "up": [x,y,z]}, "steps": [{"u_start": f64, "u_end": f64, "offset": f64}]}`
+ * * `hatch_json` - Optional JSON hatch pattern: `{"spacing": f64, "angle": f64}`
+ *
+ * # Returns
+ * A JS object containing the section view with curves, hatch lines, and bounds.
+ * @param {any} mesh_js
+ * @param {string} plane_json
+ * @param {string | null} [hatch_json]
+ * @returns {any}
+ */
+export function offsetSectionMesh(mesh_js, plane_json, hatch_json) {
+    const ptr0 = passStringToWasm0(plane_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(hatch_json) ? 0 : passStringToWasm0(hatch_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.offsetSectionMesh(mesh_js, ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
  * Chamfer all edges of a solid by the given distance.
  *
  * This is a standalone wrapper for lazy loading via wasmosis.
@@ -6187,6 +6359,44 @@ export function renderBakeMesh(input_json) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * Render a BOM table as drawing primitives, bottom-left corner at (0, 0).
+ *
+ * # Arguments
+ * * `rows_json` - JSON array of `BomRow`: `[{"item": 1, "name": "...", "qty": 2, "material": "..."}]`
+ *
+ * # Returns
+ * `{ rendered: RenderedDimension, width: f64, height: f64 }`, or null on
+ * parse failure.
+ * @param {string} rows_json
+ * @returns {any}
+ */
+export function renderBomTable(rows_json) {
+    const ptr0 = passStringToWasm0(rows_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.renderBomTable(ptr0, len0);
+    return ret;
+}
+
+/**
+ * Render a title block as drawing primitives, bottom-left corner at (0, 0).
+ *
+ * # Arguments
+ * * `fields_json` - JSON `TitleBlockFields`: `{"part_name": "...", "material": "...", "finish": "...", "scale": "...", "drawn_by": "...", "date": "...", "revision": "...", "units": "...", "tolerance_note": "..."}`
+ *
+ * # Returns
+ * `{ rendered: RenderedDimension, width: f64, height: f64 }`, or null on
+ * parse failure.
+ * @param {string} fields_json
+ * @returns {any}
+ */
+export function renderTitleBlock(fields_json) {
+    const ptr0 = passStringToWasm0(fields_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.renderTitleBlock(ptr0, len0);
+    return ret;
 }
 
 /**
@@ -8983,12 +9193,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3615, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3616, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3675, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3676, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3640, function: Function { arguments: [Externref], shim_idx: 3641, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3700, function: Function { arguments: [Externref], shim_idx: 3701, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
