@@ -103,3 +103,26 @@ fn velocity_control_stays_bounded_and_tracks() {
         "crank velocity did not track 360 deg/s: {last}"
     );
 }
+
+#[test]
+fn unactuated_slider_stops_at_its_limit() {
+    let doc = mm_scale_doc();
+    let mut world = PhysicsWorld::from_document(&doc).expect("world");
+    // No motors at all: gravity pulls the piston down. Limits are ±15mm.
+    for _ in 0..2400 {
+        world.step(1.0 / 240.0);
+    }
+    let states = world.get_joint_states();
+    let slide = &states["slide"];
+    assert!(
+        slide.position >= -15.0 - 1e-6 && slide.position <= 15.0 + 1e-6,
+        "slider blew through its limits: {}mm",
+        slide.position
+    );
+    // It should be resting AT the lower stop, not oscillating past it.
+    assert!(
+        (slide.position - -15.0).abs() < 1.0,
+        "slider not at lower stop: {}mm",
+        slide.position
+    );
+}

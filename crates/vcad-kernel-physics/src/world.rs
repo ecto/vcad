@@ -404,10 +404,49 @@ impl PhysicsWorld {
                 self.state.q[i] += self.state.v[i.min(nv - 1)] * dt;
             }
 
+            self.enforce_joint_limits();
+
             forward_kinematics(&self.model, &self.state);
         }
 
         self.model.dt = original_dt;
+    }
+
+    /// Clamp single-DOF joints to their limits after integration.
+    ///
+    /// phyz carries `Joint::limits` but its integrators never read them —
+    /// without this, an unactuated slider free-falls through its stops
+    /// forever (a mm-scale piston ends up hundreds of meters below the
+    /// floor within a minute of sim time). Hard clamp + zero the DOF
+    /// velocity at the stop: inelastic, but stable at any scale.
+    fn enforce_joint_limits(&mut self) {
+        for joint_id in &self.joint_order {
+            let Some(&q_offset) = self.joint_q_offsets.get(joint_id) else {
+                continue;
+            };
+            let Some(&v_offset) = self.joint_v_offsets.get(joint_id) else {
+                continue;
+            };
+            let Some(&body_idx) = self.joint_to_index.get(joint_id) else {
+                continue;
+            };
+            let joint_idx = self.model.bodies[body_idx].joint_idx;
+            let Some([lo, hi]) = self.model.joints[joint_idx].limits else {
+                continue;
+            };
+            let q = self.state.q[q_offset];
+            if q < lo {
+                self.state.q[q_offset] = lo;
+                if self.state.v[v_offset] < 0.0 {
+                    self.state.v[v_offset] = 0.0;
+                }
+            } else if q > hi {
+                self.state.q[q_offset] = hi;
+                if self.state.v[v_offset] > 0.0 {
+                    self.state.v[v_offset] = 0.0;
+                }
+            }
+        }
     }
 
     /// Apply PD motor torques from motor targets to state.ctrl.
