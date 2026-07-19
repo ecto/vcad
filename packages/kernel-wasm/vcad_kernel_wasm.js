@@ -227,10 +227,22 @@ export class PhysicsSim {
         return ret >>> 0;
     }
     /**
+     * Actuated joint ids in action order (document order, Fixed joints
+     * excluded). Action vector entry `i` drives `actuatedJointIds()[i]`.
+     * @returns {string[]}
+     */
+    actuatedJointIds() {
+        const ret = wasm.physicssim_actuatedJointIds(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * Joint ids in observation order (document `joints` order).
      *
      * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`, as do action vector entries.
+     * correspond to `jointIds()[i]`. Action vector entries index
+     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
      * @returns {string[]}
      */
     jointIds() {
@@ -270,7 +282,7 @@ export class PhysicsSim {
      * @returns {number}
      */
     numJoints() {
-        const ret = wasm.physicssim_actionDim(this.__wbg_ptr);
+        const ret = wasm.physicssim_numJoints(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**

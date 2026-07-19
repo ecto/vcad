@@ -75,10 +75,16 @@ export class PhysicsSim {
      */
     actionDim(): number;
     /**
+     * Actuated joint ids in action order (document order, Fixed joints
+     * excluded). Action vector entry `i` drives `actuatedJointIds()[i]`.
+     */
+    actuatedJointIds(): string[];
+    /**
      * Joint ids in observation order (document `joints` order).
      *
      * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`, as do action vector entries.
+     * correspond to `jointIds()[i]`. Action vector entries index
+     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
      */
     jointIds(): string[];
     /**
@@ -2982,8 +2988,10 @@ export interface InitOutput {
     readonly particleSimulate: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly photonicsSimulate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly physicssim_actionDim: (a: number) => number;
+    readonly physicssim_actuatedJointIds: (a: number) => [number, number];
     readonly physicssim_jointIds: (a: number) => [number, number];
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly physicssim_numJoints: (a: number) => number;
     readonly physicssim_observationDim: (a: number) => number;
     readonly physicssim_observe: (a: number) => any;
     readonly physicssim_reset: (a: number) => any;
@@ -3082,7 +3090,6 @@ export interface InitOutput {
     readonly wasmannotationlayer_isEmpty: (a: number) => number;
     readonly wasmannotationlayer_new: () => number;
     readonly wasmannotationlayer_renderAll: (a: number, b: number, c: number) => any;
-    readonly physicssim_numJoints: (a: number) => number;
     readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly solid_chamfer: (a: number, b: number) => number;
     readonly solid_fillet: (a: number, b: number) => number;
