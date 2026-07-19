@@ -733,6 +733,110 @@ fn paths_overlap(a: &str, b: &str) -> bool {
 }
 
 // ============================================================================
+// Conflict resolution
+// ============================================================================
+
+/// Which side of a conflict the user chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResolutionSide {
+    /// Keep our side's value.
+    Ours,
+    /// Keep their side's value.
+    Theirs,
+}
+
+/// A user decision resolving one [`Conflict`].
+///
+/// For [`ConflictKind::Field`] conflicts, `path` selects the contested field;
+/// for entity-level conflicts (`BothAdded`, `DeleteModify`) `path` is `None`
+/// and the chosen side's whole entity state (including deletion) wins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Resolution {
+    /// Which entity the resolution applies to.
+    #[serde(flatten)]
+    pub key: EntityKey,
+    /// Dotted field path for field-level conflicts; `None` for entity-level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The side whose value wins.
+    pub side: ResolutionSide,
+}
+
+/// Three-way merge with explicit user resolutions for known conflicts.
+///
+/// Each [`Resolution`] rewrites the *losing* side's contested entity/field to
+/// match the winning side, then the ordinary fail-closed [`merge`] runs. Any
+/// conflict not covered by a resolution is still reported — this never
+/// silently picks a side for an unresolved conflict.
+pub fn merge_with_resolutions(
+    base: &Document,
+    ours: &Document,
+    theirs: &Document,
+    resolutions: &[Resolution],
+) -> Result<MergeResult, DiffError> {
+    let mut do_ = decompose(ours)?;
+    let mut dt = decompose(theirs)?;
+
+    for r in resolutions {
+        // Winner is the side whose value survives; rewrite the loser in place.
+        let (winner, loser) = match r.side {
+            ResolutionSide::Ours => (&do_, &mut dt),
+            ResolutionSide::Theirs => (&dt, &mut do_),
+        };
+        match (&r.path, winner.entities.get(&r.key).cloned()) {
+            // Entity-level: copy the winner's entity state wholesale
+            // (including absence, which propagates a deletion).
+            (None, Some(v)) => {
+                loser.entities.insert(r.key.clone(), v);
+            }
+            (None, None) => {
+                loser.entities.remove(&r.key);
+            }
+            // Field-level: copy just the contested field.
+            (Some(path), Some(v)) => {
+                let field = get_path(&v, path);
+                if let Some(lv) = loser.entities.get_mut(&r.key) {
+                    set_path(lv, path, field)?;
+                }
+            }
+            (Some(_), None) => {
+                return Err(DiffError::Shape(format!(
+                    "field resolution for {} names a missing entity on the winning side",
+                    r.key
+                )));
+            }
+        }
+    }
+
+    let ours_resolved = recompose(&do_.entities, &do_.order)?;
+    let theirs_resolved = recompose(&dt.entities, &dt.order)?;
+    merge(base, &ours_resolved, &theirs_resolved)
+}
+
+/// Read a dotted path inside a JSON value; `Null` when absent.
+fn get_path(root: &Value, path: &str) -> Value {
+    if path.is_empty() {
+        return root.clone();
+    }
+    let mut cur = root;
+    for seg in path.split('.') {
+        cur = match cur {
+            Value::Object(map) => match map.get(seg) {
+                Some(v) => v,
+                None => return Value::Null,
+            },
+            Value::Array(items) => match seg.parse::<usize>().ok().and_then(|i| items.get(i)) {
+                Some(v) => v,
+                None => return Value::Null,
+            },
+            _ => return Value::Null,
+        };
+    }
+    cur.clone()
+}
+
+// ============================================================================
 // Human-readable rendering
 // ============================================================================
 
@@ -1094,6 +1198,90 @@ mod tests {
         };
         assert!(merged.nodes.contains_key(&2));
         assert_eq!(merged.roots.len(), 2);
+    }
+
+    #[test]
+    fn resolutions_settle_field_conflict() {
+        let base = cube_doc(10.0);
+        let ours = cube_doc(20.0);
+        let theirs = cube_doc(30.0);
+
+        // Unresolved: still conflicts.
+        let MergeResult::Conflicts(conflicts) =
+            merge_with_resolutions(&base, &ours, &theirs, &[]).unwrap()
+        else {
+            panic!("no resolutions given, conflicts must remain");
+        };
+
+        // Resolve every contested field in theirs' favor.
+        let resolutions: Vec<Resolution> = conflicts
+            .iter()
+            .map(|c| {
+                let ConflictKind::Field { path, .. } = &c.kind else {
+                    panic!("expected field conflicts");
+                };
+                Resolution {
+                    key: c.key.clone(),
+                    path: Some(path.clone()),
+                    side: ResolutionSide::Theirs,
+                }
+            })
+            .collect();
+        let MergeResult::Merged(merged) =
+            merge_with_resolutions(&base, &ours, &theirs, &resolutions).unwrap()
+        else {
+            panic!("fully resolved merge must produce a document");
+        };
+        assert!(matches!(&merged.nodes[&1].op, CsgOp::Cube { size, .. } if size.x == 30.0));
+    }
+
+    #[test]
+    fn resolutions_settle_delete_vs_modify() {
+        let mut base = cube_doc(10.0);
+        add_cylinder(&mut base, 2, 5.0);
+        let ours = cube_doc(10.0); // deleted the cylinder (node + root)
+        let mut theirs = base.clone();
+        if let CsgOp::Cylinder { radius, .. } = &mut theirs.nodes.get_mut(&2).unwrap().op {
+            *radius = 9.0;
+        }
+
+        // Choose ours (the deletion) for the contested node.
+        let resolutions = [Resolution {
+            key: EntityKey::new(EntityKind::Node, "2"),
+            path: None,
+            side: ResolutionSide::Ours,
+        }];
+        let MergeResult::Merged(merged) =
+            merge_with_resolutions(&base, &ours, &theirs, &resolutions).unwrap()
+        else {
+            panic!("resolved delete/modify must merge");
+        };
+        assert!(!merged.nodes.contains_key(&2));
+    }
+
+    #[test]
+    fn partial_resolutions_keep_remaining_conflicts() {
+        let base = cube_doc(10.0);
+        // Two independent conflicts: cube size and material name.
+        let mut ours = cube_doc(20.0);
+        ours.roots[0].material = "brass".into();
+        let mut theirs = cube_doc(30.0);
+        theirs.roots[0].material = "steel".into();
+
+        // Resolve only the root material; size conflicts must survive.
+        let resolutions = [Resolution {
+            key: EntityKey::new(EntityKind::Root, "1"),
+            path: Some("material".into()),
+            side: ResolutionSide::Ours,
+        }];
+        let MergeResult::Conflicts(conflicts) =
+            merge_with_resolutions(&base, &ours, &theirs, &resolutions).unwrap()
+        else {
+            panic!("unresolved size conflict must fail closed");
+        };
+        assert!(conflicts
+            .iter()
+            .all(|c| c.key == EntityKey::new(EntityKind::Node, "1")));
     }
 
     #[test]

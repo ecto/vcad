@@ -35,6 +35,7 @@ import { InspectedTriangleMarker } from "./TriangleInspector";
 import { ClashMesh } from "./ClashMesh";
 import { ClearanceIndicatorOverlay } from "./ClearanceIndicatorOverlay";
 import { PreviewMesh } from "./PreviewMesh";
+import { VersionGhostOverlay } from "./VersionGhostOverlay";
 import { SketchPlane3D } from "./SketchPlane3D";
 import { PlaneGizmo } from "./PlaneGizmo";
 import { TransformGizmo } from "./TransformGizmo";
@@ -1927,6 +1928,9 @@ export function ViewportContent({
 
           {/* Extrusion preview (semi-transparent) */}
           {previewMesh && <PreviewMesh mesh={previewMesh} />}
+
+          {/* Version timeline before/after ghosts (red removed / green added) */}
+          <VersionGhostOverlay />
 
           {/* 3D Sketch plane (when sketch mode is active) */}
           {sketchActive && <SketchPlane3D />}

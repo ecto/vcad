@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-18-version-timeline",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Version timeline with semantic diff & merge",
+  "summary": "History sidebar shows feature-level diffs per version, red/green before-after ghosting, restore with undo, and branch + three-way merge-back with conflict resolution.",
+  "features": ["version-history", "semantic-diff", "merge", "collaboration"]
+}
