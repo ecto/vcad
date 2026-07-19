@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use vcad_ecad_pcb::router::classes::{apply_classes, classify_nets};
 use vcad_ecad_pcb::router::{route_all_with_opts, RouteOptions};
 use vcad_ecad_symbols::parse_kicad_pcb;
 use vcad_ir::ecad::{Trace, Via};
@@ -115,6 +116,29 @@ fn main() {
             .map(|(n, _)| n.to_string())
             .collect()
     };
+
+    // Recover electrical intent from net names (diff pairs, match groups)
+    // and realize it as class rules — the SI constraint foundation.
+    let all_nets: Vec<String> = {
+        let mut v: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for f in &pcb.footprints {
+            for pad in &f.pads {
+                if let Some(n) = &pad.net {
+                    if !n.is_empty() {
+                        v.insert(n.clone());
+                    }
+                }
+            }
+        }
+        v.into_iter().collect()
+    };
+    let classifier = classify_nets(&all_nets);
+    apply_classes(&mut pcb, &classifier);
+    println!(
+        "classes: {} diff pairs, {} match groups",
+        classifier.pairs.len(),
+        classifier.match_groups.len()
+    );
 
     let width = pcb.rules.default_rules.trace_width;
     let t0 = Instant::now();

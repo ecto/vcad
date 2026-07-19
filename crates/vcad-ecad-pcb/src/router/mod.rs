@@ -11,6 +11,7 @@
 //! - [`congestion`] -- PathFinder-style negotiated-congestion history-cost field
 
 pub mod auto;
+pub mod classes;
 
 /// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
 /// Elapsed milliseconds, or 0.0 when timing is unavailable.
