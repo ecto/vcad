@@ -12,6 +12,7 @@ import type {
   SweepOp,
   JointKind,
   SceneSettings,
+  DrawingSettings,
   Environment,
   Light,
   Background,
@@ -415,6 +416,8 @@ export interface DocumentState {
   reorderPart: (partId: string, newIndex: number) => void;
   // Scene settings actions
   setSceneSettings: (settings: SceneSettings) => void;
+  /** Persist drawing sheet settings (title block, sections, BOM) on the document. */
+  setDrawingSettings: (settings: DrawingSettings) => void;
   updateEnvironment: (environment: Environment) => void;
   updateLights: (lights: Light[]) => void;
   addLight: (light: Light) => void;
@@ -734,6 +737,28 @@ function getOrCreateSceneFeature(state: DocumentState): string {
   return "";
 }
 
+let _drawingSettingsFeatureId: string | null = null;
+
+function getOrCreateDrawingFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_drawingSettingsFeatureId) return _drawingSettingsFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "drawing-settings");
+  if (existing) {
+    _drawingSettingsFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("drawing-settings", "{}");
+  if (result.createdFeatureId) {
+    _drawingSettingsFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
+
 function getOrCreateSchematicFeature(state: DocumentState): string {
   const engine = state._crdtEngine!;
   if (_schematicFeatureId) return _schematicFeatureId;
@@ -842,6 +867,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     _sceneSettingsFeatureId = null;
     _schematicFeatureId = null;
+    _drawingSettingsFeatureId = null;
     const engine = new EngineClass();
     set({ _crdtEngine: engine, _crdtEngineClass: EngineClass });
   },
@@ -1782,6 +1808,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
+      _drawingSettingsFeatureId = null;
       const engine = new state._crdtEngineClass();
       set({
         document: createDocument(),
@@ -1866,6 +1893,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (settings.background) engine.set_param(fid, "background", JSON.stringify(crdtStr(JSON.stringify(settings.background))));
     if (settings.postProcessing) engine.set_param(fid, "post_processing", JSON.stringify(crdtStr(JSON.stringify(settings.postProcessing))));
     if (settings.cameraPresets) engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(settings.cameraPresets))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
+  },
+
+  setDrawingSettings: (settings) => {
+    const state = get();
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateDrawingFeature(state);
+    if (settings.titleBlock) engine.set_param(fid, "title_block", JSON.stringify(crdtStr(JSON.stringify(settings.titleBlock))));
+    if (settings.sections) engine.set_param(fid, "sections", JSON.stringify(crdtStr(JSON.stringify(settings.sections))));
+    if (settings.showBom !== undefined) engine.set_param(fid, "show_bom", JSON.stringify(crdtStr(JSON.stringify(settings.showBom))));
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },

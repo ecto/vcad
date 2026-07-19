@@ -1148,10 +1148,84 @@ bindings?: Bindings,
  */
 clearance_specs?: Array<ClearanceSpec>, 
 /**
+ * Drawing sheet settings: title block, section lines, BOM visibility.
+ */
+drawing?: DrawingSettings, 
+/**
  * Animation timeline: keyframed parameters/joints/visibility plus
  * camera shots. Absent for static models.
  */
 timeline?: Timeline, };
+
+/**
+ * A section cut line drawn on an orthographic drawing view. The polyline
+ * runs vertically in view coordinates; horizontal jogs produce an offset
+ * (stepped) section.
+ */
+export type DrawingSectionLine = { 
+/**
+ * Unique id within the drawing.
+ */
+id: string, 
+/**
+ * View direction the line was drawn on ("front", "top", "right", …).
+ */
+view: string, 
+/**
+ * Section label letter (e.g. "A" → "SECTION A-A").
+ */
+label: string, 
+/**
+ * Polyline points in 2D view coordinates (mm).
+ */
+points: Array<[number, number]>, };
+
+/**
+ * Drawing (drafting) settings persisted on the document: title block,
+ * section lines, and BOM table visibility for the 2D drawing sheet.
+ */
+export type DrawingSettings = { 
+/**
+ * Title block fields shown on the sheet.
+ */
+titleBlock?: DrawingTitleBlock, 
+/**
+ * Section cut lines defined on drawing views.
+ */
+sections?: Array<DrawingSectionLine>, 
+/**
+ * Whether the BOM table is placed on the sheet.
+ */
+showBom?: boolean, };
+
+/**
+ * Title block fields for a technical drawing sheet.
+ */
+export type DrawingTitleBlock = { 
+/**
+ * Part or assembly name.
+ */
+partName: string, 
+/**
+ * Author (drawn by).
+ */
+author: string, 
+/**
+ * Date string (caller-formatted, e.g. "2026-07-18").
+ */
+date: string, 
+/**
+ * Drawing scale note (e.g. "1:1").
+ */
+scale: string, 
+/**
+ * Material specification (e.g. "6061-T6 AL").
+ */
+material: string, 
+/**
+ * Revision letter (e.g. "A").
+ */
+revision: string, };
 
 /**
  * A canonicalized DRC summary: total, per-rule counts (sorted), and the

@@ -2564,6 +2564,228 @@ impl Default for WasmAnnotationLayer {
 }
 
 // =========================================================================
+// Shop-ready drawing sheet: offset sections, title block, BOM, PDF
+// =========================================================================
+
+/// Generate an offset (stepped) section view from a triangle mesh.
+///
+/// # Arguments
+/// * `mesh_js` - Mesh data as JS object with `positions` (Float32Array) and `indices` (Uint32Array)
+/// * `plane_json` - JSON `OffsetSectionPlane`: `{"base": {"origin": [x,y,z], "normal": [x,y,z], "up": [x,y,z]}, "steps": [{"u_start": f64, "u_end": f64, "offset": f64}]}`
+/// * `hatch_json` - Optional JSON hatch pattern: `{"spacing": f64, "angle": f64}`
+///
+/// # Returns
+/// A JS object containing the section view with curves, hatch lines, and bounds.
+#[module("drafting")]
+#[wasm_bindgen(js_name = offsetSectionMesh)]
+pub fn offset_section_mesh_wasm(
+    mesh_js: JsValue,
+    plane_json: &str,
+    hatch_json: Option<String>,
+) -> JsValue {
+    use vcad_kernel_drafting::{offset_section_mesh, HatchPattern, OffsetSectionPlane};
+    use vcad_kernel_tessellate::TriangleMesh;
+
+    let mesh_data: WasmMesh = match serde_wasm_bindgen::from_value(mesh_js) {
+        Ok(m) => m,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let mesh = TriangleMesh {
+        vertices: mesh_data.positions,
+        indices: mesh_data.indices,
+        normals: Vec::new(),
+        face_kinds: Vec::new(),
+    };
+
+    let plane: OffsetSectionPlane = match serde_json::from_str(plane_json) {
+        Ok(p) => p,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let hatch: Option<HatchPattern> = hatch_json.and_then(|h| serde_json::from_str(&h).ok());
+
+    let view = offset_section_mesh(&mesh, &plane, hatch.as_ref());
+    serde_wasm_bindgen::to_value(&view).unwrap_or(JsValue::NULL)
+}
+
+/// Render a title block as drawing primitives, bottom-left corner at (0, 0).
+///
+/// # Arguments
+/// * `fields_json` - JSON `TitleBlockFields`: `{"part_name": "...", "material": "...", "finish": "...", "scale": "...", "drawn_by": "...", "date": "...", "revision": "...", "units": "...", "tolerance_note": "..."}`
+///
+/// # Returns
+/// `{ rendered: RenderedDimension, width: f64, height: f64 }`, or null on
+/// parse failure.
+#[module("drafting")]
+#[wasm_bindgen(js_name = renderTitleBlock)]
+pub fn render_title_block_wasm(fields_json: &str) -> JsValue {
+    use vcad_kernel_drafting::{Point2D, TitleBlock, TitleBlockFields};
+
+    let fields: TitleBlockFields = match serde_json::from_str(fields_json) {
+        Ok(f) => f,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let block = TitleBlock::new(fields);
+    let out = RenderedBlock {
+        rendered: block.render(Point2D::new(0.0, 0.0)),
+        width: block.width,
+        height: block.height,
+    };
+    serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+}
+
+/// A rendered drawing entity plus its footprint, for sheet placement.
+#[derive(serde::Serialize)]
+struct RenderedBlock {
+    rendered: vcad_kernel_drafting::RenderedDimension,
+    width: f64,
+    height: f64,
+}
+
+/// Render a BOM table as drawing primitives, bottom-left corner at (0, 0).
+///
+/// # Arguments
+/// * `rows_json` - JSON array of `BomRow`: `[{"item": 1, "name": "...", "qty": 2, "material": "..."}]`
+///
+/// # Returns
+/// `{ rendered: RenderedDimension, width: f64, height: f64 }`, or null on
+/// parse failure.
+#[module("drafting")]
+#[wasm_bindgen(js_name = renderBomTable)]
+pub fn render_bom_table_wasm(rows_json: &str) -> JsValue {
+    use vcad_kernel_drafting::{BomRow, BomTable, Point2D};
+
+    let rows: Vec<BomRow> = match serde_json::from_str(rows_json) {
+        Ok(r) => r,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let table = BomTable { rows };
+    let out = RenderedBlock {
+        rendered: table.render(Point2D::new(0.0, 0.0)),
+        width: table.width(),
+        height: table.height(),
+    };
+    serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+}
+
+/// Specification for composing a drawing sheet (see [`drawing_sheet_to_pdf`]).
+#[derive(serde::Deserialize)]
+struct SheetSpec {
+    /// Sheet size ("a4", "a3", "letter", or {"custom": {...}}). Default A4.
+    #[serde(default)]
+    size: Option<vcad_kernel_drafting::SheetSize>,
+    /// Projected views placed on the sheet.
+    #[serde(default)]
+    views: Vec<PlacedProjectedView>,
+    /// Section views placed on the sheet.
+    #[serde(default)]
+    sections: Vec<PlacedSectionView>,
+    /// Pre-rendered annotations (dimensions, cut lines) in sheet coordinates.
+    #[serde(default)]
+    annotations: Vec<vcad_kernel_drafting::RenderedDimension>,
+    /// Title block fields; omitted → no title block.
+    #[serde(default)]
+    title_block: Option<vcad_kernel_drafting::TitleBlockFields>,
+    /// BOM rows; omitted or empty → no BOM table.
+    #[serde(default)]
+    bom: Option<Vec<vcad_kernel_drafting::BomRow>>,
+}
+
+/// A projected view with sheet placement.
+#[derive(serde::Deserialize)]
+struct PlacedProjectedView {
+    view: vcad_kernel_drafting::ProjectedView,
+    /// Sheet position of the view's bounds center, mm from bottom-left.
+    center: [f64; 2],
+    scale: f64,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// A section view with sheet placement.
+#[derive(serde::Deserialize)]
+struct PlacedSectionView {
+    view: vcad_kernel_drafting::SectionView,
+    center: [f64; 2],
+    scale: f64,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// Compose a drawing sheet from projected views, sections, annotations,
+/// title block, and BOM table, and export it as a PDF.
+///
+/// # Arguments
+/// * `spec_json` - JSON `SheetSpec` (see the struct docs above).
+///
+/// # Returns
+/// PDF file bytes (deterministic PDF 1.4 from the kernel's drafting crate).
+#[module("drafting")]
+#[wasm_bindgen(js_name = drawingSheetToPdf)]
+pub fn drawing_sheet_to_pdf(spec_json: &str) -> Result<Vec<u8>, JsError> {
+    use vcad_kernel_drafting::{
+        sheet_to_pdf, BomTable, DrawingSheet, LineClass, Point2D, RenderedText, SheetSize,
+        TitleBlock,
+    };
+
+    let spec: SheetSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    let mut sheet = DrawingSheet::new(spec.size.unwrap_or(SheetSize::A4));
+
+    for placed in &spec.views {
+        let center = Point2D::new(placed.center[0], placed.center[1]);
+        sheet.add_projected_view(&placed.view, center, placed.scale);
+        if let Some(label) = &placed.label {
+            let half_h = (placed.view.bounds.max_y - placed.view.bounds.min_y) / 2.0 * placed.scale;
+            sheet.texts.push(RenderedText::new(
+                Point2D::new(center.x, center.y - half_h - 8.0),
+                label,
+                3.5,
+            ));
+        }
+    }
+
+    for placed in &spec.sections {
+        let center = Point2D::new(placed.center[0], placed.center[1]);
+        sheet.add_section_view(&placed.view, center, placed.scale);
+        if let Some(label) = &placed.label {
+            let bounds = &placed.view.bounds;
+            let half_h = (bounds.max_y - bounds.min_y) / 2.0 * placed.scale;
+            sheet.texts.push(RenderedText::new(
+                Point2D::new(center.x, center.y - half_h - 8.0),
+                label,
+                3.5,
+            ));
+        }
+    }
+
+    for rd in &spec.annotations {
+        sheet.add_annotation(rd, LineClass::Dimension, Point2D::new(0.0, 0.0));
+    }
+
+    let title_block_height = if let Some(fields) = spec.title_block {
+        let block = TitleBlock::new(fields);
+        sheet.add_title_block(&block);
+        block.height
+    } else {
+        0.0
+    };
+
+    if let Some(rows) = spec.bom {
+        if !rows.is_empty() {
+            let table = BomTable { rows };
+            sheet.add_bom_table(&table, title_block_height);
+        }
+    }
+
+    Ok(sheet_to_pdf(&sheet))
+}
+
+// =========================================================================
 // DXF Export
 // =========================================================================
 

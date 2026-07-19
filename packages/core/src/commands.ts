@@ -120,6 +120,8 @@ export interface CommandActions {
   // File — optional extras
   openFromCloud?: () => void;
   exportStep?: () => void;
+  /** Export the current 2D drawing sheet as a kernel-rendered PDF. */
+  exportDrawingPdf?: () => void;
   newDocument?: () => void;
   // Edit — optional extras
   copy?: () => void;
@@ -414,6 +416,17 @@ export function createCommandRegistry(actions: CommandActions): CommandRegistry 
       keywords: ["open", "cloud", "load", "sync", "remote"],
       shortcut: "Ctrl+Shift+O",
       action: actions.openFromCloud,
+      category: "file",
+    });
+  }
+  if (actions.exportDrawingPdf) {
+    cmds.push({
+      id: "export-drawing-pdf",
+      label: t("cmd.export_drawing_pdf.label"),
+      icon: "Export",
+      keywords: ["export", "pdf", "drawing", "sheet", "print", "drafting"],
+      action: actions.exportDrawingPdf,
+      enabled: actions.hasParts,
       category: "file",
     });
   }
