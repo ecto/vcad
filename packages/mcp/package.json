@@ -12,6 +12,7 @@
     ".": "./dist/index.js",
     "./server": "./dist/server.js",
     "./viewer": "./dist/viewer.js",
+    "./browser-tools": "./dist/browser-tools.js",
     "./oauth": "./dist/oauth.js"
   },
   "files": [

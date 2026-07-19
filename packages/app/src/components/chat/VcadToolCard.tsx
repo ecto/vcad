@@ -68,6 +68,110 @@ const extraRenderers: Record<string, ExtraRenderer> = {
 };
 
 // ---------------------------------------------------------------------------
+// Claim chips — honesty as UX. Any solver/verification tool result that
+// carries vcad.receipt/1 claims (or check_clearance's inline pass/verdict)
+// renders each claim as a small status chip: Holds (verified pass),
+// Provisional (predicted/surrogate pass — not yet verified against reality),
+// Violated (fail), Unverifiable (the oracle couldn't check it — never a
+// silent pass). Hover shows the claim's description.
+// ---------------------------------------------------------------------------
+
+type ChipStatus = "holds" | "provisional" | "violated" | "unverifiable";
+
+interface ClaimChipInfo {
+  status: ChipStatus;
+  label: string;
+  title: string;
+}
+
+const CHIP_STYLE: Record<ChipStatus, string> = {
+  holds: "bg-success/10 text-success border-success/30",
+  provisional: "bg-warning/10 text-warning border-warning/30",
+  violated: "bg-error/10 text-error border-error/30",
+  unverifiable: "bg-surface text-text-muted border-border",
+};
+
+const CHIP_TEXT: Record<ChipStatus, string> = {
+  holds: "Holds",
+  provisional: "Provisional",
+  violated: "Violated",
+  unverifiable: "Unverifiable",
+};
+
+function chipStatus(verdict: unknown, basis: unknown): ChipStatus {
+  if (verdict === "fail") return "violated";
+  if (verdict === "unverifiable") return "unverifiable";
+  if (verdict !== "pass") return "unverifiable";
+  return basis === "predicted" || basis === "surrogate" ? "provisional" : "holds";
+}
+
+/** Pull receipt claims out of a tool-result payload: `claim`, `claims`, or
+ *  `receipt.claims`; check_clearance's inline pass/verdict synthesizes one. */
+function extractClaims(call: ToolCallInfo): ClaimChipInfo[] {
+  if (call.status !== "success" || typeof call.result !== "string") return [];
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(call.result) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const raw: Array<Record<string, unknown>> = [];
+  const push = (c: unknown) => {
+    if (c && typeof c === "object" && "verdict" in (c as object)) {
+      raw.push(c as Record<string, unknown>);
+    }
+  };
+  push(payload.claim);
+  if (Array.isArray(payload.claims)) payload.claims.forEach(push);
+  const receipt = payload.receipt as Record<string, unknown> | undefined;
+  if (receipt && Array.isArray(receipt.claims)) receipt.claims.forEach(push);
+
+  const chips: ClaimChipInfo[] = raw.map((c) => ({
+    status: chipStatus(c.verdict, c.basis),
+    label: typeof c.id === "string" ? c.id : "claim",
+    title:
+      typeof c.description === "string"
+        ? c.description
+        : typeof c.id === "string"
+          ? c.id
+          : "receipt claim",
+  }));
+
+  // check_clearance carries its verdict inline, not as a claim object.
+  if (chips.length === 0 && call.name === "check_clearance" && "pass" in payload) {
+    const label = typeof payload.label === "string" ? payload.label : "clearance";
+    chips.push({
+      status: payload.pass === true ? "holds" : "violated",
+      label,
+      title: `min distance ${payload.measured_mm} mm (required ${payload.required_mm} mm)`,
+    });
+  }
+  return chips;
+}
+
+function ClaimChips({ call }: { call: ToolCallInfo }) {
+  const chips = extractClaims(call);
+  if (chips.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {chips.map((chip, i) => (
+        <span
+          key={i}
+          title={chip.title}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-medium",
+            CHIP_STYLE[chip.status],
+          )}
+        >
+          <span className="font-mono opacity-70">{chip.label}</span>
+          {CHIP_TEXT[chip.status]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Title — the at-rest summary line shown next to the icon
 // ---------------------------------------------------------------------------
 
@@ -139,6 +243,7 @@ export function VcadToolCard({ call }: { call: ToolCallInfo }) {
       )}
       <ToolContent className="space-y-2 border-t border-border p-2 text-text">
         {extra}
+        <ClaimChips call={call} />
 
         {fields.length > 0 && (
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[10px]">
