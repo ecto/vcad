@@ -583,6 +583,13 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Transient heat-conduction solve (adds a TransientSpec schedule). */
+  thermalSolveTransient?: (
+    specJson: string,
+    transientJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => unknown;
   /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
   documentDiff?: (oldJson: string, newJson: string) => unknown;
   /** Apply a `DocumentDiff` to a document, returning the patched document. */
@@ -1022,6 +1029,7 @@ export class Engine {
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
+      thermalSolveTransient: (wasmModule as Record<string, unknown>).thermalSolveTransient as KernelModule["thermalSolveTransient"],
       documentDiff: (wasmModule as Record<string, unknown>).documentDiff as KernelModule["documentDiff"],
       documentDiffApply: (wasmModule as Record<string, unknown>).documentDiffApply as KernelModule["documentDiffApply"],
       documentMerge: (wasmModule as Record<string, unknown>).documentMerge as KernelModule["documentMerge"],
@@ -1358,6 +1366,27 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Transient heat-conduction solve: backward-Euler stepping over a
+   * piecewise-constant drive schedule (TransientSpec JSON), returning
+   * T_max/per-source time series, the final-state summary, and the
+   * integrated energy audit with predicted receipt claims.
+   */
+  thermalSolveTransient(
+    specJson: string,
+    transientJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ): unknown {
+    const fn = this.kernel.thermalSolveTransient;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "thermalSolveTransient is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, transientJson, paramsJson, optionsJson);
   }
 
   private circuitFn<K extends keyof KernelModule>(name: K): NonNullable<KernelModule[K]> {

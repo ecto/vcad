@@ -42,6 +42,7 @@ use crate::model::{
     Axis, Boundary, FixedTemperature, MaterialRegion, PowerSource, Shape, ThermalModel,
     VoxelMaterials,
 };
+use crate::transient::ScheduleSegment;
 
 /// A literal value or the name of a document parameter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,6 +95,12 @@ pub enum ParamRole {
 pub enum SpecError {
     /// A named parameter had no binding.
     UnknownParameter(String),
+    /// A schedule segment referenced a face by an unknown label.
+    UnknownFaceLabel(String),
+    /// A schedule segment keyed a fixed-region override by a non-integer.
+    BadFixedIndex(String),
+    /// A schedule segment's duration or time step is not positive-finite.
+    InvalidSegmentTiming(String),
 }
 
 impl std::fmt::Display for SpecError {
@@ -101,6 +108,17 @@ impl std::fmt::Display for SpecError {
         match self {
             SpecError::UnknownParameter(name) => {
                 write!(f, "unbound thermal parameter: {name:?}")
+            }
+            SpecError::UnknownFaceLabel(label) => write!(
+                f,
+                "unknown face label {label:?} (expected -x, +x, -y, +y, -z, +z, or exposed)"
+            ),
+            SpecError::BadFixedIndex(key) => write!(
+                f,
+                "fixed-region override key {key:?} is not an integer index"
+            ),
+            SpecError::InvalidSegmentTiming(why) => {
+                write!(f, "invalid schedule segment timing: {why}")
             }
         }
     }
@@ -509,6 +527,99 @@ impl ThermalSpec {
     }
 }
 
+/// One schedule segment of a [`TransientSpec`]: a duration of
+/// piecewise-constant drives, with number-only overrides.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SegmentSpec {
+    /// Segment duration, s (> 0).
+    pub duration_s: ParamValue,
+    /// Target time step, s (> 0). The realized step is
+    /// `duration_s / ceil(duration_s / dt_s)` — the segment is covered
+    /// exactly by an integer number of steps no larger than the target.
+    pub dt_s: ParamValue,
+    /// Source-power overrides by source name, W.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub source_power_w: BTreeMap<String, ParamValue>,
+    /// Boundary-temperature overrides by face label (`-x`, `+x`, `-y`,
+    /// `+y`, `-z`, `+z`, `exposed`): retunes a fixed face's temperature
+    /// or a convection face's ambient.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub face_temperature_c: BTreeMap<String, ParamValue>,
+    /// Fixed-region temperature overrides keyed by the region's index in
+    /// `fixed` (as a string, JSON maps being string-keyed).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fixed_temperature_c: BTreeMap<String, ParamValue>,
+}
+
+/// Serializable transient run: an initial condition and a schedule of
+/// piecewise-constant segments (an RTP recipe, an ambient step, a duty
+/// cycle). Every physical number is a [`ParamValue`]; resolution is
+/// fail-closed like the steady spec.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransientSpec {
+    /// Uniform initial temperature of the free field, °C.
+    pub initial_c: ParamValue,
+    /// The schedule, in order (at least one segment).
+    pub segments: Vec<SegmentSpec>,
+}
+
+fn face_slot(label: &str) -> Result<usize, SpecError> {
+    match label {
+        "-x" => Ok(0),
+        "+x" => Ok(1),
+        "-y" => Ok(2),
+        "+y" => Ok(3),
+        "-z" => Ok(4),
+        "+z" => Ok(5),
+        "exposed" => Ok(6),
+        other => Err(SpecError::UnknownFaceLabel(other.to_string())),
+    }
+}
+
+impl TransientSpec {
+    /// Resolve to the initial temperature and model-level schedule,
+    /// fail-closed on unbound names, bad face labels, bad fixed-region
+    /// keys, and non-positive durations/steps.
+    pub fn resolve(
+        &self,
+        params: &BTreeMap<String, f64>,
+    ) -> Result<(f64, Vec<ScheduleSegment>), SpecError> {
+        let initial_c = self.initial_c.resolve(params)?;
+        let mut segments = Vec::with_capacity(self.segments.len());
+        for (i, seg) in self.segments.iter().enumerate() {
+            let duration_s = seg.duration_s.resolve(params)?;
+            let dt_target_s = seg.dt_s.resolve(params)?;
+            if !(duration_s.is_finite() && duration_s > 0.0) {
+                return Err(SpecError::InvalidSegmentTiming(format!(
+                    "segment {i}: duration_s = {duration_s} (must be > 0)"
+                )));
+            }
+            if !(dt_target_s.is_finite() && dt_target_s > 0.0) {
+                return Err(SpecError::InvalidSegmentTiming(format!(
+                    "segment {i}: dt_s = {dt_target_s} (must be > 0)"
+                )));
+            }
+            let steps = (duration_s / dt_target_s - 1e-9).ceil().max(1.0) as usize;
+            let mut out = ScheduleSegment::plain(duration_s / steps as f64, steps);
+            for (name, v) in &seg.source_power_w {
+                out.source_power_w.insert(name.clone(), v.resolve(params)?);
+            }
+            for (label, v) in &seg.face_temperature_c {
+                out.face_temperature_c
+                    .insert(face_slot(label)?, v.resolve(params)?);
+            }
+            for (key, v) in &seg.fixed_temperature_c {
+                let index: usize = key
+                    .parse()
+                    .map_err(|_| SpecError::BadFixedIndex(key.clone()))?;
+                out.fixed_temperature_c.insert(index, v.resolve(params)?);
+            }
+            segments.push(out);
+        }
+        Ok((initial_c, segments))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,6 +764,123 @@ mod tests {
             size_mm[1] = ParamValue::Named("k_cu".into());
         }
         assert_eq!(mixed.parameter_roles()["k_cu"], ParamRole::FiniteDifference);
+    }
+
+    #[test]
+    fn transient_spec_resolves_and_runs_a_schedule() {
+        let json = r#"{
+            "initial_c": "t_start",
+            "segments": [
+                {"duration_s": 20.0, "dt_s": "dt",
+                 "source_power_w": {"lamp": "p_soak"}},
+                {"duration_s": 30.0, "dt_s": 3.0,
+                 "source_power_w": {"lamp": 0.0},
+                 "face_temperature_c": {"-z": 30.0},
+                 "fixed_temperature_c": {"0": 22.0}}
+            ]
+        }"#;
+        let tspec: TransientSpec = serde_json::from_str(json).expect("parse");
+        let (initial_c, segments) = tspec
+            .resolve(&params(&[("t_start", 25.0), ("dt", 2.0), ("p_soak", 3.0)]))
+            .expect("resolve");
+        assert_eq!(initial_c, 25.0);
+        assert_eq!(segments[0].steps, 10);
+        assert_eq!(segments[0].dt_s, 2.0);
+        assert_eq!(segments[0].source_power_w["lamp"], 3.0);
+        assert_eq!(segments[1].face_temperature_c[&4], 30.0);
+        assert_eq!(segments[1].fixed_temperature_c[&0], 22.0);
+
+        // Round-trips through serde.
+        let round = serde_json::to_string(&tspec).expect("serialize");
+        let back: TransientSpec = serde_json::from_str(&round).expect("reparse");
+        assert_eq!(tspec, back);
+
+        // And drives a real solve end to end.
+        let mut m = ThermalModel::new([0.0, 0.0, 0.0], [20.0, 20.0, 4.0], [8, 8, 2]);
+        m.materials.push(
+            MaterialRegion::isotropic(
+                Shape::Box {
+                    min_mm: [0.0, 0.0, 0.0],
+                    size_mm: [20.0, 20.0, 4.0],
+                },
+                150.0,
+            )
+            .with_heat_capacity(1.7e6),
+        );
+        m.sources.push(PowerSource {
+            name: "lamp".into(),
+            shape: Shape::Box {
+                min_mm: [5.0, 5.0, 2.0],
+                size_mm: [10.0, 10.0, 2.0],
+            },
+            power_w: 1.0,
+        });
+        m.fixed.push(FixedTemperature {
+            shape: Shape::Box {
+                min_mm: [0.0, 0.0, 0.0],
+                size_mm: [20.0, 20.0, 2.0],
+            },
+            temperature_c: 25.0,
+        });
+        m.domain_faces[4] = Boundary::FixedTemperature {
+            temperature_c: 25.0,
+        };
+        m.reference_c = Some(25.0);
+        let sol = crate::transient::solve_transient_schedule(
+            &m,
+            &SolveOptions::default(),
+            initial_c,
+            0,
+            &segments,
+        )
+        .expect("transient solve");
+        assert_eq!(sol.times_s.len(), 20);
+        assert!((sol.times_s.last().unwrap() - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn transient_spec_fails_closed() {
+        let bad_face: TransientSpec = serde_json::from_str(
+            r#"{"initial_c": 25.0, "segments": [
+                {"duration_s": 1.0, "dt_s": 1.0,
+                 "face_temperature_c": {"top": 30.0}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            bad_face.resolve(&BTreeMap::new()).unwrap_err(),
+            SpecError::UnknownFaceLabel("top".into())
+        );
+
+        let bad_key: TransientSpec = serde_json::from_str(
+            r#"{"initial_c": 25.0, "segments": [
+                {"duration_s": 1.0, "dt_s": 1.0,
+                 "fixed_temperature_c": {"chuck": 30.0}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            bad_key.resolve(&BTreeMap::new()).unwrap_err(),
+            SpecError::BadFixedIndex("chuck".into())
+        );
+
+        let bad_dt: TransientSpec = serde_json::from_str(
+            r#"{"initial_c": 25.0, "segments": [
+                {"duration_s": 1.0, "dt_s": 0.0}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            bad_dt.resolve(&BTreeMap::new()).unwrap_err(),
+            SpecError::InvalidSegmentTiming(_)
+        ));
+
+        let unbound: TransientSpec = serde_json::from_str(
+            r#"{"initial_c": "t0", "segments": [
+                {"duration_s": 1.0, "dt_s": 1.0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            unbound.resolve(&BTreeMap::new()).unwrap_err(),
+            SpecError::UnknownParameter("t0".into())
+        );
     }
 
     #[test]

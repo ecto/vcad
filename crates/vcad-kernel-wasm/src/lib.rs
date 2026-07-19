@@ -8206,6 +8206,140 @@ pub fn thermal_solve(
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
 }
 
+#[derive(serde::Serialize)]
+struct WasmThermalTransient {
+    divisions: [usize; 3],
+    voxel_mm: [f64; 3],
+    /// Time after each step, s.
+    times_s: Vec<f64>,
+    /// Hottest solid-voxel temperature after each step, °C.
+    t_max_c: Vec<f64>,
+    /// Per-source hottest temperature after each step, °C, keyed by
+    /// source name (model order preserved by the parallel `sources` list).
+    source_names: Vec<String>,
+    source_t_max_c: Vec<Vec<f64>>,
+    /// Final-state summary (same shape as the steady solve's report).
+    final_t_max_c: f64,
+    final_t_max_at_mm: [f64; 3],
+    reference_c: Option<f64>,
+    final_sources: Vec<WasmThermalSource>,
+    final_energy: WasmThermalEnergy,
+    /// Whole-run energy audit: stored-energy change vs integrated net
+    /// injection (the transient conservation identity).
+    stored_delta_j: f64,
+    injected_j: f64,
+    energy_audit_residual_rel: f64,
+    cg_iterations_total: usize,
+    claim_set: vcad_kernel::vcad_kernel_thermal::receipt::ClaimSet,
+    receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+}
+
+/// Transient heat-conduction solve: backward-Euler time stepping over a
+/// piecewise-constant drive schedule (RTP ramp/soak/cool, ambient steps,
+/// duty cycles). Returns the T_max and per-source time series plus the
+/// final-state summary and the integrated energy audit — full field
+/// snapshots are not returned over this seam.
+///
+/// `spec_json` is a `ThermalSpec` (every material needs
+/// `heat_capacity_j_m3k`), `transient_json` a
+/// `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
+/// `{name: value}` map, `options_json` a [`ThermalOptions`].
+#[wasm_bindgen(js_name = thermalSolveTransient)]
+pub fn thermal_solve_transient(
+    spec_json: &str,
+    transient_json: &str,
+    params_json: &str,
+    options_json: &str,
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_thermal as th;
+    let spec: th::spec::ThermalSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let tspec: th::spec::TransientSpec = serde_json::from_str(transient_json)
+        .map_err(|e| JsError::new(&format!("bad transient spec: {e}")))?;
+    let params: std::collections::BTreeMap<String, f64> = if params_json.trim().is_empty() {
+        Default::default()
+    } else {
+        serde_json::from_str(params_json).map_err(|e| JsError::new(&format!("bad params: {e}")))?
+    };
+    let opts: ThermalOptions = if options_json.trim().is_empty() {
+        Default::default()
+    } else {
+        serde_json::from_str(options_json)
+            .map_err(|e| JsError::new(&format!("bad options: {e}")))?
+    };
+    let model = spec
+        .resolve(&params)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let (initial_c, segments) = tspec
+        .resolve(&params)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let n_voxels: usize = model.divisions.iter().product();
+    if n_voxels > 2_000_000 {
+        return Err(JsError::new(&format!(
+            "grid too large for the MCP tier: {n_voxels} voxels (cap 2,000,000) — lower `divisions`"
+        )));
+    }
+    let total_steps: usize = segments.iter().map(|s| s.steps).sum();
+    if total_steps > 20_000 {
+        return Err(JsError::new(&format!(
+            "schedule too long for the MCP tier: {total_steps} steps (cap 20,000) — raise `dt_s`"
+        )));
+    }
+    if n_voxels.saturating_mul(total_steps) > 1_000_000_000 {
+        return Err(JsError::new(&format!(
+            "run too large for the MCP tier: {n_voxels} voxels x {total_steps} steps exceeds 1e9 \
+             voxel-steps — coarsen the grid or raise `dt_s`"
+        )));
+    }
+    let sopts = th::solve::SolveOptions {
+        tol: opts.tol,
+        max_iters: opts.max_iters,
+    };
+    let tsol = th::transient::solve_transient_schedule(&model, &sopts, initial_c, 0, &segments)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let claim_set = th::receipt::transient_claims(&model, &tsol, &sopts);
+    let receipt_claims = th::receipt::design_claims(&claim_set);
+    let fs = &tsol.final_state;
+    let out = WasmThermalTransient {
+        divisions: fs.divisions,
+        voxel_mm: fs.voxel_mm,
+        times_s: tsol.times_s.clone(),
+        t_max_c: tsol.t_max_c.clone(),
+        source_names: fs.sources.iter().map(|s| s.name.clone()).collect(),
+        source_t_max_c: tsol.source_t_max_c.clone(),
+        final_t_max_c: fs.t_max_c,
+        final_t_max_at_mm: fs.t_max_at_mm,
+        reference_c: fs.reference_c,
+        final_sources: fs
+            .sources
+            .iter()
+            .map(|s| WasmThermalSource {
+                name: s.name.clone(),
+                power_w: s.power_w,
+                t_max_c: s.t_max_c,
+                t_max_at_mm: s.t_max_at_mm,
+                theta_c_per_w: s.theta_c_per_w,
+            })
+            .collect(),
+        final_energy: WasmThermalEnergy {
+            source_w: fs.energy.source_w,
+            fixed_face_out_w: fs.energy.fixed_face_out_w,
+            convection_out_w: fs.energy.convection_out_w,
+            fixed_region_out_w: fs.energy.fixed_region_out_w,
+            net_out_w: fs.energy.net_out_w,
+            residual_rel: fs.energy.residual_rel,
+        },
+        stored_delta_j: tsol.stored_delta_j,
+        injected_j: tsol.injected_j,
+        energy_audit_residual_rel: tsol.energy_audit_residual_rel,
+        cg_iterations_total: tsol.cg_iterations_total,
+        claim_set,
+        receipt_claims,
+    };
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
 // ---------------------------------------------------------------------------
 // Static structural FEA (vcad-kernel-fea)
 // ---------------------------------------------------------------------------
