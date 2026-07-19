@@ -772,6 +772,7 @@ fn route_pass(
         use_push_shove,
         max_expansions,
         fine_retry,
+        true,
         &mut fail_cache,
         &corridors,
     );
@@ -797,6 +798,8 @@ fn route_pass(
             cong,
             use_push_shove,
             max_expansions,
+            true,
+            None,
             &mut fail_cache,
             &corridors,
         );
@@ -851,6 +854,10 @@ fn incremental_round(
 
     let sw = Stopwatch::start();
     let mut fail_cache = FailCache::new();
+    // Search-only (no rescue arsenal) and hard-budgeted: this round is
+    // speculative — keep-best discards it unless it beats the snapshot, so
+    // it must be cheap. The arsenal fires where results stick.
+    let budget_ms = 1_200_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -860,6 +867,8 @@ fn incremental_round(
         cong,
         use_push_shove,
         max_expansions,
+        false,
+        Some(budget_ms),
         &mut fail_cache,
         &HashMap::new(),
     );
@@ -894,6 +903,7 @@ fn route_batch(
     use_push_shove: bool,
     max_expansions: usize,
     fine_retry: bool,
+    rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
@@ -960,6 +970,7 @@ fn route_batch(
                     cong,
                     use_push_shove,
                     max_expansions,
+                    rescue,
                 ) {
                     Some(p) => {
                         committed += 1;
@@ -998,6 +1009,7 @@ fn route_batch(
                         cong,
                         use_push_shove,
                         max_expansions,
+                        rescue,
                     ) {
                         Some(p) => placed.push(p),
                         None => {
@@ -1050,6 +1062,7 @@ fn try_route(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    rescue: bool,
 ) -> Option<Placed> {
     if let Some(cand) = search_route(
         session,
@@ -1065,6 +1078,14 @@ fn try_route(
         None,
     ) {
         return validate_and_commit(session, pcb, cand, placed);
+    }
+    // The rescue arsenal below (flow escape, coupled pairs, true shove) costs
+    // orders of magnitude more than the search itself. Inside speculative
+    // negotiation rounds — whose whole pass is discarded unless it beats the
+    // best snapshot — that cost is usually paid for nothing, so those rounds
+    // route search-only and the arsenal fires where results stick.
+    if !rescue {
+        return None;
     }
     // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
     // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
@@ -2108,14 +2129,27 @@ fn ripup_pass(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    rescue: bool,
+    deadline_ms: Option<f64>,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
+    let sw_pass = Stopwatch::start();
     let hw = width / 2.0;
     let copper = copper_layers(pcb);
     let mut still: Vec<Conn> = Vec::new();
 
-    for (net, from, to) in unrouted {
+    let mut unrouted = unrouted.into_iter();
+    for (net, from, to) in unrouted.by_ref() {
+        // Over-deadline: park the rest as pending — negotiation's keep-best
+        // treats an abandoned round exactly like a converged one.
+        if let Some(d) = deadline_ms {
+            if sw_pass.ms() > d {
+                log::info!("ripup pass over {d:.0}ms budget — deferring remainder");
+                still.push((net, from, to));
+                break;
+            }
+        }
         // Other-net copper crossing a CORRIDOR around the direct path — not the
         // hairline segment. The maze router detours around copper, so the
         // connections worth ripping are everything in the band a detour would
@@ -2181,6 +2215,7 @@ fn ripup_pass(
             cong,
             use_push_shove,
             max_expansions,
+            rescue,
         );
         if let Some(p) = routed_target {
             placed.push(p);
@@ -2198,10 +2233,12 @@ fn ripup_pass(
             cong,
             use_push_shove,
             max_expansions,
+            rescue,
             fail_cache,
             corridors,
         ));
     }
+    still.extend(unrouted);
 
     still
 }
@@ -2221,6 +2258,7 @@ fn reroute_victims_with_restore(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
@@ -2240,6 +2278,7 @@ fn reroute_victims_with_restore(
         use_push_shove,
         max_expansions,
         true,
+        rescue,
         fail_cache,
         corridors,
     ) {
@@ -2392,6 +2431,7 @@ fn joint_window_repair(
                 true,
                 max_expansions,
                 true,
+                true,
                 &mut fail_cache,
                 &HashMap::new(),
             );
@@ -2404,6 +2444,7 @@ fn joint_window_repair(
                 cong,
                 true,
                 max_expansions,
+                true,
                 &mut fail_cache,
                 &HashMap::new(),
             ));
@@ -2738,6 +2779,7 @@ mod tests {
             &cong,
             false,
             budget,
+            true,
         );
         let placed = placed.expect("try_route must succeed via the pin-field escape");
         assert!(!placed.segments.is_empty());
@@ -2804,6 +2846,7 @@ mod tests {
             &cong,
             false,
             20,
+            true,
         )
         .expect("pair stage must route the P net with its partner");
         assert_eq!(p.net, "LVDS_P");
@@ -3651,6 +3694,7 @@ mod tests {
             &cong,
             false,
             budget,
+            true,
         )
         .expect("try_route must succeed via the shove stage");
         assert!(!p.segments.is_empty());
@@ -3730,6 +3774,7 @@ mod tests {
                 &cong,
                 false,
                 budget,
+                true,
             )
             .is_none(),
             "a pad-anchored blocker must refuse the shove and leave A unrouted"
