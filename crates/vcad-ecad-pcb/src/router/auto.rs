@@ -24,7 +24,7 @@ use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 use super::complete::{route_window_complete, CompleteOutcome};
 use super::congestion::Congestion;
 use super::escape;
-use super::global::plan_corridors;
+use super::global::plan_with_scarcity;
 use super::maze::route_net_maze3d;
 use super::push_shove::{Obstacle, PushShoveRouter};
 use super::route_net_maze;
@@ -124,6 +124,13 @@ pub struct RouteOptions {
     /// negotiation round 1 onward (round 0 is the pure historical baseline), so
     /// the result can never regress below greedy + rip-up — only close more nets.
     pub use_push_shove: bool,
+    /// Nets to route FIRST in the opening greedy pass, before everything
+    /// else — the cure for path dependence: connections whose only viable
+    /// corridors get consumed by flexible nets (measured on the CM5 via the
+    /// graft test: 1097 conflicts between our easy nets' copper and the
+    /// reference routing of our stuck nets). Hard nets take the virgin
+    /// board; the flexible ones route around them.
+    pub priority_nets: Vec<String>,
     /// Effort multiplier ≥ 0: one scalar that scales every iteration budget
     /// (negotiation rounds and rip-up rounds). `1.0` is the default budget;
     /// `2.0` lets a congested board negotiate twice as long; values below 1
@@ -168,6 +175,7 @@ impl Default for RouteOptions {
             negotiation_rounds: DEFAULT_NEGOTIATION_ROUNDS,
             use_push_shove: true,
             effort: 1.0,
+            priority_nets: Vec::new(),
         }
     }
 }
@@ -313,6 +321,11 @@ pub fn route_all_with_opts(
     let mut best: Option<Pass> = None;
     // How many rounds each net has gone unrouted — its negotiation priority.
     let mut fail_count: BTreeMap<String, usize> = BTreeMap::new();
+    // Failure cache shared across negotiation rounds: entries are keyed on
+    // the session's dirty-epoch grid, so a failure recorded in one round is
+    // trusted in the next only while the board inside the connection's
+    // region is unchanged — re-proving known failures was pure waste.
+    let mut round_cache = FailCache::new();
 
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
@@ -323,9 +336,13 @@ pub fn route_all_with_opts(
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
             ordered.sort_by(|a, b| {
-                dist(b.from, b.to)
-                    .partial_cmp(&dist(a.from, a.to))
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                let pa = opts.priority_nets.contains(&a.net);
+                let pb = opts.priority_nets.contains(&b.net);
+                pb.cmp(&pa).then_with(|| {
+                    dist(b.from, b.to)
+                        .partial_cmp(&dist(a.from, a.to))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
             });
             route_pass(
                 pcb,
@@ -337,6 +354,7 @@ pub fn route_all_with_opts(
                 opts.effective_ripup_rounds(),
                 opts.effective_expansions(),
                 last_round_flag,
+                &opts.priority_nets,
             )
         } else {
             // Incremental negotiation: instead of re-routing the whole board
@@ -356,6 +374,7 @@ pub fn route_all_with_opts(
                 opts.effective_expansions(),
                 last_round_flag,
                 &fail_count,
+                &mut round_cache,
             )
         };
 
@@ -683,13 +702,14 @@ fn route_pass(
     ripup_rounds: usize,
     max_expansions: usize,
     fine_retry: bool,
+    opts_priority: &[String],
 ) -> Pass {
     let mut session = RouteSession::from_pcb(pcb);
     let mut placed: Vec<Placed> = Vec::new();
     let mut fail_cache: FailCache = FailCache::new();
 
     // Greedy pass, speculatively parallel (see [`route_batch`]).
-    let conns: Vec<Conn> = rats
+    let mut conns: Vec<Conn> = rats
         .iter()
         .filter(|l| nets_filter.is_empty() || nets_filter.iter().any(|n| n == &l.net))
         .map(|l| (l.net.clone(), l.from, l.to))
@@ -712,11 +732,39 @@ fn route_pass(
         } else {
             let pitch = width + pcb.rules.default_rules.clearance;
             let layers = copper_layers(pcb).len().max(1);
-            plan_corridors(&session, lo, hi, pitch, layers, &conns)
+            let (cs, scarcity) = plan_with_scarcity(&session, lo, hi, pitch, layers, &conns);
+            // Corridor map keyed BEFORE reordering (cs aligns with the
+            // original conns order).
+            let map: HashMap<ConnKey, (Vec2, Vec2)> = cs
                 .into_iter()
                 .zip(conns.iter())
                 .filter_map(|(c, (net, from, to))| c.map(|w| (conn_key(net, *from, *to), w)))
-                .collect()
+                .collect();
+            // Scarcest-first ordering (the campaign's decisive lesson,
+            // proven by the graft test + apex run): nets with the least
+            // corridor slack route on the emptiest board; flexible nets
+            // route around them. Priority nets stay in front; constraint
+            // degree breaks residual ties; length breaks the rest.
+            let mut order: Vec<usize> = (0..conns.len()).collect();
+            order.sort_by(|&a, &b| {
+                let pa = opts_priority.contains(&conns[a].0);
+                let pb = opts_priority.contains(&conns[b].0);
+                pb.cmp(&pa)
+                    .then_with(|| {
+                        scarcity[a]
+                            .min_residual
+                            .partial_cmp(&scarcity[b].min_residual)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| scarcity[b].overlap_degree.cmp(&scarcity[a].overlap_degree))
+                    .then_with(|| {
+                        dist(conns[b].1, conns[b].2)
+                            .partial_cmp(&dist(conns[a].1, conns[a].2))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            });
+            conns = order.iter().map(|&i| conns[i].clone()).collect();
+            map
         }
     };
 
@@ -730,6 +778,7 @@ fn route_pass(
         use_push_shove,
         max_expansions,
         fine_retry,
+        true,
         &mut fail_cache,
         &corridors,
     );
@@ -755,6 +804,8 @@ fn route_pass(
             cong,
             use_push_shove,
             max_expansions,
+            true,
+            None,
             &mut fail_cache,
             &corridors,
         );
@@ -789,6 +840,7 @@ fn incremental_round(
     max_expansions: usize,
     fine_retry: bool,
     fail_count: &BTreeMap<String, usize>,
+    fail_cache: &mut FailCache,
 ) -> Pass {
     let (mut session, mut placed, pending_base) = base.clone();
 
@@ -808,7 +860,10 @@ fn incremental_round(
     let n_stuck = stuck.len();
 
     let sw = Stopwatch::start();
-    let mut fail_cache = FailCache::new();
+    // Search-only (no rescue arsenal) and hard-budgeted: this round is
+    // speculative — keep-best discards it unless it beats the snapshot, so
+    // it must be cheap. The arsenal fires where results stick.
+    let budget_ms = 1_200_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -818,7 +873,9 @@ fn incremental_round(
         cong,
         use_push_shove,
         max_expansions,
-        &mut fail_cache,
+        false,
+        Some(budget_ms),
+        fail_cache,
         &HashMap::new(),
     );
     let _ = fine_retry;
@@ -852,6 +909,7 @@ fn route_batch(
     use_push_shove: bool,
     max_expansions: usize,
     fine_retry: bool,
+    rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
@@ -918,6 +976,7 @@ fn route_batch(
                     cong,
                     use_push_shove,
                     max_expansions,
+                    rescue,
                 ) {
                     Some(p) => {
                         committed += 1;
@@ -956,6 +1015,7 @@ fn route_batch(
                         cong,
                         use_push_shove,
                         max_expansions,
+                        rescue,
                     ) {
                         Some(p) => placed.push(p),
                         None => {
@@ -1008,6 +1068,7 @@ fn try_route(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    rescue: bool,
 ) -> Option<Placed> {
     if let Some(cand) = search_route(
         session,
@@ -1023,6 +1084,14 @@ fn try_route(
         None,
     ) {
         return validate_and_commit(session, pcb, cand, placed);
+    }
+    // The rescue arsenal below (flow escape, coupled pairs, true shove) costs
+    // orders of magnitude more than the search itself. Inside speculative
+    // negotiation rounds — whose whole pass is discarded unless it beats the
+    // best snapshot — that cost is usually paid for nothing, so those rounds
+    // route search-only and the arsenal fires where results stick.
+    if !rescue {
+        return None;
     }
     // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
     // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
@@ -2066,14 +2135,27 @@ fn ripup_pass(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    rescue: bool,
+    deadline_ms: Option<f64>,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
+    let sw_pass = Stopwatch::start();
     let hw = width / 2.0;
     let copper = copper_layers(pcb);
     let mut still: Vec<Conn> = Vec::new();
 
-    for (net, from, to) in unrouted {
+    let mut unrouted = unrouted.into_iter();
+    for (net, from, to) in unrouted.by_ref() {
+        // Over-deadline: park the rest as pending — negotiation's keep-best
+        // treats an abandoned round exactly like a converged one.
+        if let Some(d) = deadline_ms {
+            if sw_pass.ms() > d {
+                log::info!("ripup pass over {d:.0}ms budget — deferring remainder");
+                still.push((net, from, to));
+                break;
+            }
+        }
         // Other-net copper crossing a CORRIDOR around the direct path — not the
         // hairline segment. The maze router detours around copper, so the
         // connections worth ripping are everything in the band a detour would
@@ -2139,6 +2221,7 @@ fn ripup_pass(
             cong,
             use_push_shove,
             max_expansions,
+            rescue,
         );
         if let Some(p) = routed_target {
             placed.push(p);
@@ -2156,10 +2239,12 @@ fn ripup_pass(
             cong,
             use_push_shove,
             max_expansions,
+            rescue,
             fail_cache,
             corridors,
         ));
     }
+    still.extend(unrouted);
 
     still
 }
@@ -2179,6 +2264,7 @@ fn reroute_victims_with_restore(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
 ) -> Vec<Conn> {
@@ -2198,6 +2284,7 @@ fn reroute_victims_with_restore(
         use_push_shove,
         max_expansions,
         true,
+        rescue,
         fail_cache,
         corridors,
     ) {
@@ -2295,7 +2382,16 @@ fn joint_window_repair(
 
         let mut still = Vec::new();
         let n_groups = groups.len();
+        // Wall-clock budget per escalation round: the arsenal per window is
+        // expensive (measured 100min/round on the CM5); past the budget the
+        // remaining windows carry to the next escalation or the final report.
+        let round_budget_ms = 300_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
+        let sw_round = Stopwatch::start();
         for (gw, stuck) in groups {
+            if sw_round.ms() > round_budget_ms {
+                still.extend(stuck);
+                continue;
+            }
             // Transactional: snapshot the world; a window that ends
             // net-negative is rolled back wholesale, so this stage can only
             // ever improve the board.
@@ -2303,6 +2399,8 @@ fn joint_window_repair(
             let placed_snapshot = placed.clone();
             let stuck_backup = stuck.clone();
             let placed_before = placed.len();
+            let nets_before: std::collections::HashSet<String> =
+                placed.iter().map(|p| p.net.clone()).collect();
             // Rip every placed route whose copper enters the window.
             let in_window = |p: &Placed| {
                 p.segments.iter().any(|(a, b, _)| {
@@ -2339,6 +2437,7 @@ fn joint_window_repair(
                 true,
                 max_expansions,
                 true,
+                true,
                 &mut fail_cache,
                 &HashMap::new(),
             );
@@ -2351,6 +2450,7 @@ fn joint_window_repair(
                 cong,
                 true,
                 max_expansions,
+                true,
                 &mut fail_cache,
                 &HashMap::new(),
             ));
@@ -2415,8 +2515,16 @@ fn joint_window_repair(
                     }
                 }
             }
-            if placed.len() <= placed_before {
-                // Net-negative (or neutral): roll back the entire window.
+            // Identity guard (the apex lesson): a window that trades a
+            // previously-routed net away for a different one scores
+            // "neutral" by count but destroys the scarce winners the
+            // ordering fought for. Every net routed before the window must
+            // still be routed after, AND the count must strictly increase.
+            let nets_after: std::collections::HashSet<String> =
+                placed.iter().map(|p| p.net.clone()).collect();
+            let lost_identity = !nets_before.is_subset(&nets_after);
+            if placed.len() <= placed_before || lost_identity {
+                // Net-negative, neutral, or identity-losing: roll back.
                 *session = session_snapshot;
                 *placed = placed_snapshot;
                 log::debug!(
@@ -2677,6 +2785,7 @@ mod tests {
             &cong,
             false,
             budget,
+            true,
         );
         let placed = placed.expect("try_route must succeed via the pin-field escape");
         assert!(!placed.segments.is_empty());
@@ -2743,6 +2852,7 @@ mod tests {
             &cong,
             false,
             20,
+            true,
         )
         .expect("pair stage must route the P net with its partner");
         assert_eq!(p.net, "LVDS_P");
@@ -3286,6 +3396,7 @@ mod tests {
                 negotiation_rounds: 1,
                 use_push_shove: false,
                 effort: 1.0,
+                priority_nets: Vec::new(),
             },
         );
         assert_eq!(
@@ -3323,6 +3434,7 @@ mod tests {
                 negotiation_rounds: 1,
                 use_push_shove: false,
                 effort: 1.0,
+                priority_nets: Vec::new(),
             },
         );
         // The shipped default: negotiated congestion + validated push-shove.
@@ -3415,6 +3527,7 @@ mod tests {
                 negotiation_rounds: 1,
                 use_push_shove: false,
                 effort: 1.0,
+                priority_nets: Vec::new(),
             },
         );
         let default = route_all(&pcb, 0.25, &[]);
@@ -3587,6 +3700,7 @@ mod tests {
             &cong,
             false,
             budget,
+            true,
         )
         .expect("try_route must succeed via the shove stage");
         assert!(!p.segments.is_empty());
@@ -3666,6 +3780,7 @@ mod tests {
                 &cong,
                 false,
                 budget,
+                true,
             )
             .is_none(),
             "a pad-anchored blocker must refuse the shove and leave A unrouted"

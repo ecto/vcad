@@ -92,7 +92,7 @@ const MAX_AXIS_CELLS: usize = 48;
 
 /// Outcome of the complete window router.
 #[derive(Debug, Clone)]
-pub(crate) enum CompleteOutcome {
+pub enum CompleteOutcome {
     /// A joint routing was found: per-connection segment lists, in the same
     /// order as the input `conns`. Layer transitions within a connection are
     /// vias at the shared segment endpoint (adjacent-layer span).
@@ -121,7 +121,7 @@ pub(crate) enum CompleteOutcome {
 /// * `budget` — maximum DFS node expansions. A result of
 ///   [`CompleteOutcome::ProvedInfeasible`] is only ever returned when the
 ///   full space was enumerated within the budget (or the flow cut fired).
-pub(crate) fn route_window_complete(
+pub fn route_window_complete(
     session: &RouteSession,
     window: (Vec2, Vec2),
     layers: &[PcbLayer],
@@ -148,9 +148,11 @@ pub(crate) fn route_window_complete(
     let nl = layers.len();
     let n_nodes = plane * nl;
     let half_w = width / 2.0;
-    // Via legality is probed as a disc of radius `width` (a conservative
-    // stand-in for the via pad) on both spanned layers.
-    let via_r = width;
+    // Via legality is probed as a disc covering the real microvia pad (the
+    // largest via class this router ever realizes is the adjacent-layer
+    // microvia) on both spanned layers. Probing smaller than the committed
+    // pad let verdict copper pass here and fail board DRC by the difference.
+    let via_r = (width * 1.5).max(0.11);
 
     // --- Free-node raster (fixed copper only) ----------------------------
     // A node is free iff a zero-length capsule (trace centre) at the cell
@@ -214,20 +216,30 @@ pub(crate) fn route_window_complete(
             }
         }
     }
-    // Two connections snapping onto the same node can never be node-disjoint.
+    // Two DIFFERENT-net connections snapping onto the same node can never be
+    // node-disjoint — a genuine infeasibility at this pitch. Two connections
+    // of the SAME net sharing a cell is not: same-net copper may legally
+    // share space, but this model's per-connection node-disjointness can't
+    // express that, so the honest answer is unknown, never a proof.
     {
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: HashMap<usize, &str> = HashMap::new();
         for (ci, &(s, t)) in terms.iter().enumerate() {
             for node in [s, t] {
-                if !seen.insert(node) {
-                    return CompleteOutcome::ProvedInfeasible {
-                        reason: format!(
-                            "terminals of net {} collide with another connection's terminal \
-                             in the same {:.3} mm grid cell — the window cannot host \
-                             node-disjoint paths",
-                            conns[ci].0, grid.pitch
-                        ),
-                    };
+                match seen.get(&node) {
+                    None => {
+                        seen.insert(node, conns[ci].0.as_str());
+                    }
+                    Some(&other) if other != conns[ci].0 => {
+                        return CompleteOutcome::ProvedInfeasible {
+                            reason: format!(
+                                "terminals of nets {} and {other} collide in the same \
+                                 {:.3} mm grid cell — the window cannot host \
+                                 node-disjoint paths",
+                                conns[ci].0, grid.pitch
+                            ),
+                        };
+                    }
+                    Some(_) => return CompleteOutcome::BudgetExhausted,
                 }
             }
         }
@@ -724,7 +736,10 @@ impl WinGrid {
         let (lo, hi) = window;
         let span_x = (hi.x - lo.x).max(1e-3);
         let span_y = (hi.y - lo.y).max(1e-3);
-        let mut pitch = (width + clearance).max(0.02);
+        // 6% over the exact width+clearance floor: node-disjoint paths in
+        // adjacent columns sit at pitch - width — exactly the clearance at
+        // the floor, which board DRC then fails on floating-point margins.
+        let mut pitch = ((width + clearance) * 1.06).max(0.02);
         let need = (span_x / pitch).max(span_y / pitch);
         if need > MAX_AXIS_CELLS as f64 {
             pitch = (span_x / MAX_AXIS_CELLS as f64).max(span_y / MAX_AXIS_CELLS as f64);
@@ -854,9 +869,13 @@ mod tests {
     /// y≈24.3..25.7): exactly two crossing channels at the coarse pitch.
     fn two_channel_wall() -> Vec<Trace> {
         vec![
-            trace("GND", Vec2::new(20.0, 0.0), Vec2::new(20.0, 14.3)),
-            trace("GND", Vec2::new(20.0, 15.7), Vec2::new(20.0, 24.3)),
-            trace("GND", Vec2::new(20.0, 25.7), Vec2::new(20.0, 40.0)),
+            // Channels sized so each free-node band (gap minus wall
+            // clearance) is narrower than the grid pitch — at most one
+            // node-disjoint path per channel, the premise of the
+            // 3-through-2 infeasibility certificate.
+            trace("GND", Vec2::new(20.0, 0.0), Vec2::new(20.0, 14.75)),
+            trace("GND", Vec2::new(20.0, 15.75), Vec2::new(20.0, 24.75)),
+            trace("GND", Vec2::new(20.0, 25.75), Vec2::new(20.0, 40.0)),
         ]
     }
 
