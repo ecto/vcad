@@ -373,6 +373,103 @@ pub fn compare(
     })
 }
 
+/// Build the predicted claim set for one transient run.
+///
+/// Same fail-closed contract as [`predicted_claims`]: `opts` must be what
+/// the run used, the model is the **base** (pre-schedule) model, and every
+/// claim carries `basis: "predicted"`. Series data stays on the
+/// [`TransientSolution`]; the claims capture the quantities a recipe is
+/// judged by — the peak, the endpoint, how far the endpoint sits from
+/// steady, and the integrated energy audit.
+pub fn transient_claims(
+    model: &ThermalModel,
+    tsol: &crate::transient::TransientSolution,
+    opts: &SolveOptions,
+) -> ClaimSet {
+    let caveat = conduction_caveat(model);
+    let steady = predicted_claims(model, &tsol.final_state, opts);
+    let total_time_s = tsol.times_s.last().copied().unwrap_or(0.0);
+    let steps = tsol.times_s.len();
+    let run = format!("{steps} backward-Euler steps to t = {total_time_s} s");
+
+    let (peak_i, peak) =
+        tsol.t_max_c
+            .iter()
+            .enumerate()
+            .fold(
+                (0, f64::NEG_INFINITY),
+                |acc, (i, &t)| {
+                    if t > acc.1 {
+                        (i, t)
+                    } else {
+                        acc
+                    }
+                },
+            );
+    let final_t = tsol.t_max_c.last().copied().unwrap_or(f64::NAN);
+
+    let mut claims = vec![
+        claim(
+            "t_max_peak_c".into(),
+            peak,
+            "C",
+            format!(
+                "hottest solid voxel over the run, at t = {} s; {run}; {caveat}",
+                tsol.times_s[peak_i]
+            ),
+        ),
+        claim(
+            "t_max_final_c".into(),
+            final_t,
+            "C",
+            format!("hottest solid voxel at the end of the run; {run}; {caveat}"),
+        ),
+    ];
+    let single = tsol.final_state.sources.len() == 1;
+    for (s, series) in tsol.final_state.sources.iter().zip(&tsol.source_t_max_c) {
+        let name = if single {
+            "t_source_final_c".to_string()
+        } else {
+            format!("t_source_final_c:{}", s.name)
+        };
+        claims.push(claim(
+            name,
+            series.last().copied().unwrap_or(f64::NAN),
+            "C",
+            format!(
+                "hottest voxel of source {:?} at the end of the run; {caveat}",
+                s.name
+            ),
+        ));
+    }
+    claims.push(claim(
+        "transient_energy_audit_residual".into(),
+        tsol.energy_audit_residual_rel,
+        "1",
+        "|stored-energy change - integrated net injection| over the run, normalized by \
+         gross energy traffic; a discrete identity of backward Euler, closes to CG \
+         tolerance or the trajectory is wrong"
+            .into(),
+    ));
+    claims.push(claim(
+        "distance_from_steady_residual".into(),
+        tsol.final_state.energy.residual_rel,
+        "1",
+        "steady energy-balance residual of the final field: ~solver tolerance means the \
+         run has relaxed to steady state; O(1) means the endpoint is still moving"
+            .into(),
+    ));
+
+    ClaimSet {
+        schema: CLAIM_SCHEMA.to_string(),
+        provenance: SolverProvenance {
+            cg_iterations: tsol.cg_iterations_total,
+            ..steady.provenance
+        },
+        claims,
+    }
+}
+
 /// Domain tag for thermal claims in the unified [`vcad_receipt`] schema.
 pub const RECEIPT_DOMAIN: &str = "thermal";
 
@@ -434,6 +531,52 @@ mod tests {
     use super::*;
     use crate::model::{Boundary, MaterialRegion, PowerSource, Shape, ThermalModel};
     use crate::solve::solve_steady;
+
+    #[test]
+    fn transient_claims_capture_peak_endpoint_and_audits() {
+        let mut m = chip_model();
+        m.materials[0].heat_capacity_j_m3k = Some(1.8e6);
+        let opts = crate::solve::SolveOptions::default();
+        let tsol = crate::transient::solve_transient(
+            &m,
+            &opts,
+            &crate::transient::TransientOptions {
+                dt_s: 5.0,
+                steps: 20,
+                initial_c: 25.0,
+                snapshot_every: 0,
+            },
+        )
+        .unwrap();
+        let set = transient_claims(&m, &tsol, &opts);
+        assert_eq!(set.schema, CLAIM_SCHEMA);
+        let names: Vec<&str> = set.claims.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"t_max_peak_c"));
+        assert!(names.contains(&"t_max_final_c"));
+        assert!(names.contains(&"t_source_final_c"));
+        assert!(names.contains(&"transient_energy_audit_residual"));
+        assert!(names.contains(&"distance_from_steady_residual"));
+        assert!(set.claims.iter().all(|c| c.basis == "predicted"));
+        assert_eq!(set.provenance.cg_iterations, tsol.cg_iterations_total);
+        // Heating run: the peak is the endpoint.
+        let peak = set
+            .claims
+            .iter()
+            .find(|c| c.name == "t_max_peak_c")
+            .unwrap();
+        let fin = set
+            .claims
+            .iter()
+            .find(|c| c.name == "t_max_final_c")
+            .unwrap();
+        assert!((peak.value - fin.value).abs() < 1e-12);
+        // And it rides the unified receipt as Provisional like the rest.
+        let rc = design_claims(&set);
+        assert_eq!(rc.len(), set.claims.len());
+        assert!(rc
+            .iter()
+            .all(|c| c.basis == Some(vcad_receipt::ClaimBasis::Predicted)));
+    }
 
     fn chip_model() -> ThermalModel {
         let mut m = ThermalModel::new([0.0, 0.0, 0.0], [60.0, 60.0, 2.0], [30, 30, 2]);
