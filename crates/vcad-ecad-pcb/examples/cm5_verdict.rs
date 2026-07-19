@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use vcad_ecad_pcb::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet};
 use vcad_ecad_pcb::router::complete::{route_window_complete, CompleteOutcome};
 use vcad_ecad_pcb::session::RouteSession;
+use vcad_ecad_pcb::spatial::{CopperElement, CopperGeom};
 use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
 
@@ -67,7 +68,7 @@ fn main() {
     rats.retain(|l| !plane_nets.contains(l.net.as_str()));
     println!("unrouted connections (plane nets excluded): {}", rats.len());
 
-    let session = RouteSession::from_pcb(&pcb);
+    let mut session = RouteSession::from_pcb(&pcb);
     let layers: Vec<_> = pcb
         .stackup
         .layers
@@ -122,11 +123,23 @@ fn main() {
                 routed += conns.len();
                 let segs: usize = paths.iter().map(|p| p.len()).sum();
                 println!("ROUTED   {names:?} ({segs} segments found)");
-                // Commit the found copper so the board file carries the win:
-                // traces per segment, a via wherever consecutive segments of
-                // one connection meet at the same point on different layers.
+                // Commit the found copper twice: into the live SESSION so
+                // every later cluster treats this win as an obstacle (mutual
+                // legality — without this, two clusters can route through
+                // each other), and into the board file so it carries the win.
                 for ((net, _, _), path) in conns.iter().zip(&paths) {
                     for (a, b, layer) in path {
+                        session.commit(CopperElement {
+                            min: [a.x.min(b.x) - width, a.y.min(b.y) - width],
+                            max: [a.x.max(b.x) + width, a.y.max(b.y) + width],
+                            net: net.clone(),
+                            layer: *layer,
+                            geom: CopperGeom::Segment {
+                                a: *a,
+                                b: *b,
+                                half_w: width / 2.0,
+                            },
+                        });
                         pcb.traces.push(vcad_ir::ecad::Trace {
                             start: *a,
                             end: *b,
@@ -140,6 +153,16 @@ fn main() {
                         let (_, b0, l0) = w[0];
                         let (a1, _, l1) = w[1];
                         if l0 != l1 && (b0.x - a1.x).abs() < 1e-9 && (b0.y - a1.y).abs() < 1e-9 {
+                            let r = pcb.rules.default_rules.via_diameter / 2.0;
+                            for layer in [l0, l1] {
+                                session.commit(CopperElement {
+                                    min: [b0.x - r, b0.y - r],
+                                    max: [b0.x + r, b0.y + r],
+                                    net: net.clone(),
+                                    layer,
+                                    geom: CopperGeom::Disc { center: b0, r },
+                                });
+                            }
                             pcb.vias.push(vcad_ir::ecad::Via {
                                 position: b0,
                                 diameter: pcb.rules.default_rules.via_diameter,
