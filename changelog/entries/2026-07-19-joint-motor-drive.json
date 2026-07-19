@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-joint-motor-drive",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "feat",
+  "title": "Motor drive for joints in Simulate mode",
+  "summary": "Set a target velocity on any joint in the property panel and press Play — the physics sim drives the motor, so cranks and flywheels actually spin.",
+  "features": ["physics", "simulation", "joints"]
+}

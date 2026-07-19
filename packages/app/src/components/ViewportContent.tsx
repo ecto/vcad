@@ -62,6 +62,7 @@ import { useWebGLContextLost } from "@/hooks/useWebGLContextLost";
 import { useTheme } from "@/hooks/useTheme";
 import { useInputDeviceDetection } from "@/hooks/useInputDeviceDetection";
 import { usePhysicsSimulation } from "@/hooks/usePhysicsSimulation";
+import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
 import { useCanvasRecorder } from "@/hooks/useCanvasRecorder";
 import {
   useCameraSettingsStore,
@@ -313,6 +314,7 @@ export function ViewportContent({
   useCameraControls();
   useInputDeviceDetection();
   usePhysicsSimulation();
+  useTimelinePlayback();
   useCanvasRecorder();
 
   const isPcbMode = mode === "pcb";
