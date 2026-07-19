@@ -321,6 +321,11 @@ pub fn route_all_with_opts(
     let mut best: Option<Pass> = None;
     // How many rounds each net has gone unrouted — its negotiation priority.
     let mut fail_count: BTreeMap<String, usize> = BTreeMap::new();
+    // Failure cache shared across negotiation rounds: entries are keyed on
+    // the session's dirty-epoch grid, so a failure recorded in one round is
+    // trusted in the next only while the board inside the connection's
+    // region is unchanged — re-proving known failures was pure waste.
+    let mut round_cache = FailCache::new();
 
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
@@ -369,6 +374,7 @@ pub fn route_all_with_opts(
                 opts.effective_expansions(),
                 last_round_flag,
                 &fail_count,
+                &mut round_cache,
             )
         };
 
@@ -834,6 +840,7 @@ fn incremental_round(
     max_expansions: usize,
     fine_retry: bool,
     fail_count: &BTreeMap<String, usize>,
+    fail_cache: &mut FailCache,
 ) -> Pass {
     let (mut session, mut placed, pending_base) = base.clone();
 
@@ -853,7 +860,6 @@ fn incremental_round(
     let n_stuck = stuck.len();
 
     let sw = Stopwatch::start();
-    let mut fail_cache = FailCache::new();
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
@@ -869,7 +875,7 @@ fn incremental_round(
         max_expansions,
         false,
         Some(budget_ms),
-        &mut fail_cache,
+        fail_cache,
         &HashMap::new(),
     );
     let _ = fine_retry;
