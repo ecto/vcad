@@ -3635,49 +3635,6 @@ impl RayTracer {
         let num_surfaces = scene.surfaces.len();
         let num_bvh_nodes = scene.bvh_nodes.len();
 
-        // Debug: print face AABBs, inner loop data, and UV bounds from trim vertices
-        for (i, face) in scene.faces.iter().enumerate() {
-            // Compute UV bounds from trim vertices for this face
-            let trim_start = face.trim_start as usize;
-            let trim_count = face.trim_count as usize;
-            let (uv_min_x, uv_max_x, uv_min_y, uv_max_y) = if trim_count > 0 {
-                let mut min_x = f32::MAX;
-                let mut max_x = f32::MIN;
-                let mut min_y = f32::MAX;
-                let mut max_y = f32::MIN;
-                for j in 0..trim_count {
-                    let uv = &scene.trim_verts[trim_start + j];
-                    min_x = min_x.min(uv.x);
-                    max_x = max_x.max(uv.x);
-                    min_y = min_y.min(uv.y);
-                    max_y = max_y.max(uv.y);
-                }
-                (min_x, max_x, min_y, max_y)
-            } else {
-                (0.0, 0.0, 0.0, 0.0)
-            };
-
-            web_sys::console::log_1(&format!(
-                "[WASM] Face {}: surface={}, trim={}/{}@{}, UV_bounds=[{:.2},{:.2}]->[{:.2},{:.2}], inner={}/{}@{} (desc@{}), AABB=[{:.2},{:.2},{:.2}]->[{:.2},{:.2},{:.2}]",
-                i, face.surface_idx,
-                face.trim_count, face.trim_start, face.trim_start,
-                uv_min_x, uv_min_y, uv_max_x, uv_max_y,
-                face.inner_loop_count, face.inner_count, face.inner_start, face.inner_desc_start,
-                face.aabb_min[0], face.aabb_min[1], face.aabb_min[2],
-                face.aabb_max[0], face.aabb_max[1], face.aabb_max[2]
-            ).into());
-        }
-
-        // Log inner_loop_descs buffer size
-        web_sys::console::log_1(
-            &format!(
-                "[WASM] inner_loop_descs buffer: {} entries, trim_verts: {} entries",
-                scene.inner_loop_descs.len(),
-                scene.trim_verts.len()
-            )
-            .into(),
-        );
-
         inner.scene = Some(std::rc::Rc::new(scene));
         inner.invalidate_accum();
         drop(inner);
@@ -3690,6 +3647,43 @@ impl RayTracer {
             .into(),
         );
 
+        Ok(())
+    }
+
+    /// Upload a solid with its own material. Each uploaded solid's faces
+    /// keep a distinct material slot (`GpuScene::merge` offsets material
+    /// indices), so assemblies render per-part materials in one pass.
+    #[wasm_bindgen(js_name = uploadSolidWithMaterial)]
+    pub fn upload_solid_with_material(
+        &self,
+        solid: &Solid,
+        r: f32,
+        g: f32,
+        b: f32,
+        metallic: f32,
+        roughness: f32,
+    ) -> Result<(), JsError> {
+        use vcad_kernel_raytrace::gpu::GpuScene;
+
+        let brep = solid
+            .inner
+            .brep()
+            .ok_or_else(|| JsError::new("Solid has no BRep representation (mesh-only)"))?;
+
+        let mut new_scene = GpuScene::from_brep(brep)
+            .map_err(|e| JsError::new(&format!("Failed to build GPU scene: {}", e)))?;
+        new_scene.set_material(r, g, b, metallic, roughness);
+
+        let mut inner = self.inner.borrow_mut();
+        let scene = match inner.scene.take() {
+            Some(rc) => {
+                let existing = std::rc::Rc::try_unwrap(rc).unwrap_or_else(|rc| (*rc).clone());
+                existing.merge(new_scene)
+            }
+            None => new_scene,
+        };
+        inner.scene = Some(std::rc::Rc::new(scene));
+        inner.invalidate_accum();
         Ok(())
     }
 
