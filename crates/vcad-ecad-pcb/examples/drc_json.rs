@@ -11,7 +11,9 @@ use vcad_ir::ecad::Pcb;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: drc_json <board.pcb.json> [focus]");
+    let path = args
+        .next()
+        .expect("usage: drc_json <board.pcb.json> [focus]");
     let focus = args.next();
     let pcb: Pcb =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
