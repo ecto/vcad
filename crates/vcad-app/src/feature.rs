@@ -331,6 +331,18 @@ pub enum FeatureInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         sheet: Option<String>,
     },
+    /// Drawing sheet settings (title block, section lines, BOM visibility).
+    DrawingSettings {
+        /// Title block fields (JSON-serialized `DrawingTitleBlock`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title_block: Option<String>,
+        /// Section lines (JSON-serialized `Vec<DrawingSectionLine>`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sections: Option<String>,
+        /// BOM table visibility (JSON bool).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        show_bom: Option<String>,
+    },
     /// Atomic / molecular system (the `molecule` document domain).
     Molecule {
         /// System data (JSON-serialized `MoleculeSystem`).
@@ -374,6 +386,7 @@ impl FeatureInput {
             Self::Instance { .. } => "instance",
             Self::Joint { .. } => "joint",
             Self::SceneSettings { .. } => "scene-settings",
+            Self::DrawingSettings { .. } => "drawing-settings",
             Self::Schematic { .. } => "schematic",
             Self::Molecule { .. } => "molecule",
             Self::AnalysisStudies { .. } => "analysis-studies",
@@ -677,6 +690,21 @@ impl FeatureInput {
                     p.insert("camera_presets".into(), Value::String(v.clone()));
                 }
             }
+            Self::DrawingSettings {
+                title_block,
+                sections,
+                show_bom,
+            } => {
+                if let Some(v) = title_block {
+                    p.insert("title_block".into(), Value::String(v.clone()));
+                }
+                if let Some(v) = sections {
+                    p.insert("sections".into(), Value::String(v.clone()));
+                }
+                if let Some(v) = show_bom {
+                    p.insert("show_bom".into(), Value::String(v.clone()));
+                }
+            }
             Self::Schematic { title, sheet } => {
                 if let Some(v) = title {
                     p.insert("title".into(), Value::String(v.clone()));
@@ -837,6 +865,11 @@ impl FeatureInput {
                 axis: get_vec3(params, "axis"),
                 name: get_str(params, "name"),
                 limits: get_str(params, "limits"),
+            },
+            "drawing-settings" => Self::DrawingSettings {
+                title_block: get_str(params, "title_block"),
+                sections: get_str(params, "sections"),
+                show_bom: get_str(params, "show_bom"),
             },
             "scene-settings" => Self::SceneSettings {
                 environment: get_str(params, "environment"),

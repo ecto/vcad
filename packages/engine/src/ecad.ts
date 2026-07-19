@@ -1214,6 +1214,168 @@ export async function createCircuitSim(specJson: string): Promise<CircuitSimHand
 }
 
 // ---------------------------------------------------------------------------
+// Schematic → circuit mapping + stateless analyses (#583 seam + #588 bindings)
+// ---------------------------------------------------------------------------
+
+/** One device of a mapped/authored circuit spec (`p`/`n` node ids, 0 = ground). */
+export interface CircuitSpecDevice {
+  kind:
+    | "resistor"
+    | "capacitor"
+    | "inductor"
+    | "vsource"
+    | "isource"
+    | "diode"
+    | "led"
+    | "motor";
+  p: number;
+  n: number;
+  value?: number;
+}
+
+/** One component that blocked schematic→circuit conversion (fail-closed). */
+export interface CircuitBlocker {
+  reference: string;
+  message: string;
+}
+
+/** Options for {@link circuitFromSchematic}. */
+export interface CircuitMapOptions {
+  /** Refdes to stub as open circuits (power symbols, connectors, ICs). */
+  stubAsOpen?: string[];
+  /** Net names to collapse onto ground beyond GND/VSS-style names. */
+  groundNets?: string[];
+  /** Supply rails: inject a vsource-to-ground per net at the given voltage. */
+  supplies?: Array<{ net: string; volts: number }>;
+}
+
+/** Result of {@link circuitFromSchematic}: mapped spec or blocker list. */
+export interface CircuitMapResult {
+  ok: boolean;
+  blockers?: CircuitBlocker[];
+  devices?: CircuitSpecDevice[];
+  numNodes: number;
+  /** Net name → node id (ground nets and aliases → 0). */
+  nodeOfNet: Record<string, number>;
+  /** Refdes → device id. */
+  deviceOfRef: Record<string, number>;
+  groundNets: string[];
+  stubbed: string[];
+  /** Injected supply rails: net name → vsource device id. */
+  supplySourceOfNet: Record<string, number>;
+  unconnectedSupplies: string[];
+}
+
+/** DC operating-point result (camelCase mirror of `WasmDcSolution`). */
+export interface CircuitDcResult {
+  nodeVoltages: number[];
+  deviceCurrents: number[];
+  /** Tellegen residual Σ v·i (W) — nonzero only through solver error. */
+  powerBalanceW: number;
+  newtonIterations: number;
+}
+
+/** AC sweep result: per-omega complex node voltages as re/im arrays. */
+export interface CircuitAcResult {
+  source: number;
+  points: Array<{
+    omega: number;
+    nodeVoltagesRe: number[];
+    nodeVoltagesIm: number[];
+  }>;
+}
+
+/** Adjoint tune result (camelCase mirror of `WasmTuneResult`). */
+export interface CircuitTuneResult {
+  tunedValues: Array<{ device: number; before: number; after: number }>;
+  iterations: number;
+  objectiveBefore: number;
+  objectiveAfter: number;
+  response?: Array<{
+    frequencyHz: number;
+    magnitudeBefore: number;
+    magnitudeAfter: number;
+    magnitudeTarget: number;
+  }>;
+  achievedCutoffHz?: number;
+  achievedQFactor?: number;
+  achievedDcVoltage?: number;
+}
+
+/**
+ * Map a schematic sheet to a simulatable circuit spec via the fail-closed
+ * netlist seam. Returns null if the ECAD WASM build lacks the binding;
+ * blockers come back as data (`ok: false`), never as silent skips.
+ */
+export async function circuitFromSchematic(
+  sheet: SchematicSheet,
+  options: CircuitMapOptions = {},
+): Promise<CircuitMapResult | null> {
+  const wasm = await loadEcadWasm();
+  const fn = (
+    wasm as unknown as {
+      circuitFromSchematic?: (sch: string, opts: string) => CircuitMapResult;
+    } | null
+  )?.circuitFromSchematic;
+  if (typeof fn !== "function") return null;
+  return fn(JSON.stringify(sheet), JSON.stringify(options));
+}
+
+/** DC operating point of a `{devices:[...]}` spec. Null if WASM unavailable. */
+export async function circuitDcOperatingPoint(spec: {
+  devices: CircuitSpecDevice[];
+}): Promise<CircuitDcResult | null> {
+  const wasm = await loadEcadWasm();
+  const fn = (
+    wasm as unknown as {
+      circuitDcOperatingPoint?: (spec: string) => CircuitDcResult;
+    } | null
+  )?.circuitDcOperatingPoint;
+  if (typeof fn !== "function") return null;
+  return fn(JSON.stringify(spec));
+}
+
+/** Small-signal AC sweep driven by device `sourceId` at `omegas` (rad/s). */
+export async function circuitAcResponse(
+  spec: { devices: CircuitSpecDevice[] },
+  sourceId: number,
+  omegas: number[],
+): Promise<CircuitAcResult | null> {
+  const wasm = await loadEcadWasm();
+  const fn = (
+    wasm as unknown as {
+      circuitAcResponse?: (
+        spec: string,
+        sourceId: number,
+        omegas: Float64Array,
+      ) => CircuitAcResult;
+    } | null
+  )?.circuitAcResponse;
+  if (typeof fn !== "function") return null;
+  return fn(JSON.stringify(spec), sourceId, new Float64Array(omegas));
+}
+
+/** Adjoint gradient-descent tuning toward a filter or DC target. */
+export async function circuitTune(
+  spec: { devices: CircuitSpecDevice[] },
+  tune: {
+    filter?: { cutoffHz: number; qFactor: number; sourceId: number; outNode: number };
+    dc?: { node: number; dcVoltage: number };
+    freeDevices: Array<{ device: number; min?: number; max?: number }>;
+    maxIters?: number;
+  },
+): Promise<CircuitTuneResult | null> {
+  const wasm = await loadEcadWasm();
+  const fn = (
+    wasm as unknown as {
+      circuitTune?: (spec: string, tune: string) => CircuitTuneResult;
+    } | null
+  )?.circuitTune;
+  if (typeof fn !== "function") return null;
+  return fn(JSON.stringify(spec), JSON.stringify(tune));
+}
+
+// ---------------------------------------------------------------------------
 // Generative parts catalog + verified substitution (vcad-ecad-parts/-verify)
 // ---------------------------------------------------------------------------
 

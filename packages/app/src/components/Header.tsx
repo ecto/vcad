@@ -30,6 +30,7 @@ import { openCustomerPortal } from "@/lib/billing-api";
 import { UpgradeModal } from "@/components/UpgradeModal";
 import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
+import { exportDrawingPdf } from "@/lib/drawing-sheet";
 import { examples } from "@/data/examples";
 import { analytics } from "@/lib/analytics";
 import { SignInButton, UserMenu, triggerSync, useAuthStore } from "@vcad/auth";
@@ -65,7 +66,7 @@ interface HeaderProps {
   /** Opens the ContinueDialog (hand off this part to Claude/ChatGPT/an editor).
    *  Enabled only when signed in + cloud-synced. */
   onContinueOpen: () => void;
-  /** Opens the VersionHistoryModal. Enabled only when signed in. */
+  /** Opens the version timeline sidebar. Enabled only when signed in. */
   onVersionHistoryOpen: () => void;
   /** Tool palette (tab strip + icon row) docked directly under the menu bar. */
   children?: React.ReactNode;
@@ -455,6 +456,15 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
     }
   };
 
+  const handleExportDrawingPdf = () => {
+    const error = exportDrawingPdf();
+    if (error) {
+      useNotificationStore.getState().addToast(error, "error");
+    } else {
+      useNotificationStore.getState().addToast("Drawing PDF exported", "success");
+    }
+  };
+
   // Examples live in /src/data and their file loader still goes through a
   // dispatched event — not in the command registry because each entry is
   // unique, not a shared command. Detail carries either an inline
@@ -565,6 +575,9 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   <MenuItem onSelect={() => handleExport("stl")}>STL</MenuItem>
                   <MenuItem onSelect={() => handleExport("glb")}>GLB</MenuItem>
                   <MenuItem onSelect={() => handleExport("step")}>STEP</MenuItem>
+                  <MenuItem onSelect={handleExportDrawingPdf}>
+                    {t("cmd.export_drawing_pdf.label")}
+                  </MenuItem>
                 </Submenu>
                 <MenuSeparator />
                 <Submenu

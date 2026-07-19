@@ -64,6 +64,18 @@ export type FollowMode = "free" | "follow" | "lock";
  */
 export type InspectorTarget = { kind: "scene" } | null;
 
+/** A min-distance witness segment measured by `check_clearance`, drawn as a
+ *  viewport overlay (kernel Z-up coordinates, mm). */
+export interface ClearanceIndicator {
+  pointA: [number, number, number];
+  pointB: [number, number, number];
+  distanceMm: number;
+  /** Whether the measured distance met the required minimum. */
+  pass: boolean;
+  /** Optional persisted-spec label. */
+  label?: string;
+}
+
 export interface UiState {
   /** Tagged-union selection — parts, faces, edges, vertices, segments,
    *  constraints. Source of truth for everything selected. */
@@ -92,6 +104,12 @@ export interface UiState {
    *  rendered in this mode so the AI can orient itself without guessing
    *  which direction is "right" or "front". Always false in normal use. */
   captureMode: boolean;
+  /** Min-distance measurement drawn in the viewport after a chat
+   *  `check_clearance` tool call — the witness segment between the closest
+   *  pair of points, with the measured distance and pass/fail. Null when no
+   *  measurement is being shown. Cleared on the next document mutation is the
+   *  caller's concern; the overlay itself just renders whatever is set. */
+  clearanceIndicator: ClearanceIndicator | null;
   showWireframe: boolean;
   gridSnap: boolean;
   pointSnap: boolean;
@@ -184,6 +202,7 @@ export interface UiState {
   setDraggingGizmo: (dragging: boolean) => void;
   setOrbiting: (orbiting: boolean) => void;
   setCaptureMode: (on: boolean) => void;
+  setClearanceIndicator: (indicator: ClearanceIndicator | null) => void;
   copyToClipboard: (partIds: string[]) => void;
   showDeleteConfirm: (partIds: string[]) => void;
   hideDeleteConfirm: () => void;
@@ -296,6 +315,7 @@ export const useUiStore = create<UiState>((set) => ({
   isDraggingGizmo: false,
   isOrbiting: false,
   captureMode: false,
+  clearanceIndicator: null,
   showWireframe: false,
   gridSnap: true,
   pointSnap: true,
@@ -436,6 +456,8 @@ export const useUiStore = create<UiState>((set) => ({
   setOrbiting: (orbiting) => set({ isOrbiting: orbiting }),
 
   setCaptureMode: (on) => set({ captureMode: on }),
+
+  setClearanceIndicator: (indicator) => set({ clearanceIndicator: indicator }),
 
   copyToClipboard: (partIds) => set({ clipboard: partIds }),
 

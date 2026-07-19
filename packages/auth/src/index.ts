@@ -49,6 +49,8 @@ export { VersionHistoryPanel } from "./components/VersionHistoryPanel";
 export {
   triggerSync,
   debouncedSync,
+  cloudContentToVcadFile,
+  vcadFileToCloudContent,
   enableCloudSync,
   initSyncListeners,
   configureStorage,

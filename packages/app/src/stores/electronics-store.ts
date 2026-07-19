@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import type { PcbLayer, Vec2, MeanderStyle, LengthTuneParams } from "@vcad/ir";
 import type {
+  CircuitAcResult,
+  CircuitBlocker,
+  CircuitDcResult,
+  CircuitMapResult,
+  CircuitSpecDevice,
+  CircuitTuneResult,
   ComponentMesh,
   DrcViolationResult,
   ErcViolationResult,
@@ -26,6 +32,58 @@ export type ElectronicsSelection =
   | { type: "trace"; idx: number; net: string }
   | { type: "via"; idx: number; net: string }
   | { type: "pad"; fpRef: string; padNum: string; net: string };
+
+/**
+ * One-shot analysis results (DC operating point + AC sweep) over the mapped
+ * schematic, plus the fail-closed blocker list when mapping refuses. `spec`
+ * and `mapping` are kept so follow-up runs (output-net change, tune) don't
+ * re-map.
+ */
+export interface CircuitAnalysisState {
+  status: "idle" | "running" | "ok" | "blocked" | "error";
+  error: string | null;
+  /** Components that blocked simulation, pinned by refdes (fail-closed). */
+  blockers: CircuitBlocker[];
+  mapping: CircuitMapResult | null;
+  spec: { devices: CircuitSpecDevice[] } | null;
+  dc: CircuitDcResult | null;
+  ac: CircuitAcResult | null;
+  /** Net whose voltage the Bode panel plots. */
+  outNet: string | null;
+  /** Device id of the AC driving source. */
+  sourceId: number | null;
+  sweep: { startHz: number; stopHz: number; points: number };
+  /** Show the analysis (Bode + health) panel. */
+  showPanel: boolean;
+  /** Show DC node voltages / device currents on the schematic. */
+  showDcAnnotations: boolean;
+  /** Structural signature of the schematic at run time (staleness check). */
+  signature: string | null;
+  /** Refdes with the tune dialog open, if any. */
+  tuningRef: string | null;
+  /** True while the adjoint tuner is running / animating. */
+  tuneBusy: boolean;
+  tuneResult: CircuitTuneResult | null;
+}
+
+const INITIAL_ANALYSIS: CircuitAnalysisState = {
+  status: "idle",
+  error: null,
+  blockers: [],
+  mapping: null,
+  spec: null,
+  dc: null,
+  ac: null,
+  outNet: null,
+  sourceId: null,
+  sweep: { startHz: 10, stopHz: 1e6, points: 60 },
+  showPanel: false,
+  showDcAnnotations: true,
+  signature: null,
+  tuningRef: null,
+  tuneBusy: false,
+  tuneResult: null,
+};
 
 export interface LayerConfig {
   layer: PcbLayer;
@@ -80,6 +138,9 @@ export interface ElectronicsState {
   simRotorAngles: number[] | null;
   simNetToNode: Record<string, number> | null;
   simRefToDevice: Record<string, number> | null;
+
+  // One-shot DC/AC analysis + tune (Analyze flow)
+  analysis: CircuitAnalysisState;
 
   // PCB view state
   pcbZoom: number;
@@ -193,6 +254,10 @@ export interface ElectronicsState {
     rotorAngles: number[],
   ) => void;
   clearSim: () => void;
+  /** Merge fields into the analysis state. */
+  setAnalysis: (patch: Partial<CircuitAnalysisState>) => void;
+  /** Drop all analysis results (schematic edited / workspace exit). */
+  clearAnalysis: () => void;
   startRouteFromRatsnest: (fpRef: string, padNum: string, net: string) => void;
   startRoute: (fpRef: string, padNum: string, net: string) => void;
   updateRoutePreview: (points: Vec2[]) => void;
@@ -243,6 +308,8 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   simRotorAngles: null,
   simNetToNode: null,
   simRefToDevice: null,
+
+  analysis: { ...INITIAL_ANALYSIS },
 
   pcbZoom: 1,
   pcbPan: { x: 0, y: 0 },
@@ -446,6 +513,16 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       simNetToNode: null,
       simRefToDevice: null,
     }),
+  setAnalysis: (patch) => set((s) => ({ analysis: { ...s.analysis, ...patch } })),
+  clearAnalysis: () =>
+    set((s) => ({
+      analysis: {
+        ...INITIAL_ANALYSIS,
+        sweep: s.analysis.sweep,
+        showPanel: s.analysis.showPanel,
+        showDcAnnotations: s.analysis.showDcAnnotations,
+      },
+    })),
   setOrphanFootprints: (orphanFootprints) => set({ orphanFootprints }),
   setUnplacedComponents: (unplacedComponents) => set({ unplacedComponents }),
 

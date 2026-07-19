@@ -17,7 +17,7 @@
  * attached (safety factor included when a yield strength is given).
  */
 
-import { getSession } from "./session.js";
+import { getSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { resolvePartMesh } from "./topopt.js";
 

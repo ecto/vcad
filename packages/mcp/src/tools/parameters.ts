@@ -22,7 +22,7 @@ import { behavior, type ToolDef } from "./tool-def.js";
 import { resolveParameters } from "@vcad/engine";
 import type { Document, Expr, Parameter } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
-import { getSession, resolveDocInput } from "./session.js";
+import { getSession, resolveDocInput } from "./session-core.js";
 
 /** MCP result shape used across these tools. */
 type ToolResult = {

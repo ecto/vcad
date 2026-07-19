@@ -21,6 +21,7 @@ import { useCamStore } from "@/stores/cam-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { downloadBlob } from "@/lib/download";
 import { newDocId } from "@/lib/doc-id";
+import { exportDrawingPdf } from "@/lib/drawing-sheet";
 import { analytics } from "@/lib/analytics";
 
 export type CommandSurface = "palette" | "mobile-menu" | "desktop-menu";
@@ -137,6 +138,15 @@ export function useAppCommands({
         onDismiss();
       },
       exportStep: () => doExport("step"),
+      exportDrawingPdf: () => {
+        const error = exportDrawingPdf();
+        if (error) {
+          useNotificationStore.getState().addToast(error, "error");
+        } else {
+          useNotificationStore.getState().addToast("Drawing PDF exported", "success");
+        }
+        onDismiss();
+      },
 
       // Edit extras
       copy: () => {

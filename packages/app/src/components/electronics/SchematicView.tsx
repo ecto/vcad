@@ -14,6 +14,9 @@ import { useTheme } from "@/hooks/useTheme";
 const SchematicCanvas = lazy(() =>
   import("./SchematicCanvas").then((m) => ({ default: m.SchematicCanvas })),
 );
+const CircuitAnalysisPanel = lazy(() =>
+  import("./CircuitAnalysisPanel").then((m) => ({ default: m.CircuitAnalysisPanel })),
+);
 
 export function SchematicView() {
   const { isDark } = useTheme();
@@ -27,6 +30,7 @@ export function SchematicView() {
     >
       <Suspense fallback={null}>
         <SchematicCanvas />
+        <CircuitAnalysisPanel />
       </Suspense>
     </div>
   );

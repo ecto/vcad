@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-shop-ready-drawings",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Shop-ready drawings: sections, title block, BOM, PDF",
+  "summary": "Drawing mode gains offset section views, a title block editor, BOM table placement, and kernel-rendered PDF export from the toolbar, File menu, and command palette.",
+  "features": ["drafting", "drawing", "pdf", "sections", "bom"],
+  "mcpTools": []
+}

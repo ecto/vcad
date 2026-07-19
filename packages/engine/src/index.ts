@@ -91,6 +91,19 @@ export {
 export type { GpuGeometryResult } from "./gpu.js";
 
 // Caching and incremental evaluation
+export {
+  semanticDiff,
+  semanticDiffFallback,
+  threeWayMerge,
+  mergeAvailable,
+  type DocumentDiff,
+  type EntityChange,
+  type EntityKind as DiffEntityKind,
+  type FieldChange,
+  type MergeConflict,
+  type MergeResolution,
+  type MergeOutcome,
+} from "./diff.js";
 export { SolidCache, hashCsgOp } from "./solid-cache.js";
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
@@ -189,6 +202,10 @@ export {
   pcbPreviewMeshes,
   tryPcbPreviewMeshes,
   createCircuitSim,
+  circuitFromSchematic,
+  circuitDcOperatingPoint,
+  circuitAcResponse,
+  circuitTune,
   evaluateMotor,
   airgapFluxDensity,
   resolvePart,
@@ -230,6 +247,13 @@ export type {
   PcbPreviewEntity,
   CircuitObservation,
   CircuitSimHandle,
+  CircuitSpecDevice,
+  CircuitBlocker,
+  CircuitMapOptions,
+  CircuitMapResult,
+  CircuitDcResult,
+  CircuitAcResult,
+  CircuitTuneResult,
   FootprintTemplate,
   FootprintResolution,
   MotorSpecInput,
@@ -367,6 +391,77 @@ export interface DetailView {
   params: DetailViewParams;
 }
 
+/** A 2D section cut curve (from sectioning a mesh with a plane) */
+export interface SectionCurve {
+  points: Array<{ x: number; y: number }>;
+  is_closed: boolean;
+}
+
+/** Result of sectioning a mesh: cut curves, hatch lines, bounds */
+export interface SectionView {
+  curves: SectionCurve[];
+  hatch_lines: Array<[{ x: number; y: number }, { x: number; y: number }]>;
+  bounds: BoundingBox2D;
+}
+
+/** A cutting plane for section views */
+export interface SectionPlane {
+  origin: [number, number, number];
+  normal: [number, number, number];
+  up: [number, number, number];
+}
+
+/** One step (jog span) of an offset section */
+export interface OffsetSectionStep {
+  u_start: number;
+  u_end: number;
+  offset: number;
+}
+
+/** An offset (stepped) section plane: base plane + jogs */
+export interface OffsetSectionPlane {
+  base: SectionPlane;
+  steps: OffsetSectionStep[];
+}
+
+/** Title block field values for a drawing sheet (kernel snake_case shape) */
+export interface TitleBlockFields {
+  part_name: string;
+  material: string;
+  finish: string;
+  scale: string;
+  drawn_by: string;
+  date: string;
+  revision: string;
+  units: string;
+  tolerance_note: string;
+}
+
+/** One row of a drawing BOM table */
+export interface BomRow {
+  item: number;
+  name: string;
+  qty: number;
+  material: string;
+}
+
+/** A rendered drawing block (title block / BOM table) plus its footprint */
+export interface RenderedBlock {
+  rendered: RenderedDimension;
+  width: number;
+  height: number;
+}
+
+/** Spec for composing a drawing sheet for PDF export */
+export interface DrawingSheetSpec {
+  size?: "a4" | "a3" | "letter" | { custom: { width: number; height: number } };
+  views?: Array<{ view: ProjectedView; center: [number, number]; scale: number; label?: string }>;
+  sections?: Array<{ view: SectionView; center: [number, number]; scale: number; label?: string }>;
+  annotations?: RenderedDimension[];
+  title_block?: TitleBlockFields;
+  bom?: BomRow[];
+}
+
 /** Type for the initialized kernel module */
 export interface KernelModule {
   Solid: typeof Solid;
@@ -387,6 +482,18 @@ export interface KernelModule {
    */
   importUrdfBuffer: (data: Uint8Array) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
+  /** Offset (stepped) section of a mesh; null on parse failure. */
+  offsetSectionMesh?: (
+    mesh: { positions: Float32Array; indices: Uint32Array },
+    plane_json: string,
+    hatch_json?: string,
+  ) => SectionView | null;
+  /** Render a title block at origin (0,0). */
+  renderTitleBlock?: (fields_json: string) => RenderedBlock | null;
+  /** Render a BOM table at origin (0,0). */
+  renderBomTable?: (rows_json: string) => RenderedBlock | null;
+  /** Compose a drawing sheet and export it as PDF bytes. */
+  drawingSheetToPdf?: (spec_json: string) => Uint8Array;
   createDetailView: (
     parent_json: string,
     center_x: number,
@@ -476,6 +583,19 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
+  documentDiff?: (oldJson: string, newJson: string) => unknown;
+  /** Apply a `DocumentDiff` to a document, returning the patched document. */
+  documentDiffApply?: (oldJson: string, diffJson: string) => unknown;
+  /** Fail-closed three-way merge with optional conflict resolutions. */
+  documentMerge?: (
+    baseJson: string,
+    oursJson: string,
+    theirsJson: string,
+    resolutionsJson?: string | null,
+  ) => unknown;
+  /** Human-readable rendering of a `DocumentDiff` JSON string. */
+  documentDiffHuman?: (diffJson: string) => string;
   /** Circuit DC operating point (`{devices:[...]}` spec JSON). */
   circuitDcOperatingPoint?: (specJson: string) => unknown;
   /** Circuit small-signal AC sweep at the given angular frequencies. */
@@ -876,6 +996,10 @@ export class Engine {
       importStepBuffer: wasmModule.importStepBuffer,
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
+      offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
+      renderTitleBlock: (wasmModule as Record<string, unknown>).renderTitleBlock as KernelModule["renderTitleBlock"],
+      renderBomTable: (wasmModule as Record<string, unknown>).renderBomTable as KernelModule["renderBomTable"],
+      drawingSheetToPdf: (wasmModule as Record<string, unknown>).drawingSheetToPdf as KernelModule["drawingSheetToPdf"],
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
@@ -898,6 +1022,10 @@ export class Engine {
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
+      documentDiff: (wasmModule as Record<string, unknown>).documentDiff as KernelModule["documentDiff"],
+      documentDiffApply: (wasmModule as Record<string, unknown>).documentDiffApply as KernelModule["documentDiffApply"],
+      documentMerge: (wasmModule as Record<string, unknown>).documentMerge as KernelModule["documentMerge"],
+      documentDiffHuman: (wasmModule as Record<string, unknown>).documentDiffHuman as KernelModule["documentDiffHuman"],
       circuitDcOperatingPoint: (wasmModule as Record<string, unknown>).circuitDcOperatingPoint as KernelModule["circuitDcOperatingPoint"],
       circuitAcResponse: (wasmModule as Record<string, unknown>).circuitAcResponse as KernelModule["circuitAcResponse"],
       circuitSensitivities: (wasmModule as Record<string, unknown>).circuitSensitivities as KernelModule["circuitSensitivities"],
@@ -1508,6 +1636,40 @@ export class Engine {
   exportDrawingToDxf(view: ProjectedView): Uint8Array {
     const json = JSON.stringify(view);
     return this.kernel.exportProjectedViewToDxf(json);
+  }
+
+  /** Offset (stepped) section of a mesh. Returns null when the kernel lacks
+   * the binding or the inputs fail to parse. */
+  offsetSectionMesh(
+    mesh: { positions: Float32Array; indices: Uint32Array },
+    plane: OffsetSectionPlane,
+    hatch?: { spacing: number; angle: number },
+  ): SectionView | null {
+    if (!this.kernel.offsetSectionMesh) return null;
+    return this.kernel.offsetSectionMesh(
+      mesh,
+      JSON.stringify(plane),
+      hatch ? JSON.stringify(hatch) : undefined,
+    );
+  }
+
+  /** Render a title block (kernel-drawn, matches the PDF output). */
+  renderTitleBlock(fields: TitleBlockFields): RenderedBlock | null {
+    if (!this.kernel.renderTitleBlock) return null;
+    return this.kernel.renderTitleBlock(JSON.stringify(fields));
+  }
+
+  /** Render a BOM table (kernel-drawn, matches the PDF output). */
+  renderBomTable(rows: BomRow[]): RenderedBlock | null {
+    if (!this.kernel.renderBomTable) return null;
+    return this.kernel.renderBomTable(JSON.stringify(rows));
+  }
+
+  /** Compose a drawing sheet and export it as PDF bytes. Returns null when
+   * the kernel lacks the binding. */
+  drawingSheetToPdf(spec: DrawingSheetSpec): Uint8Array | null {
+    if (!this.kernel.drawingSheetToPdf) return null;
+    return this.kernel.drawingSheetToPdf(JSON.stringify(spec));
   }
 
   /**

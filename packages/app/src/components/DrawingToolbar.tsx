@@ -5,6 +5,10 @@ import { MagnifyingGlassPlus } from "@phosphor-icons/react/dist/ssr/MagnifyingGl
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Download } from "@phosphor-icons/react/dist/ssr/Download";
 import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
+import { Scissors } from "@phosphor-icons/react/dist/ssr/Scissors";
+import { Table } from "@phosphor-icons/react/dist/ssr/Table";
+import { Article } from "@phosphor-icons/react/dist/ssr/Article";
+import { FilePdf } from "@phosphor-icons/react/dist/ssr/FilePdf";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
@@ -12,8 +16,11 @@ import { cn } from "@/lib/utils";
 import { useEngineStore } from "@vcad/core";
 import { useDrawingStore, type ViewDirection } from "@/stores/drawing-store";
 import { useNotificationStore } from "@/stores/notification-store";
-import { useUiStore } from "@vcad/core";
+import { useUiStore, useDocumentStore } from "@vcad/core";
 import { downloadDxf } from "@/lib/save-load";
+import { exportDrawingPdf } from "@/lib/drawing-sheet";
+import { TitleBlockEditor } from "./TitleBlockEditor";
+import { useState } from "react";
 
 const VIEW_DIRECTIONS: { value: ViewDirection; label: string }[] = [
   { value: "front", label: "Front" },
@@ -39,8 +46,15 @@ export function DrawingToolbar() {
   const engine = useEngineStore((s) => s.engine);
   const scene = useEngineStore((s) => s.scene);
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  const drawing = useDocumentStore((s) => s.document.drawing);
+  const setDrawingSettings = useDocumentStore((s) => s.setDrawingSettings);
+  const [titleBlockOpen, setTitleBlockOpen] = useState(false);
 
   if (viewMode !== "2d") return null;
+
+  const sections = drawing?.sections ?? [];
+  const showBom = drawing?.showBom ?? false;
+  const canSection = viewDirection !== "isometric";
 
   const hasParts = scene?.parts?.length ?? 0 > 0;
 
@@ -64,6 +78,27 @@ export function DrawingToolbar() {
 
   function handleStartDetailView() {
     window.dispatchEvent(new CustomEvent("vcad:start-detail-view"));
+  }
+
+  function handleStartSection() {
+    window.dispatchEvent(new CustomEvent("vcad:start-section-view"));
+  }
+
+  function handleClearSections() {
+    setDrawingSettings({ sections: [] });
+  }
+
+  function handleToggleBom() {
+    setDrawingSettings({ showBom: !showBom });
+  }
+
+  function handleExportPdf() {
+    const error = exportDrawingPdf();
+    if (error) {
+      useNotificationStore.getState().addToast(error, "error");
+    } else {
+      useNotificationStore.getState().addToast("PDF exported", "success");
+    }
   }
 
   return (
@@ -157,6 +192,58 @@ export function DrawingToolbar() {
 
           <Separator orientation="vertical" className="mx-1 h-5" />
 
+          {/* Section views */}
+          <Tooltip
+            content={
+              canSection
+                ? "Add Section (click points, Enter to finish)"
+                : "Sections need an orthographic view"
+            }
+          >
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleStartSection}
+              disabled={!hasParts || !canSection}
+            >
+              <Scissors size={16} />
+            </Button>
+          </Tooltip>
+
+          {sections.length > 0 && (
+            <Tooltip content="Clear Sections">
+              <Button variant="ghost" size="icon-sm" onClick={handleClearSections}>
+                <X size={16} />
+              </Button>
+            </Tooltip>
+          )}
+
+          <Separator orientation="vertical" className="mx-1 h-5" />
+
+          {/* Sheet furniture */}
+          <Tooltip content="Edit Title Block">
+            <Button
+              variant={titleBlockOpen ? "default" : "ghost"}
+              size="icon-sm"
+              onClick={() => setTitleBlockOpen((v) => !v)}
+            >
+              <Article size={16} />
+            </Button>
+          </Tooltip>
+
+          <Tooltip content={showBom ? "Hide BOM Table" : "Show BOM Table"}>
+            <Button
+              variant={showBom ? "default" : "ghost"}
+              size="icon-sm"
+              onClick={handleToggleBom}
+              disabled={!hasParts}
+            >
+              <Table size={16} />
+            </Button>
+          </Tooltip>
+
+          <Separator orientation="vertical" className="mx-1 h-5" />
+
           {/* Export */}
           <Tooltip content="Export DXF">
             <Button
@@ -168,8 +255,21 @@ export function DrawingToolbar() {
               <Download size={16} />
             </Button>
           </Tooltip>
+
+          <Tooltip content="Export PDF Drawing">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleExportPdf}
+              disabled={!hasParts || !engine}
+            >
+              <FilePdf size={16} />
+            </Button>
+          </Tooltip>
         </div>
       </div>
+
+      {titleBlockOpen && <TitleBlockEditor onClose={() => setTitleBlockOpen(false)} />}
     </>
   );
 }
