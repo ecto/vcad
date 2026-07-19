@@ -52,8 +52,18 @@ fn main() {
             .map(|(name, connections)| NetlistNet { name, connections })
             .collect(),
     };
-    let rats = compute_ratsnest(&pcb, &netlist);
-    println!("unrouted connections: {}", rats.len());
+    let mut rats = compute_ratsnest(&pcb, &netlist);
+    // Nets that own a filled zone are connected THROUGH the plane, not by
+    // pad-to-pad traces — the router intentionally stitches them with vias.
+    // Their air-wires are not unrouted work and must not enter the verdict.
+    let plane_nets: std::collections::BTreeSet<&str> = pcb
+        .zones
+        .iter()
+        .filter(|z| !z.net.is_empty())
+        .map(|z| z.net.as_str())
+        .collect();
+    rats.retain(|l| !plane_nets.contains(l.net.as_str()));
+    println!("unrouted connections (plane nets excluded): {}", rats.len());
 
     let session = RouteSession::from_pcb(&pcb);
     let layers: Vec<_> = pcb
@@ -65,15 +75,31 @@ fn main() {
         .collect();
     let width = pcb.rules.default_rules.trace_width;
 
-    // Cluster connections whose bboxes (inflated 4mm) overlap.
+    // Cluster connections whose bboxes (inflated 2mm) overlap. Two rules keep
+    // the certificates honest: a cluster never holds two connections of the
+    // same net (per-connection node-disjointness can't model same-net cell
+    // sharing), and the merged window is capped — a big coalesced window
+    // coarsens the grid pitch (MAX_AXIS_CELLS) until unrelated terminals
+    // artificially collide.
+    const MAX_WINDOW_MM: f64 = 20.0;
     let mut clusters: Vec<Cluster> = Vec::new();
     'c: for l in &rats {
         let (lo, hi) = (
-            Vec2::new(l.from.x.min(l.to.x) - 4.0, l.from.y.min(l.to.y) - 4.0),
-            Vec2::new(l.from.x.max(l.to.x) + 4.0, l.from.y.max(l.to.y) + 4.0),
+            Vec2::new(l.from.x.min(l.to.x) - 2.0, l.from.y.min(l.to.y) - 2.0),
+            Vec2::new(l.from.x.max(l.to.x) + 2.0, l.from.y.max(l.to.y) + 2.0),
         );
         for (clo, chi, cc) in clusters.iter_mut() {
-            if lo.x <= chi.x && clo.x <= hi.x && lo.y <= chi.y && clo.y <= hi.y && cc.len() < 6 {
+            let merged_w = (chi.x.max(hi.x) - clo.x.min(lo.x)).abs();
+            let merged_h = (chi.y.max(hi.y) - clo.y.min(lo.y)).abs();
+            if lo.x <= chi.x
+                && clo.x <= hi.x
+                && lo.y <= chi.y
+                && clo.y <= hi.y
+                && cc.len() < 6
+                && merged_w <= MAX_WINDOW_MM
+                && merged_h <= MAX_WINDOW_MM
+                && cc.iter().all(|(n, _, _)| n != &l.net)
+            {
                 clo.x = clo.x.min(lo.x);
                 clo.y = clo.y.min(lo.y);
                 chi.x = chi.x.max(hi.x);

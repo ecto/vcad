@@ -214,20 +214,30 @@ pub fn route_window_complete(
             }
         }
     }
-    // Two connections snapping onto the same node can never be node-disjoint.
+    // Two DIFFERENT-net connections snapping onto the same node can never be
+    // node-disjoint — a genuine infeasibility at this pitch. Two connections
+    // of the SAME net sharing a cell is not: same-net copper may legally
+    // share space, but this model's per-connection node-disjointness can't
+    // express that, so the honest answer is unknown, never a proof.
     {
-        let mut seen: HashSet<usize> = HashSet::new();
+        let mut seen: HashMap<usize, &str> = HashMap::new();
         for (ci, &(s, t)) in terms.iter().enumerate() {
             for node in [s, t] {
-                if !seen.insert(node) {
-                    return CompleteOutcome::ProvedInfeasible {
-                        reason: format!(
-                            "terminals of net {} collide with another connection's terminal \
-                             in the same {:.3} mm grid cell — the window cannot host \
-                             node-disjoint paths",
-                            conns[ci].0, grid.pitch
-                        ),
-                    };
+                match seen.get(&node) {
+                    None => {
+                        seen.insert(node, conns[ci].0.as_str());
+                    }
+                    Some(&other) if other != conns[ci].0 => {
+                        return CompleteOutcome::ProvedInfeasible {
+                            reason: format!(
+                                "terminals of nets {} and {other} collide in the same \
+                                 {:.3} mm grid cell — the window cannot host \
+                                 node-disjoint paths",
+                                conns[ci].0, grid.pitch
+                            ),
+                        };
+                    }
+                    Some(_) => return CompleteOutcome::BudgetExhausted,
                 }
             }
         }
