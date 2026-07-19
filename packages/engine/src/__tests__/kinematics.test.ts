@@ -74,6 +74,12 @@ describe("solveForwardKinematics", () => {
     expect(base!.translation).toEqual({ x: 0, y: 0, z: 0 });
     // The arm rotates 90° about Z around the joint anchor at (10,0,0).
     expect(arm!.rotation.z).toBeCloseTo(90);
+    // The joint fully places the child: world = parent · joint(anchors, state).
+    // The instance's own transform (also {10,0,0} here — the natural authoring
+    // pattern) must NOT be composed on top, or the arm lands at {10,10,0}.
+    expect(arm!.translation.x).toBeCloseTo(10);
+    expect(arm!.translation.y).toBeCloseTo(0);
+    expect(arm!.translation.z).toBeCloseTo(0);
   });
 
   it("applyForwardKinematics poses instances in place", () => {

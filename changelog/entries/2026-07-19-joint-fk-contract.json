@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-joint-fk-contract",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Joints fully place their children — no more double-offset",
+  "summary": "A jointed instance with its own transform set to the joint-anchor location was placed twice as far away; joints now fully determine child poses across render, engine, and physics.",
+  "features": ["assemblies", "joints", "kinematics"]
+}
