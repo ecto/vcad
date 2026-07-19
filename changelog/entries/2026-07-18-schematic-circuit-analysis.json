@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-schematic-circuit-analysis",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Circuit analysis in the schematic editor",
+  "summary": "Analyze runs DC operating point + Bode sweep on your schematic; right-click a component to tune it to a cutoff/Q or DC target, with fail-closed blocker reporting.",
+  "features": ["electronics", "schematic", "simulation", "differentiable"],
+  "mcpTools": []
+}

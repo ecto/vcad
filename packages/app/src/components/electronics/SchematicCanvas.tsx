@@ -147,6 +147,16 @@ function getNetForWire(
 // ---------------------------------------------------------------------------
 
 /** Map a node voltage to a colour: blue (low) → green → red (high rail). */
+/** Compact engineering formatter for annotation labels (e.g. "3.30V", "1.2mA"). */
+function fmtEng(v: number, unit: string): string {
+  const a = Math.abs(v);
+  if (a >= 1 || a === 0) return `${v.toPrecision(3)}${unit}`;
+  if (a >= 1e-3) return `${(v * 1e3).toPrecision(3)}m${unit}`;
+  if (a >= 1e-6) return `${(v * 1e6).toPrecision(3)}µ${unit}`;
+  if (a >= 1e-9) return `${(v * 1e9).toPrecision(3)}n${unit}`;
+  return `${v.toExponential(1)}${unit}`;
+}
+
 function voltageColor(v: number, vmax = 5): string {
   const t = Math.max(0, Math.min(1, Math.abs(v) / vmax));
   return `hsl(${240 * (1 - t)}, 90%, 58%)`;
@@ -233,6 +243,29 @@ export function SchematicCanvas() {
   const simNetToNode = useElectronicsStore((s) => s.simNetToNode);
   const simRefToDevice = useElectronicsStore((s) => s.simRefToDevice);
   const simOn = simulating && simNodeVoltages != null;
+  // One-shot DC/AC analysis (Analyze flow): annotations + fail-closed blockers
+  const analysis = useElectronicsStore((s) => s.analysis);
+  const dcOn =
+    !simOn && analysis.status === "ok" && analysis.showDcAnnotations && analysis.dc != null;
+  const blockedRefs = useMemo(
+    () => new Set(analysis.blockers.map((b) => b.reference)),
+    [analysis.blockers],
+  );
+  const blockerMessage = (ref: string) =>
+    analysis.blockers.find((b) => b.reference === ref)?.message ?? null;
+  /** DC current through a component from the last analysis, or null. */
+  const dcCompCurrent = (ref: string): number | null => {
+    if (!dcOn || !analysis.mapping || !analysis.dc) return null;
+    const id = analysis.mapping.deviceOfRef[ref];
+    return id == null ? null : (analysis.dc.deviceCurrents[id] ?? null);
+  };
+  /** Open the tune dialog on right-click when the component is simulated. */
+  const onComponentContextMenu = (e: React.MouseEvent, ref: string) => {
+    if (analysis.status !== "ok" || analysis.mapping?.deviceOfRef[ref] == null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    useElectronicsStore.getState().setAnalysis({ tuningRef: ref, tuneResult: null });
+  };
   /** Voltage of a net under simulation (null when not simulating / unknown). */
   const netVoltage = (net: string | null): number | null => {
     if (!simOn || !net || !simNetToNode || !simNodeVoltages) return null;
@@ -319,6 +352,31 @@ export function SchematicCanvas() {
 
   const isNetActive = (net: string | null) =>
     net !== null && (net === activeNet || net === hoveredNet || activeComponentNets.has(net));
+
+  // DC annotation anchors: one voltage label per net, at the midpoint of the
+  // first wire carrying that net.
+  const dcNetAnchors = useMemo(() => {
+    if (!dcOn || !schematic || !analysis.mapping || !analysis.dc) return [];
+    const seen = new Set<string>();
+    const out: Array<{ net: string; x: number; y: number; v: number }> = [];
+    for (const wire of schematic.wires) {
+      const net = getNetForWire(wire, netlist, schematic.components);
+      if (!net || seen.has(net)) continue;
+      const node = analysis.mapping.nodeOfNet[net];
+      if (node == null || node === 0) continue;
+      const v = analysis.dc.nodeVoltages[node];
+      if (v == null) continue;
+      seen.add(net);
+      out.push({
+        net,
+        x: (wire.start.x + wire.end.x) / 2,
+        y: (wire.start.y + wire.end.y) / 2,
+        v,
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dcOn, schematic, netlist, analysis.mapping, analysis.dc]);
 
   // Connection dots: where wire endpoints meet component pins
   const connectionDots = useMemo(() => {
@@ -865,6 +923,7 @@ export function SchematicCanvas() {
                 transform={`translate(${displayPos.x}, ${displayPos.y})${comp.rotation ? ` rotate(${comp.rotation})` : ""}`}
                 className="cursor-pointer"
                 onClick={(e) => onComponentClick(e, i, comp.ref)}
+                onContextMenu={(e) => onComponentContextMenu(e, comp.ref)}
                 onPointerEnter={() => {
                   const nets = getNetsForComponent(comp.ref, netlist);
                   const first = nets.values().next().value;
@@ -966,6 +1025,7 @@ export function SchematicCanvas() {
               transform={`translate(${displayPos.x}, ${displayPos.y})${comp.rotation ? ` rotate(${comp.rotation})` : ""}`}
               className="cursor-pointer"
               onClick={(e) => onComponentClick(e, i, comp.ref)}
+              onContextMenu={(e) => onComponentContextMenu(e, comp.ref)}
               onPointerEnter={() => {
                 const nets = getNetsForComponent(comp.ref, netlist);
                 const first = nets.values().next().value;
@@ -1044,6 +1104,80 @@ export function SchematicCanvas() {
             </g>
           );
         })}
+
+        {/* DC operating-point annotations (Analyze flow): node voltages on
+            nets, device currents under components. */}
+        {dcOn && (
+          <g pointerEvents="none">
+            {dcNetAnchors.map((a) => (
+              <g key={`dcv-${a.net}`} transform={`translate(${a.x}, ${a.y - 6})`}>
+                <rect
+                  x={-2}
+                  y={-9}
+                  width={fmtEng(a.v, "V").length * 5.4 + 4}
+                  height={12}
+                  fill={isDark ? "#052e16" : "#dcfce7"}
+                  opacity={0.9}
+                  rx={2}
+                />
+                <text fontSize={8} fill="#4ade80" fontFamily="monospace" dominantBaseline="hanging" y={-8}>
+                  {fmtEng(a.v, "V")}
+                </text>
+              </g>
+            ))}
+            {schematic.components.map((comp, i) => {
+              const cur = dcCompCurrent(comp.ref);
+              if (cur == null) return null;
+              return (
+                <text
+                  key={`dci-${i}`}
+                  x={comp.position.x + 20}
+                  y={comp.position.y + 48}
+                  fontSize={7}
+                  fill="#4ade80"
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                  opacity={0.9}
+                >
+                  {fmtEng(cur, "A")}
+                </text>
+              );
+            })}
+          </g>
+        )}
+
+        {/* Fail-closed blockers: pin each unmappable component with a red
+            outline (the panel lists the reasons). */}
+        {analysis.status === "blocked" &&
+          schematic.components.map((comp, i) => {
+            if (!blockedRefs.has(comp.ref)) return null;
+            return (
+              <g key={`blk-${i}`} pointerEvents="none">
+                <rect
+                  x={comp.position.x - 8}
+                  y={comp.position.y - 16}
+                  width={56}
+                  height={60}
+                  fill="none"
+                  stroke="#f87171"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                  rx={4}
+                  style={{ filter: "drop-shadow(0 0 4px rgba(248,113,113,0.5))" }}
+                />
+                <text
+                  x={comp.position.x + 44}
+                  y={comp.position.y - 8}
+                  fontSize={10}
+                  fill="#f87171"
+                  fontFamily="monospace"
+                >
+                  !
+                </text>
+                <title>{blockerMessage(comp.ref)}</title>
+              </g>
+            );
+          })}
 
         {/* Ghost component preview (place tool) */}
         {schTool === "place" && ghostSymbol && ghostPos && (
