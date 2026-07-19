@@ -4213,10 +4213,18 @@ impl PhysicsSim {
     /// Joint ids in observation order (document `joints` order).
     ///
     /// `joint_positions[i]` / `joint_velocities[i]` in every observation
-    /// correspond to `jointIds()[i]`, as do action vector entries.
+    /// correspond to `jointIds()[i]`. Action vector entries index
+    /// `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
     #[wasm_bindgen(js_name = jointIds)]
     pub fn joint_ids(&self) -> Vec<String> {
         self.env.joint_ids().to_vec()
+    }
+
+    /// Actuated joint ids in action order (document order, Fixed joints
+    /// excluded). Action vector entry `i` drives `actuatedJointIds()[i]`.
+    #[wasm_bindgen(js_name = actuatedJointIds)]
+    pub fn actuated_joint_ids(&self) -> Vec<String> {
+        self.env.actuated_joint_ids().to_vec()
     }
 
     /// Get the observation dimension.

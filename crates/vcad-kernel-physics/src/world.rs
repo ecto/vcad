@@ -297,9 +297,9 @@ impl PhysicsWorld {
             joint_v_offsets,
         };
 
-        // Set initial joint states
+        // Set initial joint states (zero-dof joints have no q slot to write)
         for joint in joints {
-            if joint.state.abs() > 1e-6 {
+            if joint_ndof(&joint.kind) > 0 && joint.state.abs() > 1e-6 {
                 world.set_joint_position(&joint.id, joint.state);
                 // Also set the initial q value directly
                 if let Some(&q_offset) = world.joint_q_offsets.get(&joint.id) {
@@ -411,6 +411,9 @@ impl PhysicsWorld {
     /// * `target` - Target position (degrees for revolute, mm for prismatic)
     pub fn set_joint_position(&mut self, joint_id: &str, target: f64) {
         if let Some(kind) = self.joint_kinds.get(joint_id) {
+            if joint_ndof(kind) == 0 {
+                return;
+            }
             let physics_target = convert_state_to_physics(kind, target);
             self.motors.insert(
                 joint_id.to_string(),
@@ -431,6 +434,9 @@ impl PhysicsWorld {
     /// * `target` - Target velocity (deg/s for revolute, mm/s for prismatic)
     pub fn set_joint_velocity(&mut self, joint_id: &str, target: f64) {
         if let Some(kind) = self.joint_kinds.get(joint_id) {
+            if joint_ndof(kind) == 0 {
+                return;
+            }
             let physics_target = convert_state_to_physics(kind, target);
             self.motors.insert(
                 joint_id.to_string(),
@@ -450,6 +456,13 @@ impl PhysicsWorld {
     /// * `joint_id` - The vcad joint ID
     /// * `torque` - Torque/force (Nm for revolute, N for prismatic)
     pub fn apply_joint_torque(&mut self, joint_id: &str, torque: f64) {
+        if self
+            .joint_kinds
+            .get(joint_id)
+            .is_none_or(|kind| joint_ndof(kind) == 0)
+        {
+            return;
+        }
         self.motors.insert(
             joint_id.to_string(),
             MotorTarget {
@@ -626,6 +639,22 @@ impl PhysicsWorld {
     /// index against this order.
     pub fn joint_ids(&self) -> Vec<String> {
         self.joint_order.clone()
+    }
+
+    /// Joint ids (document order) with at least one degree of freedom.
+    ///
+    /// Fixed joints weld their child to the parent body and contribute no
+    /// actuated dof, so they are excluded here.
+    pub fn actuated_joint_ids(&self) -> Vec<String> {
+        self.joint_order
+            .iter()
+            .filter(|id| {
+                self.joint_kinds
+                    .get(*id)
+                    .is_some_and(|kind| joint_ndof(kind) > 0)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Get list of all instance IDs.
