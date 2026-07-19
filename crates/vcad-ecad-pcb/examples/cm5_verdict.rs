@@ -5,7 +5,7 @@
 //! argument: every connection ends accounted for.
 //!
 //! ```bash
-//! cargo run --release -p vcad-ecad-pcb --example cm5_verdict -- routed.pcb.json [budget] [out.pcb.json]
+//! cargo run --release -p vcad-ecad-pcb --example cm5_verdict -- routed.pcb.json [budget] [out.pcb.json] [max_cluster]
 //! ```
 
 use std::collections::BTreeMap;
@@ -30,6 +30,7 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(5_000_000);
     let out_json = args.next();
+    let max_cluster: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(6);
     let mut pcb: Pcb =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
 
@@ -96,7 +97,7 @@ fn main() {
                 && clo.x <= hi.x
                 && lo.y <= chi.y
                 && clo.y <= hi.y
-                && cc.len() < 6
+                && cc.len() < max_cluster
                 && merged_w <= MAX_WINDOW_MM
                 && merged_h <= MAX_WINDOW_MM
                 && cc.iter().all(|(n, _, _)| n != &l.net)
