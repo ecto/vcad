@@ -201,6 +201,114 @@ export function verifySequenceClearance(
 }
 
 /* ------------------------------------------------------------------ */
+/* Kinematic keyframes → timeline                                      */
+/* ------------------------------------------------------------------ */
+
+/** One time-major kinematic keyframe: every listed joint is posed at `t`. */
+export interface JointKeyframe {
+  /** Time in seconds (ascending across the list). */
+  t: number;
+  /** Joint id → commanded state (degrees for revolute, mm for prismatic). */
+  joints: Record<string, number>;
+}
+
+export const KEYFRAMES_DESCRIPTION =
+  "Kinematic playback shorthand: time-major joint keyframes " +
+  '[{t, joints:{jointId: value}}] with linear interpolation between keys — ' +
+  "no physics, no gravity; joints are posed exactly at the commanded values " +
+  "(degrees for revolute, mm for prismatic) and children ride their parents " +
+  "through the joint tree. Compiled to per-joint linear tracks. " +
+  "Mutually exclusive with `timeline`.";
+
+/**
+ * Compile time-major joint keyframes into a track-major {@link Timeline}
+ * (one linear track per joint id). Pure; exported for tests.
+ *
+ * A joint absent from some keyframes simply has fewer keys — the sampler's
+ * clamp-outside/interpolate-between semantics give the natural behavior
+ * (hold before its first key, hold after its last).
+ */
+export function compileJointKeyframes(
+  keyframes: JointKeyframe[],
+  opts: { fps?: number } = {},
+): { timeline: Timeline } | { error: string } {
+  if (!Array.isArray(keyframes) || keyframes.length < 2) {
+    return { error: "`keyframes` needs at least 2 entries" };
+  }
+  const perJoint = new Map<string, { t: number; value: number; ease: "linear" }[]>();
+  let prevT = -Infinity;
+  for (let i = 0; i < keyframes.length; i++) {
+    const kf = keyframes[i]!;
+    const t = Number(kf?.t);
+    if (!Number.isFinite(t) || t < 0) {
+      return { error: `keyframes[${i}].t must be a finite number >= 0` };
+    }
+    if (t < prevT) {
+      return { error: `keyframes[${i}].t=${t} is not ascending (previous was ${prevT})` };
+    }
+    prevT = t;
+    const joints = kf?.joints;
+    if (!joints || typeof joints !== "object" || Object.keys(joints).length === 0) {
+      return { error: `keyframes[${i}].joints must map at least one joint id to a value` };
+    }
+    for (const [id, raw] of Object.entries(joints)) {
+      const value = Number(raw);
+      if (!Number.isFinite(value)) {
+        return { error: `keyframes[${i}].joints["${id}"] must be a finite number` };
+      }
+      let keys = perJoint.get(id);
+      if (!keys) {
+        keys = [];
+        perJoint.set(id, keys);
+      }
+      keys.push({ t, value, ease: "linear" });
+    }
+  }
+  const durationS = prevT;
+  if (!(durationS > 0)) {
+    return { error: "keyframes must span a positive duration (last t must be > 0)" };
+  }
+  const fps =
+    opts.fps !== undefined && Number.isFinite(opts.fps)
+      ? Math.min(60, Math.max(1, Math.round(opts.fps)))
+      : 24;
+  const tracks: AnimTrack[] = [...perJoint.entries()].map(
+    ([jointId, keys]) =>
+      ({ target: { type: "Joint", jointId }, keys }) as unknown as AnimTrack,
+  );
+  return { timeline: { durationS, fps, tracks, camera: [] } as unknown as Timeline };
+}
+
+/**
+ * Resolve the timeline for a render tool call: an explicit one-shot
+ * `timeline`, compiled `keyframes`, or the document's stored timeline —
+ * in that priority, with `timeline`+`keyframes` together refused.
+ */
+function resolveTimelineInput(
+  args: Record<string, unknown>,
+  doc: Document,
+): { timeline: Timeline } | { error: string } {
+  if (args.timeline !== undefined && args.keyframes !== undefined) {
+    return { error: "Pass either `timeline` or `keyframes`, not both." };
+  }
+  if (args.keyframes !== undefined) {
+    const compiled = compileJointKeyframes(args.keyframes as JointKeyframe[], {
+      fps: args.fps === undefined ? undefined : Number(args.fps),
+    });
+    if ("error" in compiled) return compiled;
+    return { timeline: compiled.timeline };
+  }
+  const timeline = (args.timeline as Timeline | undefined) ?? doc.timeline;
+  if (!timeline) {
+    return {
+      error:
+        "No timeline: set one with `animate`, or pass one-shot `timeline` or `keyframes` here.",
+    };
+  }
+  return { timeline };
+}
+
+/* ------------------------------------------------------------------ */
 /* animate — author the timeline                                       */
 /* ------------------------------------------------------------------ */
 
@@ -216,8 +324,18 @@ export const animateSchema = {
       description:
         'Full timeline to set on the document: {durationS, fps?, tracks?, camera?}. Tracks keyframe targets: {target:{type:"Parameter",name}|{type:"Joint",jointId}|{type:"Visibility",instanceId}|{type:"Explode"}, keys:[{t,value,ease?:"linear"|"step"|"ease-in-out"}]}. Camera shots: {startS,endS,kind:{type:"Turntable",degrees,elevationDeg?}|{type:"Orbit",from:[az,el],to:[az,el]}|{type:"Focus",target,dolly?}|{type:"Static"}}. Pass null to clear the timeline.',
     },
+    keyframes: {
+      type: "array" as const,
+      items: { type: "object" as const },
+      description: KEYFRAMES_DESCRIPTION,
+    },
+    fps: {
+      type: "number" as const,
+      description:
+        "Playback frame rate when compiling `keyframes` (1-60, default 24). Ignored when `timeline` is passed.",
+    },
   },
-  required: ["document_id", "timeline"],
+  required: ["document_id"],
 };
 
 export async function animate(
@@ -229,7 +347,22 @@ export async function animate(
     doc.timeline = undefined;
     return ok({ timeline: null, note: "timeline cleared" });
   }
-  const timeline = raw as Timeline;
+  if (raw !== undefined && args.keyframes !== undefined) {
+    return err("Pass either `timeline` or `keyframes`, not both.");
+  }
+  let timeline: Timeline;
+  if (raw === undefined) {
+    if (args.keyframes === undefined) {
+      return err("Pass `timeline` (or `keyframes`, or null to clear).");
+    }
+    const compiled = compileJointKeyframes(args.keyframes as JointKeyframe[], {
+      fps: args.fps === undefined ? undefined : Number(args.fps),
+    });
+    if ("error" in compiled) return err(`keyframes rejected: ${compiled.error}`);
+    timeline = compiled.timeline;
+  } else {
+    timeline = raw as Timeline;
+  }
   const issues = validateTimeline(doc, timeline);
   if (issues.length > 0) {
     return err(
@@ -265,6 +398,16 @@ export const renderSequenceSchema = {
       type: "object" as const,
       description:
         "Optional one-shot timeline override (same shape as `animate`). When omitted, the document's stored timeline is used.",
+    },
+    keyframes: {
+      type: "array" as const,
+      items: { type: "object" as const },
+      description: KEYFRAMES_DESCRIPTION,
+    },
+    fps: {
+      type: "number" as const,
+      description:
+        "Playback frame rate when compiling `keyframes` (1-60, default 24).",
     },
     verify: {
       type: "boolean" as const,
@@ -584,12 +727,9 @@ export async function renderSequence(
     return err(e instanceof Error ? e.message : String(e));
   }
 
-  const timeline = (args.timeline as Timeline | undefined) ?? doc.timeline;
-  if (!timeline) {
-    return err(
-      "No timeline: set one with `animate` (or pass a one-shot `timeline` here).",
-    );
-  }
+  const resolved = resolveTimelineInput(args, doc);
+  if ("error" in resolved) return err(resolved.error);
+  const timeline = resolved.timeline;
   const issues = validateTimeline(doc, timeline);
   if (issues.length > 0) {
     return err(
@@ -660,6 +800,16 @@ export const exportVideoSchema = {
       type: "object" as const,
       description: "Optional one-shot timeline override (same shape as `animate`).",
     },
+    keyframes: {
+      type: "array" as const,
+      items: { type: "object" as const },
+      description: KEYFRAMES_DESCRIPTION,
+    },
+    fps: {
+      type: "number" as const,
+      description:
+        "Playback frame rate when compiling `keyframes` (1-60, default 24).",
+    },
     format: {
       type: "string" as const,
       enum: ["gif", "mp4", "auto"],
@@ -669,7 +819,18 @@ export const exportVideoSchema = {
     view: {
       type: "string" as const,
       enum: ["iso", "isometric", "top", "front", "side"],
-      description: "Camera view for the kernel renderer; defaults to 'iso'.",
+      description:
+        "Camera view for the kernel renderer; defaults to 'iso'. Ignored when azimuth/elevation are given.",
+    },
+    azimuth: {
+      type: "number" as const,
+      description:
+        "Orbit camera azimuth in degrees, CCW from +X in the XY plane (Z-up), matching render_view. Providing azimuth and/or elevation selects an arbitrary orbit view (missing angle defaults to 0) and overrides `view`.",
+    },
+    elevation: {
+      type: "number" as const,
+      description:
+        "Orbit camera elevation in degrees above the XY plane, clamped to [-90, 90]. See `azimuth`.",
     },
     width_px: {
       type: "number" as const,
@@ -870,10 +1031,9 @@ export async function exportVideo(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   const doc = getSession(String(args.document_id));
-  const timeline = (args.timeline as Timeline | undefined) ?? doc.timeline;
-  if (!timeline) {
-    return err("No timeline: set one with `animate` first.");
-  }
+  const resolvedTimeline = resolveTimelineInput(args, doc);
+  if ("error" in resolvedTimeline) return err(resolvedTimeline.error);
+  const timeline = resolvedTimeline.timeline;
   const issues = validateTimeline(doc, timeline);
   if (issues.length > 0) {
     return err(`timeline invalid:\n${issues.map((i) => i.problem).join("\n")}`);
@@ -891,6 +1051,15 @@ export async function exportVideo(
     Math.max(MIN_WIDTH_PX, Number(args.width_px) || DEFAULT_WIDTH_PX),
   );
   const view = String(args.view ?? "iso");
+  // Arbitrary orbit camera, matching render_view: azimuth/elevation
+  // (degrees, Z-up) override the named view; a missing angle defaults to 0.
+  const azRaw = args.azimuth === undefined ? undefined : Number(args.azimuth);
+  const elRaw = args.elevation === undefined ? undefined : Number(args.elevation);
+  const hasOrbit =
+    (azRaw !== undefined && Number.isFinite(azRaw)) ||
+    (elRaw !== undefined && Number.isFinite(elRaw));
+  const azimuth = azRaw !== undefined && Number.isFinite(azRaw) ? azRaw : 0;
+  const elevation = elRaw !== undefined && Number.isFinite(elRaw) ? elRaw : 0;
   const wantHud = args.hud !== false;
   const wantVerify = args.verify !== false;
 
@@ -905,12 +1074,29 @@ export async function exportVideo(
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_camera?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      focus: string | null,
+      axes: boolean,
+      labels: boolean,
+      dims: boolean,
+      section: string | null,
+      highlightJson: string | null,
+    ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
     return err(
       "export_video unavailable: kernel WASM build predates render_svg.",
     );
   }
+  if (hasOrbit && typeof wasm.render_svg_camera !== "function") {
+    return err(
+      "azimuth/elevation unavailable: kernel WASM build predates render_svg_camera — rebuild @vcad/kernel-wasm.",
+    );
+  }
+  const orbitView = hasOrbit ? `orbit:${azimuth},${elevation}` : null;
 
   // Verification first, so the HUD can show per-spec status while frames render.
   const verification = wantVerify
@@ -960,8 +1146,19 @@ export async function exportVideo(
     const posed = poseDocument(doc, frame);
     let svg: string;
     try {
-      svg =
-        view !== "iso" && typeof wasm.render_svg_view === "function"
+      svg = orbitView
+        ? wasm.render_svg_camera!(
+            JSON.stringify(posed),
+            SVG_SCALE,
+            orbitView,
+            null,
+            false,
+            false,
+            false,
+            null,
+            null,
+          )
+        : view !== "iso" && typeof wasm.render_svg_view === "function"
           ? wasm.render_svg_view(JSON.stringify(posed), SVG_SCALE, view)
           : wasm.render_svg(JSON.stringify(posed), SVG_SCALE);
     } catch (e) {
@@ -1041,6 +1238,7 @@ export async function exportVideo(
     width: size.width,
     height: size.height,
     bytes: bytes.byteLength,
+    view: hasOrbit ? `orbit(azimuth=${azimuth}, elevation=${elevation})` : view,
     hud: wantHud,
     ...(verification ? { verification } : {}),
   };
@@ -1226,7 +1424,7 @@ export const toolDefs: ToolDef[] = [
     name: "animate",
     pack: null,
     description:
-      "Set (or clear) the document's animation timeline: keyframe named parameters, joint states, instance visibility, or a global explode factor, plus declarative camera shots (turntable/orbit/focus). Preview with render_sequence; ship with export_video.",
+      "Set (or clear) the document's animation timeline: keyframe named parameters, joint states, instance visibility, or a global explode factor, plus declarative camera shots (turntable/orbit/focus). For kinematic joint playback (servo-style commanded motion, no physics) pass `keyframes:[{t, joints:{jointId: value}}]` instead of a full timeline. Preview with render_sequence; ship with export_video.",
     inputSchema: animateSchema,
     handler: async (a) => animate(a),
     behavior: behavior({ writesDoc: true }),
@@ -1235,7 +1433,7 @@ export const toolDefs: ToolDef[] = [
     name: "render_sequence",
     pack: null,
     description:
-      "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
+      "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Accepts one-shot `keyframes:[{t, joints:{jointId: value}}]` for kinematic joint playback (posed exactly, no physics). Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
     inputSchema: renderSequenceSchema,
     handler: async (a, ctx) => renderSequence(a, ctx),
     // Mounts the viewer: the animated GLB rides in _meta and autoplays —
@@ -1255,7 +1453,7 @@ export const toolDefs: ToolDef[] = [
     name: "export_video",
     pack: null,
     description:
-      "Render the timeline to an animated GIF or MP4 through the kernel renderer, with the verification HUD (time, animated values, clearance status) burned into every frame. MP4 requires ffmpeg on the server; GIF always works. Large outputs offload to an artifact URL.",
+      "Render the timeline to an animated GIF or MP4 through the kernel renderer, with the verification HUD (time, animated values, clearance status) burned into every frame. Accepts one-shot `keyframes:[{t, joints:{jointId: value}}]` for kinematic joint playback (posed exactly, no physics) — children ride their parents through the joint tree. Camera matches render_view: named `view` or azimuth/elevation orbit. MP4 requires ffmpeg on the server; GIF always works. Large outputs offload to an artifact URL.",
     inputSchema: exportVideoSchema,
     handler: async (a, ctx) => exportVideo(a, ctx),
     behavior: behavior({}),
