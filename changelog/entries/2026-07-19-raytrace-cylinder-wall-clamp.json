@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-raytrace-cylinder-wall-clamp",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Ray-traced cylinder walls no longer render elongated",
+  "summary": "Full cylinder/cone walls (e.g. rotated discs like a flywheel) traced as infinite tubes in raytrace mode; their height is now clamped correctly on both GPU and CPU paths.",
+  "features": ["raytrace", "kernel"]
+}

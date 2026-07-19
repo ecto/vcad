@@ -723,8 +723,26 @@ impl GpuScene {
             let trim_start = trim_verts.len() as u32;
             let mut trim_count = 0u32;
 
-            // Extract UV coordinates for the outer loop
-            let uvs = trim::extract_face_uv_loop(brep, face_id);
+            // Extract UV coordinates for the outer loop.
+            //
+            // A full cylinder/cone wall's outer loop projects to a zero-area
+            // UV polygon (only seam vertices survive; the rim circles
+            // collapse). The shader treats a degenerate outer loop as
+            // untrimmed — correct for spheres/tori whose v is bounded, but
+            // on a cylinder v is an unbounded length and the wall would
+            // trace as an infinite tube. Collapse such loops to the
+            // 2-vertex (v_min, v_max) form the shader's trim_count==2 path
+            // already clamps against.
+            let mut uvs = trim::extract_face_uv_loop(brep, face_id);
+            let surface = &brep.geometry.surfaces[face.surface_index];
+            if trim::polygon_area(&uvs).abs() < 1e-9 {
+                if let Some((v_min, v_max)) = trim::unbounded_v_range(surface.as_ref(), &uvs) {
+                    uvs = vec![
+                        vcad_kernel_math::Point2::new(0.0, v_min),
+                        vcad_kernel_math::Point2::new(0.0, v_max),
+                    ];
+                }
+            }
             #[cfg(target_arch = "wasm32")]
             {
                 web_sys::console::log_1(
