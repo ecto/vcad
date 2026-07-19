@@ -27,8 +27,18 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
     // surface — and still honour inner loops (holes) below.
     let untrimmed = polygon_area(&outer_uvs).abs() < 1e-9;
 
-    // Check if point is inside outer loop
-    if !untrimmed && !point_in_polygon(&uv, &outer_uvs) {
+    if untrimmed {
+        // On a cylinder or cone, v is an unbounded length parameter, so a
+        // seam-degenerate loop (e.g. a full cylinder wall: only seam
+        // vertices survive projection, the rim circles collapse) must still
+        // clamp v to the loop's extent — otherwise the wall traces as an
+        // infinite cylinder. u legitimately wraps the full turn.
+        if let Some((v_min, v_max)) = unbounded_v_range(surface.as_ref(), &outer_uvs) {
+            if uv.y < v_min || uv.y > v_max {
+                return false;
+            }
+        }
+    } else if !point_in_polygon(&uv, &outer_uvs) {
         return false;
     }
 
@@ -45,7 +55,7 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
 
 /// Signed area of a UV polygon (shoelace). Near-zero means the loop is
 /// degenerate in parameter space — e.g. a closed surface's seam-only loop.
-fn polygon_area(polygon: &[Point2]) -> f64 {
+pub(crate) fn polygon_area(polygon: &[Point2]) -> f64 {
     if polygon.len() < 3 {
         return 0.0;
     }
@@ -56,6 +66,27 @@ fn polygon_area(polygon: &[Point2]) -> f64 {
         area += a.x * b.y - b.x * a.y;
     }
     area / 2.0
+}
+
+/// For surfaces whose v parameter is an unbounded length (cylinder, cone),
+/// return the v-range spanned by a degenerate outer loop's vertices. Returns
+/// `None` for surfaces with intrinsically bounded v (sphere, torus, plane…),
+/// where the untrimmed fallback is safe as-is, or when the loop is empty.
+pub(crate) fn unbounded_v_range(surface: &dyn Surface, outer_uvs: &[Point2]) -> Option<(f64, f64)> {
+    use vcad_kernel_geom::SurfaceKind;
+    match surface.surface_type() {
+        SurfaceKind::Cylinder | SurfaceKind::Cone => {
+            let mut it = outer_uvs.iter();
+            let first = it.next()?;
+            let (mut v_min, mut v_max) = (first.y, first.y);
+            for uv in it {
+                v_min = v_min.min(uv.y);
+                v_max = v_max.max(uv.y);
+            }
+            Some((v_min, v_max))
+        }
+        _ => None,
+    }
 }
 
 /// Get the UV coordinates of vertices in a loop by projecting 3D positions onto the surface.
