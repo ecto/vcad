@@ -101,6 +101,34 @@ pub struct Solution {
     pub residual_rel: f64,
 }
 
+/// Per-node result fields from one solve, for viewport coloring.
+///
+/// Arrays are indexed by tet-mesh node; `nodes` carries the positions so a
+/// consumer can resample onto an arbitrary surface mesh (nearest node at
+/// lattice pitch `h_mm`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NodeFields {
+    /// Node positions, mm.
+    pub nodes: Vec<[f64; 3]>,
+    /// Displacement magnitude per node, mm.
+    pub displacement_mm: Vec<f64>,
+    /// Von Mises stress per node, MPa (volume-weighted average of the
+    /// incident constant-strain elements — smoother than element values,
+    /// same smearing caveats as the max).
+    pub von_mises_mpa: Vec<f64>,
+    /// Lattice pitch, mm.
+    pub h_mm: f64,
+}
+
+/// A solve result carrying both the scalar summary and per-node fields.
+#[derive(Debug, Clone)]
+pub struct FullSolution {
+    /// Scalar summary (the audited QoIs).
+    pub summary: Solution,
+    /// Per-node fields for visualization.
+    pub fields: NodeFields,
+}
+
 /// PCG controls.
 #[derive(Debug, Clone, Copy)]
 pub struct SolveOptions {
@@ -119,12 +147,21 @@ impl Default for SolveOptions {
     }
 }
 
-/// Solve one static case on a prepared tet mesh.
+/// Solve one static case on a prepared tet mesh (summary only).
 pub fn solve_static(
     mesh: &TetMesh,
     spec: &FeaSpec,
     opts: &SolveOptions,
 ) -> Result<Solution, SolveError> {
+    solve_static_full(mesh, spec, opts).map(|f| f.summary)
+}
+
+/// Solve one static case, keeping per-node displacement and stress fields.
+pub fn solve_static_full(
+    mesh: &TetMesh,
+    spec: &FeaSpec,
+    opts: &SolveOptions,
+) -> Result<FullSolution, SolveError> {
     spec.validate()?;
 
     // Element gradients: for a linear tet with nodes x0..x3, the
@@ -333,6 +370,9 @@ pub fn solve_static(
 
     let mut max_vm = 0.0f64;
     let mut max_vm_elem = 0usize;
+    // Volume-weighted nodal average of the (constant-per-element) von Mises.
+    let mut node_vm = vec![0.0f64; nn];
+    let mut node_wt = vec![0.0f64; nn];
     for (ei, e) in elems.iter().enumerate() {
         let mut h = [[0.0f64; 3]; 3];
         for (i, g) in e.grad.iter().enumerate() {
@@ -357,6 +397,15 @@ pub fn solve_static(
             max_vm = vm;
             max_vm_elem = ei;
         }
+        for &ni in &e.n {
+            node_vm[ni as usize] += vm * e.vol;
+            node_wt[ni as usize] += e.vol;
+        }
+    }
+    for (v, w) in node_vm.iter_mut().zip(&node_wt) {
+        if *w > 0.0 {
+            *v /= w;
+        }
     }
     let centroid = {
         let t = &mesh.tets[max_vm_elem];
@@ -369,19 +418,31 @@ pub fn solve_static(
         c
     };
 
-    Ok(Solution {
-        max_displacement_mm: max_d2.sqrt() / e_mod,
-        max_displacement_at: mesh.nodes[max_d_node],
-        max_von_mises_mpa: max_vm,
-        max_stress_at: centroid,
-        compliance_n_mm: compliance,
-        volume_mm3: mesh.volume(),
-        nodes: nn,
-        tets: mesh.tets.len(),
-        h_mm: mesh.h,
-        grid: mesh.grid,
-        iterations,
-        residual_rel,
+    let displacement_mm: Vec<f64> = (0..nn)
+        .map(|i| (u[3 * i].powi(2) + u[3 * i + 1].powi(2) + u[3 * i + 2].powi(2)).sqrt() / e_mod)
+        .collect();
+
+    Ok(FullSolution {
+        summary: Solution {
+            max_displacement_mm: max_d2.sqrt() / e_mod,
+            max_displacement_at: mesh.nodes[max_d_node],
+            max_von_mises_mpa: max_vm,
+            max_stress_at: centroid,
+            compliance_n_mm: compliance,
+            volume_mm3: mesh.volume(),
+            nodes: nn,
+            tets: mesh.tets.len(),
+            h_mm: mesh.h,
+            grid: mesh.grid,
+            iterations,
+            residual_rel,
+        },
+        fields: NodeFields {
+            nodes: mesh.nodes.clone(),
+            displacement_mm,
+            von_mises_mpa: node_vm,
+            h_mm: mesh.h,
+        },
     })
 }
 
@@ -497,6 +558,24 @@ mod tests {
         let ratio = a.max_displacement_mm / s.max_displacement_mm;
         assert!((ratio - 200.0 / 69.0).abs() < 1e-6, "ratio {ratio}");
         assert!((a.max_von_mises_mpa - s.max_von_mises_mpa).abs() < 1e-9);
+    }
+
+    #[test]
+    fn full_solve_fields_are_consistent_with_summary() {
+        let mesh = box_mesh([0.0; 3], [80.0, 10.0, 10.0]);
+        let tm = tet_fill(&mesh, 16).unwrap();
+        let spec = bar_spec([0.0, 0.0, -100.0], 16);
+        let full = solve_static_full(&tm, &spec, &SolveOptions::default()).unwrap();
+        let f = &full.fields;
+        assert_eq!(f.nodes.len(), full.summary.nodes);
+        assert_eq!(f.displacement_mm.len(), f.nodes.len());
+        assert_eq!(f.von_mises_mpa.len(), f.nodes.len());
+        let max_d = f.displacement_mm.iter().cloned().fold(0.0, f64::max);
+        assert!((max_d - full.summary.max_displacement_mm).abs() < 1e-12);
+        // Nodal averaging smooths: nodal max is at most the element max.
+        let max_vm = f.von_mises_mpa.iter().cloned().fold(0.0, f64::max);
+        assert!(max_vm <= full.summary.max_von_mises_mpa + 1e-12);
+        assert!(max_vm > 0.0);
     }
 
     #[test]

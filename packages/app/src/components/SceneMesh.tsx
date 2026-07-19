@@ -17,6 +17,7 @@ import {
 import { useDebugOverlayStore } from "@/stores/debug-overlay-store";
 import { inspectTriangleFromMesh as runInspectTriangle } from "./TriangleInspector";
 import { pickSubFeature } from "@/lib/sub-feature-picking";
+import { useAnalyzeStore } from "@/stores/analyze-store";
 
 const HOVER_EMISSIVE = new THREE.Color(0xffb800); // neon amber
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
@@ -514,6 +515,11 @@ export const SceneMesh = memo(function SceneMesh({
   const materials = useDocumentStore((s) => s.document.materials);
   const renamePart = useDocumentStore((s) => s.renamePart);
 
+  // Analyze field overlay (#592): per-vertex colors for this part, if any
+  const analyzeColors = useAnalyzeStore((s) =>
+    s.fieldOverlay?.partId === partInfo.id ? s.fieldOverlay.colors : null,
+  );
+
   // Face selection state
   const faceSelectionMode = useSketchStore((s) => s.faceSelectionMode);
   const hoveredFace = useSketchStore((s) => s.hoveredFace);
@@ -706,8 +712,11 @@ export const SceneMesh = memo(function SceneMesh({
       geo.computeVertexNormals();
     }
 
-    // Per-vertex colors (e.g. embroidery thread colors)
-    if (mesh.colors && mesh.colors.length === positions.length) {
+    // Per-vertex colors: an Analyze field overlay (stress/displacement,
+    // #592) wins over baked mesh colors (e.g. embroidery thread colors).
+    if (analyzeColors && analyzeColors.length === positions.length) {
+      geo.setAttribute("color", new THREE.BufferAttribute(analyzeColors, 3));
+    } else if (mesh.colors && mesh.colors.length === positions.length) {
       const colors = new Float32Array(mesh.colors);
       geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     } else {
@@ -728,7 +737,7 @@ export const SceneMesh = memo(function SceneMesh({
     return () => {
       geo.dispose();
     };
-  }, [mesh, partInfo.name, invalidate]);
+  }, [mesh, partInfo.name, invalidate, analyzeColors]);
 
   // Apply Transform3D to mesh (for assembly instances)
   useEffect(() => {
@@ -971,8 +980,8 @@ export const SceneMesh = memo(function SceneMesh({
       {/* Use procedural shader if available, otherwise standard PBR */}
       {!shaderMaterial && (
         <PbrMaterial
-          color={mesh.colors ? undefined : materialColor}
-          vertexColors={!!mesh.colors}
+          color={mesh.colors || analyzeColors ? undefined : materialColor}
+          vertexColors={!!mesh.colors || !!analyzeColors}
           emissive={emissiveColor}
           emissiveIntensity={emissiveIntensity}
           metalness={materialDef?.metallic ?? 0.0}

@@ -8219,6 +8219,9 @@ struct FeaOptions {
     stress_tol: f64,
     tol: f64,
     max_iters: usize,
+    /// When true, per-vertex displacement/von-Mises fields sampled onto the
+    /// input surface mesh are returned (for viewport coloring).
+    fields: bool,
 }
 
 impl Default for FeaOptions {
@@ -8231,6 +8234,7 @@ impl Default for FeaOptions {
             stress_tol: conv.stress_tol,
             tol: solve.tol,
             max_iters: solve.max_iters,
+            fields: false,
         }
     }
 }
@@ -8240,6 +8244,80 @@ struct WasmFeaAnalysis {
     study: vcad_kernel::vcad_kernel_fea::convergence::ConvergedAnalysis,
     claim_set: Option<vcad_kernel::vcad_kernel_fea::receipt::ClaimSet>,
     receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+    /// Displacement magnitude sampled at each input surface vertex, mm.
+    /// Present only when `FeaOptions::fields` was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vertex_displacement_mm: Option<Vec<f64>>,
+    /// Von Mises stress sampled at each input surface vertex, MPa.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vertex_von_mises_mpa: Option<Vec<f64>>,
+}
+
+/// Sample per-node fields onto surface vertices by nearest lattice node
+/// (uniform spatial hash at pitch `h`; ring search widens until a node is
+/// found, so every vertex gets the value of its closest interior node).
+fn sample_fields_to_vertices(
+    fields: &vcad_kernel::vcad_kernel_fea::solve::NodeFields,
+    positions: &[f32],
+) -> (Vec<f64>, Vec<f64>) {
+    use std::collections::HashMap;
+    let h = fields.h_mm.max(1e-9);
+    let key = |p: &[f64; 3]| {
+        [
+            (p[0] / h).floor() as i64,
+            (p[1] / h).floor() as i64,
+            (p[2] / h).floor() as i64,
+        ]
+    };
+    let mut cells: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    for (i, n) in fields.nodes.iter().enumerate() {
+        cells.entry(key(n)).or_default().push(i as u32);
+    }
+    let nv = positions.len() / 3;
+    let mut disp = Vec::with_capacity(nv);
+    let mut vm = Vec::with_capacity(nv);
+    for v in 0..nv {
+        let p = [
+            positions[3 * v] as f64,
+            positions[3 * v + 1] as f64,
+            positions[3 * v + 2] as f64,
+        ];
+        let c = key(&p);
+        let mut best: Option<(f64, u32)> = None;
+        let mut ring = 1i64;
+        // Search the 3^3 neighborhood first, then widen shells until a node
+        // shows up (guaranteed: the lattice is finite and non-empty).
+        loop {
+            for dx in -ring..=ring {
+                for dy in -ring..=ring {
+                    for dz in -ring..=ring {
+                        if dx.abs() < ring && dy.abs() < ring && dz.abs() < ring && ring > 1 {
+                            continue; // interior already searched
+                        }
+                        if let Some(ids) = cells.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) {
+                            for &i in ids {
+                                let n = &fields.nodes[i as usize];
+                                let d2 = (n[0] - p[0]).powi(2)
+                                    + (n[1] - p[1]).powi(2)
+                                    + (n[2] - p[2]).powi(2);
+                                if best.is_none_or(|(b, _)| d2 < b) {
+                                    best = Some((d2, i));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if best.is_some() || ring > 4096 {
+                break;
+            }
+            ring += 1;
+        }
+        let i = best.map(|(_, i)| i as usize).unwrap_or(0);
+        disp.push(fields.displacement_mm[i]);
+        vm.push(fields.von_mises_mpa[i]);
+    }
+    (disp, vm)
 }
 
 /// Static structural FEA of a closed evaluated mesh with fail-closed
@@ -8290,8 +8368,15 @@ pub fn fea_analyze_mesh(
         tol: opts.tol,
         max_iters: opts.max_iters,
     };
-    let study = fea::convergence::analyze_converged(&mesh, &spec, &conv, &solve_opts)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let (study, node_fields) =
+        fea::convergence::analyze_converged_fields(&mesh, &spec, &conv, &solve_opts)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+    let (vertex_displacement_mm, vertex_von_mises_mpa) = if opts.fields {
+        let (d, v) = sample_fields_to_vertices(&node_fields, positions);
+        (Some(d), Some(v))
+    } else {
+        (None, None)
+    };
     let (claim_set, receipt_claims) = match &study.verdict {
         fea::convergence::ConvergenceVerdict::Converged => {
             let set = fea::receipt::predicted_claims(&study, &spec)
@@ -8307,6 +8392,8 @@ pub fn fea_analyze_mesh(
         study,
         claim_set,
         receipt_claims,
+        vertex_displacement_mm,
+        vertex_von_mises_mpa,
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))

@@ -142,7 +142,8 @@ describe("White-screen guards", () => {
     expect(src).toMatch(/invalidate\s*=\s*useThree/);
     // ...and the geometry-build effect (keyed on the incoming mesh) must list
     // invalidate as a dep, proving the kick lives in that effect.
-    expect(src).toMatch(/\[\s*mesh\s*,\s*partInfo\.name\s*,\s*invalidate\s*\]/);
+    // (analyzeColors rides in the same effect for Analyze field overlays.)
+    expect(src).toMatch(/\[\s*mesh\s*,\s*partInfo\.name\s*,\s*invalidate\s*,\s*analyzeColors\s*\]/);
     // The imported-mesh path builds geometry imperatively too.
     expect(src).toMatch(/\[\s*mesh\s*,\s*invalidate\s*\]/);
   });

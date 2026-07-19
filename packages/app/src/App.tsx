@@ -61,6 +61,7 @@ const LogViewer = lazyWithRetry(() => import("@/components/LogViewer").then(m =>
 const PrintPanel = lazyWithRetry(() => import("@/components/print").then(m => ({ default: m.PrintPanel })), "PrintPanel");
 const DfmOverlay = lazyWithRetry(() => import("@/components/print/DfmOverlay").then(m => ({ default: m.DfmOverlay })), "DfmOverlay");
 const CamPanel = lazyWithRetry(() => import("@/components/cam").then(m => ({ default: m.CamPanel })), "CamPanel");
+const AnalyzePanel = lazyWithRetry(() => import("@/components/AnalyzePanel").then(m => ({ default: m.AnalyzePanel })), "AnalyzePanel");
 const ChatSidebar = lazyWithRetry(() => import("@/components/ChatSidebar").then(m => ({ default: m.ChatSidebar })), "ChatSidebar");
 const DocumentPicker = lazyWithRetry(() => import("@/components/DocumentPicker").then(m => ({ default: m.DocumentPicker })), "DocumentPicker");
 const OfflineIndicator = lazyWithRetry(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })), "OfflineIndicator");
@@ -112,6 +113,7 @@ import { useVersionTimelineStore } from "@/stores/version-timeline-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
+import { useAnalyzeStore } from "@/stores/analyze-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 
@@ -326,6 +328,7 @@ export function App() {
   const selectMultiple = useUiStore((s) => s.selectMultiple);
   const printPanelOpen = useSlicerStore((s) => s.printPanelOpen);
   const camPanelOpen = useCamStore((s) => s.camPanelOpen);
+  const analyzePanelOpen = useAnalyzeStore((s) => s.panelOpen);
   const embroideryPanelOpen = useEmbroideryStore((s) => s.panelOpen);
   const partIndex = useDocumentStore((s) => s.partIndex);
   const selIds = useUiStore((s) => s.selectedPartIds);
@@ -1100,6 +1103,13 @@ export function App() {
       {camPanelOpen && (
         <AsyncBoundary region="cam-panel" fallback={null}>
           <CamPanel />
+        </AsyncBoundary>
+      )}
+
+      {/* Analyze panel (#592): unified solver studies with mandatory receipts */}
+      {analyzePanelOpen && (
+        <AsyncBoundary region="analyze-panel" fallback={null}>
+          <AnalyzePanel />
         </AsyncBoundary>
       )}
 

@@ -282,6 +282,16 @@ export {
 } from "./parts.js";
 export type { PartManifestEntry, PartParam, PartXref } from "./parts.js";
 
+// Analyze mode (#592): off-main-thread solver studies
+export { AnalyzeClient, getAnalyzeClient } from "./analyze.js";
+export type {
+  FeaAnalysis,
+  FeaStudyResult,
+  FeaSolutionSummary,
+  ToleranceAnalysis,
+  ToleranceDistribution,
+} from "./analyze.js";
+
 // Physics simulation
 export { PhysicsEnv, isPhysicsAvailable } from "./physics.js";
 export type {

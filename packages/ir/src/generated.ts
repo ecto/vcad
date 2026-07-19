@@ -24,6 +24,87 @@ intensity?: number,
 radius?: number, };
 
 /**
+ * Quantities recorded from the last accepted run of a study.
+ */
+export type AnalysisBaseline = { 
+/**
+ * ISO-8601 timestamp of the run.
+ */
+recordedAtIso: string, 
+/**
+ * Recorded quantities (claim id → value).
+ */
+quantities: Array<BaselineQuantity>, };
+
+/**
+ * A persisted solver study for the unified Analyze mode (#592).
+ *
+ * The spec (loads, supports, contributors, …) lives on the document so the
+ * study re-runs and re-verifies whenever geometry changes; the optional
+ * `baseline` records the quantities from the last accepted run so a re-run
+ * can report Holds (reproduced), Stale (drifted), or Violated (requirement
+ * failed).
+ */
+export type AnalysisStudy = { 
+/**
+ * Stable unique id (UUID-ish string).
+ */
+id: string, 
+/**
+ * Human-readable name, e.g. "bracket load case".
+ */
+name: string, 
+/**
+ * The study definition.
+ */
+study: AnalysisStudyKind, 
+/**
+ * Quantities from the last accepted run, for Holds/Stale detection.
+ */
+baseline?: AnalysisBaseline, };
+
+/**
+ * The per-domain study definition. New solver domains land as new variants.
+ */
+export type AnalysisStudyKind = { "type": "structural", 
+/**
+ * Part id (stringified root node id) the study meshes and solves.
+ */
+partId: string, 
+/**
+ * Lattice cells along the longest axis at the coarsest level.
+ */
+resolution: number, 
+/**
+ * Young's modulus, MPa.
+ */
+youngsModulusMpa: number, 
+/**
+ * Poisson's ratio.
+ */
+poisson: number, 
+/**
+ * Yield strength for the safety-factor claim, MPa.
+ */
+yieldStrengthMpa?: number, 
+/**
+ * Point/region loads.
+ */
+loads: Array<StudyLoad>, 
+/**
+ * Fixed supports.
+ */
+supports: Array<StudySupport>, } | { "type": "tolerance", 
+/**
+ * Dimension-chain contributors.
+ */
+contributors: Array<StudyContributor>, 
+/**
+ * The requirement the chain must satisfy.
+ */
+requirement: StudyRequirement, };
+
+/**
  * A single keyframe: value at time `t` (seconds), eased from the previous key.
  */
 export type AnimKey = { 
@@ -87,6 +168,23 @@ top: [number, number, number],
  * Bottom color as RGB (0.0-1.0).
  */
 bottom: [number, number, number], } | { "type": "Transparent" };
+
+/**
+ * One recorded quantity in an [`AnalysisBaseline`].
+ */
+export type BaselineQuantity = { 
+/**
+ * Quantity id, e.g. "fea.max_displacement_mm".
+ */
+id: string, 
+/**
+ * Recorded value.
+ */
+value: number, 
+/**
+ * Unit label, e.g. "mm", "MPa".
+ */
+unit: string, };
 
 /**
  * Sidecar map from (node, field path) → expression.
@@ -1147,6 +1245,13 @@ bindings?: Bindings,
  * `check_clearance` and receipt verification whenever geometry changes.
  */
 clearance_specs?: Array<ClearanceSpec>, 
+/**
+ * Persisted solver studies (structural FEA, tolerance stackup, …) for
+ * the unified Analyze mode. Like `clearance_specs`, studies are
+ * re-verified against the current geometry rather than computed once —
+ * a study whose stored baseline no longer reproduces is Stale/Violated.
+ */
+analysis_studies?: Array<AnalysisStudy>, 
 /**
  * Drawing sheet settings: title block, section lines, BOM visibility.
  */
@@ -3081,6 +3186,93 @@ dielectricEr?: number,
  * Material name (e.g. "FR4", "Rogers 4350B").
  */
 material?: string, };
+
+/**
+ * One contributor in a linear tolerance chain.
+ */
+export type StudyContributor = { 
+/**
+ * Contributor name, e.g. "shaft length".
+ */
+name: string, 
+/**
+ * Signed sensitivity coefficient (usually ±1).
+ */
+coeff: number, 
+/**
+ * Nominal dimension, mm.
+ */
+nominal: number, 
+/**
+ * Lower tolerance (magnitude), mm.
+ */
+tolMinus: number, 
+/**
+ * Upper tolerance, mm.
+ */
+tolPlus: number, 
+/**
+ * Distribution: "normal" (default; σ derived from the tolerance band
+ * at ±tol = 3σ) or "uniform".
+ */
+dist?: string, };
+
+/**
+ * A load applied over a world-frame AABB region (kernel node-selection
+ * contract; fail-closed — an empty region errors, surfaced as Stale).
+ */
+export type StudyLoad = { 
+/**
+ * Region selecting mesh nodes.
+ */
+region: StudyRegion, 
+/**
+ * Total force vector in N, split evenly over selected nodes.
+ */
+force: [number, number, number], };
+
+/**
+ * World-frame axis-aligned box region, mm.
+ */
+export type StudyRegion = { 
+/**
+ * Minimum corner.
+ */
+min: [number, number, number], 
+/**
+ * Maximum corner.
+ */
+max: [number, number, number], };
+
+/**
+ * The requirement a tolerance chain must satisfy.
+ */
+export type StudyRequirement = { 
+/**
+ * Requirement name, e.g. "end gap".
+ */
+name: string, 
+/**
+ * Lower bound, mm.
+ */
+lowerMm?: number, 
+/**
+ * Upper bound, mm.
+ */
+upperMm?: number, };
+
+/**
+ * A fixed support over a world-frame AABB region.
+ */
+export type StudySupport = { 
+/**
+ * Region selecting mesh nodes.
+ */
+region: StudyRegion, 
+/**
+ * Which translational DOFs are fixed (x, y, z).
+ */
+fix: [boolean, boolean, boolean], };
 
 /**
  * A builtin symbol definition for schematic component placement.

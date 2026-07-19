@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-18-analyze-mode",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Unified Analyze mode: FEA + tolerance studies",
+  "summary": "New Analyze panel runs structural FEA and tolerance stackup studies in a worker, paints stress/displacement on the mesh, and shows a mandatory receipt claim status on every result.",
+  "features": ["analyze", "fea", "tolerance", "receipts"]
+}

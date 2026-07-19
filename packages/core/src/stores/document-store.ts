@@ -28,6 +28,7 @@ import type {
   BoardOutline,
   EmbroideryDesign,
   FillParams,
+  AnalysisStudy,
 } from "@vcad/ir";
 import { DEFAULT_FILL_PARAMS } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -414,6 +415,9 @@ export interface DocumentState {
   setPartVisible: (partId: string, visible: boolean) => void;
   // Reorder parts in tree
   reorderPart: (partId: string, newIndex: number) => void;
+  // Analyze mode (#592): persist solver studies on the document (CRDT
+  // singleton feature, like scene settings)
+  setAnalysisStudies: (studies: AnalysisStudy[]) => void;
   // Scene settings actions
   setSceneSettings: (settings: SceneSettings) => void;
   /** Persist drawing sheet settings (title block, sections, BOM) on the document. */
@@ -716,6 +720,27 @@ function applyLegacyResult(result: CrdtMutationResult): Partial<DocumentState> {
 /** Cached singleton feature IDs (lazily created, cleared on engine init). */
 let _sceneSettingsFeatureId: string | null = null;
 let _schematicFeatureId: string | null = null;
+let _analysisStudiesFeatureId: string | null = null;
+
+function getOrCreateAnalysisStudiesFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_analysisStudiesFeatureId) return _analysisStudiesFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "analysis-studies");
+  if (existing) {
+    _analysisStudiesFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("analysis-studies", "{}");
+  if (result.createdFeatureId) {
+    _analysisStudiesFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
 
 function getOrCreateSceneFeature(state: DocumentState): string {
   const engine = state._crdtEngine!;
@@ -867,6 +892,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     _sceneSettingsFeatureId = null;
     _schematicFeatureId = null;
+    _analysisStudiesFeatureId = null;
     _drawingSettingsFeatureId = null;
     const engine = new EngineClass();
     set({ _crdtEngine: engine, _crdtEngineClass: EngineClass });
@@ -1808,6 +1834,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
+      _analysisStudiesFeatureId = null;
       _drawingSettingsFeatureId = null;
       const engine = new state._crdtEngineClass();
       set({
@@ -1881,6 +1908,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const positionJson = engine.compute_position_between(beforeId, afterId);
     const result = engine.move_feature(partId, positionJson);
     set(applyLegacyResult(result));
+  },
+
+  // Analyze mode: studies live in a singleton "analysis-studies" CRDT
+  // feature so they survive the canonical v0.4 save (unlike clearance_specs,
+  // which only round-trips the server JSON path today).
+  setAnalysisStudies: (studies) => {
+    const state = get();
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateAnalysisStudiesFeature(state);
+    engine.set_param(fid, "studies", JSON.stringify(crdtStr(JSON.stringify(studies))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
   },
 
   // Scene settings actions

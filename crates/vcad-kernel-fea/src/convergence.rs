@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::mesh::{tet_fill, MeshError};
-use crate::solve::{solve_static, Solution, SolveError, SolveOptions};
+use crate::solve::{solve_static_full, NodeFields, Solution, SolveError, SolveOptions};
 use crate::spec::FeaSpec;
 
 /// Controls for the refinement study.
@@ -135,6 +135,19 @@ pub fn analyze_converged(
     conv: &ConvergenceOptions,
     solve_opts: &SolveOptions,
 ) -> Result<ConvergedAnalysis, ConvergenceError> {
+    analyze_converged_fields(surface, spec, conv, solve_opts).map(|(a, _)| a)
+}
+
+/// Run the refinement study, also returning the finest level's per-node
+/// fields (for viewport coloring). Fields are returned regardless of the
+/// verdict — consumers must gate any *claims* on `converged()` themselves,
+/// but an Unverifiable field picture is still useful diagnostic feedback.
+pub fn analyze_converged_fields(
+    surface: &TriangleMesh,
+    spec: &FeaSpec,
+    conv: &ConvergenceOptions,
+    solve_opts: &SolveOptions,
+) -> Result<(ConvergedAnalysis, NodeFields), ConvergenceError> {
     if conv.levels < 2 {
         return Err(ConvergenceError::InvalidOptions(
             "levels must be >= 2 (one solve is an anecdote, not a study)".into(),
@@ -146,11 +159,15 @@ pub fn analyze_converged(
         ));
     }
     let mut levels = Vec::with_capacity(conv.levels);
+    let mut finest_fields = None;
     for k in 0..conv.levels {
         let res = (spec.resolution << k).min(256);
         let tm = tet_fill(surface, res)?;
-        levels.push(solve_static(&tm, spec, solve_opts)?);
+        let full = solve_static_full(&tm, spec, solve_opts)?;
+        levels.push(full.summary);
+        finest_fields = Some(full.fields);
     }
+    let finest_fields = finest_fields.expect("levels >= 2");
     let fine = &levels[levels.len() - 1];
     let coarse = &levels[levels.len() - 2];
     let rel = |a: f64, b: f64| {
@@ -189,14 +206,17 @@ pub fn analyze_converged(
         }
         _ => None,
     };
-    Ok(ConvergedAnalysis {
-        levels,
-        displacement_change_rel,
-        stress_change_rel,
-        verdict,
-        safety_factor,
-        options: *conv,
-    })
+    Ok((
+        ConvergedAnalysis {
+            levels,
+            displacement_change_rel,
+            stress_change_rel,
+            verdict,
+            safety_factor,
+            options: *conv,
+        },
+        finest_fields,
+    ))
 }
 
 #[cfg(test)]
