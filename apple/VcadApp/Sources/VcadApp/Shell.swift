@@ -1173,6 +1173,50 @@ struct ExampleChips: View {
     }
 }
 
+/// Play/pause + scrub transport for kinematic joint playback. Scrubbing
+/// pauses (direct control beats a fighting timer); play loops the timeline.
+struct PlaybackBar: View {
+    let model: EditorModel
+
+    private var duration: Double { model.timeline?.durationS ?? 1 }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                model.togglePlayback()
+            } label: {
+                Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(model.isPlaying ? "Pause" : "Play")
+
+            Slider(
+                value: Binding(
+                    get: { model.playbackTime },
+                    set: { model.setPlaybackTime($0) }
+                ),
+                in: 0...max(duration, 0.001),
+                onEditingChanged: { began in
+                    if began { model.pausePlayback() }
+                }
+            )
+            .controlSize(.small)
+            .frame(width: 220)
+
+            Text(String(format: "%.2f / %.2f s", model.playbackTime, duration))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 86, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .glassCard(22)
+    }
+}
+
 struct ViewportView: View {
     let model: EditorModel
 
@@ -1181,7 +1225,8 @@ struct ViewportView: View {
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
-             model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty)
+             model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty,
+             model.playbackTime, model.playbackDirty)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -1236,6 +1281,17 @@ struct ViewportView: View {
                     }
                 }
                 model.parameterDirty = false
+            }
+            // Kinematic playback: re-pose the instance entities from the
+            // latest FK solve (transforms only — meshes never change).
+            if model.playbackDirty {
+                if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                   let centering = root.findEntity(named: "centering") {
+                    for (i, m) in model.instanceTransforms.enumerated() {
+                        centering.findEntity(named: "inst\(i)")?.transform = Transform(matrix: m)
+                    }
+                }
+                model.playbackDirty = false
             }
             if model.pickDirty {
                 if let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -1365,6 +1421,14 @@ struct ViewportView: View {
                       .interpolation(.high)
                       .transition(.opacity.animation(.easeIn(duration: 0.25)))
                       .allowsHitTesting(false)
+              }
+          }
+          // Kinematic playback transport — shown only when the document has
+          // an animation timeline with joint tracks (and instances to move).
+          .overlay(alignment: .bottom) {
+              if model.hasPlayback {
+                  PlaybackBar(model: model)
+                      .padding(.bottom, 14)
               }
           }
           .overlay(alignment: .bottomTrailing) {
@@ -1593,6 +1657,14 @@ struct ViewportView: View {
                 edgeEntity.name = "edges\(i)"
                 centering.addChild(edgeEntity)
             }
+        }
+        // Assembly instances: local mesh + world transform per entity, so
+        // kinematic playback re-poses transforms without touching meshes.
+        for inst in scene.instances {
+            let entity = ModelEntity(mesh: inst.mesh, materials: [pbrMaterial(inst.material)])
+            entity.name = "inst\(inst.index)"
+            entity.transform = Transform(matrix: inst.transform)
+            centering.addChild(entity)
         }
         if model.showsHandle {
             centering.addChild(makeHandle(radius: model.modifierValue))

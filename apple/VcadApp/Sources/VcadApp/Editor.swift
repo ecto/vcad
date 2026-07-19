@@ -300,6 +300,105 @@ final class EditorModel {
     /// overlay ribbon width during in-place scrub swaps.
     var displayedSceneSize: Float { max(sizeMM.x, max(sizeMM.y, sizeMM.z)) }
 
+    // MARK: kinematic joint playback (assemblies)
+    // Assembly documents carry joints + (optionally) a timeline of time-major
+    // joint keyframes. The evaluated scene handle stays resident so each
+    // playback frame is one kernel FK solve (`vcad_scene_solve_fk`) — the
+    // exact solver the web evaluator runs, so native motion matches it by
+    // construction. Entities keep their part-def-local meshes; only their
+    // transforms move.
+
+    /// The resident evaluated assembly scene (owns instance meshes + the
+    /// parsed doc the FK solver re-poses). Freed on rebuild / source change.
+    nonisolated(unsafe) private var residentAssemblyScene: OpaquePointer?
+    /// FFI instance count of the resident scene (0 = not an assembly).
+    var assemblyInstanceCount = 0
+    /// Per-instance kernel-frame world transforms at the current playback
+    /// time, FFI-index order. Applied to "inst<i>" entities when
+    /// `playbackDirty` is set.
+    @ObservationIgnored var instanceTransforms: [float4x4] = []
+    var playbackDirty = false
+    var isPlaying = false
+    /// Current playback time in seconds (drives the scrubber).
+    var playbackTime: Double = 0
+    nonisolated(unsafe) private var playbackTimer: Timer?
+
+    var timeline: DocTimeline? { documentGraph?.timeline }
+    /// Transport UI shows only when there is something to play.
+    var hasPlayback: Bool { assemblyInstanceCount > 0 && timeline != nil }
+
+    func togglePlayback() { isPlaying ? pausePlayback() : startPlayback() }
+
+    func startPlayback() {
+        guard hasPlayback else { return }
+        isPlaying = true
+        playbackTimer?.invalidate()
+        let dt = 1.0 / 60.0
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: dt, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let tl = self.timeline else { return }
+                var t = self.playbackTime + dt
+                if t > tl.durationS { t = 0 }              // loop
+                self.playbackTime = t
+                self.applyPlaybackPose()
+            }
+        }
+    }
+
+    func pausePlayback() {
+        isPlaying = false
+        playbackTimer?.invalidate()
+        playbackTimer = nil
+    }
+
+    /// Scrub: jump to `t` (clamped to the timeline) and re-pose.
+    func setPlaybackTime(_ t: Double) {
+        let dur = timeline?.durationS ?? 0
+        playbackTime = min(max(t, 0), dur)
+        applyPlaybackPose()
+    }
+
+    /// Sample the joint tracks at the current time and run the kernel FK
+    /// solver for fresh instance transforms.
+    private func applyPlaybackPose() {
+        guard let scene = residentAssemblyScene, let tl = timeline,
+              assemblyInstanceCount > 0 else { return }
+        let values = tl.jointValues(at: playbackTime)
+        guard !values.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: values) else { return }
+        var out = [Double](repeating: 0, count: assemblyInstanceCount * 16)
+        let n = data.withUnsafeBytes { raw in
+            vcad_scene_solve_fk(scene, raw.bindMemory(to: UInt8.self).baseAddress,
+                                data.count, &out, out.count)
+        }
+        guard n == assemblyInstanceCount else { return }
+        instanceTransforms = (0..<n).map { Self.mat4(out, at: $0 * 16) }
+        playbackDirty = true
+    }
+
+    /// Column-major 16-double slice → float4x4 (the FFI transform layout).
+    static func mat4(_ d: [Double], at o: Int = 0) -> float4x4 {
+        func col(_ c: Int) -> SIMD4<Float> {
+            SIMD4<Float>(Float(d[o + c * 4]), Float(d[o + c * 4 + 1]),
+                         Float(d[o + c * 4 + 2]), Float(d[o + c * 4 + 3]))
+        }
+        return float4x4(columns: (col(0), col(1), col(2), col(3)))
+    }
+
+    /// Drop the resident assembly scene + playback state (source change or a
+    /// rebuild about to adopt a fresh scene).
+    private func clearAssembly() {
+        pausePlayback()
+        if let s = residentAssemblyScene {
+            vcad_scene_free(s)
+            residentAssemblyScene = nil
+        }
+        assemblyInstanceCount = 0
+        instanceTransforms = []
+        playbackTime = 0
+        playbackDirty = false
+    }
+
     // MARK: ray-traced still mode (pixel-perfect: rays vs analytic BRep)
 
     /// Whether the ray-traced refinement pass is enabled (toolbar toggle).
@@ -1390,6 +1489,8 @@ final class EditorModel {
 
     deinit {
         if let d = gripperDoc { vcad_doc_free(d) }
+        if let s = residentAssemblyScene { vcad_scene_free(s) }
+        playbackTimer?.invalidate()
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         spinTimer?.invalidate()
@@ -1824,6 +1925,7 @@ final class EditorModel {
     }
 
     private func sandboxScene() -> RenderScene {
+        clearAssembly()
         guard let km = sandboxKernelMesh() else { return .empty }
         streaming.update(from: km)
         guard let res = streaming.resource else { return .empty }
@@ -1879,6 +1981,9 @@ final class EditorModel {
             vcad_scene_from_json(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
         guard let scene else { return .empty }
+        if vcad_scene_instance_count(scene) > 0 {
+            return assemblyScene(adopting: scene, start: start)
+        }
         defer { vcad_scene_free(scene) }
         return sceneFromHandle(scene, start: start)
     }
@@ -1894,14 +1999,108 @@ final class EditorModel {
             vcad_scene_from_loon(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
         guard let scene else { return .empty }
+        if vcad_scene_instance_count(scene) > 0 {
+            return assemblyScene(adopting: scene, start: start)
+        }
         defer { vcad_scene_free(scene) }
         return sceneFromHandle(scene, start: start)
+    }
+
+    /// Gather an ASSEMBLY scene: one entity per instance, mesh in part-def
+    /// local coordinates + a world transform, rendered instead of the root
+    /// parts (mirrors the web viewport). Takes ownership of `scene` and keeps
+    /// it resident so playback can re-solve FK per frame without re-parsing.
+    private func assemblyScene(adopting scene: OpaquePointer, start: Date) -> RenderScene {
+        clearAssembly()
+        residentAssemblyScene = scene
+        let count = vcad_scene_instance_count(scene)
+
+        func instString(_ f: (OpaquePointer?, Int, UnsafeMutablePointer<Int>?) -> UnsafePointer<UInt8>?,
+                        _ i: Int) -> String {
+            var len = 0
+            guard let p = f(scene, i, &len), len > 0 else { return "" }
+            return String(decoding: UnsafeBufferPointer(start: p, count: len), as: UTF8.self)
+        }
+
+        var instances: [RenderInstance] = []
+        var transforms: [float4x4] = []
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var tris = 0
+        for i in 0..<count {
+            var m16 = [Double](repeating: 0, count: 16)
+            _ = vcad_scene_instance_transform(scene, i, &m16)
+            let world = Self.mat4(m16)
+            transforms.append(world)
+
+            let km = KernelMesh.fromView(vcad_scene_instance_mesh(scene, i))
+            guard !km.isEmpty else { continue }
+            tris += km.triangleCount
+            // World bounds: transform the local AABB's 8 corners.
+            for cx in [km.minBound.x, km.maxBound.x] {
+                for cy in [km.minBound.y, km.maxBound.y] {
+                    for cz in [km.minBound.z, km.maxBound.z] {
+                        let w = world * SIMD4<Float>(cx, cy, cz, 1)
+                        let p = SIMD3<Float>(w.x, w.y, w.z)
+                        lo = simd_min(lo, p); hi = simd_max(hi, p)
+                    }
+                }
+            }
+            let matKey = instString(vcad_scene_instance_material, i)
+            instances.append(RenderInstance(
+                index: i,
+                id: instString(vcad_scene_instance_id, i),
+                mesh: km.resource(name: "inst\(i)"),
+                material: resolvedMaterial(named: matKey, fallbackIndex: i),
+                transform: world))
+        }
+        guard !instances.isEmpty else {
+            clearAssembly()
+            return .empty
+        }
+        assemblyInstanceCount = count
+        instanceTransforms = transforms
+        // Instance picking isn't wired yet — clear the part pick meshes so a
+        // stale root-part hit can't select the wrong thing.
+        docPartMeshes = []
+        docPartEdges = []
+
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        triangleCount = tris
+        partCount = instances.count
+        sizeMM = hi - lo
+        let center = (lo + hi) / 2
+        let size = Self.extent(lo, hi)
+        displayCenter = center
+        displayScale = 0.6 / max(size, 0.0001)
+        // Land on the authored pose at t=0 when a timeline exists.
+        if timeline != nil { applyPlaybackPose() }
+        return RenderScene(meshes: [], center: center, size: size,
+                           triangleCount: tris, partCount: instances.count,
+                           instances: instances)
+    }
+
+    /// Resolve a material KEY (as carried by an instance) the same way the
+    /// per-part path does: document materials → presets → index palette.
+    func resolvedMaterial(named key: String, fallbackIndex: Int) -> ResolvedMaterial {
+        if let d = documentGraph?.materials[key] {
+            return ResolvedMaterial(
+                color: NSColor(srgbRed: d.color.0, green: d.color.1, blue: d.color.2, alpha: 1),
+                metallic: d.metallic, roughness: d.roughness, transmission: d.transmission)
+        }
+        if let p = MaterialPreset.byKey(key) {
+            return ResolvedMaterial(color: p.nsColor, metallic: p.metallic,
+                                    roughness: p.roughness, transmission: p.transmission)
+        }
+        return ResolvedMaterial(color: documentBaseColor(fallbackIndex),
+                                metallic: 0.55, roughness: 0.34, transmission: 0)
     }
 
     /// Gather every part mesh out of an evaluated scene handle into a centered,
     /// auto-fit `RenderScene`, updating the live readouts. Shared by the
     /// document and AI-generated paths.
     private func sceneFromHandle(_ scene: OpaquePointer, start: Date) -> RenderScene {
+        clearAssembly()                      // part-mode scene: drop any resident assembly
         let count = vcad_scene_part_count(scene)
         var meshes: [(MeshResource, NSColor)] = []
         var picks: [PickMesh] = []

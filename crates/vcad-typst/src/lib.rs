@@ -157,14 +157,7 @@ pub fn inspect(config_json: &str, source: &str) -> Result<String, String> {
     let mut bbox_min = [f64::INFINITY; 3];
     let mut bbox_max = [f64::NEG_INFINITY; 3];
     let mut com_acc = [0.0; 3];
-    for (i, part) in scene.parts.iter().enumerate() {
-        let name = doc
-            .roots
-            .get(i)
-            .and_then(|r| doc.nodes.get(&r.root))
-            .and_then(|n| n.name.clone())
-            .unwrap_or_else(|| format!("part-{i}"));
-        let m = MeshProps::of(&part.mesh);
+    let mut push_part = |name: String, material: &str, m: MeshProps| {
         total_volume += m.volume;
         total_area += m.area;
         for a in 0..3 {
@@ -174,12 +167,35 @@ pub fn inspect(config_json: &str, source: &str) -> Result<String, String> {
         }
         parts.push(serde_json::json!({
             "name": name,
-            "material": part.material,
+            "material": material,
             "volume": m.volume,
             "area": m.area,
             "bbox": { "min": m.bbox.0, "max": m.bbox.1 },
             "center-of-mass": m.com,
         }));
+    };
+    for (i, part) in scene.parts.iter().enumerate() {
+        let name = doc
+            .roots
+            .get(i)
+            .and_then(|r| doc.nodes.get(&r.root))
+            .and_then(|n| n.name.clone())
+            .unwrap_or_else(|| format!("part-{i}"));
+        push_part(name, &part.material, MeshProps::of(&part.mesh));
+    }
+    // Assembly instances carry part-def-local meshes plus a world transform
+    // (FK-resolved by the evaluator); bake the pose before measuring so an
+    // assembly-only document reports real numbers instead of parts: ().
+    for inst in scene.instances.iter().flatten() {
+        let mesh = match &inst.transform {
+            Some(t) => transformed_mesh(&inst.mesh, t),
+            None => inst.mesh.clone(),
+        };
+        push_part(
+            inst.instance_id.clone(),
+            &inst.material,
+            MeshProps::of(&mesh),
+        );
     }
     let com: Vec<f64> = com_acc
         .iter()
@@ -202,6 +218,35 @@ pub fn inspect(config_json: &str, source: &str) -> Result<String, String> {
         "parts": parts,
     }))
     .map_err(|e| e.to_string())
+}
+
+/// Apply an IR `Transform3D` to a mesh's positions, matching the
+/// evaluator's convention: scale, then Rx·Ry·Rz (applied x-first), then
+/// translation. Rotation angles are degrees.
+fn transformed_mesh(mesh: &EvaluatedMesh, t: &vcad_ir::Transform3D) -> EvaluatedMesh {
+    let (sx, sy, sz) = (t.scale.x, t.scale.y, t.scale.z);
+    let (rx, ry, rz) = (
+        t.rotation.x.to_radians(),
+        t.rotation.y.to_radians(),
+        t.rotation.z.to_radians(),
+    );
+    let (cx, sx_r) = (rx.cos(), rx.sin());
+    let (cy, sy_r) = (ry.cos(), ry.sin());
+    let (cz, sz_r) = (rz.cos(), rz.sin());
+    let mut out = mesh.clone();
+    for p in out.positions.as_chunks_mut::<3>().0 {
+        let v = [p[0] as f64 * sx, p[1] as f64 * sy, p[2] as f64 * sz];
+        // Rx
+        let v = [v[0], cx * v[1] - sx_r * v[2], sx_r * v[1] + cx * v[2]];
+        // Ry
+        let v = [cy * v[0] + sy_r * v[2], v[1], -sy_r * v[0] + cy * v[2]];
+        // Rz
+        let v = [cz * v[0] - sz_r * v[1], sz_r * v[0] + cz * v[1], v[2]];
+        p[0] = (v[0] + t.translation.x) as f32;
+        p[1] = (v[1] + t.translation.y) as f32;
+        p[2] = (v[2] + t.translation.z) as f32;
+    }
+    out
 }
 
 /// Plugin version string (the crate version).
@@ -325,6 +370,36 @@ mod tests {
     #[test]
     fn bad_view_is_error() {
         assert!(render(r#"{"format":"loon","view":"wat"}"#, CUBE_LOON).is_err());
+    }
+
+    #[test]
+    fn inspect_assembly_instances() {
+        // Two placed instances of one 10×10×10 cube part-def. Before the
+        // instance-aware inspect, this reported parts: (), volume: 0 while
+        // render of the same source drew both cubes.
+        let src = r#"
+[assembly
+  #[[part "block" [cube 10.0 10.0 10.0] "steel"]]
+  #[[instance "a" "block" 0.0 0.0 0.0]
+    [instance "b" "block" 30.0 0.0 0.0]]
+  #[]
+  "a"]
+"#;
+        let out = inspect(r#"{"format":"loon"}"#, src).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let parts = v["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        let names: Vec<&str> = parts.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["a", "b"]);
+        let volume = v["volume"].as_f64().unwrap();
+        assert!((volume - 2000.0).abs() < 1e-3, "volume {volume}");
+        let min = v["bbox"]["min"].as_array().unwrap();
+        let max = v["bbox"]["max"].as_array().unwrap();
+        assert!((min[0].as_f64().unwrap() - 0.0).abs() < 1e-6);
+        assert!((max[0].as_f64().unwrap() - 40.0).abs() < 1e-6);
+        assert!((max[2].as_f64().unwrap() - 10.0).abs() < 1e-6);
+        let com = v["center-of-mass"].as_array().unwrap();
+        assert!((com[0].as_f64().unwrap() - 20.0).abs() < 1e-3);
     }
 
     #[test]

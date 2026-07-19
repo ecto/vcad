@@ -56,6 +56,66 @@ struct DocMaterial {
     let transmission: Float
 }
 
+/// An assembly joint — just what playback and the transport UI need. The
+/// kernel FK solver owns the full kinematic semantics; this is display data.
+struct DocJoint: Identifiable {
+    let id: String
+    let name: String?
+    /// Joint kind tag ("Revolute", "Slider", …).
+    let kind: String
+    /// Authored driven state (degrees for revolute, mm for slider).
+    let state: Double
+}
+
+/// One keyframe of an animation track (port of `vcad_ir::animation::AnimKey`).
+struct DocAnimKey {
+    let t: Double
+    let value: Double
+    /// "linear" | "step" | "ease-in-out" (kebab-case, as serialized).
+    let ease: String
+}
+
+/// A joint-target animation track.
+struct DocJointTrack {
+    let jointId: String
+    let keys: [DocAnimKey]
+}
+
+/// The document's animation timeline, reduced to the joint tracks native
+/// playback drives. Sampling mirrors `Timeline::sample_track` in vcad-ir
+/// exactly (clamp at the ends, ease from the previous key), so the native
+/// pose at time t matches the web evaluator and the kernel sequencer.
+struct DocTimeline {
+    let durationS: Double
+    let fps: Double
+    let jointTracks: [DocJointTrack]
+
+    /// Joint id → value at time `t` (seconds).
+    func jointValues(at t: Double) -> [String: Double] {
+        var out: [String: Double] = [:]
+        for track in jointTracks {
+            if let v = Self.sample(track.keys, at: t) { out[track.jointId] = v }
+        }
+        return out
+    }
+
+    static func sample(_ keys: [DocAnimKey], at t: Double) -> Double? {
+        guard let first = keys.first, let last = keys.last else { return nil }
+        if t <= first.t { return first.value }
+        if t >= last.t { return last.value }
+        guard let idx = keys.firstIndex(where: { $0.t > t }), idx > 0 else { return last.value }
+        let a = keys[idx - 1], b = keys[idx]
+        let span = b.t - a.t
+        var u = span <= 0 ? 1.0 : (t - a.t) / span
+        switch b.ease {
+        case "step": u = u >= 1.0 ? 1.0 : 0.0
+        case "ease-in-out": u = u * u * (3.0 - 2.0 * u)
+        default: break                                   // linear
+        }
+        return a.value + (b.value - a.value) * u
+    }
+}
+
 /// A parsed parametric document — just enough structure to render the tree and
 /// the inspector; geometry still comes from the kernel.
 struct DocumentGraph {
@@ -64,6 +124,10 @@ struct DocumentGraph {
     let materials: [String: DocMaterial]
     /// Document-level named parameters, sorted by name for a stable inspector.
     let parameters: [DocParameter]
+    /// Assembly joints (empty for part-only documents).
+    let joints: [DocJoint]
+    /// Animation timeline, when the document carries one with joint tracks.
+    let timeline: DocTimeline?
 
     /// Visible roots in order — index-aligned with the kernel scene's parts.
     var visibleRoots: [DocRoot] { roots.filter { $0.visible } }
@@ -138,9 +202,51 @@ struct DocumentGraph {
             parameters.sort { $0.name < $1.name }
         }
 
-        guard !nodes.isEmpty, !roots.isEmpty else { return nil }
+        // Assembly joints: accept both the canonical camelCase keys and the
+        // snake_case of older sample documents (only id/name/kind/state are
+        // needed here — the kernel re-parses the full doc for FK).
+        var joints: [DocJoint] = []
+        if let raw = obj["joints"] as? [[String: Any]] {
+            for j in raw {
+                guard let id = j["id"] as? String else { continue }
+                let kind = (j["kind"] as? [String: Any])?["type"] as? String ?? "Revolute"
+                joints.append(DocJoint(id: id,
+                                       name: j["name"] as? String,
+                                       kind: kind,
+                                       state: (j["state"] as? NSNumber)?.doubleValue ?? 0))
+            }
+        }
+
+        var timeline: DocTimeline?
+        if let tl = obj["timeline"] as? [String: Any],
+           let duration = (tl["durationS"] as? NSNumber)?.doubleValue, duration > 0 {
+            var tracks: [DocJointTrack] = []
+            for t in (tl["tracks"] as? [[String: Any]]) ?? [] {
+                guard let target = t["target"] as? [String: Any],
+                      (target["type"] as? String) == "Joint",
+                      let jointId = target["jointId"] as? String else { continue }
+                var keys: [DocAnimKey] = []
+                for k in (t["keys"] as? [[String: Any]]) ?? [] {
+                    guard let kt = (k["t"] as? NSNumber)?.doubleValue,
+                          let v = (k["value"] as? NSNumber)?.doubleValue else { continue }
+                    keys.append(DocAnimKey(t: kt, value: v,
+                                           ease: k["ease"] as? String ?? "linear"))
+                }
+                if !keys.isEmpty { tracks.append(DocJointTrack(jointId: jointId, keys: keys)) }
+            }
+            if !tracks.isEmpty {
+                timeline = DocTimeline(durationS: duration,
+                                       fps: (tl["fps"] as? NSNumber)?.doubleValue ?? 24,
+                                       jointTracks: tracks)
+            }
+        }
+
+        // Assembly documents may have no scene roots — instances carry the
+        // geometry there, so an empty `roots` is only fatal without them.
+        let hasInstances = ((obj["instances"] as? [[String: Any]])?.isEmpty == false)
+        guard !nodes.isEmpty, !roots.isEmpty || hasInstances else { return nil }
         return DocumentGraph(nodes: nodes, roots: roots, materials: materials,
-                             parameters: parameters)
+                             parameters: parameters, joints: joints, timeline: timeline)
     }
 
     // MARK: feature tree

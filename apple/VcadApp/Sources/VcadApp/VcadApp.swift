@@ -34,6 +34,10 @@ struct VcadApp: App {
             MainActor.assumeIsolated { gizmoSmoke(path: path) }
             exit(0)
         }
+        if let path = ProcessInfo.processInfo.environment["VCAD_PLAYBACK_SMOKE"] {
+            MainActor.assumeIsolated { playbackSmoke(path: path) }
+            exit(0)
+        }
     }
 
     var body: some Scene {
@@ -205,6 +209,32 @@ private func rgb(_ c: NSColor) -> String {
     m.saveDocumentAs(out)
     let reloaded = DocumentGraph.load(path: out.path)
     emit("[VCAD_AUTHOR] saved + reloaded: \(reloaded?.visibleRoots.count ?? -1) part(s), parses=\(reloaded != nil)")
+}
+
+/// Kinematic joint playback: load a jointed assembly, confirm instances +
+/// timeline surface through the model, then scrub to mid-timeline and show
+/// the FK-driven instance positions moving.
+@MainActor private func playbackSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "playback")
+    let scene = m.buildScene()
+    emit("[VCAD_PLAY] instances \(scene.instances.count) · joints \(m.documentGraph?.joints.count ?? 0) · hasPlayback \(m.hasPlayback) · duration \(m.timeline?.durationS ?? 0)s")
+    guard m.hasPlayback else { emit("[VCAD_PLAY] no playback surface"); return }
+    let dur = m.timeline?.durationS ?? 0
+    let before = m.instanceTransforms
+    m.setPlaybackTime(dur / 2)
+    let mid = m.instanceTransforms
+    for i in 0..<min(before.count, mid.count) {
+        let a = before[i].columns.3, b = mid[i].columns.3
+        emit(String(format: "[VCAD_PLAY] inst%d t=0 (%.1f, %.1f, %.1f) → t=%.2f (%.1f, %.1f, %.1f)",
+                    i, a.x, a.y, a.z, dur / 2, b.x, b.y, b.z))
+    }
+    m.setPlaybackTime(dur)
+    let end = m.instanceTransforms
+    emit(String(format: "[VCAD_PLAY] inst%d t=%.2f pos (%.1f, %.1f, %.1f)",
+                end.count - 1, dur,
+                end.last!.columns.3.x, end.last!.columns.3.y, end.last!.columns.3.z))
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

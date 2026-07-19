@@ -41,6 +41,13 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(usize::MAX);
     let out_json = args.next();
+    let priority: Vec<String> = args
+        .next()
+        .map(|p| {
+            serde_json::from_str(&std::fs::read_to_string(p).expect("read priority"))
+                .expect("parse priority")
+        })
+        .unwrap_or_default();
 
     let text = std::fs::read_to_string(&path).expect("read board file");
     // Resume mode: a .pcb.json saved by a previous run loads with its routed
@@ -117,6 +124,7 @@ fn main() {
         &filter,
         &RouteOptions {
             effort,
+            priority_nets: priority.clone(),
             ..Default::default()
         },
     );

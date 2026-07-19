@@ -154,6 +154,69 @@ const thermalSpecSchema = {
   },
 };
 
+const transientSchema = {
+  type: "object" as const,
+  required: ["initial_c", "segments"],
+  description:
+    "Transient mode: backward-Euler time stepping from a uniform initial " +
+    "temperature over a schedule of piecewise-constant segments (an RTP " +
+    "ramp/soak/cool recipe, an ambient step, a duty cycle). Every " +
+    "material must declare `heat_capacity_j_m3k` (rho*c_p, J/(m^3*K)). " +
+    "Returns T_max and per-source time series instead of a single steady " +
+    "state, plus the energy audit integrated over the run.",
+  properties: {
+    initial_c: {
+      ...paramValue,
+      description: "Uniform initial temperature of the free field, degC.",
+    },
+    segments: {
+      type: "array" as const,
+      minItems: 1,
+      items: {
+        type: "object" as const,
+        required: ["duration_s", "dt_s"],
+        properties: {
+          duration_s: {
+            ...paramValue,
+            description: "Segment duration, s.",
+          },
+          dt_s: {
+            ...paramValue,
+            description:
+              "Target time step, s. Implicit stepping is stable at any " +
+              "dt; pick it to resolve the fastest time constant you care " +
+              "about. The realized step divides the duration exactly.",
+          },
+          source_power_w: {
+            type: "object" as const,
+            additionalProperties: paramValue,
+            description:
+              "Source-power overrides for this segment by source name, W " +
+              "(fail-closed on unknown names). Unnamed sources keep the " +
+              "spec's power.",
+          },
+          face_temperature_c: {
+            type: "object" as const,
+            additionalProperties: paramValue,
+            description:
+              'Boundary-temperature overrides by face label ("-x","+x",' +
+              '"-y","+y","-z","+z","exposed"): retunes a FixedTemperature ' +
+              "face's temperature or a Convection face's ambient. " +
+              "Overriding an adiabatic face errors (fail-closed).",
+          },
+          fixed_temperature_c: {
+            type: "object" as const,
+            additionalProperties: paramValue,
+            description:
+              "Fixed-region temperature overrides keyed by the region's " +
+              "index in `fixed` (as a string).",
+          },
+        },
+      },
+    },
+  },
+};
+
 type Json = Record<string, unknown>;
 
 function textResult(payload: unknown) {
@@ -172,20 +235,26 @@ export const toolDefs: ToolDef[] = [
     name: "solve_thermal",
     pack: null,
     description:
-      "Steady heat-conduction FEA on a voxel grid: harmonic-mean finite volumes + PCG, " +
+      "Heat-conduction FEA on a voxel grid: harmonic-mean finite volumes + PCG, " +
       "returning T_max and its location, per-source theta_ja (K/W, junction-to-ambient), " +
       "reservoir loads, and an energy-balance audit — as data plus " +
       "`vcad.thermal-claims/1` and unified-receipt claims. Predictions carry basis " +
-      "\"predicted\" and roll up Provisional until hardware is measured. Conduction only: " +
-      "convection enters as film coefficients you supply (h values are the dominant " +
-      "uncertainty), no radiation, no fluid flow, steady state only. The full temperature " +
-      "field is not returned (summaries + claims are). Cost scales with voxel count " +
-      "(capped at 2M); a 20x20x2 board solves instantly, 100x100x13 in seconds.",
+      "\"predicted\" and roll up Provisional until hardware is measured. Steady state by " +
+      "default; pass `transient` for backward-Euler time stepping over a piecewise-" +
+      "constant drive schedule (RTP ramp/soak/cool, ambient steps, duty cycles — needs " +
+      "per-material `heat_capacity_j_m3k`), which returns T_max/per-source time series " +
+      "and the run-integrated energy audit. Conduction only: convection enters as film " +
+      "coefficients you supply (h values are the dominant uncertainty), no radiation, " +
+      "no fluid flow. Full temperature fields are not returned (summaries + claims are). " +
+      "Cost scales with voxel count (capped at 2M; transient runs also capped at 20k " +
+      "steps and 1e9 voxel-steps); a 20x20x2 board solves instantly, 100x100x13 in " +
+      "seconds.",
     inputSchema: {
       type: "object" as const,
       required: ["spec"],
       properties: {
         spec: thermalSpecSchema,
+        transient: transientSchema,
         parameters: {
           type: "object" as const,
           additionalProperties: { type: "number" as const },
@@ -208,11 +277,18 @@ export const toolDefs: ToolDef[] = [
     },
     handler: (args, ctx) => {
       const a = args as Json;
-      const out = ctx.engine.thermalSolve(
-        JSON.stringify(a.spec),
-        JSON.stringify(a.parameters ?? {}),
-        JSON.stringify(a.options ?? {}),
-      );
+      const out = a.transient
+        ? ctx.engine.thermalSolveTransient(
+            JSON.stringify(a.spec),
+            JSON.stringify(a.transient),
+            JSON.stringify(a.parameters ?? {}),
+            JSON.stringify(a.options ?? {}),
+          )
+        : ctx.engine.thermalSolve(
+            JSON.stringify(a.spec),
+            JSON.stringify(a.parameters ?? {}),
+            JSON.stringify(a.options ?? {}),
+          );
       return textResult(out);
     },
     behavior: behavior({}),

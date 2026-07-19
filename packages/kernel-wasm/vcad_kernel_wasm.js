@@ -227,10 +227,22 @@ export class PhysicsSim {
         return ret >>> 0;
     }
     /**
+     * Actuated joint ids in action order (document order, Fixed joints
+     * excluded). Action vector entry `i` drives `actuatedJointIds()[i]`.
+     * @returns {string[]}
+     */
+    actuatedJointIds() {
+        const ret = wasm.physicssim_actuatedJointIds(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * Joint ids in observation order (document `joints` order).
      *
      * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`, as do action vector entries.
+     * correspond to `jointIds()[i]`. Action vector entries index
+     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
      * @returns {string[]}
      */
     jointIds() {
@@ -270,7 +282,7 @@ export class PhysicsSim {
      * @returns {number}
      */
     numJoints() {
-        const ret = wasm.physicssim_actionDim(this.__wbg_ptr);
+        const ret = wasm.physicssim_numJoints(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -7249,6 +7261,39 @@ export function thermalSolve(spec_json, params_json, options_json) {
 }
 
 /**
+ * Transient heat-conduction solve: backward-Euler time stepping over a
+ * piecewise-constant drive schedule (RTP ramp/soak/cool, ambient steps,
+ * duty cycles). Returns the T_max and per-source time series plus the
+ * final-state summary and the integrated energy audit — full field
+ * snapshots are not returned over this seam.
+ *
+ * `spec_json` is a `ThermalSpec` (every material needs
+ * `heat_capacity_j_m3k`), `transient_json` a
+ * `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
+ * `{name: value}` map, `options_json` a [`ThermalOptions`].
+ * @param {string} spec_json
+ * @param {string} transient_json
+ * @param {string} params_json
+ * @param {string} options_json
+ * @returns {any}
+ */
+export function thermalSolveTransient(spec_json, transient_json, params_json, options_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(transient_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.thermalSolveTransient(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Convert a vcad IR Document (JSON) to VCode text format.
  *
  * # Arguments
@@ -9193,12 +9238,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3713, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3714, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3712, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3713, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3738, function: Function { arguments: [Externref], shim_idx: 3739, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3737, function: Function { arguments: [Externref], shim_idx: 3738, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

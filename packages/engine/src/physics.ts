@@ -96,6 +96,7 @@ export class PhysicsEnv {
   private _actionDim: number;
   private _observationDim: number;
   private _jointIds: string[] | null;
+  private _actuatedJointIds: string[] | null;
 
   private constructor(sim: WasmPhysicsSim) {
     this.sim = sim;
@@ -115,6 +116,15 @@ export class PhysicsEnv {
     // stashing a non-array that would misindex observations downstream.
     this._jointIds = Array.isArray(rawJointIds)
       ? (rawJointIds as string[])
+      : null;
+    // Same feature-detection story for actuatedJointIds (newer still).
+    const maybeActuated = (
+      sim as unknown as { actuatedJointIds?: () => unknown }
+    ).actuatedJointIds;
+    const rawActuated =
+      typeof maybeActuated === "function" ? maybeActuated.call(sim) : null;
+    this._actuatedJointIds = Array.isArray(rawActuated)
+      ? (rawActuated as string[])
       : null;
   }
 
@@ -165,7 +175,17 @@ export class PhysicsEnv {
     return this._jointIds;
   }
 
-  /** Dimension of the action space */
+  /**
+   * Actuated joint ids in action order (document order, Fixed joints
+   * excluded), or null when the loaded kernel WASM predates
+   * `actuatedJointIds()`. Action vector entry `i` drives
+   * `actuatedJointIds[i]`.
+   */
+  get actuatedJointIds(): string[] | null {
+    return this._actuatedJointIds;
+  }
+
+  /** Dimension of the action space (one entry per actuated, non-Fixed joint) */
   get actionDim(): number {
     return this._actionDim;
   }

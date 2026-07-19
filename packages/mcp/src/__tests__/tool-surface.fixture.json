@@ -3295,7 +3295,7 @@
   {
     "name": "solve_thermal",
     "title": "Solve Thermal",
-    "description": "Steady heat-conduction FEA on a voxel grid: harmonic-mean finite volumes + PCG, returning T_max and its location, per-source theta_ja (K/W, junction-to-ambient), reservoir loads, and an energy-balance audit — as data plus `vcad.thermal-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until hardware is measured. Conduction only: convection enters as film coefficients you supply (h values are the dominant uncertainty), no radiation, no fluid flow, steady state only. The full temperature field is not returned (summaries + claims are). Cost scales with voxel count (capped at 2M); a 20x20x2 board solves instantly, 100x100x13 in seconds.",
+    "description": "Heat-conduction FEA on a voxel grid: harmonic-mean finite volumes + PCG, returning T_max and its location, per-source theta_ja (K/W, junction-to-ambient), reservoir loads, and an energy-balance audit — as data plus `vcad.thermal-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until hardware is measured. Steady state by default; pass `transient` for backward-Euler time stepping over a piecewise-constant drive schedule (RTP ramp/soak/cool, ambient steps, duty cycles — needs per-material `heat_capacity_j_m3k`), which returns T_max/per-source time series and the run-integrated energy audit. Conduction only: convection enters as film coefficients you supply (h values are the dominant uncertainty), no radiation, no fluid flow. Full temperature fields are not returned (summaries + claims are). Cost scales with voxel count (capped at 2M; transient runs also capped at 20k steps and 1e9 voxel-steps); a 20x20x2 board solves instantly, 100x100x13 in seconds.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3876,6 +3876,107 @@
                   "type": "string"
                 }
               ]
+            }
+          }
+        },
+        "transient": {
+          "type": "object",
+          "required": [
+            "initial_c",
+            "segments"
+          ],
+          "description": "Transient mode: backward-Euler time stepping from a uniform initial temperature over a schedule of piecewise-constant segments (an RTP ramp/soak/cool recipe, an ambient step, a duty cycle). Every material must declare `heat_capacity_j_m3k` (rho*c_p, J/(m^3*K)). Returns T_max and per-source time series instead of a single steady state, plus the energy audit integrated over the run.",
+          "properties": {
+            "initial_c": {
+              "description": "Uniform initial temperature of the free field, degC.",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "segments": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "duration_s",
+                  "dt_s"
+                ],
+                "properties": {
+                  "duration_s": {
+                    "description": "Segment duration, s.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "dt_s": {
+                    "description": "Target time step, s. Implicit stepping is stable at any dt; pick it to resolve the fastest time constant you care about. The realized step divides the duration exactly.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "source_power_w": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "description": "A number, or the name of a named parameter bound via `parameters`.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": "Source-power overrides for this segment by source name, W (fail-closed on unknown names). Unnamed sources keep the spec's power."
+                  },
+                  "face_temperature_c": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "description": "A number, or the name of a named parameter bound via `parameters`.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": "Boundary-temperature overrides by face label (\"-x\",\"+x\",\"-y\",\"+y\",\"-z\",\"+z\",\"exposed\"): retunes a FixedTemperature face's temperature or a Convection face's ambient. Overriding an adiabatic face errors (fail-closed)."
+                  },
+                  "fixed_temperature_c": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "description": "A number, or the name of a named parameter bound via `parameters`.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": "Fixed-region temperature overrides keyed by the region's index in `fixed` (as a string)."
+                  }
+                }
+              }
             }
           }
         },
@@ -5112,7 +5213,7 @@
   {
     "name": "animate",
     "title": "Animate",
-    "description": "Set (or clear) the document's animation timeline: keyframe named parameters, joint states, instance visibility, or a global explode factor, plus declarative camera shots (turntable/orbit/focus). Preview with render_sequence; ship with export_video.",
+    "description": "Set (or clear) the document's animation timeline: keyframe named parameters, joint states, instance visibility, or a global explode factor, plus declarative camera shots (turntable/orbit/focus). For kinematic joint playback (servo-style commanded motion, no physics) pass `keyframes:[{t, joints:{jointId: value}}]` instead of a full timeline. Preview with render_sequence; ship with export_video.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5123,11 +5224,21 @@
         "timeline": {
           "type": "object",
           "description": "Full timeline to set on the document: {durationS, fps?, tracks?, camera?}. Tracks keyframe targets: {target:{type:\"Parameter\",name}|{type:\"Joint\",jointId}|{type:\"Visibility\",instanceId}|{type:\"Explode\"}, keys:[{t,value,ease?:\"linear\"|\"step\"|\"ease-in-out\"}]}. Camera shots: {startS,endS,kind:{type:\"Turntable\",degrees,elevationDeg?}|{type:\"Orbit\",from:[az,el],to:[az,el]}|{type:\"Focus\",target,dolly?}|{type:\"Static\"}}. Pass null to clear the timeline."
+        },
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Kinematic playback shorthand: time-major joint keyframes [{t, joints:{jointId: value}}] with linear interpolation between keys — no physics, no gravity; joints are posed exactly at the commanded values (degrees for revolute, mm for prismatic) and children ride their parents through the joint tree. Compiled to per-joint linear tracks. Mutually exclusive with `timeline`."
+        },
+        "fps": {
+          "type": "number",
+          "description": "Playback frame rate when compiling `keyframes` (1-60, default 24). Ignored when `timeline` is passed."
         }
       },
       "required": [
-        "document_id",
-        "timeline"
+        "document_id"
       ]
     },
     "annotations": {
@@ -5174,7 +5285,7 @@
   {
     "name": "render_sequence",
     "title": "Render Sequence",
-    "description": "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
+    "description": "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Accepts one-shot `keyframes:[{t, joints:{jointId: value}}]` for kinematic joint playback (posed exactly, no physics). Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5185,6 +5296,17 @@
         "timeline": {
           "type": "object",
           "description": "Optional one-shot timeline override (same shape as `animate`). When omitted, the document's stored timeline is used."
+        },
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Kinematic playback shorthand: time-major joint keyframes [{t, joints:{jointId: value}}] with linear interpolation between keys — no physics, no gravity; joints are posed exactly at the commanded values (degrees for revolute, mm for prismatic) and children ride their parents through the joint tree. Compiled to per-joint linear tracks. Mutually exclusive with `timeline`."
+        },
+        "fps": {
+          "type": "number",
+          "description": "Playback frame rate when compiling `keyframes` (1-60, default 24)."
         },
         "verify": {
           "type": "boolean",
@@ -5211,7 +5333,7 @@
   {
     "name": "export_video",
     "title": "Export Video",
-    "description": "Render the timeline to an animated GIF or MP4 through the kernel renderer, with the verification HUD (time, animated values, clearance status) burned into every frame. MP4 requires ffmpeg on the server; GIF always works. Large outputs offload to an artifact URL.",
+    "description": "Render the timeline to an animated GIF or MP4 through the kernel renderer, with the verification HUD (time, animated values, clearance status) burned into every frame. Accepts one-shot `keyframes:[{t, joints:{jointId: value}}]` for kinematic joint playback (posed exactly, no physics) — children ride their parents through the joint tree. Camera matches render_view: named `view` or azimuth/elevation orbit. MP4 requires ffmpeg on the server; GIF always works. Large outputs offload to an artifact URL.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5222,6 +5344,17 @@
         "timeline": {
           "type": "object",
           "description": "Optional one-shot timeline override (same shape as `animate`)."
+        },
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Kinematic playback shorthand: time-major joint keyframes [{t, joints:{jointId: value}}] with linear interpolation between keys — no physics, no gravity; joints are posed exactly at the commanded values (degrees for revolute, mm for prismatic) and children ride their parents through the joint tree. Compiled to per-joint linear tracks. Mutually exclusive with `timeline`."
+        },
+        "fps": {
+          "type": "number",
+          "description": "Playback frame rate when compiling `keyframes` (1-60, default 24)."
         },
         "format": {
           "type": "string",
@@ -5241,7 +5374,15 @@
             "front",
             "side"
           ],
-          "description": "Camera view for the kernel renderer; defaults to 'iso'."
+          "description": "Camera view for the kernel renderer; defaults to 'iso'. Ignored when azimuth/elevation are given."
+        },
+        "azimuth": {
+          "type": "number",
+          "description": "Orbit camera azimuth in degrees, CCW from +X in the XY plane (Z-up), matching render_view. Providing azimuth and/or elevation selects an arbitrary orbit view (missing angle defaults to 0) and overrides `view`."
+        },
+        "elevation": {
+          "type": "number",
+          "description": "Orbit camera elevation in degrees above the XY plane, clamped to [-90, 90]. See `azimuth`."
         },
         "width_px": {
           "type": "number",
@@ -6500,7 +6641,7 @@
           "items": {
             "type": "number"
           },
-          "description": "Constant action vector applied every step (length = action_dim from create_robot_env). Mutually exclusive with `actions`."
+          "description": "Constant action vector applied every step (length = action_dim from create_robot_env; entry i drives actuated_joint_ids[i] — Fixed joints take no action). Mutually exclusive with `actions`."
         },
         "actions": {
           "type": "array",

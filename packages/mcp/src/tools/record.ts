@@ -49,7 +49,7 @@ export const recordSimulationSchema = {
       type: "array" as const,
       items: { type: "number" as const },
       description:
-        "Constant action vector applied every step (length = action_dim from create_robot_env). Mutually exclusive with `actions`.",
+        "Constant action vector applied every step (length = action_dim from create_robot_env; entry i drives actuated_joint_ids[i] — Fixed joints take no action). Mutually exclusive with `actions`.",
     },
     actions: {
       type: "array" as const,

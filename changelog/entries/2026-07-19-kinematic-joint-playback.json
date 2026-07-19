@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-19-kinematic-joint-playback",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "feat",
+  "title": "Kinematic joint playback: keyframes without physics",
+  "summary": "animate/render_sequence/export_video accept time-major joint keyframes — servo-style commanded motion posed exactly, no gravity; export_video gains render_view's azimuth/elevation camera.",
+  "features": ["animation", "assembly", "joints"],
+  "mcpTools": ["animate", "render_sequence", "export_video"]
+}

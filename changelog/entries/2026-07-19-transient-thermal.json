@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-19-transient-thermal",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "feat",
+  "title": "Transient thermal solves with drive schedules",
+  "summary": "solve_thermal gains a transient mode: backward-Euler time stepping over piecewise-constant schedules (RTP ramp/soak/cool, ambient steps), returning T_max time series and a run-integrated energy audit.",
+  "features": ["thermal", "simulation", "receipts"],
+  "mcpTools": ["solve_thermal"]
+}

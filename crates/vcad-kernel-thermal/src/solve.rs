@@ -89,6 +89,10 @@ pub enum SolveError {
     /// A transient solve was asked for a non-positive time step or zero
     /// steps.
     InvalidTimeStep,
+    /// A transient schedule segment named a source, face, or fixed region
+    /// it cannot override (unknown name, out-of-range slot, or an
+    /// adiabatic face with no temperature to move).
+    BadScheduleOverride(String),
     /// The smooth-max exponent must be finite and > 1.
     InvalidSmoothingExponent,
 }
@@ -116,6 +120,9 @@ impl std::fmt::Display for SolveError {
             ),
             SolveError::InvalidTimeStep => {
                 write!(f, "transient solve requires dt > 0 and at least one step")
+            }
+            SolveError::BadScheduleOverride(why) => {
+                write!(f, "invalid schedule override: {why}")
             }
             SolveError::InvalidSmoothingExponent => {
                 write!(f, "smooth-max exponent p must be finite and > 1")

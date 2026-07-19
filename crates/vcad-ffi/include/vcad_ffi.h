@@ -64,6 +64,26 @@ size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 void vcad_scene_free(VcadScene *scene);
 
+/* Assembly instances + kinematic joint playback. Assembly documents place
+ * geometry via partDefs + instances + joints (joints fully place children).
+ * Instance meshes are part-def-LOCAL; transforms come separately so playback
+ * can drive them per frame. When instance_count > 0 render instances INSTEAD
+ * of the root parts (assembly docs may carry both). Id/material pointers are
+ * UTF-8, NOT NUL-terminated (length via out_len), valid for the scene's
+ * lifetime. Transforms are 16 doubles, COLUMN-major (out[col*4+row]).
+ * vcad_scene_solve_fk takes a JSON object {"jointId": value, ...} (degrees /
+ * mm; joint name accepted as fallback), runs the kernel forward-kinematics
+ * solver, and writes instance_count 4x4 world matrices in instance-index
+ * order into out (capacity out_cap doubles). Returns instances written, 0 on
+ * error. Only scenes from vcad_scene_from_json/_loon support FK. */
+size_t vcad_scene_instance_count(const VcadScene *scene);
+VcadMeshView vcad_scene_instance_mesh(const VcadScene *scene, size_t index);
+const uint8_t *vcad_scene_instance_id(const VcadScene *scene, size_t index, size_t *out_len);
+const uint8_t *vcad_scene_instance_material(const VcadScene *scene, size_t index, size_t *out_len);
+uint8_t vcad_scene_instance_transform(const VcadScene *scene, size_t index, double *out);
+size_t vcad_scene_solve_fk(const VcadScene *scene, const uint8_t *joints_json,
+                           size_t json_len, double *out, size_t out_cap);
+
 /* Feature edges (boundary + creases sharper than angle_deg) for the
  * wireframe/edge overlay. 6 floats per segment: ax ay az bx by bz. */
 typedef struct VcadEdges VcadEdges;

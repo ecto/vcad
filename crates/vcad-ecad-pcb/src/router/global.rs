@@ -201,6 +201,97 @@ impl CapacityMesh {
     }
 }
 
+/// Per-connection scarcity signals from the settled demand field:
+/// `min_residual` — the tightest capacity margin along the assigned corridor
+/// (low = few alternatives; the CSP "most constrained variable" signal), and
+/// `overlap_degree` — how many OTHER connections share a cell with this one
+/// (the "most constraining variable" tiebreak).
+#[derive(Debug, Clone, Copy)]
+pub struct Scarcity {
+    /// min(capacity - demand) along the assigned cell path.
+    pub min_residual: f64,
+    /// Number of other connections sharing at least one cell.
+    pub overlap_degree: usize,
+}
+
+/// [`plan_corridors`] plus per-connection [`Scarcity`] — the ordering brain's
+/// input. Measured lesson (CM5 apex run): ordering decides routability more
+/// than any search algorithm; nets whose only corridors get consumed by
+/// flexible early routes fail forever. Scarcest-first fixes that by default.
+pub fn plan_with_scarcity(
+    session: &RouteSession,
+    board_lo: [f64; 2],
+    board_hi: [f64; 2],
+    track_pitch: f64,
+    layers: usize,
+    conns: &[PlanConn],
+) -> (Vec<Option<(Vec2, Vec2)>>, Vec<Scarcity>) {
+    let sw = Stopwatch::start();
+    let mut mesh = CapacityMesh::build(session, board_lo, board_hi, track_pitch, layers);
+    let mut paths: Vec<Vec<usize>> = vec![Vec::new(); conns.len()];
+    for _sweep in 0..SWEEPS {
+        mesh.demand.iter_mut().for_each(|d| *d = 0.0);
+        for (i, (_, from, to)) in conns.iter().enumerate() {
+            let path = mesh.assign(*from, *to);
+            mesh.deposit(&path, 1.0);
+            paths[i] = path;
+        }
+    }
+    // Cell -> connections index for overlap degree.
+    let mut cell_users: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, path) in paths.iter().enumerate() {
+        for &c in path {
+            cell_users.entry(c).or_default().push(i);
+        }
+    }
+    let scarcity: Vec<Scarcity> = paths
+        .iter()
+        .enumerate()
+        .map(|(i, path)| {
+            let min_residual = path
+                .iter()
+                .map(|&c| mesh.capacity[c] - mesh.demand[c])
+                .fold(f64::INFINITY, f64::min);
+            let mut others = std::collections::HashSet::new();
+            for &c in path {
+                for &j in &cell_users[&c] {
+                    if j != i {
+                        others.insert(j);
+                    }
+                }
+            }
+            Scarcity {
+                min_residual: if min_residual.is_finite() {
+                    min_residual
+                } else {
+                    f64::MAX
+                },
+                overlap_degree: others.len(),
+            }
+        })
+        .collect();
+    log::info!(
+        "global plan+scarcity: {} conns over {}x{} mesh in {:.0}ms",
+        conns.len(),
+        mesh.nx,
+        mesh.ny,
+        sw.ms(),
+    );
+    let corridors = paths
+        .iter()
+        .zip(conns.iter())
+        .map(|(path, (_, from, to))| {
+            if path.len() < 2 {
+                None
+            } else {
+                Some(mesh.corridor(path, *from, *to))
+            }
+        })
+        .collect();
+    (corridors, scarcity)
+}
+
 /// Plan corridors for every connection: a few negotiated-congestion sweeps
 /// of cell-path assignment, then one corridor bbox per connection (aligned
 /// with the input order). `None` means "no useful corridor" — search

@@ -29,3 +29,4 @@ vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-loon = { workspace = true }
 vcad-ecad-pcb = { workspace = true }
+serde_json = { workspace = true }
