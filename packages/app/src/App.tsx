@@ -46,7 +46,7 @@ const RecentFilesModal = lazyWithRetry(() => import("@/components/RecentFilesMod
 const ProductModal = lazyWithRetry(() => import("@/components/ProductModal").then(m => ({ default: m.ProductModal })), "ProductModal");
 const ShareDialog = lazyWithRetry(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })), "ShareDialog");
 const ContinueDialog = lazyWithRetry(() => import("@/components/ContinueDialog").then(m => ({ default: m.ContinueDialog })), "ContinueDialog");
-const VersionHistoryModal = lazyWithRetry(() => import("@/components/VersionHistoryModal").then(m => ({ default: m.VersionHistoryModal })), "VersionHistoryModal");
+const VersionTimeline = lazyWithRetry(() => import("@/components/VersionTimeline").then(m => ({ default: m.VersionTimeline })), "VersionTimeline");
 const ForkPromptModal = lazyWithRetry(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })), "ForkPromptModal");
 const ReadOnlyBanner = lazyWithRetry(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })), "ReadOnlyBanner");
 const ProfilePage = lazyWithRetry(() => import("@/components/ProfilePage").then(m => ({ default: m.ProfilePage })), "ProfilePage");
@@ -61,6 +61,7 @@ const LogViewer = lazyWithRetry(() => import("@/components/LogViewer").then(m =>
 const PrintPanel = lazyWithRetry(() => import("@/components/print").then(m => ({ default: m.PrintPanel })), "PrintPanel");
 const DfmOverlay = lazyWithRetry(() => import("@/components/print/DfmOverlay").then(m => ({ default: m.DfmOverlay })), "DfmOverlay");
 const CamPanel = lazyWithRetry(() => import("@/components/cam").then(m => ({ default: m.CamPanel })), "CamPanel");
+const AnalyzePanel = lazyWithRetry(() => import("@/components/AnalyzePanel").then(m => ({ default: m.AnalyzePanel })), "AnalyzePanel");
 const ChatSidebar = lazyWithRetry(() => import("@/components/ChatSidebar").then(m => ({ default: m.ChatSidebar })), "ChatSidebar");
 const DocumentPicker = lazyWithRetry(() => import("@/components/DocumentPicker").then(m => ({ default: m.DocumentPicker })), "DocumentPicker");
 const OfflineIndicator = lazyWithRetry(() => import("@/components/OfflineIndicator").then(m => ({ default: m.OfflineIndicator })), "OfflineIndicator");
@@ -108,9 +109,11 @@ import {
 } from "@vcad/engine";
 import type { EmbroideryDesign } from "@vcad/ir";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useVersionTimelineStore } from "@/stores/version-timeline-store";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { useSlicerStore } from "@/stores/slicer-store";
 import { useCamStore } from "@/stores/cam-store";
+import { useAnalyzeStore } from "@/stores/analyze-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useEmbroideryStore } from "@/stores/embroidery-store";
 
@@ -251,7 +254,7 @@ export function App() {
   const [productOpen, setProductOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [continueOpen, setContinueOpen] = useState(false);
-  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const versionTimelineOpen = useVersionTimelineStore((s) => s.open);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
@@ -325,6 +328,7 @@ export function App() {
   const selectMultiple = useUiStore((s) => s.selectMultiple);
   const printPanelOpen = useSlicerStore((s) => s.printPanelOpen);
   const camPanelOpen = useCamStore((s) => s.camPanelOpen);
+  const analyzePanelOpen = useAnalyzeStore((s) => s.panelOpen);
   const embroideryPanelOpen = useEmbroideryStore((s) => s.panelOpen);
   const partIndex = useDocumentStore((s) => s.partIndex);
   const selIds = useUiStore((s) => s.selectedPartIds);
@@ -1102,6 +1106,13 @@ export function App() {
         </AsyncBoundary>
       )}
 
+      {/* Analyze panel (#592): unified solver studies with mandatory receipts */}
+      {analyzePanelOpen && (
+        <AsyncBoundary region="analyze-panel" fallback={null}>
+          <AnalyzePanel />
+        </AsyncBoundary>
+      )}
+
       {/* Embroidery panel — hide when an embroidery part is selected so PropertyPanel shows */}
       {embroideryPanelOpen && !hasSelectedEmbroideryPart && (
         <AsyncBoundary region="embroidery-panel" fallback={null}>
@@ -1152,7 +1163,9 @@ export function App() {
                 onOpen={handleOpen}
                 onShareOpen={() => setShareOpen(true)}
                 onContinueOpen={() => setContinueOpen(true)}
-                onVersionHistoryOpen={() => setVersionHistoryOpen(true)}
+                onVersionHistoryOpen={() =>
+                  void useVersionTimelineStore.getState().openPanel()
+                }
               >
                 <ToolPalette />
               </Header>
@@ -1160,11 +1173,20 @@ export function App() {
             leftSidebar={!showOnboarding && featureTreeOpen && (
               <FeatureTreeSlot sketchActive={sketchActive} />
             )}
-            rightSidebar={!showOnboarding && chatOpen && (
-              <AsyncBoundary region="chat-sidebar" fallback={null}>
-                <ChatSidebar />
-              </AsyncBoundary>
-            )}
+            rightSidebar={
+              !showOnboarding &&
+              (versionTimelineOpen ? (
+                <AsyncBoundary region="version-timeline" fallback={null}>
+                  <VersionTimeline />
+                </AsyncBoundary>
+              ) : (
+                chatOpen && (
+                  <AsyncBoundary region="chat-sidebar" fallback={null}>
+                    <ChatSidebar />
+                  </AsyncBoundary>
+                )
+              ))
+            }
             bottomDock={(
               <AsyncBoundary region="log-viewer" fallback={null}>
                 <LogViewer />
@@ -1188,10 +1210,6 @@ export function App() {
           <ProductModal open={productOpen} onOpenChange={setProductOpen} />
           <ShareDialog open={shareOpen} onOpenChange={setShareOpen} />
           <ContinueDialog open={continueOpen} onOpenChange={setContinueOpen} />
-          <VersionHistoryModal
-            open={versionHistoryOpen}
-            onOpenChange={setVersionHistoryOpen}
-          />
           <ForkPromptModal />
           <DocumentPicker
             open={documentPickerOpen}

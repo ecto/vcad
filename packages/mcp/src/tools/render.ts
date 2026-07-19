@@ -25,6 +25,7 @@ import {
   renderAssetSummary,
   withRenderAssets,
 } from "./render-assets.js";
+import { asBool } from "./arg-coerce.js";
 
 export const renderViewSchema = {
   type: "object" as const,
@@ -95,6 +96,12 @@ export const renderViewSchema = {
       type: "boolean" as const,
       description:
         "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly.",
+    },
+    style: {
+      type: "string" as const,
+      enum: ["drafting", "shaded"],
+      description:
+        "Shading style: 'drafting' (default) keeps part colors in the navy drafting tonal family; 'shaded' renders each part in its full assigned material color (same Lambertian shading). Any other value is an error.",
     },
   },
 };
@@ -266,9 +273,9 @@ export async function renderView(
   }
 
   const annotations = {
-    axes: args.axes === true,
-    labels: args.labels === true,
-    dims: args.dims === true,
+    axes: asBool(args.axes),
+    labels: asBool(args.labels),
+    dims: asBool(args.dims),
   };
   const wantAnnotations =
     annotations.axes || annotations.labels || annotations.dims;
@@ -280,7 +287,7 @@ export async function renderView(
   let highlight: string[] = Array.isArray(args.highlight)
     ? (args.highlight as unknown[]).map(String)
     : [];
-  if (highlight.length === 0 && args.highlight_changed === true) {
+  if (highlight.length === 0 && asBool(args.highlight_changed)) {
     const last = documentId ? getLastChanged(documentId) : null;
     if (!last || last.length === 0) {
       return {
@@ -301,6 +308,27 @@ export async function renderView(
     }
     highlight = last;
   }
+
+  // Shading style: 'drafting' (default) or 'shaded'. Anything else is a loud
+  // error — a style the server doesn't understand must never silently render
+  // as something else.
+  const styleRaw =
+    typeof args.style === "string" ? args.style.trim().toLowerCase() : "";
+  if (styleRaw && styleRaw !== "drafting" && styleRaw !== "shaded") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `unknown style '${args.style}' — supported: 'drafting' (navy line-art look), 'shaded' (full material color)`,
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+  const style = (styleRaw || "drafting") as "drafting" | "shaded";
 
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
@@ -336,6 +364,11 @@ export async function renderView(
       section: string | null,
       highlightJson: string | null,
     ) => string;
+    render_svg_camera_opts?: (
+      vcadJson: string,
+      scale: number,
+      optsJson: string,
+    ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
     return {
@@ -353,6 +386,24 @@ export async function renderView(
   // section + highlight). Prefer it for everything; the narrower bindings are
   // only fallbacks for a single feature on an older WASM build.
   const hasCamera = typeof wasm.render_svg_camera === "function";
+  const hasCameraOpts = typeof wasm.render_svg_camera_opts === "function";
+  // A non-default style has no legacy binding — fail loudly rather than
+  // silently rendering the default look.
+  if (style !== "drafting" && !hasCameraOpts) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error:
+              `style '${style}' unavailable: kernel WASM build predates render_svg_camera_opts — rebuild @vcad/kernel-wasm.`,
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
   // Orbit and focus have no legacy binding — they require the superset.
   if ((hasOrbit || focus !== undefined) && !hasCamera) {
     return {
@@ -413,7 +464,22 @@ export async function renderView(
     // fall back to the narrowest binding that serves the single requested
     // feature (section → highlight → annotations → named view → plain).
     svg =
-      needsCamera && hasCamera
+      hasCameraOpts && (needsCamera || style !== "drafting")
+        ? wasm.render_svg_camera_opts!(
+            JSON.stringify(doc),
+            SVG_SCALE,
+            JSON.stringify({
+              view: viewStr,
+              ...(focus ? { focus } : {}),
+              axes: annotations.axes,
+              labels: annotations.labels,
+              dims: annotations.dims,
+              ...(sectionRaw ? { section: sectionRaw } : {}),
+              ...(highlight.length > 0 ? { highlight } : {}),
+              style,
+            }),
+          )
+        : needsCamera && hasCamera
         ? wasm.render_svg_camera!(
             JSON.stringify(doc),
             SVG_SCALE,
@@ -511,6 +577,7 @@ export async function renderView(
             view: viewLabel,
             ...(focus ? { focus } : {}),
             ...(sectionRaw ? { section: sectionRaw } : {}),
+            ...(style !== "drafting" ? { style } : {}),
             width_px: widthPx,
             format: "png",
             ...(highlight.length > 0 ? { highlight } : {}),
@@ -1159,7 +1226,7 @@ export const toolDefs: ToolDef[] = [
     name: "render_view",
     pack: null,
     description:
-      "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
+      "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Call after mutations to visually confirm the part matches intent before declaring done.",
     inputSchema: renderViewSchema,
     handler: async (a) => (await renderView(a)) as unknown as ToolResult,
     behavior: behavior({}),

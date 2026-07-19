@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-chat-mcp-tool-parity",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "feat",
+  "title": "Chat assistant gains the MCP solver tool surface",
+  "summary": "In-app chat can now run inspect_cad, measure, check_clearance, dfm_check, analyze_structure, topology_optimize and more — with receipt chips, a viewport min-distance line, and undoable results.",
+  "features": ["chat", "mcp", "verification", "topology-optimization"],
+  "mcpTools": ["inspect_cad", "measure", "check_clearance", "dfm_check", "analyze_structure", "topology_optimize", "analyze_tolerance_stackup", "solve_thermal", "predict_print", "predict_physics"]
+}

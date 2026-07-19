@@ -23,7 +23,7 @@ import type {
 import { runDfm, runPcbDfm } from "@vcad/engine";
 import type { Document, Node, Pcb } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { documents, resolveDocInput } from "./session.js";
+import { documents, resolveDocInput } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Most-recent report per session, used by explain / suggest / apply.

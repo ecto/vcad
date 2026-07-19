@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-18-assembly-measure-integrity",
+  "version": "0.9.4",
+  "date": "2026-07-18",
+  "category": "fix",
+  "title": "Assemblies are first-class in measure and mutation stats",
+  "summary": "measure, inspect_part, and describe_scene now resolve assembly instances (matching check_clearance), and mutation integrity reports include instance geometry — a 44-instance assembly no longer reports parts: 0, volume: 0.",
+  "features": ["assembly", "measure", "mcp"],
+  "mcpTools": ["measure", "inspect_part", "describe_scene", "create_cad_loon"]
+}

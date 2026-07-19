@@ -21,7 +21,7 @@ import type {
   TopoOptSpec,
   TriangleMesh,
 } from "@vcad/engine";
-import { getSession, registerSession } from "./session.js";
+import { getSession, registerSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 const regionSchema = {

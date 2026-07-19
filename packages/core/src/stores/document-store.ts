@@ -12,6 +12,7 @@ import type {
   SweepOp,
   JointKind,
   SceneSettings,
+  DrawingSettings,
   Environment,
   Light,
   Background,
@@ -27,6 +28,7 @@ import type {
   BoardOutline,
   EmbroideryDesign,
   FillParams,
+  AnalysisStudy,
 } from "@vcad/ir";
 import { DEFAULT_FILL_PARAMS } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -413,8 +415,13 @@ export interface DocumentState {
   setPartVisible: (partId: string, visible: boolean) => void;
   // Reorder parts in tree
   reorderPart: (partId: string, newIndex: number) => void;
+  // Analyze mode (#592): persist solver studies on the document (CRDT
+  // singleton feature, like scene settings)
+  setAnalysisStudies: (studies: AnalysisStudy[]) => void;
   // Scene settings actions
   setSceneSettings: (settings: SceneSettings) => void;
+  /** Persist drawing sheet settings (title block, sections, BOM) on the document. */
+  setDrawingSettings: (settings: DrawingSettings) => void;
   updateEnvironment: (environment: Environment) => void;
   updateLights: (lights: Light[]) => void;
   addLight: (light: Light) => void;
@@ -713,6 +720,27 @@ function applyLegacyResult(result: CrdtMutationResult): Partial<DocumentState> {
 /** Cached singleton feature IDs (lazily created, cleared on engine init). */
 let _sceneSettingsFeatureId: string | null = null;
 let _schematicFeatureId: string | null = null;
+let _analysisStudiesFeatureId: string | null = null;
+
+function getOrCreateAnalysisStudiesFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_analysisStudiesFeatureId) return _analysisStudiesFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "analysis-studies");
+  if (existing) {
+    _analysisStudiesFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("analysis-studies", "{}");
+  if (result.createdFeatureId) {
+    _analysisStudiesFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
 
 function getOrCreateSceneFeature(state: DocumentState): string {
   const engine = state._crdtEngine!;
@@ -729,6 +757,28 @@ function getOrCreateSceneFeature(state: DocumentState): string {
   const result = engine.create_feature("scene-settings", "{}");
   if (result.createdFeatureId) {
     _sceneSettingsFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
+
+let _drawingSettingsFeatureId: string | null = null;
+
+function getOrCreateDrawingFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_drawingSettingsFeatureId) return _drawingSettingsFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "drawing-settings");
+  if (existing) {
+    _drawingSettingsFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("drawing-settings", "{}");
+  if (result.createdFeatureId) {
+    _drawingSettingsFeatureId = result.createdFeatureId;
     return result.createdFeatureId;
   }
   return "";
@@ -842,6 +892,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     _sceneSettingsFeatureId = null;
     _schematicFeatureId = null;
+    _analysisStudiesFeatureId = null;
+    _drawingSettingsFeatureId = null;
     const engine = new EngineClass();
     set({ _crdtEngine: engine, _crdtEngineClass: EngineClass });
   },
@@ -1782,6 +1834,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
+      _analysisStudiesFeatureId = null;
+      _drawingSettingsFeatureId = null;
       const engine = new state._crdtEngineClass();
       set({
         document: createDocument(),
@@ -1856,6 +1910,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set(applyLegacyResult(result));
   },
 
+  // Analyze mode: studies live in a singleton "analysis-studies" CRDT
+  // feature so they survive the canonical v0.4 save (unlike clearance_specs,
+  // which only round-trips the server JSON path today).
+  setAnalysisStudies: (studies) => {
+    const state = get();
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateAnalysisStudiesFeature(state);
+    engine.set_param(fid, "studies", JSON.stringify(crdtStr(JSON.stringify(studies))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
+  },
+
   // Scene settings actions
   setSceneSettings: (settings) => {
     const state = get();
@@ -1866,6 +1932,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (settings.background) engine.set_param(fid, "background", JSON.stringify(crdtStr(JSON.stringify(settings.background))));
     if (settings.postProcessing) engine.set_param(fid, "post_processing", JSON.stringify(crdtStr(JSON.stringify(settings.postProcessing))));
     if (settings.cameraPresets) engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(settings.cameraPresets))));
+    const doc: Document = JSON.parse(engine.get_document_json());
+    set({ document: doc, isDirty: true });
+  },
+
+  setDrawingSettings: (settings) => {
+    const state = get();
+    const engine = state._crdtEngine!;
+    const fid = getOrCreateDrawingFeature(state);
+    if (settings.titleBlock) engine.set_param(fid, "title_block", JSON.stringify(crdtStr(JSON.stringify(settings.titleBlock))));
+    if (settings.sections) engine.set_param(fid, "sections", JSON.stringify(crdtStr(JSON.stringify(settings.sections))));
+    if (settings.showBom !== undefined) engine.set_param(fid, "show_bom", JSON.stringify(crdtStr(JSON.stringify(settings.showBom))));
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },

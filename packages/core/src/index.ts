@@ -334,6 +334,15 @@ export type {
   RenderedArc,
   DetailView,
   DetailViewParams,
+  SectionView,
+  SectionCurve,
+  SectionPlane,
+  OffsetSectionPlane,
+  OffsetSectionStep,
+  TitleBlockFields,
+  BomRow,
+  RenderedBlock,
+  DrawingSheetSpec,
 } from "@vcad/engine";
 
 // Logger

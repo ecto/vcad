@@ -13,6 +13,7 @@
 
 import type { Document } from "@vcad/ir";
 import type { Engine, TriangleMesh } from "@vcad/engine";
+import { transformMesh } from "@vcad/engine";
 
 /** Compact aggregate geometry report attached to mutation results. */
 export interface IntegrityReport {
@@ -28,6 +29,13 @@ export interface IntegrityReport {
   /** Unpaired directed edges across all parts (0 when watertight). */
   open_edges: number;
   parts: number;
+  /**
+   * Assembly instances included in the aggregate (world-posed). Present only
+   * when the document places instances; without it a successful N-instance
+   * assembly reported `parts: 0, volume: 0` — indistinguishable from a
+   * silent failure.
+   */
+  instances?: number;
   triangles: number;
   /**
    * Distance (mm) from the aggregate CoM to each distinct circular-pattern
@@ -208,11 +216,30 @@ export function computeIntegrity(
   doc: Document,
   engine: Engine,
 ): IntegrityReport | null {
-  let scene: { parts: Array<{ mesh: TriangleMesh }> };
+  // Infer the scene type from the engine rather than hand-annotating it, so
+  // the instance transform shape (kernel-native {x,y,z}) stays in sync with
+  // @vcad/engine — the same untyped pattern check_clearance uses.
+  let scene: ReturnType<Engine["evaluate"]>;
   try {
     scene = engine.evaluate(doc);
   } catch {
     return null;
+  }
+
+  // Assembly instances contribute world-posed meshes to the aggregate, the
+  // same way check_clearance's candidate set bakes FK transforms. Without
+  // this, an assembly-only document reported parts: 0, volume: 0.
+  const instanceMeshes: TriangleMesh[] = [];
+  for (const inst of scene.instances ?? []) {
+    const mesh = inst.transform
+      ? transformMesh(inst.mesh, {
+          translate: inst.transform.translation,
+          rotate: inst.transform.rotation,
+          scale: inst.transform.scale,
+        })
+      : inst.mesh;
+    if (!mesh || mesh.positions.length === 0) continue;
+    instanceMeshes.push(mesh);
   }
 
   let volume = 0;
@@ -228,8 +255,12 @@ export function computeIntegrity(
   };
   const warnings: string[] = [];
 
-  for (let partIndex = 0; partIndex < scene.parts.length; partIndex++) {
-    const mesh = scene.parts[partIndex].mesh;
+  const meshes: TriangleMesh[] = [
+    ...scene.parts.map((p) => p.mesh),
+    ...instanceMeshes,
+  ];
+  for (let partIndex = 0; partIndex < meshes.length; partIndex++) {
+    const mesh = meshes[partIndex];
     const tris = mesh.indices.length / 3;
     triangles += tris;
     let partVolume = 0;
@@ -337,6 +368,7 @@ export function computeIntegrity(
     watertight: openEdges === 0,
     open_edges: openEdges,
     parts: scene.parts.length,
+    ...(instanceMeshes.length > 0 ? { instances: instanceMeshes.length } : {}),
     triangles,
     warnings,
   };

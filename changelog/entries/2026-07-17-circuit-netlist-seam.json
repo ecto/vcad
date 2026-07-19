@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-circuit-netlist-seam",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Schematics simulate directly: netlist-to-circuit seam",
+  "summary": "Schematics from create_schematic convert to simulatable circuits (DC/AC/adjoint) with SI value parsing and fail-closed errors for unmappable components.",
+  "features": ["circuit-simulation", "ecad", "schematic"]
+}

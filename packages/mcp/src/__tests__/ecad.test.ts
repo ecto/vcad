@@ -2463,6 +2463,14 @@ describe("route_nets idempotency", () => {
     expect(r.stale_nets_cleared).toBeUndefined();
   });
 
+  // Timeout raised above the 5s default: this is the only case in the suite that
+  // routes a board with a dense free coil present (~24 spiral segments become
+  // router obstacles), so each of the two route_nets passes runs the kernel
+  // autorouter ~200× longer than a pad-only board (~0.9s vs ~4ms locally, ~1.8s
+  // total). The autorouter is unchanged; the cost is inherent to the coil-as-
+  // obstacle case and sits near the 5s edge, so it flakes under loaded CI. The
+  // assertion is about correctness (coil copper survives the stale sweep), not
+  // speed — give it headroom rather than let wall-clock flake the correctness check.
   it("the stale sweep never rips coil/winding copper (free spiral, no pads)", async () => {
     const id = await buildBoard();
     // A standalone coil on its own net — a free spiral whose terminals dangle by
@@ -2491,7 +2499,7 @@ describe("route_nets idempotency", () => {
     const board = getPcbBoard(getSession(id));
     expect(board.traces.filter((t) => t.net === "COIL").length).toBe(coilTraces);
     expect((r.stale_nets_cleared as string[] | undefined) ?? []).not.toContain("COIL");
-  });
+  }, 20000);
 });
 
 describe("schematic label diagnostics", () => {

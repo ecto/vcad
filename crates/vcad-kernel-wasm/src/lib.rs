@@ -9,6 +9,7 @@
 
 #[cfg(feature = "ecad")]
 pub mod circuit_sim;
+pub mod document_diff;
 pub mod document_engine;
 pub mod keybindings;
 pub mod sheet_metal;
@@ -293,6 +294,94 @@ pub fn render_svg_camera(
         section: plane,
         highlight,
         annotations: vcad_render::RenderAnnotations { axes, labels, dims },
+        ..Default::default()
+    };
+    vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// surface expressed as one JSON options object — the forward-compatible
+/// companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
+/// so new render options never need another positional-arg binding.
+///
+/// `opts_json` (empty string = defaults):
+/// `{"view":"iso","focus":"rotor","axes":false,"labels":false,"dims":false,
+///   "section":"z=10","highlight":["part_3"],"style":"shaded"}`.
+/// `view` accepts everything [`render_svg_view`] does, including
+/// `"orbit:<azimuth>,<elevation>"`. `style` is `"drafting"` (default, navy
+/// tonal family) or `"shaded"` (full material colour). Unknown option keys
+/// and unknown style names are errors, never silently ignored.
+#[wasm_bindgen]
+pub fn render_svg_camera_opts(
+    vcad_json: &str,
+    scale: f64,
+    opts_json: &str,
+) -> Result<String, JsError> {
+    #[derive(serde::Deserialize, Default)]
+    #[serde(deny_unknown_fields)]
+    struct CameraOptsJson {
+        #[serde(default)]
+        view: Option<String>,
+        #[serde(default)]
+        focus: Option<String>,
+        #[serde(default)]
+        axes: bool,
+        #[serde(default)]
+        labels: bool,
+        #[serde(default)]
+        dims: bool,
+        #[serde(default)]
+        section: Option<String>,
+        #[serde(default)]
+        highlight: Vec<String>,
+        #[serde(default)]
+        style: Option<String>,
+        #[serde(default)]
+        transparent: bool,
+    }
+    let o: CameraOptsJson = if opts_json.trim().is_empty() {
+        CameraOptsJson::default()
+    } else {
+        serde_json::from_str(opts_json)
+            .map_err(|e| JsError::new(&format!("invalid render options: {e}")))?
+    };
+    let view = o
+        .view
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("iso")
+        .parse::<vcad_render::View>()
+        .map_err(|e| JsError::new(&e))?;
+    let section = match o
+        .section
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) => Some(
+            s.parse::<vcad_render::SectionPlane>()
+                .map_err(|e| JsError::new(&e))?,
+        ),
+        None => None,
+    };
+    let style = o
+        .style
+        .as_deref()
+        .unwrap_or("")
+        .parse::<vcad_render::RenderStyle>()
+        .map_err(|e| JsError::new(&e))?;
+    let opts = vcad_render::SvgOptions {
+        view,
+        transparent: o.transparent,
+        focus: o.focus.filter(|f| !f.trim().is_empty()),
+        section,
+        highlight: o.highlight,
+        annotations: vcad_render::RenderAnnotations {
+            axes: o.axes,
+            labels: o.labels,
+            dims: o.dims,
+        },
+        style,
         ..Default::default()
     };
     vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
@@ -2473,6 +2562,228 @@ impl Default for WasmAnnotationLayer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// =========================================================================
+// Shop-ready drawing sheet: offset sections, title block, BOM, PDF
+// =========================================================================
+
+/// Generate an offset (stepped) section view from a triangle mesh.
+///
+/// # Arguments
+/// * `mesh_js` - Mesh data as JS object with `positions` (Float32Array) and `indices` (Uint32Array)
+/// * `plane_json` - JSON `OffsetSectionPlane`: `{"base": {"origin": [x,y,z], "normal": [x,y,z], "up": [x,y,z]}, "steps": [{"u_start": f64, "u_end": f64, "offset": f64}]}`
+/// * `hatch_json` - Optional JSON hatch pattern: `{"spacing": f64, "angle": f64}`
+///
+/// # Returns
+/// A JS object containing the section view with curves, hatch lines, and bounds.
+#[module("drafting")]
+#[wasm_bindgen(js_name = offsetSectionMesh)]
+pub fn offset_section_mesh_wasm(
+    mesh_js: JsValue,
+    plane_json: &str,
+    hatch_json: Option<String>,
+) -> JsValue {
+    use vcad_kernel_drafting::{offset_section_mesh, HatchPattern, OffsetSectionPlane};
+    use vcad_kernel_tessellate::TriangleMesh;
+
+    let mesh_data: WasmMesh = match serde_wasm_bindgen::from_value(mesh_js) {
+        Ok(m) => m,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let mesh = TriangleMesh {
+        vertices: mesh_data.positions,
+        indices: mesh_data.indices,
+        normals: Vec::new(),
+        face_kinds: Vec::new(),
+    };
+
+    let plane: OffsetSectionPlane = match serde_json::from_str(plane_json) {
+        Ok(p) => p,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let hatch: Option<HatchPattern> = hatch_json.and_then(|h| serde_json::from_str(&h).ok());
+
+    let view = offset_section_mesh(&mesh, &plane, hatch.as_ref());
+    serde_wasm_bindgen::to_value(&view).unwrap_or(JsValue::NULL)
+}
+
+/// Render a title block as drawing primitives, bottom-left corner at (0, 0).
+///
+/// # Arguments
+/// * `fields_json` - JSON `TitleBlockFields`: `{"part_name": "...", "material": "...", "finish": "...", "scale": "...", "drawn_by": "...", "date": "...", "revision": "...", "units": "...", "tolerance_note": "..."}`
+///
+/// # Returns
+/// `{ rendered: RenderedDimension, width: f64, height: f64 }`, or null on
+/// parse failure.
+#[module("drafting")]
+#[wasm_bindgen(js_name = renderTitleBlock)]
+pub fn render_title_block_wasm(fields_json: &str) -> JsValue {
+    use vcad_kernel_drafting::{Point2D, TitleBlock, TitleBlockFields};
+
+    let fields: TitleBlockFields = match serde_json::from_str(fields_json) {
+        Ok(f) => f,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let block = TitleBlock::new(fields);
+    let out = RenderedBlock {
+        rendered: block.render(Point2D::new(0.0, 0.0)),
+        width: block.width,
+        height: block.height,
+    };
+    serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+}
+
+/// A rendered drawing entity plus its footprint, for sheet placement.
+#[derive(serde::Serialize)]
+struct RenderedBlock {
+    rendered: vcad_kernel_drafting::RenderedDimension,
+    width: f64,
+    height: f64,
+}
+
+/// Render a BOM table as drawing primitives, bottom-left corner at (0, 0).
+///
+/// # Arguments
+/// * `rows_json` - JSON array of `BomRow`: `[{"item": 1, "name": "...", "qty": 2, "material": "..."}]`
+///
+/// # Returns
+/// `{ rendered: RenderedDimension, width: f64, height: f64 }`, or null on
+/// parse failure.
+#[module("drafting")]
+#[wasm_bindgen(js_name = renderBomTable)]
+pub fn render_bom_table_wasm(rows_json: &str) -> JsValue {
+    use vcad_kernel_drafting::{BomRow, BomTable, Point2D};
+
+    let rows: Vec<BomRow> = match serde_json::from_str(rows_json) {
+        Ok(r) => r,
+        Err(_) => return JsValue::NULL,
+    };
+
+    let table = BomTable { rows };
+    let out = RenderedBlock {
+        rendered: table.render(Point2D::new(0.0, 0.0)),
+        width: table.width(),
+        height: table.height(),
+    };
+    serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+}
+
+/// Specification for composing a drawing sheet (see [`drawing_sheet_to_pdf`]).
+#[derive(serde::Deserialize)]
+struct SheetSpec {
+    /// Sheet size ("a4", "a3", "letter", or {"custom": {...}}). Default A4.
+    #[serde(default)]
+    size: Option<vcad_kernel_drafting::SheetSize>,
+    /// Projected views placed on the sheet.
+    #[serde(default)]
+    views: Vec<PlacedProjectedView>,
+    /// Section views placed on the sheet.
+    #[serde(default)]
+    sections: Vec<PlacedSectionView>,
+    /// Pre-rendered annotations (dimensions, cut lines) in sheet coordinates.
+    #[serde(default)]
+    annotations: Vec<vcad_kernel_drafting::RenderedDimension>,
+    /// Title block fields; omitted → no title block.
+    #[serde(default)]
+    title_block: Option<vcad_kernel_drafting::TitleBlockFields>,
+    /// BOM rows; omitted or empty → no BOM table.
+    #[serde(default)]
+    bom: Option<Vec<vcad_kernel_drafting::BomRow>>,
+}
+
+/// A projected view with sheet placement.
+#[derive(serde::Deserialize)]
+struct PlacedProjectedView {
+    view: vcad_kernel_drafting::ProjectedView,
+    /// Sheet position of the view's bounds center, mm from bottom-left.
+    center: [f64; 2],
+    scale: f64,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// A section view with sheet placement.
+#[derive(serde::Deserialize)]
+struct PlacedSectionView {
+    view: vcad_kernel_drafting::SectionView,
+    center: [f64; 2],
+    scale: f64,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// Compose a drawing sheet from projected views, sections, annotations,
+/// title block, and BOM table, and export it as a PDF.
+///
+/// # Arguments
+/// * `spec_json` - JSON `SheetSpec` (see the struct docs above).
+///
+/// # Returns
+/// PDF file bytes (deterministic PDF 1.4 from the kernel's drafting crate).
+#[module("drafting")]
+#[wasm_bindgen(js_name = drawingSheetToPdf)]
+pub fn drawing_sheet_to_pdf(spec_json: &str) -> Result<Vec<u8>, JsError> {
+    use vcad_kernel_drafting::{
+        sheet_to_pdf, BomTable, DrawingSheet, LineClass, Point2D, RenderedText, SheetSize,
+        TitleBlock,
+    };
+
+    let spec: SheetSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    let mut sheet = DrawingSheet::new(spec.size.unwrap_or(SheetSize::A4));
+
+    for placed in &spec.views {
+        let center = Point2D::new(placed.center[0], placed.center[1]);
+        sheet.add_projected_view(&placed.view, center, placed.scale);
+        if let Some(label) = &placed.label {
+            let half_h = (placed.view.bounds.max_y - placed.view.bounds.min_y) / 2.0 * placed.scale;
+            sheet.texts.push(RenderedText::new(
+                Point2D::new(center.x, center.y - half_h - 8.0),
+                label,
+                3.5,
+            ));
+        }
+    }
+
+    for placed in &spec.sections {
+        let center = Point2D::new(placed.center[0], placed.center[1]);
+        sheet.add_section_view(&placed.view, center, placed.scale);
+        if let Some(label) = &placed.label {
+            let bounds = &placed.view.bounds;
+            let half_h = (bounds.max_y - bounds.min_y) / 2.0 * placed.scale;
+            sheet.texts.push(RenderedText::new(
+                Point2D::new(center.x, center.y - half_h - 8.0),
+                label,
+                3.5,
+            ));
+        }
+    }
+
+    for rd in &spec.annotations {
+        sheet.add_annotation(rd, LineClass::Dimension, Point2D::new(0.0, 0.0));
+    }
+
+    let title_block_height = if let Some(fields) = spec.title_block {
+        let block = TitleBlock::new(fields);
+        sheet.add_title_block(&block);
+        block.height
+    } else {
+        0.0
+    };
+
+    if let Some(rows) = spec.bom {
+        if !rows.is_empty() {
+            let table = BomTable { rows };
+            sheet.add_bom_table(&table, title_block_height);
+        }
+    }
+
+    Ok(sheet_to_pdf(&sheet))
 }
 
 // =========================================================================
@@ -7908,6 +8219,9 @@ struct FeaOptions {
     stress_tol: f64,
     tol: f64,
     max_iters: usize,
+    /// When true, per-vertex displacement/von-Mises fields sampled onto the
+    /// input surface mesh are returned (for viewport coloring).
+    fields: bool,
 }
 
 impl Default for FeaOptions {
@@ -7920,6 +8234,7 @@ impl Default for FeaOptions {
             stress_tol: conv.stress_tol,
             tol: solve.tol,
             max_iters: solve.max_iters,
+            fields: false,
         }
     }
 }
@@ -7929,6 +8244,80 @@ struct WasmFeaAnalysis {
     study: vcad_kernel::vcad_kernel_fea::convergence::ConvergedAnalysis,
     claim_set: Option<vcad_kernel::vcad_kernel_fea::receipt::ClaimSet>,
     receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+    /// Displacement magnitude sampled at each input surface vertex, mm.
+    /// Present only when `FeaOptions::fields` was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vertex_displacement_mm: Option<Vec<f64>>,
+    /// Von Mises stress sampled at each input surface vertex, MPa.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vertex_von_mises_mpa: Option<Vec<f64>>,
+}
+
+/// Sample per-node fields onto surface vertices by nearest lattice node
+/// (uniform spatial hash at pitch `h`; ring search widens until a node is
+/// found, so every vertex gets the value of its closest interior node).
+fn sample_fields_to_vertices(
+    fields: &vcad_kernel::vcad_kernel_fea::solve::NodeFields,
+    positions: &[f32],
+) -> (Vec<f64>, Vec<f64>) {
+    use std::collections::HashMap;
+    let h = fields.h_mm.max(1e-9);
+    let key = |p: &[f64; 3]| {
+        [
+            (p[0] / h).floor() as i64,
+            (p[1] / h).floor() as i64,
+            (p[2] / h).floor() as i64,
+        ]
+    };
+    let mut cells: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    for (i, n) in fields.nodes.iter().enumerate() {
+        cells.entry(key(n)).or_default().push(i as u32);
+    }
+    let nv = positions.len() / 3;
+    let mut disp = Vec::with_capacity(nv);
+    let mut vm = Vec::with_capacity(nv);
+    for v in 0..nv {
+        let p = [
+            positions[3 * v] as f64,
+            positions[3 * v + 1] as f64,
+            positions[3 * v + 2] as f64,
+        ];
+        let c = key(&p);
+        let mut best: Option<(f64, u32)> = None;
+        let mut ring = 1i64;
+        // Search the 3^3 neighborhood first, then widen shells until a node
+        // shows up (guaranteed: the lattice is finite and non-empty).
+        loop {
+            for dx in -ring..=ring {
+                for dy in -ring..=ring {
+                    for dz in -ring..=ring {
+                        if dx.abs() < ring && dy.abs() < ring && dz.abs() < ring && ring > 1 {
+                            continue; // interior already searched
+                        }
+                        if let Some(ids) = cells.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) {
+                            for &i in ids {
+                                let n = &fields.nodes[i as usize];
+                                let d2 = (n[0] - p[0]).powi(2)
+                                    + (n[1] - p[1]).powi(2)
+                                    + (n[2] - p[2]).powi(2);
+                                if best.is_none_or(|(b, _)| d2 < b) {
+                                    best = Some((d2, i));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if best.is_some() || ring > 4096 {
+                break;
+            }
+            ring += 1;
+        }
+        let i = best.map(|(_, i)| i as usize).unwrap_or(0);
+        disp.push(fields.displacement_mm[i]);
+        vm.push(fields.von_mises_mpa[i]);
+    }
+    (disp, vm)
 }
 
 /// Static structural FEA of a closed evaluated mesh with fail-closed
@@ -7979,8 +8368,15 @@ pub fn fea_analyze_mesh(
         tol: opts.tol,
         max_iters: opts.max_iters,
     };
-    let study = fea::convergence::analyze_converged(&mesh, &spec, &conv, &solve_opts)
-        .map_err(|e| JsError::new(&e.to_string()))?;
+    let (study, node_fields) =
+        fea::convergence::analyze_converged_fields(&mesh, &spec, &conv, &solve_opts)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+    let (vertex_displacement_mm, vertex_von_mises_mpa) = if opts.fields {
+        let (d, v) = sample_fields_to_vertices(&node_fields, positions);
+        (Some(d), Some(v))
+    } else {
+        (None, None)
+    };
     let (claim_set, receipt_claims) = match &study.verdict {
         fea::convergence::ConvergenceVerdict::Converged => {
             let set = fea::receipt::predicted_claims(&study, &spec)
@@ -7996,6 +8392,8 @@ pub fn fea_analyze_mesh(
         study,
         claim_set,
         receipt_claims,
+        vertex_displacement_mm,
+        vertex_von_mises_mpa,
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))

@@ -734,6 +734,7 @@ export const translations = {
     "cmd.export_stl.label": "Export STL",
     "cmd.export_glb.label": "Export GLB",
     "cmd.export_step.label": "Export STEP",
+    "cmd.export_drawing_pdf.label": "Export Drawing PDF",
     "cmd.quit.label": "Quit",
     "cmd.toggle_sidebar.label": "Toggle Sidebar",
     "cmd.toggle_feature_tree.label": "Toggle Feature Tree",

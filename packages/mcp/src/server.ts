@@ -104,6 +104,7 @@ import {
   type ToolContext,
 } from "./tools/tool-def.js";
 import { TOOL_METADATA } from "./tools/tool-metadata.js";
+import { unknownArgKeys, unknownArgsError } from "./tools/validate-args.js";
 import type { ToolResult } from "./tools/tool-result.js";
 import { buildKernelEventPayload } from "./tools/kernel-event.js";
 
@@ -132,6 +133,7 @@ import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
 import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as circuitToolDefs } from "./tools/circuit.js";
 import { toolDefs as structureToolDefs } from "./tools/structure.js";
 import { toolDefs as emToolDefs } from "./tools/em.js";
 import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
@@ -318,6 +320,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...particleToolDefs,
   ...toleranceToolDefs,
   ...thermalToolDefs,
+  ...circuitToolDefs,
   ...structureToolDefs,
   ...emToolDefs,
   ...antennaToolDefs,
@@ -414,6 +417,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "analyze_structure",
   "simulate_neutron_shield",
   "analyze_tolerance_stackup",
+  "simulate_circuit",
+  "tune_circuit",
   // ── Two-tier static physics (predict fast, verify to certify) ──
   "predict_physics",
   // ── Print-then-measure calibration loop (3DP) ──────────────
@@ -1360,6 +1365,22 @@ export async function createServer(
         };
         fireToolAlert(name, args, unknownResult);
         return unknownResult;
+      }
+
+      // ── Strict arguments ───────────────────────────────────────────
+      // Any top-level argument key the tool's schema doesn't declare is a
+      // loud error, never a silent no-op — a misspelled or unsupported
+      // option must not vanish into a successful-looking result.
+      const unknown = unknownArgKeys(def.inputSchema, args);
+      if (unknown.length > 0) {
+        const rejection: ToolResult = {
+          content: [
+            { type: "text", text: unknownArgsError(name, unknown, def.inputSchema) },
+          ],
+          isError: true,
+        };
+        fireToolAlert(name, args, rejection);
+        return rejection;
       }
 
       // ── Trust boundary (commerce plane) ────────────────────────────

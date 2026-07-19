@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-circuit-adaptive-dt",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Adaptive timestep control for circuit simulation",
+  "summary": "Opt-in LTE-based adaptive stepping: stiff circuits solve in ~1000x fewer steps at equal accuracy, with Newton-failure rescue; fixed-step default unchanged.",
+  "features": ["circuit", "simulation", "ecad"]
+}
