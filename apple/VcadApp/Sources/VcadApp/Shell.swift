@@ -1354,6 +1354,14 @@ struct ViewportView: View {
                                name: "edges\(i)") {
                             (centering.findEntity(named: "edges\(i)") as? ModelEntity)?.model?.mesh = ribbon
                         }
+                        // Ride the selection highlight ribbon along the scrub.
+                        if let o = centering.findEntity(named: "outline\(i)") as? ModelEntity,
+                           let ribbon = EdgeOverlay.ribbonResource(
+                               segments: i < model.docPartEdges.count ? model.docPartEdges[i] : [],
+                               width: outlineWidth(selected: model.highlightedParts.contains(i)),
+                               name: "outline\(i)") {
+                            o.model?.mesh = ribbon
+                        }
                     }
                     // Slide the gizmo with the part (don't rebuild — that would
                     // destroy the arm the drag is holding).
@@ -2250,14 +2258,6 @@ struct ViewportView: View {
             }
             Self.applyPartPicking(pe, mesh: m, model: model)
         }
-        // Ride the selection outline along the scrub (per instance when patterned).
-        let selected = model.highlightedParts.contains(i)
-        for host in Self.partModelEntities(pe) {
-            if let o = host.findEntity(named: "outline\(i)") as? ModelEntity {
-                o.model?.mesh = m
-                Self.fitOutline(o, to: m, thickness: outlineThickness(selected: selected))
-            }
-        }
     }
 
     // MARK: feature-tree sync (visibility + selection highlight)
@@ -2271,12 +2271,13 @@ struct ViewportView: View {
         }
     }
 
-    /// Selection reads as a screen-space outline via an inverted hull: a
-    /// slightly inflated copy of the part's mesh rendered with front faces
-    /// culled, so only its back faces peek past the silhouette — a crisp
-    /// brand-orange rim that tracks camera orbit for free. Selection = thick +
-    /// bright, hover = thinner + dimmer. Part materials are never touched, so
-    /// the plate still looks like alu, not the accent color.
+    /// Selection reads as brand-orange feature-edge ribbons: the same crisp
+    /// edge polylines the CAD overlay already draws, rebuilt a touch wider in
+    /// accent orange for the selected part (hover = thinner + dimmer). This is
+    /// the classic CAD idiom — every silhouette, hole rim, and rib edge lights
+    /// up exactly where the geometry is, with none of the inflated-hull
+    /// artifacts. The part's dark edge ribbon is hidden while highlighted so
+    /// the two coplanar ribbons don't z-fight.
     private func applySelectionHighlight(_ content: RealityViewCameraContent) {
         guard model.usesDocumentTree,
               let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -2284,55 +2285,37 @@ struct ViewportView: View {
         let sel = model.highlightedParts
         let hov = model.hoveredPartIndex
         for i in 0..<model.partCount {
-            guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
-            // For instanced patterns each copy hosts its own outline (it rides
-            // the instance transform for free as a child).
-            let hosts = Self.partModelEntities(e)
-            for h in hosts { h.findEntity(named: "outline\(i)")?.removeFromParent() }
+            centering.findEntity(named: "outline\(i)")?.removeFromParent()
+            let edges = centering.findEntity(named: "edges\(i)")
             let selected = sel.contains(i)
-            guard selected || i == hov else { continue }
-            for h in hosts {
-                guard let mesh = h.model?.mesh else { continue }
-                h.addChild(Self.outlineEntity(
-                    index: i, mesh: mesh,
-                    thickness: outlineThickness(selected: selected),
-                    brightness: selected ? 1.0 : 0.35))
-            }
+            guard selected || i == hov else { edges?.isEnabled = true; continue }
+            guard let outline = outlineRibbon(index: i, selected: selected) else { continue }
+            centering.addChild(outline)
+            edges?.isEnabled = false
         }
     }
 
-    /// Outline rim width in kernel mm, proportional to the scene (like the
-    /// edge ribbons) so it stays visually constant across part sizes.
-    private func outlineThickness(selected: Bool) -> Double {
-        max(Double(model.displayedSceneSize) * (selected ? 0.008 : 0.004), selected ? 0.08 : 0.04)
+    /// Build the highlight ribbon for one part from its feature-edge segments
+    /// (already aggregated across pattern instances). Nil if there are none.
+    private func outlineRibbon(index i: Int, selected: Bool) -> ModelEntity? {
+        guard i < model.docPartEdges.count,
+              let ribbon = EdgeOverlay.ribbonResource(
+                  segments: model.docPartEdges[i],
+                  width: outlineWidth(selected: selected),
+                  name: "outline\(i)") else { return nil }
+        let color = selected
+            ? EditorModel.brandOrange
+            : NSColor(srgbRed: 0.62, green: 0.32, blue: 0.10, alpha: 1.0)   // dim hover
+        let e = ModelEntity(mesh: ribbon, materials: [UnlitMaterial(color: color)])
+        e.name = "outline\(i)"
+        return e
     }
 
-    /// Build the inverted-hull outline entity for one part.
-    private static func outlineEntity(index: Int, mesh: MeshResource,
-                                      thickness: Double, brightness: Float) -> ModelEntity {
-        var m = PhysicallyBasedMaterial()
-        m.baseColor = .init(tint: .black)
-        m.emissiveColor = .init(color: EditorModel.brandOrange)
-        m.emissiveIntensity = 2.0 * brightness   // reads unlit — pure rim color
-        m.roughness = 1.0
-        m.metallic = 0.0
-        m.faceCulling = .front                   // back faces only → silhouette
-        let outline = ModelEntity(mesh: mesh, materials: [m])
-        outline.name = "outline\(index)"
-        fitOutline(outline, to: mesh, thickness: thickness)
-        return outline
-    }
-
-    /// Inflate the hull ~`thickness` mm on every axis by scaling around the
-    /// mesh-bounds center — per-axis, so thin plates get the same rim as cubes.
-    private static func fitOutline(_ outline: ModelEntity, to mesh: MeshResource, thickness: Double) {
-        let b = mesh.bounds
-        let t = Float(thickness)
-        let s = SIMD3<Float>(1 + 2 * t / max(b.extents.x, 1e-4),
-                             1 + 2 * t / max(b.extents.y, 1e-4),
-                             1 + 2 * t / max(b.extents.z, 1e-4))
-        outline.scale = s
-        outline.position = b.center * (SIMD3<Float>(repeating: 1) - s)
+    /// Highlight ribbon width in kernel mm — a bit heavier than the standard
+    /// edge overlay (0.0016×scene) so the accent reads, scaled with the scene
+    /// so it stays visually constant across part sizes.
+    private func outlineWidth(selected: Bool) -> Float {
+        max(model.displayedSceneSize * (selected ? 0.0042 : 0.0026), selected ? 0.05 : 0.03)
     }
 
     // MARK: gestures
