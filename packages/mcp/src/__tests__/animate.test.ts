@@ -138,6 +138,40 @@ describe("animate", () => {
     expect(res.camera_shots).toBe(1);
   });
 
+  it("compiles the keyframes shorthand nested inside `timeline`", async () => {
+    // Common agent slip: {durationS, keyframes} passed AS the timeline.
+    // Before this compiled, only durationS was validated and a tracks-less
+    // timeline persisted — invalid IR that crashed the app on load.
+    const docId = openArm();
+    const res = out(
+      await animate({
+        document_id: docId,
+        timeline: {
+          durationS: 1,
+          keyframes: [
+            { t: 0, joints: { shoulder: 0 } },
+            { t: 1, joints: { shoulder: 90 } },
+          ],
+        },
+      }),
+    );
+    expect(res.tracks).toEqual([{ type: "Joint", jointId: "shoulder" }]);
+    const stored = documents.get(docId)!.timeline!;
+    expect(Array.isArray(stored.tracks)).toBe(true);
+    expect(stored.tracks.length).toBe(1);
+  });
+
+  it("rejects a timeline with neither tracks nor keyframes", async () => {
+    const docId = openArm();
+    const res = await animate({
+      document_id: docId,
+      timeline: { durationS: 1 },
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.content[0]?.text)).toContain("`tracks` must be an array");
+    expect(documents.get(docId)!.timeline).toBeUndefined();
+  });
+
   it("rejects unknown targets with actionable errors", async () => {
     const docId = openArm();
     const bad = {

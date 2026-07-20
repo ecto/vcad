@@ -38,7 +38,7 @@ export function useTimelinePlayback() {
 
   useFrame((_, delta) => {
     const timeline = useDocumentStore.getState().document.timeline;
-    if (!timeline || timeline.tracks.length === 0) return;
+    if (!timeline || (timeline.tracks?.length ?? 0) === 0) return;
 
     const anim = useAnimationStore.getState();
     if (!anim.visible) {

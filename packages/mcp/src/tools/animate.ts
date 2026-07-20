@@ -362,6 +362,26 @@ export async function animate(
     timeline = compiled.timeline;
   } else {
     timeline = raw as Timeline;
+    // Common agent slip: nesting the `keyframes` shorthand INSIDE the
+    // timeline object. Before this compiled, it validated (only durationS is
+    // checked) and persisted a tracks-less timeline — invalid IR that
+    // crashed the app's timeline sampler on load.
+    const nested = (timeline as unknown as { keyframes?: unknown }).keyframes;
+    if (!Array.isArray(timeline.tracks) && Array.isArray(nested)) {
+      const compiled = compileJointKeyframes(nested as JointKeyframe[], {
+        fps: timeline.fps === undefined ? undefined : Number(timeline.fps),
+      });
+      if ("error" in compiled) {
+        return err(`timeline.keyframes rejected: ${compiled.error}`);
+      }
+      timeline = compiled.timeline;
+    }
+    if (!Array.isArray(timeline.tracks)) {
+      return err(
+        "timeline rejected:\n`tracks` must be an array (or pass the " +
+          "`keyframes` shorthand instead of `timeline`).",
+      );
+    }
   }
   const issues = validateTimeline(doc, timeline);
   if (issues.length > 0) {

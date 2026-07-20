@@ -42,7 +42,9 @@ export function sampleJointTracks(
   t: number,
 ): Map<string, number> {
   const out = new Map<string, number>();
-  for (const track of timeline.tracks) {
+  // Defensive: documents authored by older MCP servers could carry a
+  // tracks-less timeline (keyframes shorthand persisted verbatim).
+  for (const track of timeline.tracks ?? []) {
     if (track.target.type !== "Joint") continue;
     const v = sampleTrack(track, t);
     if (v !== null) out.set(track.target.jointId, v);
@@ -52,7 +54,7 @@ export function sampleJointTracks(
 
 /** True when the timeline has at least one joint track with keys. */
 export function hasJointTracks(timeline: Timeline | undefined | null): boolean {
-  return !!timeline?.tracks.some(
+  return !!timeline?.tracks?.some(
     (tr) => tr.target.type === "Joint" && tr.keys.length > 0,
   );
 }
