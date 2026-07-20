@@ -37,8 +37,12 @@ struct EditorView: View {
             let compact = geo.size.width < 760
             ViewportView(model: model)
                 .ignoresSafeArea()
+                .background(ReleaseWindowConfigurator(release: model.releaseMode))
+                .containerBackground(
+                    model.releaseMode ? AnyShapeStyle(.clear) : AnyShapeStyle(.background),
+                    for: .window)
                 .overlay(alignment: .topLeading) {
-                    if !compact {
+                    if !compact && !model.releaseMode {
                         FeatureTreeView(model: model)
                             .frame(width: 206)
                             .padding(14)
@@ -46,18 +50,20 @@ struct EditorView: View {
                     }
                 }
                 .overlay(alignment: .top) {
-                    if showsTools && model.toolPlacement == .header {
+                    if showsTools && !model.releaseMode && model.toolPlacement == .header {
                         toolStrip(header: true)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
                 .overlay(alignment: .top) {
-                    if model.source.isGripper {
+                    if model.source.isGripper && !model.releaseMode {
                         GripperReceiptPill(model: model).padding(.top, 14)
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if model.source.isGripper {
+                    if model.releaseMode {
+                        ReleaseReturnPill(model: model).padding(14)
+                    } else if model.source.isGripper {
                         // The cross-domain Receipt takes the inspector slot — the
                         // adaptive inspector adapting to a multi-domain part.
                         ReceiptLedger(model: model)
@@ -71,6 +77,7 @@ struct EditorView: View {
                     }
                 }
                 .overlay(alignment: .bottom) {
+                  if !model.releaseMode {
                     VStack(spacing: 10) {
                         if model.sketching {
                             SketchHintBar(model: model)
@@ -90,6 +97,7 @@ struct EditorView: View {
                     .animation(Motion.smooth, value: intent.draft.isEmpty)
                     .animation(Motion.panel, value: model.sketching)
                     .animation(Motion.panel, value: model.toolPlacement)
+                  }
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigation) { BrandMark() }
@@ -97,6 +105,13 @@ struct EditorView: View {
                     ToolbarItem(placement: .primaryAction) { CollabAvatars() }
                 }
                 .navigationTitle(model.documentName)
+                .onChange(of: model.releaseMode) { _, released in
+                    if released {
+                        ReleaseWindowController.shared.show(model: model)
+                    } else {
+                        ReleaseWindowController.shared.hide()
+                    }
+                }
                 .animation(.smooth(duration: 0.3), value: compact)
                 .task {
                     // Dev hook: VCAD_GRIPPER=1 [VCAD_CONNECTOR_X=n] launches into
@@ -106,6 +121,12 @@ struct EditorView: View {
                     // for verifying the feature tree against a real document).
                     if let path = env["VCAD_OPEN"], !path.isEmpty {
                         model.openDocument(URL(fileURLWithPath: path))
+                    }
+                    // Dev hook: VCAD_RELEASE=1 enters release-to-desktop on launch
+                    // (headless hit-test debugging without driving the menu).
+                    if env["VCAD_RELEASE"] == "1" {
+                        try? await Task.sleep(for: .seconds(1))
+                        model.releaseMode = true
                     }
                     guard env["VCAD_GRIPPER"] == "1" else { return }
                     model.openGripper()
@@ -184,6 +205,10 @@ struct DocumentMenu: View {
             Button("Toggle Tool Palette") { model.cycleToolPlacement() }.keyboardShortcut("t")
             Button(model.zebraMode ? "Zebra Analysis ✓" : "Zebra Analysis") { model.zebraMode.toggle() }
                 .keyboardShortcut("z", modifiers: [])
+            Button(model.releaseMode ? "Return to Studio" : "Release to Desktop") {
+                withAnimation(Motion.panel) { model.releaseMode.toggle() }
+            }
+            .keyboardShortcut(.space, modifiers: [.command, .shift])
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: model.source.isSandbox ? "cube" : "doc").font(.system(size: 12))
@@ -1229,6 +1254,72 @@ struct PlaybackBar: View {
     }
 }
 
+/// Applies/reverts the transparent-window styling for release-to-desktop mode.
+/// Lives as an invisible background NSView so it can reach the hosting NSWindow.
+struct ReleaseWindowConfigurator: NSViewRepresentable {
+    var release: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let release = release
+        DispatchQueue.main.async {
+            guard let w = view.window else { return }
+            w.isOpaque = !release
+            w.backgroundColor = release ? .clear : .windowBackgroundColor
+            w.hasShadow = !release
+            w.titlebarAppearsTransparent = release
+            w.titleVisibility = release ? .hidden : .visible
+            w.toolbar?.isVisible = !release
+            if release {
+                w.styleMask.insert(.fullSizeContentView)
+                w.level = .floating
+            } else {
+                w.styleMask.remove(.fullSizeContentView)
+                w.level = .normal
+            }
+            // RealityKit's drawable clears opaque — punch through every metal
+            // layer in the hierarchy so the desktop shows behind the parts.
+            if let content = w.contentView { Self.setMetalLayersOpaque(!release, in: content) }
+        }
+    }
+
+    private static func setMetalLayersOpaque(_ opaque: Bool, in view: NSView) {
+        if let layer = view.layer { walkLayers(layer, opaque: opaque) }
+        for sub in view.subviews { setMetalLayersOpaque(opaque, in: sub) }
+    }
+
+    private static func walkLayers(_ layer: CALayer, opaque: Bool) {
+        if layer is CAMetalLayer {
+            layer.isOpaque = opaque
+            layer.backgroundColor = opaque ? nil : NSColor.clear.cgColor
+        }
+        for sub in layer.sublayers ?? [] { walkLayers(sub, opaque: opaque) }
+    }
+}
+
+/// The only chrome left in release mode: a small pill to come back inside.
+struct ReleaseReturnPill: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        Button {
+            withAnimation(Motion.panel) { model.releaseMode = false }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.forward.and.arrow.up.backward")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Return to Studio").font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Bring vcad back into its window (⌘⇧Space)")
+    }
+}
+
 struct ViewportView: View {
     let model: EditorModel
 
@@ -1238,11 +1329,13 @@ struct ViewportView: View {
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
              model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty,
-             model.playbackTime, model.playbackDirty, model.zebraDirty)
+             model.playbackTime, model.playbackDirty, model.zebraDirty, model.releaseDirty)
 
         return GeometryReader { geo in
           RealityView { content in
-            if let env = model.zebraMode ? Self.zebraEnvironment : Self.studioEnvironment {
+            if model.releaseMode {
+                content.environment = .default
+            } else if let env = model.zebraMode ? Self.zebraEnvironment : Self.studioEnvironment {
                 content.environment = .skybox(env)
             }
             setupScene(content)
@@ -1263,6 +1356,11 @@ struct ViewportView: View {
                 var mutableContent = content
                 applyZebra(&mutableContent, on: model.zebraMode)
                 model.zebraDirty = false
+            }
+            if model.releaseDirty {
+                var mutableContent = content
+                applyRelease(&mutableContent, on: model.releaseMode)
+                model.releaseDirty = false
             }
             if model.geometryDirty {
                 rebuildGeometry(content)
@@ -1780,6 +1878,7 @@ struct ViewportView: View {
         let floor = ModelEntity(mesh: .generatePlane(width: 8, depth: 8), materials: [floorMat])
         floor.name = "floor"
         floor.position = [0, floorY, 0]
+        floor.isEnabled = !model.releaseMode
         content.add(floor)
 
         // Adaptive reference grid: minor cells snap to a 1/2/5-decade of the
@@ -1803,6 +1902,7 @@ struct ViewportView: View {
                 let grid = ModelEntity(mesh: gmesh, materials: [gm])
                 grid.name = "grid"
                 grid.position = [0, floorY + 0.0008, 0]
+                grid.isEnabled = !model.releaseMode
                 content.add(grid)
             }
         }
@@ -1817,6 +1917,7 @@ struct ViewportView: View {
             let blob = ModelEntity(mesh: .generatePlane(width: fwd, depth: dpt), materials: [sm])
             blob.name = "contactShadow"
             blob.position = [0, floorY + 0.0015, 0]
+            blob.isEnabled = !model.releaseMode
             content.add(blob)
         }
     }
@@ -1842,6 +1943,21 @@ struct ViewportView: View {
     /// Toggle zebra analysis: swap the environment and chrome/restore the part
     /// materials in place. Restore goes through a (pop-suppressed) rebuild so
     /// gripper/document/palette materials come back exactly as built.
+    /// Release-to-desktop: keep the studio environment for LIGHTING only (no
+    /// skybox → the view composites transparent over the desktop) and hide the
+    /// grounding set (floor, grid, contact shadow). Window transparency is
+    /// handled by ReleaseWindowConfigurator.
+    private func applyRelease(_ content: inout RealityViewCameraContent, on: Bool) {
+        if on {
+            content.environment = .default
+        } else if let env = model.zebraMode ? Self.zebraEnvironment : Self.studioEnvironment {
+            content.environment = .skybox(env)
+        }
+        for name in ["floor", "grid", "contactShadow"] {
+            content.entities.filter { $0.name == name }.forEach { $0.isEnabled = !on }
+        }
+    }
+
     private func applyZebra(_ content: inout RealityViewCameraContent, on: Bool) {
         if on {
             if let env = Self.zebraEnvironment { content.environment = .skybox(env) }

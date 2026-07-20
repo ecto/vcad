@@ -290,6 +290,10 @@ final class EditorModel {
     /// so stripe continuity reveals curvature/tangency defects.
     var zebraMode = false { didSet { if zebraMode != oldValue { zebraDirty = true } } }
     var zebraDirty = false
+    /// Release-to-desktop: the window goes transparent + chromeless and the
+    /// parts float over the desktop (environment kept for lighting only).
+    var releaseMode = false { didSet { if releaseMode != oldValue { releaseDirty = true } } }
+    var releaseDirty = false
     /// Per-part kernel-space triangle meshes (+ AABB), index-aligned with the
     /// rendered parts — the basis for precise ray-triangle hover/pick. The AABB
     /// is a broadphase cull before the triangle test.
