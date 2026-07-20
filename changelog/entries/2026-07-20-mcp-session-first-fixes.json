@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-20-mcp-session-first-fixes",
+  "version": "0.9.4",
+  "date": "2026-07-20",
+  "category": "fix",
+  "title": "MCP session-first workflow fixes",
+  "summary": "create_cad_loon and open_in_browser now accept document_id, save_document rejects empty names, and the CoM-vs-pattern-axis warning no longer fires on multi-part assemblies.",
+  "features": ["mcp", "sessions", "integrity"],
+  "mcpTools": ["create_cad_loon", "open_in_browser", "save_document"]
+}

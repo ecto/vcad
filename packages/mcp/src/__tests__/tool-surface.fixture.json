@@ -1287,6 +1287,10 @@
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Existing session (from open_document) to write the evaluated document into, so the open → author workflow stays on one session. Omitted: a fresh session is minted."
+        },
         "source": {
           "type": "string",
           "description": "Loon source code defining CAD geometry"
@@ -6210,22 +6214,23 @@
   {
     "name": "open_in_browser",
     "title": "Open in Browser",
-    "description": "Generate a shareable URL to open a CAD document in vcad.io. Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. Documents are compressed (gzip + base64url) for URL embedding. Note: Very large documents may exceed URL length limits (~2KB).",
+    "description": "Generate a shareable URL to open a CAD document in vcad.io. Pass a live session's `document_id` (the usual ship path), or an inline IR `document` (JSON or VCode format). Documents are compressed (gzip + base64url) for URL embedding. Note: Very large documents may exceed URL length limits (~2KB).",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Live session id (from open_document / create_cad_loon) to share — the session-first path. Either this or `document` is required."
+        },
         "document": {
           "type": "string",
-          "description": "IR document (JSON or VCode format)"
+          "description": "Inline IR document (JSON or VCode format) — the stateless alternative to document_id."
         },
         "name": {
           "type": "string",
           "description": "Optional document name"
         }
-      },
-      "required": [
-        "document"
-      ]
+      }
     },
     "annotations": {
       "readOnlyHint": false
