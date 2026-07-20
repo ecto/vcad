@@ -584,3 +584,314 @@ mod tests {
         assert!((r.nets[1].length_before - 30.0).abs() < 1e-9);
     }
 }
+
+// ============================================================================
+// Multi-layer tuning: meander the longest single-layer run
+// ============================================================================
+
+/// Chain `segs` (all one net, one layer) into open unbranched chains and
+/// return the longest one as ordered points. `None` when the layer branches
+/// (T-junction) or holds no open chain — the conservative refusal inherited
+/// from [`net_polyline`], scoped to one layer instead of the whole net.
+fn longest_chain(segs: &[&Trace]) -> Option<Vec<Vec2>> {
+    if segs.is_empty() {
+        return None;
+    }
+    let key = |p: Vec2| {
+        (
+            (p.x / CHAIN_EPS).round() as i64,
+            (p.y / CHAIN_EPS).round() as i64,
+        )
+    };
+    let mut adj: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, t) in segs.iter().enumerate() {
+        adj.entry(key(t.start)).or_default().push(i);
+        adj.entry(key(t.end)).or_default().push(i);
+    }
+    if adj.values().any(|v| v.len() > 2) {
+        return None;
+    }
+    // Walk each open chain from an endpoint; keep the longest by length.
+    let mut used: std::collections::HashSet<usize> = Default::default();
+    let mut best: Option<(f64, Vec<Vec2>)> = None;
+    let endpoints: Vec<(i64, i64)> = adj
+        .iter()
+        .filter(|(_, v)| v.len() == 1)
+        .map(|(k, _)| *k)
+        .collect();
+    for start in endpoints {
+        let first = adj[&start][0];
+        if used.contains(&first) {
+            continue;
+        }
+        let mut points = Vec::new();
+        let mut current = start;
+        let mut prev_seg: Option<usize> = None;
+        let mut len = 0.0;
+        while let Some(next_seg) = adj[&current]
+            .iter()
+            .copied()
+            .find(|s| Some(*s) != prev_seg && !used.contains(s))
+        {
+            let t = segs[next_seg];
+            used.insert(next_seg);
+            let (from, to) = if key(t.start) == current {
+                (t.start, t.end)
+            } else {
+                (t.end, t.start)
+            };
+            if points.is_empty() {
+                points.push(from);
+            }
+            len += (to - from).length();
+            points.push(to);
+            current = key(to);
+            prev_seg = Some(next_seg);
+        }
+        if points.len() >= 2 && best.as_ref().map(|(l, _)| len > *l).unwrap_or(true) {
+            best = Some((len, points));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// Group length matching for nets whose routing spans layers and vias — the
+/// production case [`match_lengths`]'s whole-net-polyline contract refuses.
+///
+/// Strategy: the net's total routed length is measured across all layers, but
+/// the *meander is inserted into the longest single-layer run* (the longest
+/// unbranched chain of same-layer segments). Clearance is checked against
+/// other-net traces on that layer only. `new_traces` in each tuned report is
+/// a full-net replacement (untouched runs pass through verbatim), preserving
+/// the existing consumer contract: delete the net's traces, insert
+/// `new_traces`.
+pub fn match_lengths_runs(
+    pcb: &Pcb,
+    nets: &[String],
+    opts: &LengthMatchOptions,
+) -> LengthMatchResult {
+    let lengths: Vec<f64> = nets.iter().map(|n| net_routed_length(pcb, n)).collect();
+    let longest = lengths.iter().cloned().fold(0.0_f64, f64::max);
+    let target = opts.target_length.unwrap_or(longest);
+    let session = RouteSession::from_pcb(pcb);
+
+    let mut reports = Vec::with_capacity(nets.len());
+    for (net, &before) in nets.iter().zip(&lengths) {
+        let deficit = target - before;
+        if deficit <= opts.tolerance {
+            reports.push(NetLengthReport {
+                net: net.clone(),
+                length_before: before,
+                length_after: before,
+                matched: deficit >= -opts.tolerance,
+                tuned: false,
+                skip_reason: if deficit < -opts.tolerance {
+                    Some("net is longer than the target (shortening unsupported)".into())
+                } else {
+                    None
+                },
+                new_traces: vec![],
+            });
+            continue;
+        }
+
+        // Longest single-layer run across the net's layers.
+        let mut layers: Vec<vcad_ir::ecad::PcbLayer> = pcb
+            .traces
+            .iter()
+            .filter(|t| t.net == *net)
+            .map(|t| t.layer)
+            .collect();
+        layers.sort();
+        layers.dedup();
+        let mut run: Option<(f64, Vec<Vec2>, vcad_ir::ecad::PcbLayer)> = None;
+        for layer in layers {
+            let segs: Vec<&Trace> = pcb
+                .traces
+                .iter()
+                .filter(|t| t.net == *net && t.layer == layer)
+                .collect();
+            if let Some(points) = longest_chain(&segs) {
+                let len: f64 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+                if run.as_ref().map(|(l, _, _)| len > *l).unwrap_or(true) {
+                    run = Some((len, points, layer));
+                }
+            }
+        }
+        let Some((run_len, points, layer)) = run else {
+            reports.push(NetLengthReport {
+                net: net.clone(),
+                length_before: before,
+                length_after: before,
+                matched: false,
+                tuned: false,
+                skip_reason: Some("no unbranched single-layer run to tune".into()),
+                new_traces: vec![],
+            });
+            continue;
+        };
+
+        let template = pcb
+            .traces
+            .iter()
+            .find(|t| t.net == *net && t.layer == layer)
+            .expect("run implies at least one trace on the layer")
+            .clone();
+        let params = LengthTuneParams {
+            // The tuner grows THIS run by the whole-net deficit.
+            target_length: run_len + deficit,
+            max_amplitude: opts.max_amplitude,
+            spacing: opts.spacing,
+            style: opts.style,
+        };
+        let min_clearance = session.clearance_for(net) + template.width;
+        let obstacles: Vec<(Vec2, Vec2)> = pcb
+            .traces
+            .iter()
+            .filter(|t| t.net != *net && t.layer == layer)
+            .map(|t| (t.start, t.end))
+            .collect();
+
+        match generate_meanders_checked(&points, &params, min_clearance, &obstacles) {
+            Some(meanders) if !meanders.is_empty() => {
+                let tuned_run = polyline_to_traces(&points, &meanders, &template);
+                // Full-net replacement: untouched segments (other layers and
+                // other chains on this layer) pass through verbatim.
+                let key = |p: Vec2| {
+                    (
+                        (p.x / CHAIN_EPS).round() as i64,
+                        (p.y / CHAIN_EPS).round() as i64,
+                    )
+                };
+                let run_keys: std::collections::HashSet<((i64, i64), (i64, i64))> = points
+                    .windows(2)
+                    .flat_map(|w| [(key(w[0]), key(w[1])), (key(w[1]), key(w[0]))])
+                    .collect();
+                let mut new_traces: Vec<Trace> = pcb
+                    .traces
+                    .iter()
+                    .filter(|t| {
+                        t.net == *net
+                            && !(t.layer == layer && run_keys.contains(&(key(t.start), key(t.end))))
+                    })
+                    .cloned()
+                    .collect();
+                new_traces.extend(tuned_run);
+                let after: f64 = new_traces.iter().map(|t| (t.end - t.start).length()).sum();
+                reports.push(NetLengthReport {
+                    net: net.clone(),
+                    length_before: before,
+                    length_after: after,
+                    matched: (target - after).abs() <= opts.tolerance,
+                    tuned: true,
+                    skip_reason: None,
+                    new_traces,
+                });
+            }
+            _ => {
+                reports.push(NetLengthReport {
+                    net: net.clone(),
+                    length_before: before,
+                    length_after: before,
+                    matched: false,
+                    tuned: false,
+                    skip_reason: Some(
+                        "meanders do not fit on the longest run: amplitude/clearance \
+                         constraints or run shorter than the meander spacing"
+                            .into(),
+                    ),
+                    new_traces: vec![],
+                });
+            }
+        }
+    }
+
+    let all_matched = reports.iter().all(|r| r.matched);
+    LengthMatchResult {
+        target_length: target,
+        tolerance: opts.tolerance,
+        all_matched,
+        nets: reports,
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+    use vcad_ir::ecad::PcbLayer;
+
+    fn seg(net: &str, layer: PcbLayer, a: (f64, f64), b: (f64, f64)) -> Trace {
+        Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.2,
+            layer,
+            net: net.into(),
+            source: None,
+        }
+    }
+
+    fn board(traces: Vec<Trace>) -> Pcb {
+        let mut pcb: Pcb = serde_json::from_value(serde_json::json!({
+            "outline": {"vertices": [
+                {"x": -5.0, "y": -5.0}, {"x": 60.0, "y": -5.0},
+                {"x": 60.0, "y": 20.0}, {"x": -5.0, "y": 20.0}
+            ], "cutouts": [], "thickness": 1.6},
+            "stackup": {"layers": []},
+            "nets": [],
+            "rules": {
+                "defaultRules": {"name": "Default", "traceWidth": 0.2, "clearance": 0.15,
+                                  "viaDiameter": 0.6, "viaDrill": 0.3},
+                "edgeClearance": 0.2, "holeToHole": 0.2, "minAnnularRing": 0.05, "minDrill": 0.1
+            },
+            "footprints": [], "traces": [], "traceArcs": [], "vias": [], "zones": []
+        }))
+        .expect("test board");
+        pcb.traces = traces;
+        pcb
+    }
+
+    #[test]
+    fn multilayer_net_tunes_its_longest_run() {
+        // "A": 30mm front run + 10mm back run (via-joined in spirit).
+        // "B": 50mm front run. Target = 50; A needs +10, grown on the front run.
+        let pcb = board(vec![
+            seg("A", PcbLayer::FCu, (0.0, 0.0), (30.0, 0.0)),
+            seg("A", PcbLayer::BCu, (30.0, 0.0), (40.0, 0.0)),
+            seg("B", PcbLayer::FCu, (0.0, 10.0), (50.0, 10.0)),
+        ]);
+        let r = match_lengths_runs(
+            &pcb,
+            &["A".into(), "B".into()],
+            &LengthMatchOptions::default(),
+        );
+        let a = &r.nets[0];
+        assert!(a.tuned, "A must tune: {:?}", a.skip_reason);
+        assert!(
+            (a.length_after - 50.0).abs() <= r.tolerance,
+            "A grew to target: {}",
+            a.length_after
+        );
+        // The BCu run passes through untouched.
+        assert!(a.new_traces.iter().any(|t| t.layer == PcbLayer::BCu));
+        assert!(r.nets[1].matched && !r.nets[1].tuned);
+    }
+
+    #[test]
+    fn branched_layer_reports_skip() {
+        // T-junction on the only layer: no tunable run.
+        let pcb = board(vec![
+            seg("A", PcbLayer::FCu, (0.0, 0.0), (10.0, 0.0)),
+            seg("A", PcbLayer::FCu, (10.0, 0.0), (20.0, 0.0)),
+            seg("A", PcbLayer::FCu, (10.0, 0.0), (10.0, 5.0)),
+            seg("B", PcbLayer::FCu, (0.0, 10.0), (50.0, 10.0)),
+        ]);
+        let r = match_lengths_runs(
+            &pcb,
+            &["A".into(), "B".into()],
+            &LengthMatchOptions::default(),
+        );
+        assert!(!r.nets[0].tuned);
+        assert!(r.nets[0].skip_reason.is_some());
+    }
+}
