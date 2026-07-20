@@ -31,6 +31,10 @@ struct VcadApp: App {
             MainActor.assumeIsolated { matSmoke(path: path) }
             exit(0)
         }
+        if let path = ProcessInfo.processInfo.environment["VCAD_USDZ_SMOKE"] {
+            MainActor.assumeIsolated { usdzSmoke(path: path) }
+            exit(0)
+        }
         if let path = ProcessInfo.processInfo.environment["VCAD_PATTERN_SMOKE"] {
             MainActor.assumeIsolated { patternSmoke(path: path) }
             exit(0)
@@ -108,6 +112,19 @@ private func dumpFeatureTree(path: String) {
 
 private func fmt3(_ v: SIMD3<Float>) -> String {
     String(format: "%.1f×%.1f×%.1f", abs(v.x), abs(v.y), abs(v.z))
+}
+
+/// Load a document and export it as USDZ — verifies the ModelIO pipeline
+/// headlessly. Writes to /tmp/vcad_usdz_smoke.usdz.
+@MainActor private func usdzSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "usdz")
+    _ = m.reevalDocumentMeshes()
+    let out = URL(fileURLWithPath: "/tmp/vcad_usdz_smoke.usdz")
+    let ok = m.exportUSDZ(to: out)
+    let size = (try? Data(contentsOf: out))?.count ?? 0
+    emit("[VCAD_USDZ] export: \(ok) · \(size) bytes · parts \(m.partCount) · bbox \(fmt3(m.sizeMM)) mm")
 }
 
 /// Material assignment + persistence: set part 0 to copper, verify the resolved
