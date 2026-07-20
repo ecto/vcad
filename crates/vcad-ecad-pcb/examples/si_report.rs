@@ -117,6 +117,49 @@ fn main() {
         }
     }
 
+    // Impedance geometry: differential Z of the declared pair class (w, gap)
+    // on each copper layer, from the imported physical stackup. Outer layers
+    // model as microstrip (reference = first inner plane), inner layers as
+    // stripline. This is the task-24 seam: the numbers that decide per-layer
+    // width/gap overrides for a 90/100 ohm target.
+    {
+        use vcad_ecad_sim::impedance::{diff_microstrip_impedance, diff_stripline_impedance};
+        let dp_w = pcb.rules.default_rules.diff_pair_width.unwrap_or(0.2);
+        let dp_gap = pcb.rules.default_rules.diff_pair_gap.unwrap_or(0.25);
+        let coppers: Vec<&vcad_ir::ecad::StackupLayer> = pcb
+            .stackup
+            .layers
+            .iter()
+            .filter(|l| l.layer.is_copper())
+            .collect();
+        let n = coppers.len();
+        for (i, sl) in coppers.iter().enumerate() {
+            let t = sl.copper_thickness.unwrap_or(0.035);
+            let er = sl.dielectric_er.unwrap_or(4.5);
+            // Height to the adjacent copper (the reference in a dense stack).
+            let h = if i + 1 < n {
+                coppers[i + 1]
+                    .dielectric_thickness
+                    .or(sl.dielectric_thickness)
+            } else {
+                sl.dielectric_thickness
+            }
+            .unwrap_or(0.1);
+            let outer = i == 0 || i + 1 == n;
+            let zdiff = if outer {
+                diff_microstrip_impedance(dp_w, dp_gap, t, h, er)
+            } else {
+                diff_stripline_impedance(dp_w, dp_gap, t, 2.0 * h, er)
+            };
+            println!(
+                "impedance {:?}: pair w={dp_w} gap={dp_gap} -> Zdiff {:.0} ohm ({})",
+                sl.layer,
+                zdiff,
+                if outer { "microstrip" } else { "stripline" }
+            );
+        }
+    }
+
     let mut worst: (f64, String) = (0.0, String::new());
     let mut measured = 0usize;
     for (p, n) in &c.pairs {

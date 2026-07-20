@@ -6997,6 +6997,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 0.8.23",
  "vcad-ecad-package",
+ "vcad-ecad-sim",
  "vcad-ecad-symbols",
  "vcad-ir",
  "vcad-kernel-math",
