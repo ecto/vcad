@@ -692,6 +692,24 @@ export class RayTracer {
             throw takeFromExternrefTable0(ret[0]);
         }
     }
+    /**
+     * Upload a solid with its own material. Each uploaded solid's faces
+     * keep a distinct material slot (`GpuScene::merge` offsets material
+     * indices), so assemblies render per-part materials in one pass.
+     * @param {Solid} solid
+     * @param {number} r
+     * @param {number} g
+     * @param {number} b
+     * @param {number} metallic
+     * @param {number} roughness
+     */
+    uploadSolidWithMaterial(solid, r, g, b, metallic, roughness) {
+        _assertClass(solid, Solid);
+        const ret = wasm.raytracer_uploadSolidWithMaterial(this.__wbg_ptr, solid.__wbg_ptr, r, g, b, metallic, roughness);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
 }
 if (Symbol.dispose) RayTracer.prototype[Symbol.dispose] = RayTracer.prototype.free;
 
@@ -9238,12 +9256,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3712, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3713, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3735, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3736, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3737, function: Function { arguments: [Externref], shim_idx: 3738, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3760, function: Function { arguments: [Externref], shim_idx: 3761, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
