@@ -57,6 +57,66 @@ fn main() {
             );
         }
     }
+    // Reference-plane discipline: which copper layers hold a large zone
+    // (plane), and for each SI-class net, how much of its length rides a
+    // layer ADJACENT (stackup-neighbouring) to a plane — the return-path
+    // metric — plus its via count (each via is a reference change).
+    {
+        let mut plane_pos: std::collections::BTreeSet<u8> = Default::default();
+        for z in &pcb.zones {
+            let area = {
+                let v = &z.outline;
+                let mut a = 0.0;
+                for i in 0..v.len() {
+                    let j = (i + 1) % v.len();
+                    a += v[i].x * v[j].y - v[j].x * v[i].y;
+                }
+                (a / 2.0).abs()
+            };
+            if area > 100.0 {
+                if let Some(pz) = z.layer.copper_position() {
+                    plane_pos.insert(pz);
+                }
+            }
+        }
+        let referenced = |pos: u8| {
+            plane_pos.contains(&pos)
+                || (pos > 0 && plane_pos.contains(&(pos - 1)))
+                || plane_pos.contains(&(pos + 1))
+        };
+        let si_nets: Vec<&String> = c.pairs.iter().flat_map(|(p, n)| [p, n]).collect();
+        let (mut ref_len, mut tot_len) = (0.0f64, 0.0f64);
+        let mut vias = 0usize;
+        let mut worst_net = (1.0f64, String::new());
+        for net in &si_nets {
+            let (mut r, mut t) = (0.0f64, 0.0f64);
+            for tr in pcb.traces.iter().filter(|t| &t.net == *net) {
+                let l = (tr.end - tr.start).length();
+                t += l;
+                if tr.layer.copper_position().map(referenced).unwrap_or(false) {
+                    r += l;
+                }
+            }
+            vias += pcb.vias.iter().filter(|v| &v.net == *net).count();
+            ref_len += r;
+            tot_len += t;
+            if t > 0.0 && r / t < worst_net.0 {
+                worst_net = (r / t, (*net).clone());
+            }
+        }
+        if tot_len > 0.0 {
+            println!(
+                "plane-discipline: {} plane layers; SI nets {:.1}% plane-referenced, {} vias across {} nets, worst {:.0}% ({})",
+                plane_pos.len(),
+                100.0 * ref_len / tot_len,
+                vias,
+                si_nets.len(),
+                100.0 * worst_net.0,
+                worst_net.1
+            );
+        }
+    }
+
     let mut worst: (f64, String) = (0.0, String::new());
     let mut measured = 0usize;
     for (p, n) in &c.pairs {
