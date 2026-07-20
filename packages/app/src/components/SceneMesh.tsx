@@ -19,7 +19,12 @@ import { inspectTriangleFromMesh as runInspectTriangle } from "./TriangleInspect
 import { pickSubFeature } from "@/lib/sub-feature-picking";
 import { useAnalyzeStore } from "@/stores/analyze-store";
 
-const HOVER_EMISSIVE = new THREE.Color(0xffb800); // neon amber
+// Brand-orange accent, sRGB (1.0, 0.45, 0.10) — matches the native macOS
+// app's picking accent. Hover and selection only *add* emissive at different
+// intensities; the base material color is never repainted.
+const ACCENT_EMISSIVE = new THREE.Color(1.0, 0.45, 0.1);
+const HOVER_EMISSIVE_INTENSITY = 0.06;
+const SELECT_EMISSIVE_INTENSITY = 0.18;
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
 
 const DEG2RAD = Math.PI / 180;
@@ -503,7 +508,6 @@ export const SceneMesh = memo(function SceneMesh({
   const select = useUiStore((s) => s.select);
   const toggleSelect = useUiStore((s) => s.toggleSelect);
   const selectItem = useUiStore((s) => s.selectItem);
-  const toggleItem = useUiStore((s) => s.toggleItem);
   const setHoveredItem = useUiStore((s) => s.setHoveredItem);
   const selectionFilter = useUiStore((s) => s.selectionFilter);
   const showWireframe = useUiStore((s) => s.showWireframe);
@@ -528,6 +532,10 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Disable raycasting during orbit for performance
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  // Gizmo handles win over part hover, and hover must never re-highlight
+  // mid-drag — matches the native app's picking semantics.
+  const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
+  const isGizmoHovered = useUiStore((s) => s.isGizmoHovered);
   // During AI screenshot capture, suppress emissive tint so user-selected
   // parts don't glow in the shot — the AI is verifying geometry/materials,
   // not watching the user's cursor.
@@ -536,7 +544,17 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Use selectionId if provided, otherwise fall back to partInfo.id
   const effectiveSelectionId = selectionId ?? partInfo.id;
-  const isHovered = hoveredPartId === effectiveSelectionId;
+  // The part under the cursor gets the faint accent lift whether the picker
+  // resolved a whole-part hover or a sub-feature (face/edge/vertex) on it —
+  // the sub-feature overlay draws on top of the lift.
+  const hoveredItem = useUiStore((s) => s.hoveredItem);
+  const isHovered =
+    hoveredPartId === effectiveSelectionId ||
+    (hoveredItem != null &&
+      (hoveredItem.kind === "face" ||
+        hoveredItem.kind === "edge" ||
+        hoveredItem.kind === "vertex") &&
+      hoveredItem.partId === partInfo.id);
   const isHoveredFace =
     faceSelectionMode && hoveredFace?.partId === partInfo.id;
 
@@ -645,15 +663,15 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Compute emissive state: selected > hovered > none (face highlight uses overlay)
   const emissiveColor = useMemo(() => {
-    if (effectiveSelected) return materialColor.clone().multiplyScalar(0.3);
-    if (isHovered && !faceSelectionMode && !captureMode) return HOVER_EMISSIVE;
+    if (effectiveSelected) return ACCENT_EMISSIVE;
+    if (isHovered && !faceSelectionMode && !captureMode) return ACCENT_EMISSIVE;
     return undefined;
-  }, [effectiveSelected, isHovered, faceSelectionMode, captureMode, materialColor]);
+  }, [effectiveSelected, isHovered, faceSelectionMode, captureMode]);
 
   const emissiveIntensity = effectiveSelected
-    ? 0.2
+    ? SELECT_EMISSIVE_INTENSITY
     : isHovered && !faceSelectionMode && !captureMode
-    ? 0.08
+    ? HOVER_EMISSIVE_INTENSITY
     : 0;
 
   // Update shader material uniforms for emissive state
@@ -663,16 +681,16 @@ export const SceneMesh = memo(function SceneMesh({
     if (!uniforms["uEmissive"] || !uniforms["uEmissiveIntensity"]) return;
 
     if (effectiveSelected) {
-      uniforms["uEmissive"].value = materialColor.clone().multiplyScalar(0.3);
-      uniforms["uEmissiveIntensity"].value = 0.2;
+      uniforms["uEmissive"].value = ACCENT_EMISSIVE;
+      uniforms["uEmissiveIntensity"].value = SELECT_EMISSIVE_INTENSITY;
     } else if (isHovered && !faceSelectionMode && !captureMode) {
-      uniforms["uEmissive"].value = HOVER_EMISSIVE;
-      uniforms["uEmissiveIntensity"].value = 0.08;
+      uniforms["uEmissive"].value = ACCENT_EMISSIVE;
+      uniforms["uEmissiveIntensity"].value = HOVER_EMISSIVE_INTENSITY;
     } else {
       uniforms["uEmissive"].value = new THREE.Color(0, 0, 0);
       uniforms["uEmissiveIntensity"].value = 0;
     }
-  }, [shaderMaterial, effectiveSelected, isHovered, faceSelectionMode, captureMode, materialColor]);
+  }, [shaderMaterial, effectiveSelected, isHovered, faceSelectionMode, captureMode]);
 
   useEffect(() => {
     setDraftName(partInfo.name);
@@ -809,6 +827,9 @@ export const SceneMesh = memo(function SceneMesh({
     (e: ThreeEvent<MouseEvent>) => {
       // Ignore the click that fires after a camera rotate/pan gesture.
       if (viewportWasDrag()) return;
+      // A click that lands on a transform-gizmo handle belongs to the gizmo,
+      // even when a part mesh sits behind it.
+      if (isDraggingGizmo || isGizmoHovered) return;
       e.stopPropagation();
 
       // Debug triangle inspector: when enabled, show triangle info.
@@ -833,6 +854,19 @@ export const SceneMesh = memo(function SceneMesh({
       // current selectionFilter. Falls through to body-only behavior when
       // the filter is "auto" and there's no candidate within threshold,
       // or when the filter is explicitly "body".
+      // ⌘-click (metaKey) toggles multi-select for boolean workflows —
+      // selection order is preserved (first selected = base), matching the
+      // native app. Shift-click keeps working as the historical alias.
+      const isToggle = e.nativeEvent.shiftKey || e.nativeEvent.metaKey;
+
+      // Toggle-clicks work at the part level (skip the sub-feature picker):
+      // boolean workflows consume ordered part selections, and this matches
+      // the native app's ⌘-click semantics.
+      if (isToggle) {
+        toggleSelect(effectiveSelectionId);
+        return;
+      }
+
       if (e.faceIndex != null) {
         const item = pickSubFeature({
           triIndex: e.faceIndex,
@@ -844,23 +878,18 @@ export const SceneMesh = memo(function SceneMesh({
           viewport: viewportSize,
         });
         if (item) {
-          if (e.nativeEvent.shiftKey) {
-            toggleItem(item);
-          } else {
-            selectItem(item);
-          }
+          selectItem(item);
           return;
         }
       }
 
       // Filter narrowed too far / fallback to part-level select.
-      if (e.nativeEvent.shiftKey) {
-        toggleSelect(partInfo.id);
-      } else {
-        select(partInfo.id);
-      }
+      select(effectiveSelectionId);
     },
     [
+      effectiveSelectionId,
+      isDraggingGizmo,
+      isGizmoHovered,
       faceSelectionMode,
       mesh,
       partInfo.id,
@@ -868,7 +897,6 @@ export const SceneMesh = memo(function SceneMesh({
       toggleSelect,
       select,
       selectItem,
-      toggleItem,
       selectionFilter,
       camera,
       viewportSize,
@@ -879,8 +907,8 @@ export const SceneMesh = memo(function SceneMesh({
 
   const handlePointerMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
-      // Skip during orbit for performance
-      if (isOrbiting) return;
+      // Skip during orbit for performance; gizmo interactions win over hover.
+      if (isOrbiting || isDraggingGizmo || isGizmoHovered) return;
       if (faceSelectionMode && e.faceIndex != null) {
         e.stopPropagation();
         const faceInfo = computeFaceInfo(mesh, e.faceIndex, partInfo.id);
@@ -910,6 +938,8 @@ export const SceneMesh = memo(function SceneMesh({
     },
     [
       isOrbiting,
+      isDraggingGizmo,
+      isGizmoHovered,
       faceSelectionMode,
       mesh,
       partInfo.id,
@@ -923,14 +953,14 @@ export const SceneMesh = memo(function SceneMesh({
 
   const handlePointerOver = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
-      // Skip during orbit for performance
-      if (isOrbiting) return;
+      // Skip during orbit for performance; gizmo interactions win over hover.
+      if (isOrbiting || isDraggingGizmo || isGizmoHovered) return;
       e.stopPropagation();
       if (!faceSelectionMode) {
         setHoveredPartId(partInfo.id);
       }
     },
-    [isOrbiting, faceSelectionMode, partInfo.id, setHoveredPartId],
+    [isOrbiting, isDraggingGizmo, isGizmoHovered, faceSelectionMode, partInfo.id, setHoveredPartId],
   );
 
   const handlePointerOut = useCallback(() => {

@@ -68,6 +68,7 @@ export function TransformGizmo({
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const transformMode = useUiStore((s) => s.transformMode);
   const setDraggingGizmo = useUiStore((s) => s.setDraggingGizmo);
+  const setGizmoHovered = useUiStore((s) => s.setGizmoHovered);
   const gridSnap = useUiStore((s) => s.gridSnap);
   const snapIncrement = useUiStore((s) => s.snapIncrement);
 
@@ -159,11 +160,24 @@ export function TransformGizmo({
       }
     };
 
+    // Pointer is over a gizmo handle when `axis` is non-null. Gizmo hover
+    // wins over part hover, and a click on a handle must not deselect —
+    // consumers (SceneMesh, Viewport onPointerMissed) read this flag.
+    const onAxisChanged = (event: { value: string | null }) => {
+      const hovered = event.value != null;
+      setGizmoHovered(hovered);
+      // Gizmo wins: drop any part hover the moment a handle is under the cursor.
+      if (hovered) useUiStore.getState().setHoveredItem(null);
+    };
+
     controls.addEventListener("dragging-changed", onDraggingChanged);
+    controls.addEventListener("axis-changed", onAxisChanged);
     return () => {
       controls.removeEventListener("dragging-changed", onDraggingChanged);
+      controls.removeEventListener("axis-changed", onAxisChanged);
+      setGizmoHovered(false);
     };
-  }, [proxy, orbitControls, setDraggingGizmo]);
+  }, [proxy, orbitControls, setDraggingGizmo, setGizmoHovered]);
 
   // Handle transform changes during drag
   useEffect(() => {
