@@ -334,7 +334,7 @@ pub(super) fn try_route_pair(
         if dist(from, to) <= w * 2.0 {
             return Some((vec![(from, to, to_layer)], vec![]));
         }
-        let margin = 2.0 + w;
+        let margin = 4.0 + w;
         let window = (
             Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
             Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
@@ -351,7 +351,7 @@ pub(super) fn try_route_pair(
             w,
             via_d,
             Some(cong),
-            50_000,
+            120_000,
             0.5,
             Some(window),
             &[],
