@@ -229,31 +229,54 @@ pub(super) fn try_route_pair(
 
     // Centerline search: one phantom fat trace. No tree goals/sources — a
     // coupled pair needs clean pad-to-pad geometry, not a tap onto a tree.
+    //
+    // Neck-down retreat (the CM5 bail census: 96/110 failures were this
+    // search): near pin fields no fat capsule exists, so on failure the
+    // coupling endpoints retreat toward the span middle in escalating steps
+    // and the single-width connector stubs cover the necked ends — exactly
+    // how a human escapes a BGA with a pair: singles in the field, coupled
+    // in the open.
     let budget = max_expansions.max(100_000);
-    let r = route_net_maze3d(
-        session,
-        &pcb.outline.vertices,
-        &copper,
-        net,
-        start,
-        &[first_layer],
-        end,
-        &[first_layer],
-        fat_w,
-        via_d,
-        Some(cong),
-        budget,
-        1.0,
-        None,
-        &[],
-        &[],
-        true,
-    );
-    if !r.success || r.segments.is_empty() {
+    let mut found = None;
+    for retreat in [0.0, 1.0, 2.0, 4.0, 8.0] {
+        let usable = span - 2.0 * lead;
+        if 2.0 * retreat >= usable - 1.0 {
+            break;
+        }
+        let s_pt = start + dir.scale(retreat);
+        let e_pt = end - dir.scale(retreat);
+        let r = route_net_maze3d(
+            session,
+            &pcb.outline.vertices,
+            &copper,
+            net,
+            s_pt,
+            &[first_layer],
+            e_pt,
+            &[first_layer],
+            fat_w,
+            via_d,
+            Some(cong),
+            budget,
+            1.0,
+            None,
+            &[],
+            &[],
+            true,
+        );
+        if r.success && !r.segments.is_empty() {
+            if retreat > 0.0 {
+                log::debug!("pair: {net}/{partner}: coupled after {retreat}mm neck-down retreat");
+            }
+            found = Some(r);
+            break;
+        }
+    }
+    let Some(r) = found else {
         log::debug!("pair: {net}/{partner}: phantom centerline search failed");
         restore(session, placed, ripped);
         return None;
-    }
+    };
 
     // Realize the two legs from the centerline.
     let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
