@@ -300,26 +300,83 @@ pub(super) fn try_route_pair(
         (leg_b, leg_a)
     };
 
-    let build = |leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Candidate {
-        let mut segments = Vec::with_capacity(leg.segments.len() + 2);
-        if dist(from, leg.first) > 1e-9 {
-            segments.push((from, leg.first, leg.first_layer));
+    // Connector from a pad to a leg end: straight when short, maze-routed at
+    // single width when the crow-flight would thread a pin field (the second
+    // CM5 bail census: 71 leg validations failed on straight stubs crossing
+    // field copper after the neck-down retreat).
+    let connect = |session: &RouteSession,
+                   net: &str,
+                   from: Vec2,
+                   to: Vec2,
+                   to_layer: PcbLayer|
+     -> Option<(Vec<(Vec2, Vec2, PcbLayer)>, Vec<(Vec2, PcbLayer, PcbLayer)>)> {
+        if dist(from, to) <= 1e-9 {
+            return Some((vec![], vec![]));
         }
+        if dist(from, to) <= w * 2.0 {
+            return Some((vec![(from, to, to_layer)], vec![]));
+        }
+        let margin = 2.0 + w;
+        let window = (
+            Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
+            Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
+        );
+        let r = route_net_maze3d(
+            session,
+            &pcb.outline.vertices,
+            &copper,
+            net,
+            from,
+            &copper,
+            to,
+            &[to_layer],
+            w,
+            via_d,
+            Some(cong),
+            50_000,
+            0.5,
+            Some(window),
+            &[],
+            &[],
+            true,
+        );
+        if r.success {
+            Some((r.segments, r.vias))
+        } else {
+            None
+        }
+    };
+    let build = |leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Option<Candidate> {
+        let (head_segs, head_vias) = connect(session, net, from, leg.first, leg.first_layer)?;
+        let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer)?;
+        let mut segments =
+            Vec::with_capacity(leg.segments.len() + head_segs.len() + tail_segs.len());
+        segments.extend(head_segs);
         segments.extend(leg.segments.iter().copied());
-        if dist(leg.last, to) > 1e-9 {
-            segments.push((leg.last, to, leg.last_layer));
-        }
-        Candidate {
+        // Tail connector was searched pad→leg; reverse into leg→pad order.
+        segments.extend(tail_segs.into_iter().rev().map(|(a, b, l)| (b, a, l)));
+        let mut vias = leg.vias.clone();
+        vias.extend(head_vias);
+        vias.extend(tail_vias);
+        Some(Candidate {
             net: net.to_string(),
             from,
             to,
             width: w,
             segments,
-            vias: leg.vias.clone(),
-        }
+            vias,
+        })
     };
-    let cand_mine = build(&mine, net, from, to);
-    let cand_theirs = build(&theirs, &partner, p_from, p_to);
+    let Some(cand_mine) = build(&mine, net, from, to) else {
+        log::debug!("pair: {net}/{partner}: connector routing failed (mine)");
+        restore(session, placed, ripped);
+        return None;
+    };
+    let Some(cand_theirs) = build(&theirs, &partner, p_from, p_to) else {
+        log::debug!("pair: {net}/{partner}: connector routing failed (partner)");
+        restore(session, placed, ripped);
+        return None;
+    };
 
     // Atomic commit: both legs or neither.
     let Some(placed_mine) = validate_and_commit(session, pcb, cand_mine, placed) else {
