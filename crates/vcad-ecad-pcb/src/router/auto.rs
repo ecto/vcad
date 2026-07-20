@@ -917,7 +917,10 @@ fn incremental_round(
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
-    let budget_ms = 1_200_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
+    // Flat 20-minute budget regardless of effort: scaling by expansion
+    // budget multiplied speculative-round cost right back up at high effort
+    // (effort 10 → 3.3h/round), exactly what the budget exists to prevent.
+    let budget_ms = 1_200_000.0;
     let pending = ripup_pass(
         &mut session,
         pcb,
