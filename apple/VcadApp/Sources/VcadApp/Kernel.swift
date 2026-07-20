@@ -166,6 +166,9 @@ struct RenderScene {
     /// its kernel-frame world transform, so playback can re-pose the entity
     /// per frame without touching the mesh.
     var instances: [RenderInstance] = []
+    /// Index-aligned with `meshes`: non-nil when part i is a pattern rendered
+    /// as one shared MeshResource + N per-instance transforms (else one entity).
+    var instancing: [PatternInstancing?] = []
 
     static let empty = RenderScene(meshes: [], center: .zero, size: 1, triangleCount: 0, partCount: 0)
 }

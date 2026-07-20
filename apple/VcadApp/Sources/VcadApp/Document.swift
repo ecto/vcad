@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 // Parses a `.vcad` parametric document (JSON: a node DAG + scene roots) into a
 // navigable feature tree — the native counterpart of the web app's FeatureTree.
@@ -409,6 +410,18 @@ struct DocumentGraph {
     }
 }
 
+/// Viewport instancing for a pattern root: the seed subtree is tessellated
+/// once and rendered as N rigid copies (one shared MeshResource, N entities)
+/// instead of N independently tessellated + unioned meshes.
+struct PatternInstancing {
+    /// The LinearPattern/CircularPattern node at the root.
+    let patternNodeId: Int
+    /// The pattern's child — the seed the kernel tessellates once.
+    let seedNodeId: Int
+    /// Kernel-space (Z-up, mm) rigid transforms, one per copy; first = identity.
+    let transforms: [simd_float4x4]
+}
+
 // MARK: in-place JSON edits
 // The kernel is a pure `JSON → meshes` evaluator, so editing a document is just
 // mutating its JSON dict and re-evaluating — no editable-doc FFI needed. These
@@ -534,6 +547,67 @@ enum DocEdit {
             }
             vis += 1
         }
+    }
+
+    /// Instancing plan for a visible root whose node is a Linear/CircularPattern.
+    /// Because the pattern IS the root, nothing downstream consumes its result,
+    /// so the copies are pure rigid transforms of the seed — safe to instance.
+    /// Returns nil (→ fall back to the baked kernel mesh) when the op isn't a
+    /// pattern, the parameters are degenerate, or a document binding targets
+    /// this node (bindings rewrite fields inside the kernel at eval time, so
+    /// the raw JSON values here could be stale).
+    static func patternInstancing(_ json: [String: Any], rootNodeId: Int) -> PatternInstancing? {
+        guard let nodes = json["nodes"] as? [String: Any],
+              let node = nodes[String(rootNodeId)] as? [String: Any],
+              let op = node["op"] as? [String: Any],
+              let type = op["type"] as? String,
+              type == "LinearPattern" || type == "CircularPattern",
+              let seed = (op["child"] as? NSNumber)?.intValue,
+              nodes[String(seed)] != nil,
+              let count = (op["count"] as? NSNumber)?.intValue, count >= 2
+        else { return nil }
+        if let bindings = json["bindings"] as? [String: Any],
+           bindings.keys.contains(where: { $0.hasPrefix("\(rootNodeId):") }) { return nil }
+        func vec(_ k: String) -> SIMD3<Double>? {
+            guard let v = op[k] as? [String: Any],
+                  let x = (v["x"] as? NSNumber)?.doubleValue,
+                  let y = (v["y"] as? NSNumber)?.doubleValue,
+                  let z = (v["z"] as? NSNumber)?.doubleValue else { return nil }
+            return SIMD3(x, y, z)
+        }
+        var transforms: [simd_float4x4] = []
+        transforms.reserveCapacity(count)
+        if type == "LinearPattern" {
+            // Kernel: copies at i·spacing along the normalized direction.
+            guard let d = vec("direction"),
+                  let spacing = (op["spacing"] as? NSNumber)?.doubleValue else { return nil }
+            let n = simd_length(d)
+            guard n > 1e-12 else { return nil }
+            let dir = d / n
+            for i in 0..<count {
+                var m = matrix_identity_float4x4
+                let o = dir * (spacing * Double(i))
+                m.columns.3 = SIMD4(Float(o.x), Float(o.y), Float(o.z), 1)
+                transforms.append(m)
+            }
+        } else {
+            // Kernel: step = angle_deg/count about the axis through axis_origin.
+            guard let o = vec("axis_origin"), let a = vec("axis_dir"),
+                  let angle = (op["angle_deg"] as? NSNumber)?.doubleValue else { return nil }
+            let n = simd_length(a)
+            guard n > 1e-12 else { return nil }
+            let axis = SIMD3<Float>(a / n)
+            let origin = SIMD3<Float>(o)
+            let step = angle * .pi / 180 / Double(count)
+            for i in 0..<count {
+                let q = simd_quatf(angle: Float(step * Double(i)), axis: axis)
+                var m = simd_float4x4(q)
+                m.columns.3 = SIMD4(origin - q.act(origin), 1)
+                transforms.append(m)
+            }
+        }
+        return PatternInstancing(patternNodeId: rootNodeId, seedNodeId: seed,
+                                 transforms: transforms)
     }
 
     /// Current op dict for a node (for populating the inspector's editors).

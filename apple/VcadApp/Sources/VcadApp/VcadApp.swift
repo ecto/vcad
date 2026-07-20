@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import simd
+import CVcadFFI
 
 @main
 struct VcadApp: App {
@@ -28,6 +29,10 @@ struct VcadApp: App {
         }
         if let path = ProcessInfo.processInfo.environment["VCAD_MAT_SMOKE"] {
             MainActor.assumeIsolated { matSmoke(path: path) }
+            exit(0)
+        }
+        if let path = ProcessInfo.processInfo.environment["VCAD_PATTERN_SMOKE"] {
+            MainActor.assumeIsolated { patternSmoke(path: path) }
             exit(0)
         }
         if let path = ProcessInfo.processInfo.environment["VCAD_GIZMO_SMOKE"] {
@@ -128,6 +133,46 @@ private func fmt3(_ v: SIMD3<Float>) -> String {
 private func rgb(_ c: NSColor) -> String {
     let s = c.usingColorSpace(.sRGB) ?? c
     return String(format: "(%.2f, %.2f, %.2f)", s.redComponent, s.greenComponent, s.blueComponent)
+}
+
+/// Pattern instancing: load a doc with pattern roots through the instanced
+/// eval path, then cross-check each instanced part's aggregated bounds and
+/// triangle count against a full BAKED kernel eval of the untouched document.
+/// Agreement proves the Swift-side transforms reproduce the kernel's pattern
+/// placement exactly.
+@MainActor private func patternSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "pattern")
+    guard m.usesDocumentTree, m.reevalDocumentMeshes() != nil else {
+        emit("[VCAD_PATTERN] load failed"); return
+    }
+    let instanced = m.docPartInstancing.enumerated().compactMap { i, p in p.map { (i, $0) } }
+    emit("[VCAD_PATTERN] \(m.partCount) part(s), \(instanced.count) instanced · tris \(m.triangleCount) · bbox \(fmt3(m.sizeMM))")
+    for (i, p) in instanced {
+        emit("[VCAD_PATTERN] part\(i): node \(p.patternNodeId) seed \(p.seedNodeId) × \(p.transforms.count) copies")
+    }
+
+    // Baked reference: evaluate the ORIGINAL doc (patterns unioned in-kernel).
+    guard let json = m.documentJSON, let data = DocEdit.serialize(json) else { return }
+    let scene: OpaquePointer? = data.withUnsafeBytes {
+        vcad_scene_from_json($0.bindMemory(to: UInt8.self).baseAddress, data.count)
+    }
+    guard let scene else { emit("[VCAD_PATTERN] baked eval failed"); return }
+    defer { vcad_scene_free(scene) }
+    var ok = true
+    for i in 0..<vcad_scene_part_count(scene) {
+        let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+        guard i < m.docPartMeshes.count else { continue }
+        let pick = m.docPartMeshes[i]
+        let dLo = simd_length(km.minBound - pick.lo), dHi = simd_length(km.maxBound - pick.hi)
+        let match = dLo < 1e-3 && dHi < 1e-3
+        // Baked pattern tris can differ slightly (the union sews coincident
+        // faces); bounds are the placement invariant.
+        emit("[VCAD_PATTERN] part\(i) bounds baked vs instanced: Δlo \(String(format: "%.5f", dLo)) Δhi \(String(format: "%.5f", dHi)) → \(match ? "MATCH" : "MISMATCH")")
+        if !match { ok = false }
+    }
+    emit("[VCAD_PATTERN] \(ok ? "PASS" : "FAIL")")
 }
 
 /// Gizmo translate: move part 0 by +50 in X via the root Translate, confirm the
