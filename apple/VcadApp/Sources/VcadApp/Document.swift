@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 // Parses a `.vcad` parametric document (JSON: a node DAG + scene roots) into a
 // navigable feature tree — the native counterpart of the web app's FeatureTree.
@@ -56,6 +57,66 @@ struct DocMaterial {
     let transmission: Float
 }
 
+/// An assembly joint — just what playback and the transport UI need. The
+/// kernel FK solver owns the full kinematic semantics; this is display data.
+struct DocJoint: Identifiable {
+    let id: String
+    let name: String?
+    /// Joint kind tag ("Revolute", "Slider", …).
+    let kind: String
+    /// Authored driven state (degrees for revolute, mm for slider).
+    let state: Double
+}
+
+/// One keyframe of an animation track (port of `vcad_ir::animation::AnimKey`).
+struct DocAnimKey {
+    let t: Double
+    let value: Double
+    /// "linear" | "step" | "ease-in-out" (kebab-case, as serialized).
+    let ease: String
+}
+
+/// A joint-target animation track.
+struct DocJointTrack {
+    let jointId: String
+    let keys: [DocAnimKey]
+}
+
+/// The document's animation timeline, reduced to the joint tracks native
+/// playback drives. Sampling mirrors `Timeline::sample_track` in vcad-ir
+/// exactly (clamp at the ends, ease from the previous key), so the native
+/// pose at time t matches the web evaluator and the kernel sequencer.
+struct DocTimeline {
+    let durationS: Double
+    let fps: Double
+    let jointTracks: [DocJointTrack]
+
+    /// Joint id → value at time `t` (seconds).
+    func jointValues(at t: Double) -> [String: Double] {
+        var out: [String: Double] = [:]
+        for track in jointTracks {
+            if let v = Self.sample(track.keys, at: t) { out[track.jointId] = v }
+        }
+        return out
+    }
+
+    static func sample(_ keys: [DocAnimKey], at t: Double) -> Double? {
+        guard let first = keys.first, let last = keys.last else { return nil }
+        if t <= first.t { return first.value }
+        if t >= last.t { return last.value }
+        guard let idx = keys.firstIndex(where: { $0.t > t }), idx > 0 else { return last.value }
+        let a = keys[idx - 1], b = keys[idx]
+        let span = b.t - a.t
+        var u = span <= 0 ? 1.0 : (t - a.t) / span
+        switch b.ease {
+        case "step": u = u >= 1.0 ? 1.0 : 0.0
+        case "ease-in-out": u = u * u * (3.0 - 2.0 * u)
+        default: break                                   // linear
+        }
+        return a.value + (b.value - a.value) * u
+    }
+}
+
 /// A parsed parametric document — just enough structure to render the tree and
 /// the inspector; geometry still comes from the kernel.
 struct DocumentGraph {
@@ -64,6 +125,10 @@ struct DocumentGraph {
     let materials: [String: DocMaterial]
     /// Document-level named parameters, sorted by name for a stable inspector.
     let parameters: [DocParameter]
+    /// Assembly joints (empty for part-only documents).
+    let joints: [DocJoint]
+    /// Animation timeline, when the document carries one with joint tracks.
+    let timeline: DocTimeline?
 
     /// Visible roots in order — index-aligned with the kernel scene's parts.
     var visibleRoots: [DocRoot] { roots.filter { $0.visible } }
@@ -138,9 +203,51 @@ struct DocumentGraph {
             parameters.sort { $0.name < $1.name }
         }
 
-        guard !nodes.isEmpty, !roots.isEmpty else { return nil }
+        // Assembly joints: accept both the canonical camelCase keys and the
+        // snake_case of older sample documents (only id/name/kind/state are
+        // needed here — the kernel re-parses the full doc for FK).
+        var joints: [DocJoint] = []
+        if let raw = obj["joints"] as? [[String: Any]] {
+            for j in raw {
+                guard let id = j["id"] as? String else { continue }
+                let kind = (j["kind"] as? [String: Any])?["type"] as? String ?? "Revolute"
+                joints.append(DocJoint(id: id,
+                                       name: j["name"] as? String,
+                                       kind: kind,
+                                       state: (j["state"] as? NSNumber)?.doubleValue ?? 0))
+            }
+        }
+
+        var timeline: DocTimeline?
+        if let tl = obj["timeline"] as? [String: Any],
+           let duration = (tl["durationS"] as? NSNumber)?.doubleValue, duration > 0 {
+            var tracks: [DocJointTrack] = []
+            for t in (tl["tracks"] as? [[String: Any]]) ?? [] {
+                guard let target = t["target"] as? [String: Any],
+                      (target["type"] as? String) == "Joint",
+                      let jointId = target["jointId"] as? String else { continue }
+                var keys: [DocAnimKey] = []
+                for k in (t["keys"] as? [[String: Any]]) ?? [] {
+                    guard let kt = (k["t"] as? NSNumber)?.doubleValue,
+                          let v = (k["value"] as? NSNumber)?.doubleValue else { continue }
+                    keys.append(DocAnimKey(t: kt, value: v,
+                                           ease: k["ease"] as? String ?? "linear"))
+                }
+                if !keys.isEmpty { tracks.append(DocJointTrack(jointId: jointId, keys: keys)) }
+            }
+            if !tracks.isEmpty {
+                timeline = DocTimeline(durationS: duration,
+                                       fps: (tl["fps"] as? NSNumber)?.doubleValue ?? 24,
+                                       jointTracks: tracks)
+            }
+        }
+
+        // Assembly documents may have no scene roots — instances carry the
+        // geometry there, so an empty `roots` is only fatal without them.
+        let hasInstances = ((obj["instances"] as? [[String: Any]])?.isEmpty == false)
+        guard !nodes.isEmpty, !roots.isEmpty || hasInstances else { return nil }
         return DocumentGraph(nodes: nodes, roots: roots, materials: materials,
-                             parameters: parameters)
+                             parameters: parameters, joints: joints, timeline: timeline)
     }
 
     // MARK: feature tree
@@ -303,6 +410,18 @@ struct DocumentGraph {
     }
 }
 
+/// Viewport instancing for a pattern root: the seed subtree is tessellated
+/// once and rendered as N rigid copies (one shared MeshResource, N entities)
+/// instead of N independently tessellated + unioned meshes.
+struct PatternInstancing {
+    /// The LinearPattern/CircularPattern node at the root.
+    let patternNodeId: Int
+    /// The pattern's child — the seed the kernel tessellates once.
+    let seedNodeId: Int
+    /// Kernel-space (Z-up, mm) rigid transforms, one per copy; first = identity.
+    let transforms: [simd_float4x4]
+}
+
 // MARK: in-place JSON edits
 // The kernel is a pure `JSON → meshes` evaluator, so editing a document is just
 // mutating its JSON dict and re-evaluating — no editable-doc FFI needed. These
@@ -428,6 +547,67 @@ enum DocEdit {
             }
             vis += 1
         }
+    }
+
+    /// Instancing plan for a visible root whose node is a Linear/CircularPattern.
+    /// Because the pattern IS the root, nothing downstream consumes its result,
+    /// so the copies are pure rigid transforms of the seed — safe to instance.
+    /// Returns nil (→ fall back to the baked kernel mesh) when the op isn't a
+    /// pattern, the parameters are degenerate, or a document binding targets
+    /// this node (bindings rewrite fields inside the kernel at eval time, so
+    /// the raw JSON values here could be stale).
+    static func patternInstancing(_ json: [String: Any], rootNodeId: Int) -> PatternInstancing? {
+        guard let nodes = json["nodes"] as? [String: Any],
+              let node = nodes[String(rootNodeId)] as? [String: Any],
+              let op = node["op"] as? [String: Any],
+              let type = op["type"] as? String,
+              type == "LinearPattern" || type == "CircularPattern",
+              let seed = (op["child"] as? NSNumber)?.intValue,
+              nodes[String(seed)] != nil,
+              let count = (op["count"] as? NSNumber)?.intValue, count >= 2
+        else { return nil }
+        if let bindings = json["bindings"] as? [String: Any],
+           bindings.keys.contains(where: { $0.hasPrefix("\(rootNodeId):") }) { return nil }
+        func vec(_ k: String) -> SIMD3<Double>? {
+            guard let v = op[k] as? [String: Any],
+                  let x = (v["x"] as? NSNumber)?.doubleValue,
+                  let y = (v["y"] as? NSNumber)?.doubleValue,
+                  let z = (v["z"] as? NSNumber)?.doubleValue else { return nil }
+            return SIMD3(x, y, z)
+        }
+        var transforms: [simd_float4x4] = []
+        transforms.reserveCapacity(count)
+        if type == "LinearPattern" {
+            // Kernel: copies at i·spacing along the normalized direction.
+            guard let d = vec("direction"),
+                  let spacing = (op["spacing"] as? NSNumber)?.doubleValue else { return nil }
+            let n = simd_length(d)
+            guard n > 1e-12 else { return nil }
+            let dir = d / n
+            for i in 0..<count {
+                var m = matrix_identity_float4x4
+                let o = dir * (spacing * Double(i))
+                m.columns.3 = SIMD4(Float(o.x), Float(o.y), Float(o.z), 1)
+                transforms.append(m)
+            }
+        } else {
+            // Kernel: step = angle_deg/count about the axis through axis_origin.
+            guard let o = vec("axis_origin"), let a = vec("axis_dir"),
+                  let angle = (op["angle_deg"] as? NSNumber)?.doubleValue else { return nil }
+            let n = simd_length(a)
+            guard n > 1e-12 else { return nil }
+            let axis = SIMD3<Float>(a / n)
+            let origin = SIMD3<Float>(o)
+            let step = angle * .pi / 180 / Double(count)
+            for i in 0..<count {
+                let q = simd_quatf(angle: Float(step * Double(i)), axis: axis)
+                var m = simd_float4x4(q)
+                m.columns.3 = SIMD4(origin - q.act(origin), 1)
+                transforms.append(m)
+            }
+        }
+        return PatternInstancing(patternNodeId: rootNodeId, seedNodeId: seed,
+                                 transforms: transforms)
     }
 
     /// Current op dict for a node (for populating the inspector's editors).

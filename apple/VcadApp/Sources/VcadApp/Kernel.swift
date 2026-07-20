@@ -161,8 +161,27 @@ struct RenderScene {
     var triangleCount: Int
     var partCount: Int
     var edges: [[SIMD3<Float>]] = []
+    /// Assembly instances (rendered INSTEAD of `meshes` when non-empty,
+    /// mirroring the web viewport). Each carries its part-def-local mesh and
+    /// its kernel-frame world transform, so playback can re-pose the entity
+    /// per frame without touching the mesh.
+    var instances: [RenderInstance] = []
+    /// Index-aligned with `meshes`: non-nil when part i is a pattern rendered
+    /// as one shared MeshResource + N per-instance transforms (else one entity).
+    var instancing: [PatternInstancing?] = []
 
     static let empty = RenderScene(meshes: [], center: .zero, size: 1, triangleCount: 0, partCount: 0)
+}
+
+/// One assembly instance ready to render. `index` is the FFI instance index —
+/// entity names ("inst<i>") and playback transform order both key off it.
+struct RenderInstance {
+    var index: Int
+    var id: String
+    var mesh: MeshResource
+    var material: ResolvedMaterial
+    /// World placement in kernel coordinates (Z-up, mm), column-major.
+    var transform: float4x4
 }
 
 /// Feature-edge overlay support: converts a kernel `VcadEdgesView` into

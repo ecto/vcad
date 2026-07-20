@@ -182,6 +182,8 @@ struct DocumentMenu: View {
                 ForEach(ToolPlacement.allCases) { p in Text(p.label).tag(p) }
             }
             Button("Toggle Tool Palette") { model.cycleToolPlacement() }.keyboardShortcut("t")
+            Button(model.zebraMode ? "Zebra Analysis ✓" : "Zebra Analysis") { model.zebraMode.toggle() }
+                .keyboardShortcut("z", modifiers: [])
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: model.source.isSandbox ? "cube" : "doc").font(.system(size: 12))
@@ -1183,6 +1185,50 @@ struct ExampleChips: View {
     }
 }
 
+/// Play/pause + scrub transport for kinematic joint playback. Scrubbing
+/// pauses (direct control beats a fighting timer); play loops the timeline.
+struct PlaybackBar: View {
+    let model: EditorModel
+
+    private var duration: Double { model.timeline?.durationS ?? 1 }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                model.togglePlayback()
+            } label: {
+                Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(model.isPlaying ? "Pause" : "Play")
+
+            Slider(
+                value: Binding(
+                    get: { model.playbackTime },
+                    set: { model.setPlaybackTime($0) }
+                ),
+                in: 0...max(duration, 0.001),
+                onEditingChanged: { began in
+                    if began { model.pausePlayback() }
+                }
+            )
+            .controlSize(.small)
+            .frame(width: 220)
+
+            Text(String(format: "%.2f / %.2f s", model.playbackTime, duration))
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 86, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .glassCard(22)
+    }
+}
+
 struct ViewportView: View {
     let model: EditorModel
 
@@ -1191,11 +1237,14 @@ struct ViewportView: View {
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
-             model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty)
+             model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty,
+             model.playbackTime, model.playbackDirty, model.zebraDirty)
 
         return GeometryReader { geo in
           RealityView { content in
-            if let env = makeStudioEnvironment() { content.environment = .skybox(env) }
+            if let env = model.zebraMode ? Self.zebraEnvironment : Self.studioEnvironment {
+                content.environment = .skybox(env)
+            }
             setupScene(content)
             rebuildGeometry(content)
             model.geometryDirty = false
@@ -1209,6 +1258,11 @@ struct ViewportView: View {
             if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                let gizmo = root.findEntity(named: "gizmoRoot") {
                 gizmo.scale = SIMD3<Float>(repeating: gizmoScreenScale())
+            }
+            if model.zebraDirty {
+                var mutableContent = content
+                applyZebra(&mutableContent, on: model.zebraMode)
+                model.zebraDirty = false
             }
             if model.geometryDirty {
                 rebuildGeometry(content)
@@ -1225,7 +1279,10 @@ struct ViewportView: View {
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                        let centering = root.findEntity(named: "centering") {
                         for (i, item) in scene.meshes.enumerated() {
-                            (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = item.mesh
+                            if let pe = centering.findEntity(named: "part\(i)") as? ModelEntity {
+                                pe.model?.mesh = item.mesh
+                                Self.applyPartPicking(pe, mesh: item.mesh, model: model)
+                            }
                         }
                         centering.findEntity(named: "connectorHandle")?.position =
                             model.connectorHandlePosition()
@@ -1235,9 +1292,12 @@ struct ViewportView: View {
                 } else {
                     let recreated = model.streamSandbox()
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }) {
-                        if recreated, let res = model.streaming.resource,
+                        if let res = model.streaming.resource,
                            let entity = root.findEntity(named: "part0") as? ModelEntity {
-                            entity.model?.mesh = res
+                            if recreated { entity.model?.mesh = res }
+                            // Streaming mutates the buffers in place — refresh
+                            // the collider either way so picks track the solve.
+                            Self.applyPartPicking(entity, mesh: res, model: model)
                         }
                         if model.showsHandle {
                             root.findEntity(named: "filletHandle")?.position =
@@ -1246,6 +1306,17 @@ struct ViewportView: View {
                     }
                 }
                 model.parameterDirty = false
+            }
+            // Kinematic playback: re-pose the instance entities from the
+            // latest FK solve (transforms only — meshes never change).
+            if model.playbackDirty {
+                if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                   let centering = root.findEntity(named: "centering") {
+                    for (i, m) in model.instanceTransforms.enumerated() {
+                        centering.findEntity(named: "inst\(i)")?.transform = Transform(matrix: m)
+                    }
+                }
+                model.playbackDirty = false
             }
             if model.pickDirty {
                 if let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -1273,7 +1344,9 @@ struct ViewportView: View {
                    let root = content.entities.first(where: { $0.name == "geomRoot" }),
                    let centering = root.findEntity(named: "centering") {
                     for (i, m) in meshes.enumerated() {
-                        (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = m
+                        if let pe = centering.findEntity(named: "part\(i)") as? ModelEntity {
+                            syncPartEntity(pe, index: i, mesh: m)
+                        }
                         if i < model.docPartEdges.count,
                            let ribbon = EdgeOverlay.ribbonResource(
                                segments: model.docPartEdges[i],
@@ -1331,7 +1404,10 @@ struct ViewportView: View {
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                        let centering = root.findEntity(named: "centering") {
                         for (i, mesh) in solve.meshes.enumerated() {
-                            (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = mesh
+                            if let pe = centering.findEntity(named: "part\(i)") as? ModelEntity {
+                                pe.model?.mesh = mesh
+                                Self.applyPartPicking(pe, mesh: mesh, model: model)
+                            }
                         }
                     }
                     redrawCopper(content, solve.copper)
@@ -1339,15 +1415,13 @@ struct ViewportView: View {
                 model.copperDirty = false
             }
 
-            // Keep the handles' world positions current + apply the hover pop.
+            // Apply the hover pop on the draggable handles.
             if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                let centering = root.findEntity(named: "centering") {
                 if let h = centering.findEntity(named: "connectorHandle") {
-                    model.connectorHandleWorld = h.position(relativeTo: nil)
                     applyHover(h, hovered: model.hoveredHandle == "connectorHandle")
                 }
                 if let h = centering.findEntity(named: "filletHandle") {
-                    model.filletHandleWorld = h.position(relativeTo: nil)
                     applyHover(h, hovered: model.hoveredHandle == "filletHandle")
                 }
             }
@@ -1375,6 +1449,14 @@ struct ViewportView: View {
                       .interpolation(.high)
                       .transition(.opacity.animation(.easeIn(duration: 0.25)))
                       .allowsHitTesting(false)
+              }
+          }
+          // Kinematic playback transport — shown only when the document has
+          // an animation timeline with joint tracks (and instances to move).
+          .overlay(alignment: .bottom) {
+              if model.hasPlayback {
+                  PlaybackBar(model: model)
+                      .padding(.bottom, 14)
               }
           }
           .overlay(alignment: .bottomTrailing) {
@@ -1449,7 +1531,32 @@ struct ViewportView: View {
     /// both the skybox backdrop and image-based reflections on the geometry.
     /// A soft ceiling, a horizon band, and three softbox highlights at varied
     /// azimuths give metals real reflection structure as the camera orbits.
-    private func makeStudioEnvironment() -> EnvironmentResource? {
+    static let studioEnvironment: EnvironmentResource? = makeStudioEnvironment()
+    static let zebraEnvironment: EnvironmentResource? = makeZebraEnvironment()
+
+    /// Equirect of bold horizontal bands: the classic zebra-analysis light box.
+    /// Reflected off a chromed surface, stripe kinks expose G1/G2 breaks.
+    private static func makeZebraEnvironment() -> EnvironmentResource? {
+        let w = 2048, h = 1024
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        ctx.setFillColor(CGColor(gray: 0.03, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        // Latitude bands: even count, mirrored about the horizon so stripes stay
+        // readable at any camera elevation. 16 white bands ≈ classic light-tube rig.
+        let bands = 32
+        let bandH = CGFloat(h) / CGFloat(bands)
+        ctx.setFillColor(CGColor(gray: 0.98, alpha: 1))
+        for i in stride(from: 0, to: bands, by: 2) {
+            ctx.fill(CGRect(x: 0, y: CGFloat(i) * bandH, width: CGFloat(w), height: bandH))
+        }
+        guard let img = ctx.makeImage() else { return nil }
+        return try? EnvironmentResource(equirectangular: img)
+    }
+
+    private static func makeStudioEnvironment() -> EnvironmentResource? {
         let w = 2048, h = 1024
         let cs = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
@@ -1580,16 +1687,32 @@ struct ViewportView: View {
         let centering = Entity()
         centering.name = "centering"
         centering.position = -scene.center
+        model.centeringEntity = centering        // scene handle for native raycasts
         for (i, item) in scene.meshes.enumerated() {
             // The gripper's parts get intentional materials (glass enclosure,
             // green FR4 board, brushed-metal bracket) so each domain reads as what
             // it is; everything else falls back to the index palette.
             let mat: PhysicallyBasedMaterial =
-                model.source.isGripper ? gripperMaterial(i)
+                model.zebraMode ? Self.zebraChrome
+                : model.source.isGripper ? gripperMaterial(i)
                 : model.usesDocumentTree ? pbrMaterial(model.resolvedMaterial(forPart: i))
                 : material(item.color)
-            let entity = ModelEntity(mesh: item.mesh, materials: [mat])
+            let entity = ModelEntity()
             entity.name = "part\(i)"
+            if let inst = i < scene.instancing.count ? scene.instancing[i] : nil {
+                // Pattern root: one shared MeshResource, N instance entities
+                // with per-copy rigid transforms (kernel-space, under centering).
+                for (j, t) in inst.transforms.enumerated() {
+                    let child = ModelEntity(mesh: item.mesh, materials: [mat])
+                    child.name = "part\(i)_inst\(j)"
+                    child.transform = Transform(matrix: t)
+                    Self.applyPartPicking(child, mesh: item.mesh, model: model)
+                    entity.addChild(child)
+                }
+            } else {
+                entity.model = ModelComponent(mesh: item.mesh, materials: [mat])
+                Self.applyPartPicking(entity, mesh: item.mesh, model: model)
+            }
             centering.addChild(entity)
             // CAD edge overlay: crisp feature edges over the shading. Width is
             // proportional to the scene so it stays visually constant across
@@ -1601,8 +1724,17 @@ struct ViewportView: View {
                    name: "edges\(i)") {
                 let edgeEntity = ModelEntity(mesh: ribbon, materials: [Self.edgeMaterial])
                 edgeEntity.name = "edges\(i)"
+                edgeEntity.isEnabled = !model.zebraMode
                 centering.addChild(edgeEntity)
             }
+        }
+        // Assembly instances: local mesh + world transform per entity, so
+        // kinematic playback re-poses transforms without touching meshes.
+        for inst in scene.instances {
+            let entity = ModelEntity(mesh: inst.mesh, materials: [pbrMaterial(inst.material)])
+            entity.name = "inst\(inst.index)"
+            entity.transform = Transform(matrix: inst.transform)
+            centering.addChild(entity)
         }
         if model.showsHandle {
             centering.addChild(makeHandle(radius: model.modifierValue))
@@ -1695,6 +1827,37 @@ struct ViewportView: View {
         m.roughness = 0.34
         m.metallic = 0.55
         return m
+    }
+
+    /// Mirror-chrome for zebra analysis: near-zero roughness so the striped
+    /// environment reflects as sharp bands.
+    static let zebraChrome: PhysicallyBasedMaterial = {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: .white)
+        m.metallic = 1.0
+        m.roughness = 0.02
+        return m
+    }()
+
+    /// Toggle zebra analysis: swap the environment and chrome/restore the part
+    /// materials in place. Restore goes through a (pop-suppressed) rebuild so
+    /// gripper/document/palette materials come back exactly as built.
+    private func applyZebra(_ content: inout RealityViewCameraContent, on: Bool) {
+        if on {
+            if let env = Self.zebraEnvironment { content.environment = .skybox(env) }
+            guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                  let centering = root.findEntity(named: "centering") else { return }
+            var i = 0
+            while let e = centering.findEntity(named: "part\(i)") as? ModelEntity {
+                for h in Self.partModelEntities(e) { h.model?.materials = [Self.zebraChrome] }
+                centering.findEntity(named: "edges\(i)")?.isEnabled = false
+                i += 1
+            }
+        } else {
+            if let env = Self.studioEnvironment { content.environment = .skybox(env) }
+            model.suppressMaterializePop = true
+            rebuildGeometry(content)
+        }
     }
 
     /// Build a PBR material from a resolved document material (color + metallic +
@@ -2032,6 +2195,71 @@ struct ViewportView: View {
         if model.showsGizmo { centering.addChild(buildGizmo()) }
     }
 
+    // MARK: pattern instancing helpers
+
+    /// The ModelEntities that carry a part's geometry: the part entity itself,
+    /// or its per-instance children when the part is a pattern rendered as
+    /// shared-mesh instances.
+    private static func partModelEntities(_ e: ModelEntity) -> [ModelEntity] {
+        if e.model != nil { return [e] }
+        return e.children.compactMap { $0 as? ModelEntity }
+            .filter { $0.name.hasPrefix("\(e.name)_inst") }
+    }
+
+    /// In-place scrub update for one part: swap the mesh (and, for instanced
+    /// patterns, sync the instance count + transforms) without rebuilding
+    /// entities — materials, outlines, and colliders ride along. Handles the
+    /// part flipping between plain and instanced mid-scrub (count 1 ↔ N).
+    private func syncPartEntity(_ pe: ModelEntity, index i: Int, mesh m: MeshResource) {
+        let inst = i < model.docPartInstancing.count ? model.docPartInstancing[i] : nil
+        if let inst {
+            var children = pe.children.compactMap { $0 as? ModelEntity }
+                .filter { $0.name.hasPrefix("part\(i)_inst") }
+            if pe.model != nil {          // was plain last frame → become container
+                pe.model = nil
+                pe.components.remove(CollisionComponent.self)
+                pe.components.remove(InputTargetComponent.self)
+            }
+            let mat: any RealityKit.Material = children.first?.model?.materials.first
+                ?? pbrMaterial(model.resolvedMaterial(forPart: i))
+            while children.count > inst.transforms.count {
+                children.removeLast().removeFromParent()
+            }
+            for (j, t) in inst.transforms.enumerated() {
+                if j < children.count {
+                    children[j].model?.mesh = m
+                    children[j].transform = Transform(matrix: t)
+                    Self.applyPartPicking(children[j], mesh: m, model: model)
+                } else {
+                    let child = ModelEntity(mesh: m, materials: [mat])
+                    child.name = "part\(i)_inst\(j)"
+                    child.transform = Transform(matrix: t)
+                    Self.applyPartPicking(child, mesh: m, model: model)
+                    pe.addChild(child)
+                }
+            }
+        } else {
+            for c in pe.children.filter({ $0.name.hasPrefix("part\(i)_inst") }) {
+                c.removeFromParent()
+            }
+            if pe.model == nil {          // was instanced last frame → plain again
+                pe.model = ModelComponent(
+                    mesh: m, materials: [pbrMaterial(model.resolvedMaterial(forPart: i))])
+            } else {
+                pe.model?.mesh = m
+            }
+            Self.applyPartPicking(pe, mesh: m, model: model)
+        }
+        // Ride the selection outline along the scrub (per instance when patterned).
+        let selected = model.highlightedParts.contains(i)
+        for host in Self.partModelEntities(pe) {
+            if let o = host.findEntity(named: "outline\(i)") as? ModelEntity {
+                o.model?.mesh = m
+                Self.fitOutline(o, to: m, thickness: outlineThickness(selected: selected))
+            }
+        }
+    }
+
     // MARK: feature-tree sync (visibility + selection highlight)
 
     /// Enable/disable part entities to honor the tree's eye toggles + isolate.
@@ -2043,10 +2271,12 @@ struct ViewportView: View {
         }
     }
 
-    /// Give the selected part a subtle brand-orange emissive lift so the tree
-    /// selection reads in the viewport without masking the document material
-    /// (the plate must still look like alu, not the accent color). Non-selected
-    /// parts are restored exactly to their base material.
+    /// Selection reads as a screen-space outline via an inverted hull: a
+    /// slightly inflated copy of the part's mesh rendered with front faces
+    /// culled, so only its back faces peek past the silhouette — a crisp
+    /// brand-orange rim that tracks camera orbit for free. Selection = thick +
+    /// bright, hover = thinner + dimmer. Part materials are never touched, so
+    /// the plate still looks like alu, not the accent color.
     private func applySelectionHighlight(_ content: RealityViewCameraContent) {
         guard model.usesDocumentTree,
               let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -2055,16 +2285,54 @@ struct ViewportView: View {
         let hov = model.hoveredPartIndex
         for i in 0..<model.partCount {
             guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
-            var m = pbrMaterial(model.resolvedMaterial(forPart: i))
-            if sel.contains(i) {
-                m.emissiveColor = .init(color: EditorModel.brandOrange)
-                m.emissiveIntensity = 0.18     // subtle — base color stays legible
-            } else if i == hov {
-                m.emissiveColor = .init(color: EditorModel.brandOrange)
-                m.emissiveIntensity = 0.06     // faint hover glow
+            // For instanced patterns each copy hosts its own outline (it rides
+            // the instance transform for free as a child).
+            let hosts = Self.partModelEntities(e)
+            for h in hosts { h.findEntity(named: "outline\(i)")?.removeFromParent() }
+            let selected = sel.contains(i)
+            guard selected || i == hov else { continue }
+            for h in hosts {
+                guard let mesh = h.model?.mesh else { continue }
+                h.addChild(Self.outlineEntity(
+                    index: i, mesh: mesh,
+                    thickness: outlineThickness(selected: selected),
+                    brightness: selected ? 1.0 : 0.35))
             }
-            e.model?.materials = [m]
         }
+    }
+
+    /// Outline rim width in kernel mm, proportional to the scene (like the
+    /// edge ribbons) so it stays visually constant across part sizes.
+    private func outlineThickness(selected: Bool) -> Double {
+        max(Double(model.displayedSceneSize) * (selected ? 0.008 : 0.004), selected ? 0.08 : 0.04)
+    }
+
+    /// Build the inverted-hull outline entity for one part.
+    private static func outlineEntity(index: Int, mesh: MeshResource,
+                                      thickness: Double, brightness: Float) -> ModelEntity {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: .black)
+        m.emissiveColor = .init(color: EditorModel.brandOrange)
+        m.emissiveIntensity = 2.0 * brightness   // reads unlit — pure rim color
+        m.roughness = 1.0
+        m.metallic = 0.0
+        m.faceCulling = .front                   // back faces only → silhouette
+        let outline = ModelEntity(mesh: mesh, materials: [m])
+        outline.name = "outline\(index)"
+        fitOutline(outline, to: mesh, thickness: thickness)
+        return outline
+    }
+
+    /// Inflate the hull ~`thickness` mm on every axis by scaling around the
+    /// mesh-bounds center — per-axis, so thin plates get the same rim as cubes.
+    private static func fitOutline(_ outline: ModelEntity, to mesh: MeshResource, thickness: Double) {
+        let b = mesh.bounds
+        let t = Float(thickness)
+        let s = SIMD3<Float>(1 + 2 * t / max(b.extents.x, 1e-4),
+                             1 + 2 * t / max(b.extents.y, 1e-4),
+                             1 + 2 * t / max(b.extents.z, 1e-4))
+        outline.scale = s
+        outline.position = b.center * (SIMD3<Float>(repeating: 1) - s)
     }
 
     // MARK: gestures
@@ -2099,44 +2367,58 @@ struct ViewportView: View {
                     model.setConnectorX(model.connectorDragBaseline + delta)
                     return
                 }
-                guard value.entity.name == "filletHandle" else { return }
-                if !model.draggingHandle {
-                    model.draggingHandle = true
-                    model.handleBaseline = model.modifierValue
+                if value.entity.name == "filletHandle" {
+                    if !model.draggingHandle {
+                        model.draggingHandle = true
+                        model.handleBaseline = model.modifierValue
+                    }
+                    let delta = Double(-value.translation.height) * 0.03
+                    model.modifierValue = max(0, min(12, model.handleBaseline + delta))
+                    return
                 }
-                let delta = Double(-value.translation.height) * 0.03
-                model.modifierValue = max(0, min(12, model.handleBaseline + delta))
+                // Parts are input targets too (for native picking) — a drag
+                // that starts on one is still an orbit/pan, same as empty space.
+                orbitChanged(value.translation)
             }
             .onEnded { _ in
-                if model.draggingHandle { NSCursor.arrow.set() }
-                model.draggingHandle = false
-                model.endGizmoDrag()
-                // Connector settled → re-route the copper once (gripper only).
-                if model.source.isGripper { model.copperDirty = true }
+                if model.draggingHandle {
+                    NSCursor.arrow.set()
+                    model.draggingHandle = false
+                    model.endGizmoDrag()
+                    // Connector settled → re-route the copper once (gripper only).
+                    if model.source.isGripper { model.copperDirty = true }
+                } else {
+                    orbitEnded()
+                }
             }
     }
 
+    // Drag orbits (with flick-to-spin momentum); ⇧-drag pans the look-at.
+    // Shared by the plain background gesture and entity drags on parts.
+    private func orbitChanged(_ translation: CGSize) {
+        guard !model.draggingHandle else { return }
+        if model.lastDrag == .zero { model.beginOrbit() }   // grab → stop coasting
+        let dx = Float(translation.width - model.lastDrag.width)
+        let dy = Float(translation.height - model.lastDrag.height)
+        if NSEvent.modifierFlags.contains(.shift) {
+            model.panBy(dx: dx, dy: dy)
+        } else {
+            model.orbitDrag(dx: dx, dy: dy)
+        }
+        model.lastDrag = translation
+        NSCursor.closedHand.set()        // grabbing to orbit/pan
+    }
+
+    private func orbitEnded() {
+        model.lastDrag = .zero
+        model.endOrbit()                 // coast if the flick was fast
+        if !model.draggingHandle { NSCursor.arrow.set() }
+    }
+
     private var orbitGesture: some Gesture {
-        // Drag orbits (with flick-to-spin momentum); ⇧-drag pans the look-at.
         DragGesture()
-            .onChanged { value in
-                guard !model.draggingHandle else { return }
-                if model.lastDrag == .zero { model.beginOrbit() }   // grab → stop coasting
-                let dx = Float(value.translation.width - model.lastDrag.width)
-                let dy = Float(value.translation.height - model.lastDrag.height)
-                if NSEvent.modifierFlags.contains(.shift) {
-                    model.panBy(dx: dx, dy: dy)
-                } else {
-                    model.orbitDrag(dx: dx, dy: dy)
-                }
-                model.lastDrag = value.translation
-                NSCursor.closedHand.set()        // grabbing to orbit/pan
-            }
-            .onEnded { _ in
-                model.lastDrag = .zero
-                model.endOrbit()                 // coast if the flick was fast
-                if !model.draggingHandle { NSCursor.arrow.set() }
-            }
+            .onChanged { orbitChanged($0.translation) }
+            .onEnded { _ in orbitEnded() }
     }
 
     private var zoomGesture: some Gesture {
@@ -2150,9 +2432,10 @@ struct ViewportView: View {
 
     // MARK: picking (#7)
 
-    /// Screen point → ray in kernel space (origin, normalized dir). Inverse of
-    /// the pinhole projection; shared by face-pick, part-pick, and sketch-pick.
-    private func kernelRay(at p: CGPoint, viewSize: CGSize) -> (o: SIMD3<Float>, d: SIMD3<Float>)? {
+    /// Screen point → ray in RealityKit world space (origin, normalized dir).
+    /// Inverse of the pinhole projection; the basis for both native raycasts
+    /// and the kernel-space conversion below.
+    private func worldRay(at p: CGPoint, viewSize: CGSize) -> (o: SIMD3<Float>, d: SIMD3<Float>)? {
         guard viewSize.width > 1, viewSize.height > 1 else { return nil }
         let cam = model.cameraPosition
         let forward = normalize(model.panOffset - cam)
@@ -2162,7 +2445,13 @@ struct ViewportView: View {
         let aspect = Float(viewSize.width / viewSize.height)
         let ndcX = Float(2 * p.x / viewSize.width - 1)
         let ndcY = Float(1 - 2 * p.y / viewSize.height)
-        let dirWorld = normalize(forward + ndcX * tanHalf * aspect * right + ndcY * tanHalf * up)
+        return (cam, normalize(forward + ndcX * tanHalf * aspect * right + ndcY * tanHalf * up))
+    }
+
+    /// Screen point → ray in kernel space — still needed for sketch-plane taps
+    /// and the gizmo's closest-point drag math.
+    private func kernelRay(at p: CGPoint, viewSize: CGSize) -> (o: SIMD3<Float>, d: SIMD3<Float>)? {
+        guard let (cam, dirWorld) = worldRay(at: p, viewSize: viewSize) else { return nil }
         let s = model.displayScale
         return (rxPlus90(cam / s) + model.displayCenter, normalize(rxPlus90(dirWorld)))
     }
@@ -2170,33 +2459,42 @@ struct ViewportView: View {
     private func pick(at p: CGPoint, viewSize: CGSize) {
         model.viewSize = viewSize                 // keep fresh for gizmo drags
         model.stopSpin()                          // a tap settles the camera
-        guard let (camKernel, dirKernel) = kernelRay(at: p, viewSize: viewSize) else { return }
 
         // Sketch mode: a tap drops a point on the sketch plane.
         if model.sketching {
-            if let pt = model.sketchPlanePoint(originKernel: camKernel, dirKernel: dirKernel) {
+            if let (o, d) = kernelRay(at: p, viewSize: viewSize),
+               let pt = model.sketchPlanePoint(originKernel: o, dirKernel: d) {
                 model.sketchTap(pt)
             }
             return
         }
 
+        let hits = raycastHits(at: p, viewSize: viewSize)
+
         // Documents: tap a part → select its row (⌘-tap toggles multi-select, for
-        // booleans); tap empty space → deselect. Kernel-space AABBs make it cheap.
+        // booleans); tap empty space → deselect. Native collision raycast.
         if model.usesDocumentTree {
             let cmd = NSEvent.modifierFlags.contains(.command)
-            if let pi = model.pickDocumentPart(originKernel: camKernel, dirKernel: dirKernel),
+            if let pi = hits.compactMap({ Self.partIndex($0.entity) }).first,
                pi < model.featureNodes.count {
                 if cmd { model.toggleMultiSelect(part: pi, featureID: model.featureNodes[pi].id) }
                 else { model.selectFeature(model.featureNodes[pi].id) }
-            } else if !cmd, !model.rayHitsGizmo(originKernel: camKernel, dirKernel: dirKernel) {
+            } else if !cmd,
+                      !hits.contains(where: { model.gizmoHandle(for: $0.entity.name) != nil }) {
                 model.deselectAll()        // empty space (but not a tap on the gizmo)
             }
             return
         }
 
-        if let hit = model.raycastSandbox(originKernel: camKernel, dirKernel: dirKernel) {
-            model.pickPoint = hit.point
-            model.pickInfo = describe(hit)
+        // Sandbox: surface probe — nearest part hit, converted world → kernel
+        // through the live centering entity (handles Z-up rotation + scale).
+        if model.source.isSandbox,
+           let hit = hits.first(where: { Self.partIndex($0.entity) != nil }),
+           let centering = model.centeringEntity {
+            let pt = centering.convert(position: hit.position, from: nil)
+            let n = normalize(centering.convert(direction: hit.normal, from: nil))
+            model.pickPoint = pt
+            model.pickInfo = describe(EditorModel.PickHit(point: pt, normal: n))
         } else {
             model.pickPoint = nil
             model.pickInfo = nil
@@ -2230,24 +2528,24 @@ struct ViewportView: View {
             }
             return
         }
-        // Documents: hover-highlight the part under the cursor (ray-AABB pick),
-        // and show a pointing cursor to signal it's clickable.
+        // Documents: hover-highlight the part under the cursor (native collision
+        // raycast), and show a pointing cursor to signal it's clickable.
         if model.usesDocumentTree {
             switch phase {
             case .active(let point):
-                let ray = kernelRay(at: point, viewSize: viewSize)
+                let hits = raycastHits(at: point, viewSize: viewSize)
                 // Gizmo handles win over part hover (they sit on top). Never
                 // re-highlight mid-drag — that would rebuild the grabbed arm.
-                let gh = (model.showsGizmo && !model.draggingHandle) ? ray.flatMap {
-                    model.hitGizmoHandle(originKernel: $0.o, dirKernel: $0.d)
-                } : nil
+                let gh = (model.showsGizmo && !model.draggingHandle)
+                    ? hits.first(where: { model.gizmoHandle(for: $0.entity.name) != nil })?.entity.name
+                    : nil
                 if gh != model.hoveredGizmoHandle { model.hoveredGizmoHandle = gh; model.gizmoDirty = true }
                 if gh != nil {
                     if model.hoveredPartIndex != nil { model.hoveredPartIndex = nil; model.hoverDirty = true }
                     NSCursor.openHand.set()
                     return
                 }
-                let pi = ray.flatMap { model.pickDocumentPart(originKernel: $0.o, dirKernel: $0.d) }
+                let pi = hits.compactMap { Self.partIndex($0.entity) }.first
                 if pi != model.hoveredPartIndex { model.hoveredPartIndex = pi; model.hoverDirty = true }
                 (pi != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
             case .ended:
@@ -2260,7 +2558,12 @@ struct ViewportView: View {
 
         switch phase {
         case .active(let point):
-            let hit = hitHandle(at: point, viewSize: viewSize)
+            // The draggable handles' colliders answer hover directly; handle
+            // hits win over any part in front (the glass enclosure encloses
+            // the gripper's connector handle).
+            let hit = raycastHits(at: point, viewSize: viewSize)
+                .first(where: { $0.entity.name == "connectorHandle" || $0.entity.name == "filletHandle" })?
+                .entity.name
             if hit != nil, !model.draggingHandle {
                 NSCursor.openHand.set()
             } else if hit == nil, model.hoveredHandle != nil {
@@ -2275,42 +2578,45 @@ struct ViewportView: View {
         }
     }
 
-    /// Nearest visible handle whose projected screen position is within reach of
-    /// the pointer, or nil.
-    private func hitHandle(at p: CGPoint, viewSize: CGSize) -> String? {
-        var best: (name: String, dist: CGFloat)?
-        func consider(_ name: String, _ world: SIMD3<Float>) {
-            guard let s = worldToScreen(world, viewSize) else { return }
-            let d = hypot(s.x - p.x, s.y - p.y)
-            if d < 24, best == nil || d < best!.dist { best = (name, d) }
-        }
-        if model.showsConnectorHandle { consider("connectorHandle", model.connectorHandleWorld) }
-        if model.showsHandle { consider("filletHandle", model.filletHandleWorld) }
-        return best?.name
-    }
-
-    /// Forward pinhole projection — the inverse of `pick`'s ray build: world → screen.
-    private func worldToScreen(_ p: SIMD3<Float>, _ viewSize: CGSize) -> CGPoint? {
-        guard viewSize.width > 1, viewSize.height > 1 else { return nil }
-        let cam = model.cameraPosition
-        let forward = normalize(model.panOffset - cam)
-        let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
-        let up = cross(right, forward)
-        let rel = p - cam
-        let z = dot(rel, forward)
-        guard z > 0.0001 else { return nil }
-        let tanHalf = Float(tan(Double.pi / 6.0))
-        let aspect = Float(viewSize.width / viewSize.height)
-        let ndcX = (dot(rel, right) / z) / (tanHalf * aspect)
-        let ndcY = (dot(rel, up) / z) / tanHalf
-        return CGPoint(x: Double((ndcX + 1) / 2) * viewSize.width,
-                       y: Double((1 - ndcY) / 2) * viewSize.height)
-    }
-
     private func applyHover(_ e: Entity, hovered: Bool) {
         let target: Float = hovered ? 1.4 : 1.0
         if abs(e.scale.x - target) > 0.001 {
             e.scale = SIMD3<Float>(repeating: target)
         }
+    }
+
+    // MARK: native picking (collision raycasts)
+
+    /// Make a part entity natively pickable: an input target plus a static-mesh
+    /// collider generated from the render mesh, so scene raycasts hit exactly
+    /// what is drawn. Collider generation is async; the token guards against an
+    /// older build landing after a newer mesh swap.
+    static func applyPartPicking(_ entity: ModelEntity, mesh: MeshResource, model: EditorModel) {
+        entity.components.set(InputTargetComponent())
+        let key = entity.name
+        let token = (model.colliderTokens[key] ?? 0) + 1
+        model.colliderTokens[key] = token
+        Task { @MainActor in
+            guard let shape = try? await ShapeResource.generateStaticMesh(from: mesh),
+                  model.colliderTokens[key] == token else { return }
+            entity.components.set(CollisionComponent(shapes: [shape]))
+        }
+    }
+
+    /// All collision hits under a screen point, nearest first — parts, gizmo
+    /// grab proxies, and drag handles all carry colliders.
+    private func raycastHits(at p: CGPoint, viewSize: CGSize) -> [CollisionCastHit] {
+        guard let scene = model.centeringEntity?.scene,
+              let (o, d) = worldRay(at: p, viewSize: viewSize) else { return [] }
+        return scene.raycast(origin: o, direction: d, length: 100,
+                             query: .all, mask: .all, relativeTo: nil)
+            .sorted { $0.distance < $1.distance }
+    }
+
+    /// "part7" → 7 (instance children "part7_inst2" also → 7); else nil.
+    private static func partIndex(_ e: Entity) -> Int? {
+        guard e.name.hasPrefix("part") else { return nil }
+        let digits = e.name.dropFirst(4).prefix(while: \.isNumber)
+        return digits.isEmpty ? nil : Int(digits)
     }
 }

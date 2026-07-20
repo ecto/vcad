@@ -172,7 +172,12 @@ export async function getSimReplay(input: unknown): Promise<ReplayResult> {
   const instanceTransforms: Array<Record<string, SimTrs>> = [];
   const jointCount = record.document.joints?.length ?? 0;
   const instanceCount = record.document.instances?.length ?? 0;
-  if (jointCount > 0 && instanceCount > 0 && record.trajectory.length > 0) {
+  // With no recorded steps yet, still emit one FK row at the document's
+  // current joint states: the viewer then binds per-instance nodes and shows
+  // the articulated resting pose instead of "no articulated assembly".
+  const fkRows: number[][] =
+    record.trajectory.length > 0 ? record.trajectory : [[]];
+  if (jointCount > 0 && instanceCount > 0) {
     try {
       const wasm = (await getKernelWasm()) as unknown as {
         solveForwardKinematics?: (docJson: string) => unknown;
@@ -187,7 +192,7 @@ export async function getSimReplay(input: unknown): Promise<ReplayResult> {
         // — impossible for a live env, so degrade to a transform-less replay
         // (the viewer falls back to static geometry) rather than mis-posing.
         if (!("error" in obsJoints)) {
-          for (const row of record.trajectory) {
+          for (const row of fkRows) {
             for (let j = 0; j < obsJoints.joints.length; j++) {
               const pos = row[j];
               if (typeof pos === "number") obsJoints.joints[j]!.state = pos;

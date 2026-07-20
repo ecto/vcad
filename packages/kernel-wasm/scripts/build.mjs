@@ -188,9 +188,24 @@ if (process.env.VCAD_WASM_SKIP) {
   process.exit(0);
 }
 
+// VCAD_WASM_DEV=1: debug-profile build (no wasm-opt, no release codegen).
+// ~5-10x faster than release — the iteration mode `npm run dev` (watch) uses.
+// The output is bigger and slower at runtime; never ship it.
+const devProfile = !!process.env.VCAD_WASM_DEV;
+if (devProfile) {
+  console.log('[kernel-wasm] VCAD_WASM_DEV set — building debug profile');
+}
 const result = spawnSync(
   'wasm-pack',
-  ['build', cratePath, '--target', 'web', '--out-dir', outDir],
+  [
+    'build',
+    cratePath,
+    ...(devProfile ? ['--dev'] : []),
+    '--target',
+    'web',
+    '--out-dir',
+    outDir,
+  ],
   { stdio: 'inherit', shell: process.platform === 'win32' },
 );
 

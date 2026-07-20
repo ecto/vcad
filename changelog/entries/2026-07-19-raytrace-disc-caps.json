@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-raytrace-disc-caps",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Ray-traced disc caps no longer vanish",
+  "summary": "Cylinder/cone cap faces (planes bounded by a single full-circle edge) rendered as a thin crescent rim in raytrace mode; the circular trim boundary is now reconstructed on both GPU and CPU paths.",
+  "features": ["raytrace", "kernel"]
+}

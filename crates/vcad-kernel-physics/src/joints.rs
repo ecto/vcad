@@ -80,11 +80,12 @@ pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> 
             let xform = SpatialTransform::new(Mat3::identity(), anchor);
             Ok(PhyzJoint::fixed(xform))
         }
-        JointKind::Revolute { axis, limits } => {
+        JointKind::Revolute { limits, .. } => {
             // phyz revolute joints rotate about Z in joint frame.
             // We need to orient the joint frame so that Z aligns with the desired axis.
-            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
-            let rot = rotation_aligning_z_to(axis_vec);
+            // Plücker parent→joint coordinate map: E = Rᵀ where R carries
+            // the joint frame axes (Z = motion axis) in parent coordinates.
+            let rot = joint_frame_rotation(&joint.kind).transpose();
             let xform = SpatialTransform::new(rot, anchor);
 
             let mut phyz_joint = PhyzJoint::revolute(xform);
@@ -108,10 +109,9 @@ pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> 
 
             Ok(phyz_joint)
         }
-        JointKind::Cylindrical { axis } => {
+        JointKind::Cylindrical { .. } => {
             // Approximate as revolute (primary DOF)
-            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
-            let rot = rotation_aligning_z_to(axis_vec);
+            let rot = joint_frame_rotation(&joint.kind).transpose();
             let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::revolute(xform))
         }
@@ -119,6 +119,21 @@ pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> 
             let xform = SpatialTransform::new(Mat3::identity(), anchor);
             Ok(PhyzJoint::spherical(xform))
         }
+    }
+}
+
+/// Rotation part of the parent-to-joint frame for a joint kind.
+///
+/// phyz body frames coincide with the joint frame (Featherstone convention),
+/// so child geometry and inertia must be expressed in this frame: for a
+/// point `p` in the child part's local mm coordinates,
+/// `p_body = R^T * (p - child_anchor)`.
+pub fn joint_frame_rotation(kind: &JointKind) -> Mat3 {
+    match kind {
+        JointKind::Revolute { axis, .. } | JointKind::Cylindrical { axis } => {
+            rotation_aligning_z_to(Vec3::new(axis.x, axis.y, axis.z).normalize())
+        }
+        JointKind::Slider { .. } | JointKind::Fixed | JointKind::Ball => Mat3::identity(),
     }
 }
 

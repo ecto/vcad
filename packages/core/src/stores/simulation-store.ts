@@ -19,6 +19,8 @@ export interface JointState {
   position: number; // degrees for revolute, mm for prismatic
   velocity: number; // deg/s or mm/s
   torque: number; // Nm or N
+  /** Motor drive target velocity (deg/s or mm/s) used in "velocity" action mode. */
+  targetVelocity: number;
   limits: [number, number] | null;
 }
 
@@ -63,6 +65,8 @@ export interface SimulationState {
   setPhysicsAvailable: (available: boolean) => void;
   setJointStates: (states: JointState[]) => void;
   updateJointState: (id: string, position: number, velocity: number) => void;
+  /** Set a joint's motor drive target velocity (deg/s or mm/s). */
+  setJointTargetVelocity: (id: string, targetVelocity: number) => void;
   selectJoint: (id: string | null) => void;
   setActionType: (type: ActionType) => void;
   setEndEffectorIds: (ids: string[]) => void;
@@ -120,6 +124,15 @@ export const useSimulationStore = create<SimulationState>((set) => ({
       jointStates: s.jointStates.map((js) =>
         js.id === id ? { ...js, position, velocity } : js
       ),
+    })),
+
+  setJointTargetVelocity: (id, targetVelocity) =>
+    set((s) => ({
+      jointStates: s.jointStates.map((js) =>
+        js.id === id ? { ...js, targetVelocity } : js
+      ),
+      // Driving a motor implies velocity control for the whole env.
+      actionType: "velocity",
     })),
 
   selectJoint: (selectedJointId) => set({ selectedJointId }),

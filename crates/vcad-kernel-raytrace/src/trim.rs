@@ -25,7 +25,19 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
     // zero-area polygon in UV, which would reject every hit. Treat a
     // degenerate outer loop as "untrimmed" — the face spans the entire
     // surface — and still honour inner loops (holes) below.
-    let untrimmed = polygon_area(&outer_uvs).abs() < 1e-9;
+    let mut outer_uvs = outer_uvs;
+    let mut untrimmed = polygon_area(&outer_uvs).abs() < 1e-9;
+
+    // A planar cap bounded by a single closed circle edge (cylinder/cone
+    // caps) projects to a degenerate UV polygon too — but "untrimmed" on a
+    // plane means the infinite plane. Rebuild the circle from the adjacent
+    // surface instead.
+    if untrimmed {
+        if let Some(poly) = synthesize_planar_cap_polygon(brep, face_id) {
+            outer_uvs = poly;
+            untrimmed = false;
+        }
+    }
 
     if untrimmed {
         // On a cylinder or cone, v is an unbounded length parameter, so a
@@ -87,6 +99,104 @@ pub(crate) fn unbounded_v_range(surface: &dyn Surface, outer_uvs: &[Point2]) -> 
         }
         _ => None,
     }
+}
+
+/// Number of segments used when a degenerate cap loop is rebuilt as a
+/// sampled circle polygon.
+const CAP_CIRCLE_SEGMENTS: usize = 64;
+
+/// Rebuild the trim polygon for a planar face whose outer loop is degenerate
+/// in UV — a cap bounded by a single closed circle edge (e.g. a cylinder or
+/// cone cap). Only loop *vertices* project to UV, so a full-circle edge
+/// collapses to a point and the cap would either be rejected (GPU) or spill
+/// to the whole infinite plane (CPU untrimmed fallback).
+///
+/// The circle is recovered from the adjacent surface across the loop's twin
+/// half-edge: the surface's axis pierced through the cap plane gives the
+/// center, and the loop vertex gives the radius. Returns a sampled polygon
+/// in the plane's (orthonormal, hence isometric) UV space, or `None` when
+/// the face isn't planar or no axis-bearing neighbour is found.
+pub(crate) fn synthesize_planar_cap_polygon(
+    brep: &BRepSolid,
+    face_id: FaceId,
+) -> Option<Vec<Point2>> {
+    use vcad_kernel_geom::SurfaceKind;
+
+    let topo = &brep.topology;
+    let face = &topo.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let plane = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>()?;
+
+    for he_id in topo.loop_half_edges(face.outer_loop) {
+        let he = &topo.half_edges[he_id];
+        let Some(twin_id) = he.twin else { continue };
+        let Some(loop_id) = topo.half_edges[twin_id].loop_id else {
+            continue;
+        };
+        let Some(nbr_face_id) = topo.loops[loop_id].face else {
+            continue;
+        };
+        let nbr_surface = &brep.geometry.surfaces[topo.faces[nbr_face_id].surface_index];
+
+        // Axis (point + direction) of the neighbouring surface of revolution.
+        let (axis_point, axis_dir) = match nbr_surface.surface_type() {
+            SurfaceKind::Cylinder => {
+                let cyl = nbr_surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::CylinderSurface>()?;
+                (cyl.center, *cyl.axis.as_ref())
+            }
+            SurfaceKind::Cone => {
+                let cone = nbr_surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::ConeSurface>()?;
+                (cone.apex, *cone.axis.as_ref())
+            }
+            SurfaceKind::Sphere => {
+                let sph = nbr_surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::SphereSurface>()?;
+                (sph.center, *sph.axis.as_ref())
+            }
+            SurfaceKind::Torus => {
+                let torus = nbr_surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::TorusSurface>()?;
+                (torus.center, *torus.axis.as_ref())
+            }
+            _ => continue,
+        };
+
+        // Pierce the axis through the cap plane to get the circle center;
+        // if the axis is parallel to the plane, project the axis point.
+        let n = plane.normal_dir.as_ref();
+        let denom = axis_dir.dot(n);
+        let center = if denom.abs() > 1e-12 {
+            let t = (plane.origin - axis_point).dot(n) / denom;
+            axis_point + axis_dir * t
+        } else {
+            axis_point - *n * (axis_point - plane.origin).dot(n)
+        };
+
+        let vertex = topo.vertices[he.origin].point;
+        let radius = (vertex - center).norm();
+        if radius < 1e-12 {
+            continue;
+        }
+
+        let center_uv = plane.project(&center);
+        let mut poly = Vec::with_capacity(CAP_CIRCLE_SEGMENTS);
+        for i in 0..CAP_CIRCLE_SEGMENTS {
+            let theta = std::f64::consts::TAU * (i as f64) / (CAP_CIRCLE_SEGMENTS as f64);
+            poly.push(Point2::new(
+                center_uv.x + radius * theta.cos(),
+                center_uv.y + radius * theta.sin(),
+            ));
+        }
+        return Some(poly);
+    }
+
+    None
 }
 
 /// Get the UV coordinates of vertices in a loop by projecting 3D positions onto the surface.

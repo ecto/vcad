@@ -57,6 +57,13 @@ pub struct PhysicsWorld {
     // Joint DOF offsets in the state vectors
     joint_q_offsets: HashMap<String, usize>,
     joint_v_offsets: HashMap<String, usize>,
+
+    // Per-body part-local → body-frame transform (rotation, translation in
+    // meters): `p_body = R * p_part_m + t`. phyz body frames coincide with
+    // the joint frame (Featherstone), which for a jointed child is rotated by
+    // the axis-alignment rotation and anchored at the child anchor. Identity
+    // for ground/free bodies. Needed to report part poses to callers.
+    body_part_frames: Vec<(Mat3, Vec3)>,
 }
 
 impl PhysicsWorld {
@@ -90,6 +97,7 @@ impl PhysicsWorld {
         let mut joint_to_index: HashMap<String, usize> = HashMap::new();
         let mut joint_kinds: HashMap<String, JointKind> = HashMap::new();
         let mut body_geometries: Vec<Option<Geometry>> = Vec::new();
+        let mut body_part_frames: Vec<(Mat3, Vec3)> = Vec::new();
         let mut body_count = 0usize;
 
         // Helper: evaluate mesh, mass, and (optionally) authored inertials
@@ -97,7 +105,14 @@ impl PhysicsWorld {
         // `inertial` block (set by the URDF importer for any link with an
         // `<inertial>` tag), we surface those values; the caller prefers
         // them over mesh-derived inertia.
-        let eval_instance = |inst: &vcad_ir::Instance| -> Result<
+        // `part_frame`: optional part-local → body-frame map `(R, anchor_mm)`
+        // with `p_body = R * (p_part - anchor)`. When present, the mesh (and
+        // any authored inertial) is re-expressed in the body frame before
+        // mass/collider/inertia are computed, because phyz body frames
+        // coincide with the joint frame, not the part's local frame.
+        let eval_instance = |inst: &vcad_ir::Instance,
+                             part_frame: Option<(&Mat3, &vcad_ir::Vec3)>|
+         -> Result<
             (
                 vcad_kernel_tessellate::TriangleMesh,
                 f64,
@@ -109,8 +124,43 @@ impl PhysicsWorld {
             let part_def = part_defs
                 .get(&inst.part_def_id)
                 .ok_or_else(|| PhysicsError::MissingPartDef(inst.part_def_id.clone()))?;
-            let mesh = Self::evaluate_part(doc, part_def.root)?;
-            let authored = part_def.inertial;
+            let mut mesh = Self::evaluate_part(doc, part_def.root)?;
+            let mut authored = part_def.inertial;
+            if let Some((rot, anchor_mm)) = part_frame {
+                for v in mesh.vertices.chunks_mut(3) {
+                    let p = Vec3::new(
+                        v[0] as f64 - anchor_mm.x,
+                        v[1] as f64 - anchor_mm.y,
+                        v[2] as f64 - anchor_mm.z,
+                    );
+                    let q = rot.mul_vec(p);
+                    v[0] = q.x as f32;
+                    v[1] = q.y as f32;
+                    v[2] = q.z as f32;
+                }
+                if let Some(props) = authored.as_mut() {
+                    // COM is in mm, inertia about COM in kg·m² — rotate both
+                    // into the body frame.
+                    let com = Vec3::new(
+                        props.com_mm.x - anchor_mm.x,
+                        props.com_mm.y - anchor_mm.y,
+                        props.com_mm.z - anchor_mm.z,
+                    );
+                    let com_b = rot.mul_vec(com);
+                    props.com_mm = vcad_ir::Vec3::new(com_b.x, com_b.y, com_b.z);
+                    let [ixx, iyy, izz, ixy, ixz, iyz] = props.inertia_kg_m2;
+                    let i = Mat3::new(ixx, ixy, ixz, ixy, iyy, iyz, ixz, iyz, izz);
+                    let i_b = rot.mul_mat(&i).mul_mat(&rot.transpose());
+                    props.inertia_kg_m2 = [
+                        i_b[(0, 0)],
+                        i_b[(1, 1)],
+                        i_b[(2, 2)],
+                        i_b[(0, 1)],
+                        i_b[(0, 2)],
+                        i_b[(1, 2)],
+                    ];
+                }
+            }
             let mass = match authored {
                 Some(props) => props.mass_kg,
                 None => {
@@ -181,7 +231,8 @@ impl PhysicsWorld {
             .find(|i| i.id == *ground_id)
             .ok_or_else(|| PhysicsError::MissingInstance(ground_id.clone()))?;
         {
-            let (mesh, mass, geometry, authored) = eval_instance(ground_inst)?;
+            let (mesh, mass, geometry, authored) = eval_instance(ground_inst, None)?;
+            body_part_frames.push((Mat3::identity(), Vec3::zero()));
             let inertia = build_inertia(&mesh, mass, authored);
             let xform = instance_transform(ground_inst);
             builder = builder.add_fixed_body(&ground_inst.id, -1, xform, inertia);
@@ -215,7 +266,17 @@ impl PhysicsWorld {
                     .get(&parent_id)
                     .ok_or_else(|| PhysicsError::MissingInstance(parent_id.clone()))?;
 
-                let (mesh, mass, geometry, authored) = eval_instance(child_inst)?;
+                // Body frame = joint frame: rotated so the motion axis is Z,
+                // origin at the child anchor.
+                let r_part_to_body = crate::joints::joint_frame_rotation(&joint.kind).transpose();
+                let (mesh, mass, geometry, authored) =
+                    eval_instance(child_inst, Some((&r_part_to_body, &joint.child_anchor)))?;
+                let anchor_m = Vec3::new(
+                    joint.child_anchor.x / 1000.0,
+                    joint.child_anchor.y / 1000.0,
+                    joint.child_anchor.z / 1000.0,
+                );
+                body_part_frames.push((r_part_to_body, r_part_to_body.mul_vec(-anchor_m)));
                 let inertia = build_inertia(&mesh, mass, authored);
 
                 // Create phyz joint
@@ -253,7 +314,8 @@ impl PhysicsWorld {
                 continue;
             }
 
-            let (mesh, mass, geometry, authored) = eval_instance(inst)?;
+            let (mesh, mass, geometry, authored) = eval_instance(inst, None)?;
+            body_part_frames.push((Mat3::identity(), Vec3::zero()));
             let inertia = build_inertia(&mesh, mass, authored);
             let xform = instance_transform(inst);
 
@@ -295,11 +357,12 @@ impl PhysicsWorld {
             joint_kinds,
             joint_q_offsets,
             joint_v_offsets,
+            body_part_frames,
         };
 
-        // Set initial joint states
+        // Set initial joint states (zero-dof joints have no q slot to write)
         for joint in joints {
-            if joint.state.abs() > 1e-6 {
+            if joint_ndof(&joint.kind) > 0 && joint.state.abs() > 1e-6 {
                 world.set_joint_position(&joint.id, joint.state);
                 // Also set the initial q value directly
                 if let Some(&q_offset) = world.joint_q_offsets.get(&joint.id) {
@@ -341,10 +404,49 @@ impl PhysicsWorld {
                 self.state.q[i] += self.state.v[i.min(nv - 1)] * dt;
             }
 
+            self.enforce_joint_limits();
+
             forward_kinematics(&self.model, &self.state);
         }
 
         self.model.dt = original_dt;
+    }
+
+    /// Clamp single-DOF joints to their limits after integration.
+    ///
+    /// phyz carries `Joint::limits` but its integrators never read them —
+    /// without this, an unactuated slider free-falls through its stops
+    /// forever (a mm-scale piston ends up hundreds of meters below the
+    /// floor within a minute of sim time). Hard clamp + zero the DOF
+    /// velocity at the stop: inelastic, but stable at any scale.
+    fn enforce_joint_limits(&mut self) {
+        for joint_id in &self.joint_order {
+            let Some(&q_offset) = self.joint_q_offsets.get(joint_id) else {
+                continue;
+            };
+            let Some(&v_offset) = self.joint_v_offsets.get(joint_id) else {
+                continue;
+            };
+            let Some(&body_idx) = self.joint_to_index.get(joint_id) else {
+                continue;
+            };
+            let joint_idx = self.model.bodies[body_idx].joint_idx;
+            let Some([lo, hi]) = self.model.joints[joint_idx].limits else {
+                continue;
+            };
+            let q = self.state.q[q_offset];
+            if q < lo {
+                self.state.q[q_offset] = lo;
+                if self.state.v[v_offset] < 0.0 {
+                    self.state.v[v_offset] = 0.0;
+                }
+            } else if q > hi {
+                self.state.q[q_offset] = hi;
+                if self.state.v[v_offset] > 0.0 {
+                    self.state.v[v_offset] = 0.0;
+                }
+            }
+        }
     }
 
     /// Apply PD motor torques from motor targets to state.ctrl.
@@ -411,16 +513,64 @@ impl PhysicsWorld {
     /// * `target` - Target position (degrees for revolute, mm for prismatic)
     pub fn set_joint_position(&mut self, joint_id: &str, target: f64) {
         if let Some(kind) = self.joint_kinds.get(joint_id) {
+            if joint_ndof(kind) == 0 {
+                return;
+            }
             let physics_target = convert_state_to_physics(kind, target);
+            let (kp, kd, max_force) = self.position_gains(joint_id);
             self.motors.insert(
                 joint_id.to_string(),
                 MotorTarget {
                     mode: MotorMode::Position,
                     target: physics_target,
-                    ..MotorTarget::default()
+                    kp,
+                    kd,
+                    max_force,
                 },
             );
         }
+    }
+
+    /// Critically-damped PD gains scaled to the joint's reflected inertia.
+    ///
+    /// The old fixed defaults (`kp = 1000 Nm/rad`, clamp `±1000 Nm`) are
+    /// tuned for meter/kilogram robots; a mm-scale part has a reflected
+    /// inertia around 1e-8 kg·m², so a saturated 1000 Nm torque produced
+    /// ~1e11 rad/s² and the explicit integrator diverged in one substep.
+    /// Scaling by the measured inertia keeps the closed-loop natural
+    /// frequency fixed (ω = 20 rad/s, ζ = 1) at every scale.
+    fn position_gains(&mut self, joint_id: &str) -> (f64, f64, f64) {
+        const OMEGA: f64 = 20.0;
+        let i = self.reflected_inertia(joint_id);
+        let kp = i * OMEGA * OMEGA;
+        let kd = 2.0 * i * OMEGA;
+        // Full-scale (π rad / 1 m) error torque bounds the clamp.
+        let max_force = (kp * std::f64::consts::PI).max(1e-12);
+        (kp, kd, max_force)
+    }
+
+    /// Reflected inertia (kg·m² or kg) of a joint's DOF, measured by probing
+    /// forward dynamics: apply a unit generalized force and read the change
+    /// in acceleration. Falls back to the old meter-scale assumption (1.0)
+    /// when the probe degenerates.
+    fn reflected_inertia(&mut self, joint_id: &str) -> f64 {
+        let Some(&v_offset) = self.joint_v_offsets.get(joint_id) else {
+            return 1.0;
+        };
+        let saved_ctrl = self.state.ctrl.clone();
+        for c in self.state.ctrl.as_mut_slice() {
+            *c = 0.0;
+        }
+        let qdd0 = aba_with_external_forces(&self.model, &self.state, None);
+        self.state.ctrl[v_offset] = 1.0;
+        let qdd1 = aba_with_external_forces(&self.model, &self.state, None);
+        self.state.ctrl = saved_ctrl;
+
+        let delta = qdd1[v_offset] - qdd0[v_offset];
+        if !delta.is_finite() || delta.abs() < 1e-12 {
+            return 1.0;
+        }
+        (1.0 / delta).abs().clamp(1e-12, 1e9)
     }
 
     /// Set the target velocity for a joint.
@@ -431,13 +581,25 @@ impl PhysicsWorld {
     /// * `target` - Target velocity (deg/s for revolute, mm/s for prismatic)
     pub fn set_joint_velocity(&mut self, joint_id: &str, target: f64) {
         if let Some(kind) = self.joint_kinds.get(joint_id) {
+            if joint_ndof(kind) == 0 {
+                return;
+            }
             let physics_target = convert_state_to_physics(kind, target);
+            // Velocity servo: τ = kd (v* − v). Track within ~1/ω seconds and
+            // clamp at the torque needed to reach the target from rest in one
+            // time constant, scaled to the joint's reflected inertia.
+            const OMEGA: f64 = 40.0;
+            let i = self.reflected_inertia(joint_id);
+            let kd = i * OMEGA;
+            let max_force = (kd * physics_target.abs().max(1.0) * 2.0).max(1e-12);
             self.motors.insert(
                 joint_id.to_string(),
                 MotorTarget {
                     mode: MotorMode::Velocity,
                     target: physics_target,
-                    ..MotorTarget::default()
+                    kp: 0.0,
+                    kd,
+                    max_force,
                 },
             );
         }
@@ -450,6 +612,13 @@ impl PhysicsWorld {
     /// * `joint_id` - The vcad joint ID
     /// * `torque` - Torque/force (Nm for revolute, N for prismatic)
     pub fn apply_joint_torque(&mut self, joint_id: &str, torque: f64) {
+        if self
+            .joint_kinds
+            .get(joint_id)
+            .is_none_or(|kind| joint_ndof(kind) == 0)
+        {
+            return;
+        }
         self.motors.insert(
             joint_id.to_string(),
             MotorTarget {
@@ -467,20 +636,27 @@ impl PhysicsWorld {
     /// orientation is a unit quaternion [w, x, y, z].
     pub fn get_instance_pose(&self, instance_id: &str) -> Option<([f64; 3], [f64; 4])> {
         let &body_idx = self.instance_to_body.get(instance_id)?;
+        Some(self.part_pose(body_idx))
+    }
+
+    /// World pose of the PART frame for a body: composes the body-in-world
+    /// pose from FK with the stored part→body frame, so callers see the
+    /// part's local origin/axes (the thing renderers pose), not the internal
+    /// joint frame.
+    fn part_pose(&self, body_idx: usize) -> Pose {
         let xform = &self.state.body_xform[body_idx];
-
-        // The body_xform from FK is world-to-body. We need body-in-world.
-        // Actually phyz FK returns world_to_body transforms (Plücker convention).
-        // To get the world-frame position, we need the inverse.
-        let inv = xform.inverse();
-        let pos = inv.pos;
-        let rot = inv.rot;
-        let quat = Quat::from_matrix(&rot);
-
-        Some((
-            [pos.x, pos.y, pos.z],
+        // phyz body_xform is world→body in Plücker form `p_body = E (p - r)`:
+        // body origin in world is `r`, body→world rotation is `Eᵀ`.
+        let e_t = xform.rot.transpose();
+        let (r_pb, t_pb) = &self.body_part_frames[body_idx];
+        // part→world: p_w = Eᵀ (R_pb p + t_pb) + r
+        let rot_world = e_t.mul_mat(r_pb);
+        let origin = e_t.mul_vec(*t_pb) + xform.pos;
+        let quat = Quat::from_matrix(&rot_world);
+        (
+            [origin.x, origin.y, origin.z],
             [quat.w, quat.v.x, quat.v.y, quat.v.z],
-        ))
+        )
     }
 
     /// Set gravity vector.
@@ -542,17 +718,7 @@ impl PhysicsWorld {
 
         let mut out = HashMap::new();
         for (inst_id, &body_idx) in &self.instance_to_body {
-            let inv = self.state.body_xform[body_idx].inverse();
-            let pos = inv.pos;
-            let rot = inv.rot;
-            let quat = phyz::math::Quat::from_matrix(&rot);
-            out.insert(
-                inst_id.clone(),
-                (
-                    [pos.x, pos.y, pos.z],
-                    [quat.w, quat.v.x, quat.v.y, quat.v.z],
-                ),
-            );
+            out.insert(inst_id.clone(), self.part_pose(body_idx));
         }
 
         // Restore prior state — caller wanted a kinematic probe, not a step.
@@ -626,6 +792,22 @@ impl PhysicsWorld {
     /// index against this order.
     pub fn joint_ids(&self) -> Vec<String> {
         self.joint_order.clone()
+    }
+
+    /// Joint ids (document order) with at least one degree of freedom.
+    ///
+    /// Fixed joints weld their child to the parent body and contribute no
+    /// actuated dof, so they are excluded here.
+    pub fn actuated_joint_ids(&self) -> Vec<String> {
+        self.joint_order
+            .iter()
+            .filter(|id| {
+                self.joint_kinds
+                    .get(*id)
+                    .is_some_and(|kind| joint_ndof(kind) > 0)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Get list of all instance IDs.
