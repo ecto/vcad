@@ -1792,11 +1792,11 @@ final class EditorModel {
 
     private var modifierApplies: Bool { selectedFeatureID != "base" && modifier != .none && modifierValue > 0.05 }
 
-    /// Build the sandbox solid (primitive + modifier) and tessellate it.
-    private func sandboxKernelMesh() -> KernelMesh? {
+    /// Build the sandbox solid (primitive + modifier), tessellate it, and hand
+    /// the kernel mesh handle to `body`; every FFI handle is freed on return.
+    private func withSandboxMesh<T>(_ body: (OpaquePointer) -> T?) -> T? {
         guard let base = makeBase() else { return nil }
         defer { vcad_solid_free(base) }
-        let start = Date()
         var target = base
         var owned: OpaquePointer?
         if modifierApplies {
@@ -1809,36 +1809,51 @@ final class EditorModel {
         defer { if let o = owned { vcad_solid_free(o) } }
         guard let mesh = vcad_solid_to_mesh(target, 64) else { return nil }
         defer { vcad_mesh_free(mesh) }
-        let km = KernelMesh.fromView(vcad_mesh_view(mesh))
-        if let eh = vcad_mesh_edges(mesh, Self.edgeAngleDeg) {
-            docPartEdges = [EdgeOverlay.segments(fromView: vcad_edges_view(eh))]
-            vcad_edges_free(eh)
-        } else {
-            docPartEdges = []
+        return body(mesh)
+    }
+
+    /// CPU-side copy of the sandbox mesh — export path (STL needs the arrays).
+    private func sandboxKernelMesh() -> KernelMesh? {
+        withSandboxMesh { KernelMesh.fromView(vcad_mesh_view($0)) }
+    }
+
+    /// Re-solve the sandbox and stream the FFI tessellation buffers directly
+    /// into the LowLevelMesh — no CPU-side array copy on the scrub hot path.
+    private func solveSandboxStream() -> (recreated: Bool, stats: StreamingMesh.StreamStats)? {
+        let start = Date()
+        let result: (recreated: Bool, stats: StreamingMesh.StreamStats)? = withSandboxMesh { mesh in
+            guard let r = streaming.update(fromView: vcad_mesh_view(mesh)) else { return nil }
+            if let eh = vcad_mesh_edges(mesh, Self.edgeAngleDeg) {
+                docPartEdges = [EdgeOverlay.segments(fromView: vcad_edges_view(eh))]
+                vcad_edges_free(eh)
+            } else {
+                docPartEdges = []
+            }
+            return r
         }
+        guard let (_, stats) = result else { return nil }
         solveMillis = Date().timeIntervalSince(start) * 1000
-        triangleCount = km.triangleCount
+        triangleCount = stats.triangleCount
         partCount = 1
-        sizeMM = km.maxBound - km.minBound
-        return km
+        sizeMM = stats.maxBound - stats.minBound
+        return result
     }
 
     private func sandboxScene() -> RenderScene {
-        guard let km = sandboxKernelMesh() else { return .empty }
-        streaming.update(from: km)
-        guard let res = streaming.resource else { return .empty }
-        let center = (km.minBound + km.maxBound) / 2
-        let size = Self.extent(km.minBound, km.maxBound)
+        guard let r = solveSandboxStream(), let res = streaming.resource else { return .empty }
+        let center = (r.stats.minBound + r.stats.maxBound) / 2
+        let size = Self.extent(r.stats.minBound, r.stats.maxBound)
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
         return RenderScene(meshes: [(res, Self.heroColor)], center: center, size: size,
-                           triangleCount: km.triangleCount, partCount: 1, edges: docPartEdges)
+                           triangleCount: r.stats.triangleCount, partCount: 1, edges: docPartEdges)
     }
 
     /// Hot path: re-solve the sandbox and stream into the GPU buffers in place.
+    /// Returns true when the LowLevelMesh was recreated (capacity growth) and
+    /// the caller must reassign `streaming.resource` onto its entity.
     func streamSandbox() -> Bool {
-        guard let km = sandboxKernelMesh() else { return false }
-        return streaming.update(from: km)
+        solveSandboxStream()?.recreated ?? false
     }
 
     struct PickHit { var point: SIMD3<Float>; var normal: SIMD3<Float> }
