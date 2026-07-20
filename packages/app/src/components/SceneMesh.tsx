@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useMemo, useCallback, useState } from "react";
 import * as THREE from "three";
-import { Edges, Html } from "@react-three/drei";
+import { Edges, Html, Outlines } from "@react-three/drei";
 import { useThree } from "@react-three/fiber";
 import type { TriangleMesh, PartInfo, FaceInfo } from "@vcad/core";
 import { useUiStore, useDocumentStore, useSketchStore, isPcbBoardPart, isStitchPart, isEmbroideryPatternPart } from "@vcad/core";
@@ -669,6 +669,19 @@ export const SceneMesh = memo(function SceneMesh({
     !captureMode &&
     (effectiveSelected || (isHovered && !faceSelectionMode));
 
+  // Smooth bodies (spheres, blends) have no dihedral > 15° — the edge
+  // highlight would draw nothing. Fall back to a screen-space silhouette
+  // outline for those. Recomputed only when the mesh changes.
+  const isSmoothBody = useMemo(() => {
+    if (!geoReady) return false;
+    const geo = geoRef.current;
+    if (!geo) return false;
+    const eg = new THREE.EdgesGeometry(geo, 15);
+    const segments = eg.attributes["position"]?.count ?? 0;
+    eg.dispose();
+    return segments === 0;
+  }, [geoReady, mesh]);
+
   useEffect(() => {
     setDraftName(partInfo.name);
   }, [partInfo.name, selected]);
@@ -1007,11 +1020,19 @@ export const SceneMesh = memo(function SceneMesh({
       {/* Selection/hover highlight: brand-orange feature-edge lines (ported
           from the native app). Fat screen-space lines, so the width stays
           visually constant at any zoom. */}
-      {showSelectionEdges && geoReady && (
+      {showSelectionEdges && geoReady && !isSmoothBody && (
         <Edges
           threshold={15}
           color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
           lineWidth={effectiveSelected ? 2 : 1.25}
+          renderOrder={1}
+        />
+      )}
+      {showSelectionEdges && geoReady && isSmoothBody && (
+        <Outlines
+          color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
+          thickness={effectiveSelected ? 2 : 1.25}
+          angle={Math.PI}
           renderOrder={1}
         />
       )}
