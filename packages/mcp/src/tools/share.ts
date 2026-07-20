@@ -6,9 +6,11 @@ import type { Document } from "@vcad/ir";
 import { fromVCode, toVCode } from "@vcad/ir";
 import { gzipSync } from "node:zlib";
 import { behavior, type ToolDef } from "./tool-def.js";
+import { getSession } from "./session-core.js";
 
 interface ShareInput {
-  document: string;  // JSON string or VCode
+  document_id?: string; // live session — the session-first path
+  document?: string; // inline JSON string or VCode — stateless path
   name?: string;
 }
 
@@ -39,16 +41,23 @@ function validateAppUrl(raw: string): string {
 export const openInBrowserSchema = {
   type: "object" as const,
   properties: {
+    document_id: {
+      type: "string" as const,
+      description:
+        "Live session id (from open_document / create_cad_loon) to share — " +
+        "the session-first path. Either this or `document` is required.",
+    },
     document: {
       type: "string" as const,
-      description: "IR document (JSON or VCode format)",
+      description:
+        "Inline IR document (JSON or VCode format) — the stateless " +
+        "alternative to document_id.",
     },
     name: {
       type: "string" as const,
       description: "Optional document name",
     },
   },
-  required: ["document"],
 };
 
 /**
@@ -88,12 +97,19 @@ function compressForUrl(compact: string): string {
 export function openInBrowser(
   input: unknown,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { document: docInput, name } = input as ShareInput;
+  const { document_id, document: docInput, name } = input as ShareInput;
 
+  // Session-first: resolve a live session by id. Inline `document` remains
+  // the stateless escape hatch.
+  if (!document_id && !docInput) {
+    throw new Error(
+      "Pass `document_id` (a live session) or `document` (inline IR).",
+    );
+  }
   // Parse and convert to compact (smallest representation). Documents that
   // VCode can't represent yet (e.g. PCB boards) ship as raw JSON — the
   // app's parseVcadFile loader accepts both formats.
-  const doc = parseDocument(docInput);
+  const doc = document_id ? getSession(document_id) : parseDocument(docInput!);
   let payload: string;
   let format: "vcode" | "json";
   try {
@@ -141,7 +157,7 @@ export const toolDefs: ToolDef[] = [
     pack: null,
     description:
       "Generate a shareable URL to open a CAD document in vcad.io. " +
-      "Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. " +
+      "Pass a live session's `document_id` (the usual ship path), or an inline IR `document` (JSON or VCode format). " +
       "Documents are compressed (gzip + base64url) for URL embedding. " +
       "Note: Very large documents may exceed URL length limits (~2KB).",
     inputSchema: openInBrowserSchema,

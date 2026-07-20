@@ -297,6 +297,17 @@ describe("session persistence (save_document / load_document)", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
+  it("rejects an omitted or empty name instead of writing `.vcad`", async () => {
+    const open = openDocument({ initial: makeCubeDoc() });
+    const { document_id } = JSON.parse(open.content[0].text);
+    for (const args of [{ document_id }, { document_id, name: "  " }]) {
+      await expect(
+        saveDocument(args, new InMemorySessionStore()),
+      ).rejects.toThrow(/Pass `name`/);
+    }
+    expect(existsSync(join(stateDir, ".vcad"))).toBe(false);
+  });
+
   it("round-trips a session to disk and back", async () => {
     const open = openDocument({ initial: makeCubeDoc() });
     const { document_id } = JSON.parse(open.content[0].text);
