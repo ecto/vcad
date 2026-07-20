@@ -111,7 +111,7 @@ struct ReleasedOverlayView: View {
             ReleasedARView(model: model,
                            cameraPosition: model.cameraPosition,
                            lookAt: model.panOffset,
-                           geometryKey: "\(model.baseShape)|\(model.modifier)|\(model.modifierValue)|\(model.triangleCount)|\(model.zebraMode)")
+                           geometryKey: "\(model.baseShape)|\(model.modifier)|\(model.modifierValue)|\(model.triangleCount)|\(model.zebraMode)|\(model.highlightedParts.sorted())|\(model.hiddenParts.sorted())|\(String(describing: model.isolatedPart))")
                 .ignoresSafeArea()
             // ARView consumes mouse events — capture orbit/zoom on a clear
             // layer above it instead.
@@ -120,6 +120,10 @@ struct ReleasedOverlayView: View {
                 .ignoresSafeArea()
                 .gesture(orbitGesture)
                 .simultaneousGesture(zoomGesture)
+                .gesture(SpatialTapGesture(coordinateSpace: .local).modifiers(.command)
+                    .onEnded { value in tapSelect(at: value.location, additive: true) })
+                .gesture(SpatialTapGesture(coordinateSpace: .local)
+                    .onEnded { value in tapSelect(at: value.location, additive: false) })
             // BCB-style tool windows, hosted in the overlay itself (separate
             // NSPanels break SwiftUI hit testing after auto-resize).
             VStack(alignment: .leading, spacing: 12) {
@@ -127,6 +131,13 @@ struct ReleasedOverlayView: View {
                     .modifier(ChromeRegion(key: "palette"))
                 ObjectInspectorWindow(model: model)
                     .modifier(ChromeRegion(key: "inspector"))
+                ScrollView {
+                    FeatureTreeView(model: model)
+                }
+                .frame(width: 230)
+                .frame(maxHeight: 380)
+                .fixedSize(horizontal: false, vertical: true)
+                .modifier(ChromeRegion(key: "tree"))
             }
             .padding(16)
         }
@@ -135,6 +146,28 @@ struct ReleasedOverlayView: View {
                 .padding(16)
                 .modifier(ChromeRegion(key: "pill"))
         }
+    }
+
+    /// Click a part to select it (⌘-click for the boolean multi-selection,
+    /// empty space to deselect) — the released twin of the studio's pick.
+    private func tapSelect(at p: CGPoint, additive: Bool) {
+        guard model.usesDocumentTree,
+              let ar = ReleaseWindowController.shared.arView else { return }
+        if let e = ar.hitTest(p).first?.entity, e.name.hasPrefix("part"),
+           let pi = Int(e.name.dropFirst(4)),
+           let fid = model.featureNodes.first(where: { $0.partIndex == pi })?.id {
+            // Modifiers come from the gesture (.modifiers(.command)), not
+            // NSEvent.modifierFlags — that reads hardware key state and misses
+            // synthetic events (and some tap orderings).
+            if additive {
+                model.toggleMultiSelect(part: pi, featureID: fid)
+            } else {
+                model.selectFeature(fid)
+            }
+        } else if !additive {
+            model.deselectAll()
+        }
+        model.selectionDirty = false   // released view rebuilds via geometryKey
     }
 
     private var orbitGesture: some Gesture {
@@ -238,8 +271,15 @@ struct ReleasedARView: NSViewRepresentable {
                 m.roughness = 0.34
                 m.metallic = 0.55
             }
+            if model.usesDocumentTree, !model.zebraMode, model.highlightedParts.contains(i) {
+                // Brand orange = action: a subtle emissive lift marks selection
+                // without repainting the material (mirrors the studio rule).
+                m.emissiveColor = .init(color: NSColor(red: 1.0, green: 0.62, blue: 0.12, alpha: 1.0))
+                m.emissiveIntensity = 0.35
+            }
             let e = ModelEntity(mesh: item.mesh, materials: [m])
             e.name = "part\(i)"
+            e.isEnabled = model.isPartVisible(i)
             e.generateCollisionShapes(recursive: false)   // pass-through hit test
             centering.addChild(e)
         }
@@ -304,38 +344,67 @@ struct ComponentPaletteWindow: View {
 
     var body: some View {
         ToolWindow(title: "Components", onClose: { model.releaseMode = false }) {
-            HStack(spacing: 10) {
-                HStack(spacing: 2) {
-                    ForEach(BaseShape.allCases, id: \.self) { s in
-                        paletteButton(s.label, s.symbol, active: model.baseShape == s) {
-                            model.baseShape = s
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    // Same tabs, same tools, same enable/hint logic as the
+                    // in-studio palette: one source of truth (model.tools(for:)).
+                    Picker("", selection: $model.toolTab) {
+                        ForEach(availableTabs) { t in Text(t.label).tag(t) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    Divider().frame(height: 22)
+                    HStack(spacing: 2) {
+                        iconButton("Zebra", "line.3.horizontal", enabled: true,
+                                   active: model.zebraMode) { model.zebraMode.toggle() }
+                        iconButton("Undo", "arrow.uturn.backward", enabled: model.canUndo) { model.undo() }
+                        iconButton("Redo", "arrow.uturn.forward", enabled: model.canRedo) { model.redo() }
+                        iconButton("STL", "square.and.arrow.up", enabled: model.canExport) {
+                            exportPanel(ext: "stl") { model.exportSTL(to: $0) }
+                        }
+                        iconButton("USDZ", "arkit", enabled: model.canExport) {
+                            exportPanel(ext: "usdz") { model.exportUSDZ(to: $0) }
                         }
                     }
                 }
-                Divider().frame(height: 22)
                 HStack(spacing: 2) {
-                    ForEach(Modifier.allCases, id: \.self) { m in
-                        paletteButton(m.label, m.symbol, active: model.modifier == m) {
-                            model.modifier = m
-                        }
-                    }
-                }
-                Divider().frame(height: 22)
-                HStack(spacing: 2) {
-                    paletteButton("Zebra", "line.3.horizontal", active: model.zebraMode) {
-                        model.zebraMode.toggle()
-                    }
-                    iconButton("Undo", "arrow.uturn.backward", enabled: model.canUndo) { model.undo() }
-                    iconButton("Redo", "arrow.uturn.forward", enabled: model.canRedo) { model.redo() }
-                    iconButton("STL", "square.and.arrow.up", enabled: model.canExport) {
-                        exportPanel(ext: "stl") { model.exportSTL(to: $0) }
-                    }
-                    iconButton("USDZ", "arkit", enabled: model.canExport) {
-                        exportPanel(ext: "usdz") { model.exportUSDZ(to: $0) }
+                    ForEach(model.tools(for: activeTab)) { tool in
+                        toolButton(tool)
                     }
                 }
             }
         }
+    }
+
+    /// Combine only exists for documents (needs two selected parts).
+    private var availableTabs: [ToolTab] {
+        model.usesDocumentTree ? ToolTab.allCases : [.create, .modify]
+    }
+    private var activeTab: ToolTab {
+        availableTabs.contains(model.toolTab) ? model.toolTab : .create
+    }
+
+    private func toolButton(_ tool: Tool) -> some View {
+        Button(action: tool.action) {
+            VStack(spacing: 3) {
+                Image(systemName: tool.symbol).font(.system(size: 14))
+                Text(tool.label).font(.system(size: 9)).lineLimit(1)
+            }
+            .frame(minWidth: 52, minHeight: 40)
+            .padding(.horizontal, 4)
+            .foregroundStyle(tool.isActive ? Color.accentColor
+                             : tool.enabled ? Color.primary : Color.secondary.opacity(0.4))
+            .background(tool.isActive ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 7))
+            // .plain buttons only hit-test opaque pixels; without this, clicks
+            // in the transparent padding between glyph and label do nothing.
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!tool.enabled)
+        .help(tool.hint.isEmpty ? tool.label : tool.hint)
     }
 
     private func exportPanel(ext: String, _ export: @escaping (URL) -> Bool) {
@@ -347,25 +416,8 @@ struct ComponentPaletteWindow: View {
         }
     }
 
-    private func paletteButton(_ label: String, _ symbol: String,
-                               active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.system(size: 14))
-                Text(label).font(.system(size: 9))
-            }
-            .frame(width: 52, height: 40)
-            .foregroundStyle(active ? Color.accentColor : Color.primary)
-            .background(active ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear),
-                        in: RoundedRectangle(cornerRadius: 7))
-            // .plain buttons only hit-test opaque pixels; without this, clicks
-            // in the transparent padding between glyph and label do nothing.
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
     private func iconButton(_ label: String, _ symbol: String, enabled: Bool,
+                            active: Bool = false,
                             action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 3) {
@@ -373,7 +425,10 @@ struct ComponentPaletteWindow: View {
                 Text(label).font(.system(size: 9))
             }
             .frame(width: 52, height: 40)
-            .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.4))
+            .foregroundStyle(active ? Color.accentColor
+                             : enabled ? Color.primary : Color.secondary.opacity(0.4))
+            .background(active ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -452,9 +507,10 @@ struct ObjectInspectorWindow: View {
     }
 
     private var materialBinding: Binding<String> {
-        Binding(
-            get: { model.materialName(forPart: 0) ?? "aluminum" },
-            set: { model.setPartMaterial(0, $0) })
+        let pi = model.selectedPartIndex ?? 0
+        return Binding(
+            get: { model.materialName(forPart: pi) ?? "aluminum" },
+            set: { model.setPartMaterial(pi, $0) })
     }
 
     private func camButton(_ label: String, az: Float, el: Float) -> some View {
