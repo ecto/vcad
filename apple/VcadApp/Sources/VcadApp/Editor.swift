@@ -19,7 +19,7 @@ enum Motion {
     static let pop = Animation.spring(response: 0.32, dampingFraction: 0.7)
 }
 
-private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/great-bohr-4c355d"
+private let kSamplesDir = "/Users/cam/Developer/vcad"
 
 enum GeometrySource: Hashable, Identifiable {
     case sandbox
