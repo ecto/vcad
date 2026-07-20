@@ -238,13 +238,28 @@ pub(super) fn try_route_pair(
     // in the open.
     let budget = max_expansions.max(100_000);
     let mut found = None;
-    for retreat in [0.0, 1.0, 2.0, 4.0, 8.0] {
+    // Asymmetric ladder: most pairs have only ONE end in a pin field, so
+    // necking both ends symmetrically wastes coupled length and misses the
+    // cases where only one side needs the retreat.
+    for (r_from, r_to) in [
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (1.0, 1.0),
+        (2.0, 0.0),
+        (0.0, 2.0),
+        (2.0, 2.0),
+        (4.0, 0.0),
+        (0.0, 4.0),
+        (4.0, 4.0),
+        (8.0, 8.0),
+    ] {
         let usable = span - 2.0 * lead;
-        if 2.0 * retreat >= usable - 1.0 {
-            break;
+        if r_from + r_to >= usable - 1.0 {
+            continue;
         }
-        let s_pt = start + dir.scale(retreat);
-        let e_pt = end - dir.scale(retreat);
+        let s_pt = start + dir.scale(r_from);
+        let e_pt = end - dir.scale(r_to);
         let r = route_net_maze3d(
             session,
             &pcb.outline.vertices,
@@ -265,8 +280,10 @@ pub(super) fn try_route_pair(
             true,
         );
         if r.success && !r.segments.is_empty() {
-            if retreat > 0.0 {
-                log::debug!("pair: {net}/{partner}: coupled after {retreat}mm neck-down retreat");
+            if r_from + r_to > 0.0 {
+                log::debug!(
+                    "pair: {net}/{partner}: coupled after {r_from}/{r_to}mm neck-down retreat"
+                );
             }
             found = Some(r);
             break;
