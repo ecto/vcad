@@ -1332,7 +1332,20 @@ function SubFeatureInspector({
 
   const part = parts.find((p) => p.id === item.partId);
   const partIdx = parts.findIndex((p) => p.id === item.partId);
-  const mesh = partIdx >= 0 ? scene?.parts[partIdx]?.mesh : null;
+  // scene.parts indexes visible roots only (hidden parts are skipped during
+  // evaluation) — translate the full-roots index before the mesh lookup.
+  const docRoots = useDocumentStore((s) => s.document.roots);
+  const sceneIdx = useMemo(() => {
+    if (partIdx < 0) return -1;
+    let visIdx = 0;
+    for (let i = 0; i < docRoots.length; i++) {
+      if (docRoots[i]?.visible === false) continue;
+      if (i === partIdx) return visIdx;
+      visIdx++;
+    }
+    return -1;
+  }, [docRoots, partIdx]);
+  const mesh = sceneIdx >= 0 ? scene?.parts[sceneIdx]?.mesh : null;
 
   const stats = useMemo(() => {
     if (!mesh) return null;

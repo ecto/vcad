@@ -501,6 +501,19 @@ export function ViewportContent({
     return mapping;
   }, [docInstances, docPartDefs, docRoots]);
 
+  // Scene evaluation filters out hidden roots (`visible === false`), so
+  // `scene.parts[idx]` indexes *visible* roots while `parts`/`docRoots` index
+  // all of them. Map each scene index back to its original root index so a
+  // click on a part still selects the right feature-tree row when an earlier
+  // part is hidden.
+  const visibleRootIndices = useMemo(
+    () =>
+      docRoots
+        .map((entry, idx) => (entry.visible !== false ? idx : -1))
+        .filter((idx) => idx >= 0),
+    [docRoots],
+  );
+
   // Check if a part at given index is selected (handles both part IDs and instance IDs)
   const isPartSelected = useCallback(
     (partId: string, partIndex: number): boolean => {
@@ -588,7 +601,11 @@ export function ViewportContent({
     const meshFor = (partId: string) => {
       const idx = parts.findIndex((p) => p.id === partId);
       if (idx < 0) return null;
-      return scene.parts[idx]?.mesh ?? null;
+      // scene.parts indexes visible roots only — translate the full-roots
+      // index before looking up the evaluated mesh.
+      const sceneIdx = visibleRootIndices.indexOf(idx);
+      if (sceneIdx < 0) return null;
+      return scene.parts[sceneIdx]?.mesh ?? null;
     };
 
     for (const item of selection) {
@@ -619,10 +636,12 @@ export function ViewportContent({
           // Legacy path: full part mesh. Also covers instances exposed as
           // parts via isPartSelected — keep the existing index-based walk
           // so the same id can match either path.
-          parts.forEach((part, index) => {
-            if (!isPartSelected(part.id, index)) return;
+          visibleRootIndices.forEach((rootIdx, sceneIdx) => {
+            const part = parts[rootIdx];
+            if (!part) return;
+            if (!isPartSelected(part.id, rootIdx)) return;
             if (part.id !== item.id) return;
-            const evalPart = scene.parts[index];
+            const evalPart = scene.parts[sceneIdx];
             if (!evalPart) return;
             const positions = evalPart.mesh.positions;
             for (let i = 0; i < positions.length; i += 3) {
@@ -688,7 +707,7 @@ export function ViewportContent({
     const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
     const mode: "fit" | "pan-only" = hasSubFeature ? "pan-only" : "fit";
     return { center, radius, mode };
-  }, [selection, scene, parts, isPartSelected]);
+  }, [selection, scene, parts, isPartSelected, visibleRootIndices]);
 
   // Animate orbit target to selection center. For part selections we also
   // tighten distance to fit the bounding sphere; for sub-features we keep
@@ -1994,7 +2013,11 @@ export function ViewportContent({
               {(!scene?.instances || scene.instances.length === 0) &&
                 parts.length > 0 &&
                 scene?.parts.map((evalPart, idx) => {
-                  const partInfo = parts[idx];
+                  // scene.parts indexes visible roots only — map back to the
+                  // full-roots index so partInfo/selection stay aligned when
+                  // some parts are hidden.
+                  const rootIdx = visibleRootIndices[idx] ?? idx;
+                  const partInfo = parts[rootIdx];
                   if (!partInfo) return null;
                   // The focused board renders via PcbScene's unified kernel
                   // meshes instead of its merged solid.
@@ -2005,7 +2028,7 @@ export function ViewportContent({
                       partInfo={partInfo}
                       mesh={evalPart.mesh}
                       materialKey={evalPart.material}
-                      selected={isPartSelected(partInfo.id, idx)}
+                      selected={isPartSelected(partInfo.id, rootIdx)}
                       ghosted={pcbEditFocus && !isPcbBoardPart(partInfo)}
                     />
                   );
