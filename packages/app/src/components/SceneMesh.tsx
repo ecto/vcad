@@ -19,12 +19,12 @@ import { inspectTriangleFromMesh as runInspectTriangle } from "./TriangleInspect
 import { pickSubFeature } from "@/lib/sub-feature-picking";
 import { useAnalyzeStore } from "@/stores/analyze-store";
 
-// Brand-orange accent, sRGB (1.0, 0.45, 0.10) — matches the native macOS
-// app's picking accent. Hover and selection only *add* emissive at different
-// intensities; the base material color is never repainted.
-const ACCENT_EMISSIVE = new THREE.Color(1.0, 0.45, 0.1);
-const HOVER_EMISSIVE_INTENSITY = 0.06;
-const SELECT_EMISSIVE_INTENSITY = 0.18;
+// Selection reads as brand-orange feature-edge lines (same design as the
+// native app): every silhouette, hole rim, and rib edge lights up exactly on
+// the geometry, and the part material is never touched. Hover = thinner +
+// dimmer burnt orange.
+const SELECTION_EDGE_COLOR = new THREE.Color(1.0, 0.45, 0.1); // brand orange
+const HOVER_EDGE_COLOR = new THREE.Color(0.62, 0.32, 0.1); // dim hover
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
 
 const DEG2RAD = Math.PI / 180;
@@ -544,17 +544,18 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Use selectionId if provided, otherwise fall back to partInfo.id
   const effectiveSelectionId = selectionId ?? partInfo.id;
-  // The part under the cursor gets the faint accent lift whether the picker
-  // resolved a whole-part hover or a sub-feature (face/edge/vertex) on it —
-  // the sub-feature overlay draws on top of the lift.
+  // Part reads as hovered when the cursor is anywhere on it — including when
+  // the sub-feature picker is reporting a vertex/edge/face of this part (that
+  // path clears `hoveredPartId`, so check the hovered item's owner too).
   const hoveredItem = useUiStore((s) => s.hoveredItem);
   const isHovered =
     hoveredPartId === effectiveSelectionId ||
     (hoveredItem != null &&
-      (hoveredItem.kind === "face" ||
-        hoveredItem.kind === "edge" ||
-        hoveredItem.kind === "vertex") &&
-      hoveredItem.partId === partInfo.id);
+      hoveredItem.kind !== "segment" &&
+      hoveredItem.kind !== "constraint" &&
+      (hoveredItem.kind === "part"
+        ? hoveredItem.id === effectiveSelectionId
+        : hoveredItem.partId === partInfo.id));
   const isHoveredFace =
     faceSelectionMode && hoveredFace?.partId === partInfo.id;
 
@@ -661,36 +662,12 @@ export const SceneMesh = memo(function SceneMesh({
     return new THREE.Color(0.55, 0.55, 0.55);
   }, [materialDef]);
 
-  // Compute emissive state: selected > hovered > none (face highlight uses overlay)
-  const emissiveColor = useMemo(() => {
-    if (effectiveSelected) return ACCENT_EMISSIVE;
-    if (isHovered && !faceSelectionMode && !captureMode) return ACCENT_EMISSIVE;
-    return undefined;
-  }, [effectiveSelected, isHovered, faceSelectionMode, captureMode]);
-
-  const emissiveIntensity = effectiveSelected
-    ? SELECT_EMISSIVE_INTENSITY
-    : isHovered && !faceSelectionMode && !captureMode
-    ? HOVER_EMISSIVE_INTENSITY
-    : 0;
-
-  // Update shader material uniforms for emissive state
-  useEffect(() => {
-    if (!shaderMaterial) return;
-    const uniforms = shaderMaterial.uniforms;
-    if (!uniforms["uEmissive"] || !uniforms["uEmissiveIntensity"]) return;
-
-    if (effectiveSelected) {
-      uniforms["uEmissive"].value = ACCENT_EMISSIVE;
-      uniforms["uEmissiveIntensity"].value = SELECT_EMISSIVE_INTENSITY;
-    } else if (isHovered && !faceSelectionMode && !captureMode) {
-      uniforms["uEmissive"].value = ACCENT_EMISSIVE;
-      uniforms["uEmissiveIntensity"].value = HOVER_EMISSIVE_INTENSITY;
-    } else {
-      uniforms["uEmissive"].value = new THREE.Color(0, 0, 0);
-      uniforms["uEmissiveIntensity"].value = 0;
-    }
-  }, [shaderMaterial, effectiveSelected, isHovered, faceSelectionMode, captureMode]);
+  // Selection/hover reads as edge highlighting, not a material tint — the
+  // part must still look like its material (see the edge overlay below).
+  const showSelectionEdges =
+    !ghosted &&
+    !captureMode &&
+    (effectiveSelected || (isHovered && !faceSelectionMode));
 
   useEffect(() => {
     setDraftName(partInfo.name);
@@ -1012,8 +989,6 @@ export const SceneMesh = memo(function SceneMesh({
         <PbrMaterial
           color={mesh.colors || analyzeColors ? undefined : materialColor}
           vertexColors={!!mesh.colors || !!analyzeColors}
-          emissive={emissiveColor}
-          emissiveIntensity={emissiveIntensity}
           metalness={materialDef?.metallic ?? 0.0}
           roughness={materialDef?.roughness ?? 0.7}
           transmission={materialDef?.transmission}
@@ -1029,6 +1004,17 @@ export const SceneMesh = memo(function SceneMesh({
         />
       )}
       {showWireframe && geoReady && <Edges threshold={15} color="#666" />}
+      {/* Selection/hover highlight: brand-orange feature-edge lines (ported
+          from the native app). Fat screen-space lines, so the width stays
+          visually constant at any zoom. */}
+      {showSelectionEdges && geoReady && (
+        <Edges
+          threshold={15}
+          color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
+          lineWidth={effectiveSelected ? 2 : 1.25}
+          renderOrder={1}
+        />
+      )}
       {/* Face highlight overlay for individual face selection */}
       {faceHighlightGeo && (
         <mesh geometry={faceHighlightGeo} renderOrder={1}>
