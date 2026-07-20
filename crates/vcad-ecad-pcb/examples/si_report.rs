@@ -9,7 +9,7 @@
 
 use vcad_ecad_pcb::router::classes::classify_nets;
 use vcad_ecad_pcb::router::length_match::net_routed_length;
-use vcad_ecad_pcb::router::si_claims::{si_claims, SiBounds};
+use vcad_ecad_pcb::router::si_claims::{si_claims, to_receipt_claims, SiBounds};
 use vcad_ecad_symbols::parse_kicad_pcb;
 use vcad_ir::ecad::Pcb;
 
@@ -201,4 +201,15 @@ fn main() {
             "NOT ALL HOLD"
         }
     );
+
+    // Optional second arg: write the unified DesignReceipt JSON.
+    if let Some(out) = std::env::args().nth(2) {
+        let receipt = vcad_receipt::DesignReceipt::with_claims(to_receipt_claims(&set));
+        std::fs::write(
+            &out,
+            serde_json::to_string_pretty(&receipt).expect("serialize"),
+        )
+        .expect("write receipt");
+        eprintln!("wrote {out} (verdict: {:?})", receipt.verdict());
+    }
 }

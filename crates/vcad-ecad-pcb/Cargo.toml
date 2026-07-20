@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+vcad-receipt = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-ecad-package = { workspace = true }
 vcad-kernel-math = { workspace = true }
