@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-19-animation-timeline-player",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "feat",
+  "title": "Animation timeline playback in the app",
+  "summary": "Documents with an animation timeline get a transport bar — play/scrub/loop/speed drive joint tracks through FK (Space toggles play); timelines now survive the CRDT round-trip and deep links.",
+  "features": ["animation", "timeline", "assemblies"],
+  "mcpTools": ["animate"]
+}

@@ -229,7 +229,12 @@ export async function recordSimulation(
   // so failures here mean a typo, an expired session, or a closed env.
   const env = getSimulation(envId);
   if (!env) {
-    return errorResult(`Unknown env_id: ${envId}`);
+    return errorResult(
+      `Unknown env_id: ${envId}. Physics envs live in process memory only — ` +
+        `on a serverless deployment a cold start or instance rotation drops ` +
+        `them. Re-run create_robot_env (documents survive; envs do not) and ` +
+        `retry record_simulation immediately after.`,
+    );
   }
 
   let doc: Document;
@@ -299,8 +304,22 @@ export async function recordSimulation(
   let encoder: ReturnType<GifencModule["GIFEncoder"]> | null = null;
   if (gifLoad.mod) encoder = gifLoad.mod.GIFEncoder();
 
+  // Wall-clock budget: rendering + rasterizing + encoding every frame holds
+  // the event loop, and a serverless host kills the whole request at its own
+  // (opaque) timeout — returning nothing. Stop early and ship the frames we
+  // have instead. Override with VCAD_RECORD_BUDGET_MS.
+  const budgetMsRaw = Number(process.env.VCAD_RECORD_BUDGET_MS ?? 8000);
+  const budgetMs =
+    Number.isFinite(budgetMsRaw) && budgetMsRaw > 0 ? budgetMsRaw : 8000;
+  const deadline = Date.now() + budgetMs;
+  let truncatedAtStep: number | null = null;
+
   let framesEncoded = 0;
   for (let s = 0; s < steps; s++) {
+    if (s > 0 && Date.now() > deadline) {
+      truncatedAtStep = s;
+      break;
+    }
     const result = env.step(actionType, perStepActions.values[s]!);
     const obs = result.observation;
 
@@ -409,6 +428,12 @@ export async function recordSimulation(
             height_px: firstFrameSize?.height ?? null,
             format: "gif",
             duration_s: Math.round((framesEncoded / fps) * 100) / 100,
+            ...(truncatedAtStep !== null
+              ? {
+                  truncated: true,
+                  note: `Stopped after ${truncatedAtStep}/${steps} steps: ${budgetMs}ms render budget reached (VCAD_RECORD_BUDGET_MS). The GIF covers the recorded prefix.`,
+                }
+              : {}),
           },
           null,
           2,

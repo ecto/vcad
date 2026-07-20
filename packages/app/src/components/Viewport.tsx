@@ -378,7 +378,7 @@ export function Viewport() {
           clearDfmSelection(null);
         }}
         onCreated={handleGlCreated}
-        shadows
+        shadows="soft"
         gl={{
           alpha: true,
           antialias: true,

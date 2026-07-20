@@ -9,7 +9,8 @@
     "url": "https://github.com/ecto/vcad"
   },
   "scripts": {
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "dev": "cargo watch -C ../.. -w crates -s 'VCAD_WASM_DEV=1 node packages/kernel-wasm/scripts/build.mjs'"
   },
   "files": [
     "vcad_kernel_wasm_bg.wasm",

@@ -241,3 +241,39 @@ describe("serialize → parse roundtrip", () => {
     }
   });
 });
+
+describe("wrapLegacyWasmResult Map normalization", () => {
+  it("converts serde_wasm_bindgen Maps back to plain objects", async () => {
+    const { wrapLegacyWasmResult } = await import("../utils/save-load.js");
+    // serde_wasm_bindgen serializes Rust HashMaps (nodes, partDefs,
+    // materials) as JS Maps; JSON.stringify turns a Map into {} which used
+    // to silently drop every node of a WASM-parsed document.
+    const wasmShaped = {
+      version: "0.2",
+      document: {
+        version: "0.1",
+        nodes: new Map([
+          ["0", { id: 0, op: { type: "Cube", size: { x: 1, y: 1, z: 1 } } }],
+        ]),
+        materials: new Map(),
+        part_materials: new Map(),
+        roots: [],
+        partDefs: new Map([
+          ["p", { id: "p", name: "p", root: 0 }],
+        ]),
+        instances: [{ id: "i", partDefId: "p" }],
+        joints: [],
+      },
+      parts: [],
+      nextNodeId: 1,
+    };
+    const file = wrapLegacyWasmResult(wasmShaped);
+    if (file.kind !== "legacy") throw new Error("expected legacy kind");
+    expect(Object.keys(file.document.nodes)).toEqual(["0"]);
+    expect(Object.keys(file.document.partDefs ?? {})).toEqual(["p"]);
+    // The whole point: stringify must not lose geometry.
+    const round = JSON.parse(JSON.stringify(file.document));
+    expect(Object.keys(round.nodes)).toHaveLength(1);
+    expect(Object.keys(round.partDefs)).toHaveLength(1);
+  });
+});

@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-joint-limits-shadows",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Joint limits enforced in sim; scene-fit soft shadows",
+  "summary": "Unactuated joints no longer free-fall through their stops (a piston could end up 400m below the floor); shadow cameras now fit the scene instead of a fixed 100mm box, with soft shadows on.",
+  "features": ["physics", "simulation", "rendering"]
+}
