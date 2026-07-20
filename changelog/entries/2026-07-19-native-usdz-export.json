@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-native-usdz-export",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "feat",
+  "title": "Native macOS app: USDZ export",
+  "summary": "File > Export USDZ in the native app — per-part colors/materials at physical millimeter scale, Quick Look and AR ready.",
+  "features": ["native-app", "export", "usdz"]
+}

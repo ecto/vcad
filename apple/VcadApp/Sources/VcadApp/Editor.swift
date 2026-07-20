@@ -1252,6 +1252,32 @@ final class EditorModel {
         return (try? data.write(to: url)) != nil
     }
 
+    /// Export the current scene as USDZ — one prim per part, mirroring the
+    /// viewport's resolved materials, at physical (millimeter) scale.
+    @discardableResult
+    func exportUSDZ(to url: URL) -> Bool {
+        let meshes = currentKernelMeshes()
+        guard !meshes.isEmpty else { return false }
+        let parts = meshes.enumerated().map { i, km -> UsdzExport.Part in
+            if usesDocumentTree {
+                let m = resolvedMaterial(forPart: i)
+                let name = i < featureNodes.count ? featureNodes[i].name : "part\(i)"
+                return UsdzExport.Part(mesh: km, name: sanitizePrimName(name),
+                                       color: m.color, metallic: m.metallic, roughness: m.roughness)
+            }
+            let color = source.isSandbox ? Self.heroColor : Self.partColors[i % Self.partColors.count]
+            return UsdzExport.Part(mesh: km, name: "part\(i)", color: color)
+        }
+        return UsdzExport.write(parts: parts, to: url)
+    }
+
+    /// USD prim names must be identifiers — replace anything else with `_`.
+    private func sanitizePrimName(_ s: String) -> String {
+        let cleaned = String(s.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
+        let first = cleaned.first
+        return (first?.isNumber == true || cleaned.isEmpty) ? "_" + cleaned : cleaned
+    }
+
     // Hover affordance for the draggable handles (cursor + a subtle scale pop).
     // The handles' live world positions are projected to screen to hit-test the
     // pointer; `hoveredHandle` drives the highlight + cursor.

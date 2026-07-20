@@ -175,6 +175,8 @@ struct DocumentMenu: View {
                 }
             }
             Button("Export STL…") { exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
+            Button("Export USDZ…") { exportUSDZPanel() }
+                .keyboardShortcut("e", modifiers: [.command, .shift]).disabled(!model.canExport)
             Divider()
             Picker("Tool Palette", selection: $model.toolPlacement) {
                 ForEach(ToolPlacement.allCases) { p in Text(p.label).tag(p) }
@@ -200,6 +202,14 @@ struct DocumentMenu: View {
         panel.nameFieldStringValue = "\(model.documentName).stl"
         panel.prompt = "Export"
         if panel.runModal() == .OK, let url = panel.url { _ = model.exportSTL(to: url) }
+    }
+
+    private func exportUSDZPanel() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.usdz]
+        panel.nameFieldStringValue = "\(model.documentName).usdz"
+        panel.prompt = "Export"
+        if panel.runModal() == .OK, let url = panel.url { _ = model.exportUSDZ(to: url) }
     }
 
     private func saveAsPanel() {
