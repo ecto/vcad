@@ -12,6 +12,7 @@
 
 pub mod auto;
 pub mod classes;
+pub mod si_claims;
 
 /// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
 /// Elapsed milliseconds, or 0.0 when timing is unavailable.

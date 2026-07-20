@@ -9,6 +9,7 @@
 
 use vcad_ecad_pcb::router::classes::classify_nets;
 use vcad_ecad_pcb::router::length_match::net_routed_length;
+use vcad_ecad_pcb::router::si_claims::{si_claims, SiBounds};
 use vcad_ecad_symbols::parse_kicad_pcb;
 use vcad_ir::ecad::Pcb;
 
@@ -175,5 +176,29 @@ fn main() {
     println!(
         "pairs: {measured} measured, worst intra-pair skew {:.3} mm ({})",
         worst.0, worst.1
+    );
+
+    // The claim set: the machine-checkable verdict this whole report exists
+    // to feed. Bounds = the human CM5 envelope.
+    let set = si_claims(&pcb, &c, &SiBounds::default());
+    println!("\nvcad.si-claims/1 (bounds = human CM5 envelope):");
+    for cl in &set.claims {
+        println!(
+            "  {} {}: {:.3} {} (bound {:.3}) — {}",
+            if cl.holds { "HOLDS " } else { "BROKEN" },
+            cl.name,
+            cl.value,
+            cl.unit,
+            cl.bound,
+            cl.note
+        );
+    }
+    println!(
+        "verdict: {}",
+        if set.all_hold {
+            "ALL HOLD"
+        } else {
+            "NOT ALL HOLD"
+        }
     );
 }
