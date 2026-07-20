@@ -1024,14 +1024,14 @@ export const SceneMesh = memo(function SceneMesh({
         <Edges
           threshold={15}
           color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
-          lineWidth={effectiveSelected ? 2 : 1.25}
+          lineWidth={effectiveSelected ? 3 : 2}
           renderOrder={1}
         />
       )}
       {showSelectionEdges && geoReady && isSmoothBody && (
         <Outlines
           color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
-          thickness={effectiveSelected ? 2 : 1.25}
+          thickness={effectiveSelected ? 3 : 2}
           angle={Math.PI}
           renderOrder={1}
         />
