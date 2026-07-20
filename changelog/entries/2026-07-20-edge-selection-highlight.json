@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-20-edge-selection-highlight",
+  "version": "0.9.4",
+  "date": "2026-07-20",
+  "category": "feat",
+  "title": "Selection reads as orange feature-edge highlighting",
+  "summary": "Selected and hovered parts now light up with brand-orange feature-edge lines (silhouettes, hole rims, ribs) instead of a material tint, in both the web viewport and the native macOS app.",
+  "features": ["viewport", "selection", "native"]
+}
