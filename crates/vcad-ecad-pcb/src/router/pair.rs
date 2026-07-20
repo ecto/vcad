@@ -347,41 +347,47 @@ pub(super) fn try_route_pair(
             None
         }
     };
-    let build = |leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Option<Candidate> {
-        let (head_segs, head_vias) = connect(session, net, from, leg.first, leg.first_layer)?;
-        let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer)?;
-        let mut segments =
-            Vec::with_capacity(leg.segments.len() + head_segs.len() + tail_segs.len());
-        segments.extend(head_segs);
-        segments.extend(leg.segments.iter().copied());
-        // Tail connector was searched pad→leg; reverse into leg→pad order.
-        segments.extend(tail_segs.into_iter().rev().map(|(a, b, l)| (b, a, l)));
-        let mut vias = leg.vias.clone();
-        vias.extend(head_vias);
-        vias.extend(tail_vias);
-        Some(Candidate {
-            net: net.to_string(),
-            from,
-            to,
-            width: w,
-            segments,
-            vias,
-        })
-    };
-    let Some(cand_mine) = build(&mine, net, from, to) else {
+    let build =
+        |session: &RouteSession, leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Option<Candidate> {
+            let (head_segs, head_vias) = connect(session, net, from, leg.first, leg.first_layer)?;
+            let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer)?;
+            let mut segments =
+                Vec::with_capacity(leg.segments.len() + head_segs.len() + tail_segs.len());
+            segments.extend(head_segs);
+            segments.extend(leg.segments.iter().copied());
+            // Tail connector was searched pad→leg; reverse into leg→pad order.
+            segments.extend(tail_segs.into_iter().rev().map(|(a, b, l)| (b, a, l)));
+            let mut vias = leg.vias.clone();
+            vias.extend(head_vias);
+            vias.extend(tail_vias);
+            Some(Candidate {
+                net: net.to_string(),
+                from,
+                to,
+                width: w,
+                segments,
+                vias,
+            })
+        };
+    // Build-and-commit SEQUENTIALLY: leg 2's connectors are searched against
+    // the session that already holds leg 1's copper, so they route around it
+    // instead of colliding in the necked corridor (69 of the census-3 bails).
+    // Atomicity is preserved by the rollback below.
+    let Some(cand_mine) = build(session, &mine, net, from, to) else {
         log::debug!("pair: {net}/{partner}: connector routing failed (mine)");
         restore(session, placed, ripped);
         return None;
     };
-    let Some(cand_theirs) = build(&theirs, &partner, p_from, p_to) else {
-        log::debug!("pair: {net}/{partner}: connector routing failed (partner)");
+    let Some(placed_mine) = validate_and_commit(session, pcb, cand_mine, placed) else {
+        log::debug!("pair: {net}/{partner}: leg 1 failed validation");
         restore(session, placed, ripped);
         return None;
     };
-
-    // Atomic commit: both legs or neither.
-    let Some(placed_mine) = validate_and_commit(session, pcb, cand_mine, placed) else {
-        log::debug!("pair: {net}/{partner}: leg 1 failed validation");
+    let Some(cand_theirs) = build(session, &theirs, &partner, p_from, p_to) else {
+        log::debug!("pair: {net}/{partner}: connector routing failed (partner)");
+        for &sp in &placed_mine.spans {
+            session.remove(sp);
+        }
         restore(session, placed, ripped);
         return None;
     };
