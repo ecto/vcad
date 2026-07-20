@@ -208,6 +208,13 @@ fn compute_joint_transform(joint: &Joint) -> Transform3D {
 ///
 /// Starting from root instances (not children of any joint), traverses the
 /// joint tree via BFS and computes world transforms for each instance.
+///
+/// Contract: a joint fully determines its child's pose. For a jointed child,
+/// `world = parent_world · joint_transform(anchors, state)` — the instance's
+/// own `transform` is ignored (it applies only to instances that are not the
+/// child of any joint). Composing both would double-apply the placement
+/// whenever an author sets the instance transform to the joint-anchor
+/// location, which is the natural way to author an assembly.
 pub fn solve_forward_kinematics(doc: &Document) -> HashMap<String, Transform3D> {
     let mut results = HashMap::new();
 
@@ -275,10 +282,9 @@ pub fn solve_forward_kinematics(doc: &Document) -> HashMap<String, Transform3D> 
                 Some(e) => e,
                 None => continue,
             };
-            let instance = match instance_by_id.get(child_id) {
-                Some(i) => i,
-                None => continue,
-            };
+            if !instance_by_id.contains_key(child_id) {
+                continue;
+            }
 
             let parent_world = parent_id
                 .and_then(|pid| results.get(pid))
@@ -286,9 +292,7 @@ pub fn solve_forward_kinematics(doc: &Document) -> HashMap<String, Transform3D> 
                 .unwrap_or_else(identity);
 
             let joint_transform = compute_joint_transform(entry.0);
-            let instance_local = instance.transform.unwrap_or_else(identity);
-            let jointed = compose_transforms(&joint_transform, &instance_local);
-            let world = compose_transforms(&parent_world, &jointed);
+            let world = compose_transforms(&parent_world, &joint_transform);
 
             results.insert(child_id.to_string(), world);
             queue.push_back(Some(child_id));
@@ -296,4 +300,86 @@ pub fn solve_forward_kinematics(doc: &Document) -> HashMap<String, Transform3D> 
     }
 
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A revolute joint whose parent anchor matches the child instance's own
+    /// transform — the natural authoring pattern. The joint must fully place
+    /// the child; the instance transform must NOT be applied on top.
+    fn doc_with_instance_transform(state: f64) -> Document {
+        serde_json::from_value(serde_json::json!({
+            "version": "0.1",
+            "nodes": {
+                "0": {"id": 0, "op": {"type": "Cube", "size": {"x": 10.0, "y": 10.0, "z": 10.0}}}
+            },
+            "roots": [],
+            "materials": {},
+            "part_materials": {},
+            "partDefs": {
+                "p": {"id": "p", "name": "p", "root": 0}
+            },
+            "instances": [
+                {"id": "base", "partDefId": "p"},
+                {"id": "arm", "partDefId": "p",
+                 "transform": {"translation": {"x": 10.0, "y": 0.0, "z": 90.0},
+                                "rotation": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                "scale": {"x": 1.0, "y": 1.0, "z": 1.0}}}
+            ],
+            "joints": [
+                {"id": "j0", "parentInstanceId": "base", "childInstanceId": "arm",
+                 "parentAnchor": {"x": 10.0, "y": 0.0, "z": 90.0},
+                 "childAnchor": {"x": 0.0, "y": 0.0, "z": 0.0},
+                 "kind": {"type": "Revolute", "axis": {"x": 0.0, "y": 1.0, "z": 0.0}, "limits": [-360.0, 360.0]},
+                 "state": state}
+            ],
+            "groundInstanceId": "base"
+        }))
+        .expect("valid doc")
+    }
+
+    #[test]
+    fn jointed_child_ignores_instance_transform() {
+        let doc = doc_with_instance_transform(0.0);
+        let world = solve_forward_kinematics(&doc);
+        let arm = world.get("arm").expect("arm solved");
+        // Joint places the child at the parent anchor exactly once.
+        assert!(
+            (arm.translation.x - 10.0).abs() < 1e-9,
+            "x = {}",
+            arm.translation.x
+        );
+        assert!(
+            (arm.translation.z - 90.0).abs() < 1e-9,
+            "z = {}",
+            arm.translation.z
+        );
+    }
+
+    #[test]
+    fn jointed_child_rotates_about_anchor() {
+        let doc = doc_with_instance_transform(90.0);
+        let world = solve_forward_kinematics(&doc);
+        let arm = world.get("arm").expect("arm solved");
+        // child_anchor is the origin, so the anchor point itself stays put.
+        assert!((arm.translation.x - 10.0).abs() < 1e-9);
+        assert!((arm.translation.z - 90.0).abs() < 1e-9);
+        assert!(
+            (arm.rotation.y - 90.0).abs() < 1e-6,
+            "ry = {}",
+            arm.rotation.y
+        );
+    }
+
+    #[test]
+    fn root_instance_keeps_own_transform() {
+        let mut doc = doc_with_instance_transform(0.0);
+        doc.joints = Some(vec![]);
+        let world = solve_forward_kinematics(&doc);
+        let arm = world.get("arm").expect("arm solved");
+        assert!((arm.translation.x - 10.0).abs() < 1e-9);
+        assert!((arm.translation.z - 90.0).abs() < 1e-9);
+    }
 }

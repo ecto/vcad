@@ -31,14 +31,15 @@ use vcad_ecad_pcb::router::route_all;
 // plain `evaluate_document` (web/MCP contract: leave sheet-metal empty) is never
 // what we want natively.
 use vcad_eval::{
-    evaluate_document_with_sheet_metal as evaluate_document, EvalOptions, EvaluatedScene,
+    evaluate_document_with_sheet_metal as evaluate_document, solve_forward_kinematics, EvalOptions,
+    EvaluatedScene,
 };
 use vcad_ir::ecad::{
     BoardOutline, DesignRules, Footprint, LayerStackup, Net, NetClassRules, Pad, PadShape, PadType,
     Pcb, PcbLayer, StackupLayer,
 };
 use vcad_ir::{
-    BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry, Vec2,
+    BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry, Transform3D, Vec2,
     Vec3 as IrVec3,
 };
 use vcad_kernel::Solid;
@@ -254,8 +255,14 @@ pub extern "C" fn vcad_solid_bbox(solid: *const VcadSolid) -> VcadAabb {
 // =========================================================================
 
 /// Opaque handle to an evaluated scene (owns all part meshes).
+///
+/// `doc` keeps the parsed source document alive when the scene came from
+/// JSON/loon, so kinematic queries (`vcad_scene_solve_fk`) can re-solve joint
+/// placement without re-parsing. Scenes produced by resident-doc re-solves
+/// don't carry one (FK queries on them return 0).
 pub struct VcadScene {
     inner: EvaluatedScene,
+    doc: Option<Document>,
 }
 
 /// Parse a `.vcad` JSON document (UTF-8 bytes of length `json_len`) and
@@ -277,7 +284,10 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
             Err(_) => return ptr::null_mut(),
         };
         match evaluate_document(&doc, &EvalOptions::default()) {
-            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Ok(scene) => Box::into_raw(Box::new(VcadScene {
+                inner: scene,
+                doc: Some(doc),
+            })),
             Err(_) => ptr::null_mut(),
         }
     }))
@@ -307,7 +317,10 @@ pub extern "C" fn vcad_scene_from_loon(loon: *const u8, loon_len: usize) -> *mut
             Err(_) => return ptr::null_mut(),
         };
         match evaluate_document(&doc, &EvalOptions::default()) {
-            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Ok(scene) => Box::into_raw(Box::new(VcadScene {
+                inner: scene,
+                doc: Some(doc),
+            })),
             Err(_) => ptr::null_mut(),
         }
     }))
@@ -371,6 +384,217 @@ pub extern "C" fn vcad_scene_part_edges(
         Box::into_raw(Box::new(VcadEdges { inner: flat }))
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// =========================================================================
+// Assembly instances + kinematic joint playback
+//
+// Assembly documents place geometry via `partDefs` + `instances` + `joints`
+// (the FK contract: joints fully place children). The evaluator exposes each
+// instance's mesh in part-def-LOCAL coordinates with its world transform
+// separate, which is exactly the per-frame playback shape: static mesh
+// entities, per-frame transforms from `vcad_scene_solve_fk`.
+// =========================================================================
+
+/// Row-major 3x3 rotation from Euler angles in degrees, composed Rz·Ry·Rx —
+/// the same convention as `vcad_eval::kinematics` (and the web evaluator).
+fn euler_deg_to_mat3(rot: &IrVec3) -> [[f64; 3]; 3] {
+    let (rx, ry, rz) = (rot.x.to_radians(), rot.y.to_radians(), rot.z.to_radians());
+    let (cx, sx) = (rx.cos(), rx.sin());
+    let (cy, sy) = (ry.cos(), ry.sin());
+    let (cz, sz) = (rz.cos(), rz.sin());
+    [
+        [cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz],
+        [cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz],
+        [-sy, sx * cy, cx * cy],
+    ]
+}
+
+/// Write a `Transform3D` (T · R · S) into `out` as a 4x4 matrix in
+/// COLUMN-MAJOR order (out[col*4 + row]) — the layout `simd_double4x4` /
+/// `float4x4` columns expect on the Swift side.
+fn write_transform_col_major(t: &Transform3D, out: &mut [f64]) {
+    let r = euler_deg_to_mat3(&t.rotation);
+    let s = [t.scale.x, t.scale.y, t.scale.z];
+    for col in 0..3 {
+        for row in 0..3 {
+            out[col * 4 + row] = r[row][col] * s[col];
+        }
+        out[col * 4 + 3] = 0.0;
+    }
+    out[12] = t.translation.x;
+    out[13] = t.translation.y;
+    out[14] = t.translation.z;
+    out[15] = 1.0;
+}
+
+/// Number of assembly instances in the scene (0 for part-only documents).
+/// When non-zero, renderers should draw instances INSTEAD of the root parts
+/// (mirroring the web viewport) — assembly docs may carry both.
+#[no_mangle]
+pub extern "C" fn vcad_scene_instance_count(scene: *const VcadScene) -> usize {
+    if scene.is_null() {
+        return 0;
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    s.inner.instances.as_ref().map_or(0, |i| i.len())
+}
+
+/// Borrow the `index`-th instance's mesh buffers, in part-def-LOCAL
+/// coordinates (apply the instance transform to place it). Same normals
+/// contract as [`vcad_scene_part_mesh`]. Empty view when out of range.
+#[no_mangle]
+pub extern "C" fn vcad_scene_instance_mesh(scene: *const VcadScene, index: usize) -> VcadMeshView {
+    if scene.is_null() {
+        return VcadMeshView::empty();
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    match s.inner.instances.as_ref().and_then(|i| i.get(index)) {
+        Some(inst) => eval_mesh_view(&inst.mesh),
+        None => VcadMeshView::empty(),
+    }
+}
+
+/// Borrow the `index`-th instance's id as UTF-8 bytes (NOT NUL-terminated;
+/// `*out_len` receives the byte length). The pointer stays valid for the
+/// scene's lifetime. Null + len 0 when out of range.
+#[no_mangle]
+pub extern "C" fn vcad_scene_instance_id(
+    scene: *const VcadScene,
+    index: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    if !out_len.is_null() {
+        unsafe { *out_len = 0 };
+    }
+    if scene.is_null() {
+        return ptr::null();
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    match s.inner.instances.as_ref().and_then(|i| i.get(index)) {
+        Some(inst) => {
+            if !out_len.is_null() {
+                unsafe { *out_len = inst.instance_id.len() };
+            }
+            inst.instance_id.as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
+/// Borrow the `index`-th instance's resolved material name (same borrow rules
+/// as [`vcad_scene_instance_id`]).
+#[no_mangle]
+pub extern "C" fn vcad_scene_instance_material(
+    scene: *const VcadScene,
+    index: usize,
+    out_len: *mut usize,
+) -> *const u8 {
+    if !out_len.is_null() {
+        unsafe { *out_len = 0 };
+    }
+    if scene.is_null() {
+        return ptr::null();
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    match s.inner.instances.as_ref().and_then(|i| i.get(index)) {
+        Some(inst) => {
+            if !out_len.is_null() {
+                unsafe { *out_len = inst.material.len() };
+            }
+            inst.material.as_ptr()
+        }
+        None => ptr::null(),
+    }
+}
+
+/// The `index`-th instance's world transform at the document's AUTHORED joint
+/// states, written to `out` as 16 doubles (column-major, see
+/// [`vcad_scene_solve_fk`]). Returns 1 on success, 0 when out of range/null.
+#[no_mangle]
+pub extern "C" fn vcad_scene_instance_transform(
+    scene: *const VcadScene,
+    index: usize,
+    out: *mut f64,
+) -> u8 {
+    if scene.is_null() || out.is_null() {
+        return 0;
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    let Some(inst) = s.inner.instances.as_ref().and_then(|i| i.get(index)) else {
+        return 0;
+    };
+    let t = inst.transform.unwrap_or_else(Transform3D::identity);
+    let slice = unsafe { std::slice::from_raw_parts_mut(out, 16) };
+    write_transform_col_major(&t, slice);
+    1
+}
+
+/// Kinematic joint playback: solve forward kinematics at the given joint
+/// values and return every instance's world transform.
+///
+/// `joints_json` is a UTF-8 JSON object mapping joint id (falling back to
+/// joint name) to its driven value — degrees for revolute, mm for slider —
+/// e.g. `{"shoulder": 45.0, "elbow": -30.0}`. Joints absent from the map keep
+/// their authored state. This is the exact kernel FK the web evaluator runs
+/// per playback frame, so native playback matches it by construction.
+///
+/// `out` receives `instance_count * 16` doubles: one column-major 4x4 world
+/// matrix per instance, in [`vcad_scene_instance_mesh`] index order.
+/// `out_cap` is the capacity of `out` in doubles. Returns the number of
+/// instances written, or 0 on any error (null/undersized buffer, bad JSON, or
+/// a scene that didn't come from `vcad_scene_from_json`/`_loon`).
+#[no_mangle]
+pub extern "C" fn vcad_scene_solve_fk(
+    scene: *const VcadScene,
+    joints_json: *const u8,
+    json_len: usize,
+    out: *mut f64,
+    out_cap: usize,
+) -> usize {
+    if scene.is_null() || joints_json.is_null() || out.is_null() {
+        return 0;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s: &VcadScene = unsafe { &*scene };
+        let Some(doc) = &s.doc else { return 0 };
+        let Some(instances) = s.inner.instances.as_ref() else {
+            return 0;
+        };
+        if instances.is_empty() || out_cap < instances.len() * 16 {
+            return 0;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(joints_json, json_len) };
+        let Ok(values) = serde_json::from_slice::<std::collections::HashMap<String, f64>>(bytes)
+        else {
+            return 0;
+        };
+
+        let mut posed = doc.clone();
+        if let Some(joints) = posed.joints.as_mut() {
+            for joint in joints.iter_mut() {
+                let v = values
+                    .get(&joint.id)
+                    .or_else(|| joint.name.as_ref().and_then(|n| values.get(n)));
+                if let Some(&v) = v {
+                    joint.state = v;
+                }
+            }
+        }
+        let world = solve_forward_kinematics(&posed);
+
+        let slice = unsafe { std::slice::from_raw_parts_mut(out, instances.len() * 16) };
+        for (i, inst) in instances.iter().enumerate() {
+            let t = world
+                .get(&inst.instance_id)
+                .copied()
+                .or(inst.transform)
+                .unwrap_or_else(Transform3D::identity);
+            write_transform_col_major(&t, &mut slice[i * 16..i * 16 + 16]);
+        }
+        instances.len()
+    }))
+    .unwrap_or(0)
 }
 
 /// Extract feature edges from a standalone mesh (same semantics as
@@ -744,7 +968,10 @@ pub extern "C" fn vcad_doc_set_param(
             .parameters
             .insert(name.to_string(), Parameter::literal(value));
         match evaluate_document(&d.inner, &interactive_opts()) {
-            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Ok(scene) => Box::into_raw(Box::new(VcadScene {
+                inner: scene,
+                doc: None,
+            })),
             Err(_) => ptr::null_mut(),
         }
     }))
@@ -780,7 +1007,10 @@ pub extern "C" fn vcad_doc_set_param_cheap(
         fast.roots
             .retain(|e| !subtree_has_sheet_metal(&nodes, e.root));
         match evaluate_document(&fast, &interactive_opts()) {
-            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Ok(scene) => Box::into_raw(Box::new(VcadScene {
+                inner: scene,
+                doc: None,
+            })),
             Err(_) => ptr::null_mut(),
         }
     }))
@@ -2406,6 +2636,87 @@ mod tests {
         }
         assert!((max_x(&doc_json(20.0)) - 20.0).abs() < 1e-4);
         assert!((max_x(&doc_json(50.0)) - 50.0).abs() < 1e-4);
+    }
+
+    /// Kinematic playback surface: an assembly document (partDefs, instances,
+    /// and a revolute joint) exposes instances through the FFI, and
+    /// `vcad_scene_solve_fk` re-places the child when the joint value changes.
+    #[test]
+    fn scene_instances_and_fk_playback() {
+        let json = r#"{
+            "version": "0.1",
+            "materials": {},
+            "part_materials": {},
+            "nodes": {
+                "1": { "id": 1, "op": { "type": "Cube", "size": { "x": 10.0, "y": 10.0, "z": 10.0 } } },
+                "2": { "id": 2, "op": { "type": "Cube", "size": { "x": 4.0, "y": 4.0, "z": 30.0 } } }
+            },
+            "roots": [],
+            "partDefs": {
+                "base": { "id": "base", "name": "Base", "root": 1 },
+                "arm":  { "id": "arm",  "name": "Arm",  "root": 2 }
+            },
+            "instances": [
+                { "id": "base_inst", "partDefId": "base" },
+                { "id": "arm_inst",  "partDefId": "arm" }
+            ],
+            "joints": [
+                {
+                    "id": "hinge",
+                    "name": "Hinge",
+                    "parentInstanceId": "base_inst",
+                    "childInstanceId": "arm_inst",
+                    "parentAnchor": { "x": 5.0, "y": 5.0, "z": 10.0 },
+                    "childAnchor": { "x": 2.0, "y": 2.0, "z": 0.0 },
+                    "kind": { "type": "Revolute", "axis": { "x": 0.0, "y": 1.0, "z": 0.0 } },
+                    "state": 0.0
+                }
+            ],
+            "groundInstanceId": "base_inst"
+        }"#;
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null(), "assembly doc should evaluate");
+        assert_eq!(vcad_scene_instance_count(scene), 2);
+        let view = vcad_scene_instance_mesh(scene, 1);
+        assert!(view.vertices_len > 0, "arm instance carries a mesh");
+        let mut len = 0usize;
+        let idp = vcad_scene_instance_id(scene, 1, &mut len);
+        let id = unsafe { std::slice::from_raw_parts(idp, len) };
+        assert_eq!(id, b"arm_inst");
+
+        // Authored state (0°): the joint places the arm at parent−child anchor.
+        let mut t0 = [0.0f64; 16];
+        assert_eq!(vcad_scene_instance_transform(scene, 1, t0.as_mut_ptr()), 1);
+        assert!((t0[12] - 3.0).abs() < 1e-9 && (t0[14] - 10.0).abs() < 1e-9);
+
+        // Drive the hinge to 90° about +Y: rotation column 0 becomes ~(0,0,-1).
+        let pose = r#"{"hinge": 90.0}"#;
+        let mut out = [0.0f64; 32];
+        let n = vcad_scene_solve_fk(scene, pose.as_ptr(), pose.len(), out.as_mut_ptr(), 32);
+        assert_eq!(n, 2);
+        let base = &out[0..16];
+        assert!((base[12]).abs() < 1e-9, "grounded base stays put");
+        let arm = &out[16..32];
+        assert!(
+            (arm[0]).abs() < 1e-9 && (arm[2] + 1.0).abs() < 1e-9,
+            "arm rotated 90° about +Y (col0 = {:?})",
+            &arm[0..3]
+        );
+        // Joint-name fallback drives the same joint.
+        let by_name = r#"{"Hinge": 90.0}"#;
+        let mut out2 = [0.0f64; 32];
+        assert_eq!(
+            vcad_scene_solve_fk(
+                scene,
+                by_name.as_ptr(),
+                by_name.len(),
+                out2.as_mut_ptr(),
+                32
+            ),
+            2
+        );
+        assert!((out2[16] - arm[0]).abs() < 1e-12);
+        vcad_scene_free(scene);
     }
 
     /// Guard the shipped parametric example: it must keep evaluating (the

@@ -735,8 +735,15 @@ impl GpuScene {
             // already clamps against.
             let mut uvs = trim::extract_face_uv_loop(brep, face_id);
             let surface = &brep.geometry.surfaces[face.surface_index];
+            // A planar cap bounded by a single closed circle edge is
+            // degenerate too (the circle collapses to one UV point) — the
+            // shader would reject every hit. Rebuild the circle polygon
+            // from the adjacent surface's axis.
             if trim::polygon_area(&uvs).abs() < 1e-9 {
-                if let Some((v_min, v_max)) = trim::unbounded_v_range(surface.as_ref(), &uvs) {
+                if let Some(poly) = trim::synthesize_planar_cap_polygon(brep, face_id) {
+                    uvs = poly;
+                } else if let Some((v_min, v_max)) = trim::unbounded_v_range(surface.as_ref(), &uvs)
+                {
                     uvs = vec![
                         vcad_kernel_math::Point2::new(0.0, v_min),
                         vcad_kernel_math::Point2::new(0.0, v_max),

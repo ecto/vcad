@@ -110,6 +110,7 @@ export function usePhysicsSimulation() {
           position: joint.state ?? 0,
           velocity: 0,
           torque: 0,
+          targetVelocity: 0,
           limits: null, // Joint limits could be derived from JointKind in future
         }));
         setJointStates(initialStates);
@@ -159,6 +160,14 @@ export function usePhysicsSimulation() {
   const getJointTorques = useCallback((): number[] => {
     const currentStates = useSimulationStore.getState().jointStates;
     return currentStates.map((js) => js.torque);
+  }, []);
+
+  // Get motor drive targets for velocity control mode. Distinct from the
+  // OBSERVED velocity (js.velocity) — sending that back as the command
+  // would just servo each joint to wherever it already drifts.
+  const getJointVelocityTargets = useCallback((): number[] => {
+    const currentStates = useSimulationStore.getState().jointStates;
+    return currentStates.map((js) => js.targetVelocity ?? 0);
   }, []);
 
   // Update scene transforms directly from physics observation (bypasses CSG re-eval)
@@ -213,7 +222,12 @@ export function usePhysicsSimulation() {
     if (mode === "stepping") {
       // Single step mode - step once then pause
       const actionType = useSimulationStore.getState().actionType;
-      const actions = actionType === "torque" ? getJointTorques() : getJointTargets();
+      const actions =
+        actionType === "torque"
+          ? getJointTorques()
+          : actionType === "velocity"
+            ? getJointVelocityTargets()
+            : getJointTargets();
       const result = env.step(actionType, actions);
       updateFromObservation(result.observation);
       setMode("paused");
@@ -230,7 +244,12 @@ export function usePhysicsSimulation() {
 
       // Step physics at fixed timestep
       while (accumulatorRef.current >= timestep) {
-        const actions = actionType === "torque" ? getJointTorques() : getJointTargets();
+        const actions =
+          actionType === "torque"
+            ? getJointTorques()
+            : actionType === "velocity"
+              ? getJointVelocityTargets()
+              : getJointTargets();
         const result = env.step(actionType, actions);
 
         // Debug: log physics state occasionally

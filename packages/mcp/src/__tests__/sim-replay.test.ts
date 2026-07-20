@@ -122,7 +122,9 @@ describe("sim replay (gym ring buffer → viewer playback)", () => {
     const replay = json(await getSimReplay({ env_id: env.envId }));
     expect(replay.steps).toBe(0);
     expect(replay.joint_trajectory).toHaveLength(0);
-    expect(replay.instance_transforms).toHaveLength(0);
+    // Even with no recorded steps, an articulated assembly gets one FK row
+    // at the current joint states so the viewer can pose instances at rest.
+    expect(replay.instance_transforms).toHaveLength(1);
     const v3 = json(getSimVersion({ env_id: env.envId }));
     expect(v3.step_count).toBe(0);
 

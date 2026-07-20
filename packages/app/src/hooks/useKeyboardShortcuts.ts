@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useAnimationStore } from "@/stores/animation-store";
 import { useUiStore, useDocumentStore, useSketchStore, useChatStore, isPrimitivePart } from "@vcad/core";
 import type { FocusZone } from "@vcad/core";
 import { useElectronicsStore } from "../stores/electronics-store";
@@ -32,6 +33,22 @@ export function useKeyboardShortcuts() {
       }
 
       const mod = e.ctrlKey || e.metaKey;
+
+      // ── Animation transport ─────────────────────────────────────────
+      // Space toggles document-timeline playback when the transport bar is
+      // up and focus is in the viewport (tree zone keeps Space = expand).
+      if (
+        e.key === " " &&
+        !mod &&
+        !e.shiftKey &&
+        !e.altKey &&
+        useUiStore.getState().focusZone === "viewport" &&
+        useAnimationStore.getState().visible
+      ) {
+        e.preventDefault();
+        useAnimationStore.getState().togglePlay();
+        return;
+      }
 
       // ── Focus zone navigation ────────────────────────────────────────
       // Tab / Shift+Tab: cycle keyboard focus zones.

@@ -213,11 +213,33 @@ function isCrdtJson(trimmed: string): boolean {
  * The Rust side hasn't been migrated to the tagged union yet; it still
  * returns the flat legacy `{version, document, parts, ...}` shape.
  */
-function wrapLegacyWasmResult(result: unknown): VcadFile {
+/**
+ * Recursively convert JS `Map`s to plain objects. serde_wasm_bindgen
+ * serializes Rust `HashMap`s as `Map`, but everything downstream (including
+ * `JSON.stringify` feeding the CRDT importer) expects plain objects — a Map
+ * stringifies to `{}`, which silently drops every node and partDef of a
+ * WASM-parsed document.
+ */
+export function mapsToObjects(value: unknown): unknown {
+  if (value instanceof Map) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of value) out[String(k)] = mapsToObjects(v);
+    return out;
+  }
+  if (Array.isArray(value)) return value.map(mapsToObjects);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = mapsToObjects(v);
+    return out;
+  }
+  return value;
+}
+
+export function wrapLegacyWasmResult(result: unknown): VcadFile {
   if (!result || typeof result !== "object") {
     throw new Error("Invalid .vcad file: WASM parser returned non-object");
   }
-  const obj = result as Record<string, unknown>;
+  const obj = mapsToObjects(result) as Record<string, unknown>;
   const loonSource = typeof obj.loonSource === "string" ? obj.loonSource : null;
   const document = obj.document as Document;
   const parts = (obj.parts ?? []) as PartInfo[];

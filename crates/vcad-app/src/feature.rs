@@ -356,6 +356,13 @@ pub enum FeatureInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         studies: Option<String>,
     },
+    /// Document animation timeline (singleton, like scene settings):
+    /// JSON-serialized `Timeline`.
+    Timeline {
+        /// Timeline data (JSON-serialized `vcad_ir::Timeline`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timeline: Option<String>,
+    },
 }
 
 impl FeatureInput {
@@ -390,6 +397,7 @@ impl FeatureInput {
             Self::Schematic { .. } => "schematic",
             Self::Molecule { .. } => "molecule",
             Self::AnalysisStudies { .. } => "analysis-studies",
+            Self::Timeline { .. } => "timeline",
         }
     }
 
@@ -723,6 +731,11 @@ impl FeatureInput {
                     p.insert("studies".into(), Value::String(v.clone()));
                 }
             }
+            Self::Timeline { timeline } => {
+                if let Some(v) = timeline {
+                    p.insert("timeline".into(), Value::String(v.clone()));
+                }
+            }
         }
 
         (kind, p)
@@ -887,6 +900,9 @@ impl FeatureInput {
             },
             "analysis-studies" => Self::AnalysisStudies {
                 studies: get_str(params, "studies"),
+            },
+            "timeline" => Self::Timeline {
+                timeline: get_str(params, "timeline"),
             },
             _ => return None,
         })

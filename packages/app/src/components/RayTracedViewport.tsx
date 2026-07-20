@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import { useThree, useFrame } from "@react-three/fiber";
 import { useEngineStore, useDocumentStore, useUiStore, logger } from "@vcad/core";
-import { getRayTracer } from "@vcad/engine";
+import { getRayTracer, solveForwardKinematics } from "@vcad/engine";
 import { getMaterialByKey } from "@/data/materials";
 import { useTheme } from "@/hooks/useTheme";
 import type { PerspectiveCamera } from "three";
@@ -125,9 +125,50 @@ export function RayTracedViewportSync() {
     const rt = rayTracer as {
       clearScene?: () => void;
       uploadSolid: (s: unknown) => void;
+      uploadSolidWithMaterial?: (
+        s: unknown,
+        r: number,
+        g: number,
+        b: number,
+        m: number,
+        ro: number,
+      ) => void;
       setMaterial: (r: number, g: number, b: number, m: number, ro: number) => void;
     };
     rt.clearScene?.();
+
+    // Resolve a material key to (color, metallic, roughness) — document
+    // overrides first, preset library second.
+    const resolveMaterial = (key: string | undefined) => {
+      if (!key) return null;
+      const docMat = document.materials[key];
+      const mat = docMat ?? getMaterialByKey(key);
+      return mat
+        ? {
+            color: mat.color as [number, number, number],
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+          }
+        : null;
+    };
+
+    // Upload with a per-solid material when the WASM build supports it
+    // (GpuScene::merge keeps material slots distinct per upload).
+    const uploadWithMaterial = (solid: unknown, key: string | undefined) => {
+      const mat = resolveMaterial(key);
+      if (mat && typeof rt.uploadSolidWithMaterial === "function") {
+        rt.uploadSolidWithMaterial(
+          solid,
+          mat.color[0],
+          mat.color[1],
+          mat.color[2],
+          mat.metallic,
+          mat.roughness,
+        );
+      } else {
+        rt.uploadSolid(solid);
+      }
+    };
 
     let uploaded = false;
     let firstMaterialKey: string | undefined;
@@ -138,7 +179,7 @@ export function RayTracedViewportSync() {
       if (!solid) continue;
 
       try {
-        rt.uploadSolid(solid);
+        uploadWithMaterial(solid, p.material);
       } catch (e) {
         logger.debug("gpu", `uploadSolid failed: ${e}`);
       }
@@ -159,10 +200,18 @@ export function RayTracedViewportSync() {
         if (s) partDefSolids.set(pd.id, s);
       }
 
+      // Jointed instances carry no useful `transform` of their own — the
+      // joint places them (same FK contract as the tessellated renderer).
+      // Without this, assembly parts pile up unposed at the origin.
+      const fkTransforms = solveForwardKinematics(document);
+
       for (const inst of solidScene.instances ?? []) {
         const baseSolid = partDefSolids.get(inst.partDefId);
         if (!baseSolid) continue;
-        const tf = inst.transform;
+        const instId =
+          (inst as { id?: string; instanceId?: string }).id ??
+          (inst as { instanceId?: string }).instanceId;
+        const tf = (instId ? fkTransforms.get(instId) : undefined) ?? inst.transform;
         const placed = tf
           ? baseSolid
               .scale(tf.scale.x, tf.scale.y, tf.scale.z)
@@ -170,7 +219,7 @@ export function RayTracedViewportSync() {
               .translate(tf.translation.x, tf.translation.y, tf.translation.z)
           : baseSolid;
         try {
-          rt.uploadSolid(placed);
+          uploadWithMaterial(placed, inst.material);
         } catch (e) {
           logger.debug("gpu", `uploadSolid (instance) failed: ${e}`);
         }
@@ -182,7 +231,7 @@ export function RayTracedViewportSync() {
     // Apply material — document overrides take precedence, fall back to preset library.
     // For now we apply one material to the whole merged scene; per-part materials
     // would need a setMaterialAt(idx, ...) on the WASM side.
-    if (uploaded && firstMaterialKey) {
+    if (uploaded && firstMaterialKey && typeof rt.uploadSolidWithMaterial !== "function") {
       const docMat = document.materials[firstMaterialKey];
       const preset = docMat ? null : getMaterialByKey(firstMaterialKey);
       const mat = docMat ?? preset;

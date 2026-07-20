@@ -6641,7 +6641,7 @@
           "items": {
             "type": "number"
           },
-          "description": "Constant action vector applied every step (length = action_dim from create_robot_env). Mutually exclusive with `actions`."
+          "description": "Constant action vector applied every step (length = action_dim from create_robot_env; entry i drives actuated_joint_ids[i] — Fixed joints take no action). Mutually exclusive with `actions`."
         },
         "actions": {
           "type": "array",

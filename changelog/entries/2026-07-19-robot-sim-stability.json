@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-19-robot-sim-stability",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Stable position/velocity control in physics sim",
+  "summary": "gym_step position/velocity actions no longer explode on mm-scale assemblies — servo gains now scale to each joint's measured inertia; sim viewer shows the articulated rest pose and record_simulation returns partial GIFs instead of timing out.",
+  "features": ["physics", "simulation", "gym"],
+  "mcpTools": ["gym_step", "create_robot_env", "record_simulation"]
+}

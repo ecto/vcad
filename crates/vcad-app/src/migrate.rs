@@ -36,6 +36,16 @@ pub fn migrate_v1(doc: &Document) -> CrdtDocument {
         }
     }
 
+    // Animation timeline: singleton JSON-blob feature (same pattern), so
+    // deep-linked / imported docs keep their motion through the CRDT.
+    if let Some(tl) = &doc.timeline {
+        if let Ok(json) = serde_json::to_string(tl) {
+            let mut params = HashMap::new();
+            params.insert("timeline".to_string(), Value::String(json));
+            create(&mut crdt, &mut ctx, "timeline", params);
+        }
+    }
+
     crdt
 }
 
@@ -1017,5 +1027,36 @@ mod tests {
             "v1 migration of extrude+fillet must produce exactly 1 root; got {:#?}",
             result.document.roots
         );
+    }
+}
+
+#[cfg(test)]
+mod timeline_roundtrip_tests {
+    use super::*;
+    use crate::materializer::materialize;
+
+    #[test]
+    fn timeline_survives_migrate_and_materialize() {
+        let mut doc = Document::default();
+        doc.timeline = serde_json::from_value(serde_json::json!({
+            "durationS": 2.0,
+            "fps": 30.0,
+            "tracks": [{
+                "target": {"type": "Joint", "jointId": "j0"},
+                "keys": [
+                    {"t": 0.0, "value": 0.0, "ease": "linear"},
+                    {"t": 2.0, "value": 360.0, "ease": "linear"}
+                ]
+            }],
+            "camera": []
+        }))
+        .ok();
+        assert!(doc.timeline.is_some());
+
+        let crdt = migrate_v1(&doc);
+        let result = materialize(&crdt);
+        let tl = result.document.timeline.expect("timeline materialized");
+        assert_eq!(tl.tracks.len(), 1);
+        assert!((tl.duration_s - 2.0).abs() < 1e-9);
     }
 }

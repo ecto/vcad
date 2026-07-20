@@ -17,7 +17,7 @@ function BackButton() {
 }
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
-import { useDocumentStore, useUiStore, useEngineStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool, t, tFmt } from "@vcad/core";
+import { useDocumentStore, useUiStore, useEngineStore, useSimulationStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool, t, tFmt } from "@vcad/core";
 import type { SelectionItem } from "@vcad/core";
 import { Vector3 } from "three";
 import { findCoplanarTriangles, getEdgeEndpoints, getVertex } from "@/lib/sub-feature-geometry";
@@ -1188,6 +1188,57 @@ function JointStateSlider({ joint }: { joint: Joint }) {
   );
 }
 
+/**
+ * Motor drive: a target velocity for this joint in the physics sim.
+ * Setting a non-zero value switches the sim to velocity control, so
+ * pressing Play in Simulate mode spins the machine.
+ */
+function JointMotorDrive({ joint }: { joint: Joint }) {
+  const physicsAvailable = useSimulationStore((s) => s.physicsAvailable);
+  const setJointTargetVelocity = useSimulationStore(
+    (s) => s.setJointTargetVelocity,
+  );
+  const targetVelocity = useSimulationStore(
+    (s) => s.jointStates.find((js) => js.id === joint.id)?.targetVelocity ?? 0,
+  );
+
+  if (!physicsAvailable || joint.kind.type === "Fixed") return null;
+  const unit = joint.kind.type === "Slider" ? "mm/s" : "°/s";
+
+  return (
+    <div>
+      <SectionHeader tooltip="Drive this joint at a target velocity while the physics simulation plays">
+        Motor
+      </SectionHeader>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          step={joint.kind.type === "Slider" ? 1 : 15}
+          value={targetVelocity}
+          onChange={(e) =>
+            setJointTargetVelocity(joint.id, Number(e.target.value) || 0)
+          }
+          className="w-24 rounded border border-border bg-surface px-2 py-1 text-xs text-text tabular-nums"
+          aria-label="Motor target velocity"
+        />
+        <span className="text-[10px] text-text-muted">{unit}</span>
+        {targetVelocity !== 0 && (
+          <button
+            type="button"
+            onClick={() => setJointTargetVelocity(joint.id, 0)}
+            className="text-[10px] text-text-muted underline hover:text-text"
+          >
+            stop
+          </button>
+        )}
+      </div>
+      <div className="mt-1 text-[10px] text-text-muted">
+        Press Play in Simulate to run the motor.
+      </div>
+    </div>
+  );
+}
+
 function JointPropertiesPanel({ joint }: { joint: Joint }) {
   const document = useDocumentStore((s) => s.document);
   const clearSelection = useUiStore((s) => s.clearSelection);
@@ -1255,6 +1306,7 @@ function JointPropertiesPanel({ joint }: { joint: Joint }) {
         {joint.kind.type !== "Fixed" && (
           <>
             <JointStateSlider joint={joint} />
+            <JointMotorDrive joint={joint} />
           </>
         )}
       </div>

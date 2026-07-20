@@ -48,6 +48,9 @@ pub struct RobotEnv {
     world: PhysicsWorld,
     /// Joint IDs in order.
     joint_ids: Vec<String>,
+    /// Joint IDs with at least one dof (document order) — Fixed joints are
+    /// excluded. Action vectors index against this list.
+    actuated_joint_ids: Vec<String>,
     /// End effector instance IDs.
     end_effector_ids: Vec<String>,
     /// Simulation timestep.
@@ -81,10 +84,12 @@ impl RobotEnv {
     ) -> Result<Self, PhysicsError> {
         let world = PhysicsWorld::from_document(&doc)?;
         let joint_ids = world.joint_ids();
+        let actuated_joint_ids = world.actuated_joint_ids();
 
         Ok(Self {
             world,
             joint_ids,
+            actuated_joint_ids,
             end_effector_ids,
             dt: dt.unwrap_or(1.0 / 240.0),
             substeps: substeps.unwrap_or(4),
@@ -106,6 +111,7 @@ impl RobotEnv {
         self.world = PhysicsWorld::from_document(&self.initial_doc)
             .expect("gym reset: PhysicsWorld::from_document failed on a doc that was valid at construction — this should be unreachable");
         self.joint_ids = self.world.joint_ids();
+        self.actuated_joint_ids = self.world.actuated_joint_ids();
         self.current_step = 0;
 
         self.observe()
@@ -185,13 +191,19 @@ impl RobotEnv {
 
     /// Joint ids in observation order (document order).
     ///
-    /// `Observation::joint_positions[i]` / `joint_velocities[i]` and action
-    /// vectors all index against this list.
+    /// `Observation::joint_positions[i]` / `joint_velocities[i]` index against
+    /// this list. Action vectors index against [`Self::actuated_joint_ids`],
+    /// which drops zero-dof (Fixed) joints.
     pub fn joint_ids(&self) -> &[String] {
         &self.joint_ids
     }
 
-    /// Get the number of joints (action dimension for position/velocity control).
+    /// Actuated joint ids in action order (document order, Fixed joints excluded).
+    pub fn actuated_joint_ids(&self) -> &[String] {
+        &self.actuated_joint_ids
+    }
+
+    /// Get the number of joints (observation joint count, including Fixed joints).
     pub fn num_joints(&self) -> usize {
         self.joint_ids.len()
     }
@@ -201,29 +213,29 @@ impl RobotEnv {
         self.joint_ids.len() * 2 + self.end_effector_ids.len() * 7
     }
 
-    /// Get the action dimension (for torque control).
+    /// Get the action dimension: one entry per actuated (non-Fixed) joint.
     pub fn action_dim(&self) -> usize {
-        self.joint_ids.len()
+        self.actuated_joint_ids.len()
     }
 
     fn apply_action(&mut self, action: &Action) {
         match action {
             Action::Torque(torques) => {
-                for (i, joint_id) in self.joint_ids.iter().enumerate() {
+                for (i, joint_id) in self.actuated_joint_ids.iter().enumerate() {
                     if let Some(&torque) = torques.get(i) {
                         self.world.apply_joint_torque(joint_id, torque);
                     }
                 }
             }
             Action::PositionTarget(targets) => {
-                for (i, joint_id) in self.joint_ids.iter().enumerate() {
+                for (i, joint_id) in self.actuated_joint_ids.iter().enumerate() {
                     if let Some(&target) = targets.get(i) {
                         self.world.set_joint_position(joint_id, target);
                     }
                 }
             }
             Action::VelocityTarget(targets) => {
-                for (i, joint_id) in self.joint_ids.iter().enumerate() {
+                for (i, joint_id) in self.actuated_joint_ids.iter().enumerate() {
                     if let Some(&target) = targets.get(i) {
                         self.world.set_joint_velocity(joint_id, target);
                     }
@@ -503,6 +515,147 @@ mod tests {
         assert_eq!(env.joint_ids(), ["joint3", "joint2", "joint1"]);
         assert!((obs.joint_positions[0] - 30.0).abs() < 1e-6);
         assert!((obs.joint_positions[2] - 10.0).abs() < 1e-6);
+    }
+
+    /// Repro for the record_simulation kernel trap: base —revolute→ arm
+    /// —fixed→ tip. The fixed joint has zero dof, so its q/v offsets point
+    /// past the end of the state vectors; installing a motor on it indexed
+    /// out of bounds and trapped (unreachable in wasm).
+    fn create_robot_with_fixed_joint() -> Document {
+        let mut doc = Document::new();
+
+        for (node_id, name, size) in [
+            (1, "base", Vec3::new(80.0, 80.0, 30.0)),
+            (2, "arm", Vec3::new(80.0, 20.0, 20.0)),
+            (3, "tip", Vec3::new(24.0, 24.0, 24.0)),
+        ] {
+            doc.nodes.insert(
+                node_id,
+                vcad_ir::Node {
+                    id: node_id,
+                    name: Some(name.to_string()),
+                    op: vcad_ir::CsgOp::Cube { size },
+                },
+            );
+        }
+
+        let mut part_defs = HashMap::new();
+        for (root, name) in [(1, "base"), (2, "arm"), (3, "tip")] {
+            part_defs.insert(
+                name.to_string(),
+                PartDef {
+                    id: name.to_string(),
+                    name: None,
+                    root,
+                    default_material: None,
+                    inertial: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+
+        doc.instances = Some(
+            ["base", "arm", "tip"]
+                .iter()
+                .map(|name| Instance {
+                    id: format!("{name}_inst"),
+                    part_def_id: name.to_string(),
+                    name: None,
+                    tags: Vec::new(),
+                    transform: None,
+                    material: None,
+                })
+                .collect(),
+        );
+
+        doc.joints = Some(vec![
+            Joint {
+                id: "swing".to_string(),
+                name: None,
+                parent_instance_id: Some("base_inst".to_string()),
+                child_instance_id: "arm_inst".to_string(),
+                parent_anchor: Vec3::new(0.0, 0.0, 30.0),
+                child_anchor: Vec3::new(0.0, 10.0, 0.0),
+                kind: JointKind::Revolute {
+                    axis: Vec3::new(0.0, 0.0, 1.0),
+                    limits: Some((-180.0, 180.0)),
+                },
+                state: 0.0,
+            },
+            Joint {
+                id: "f-tip".to_string(),
+                name: None,
+                parent_instance_id: Some("arm_inst".to_string()),
+                child_instance_id: "tip_inst".to_string(),
+                parent_anchor: Vec3::new(80.0, 10.0, 10.0),
+                child_anchor: Vec3::new(0.0, 0.0, 0.0),
+                kind: JointKind::Fixed,
+                state: 0.0,
+            },
+        ]);
+
+        doc.ground_instance_id = Some("base_inst".to_string());
+        doc
+    }
+
+    #[test]
+    fn fixed_joint_rollout_completes_and_tip_tracks_arm() {
+        let doc = create_robot_with_fixed_joint();
+        // Track both the fixed child and its parent so we can assert the weld.
+        let mut env = RobotEnv::new(
+            doc,
+            vec!["tip_inst".to_string(), "arm_inst".to_string()],
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Fixed joints appear in observations but contribute zero actuated dof.
+        assert_eq!(env.num_joints(), 2);
+        assert_eq!(env.action_dim(), 1);
+        assert_eq!(env.actuated_joint_ids(), ["swing"]);
+
+        let obs0 = env.reset();
+        let rel0 = {
+            let [tip, arm] = [obs0.end_effector_poses[0], obs0.end_effector_poses[1]];
+            [tip[0] - arm[0], tip[1] - arm[1], tip[2] - arm[2]]
+        };
+        let dist0 = (rel0[0].powi(2) + rel0[1].powi(2) + rel0[2].powi(2)).sqrt();
+        assert!(dist0 > 1e-3, "tip should be offset from arm origin");
+
+        // Short torque-driven rollout — installing any motor on the fixed
+        // joint trapped out-of-bounds before zero-dof joints were excluded
+        // from the action path. (A small constant torque gives smooth motion;
+        // the default PD position gains oscillate on an arm this light.)
+        let mut max_abs_pos: f64 = 0.0;
+        let mut last = obs0;
+        for _ in 0..60 {
+            let (obs, _, _) = env.step(Action::Torque(vec![1e-4]));
+            max_abs_pos = max_abs_pos.max(obs.joint_positions[0].abs());
+
+            // The fixed joint reads zero and the tip rides the arm at every
+            // step: tip-to-arm distance is invariant under the weld.
+            assert!(obs.joint_positions[1].abs() < 1e-9);
+            let [tip, arm] = [obs.end_effector_poses[0], obs.end_effector_poses[1]];
+            let rel = [tip[0] - arm[0], tip[1] - arm[1], tip[2] - arm[2]];
+            let dist = (rel[0].powi(2) + rel[1].powi(2) + rel[2].powi(2)).sqrt();
+            assert!(
+                (dist - dist0).abs() < 1e-6,
+                "fixed child should stay welded to its parent: |tip-arm| went {dist0} -> {dist}"
+            );
+            last = obs;
+        }
+
+        // The arm actually swung at some point during the rollout.
+        assert!(
+            max_abs_pos > 1.0,
+            "revolute joint should have moved, max |pos| = {max_abs_pos} deg"
+        );
+        assert!(last.joint_positions.len() == 2);
+
+        // Position and velocity actions must not trap either.
+        env.step(Action::PositionTarget(vec![60.0]));
+        env.step(Action::VelocityTarget(vec![10.0]));
     }
 
     #[test]
