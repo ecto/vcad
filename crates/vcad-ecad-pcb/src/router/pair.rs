@@ -304,12 +304,13 @@ pub(super) fn try_route_pair(
     // single width when the crow-flight would thread a pin field (the second
     // CM5 bail census: 71 leg validations failed on straight stubs crossing
     // field copper after the neck-down retreat).
+    type ConnectorCopper = (Vec<(Vec2, Vec2, PcbLayer)>, Vec<(Vec2, PcbLayer, PcbLayer)>);
     let connect = |session: &RouteSession,
                    net: &str,
                    from: Vec2,
                    to: Vec2,
                    to_layer: PcbLayer|
-     -> Option<(Vec<(Vec2, Vec2, PcbLayer)>, Vec<(Vec2, PcbLayer, PcbLayer)>)> {
+     -> Option<ConnectorCopper> {
         if dist(from, to) <= 1e-9 {
             return Some((vec![], vec![]));
         }
