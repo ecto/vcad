@@ -586,8 +586,21 @@ fn realize_legs(
         let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
         let mut first: Option<(Vec2, PcbLayer)> = None;
         let mut prev_end: Option<(Vec2, PcbLayer)> = None;
+        let mut prev_dir: Option<Vec2> = None;
+        // Side consistency (census 15's twin-crossing bug): when a run's
+        // direction reverses relative to the previous run, its left-hand
+        // normal flips — a fixed sign would swap which physical side this
+        // leg occupies, and the via jog would cut straight through the twin.
+        // The per-run sign flips cumulatively to keep the leg on one side.
+        let mut run_sign = sign;
         for (layer, pts) in &runs {
-            let off = offset_polyline(pts, sign * half_sep);
+            let d_first = (pts[1] - pts[0]).normalize();
+            if let Some(pd) = prev_dir {
+                if pd.dot(d_first) < 0.0 {
+                    run_sign = -run_sign;
+                }
+            }
+            let off = offset_polyline(pts, run_sign * half_sep);
             if off.len() < 2 {
                 return None;
             }
@@ -601,9 +614,8 @@ fn realize_legs(
                 let junction = pts[0];
                 // Perpendicular at the junction: direction of the new run's
                 // first segment (matches the offset used for the leg points).
-                let d = (pts[1] - pts[0]).normalize();
-                let n = d.perp();
-                let vp = junction + n.scale(sign * via_off);
+                let n = d_first.perp();
+                let vp = junction + n.scale(run_sign * via_off);
                 if dist(pe, vp) > 1e-9 {
                     segments.push((pe, vp, pl));
                 }
@@ -618,6 +630,8 @@ fn realize_legs(
                 }
             }
             prev_end = Some((*off.last().unwrap(), *layer));
+            let np = pts.len();
+            prev_dir = Some((pts[np - 1] - pts[np - 2]).normalize());
         }
         let (first, first_layer) = first?;
         let (last, last_layer) = prev_end?;
