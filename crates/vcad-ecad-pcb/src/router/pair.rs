@@ -160,7 +160,7 @@ pub(super) fn try_route_pair(
     // (census 11: leg segments/jogs stepped outside a 2w+gap corridor onto
     // unprobed copper whenever the search dropped a layer change).
     let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
-    let voff_max = via_off.max(via_d / 2.0 + clearance + w / 2.0 + 0.02 - half_sep);
+    let voff_max = via_off.max(via_d / 2.0 + 1.5 * clearance + w / 2.0 - half_sep);
     let fat_w = (2.0 * w + gap).max(2.0 * (voff_max + via_d / 2.0));
     let copper = copper_layers(pcb);
     let first_layer = *copper.first().unwrap_or(&PcbLayer::FCu);
@@ -528,7 +528,7 @@ pub(super) fn try_route_pair(
 fn realize_legs(
     center: &[(Vec2, Vec2, PcbLayer)],
     half_sep: f64,
-    via_off: f64,
+    _via_off: f64,
     via_r: f64,
     clearance: f64,
     w: f64,
@@ -586,112 +586,132 @@ fn realize_legs(
         return None;
     }
 
+    // One combined centerline: runs concatenated with junction vertices kept
+    // (a junction is an interior vertex of the whole polyline, so both its
+    // sides offset with ONE mitered normal — per-run offsetting gave each
+    // side a different normal and shaved the pair gap at every junction).
+    let mut pts: Vec<Vec2> = Vec::new();
+    let mut seg_layers: Vec<PcbLayer> = Vec::new();
+    for (layer, rp) in &runs {
+        for (k, p) in rp.iter().enumerate() {
+            match pts.last() {
+                Some(last) if dist(*last, *p) < 1e-6 => {
+                    if k > 0 {
+                        // interior duplicate — skip
+                    }
+                }
+                _ => pts.push(*p),
+            }
+            if pts.len() >= 2 && seg_layers.len() < pts.len() - 1 {
+                seg_layers.push(*layer);
+            }
+        }
+    }
+    // Trim terminal reversals (maze end-approach overshoot-and-return):
+    // offsetting a cusp hurls one leg across the other's lane. Interior
+    // cusps (rare) make the pair bail rather than emit crossing copper.
+    let rev = |a: Vec2, b: Vec2, c: Vec2| -> bool {
+        let d0 = (b - a).normalize();
+        let d1 = (c - b).normalize();
+        d0.dot(d1) < -0.5
+    };
+    while pts.len() >= 3 && rev(pts[pts.len() - 3], pts[pts.len() - 2], pts[pts.len() - 1]) {
+        pts.pop();
+        seg_layers.pop();
+    }
+    while pts.len() >= 3 && rev(pts[0], pts[1], pts[2]) {
+        pts.remove(0);
+        seg_layers.remove(0);
+    }
+    for k in 1..pts.len().saturating_sub(1) {
+        if rev(pts[k - 1], pts[k], pts[k + 1]) {
+            log::debug!("pair: interior centerline cusp — bailing");
+            return None;
+        }
+    }
+    if pts.len() < 2 || seg_layers.len() != pts.len() - 1 {
+        log::debug!(
+            "pair: combined centerline malformed: {} pts {} seg layers",
+            pts.len(),
+            seg_layers.len()
+        );
+        return None;
+    }
+    // In-line vias demand the disc clears the other leg's line — but only
+    // when the centerline actually changes layers.
+    let has_transition = seg_layers.windows(2).any(|w2| w2[0] != w2[1]);
+    if has_transition && 2.0 * half_sep < via_r + clearance + w / 2.0 + 0.01 {
+        log::debug!(
+            "pair: in-line via gate: 2*half_sep {} too small",
+            2.0 * half_sep
+        );
+        return None;
+    }
+    let need = 2.0 * via_r + clearance + 0.04;
+    let lat = 2.0 * half_sep;
+    let stagger = if lat >= need {
+        0.0
+    } else {
+        (need * need - lat * lat).sqrt()
+    };
+
     let leg = |sign: f64| -> Option<Leg> {
+        let off = offset_polyline(&pts, sign * half_sep);
+        let other = offset_polyline(&pts, -sign * half_sep);
+        if off.len() != pts.len() || other.len() != pts.len() {
+            return None;
+        }
         let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
         let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
-        let mut first: Option<(Vec2, PcbLayer)> = None;
-        let mut prev_end: Option<(Vec2, PcbLayer)> = None;
-        let mut prev_dir: Option<Vec2> = None;
-        // Side consistency (census 15's twin-crossing bug): when a run's
-        // direction reverses relative to the previous run, its left-hand
-        // normal flips — a fixed sign would swap which physical side this
-        // leg occupies, and the via jog would cut straight through the twin.
-        // The per-run sign flips cumulatively to keep the leg on one side.
-        let mut run_sign = sign;
-        for (layer, pts) in &runs {
-            let d_first = (pts[1] - pts[0]).normalize();
-            if let Some(pd) = prev_dir {
-                if pd.dot(d_first) < 0.0 {
-                    run_sign = -run_sign;
-                }
-            }
-            let off = offset_polyline(pts, run_sign * half_sep);
-            if off.len() < 2 {
-                return None;
-            }
-            if first.is_none() {
-                first = Some((off[0], *layer));
-            }
-            // Layer transition: STAGGERED pair vias on the track axis (the
-            // human DDR pattern) — the perpendicular dog-bone interleaved
-            // the two legs' discs and jogs below clearance at corners
-            // (censuses 11–16). The `sign>0` leg vias BEFORE the junction on
-            // the incoming axis, the other AFTER on the outgoing axis; each
-            // jog swerves around the other leg's via when it passes close.
-            if let Some((pe, pl)) = prev_end {
-                let j = pts[0];
-                let d0 = prev_dir.unwrap_or(d_first);
-                let d1 = d_first;
-                let delta = {
-                    let chord = (d0 + d1).length().max(0.5);
-                    ((2.0 * via_r + clearance + 0.04) / chord).max(via_off)
-                };
-                // Perpendicular clearance: the via must clear the OTHER
-                // leg's line (at half_sep on the far side), so its center
-                // sits at least via_r + clearance + w/2 past the centerline
-                // on its OWN side — a centerline via clobbers both legs
-                // whenever via_r exceeds the gap (the unit repro's finding).
-                let voff = via_off.max(via_r + clearance + w / 2.0 + 0.02 - half_sep);
-                let before = j - d0.scale(delta) + d0.perp().scale(run_sign * voff);
-                let after = j + d1.scale(delta) + d1.perp().scale(run_sign * voff);
-                let (own, other) = if sign > 0.0 {
-                    (before, after)
+        for k in 0..off.len() - 1 {
+            let (a, b, l) = (off[k], off[k + 1], seg_layers[k]);
+            // Layer change at vertex k (k>0): via on this leg's own line at
+            // the mitered junction vertex; the `sign<0` leg pulls its via
+            // back along its previous segment so the two discs clear.
+            if k > 0 && seg_layers[k - 1] != l {
+                let pl = seg_layers[k - 1];
+                let vp = if sign > 0.0 {
+                    off[k]
                 } else {
-                    (after, before)
-                };
-                let s_off = via_r + clearance + w / 2.0 + 0.02;
-                let dodge = |from: Vec2, to: Vec2, obst: Vec2| -> Vec<Vec2> {
-                    let ab = to - from;
-                    let l2 = ab.x * ab.x + ab.y * ab.y;
-                    if l2 < 1e-18 {
-                        return vec![from, to];
+                    // Pull back along this leg's own segment until the disc
+                    // truly clears the twin's via at ITS mitered vertex —
+                    // the nominal stagger under-counts when the miter shifts
+                    // the twin's vertex along the corner.
+                    let (pa, pb) = (off[k - 1], off[k]);
+                    let seg_len = dist(pa, pb);
+                    let d = (pb - pa).normalize();
+                    let need_d = 2.0 * via_r + clearance + 0.04;
+                    let mut t = stagger.min(seg_len - 1e-6).max(0.0);
+                    let mut vp = pb - d.scale(t);
+                    while dist(vp, other[k]) < need_d && t + 0.05 < seg_len {
+                        t += 0.05;
+                        vp = pb - d.scale(t);
                     }
-                    let t = (((obst.x - from.x) * ab.x + (obst.y - from.y) * ab.y) / l2)
-                        .clamp(0.0, 1.0);
-                    let proj = from + ab.scale(t);
-                    if dist(proj, obst) >= s_off || t <= 1e-6 || t >= 1.0 - 1e-6 {
-                        return vec![from, to];
+                    if dist(vp, other[k]) < need_d {
+                        return None;
                     }
-                    let away = {
-                        let v = proj - obst;
-                        let vl = v.length();
-                        if vl < 1e-9 {
-                            ab.normalize().perp()
-                        } else {
-                            v.scale(1.0 / vl)
-                        }
-                    };
-                    vec![from, obst + away.scale(s_off), to]
+                    vp
                 };
-                let mut emit = |path: Vec<Vec2>, layer: PcbLayer| {
-                    for wp in path.windows(2) {
-                        if dist(wp[0], wp[1]) > 1e-9 {
-                            segments.push((wp[0], wp[1], layer));
-                        }
-                    }
-                };
-                emit(dodge(pe, own, other), pl);
-                emit(dodge(own, off[0], other), *layer);
-                vias.push((own, pl, *layer));
-            }
-            for wpair in off.windows(2) {
-                if dist(wpair[0], wpair[1]) > 1e-9 {
-                    segments.push((wpair[0], wpair[1], *layer));
+                // Retrace from the (possibly pulled-back) via to the mitered
+                // vertex on the NEW layer, staying on this leg's line.
+                if dist(vp, off[k]) > 1e-9 {
+                    segments.push((vp, off[k], l));
                 }
+                vias.push((vp, pl, l));
             }
-            prev_end = Some((*off.last().unwrap(), *layer));
-            let np = pts.len();
-            prev_dir = Some((pts[np - 1] - pts[np - 2]).normalize());
+            if dist(a, b) > 1e-9 {
+                segments.push((a, b, l));
+            }
         }
-        let (first, first_layer) = first?;
-        let (last, last_layer) = prev_end?;
+        let first = *off.first().unwrap();
+        let last = *off.last().unwrap();
         Some(Leg {
             segments,
             vias,
             first,
-            first_layer,
+            first_layer: seg_layers[0],
             last,
-            last_layer,
+            last_layer: *seg_layers.last().unwrap(),
         })
     };
     Some((leg(1.0)?, leg(-1.0)?))
@@ -793,8 +813,8 @@ mod tests {
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.15,
-                    via_diameter: 0.8,
-                    via_drill: 0.4,
+                    via_diameter: 0.35,
+                    via_drill: 0.2,
                     diff_pair_gap: None,
                     diff_pair_width: None,
                 },
@@ -802,8 +822,8 @@ mod tests {
                     name: "DIFF".into(),
                     trace_width: 0.2,
                     clearance: 0.15,
-                    via_diameter: 0.8,
-                    via_drill: 0.4,
+                    via_diameter: 0.35,
+                    via_drill: 0.2,
                     diff_pair_gap: Some(0.25),
                     diff_pair_width: Some(0.2),
                 }],
@@ -1062,5 +1082,84 @@ mod tests {
             worst >= clearance - 1e-9,
             "twin edge clearance {worst:.3}mm < {clearance}"
         );
+    }
+
+    /// Twin-clearance check shared by the transition repros.
+    fn assert_twin_clear(mine: &Placed, theirs: &Placed, clearance: f64) {
+        let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+            let pt_seg = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+                let ab = b - a;
+                let l2 = ab.x * ab.x + ab.y * ab.y;
+                if l2 < 1e-18 {
+                    return dist(p, a);
+                }
+                let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+                dist(p, a + ab.scale(t))
+            };
+            pt_seg(a1, a2, b2)
+                .min(pt_seg(b1, a2, b2))
+                .min(pt_seg(a2, a1, b1))
+                .min(pt_seg(b2, a1, b1))
+        };
+        let all = |p: &Placed| -> Vec<(Vec2, Vec2, PcbLayer, f64)> {
+            let mut v: Vec<(Vec2, Vec2, PcbLayer, f64)> = p
+                .segments
+                .iter()
+                .map(|&(a, b, l)| (a, b, l, p.width))
+                .collect();
+            v.extend(p.stubs.iter().map(|&(a, b, l)| (a, b, l, p.stub_width)));
+            v
+        };
+        let mut worst = f64::INFINITY;
+        for &(a1, b1, l1, w1) in &all(mine) {
+            for &(a2, b2, l2, w2) in &all(theirs) {
+                if l1 == l2 {
+                    worst = worst.min(seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0);
+                }
+            }
+        }
+        assert!(
+            worst >= clearance - 1e-9,
+            "twin edge clearance {worst:.3}mm < {clearance}"
+        );
+    }
+
+    /// Corner transition: walls force the pair through a via field at an
+    /// L-turn — the corner-normal rotation case the straight-wall repro
+    /// cannot exercise.
+    #[test]
+    fn pair_corner_transition_keeps_twin_clearance() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let mut pcb = pair_board();
+        // Move the destination pads to force an L (right then up).
+        pcb.footprints[1].position = Vec2::new(45.0, 15.0);
+        for pad in &mut pcb.footprints[1].pads {
+            pad.position = Vec2::new(pad.position.y, pad.position.x + 10.0);
+        }
+        // Wall on FCu with a vertical jog channel only reachable on BCu.
+        pcb.traces.push(Trace {
+            start: Vec2::new(30.0, 0.0),
+            end: Vec2::new(30.0, 30.0),
+            width: 0.4,
+            layer: PcbLayer::FCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let r = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.325, 25.0),
+            &mut placed,
+            &cong,
+            400_000,
+        );
+        let (mine, theirs) = r.expect("pair must route the L across the wall");
+        assert_twin_clear(&mine, &theirs, 0.15);
     }
 }

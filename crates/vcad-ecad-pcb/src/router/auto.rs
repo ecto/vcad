@@ -1512,6 +1512,7 @@ pub(super) fn validate_and_commit(
             half_w: thin_hw,
         };
         if !session.probe(&seg, *l, net, clearance).legal {
+            log::debug!("validate: {net} THIN segment illegal");
             return None;
         }
     }
@@ -1547,14 +1548,25 @@ pub(super) fn validate_and_commit(
             center: p,
             r: via_r,
         };
-        let legal = span_slice(la, lb)
-            .iter()
-            .all(|&l| session.probe(&disc, l, net, clearance).legal);
-        if !legal {
+        let mut bad: Option<(PcbLayer, String, f64)> = None;
+        for &l in span_slice(la, lb) {
+            let pr = session.probe(&disc, l, net, clearance);
+            if !pr.legal {
+                bad = Some((
+                    l,
+                    pr.blockers
+                        .first()
+                        .map(|b| b.net.clone())
+                        .unwrap_or_default(),
+                    pr.min_clearance,
+                ));
+                break;
+            }
+        }
+        if let Some((l, bnet, d)) = bad {
             log::debug!(
-                "validate: {net} via ({:.2},{:.2}) {la:?}..{lb:?} illegal",
-                p.x,
-                p.y
+                "validate: {net} via ({:.3},{:.3}) {la:?}..{lb:?} illegal on {l:?} — blocker {bnet} at {d:.3}mm",
+                p.x, p.y
             );
             return None;
         }
