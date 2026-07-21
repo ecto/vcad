@@ -14,6 +14,7 @@ use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
 use crate::session::RouteSession;
+use crate::spatial::CopperGeom;
 
 use super::auto::{copper_layers, dist, validate_and_commit, Candidate, Placed};
 use super::congestion::Congestion;
@@ -332,7 +333,8 @@ pub(super) fn try_route_pair(
                    net: &str,
                    from: Vec2,
                    to: Vec2,
-                   to_layer: PcbLayer|
+                   to_layer: PcbLayer,
+                   leg: &Leg|
      -> Option<ConnectorCopper> {
         if dist(from, to) <= 1e-9 {
             return Some((vec![], vec![]));
@@ -345,6 +347,25 @@ pub(super) fn try_route_pair(
             Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
             Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
         );
+        // Multi-goal attachment: the connector may terminate anywhere along
+        // the leg's copper, not only at its endpoint — an offset leg end can
+        // sit against a neighbouring pad where no legal approach exists.
+        let goals: Vec<(CopperGeom, [f64; 2], [f64; 2], PcbLayer)> = leg
+            .segments
+            .iter()
+            .map(|&(a, b, l)| {
+                (
+                    CopperGeom::Segment {
+                        a,
+                        b,
+                        half_w: w / 2.0,
+                    },
+                    [a.x.min(b.x) - w, a.y.min(b.y) - w],
+                    [a.x.max(b.x) + w, a.y.max(b.y) + w],
+                    l,
+                )
+            })
+            .collect();
         let r = route_net_maze3d(
             session,
             &pcb.outline.vertices,
@@ -360,7 +381,7 @@ pub(super) fn try_route_pair(
             120_000,
             0.5,
             Some(window),
-            &[],
+            &goals,
             &[],
             true,
         );
@@ -381,8 +402,9 @@ pub(super) fn try_route_pair(
     };
     let build =
         |session: &RouteSession, leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Option<Candidate> {
-            let (head_segs, head_vias) = connect(session, net, from, leg.first, leg.first_layer)?;
-            let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer)?;
+            let (head_segs, head_vias) =
+                connect(session, net, from, leg.first, leg.first_layer, leg)?;
+            let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer, leg)?;
             // Connectors are the neck-down: they commit at `nw` via the thin
             // channel, while the coupled leg stays at the class width.
             let mut thin = head_segs;
@@ -523,6 +545,7 @@ fn realize_legs(
 mod tests {
     use super::*;
     use crate::session::RouteSession;
+    use crate::spatial::CopperGeom;
     use vcad_ir::ecad::*;
 
     #[test]
