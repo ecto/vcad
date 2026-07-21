@@ -424,37 +424,111 @@ pub(super) fn try_route_pair(
                 thin_width: nw,
             })
         };
-    // Build-and-commit SEQUENTIALLY: leg 2's connectors are searched against
-    // the session that already holds leg 1's copper, so they route around it
-    // instead of colliding in the necked corridor (69 of the census-3 bails).
-    // Atomicity is preserved by the rollback below.
-    let Some(cand_mine) = build(session, &mine, net, from, to) else {
-        log::debug!("pair: {net}/{partner}: connector routing failed (mine)");
-        restore(session, placed, ripped);
-        return None;
+    // Ordering (census 9's lesson): commit BOTH legs first — they are
+    // parallel and disjoint by construction — then route the four pad
+    // connectors against the complete picture, so no connector can cut the
+    // coupled corridor before the other leg exists. Rollback keeps the
+    // all-or-nothing contract.
+    let leg_cand = |leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Candidate {
+        Candidate {
+            net: net.to_string(),
+            from,
+            to,
+            width: w,
+            segments: leg.segments.clone(),
+            vias: leg.vias.clone(),
+            thin_segments: vec![],
+            thin_width: nw,
+        }
     };
-    let Some(placed_mine) = validate_and_commit(session, pcb, cand_mine, placed) else {
+    let Some(mut placed_mine) =
+        validate_and_commit(session, pcb, leg_cand(&mine, net, from, to), placed)
+    else {
         log::debug!("pair: {net}/{partner}: leg 1 failed validation");
         restore(session, placed, ripped);
         return None;
     };
-    let Some(cand_theirs) = build(session, &theirs, &partner, p_from, p_to) else {
-        log::debug!("pair: {net}/{partner}: connector routing failed (partner)");
+    let Some(mut placed_theirs) = validate_and_commit(
+        session,
+        pcb,
+        leg_cand(&theirs, &partner, p_from, p_to),
+        placed,
+    ) else {
+        log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
         for &sp in &placed_mine.spans {
             session.remove(sp);
         }
         restore(session, placed, ripped);
         return None;
     };
-    let Some(placed_theirs) = validate_and_commit(session, pcb, cand_theirs, placed) else {
-        // Leg 2 failed: rip leg 1 back out, restore the partner originals.
-        for &s in &placed_mine.spans {
-            session.remove(s);
+    // Connectors, all four against both committed legs. Committed as thin
+    // copper directly into each leg's Placed (stubs channel).
+    let rollback_all = |session: &mut RouteSession,
+                        placed: &mut Vec<Placed>,
+                        a: &Placed,
+                        b: &Placed,
+                        ripped: Vec<Placed>| {
+        for &sp in a.spans.iter().chain(b.spans.iter()) {
+            session.remove(sp);
         }
-        log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
         restore(session, placed, ripped);
-        return None;
     };
+    let attach = |session: &mut RouteSession,
+                  pl: &mut Placed,
+                  leg: &Leg,
+                  pad_a: Vec2,
+                  pad_b: Vec2|
+     -> bool {
+        let net = pl.net.clone();
+        let Some((head, hv)) = connect(session, &net, pad_a, leg.first, leg.first_layer, leg)
+        else {
+            log::debug!("pair-connector: {net} head failed");
+            return false;
+        };
+        for (a, b, l) in &head {
+            let id = crate::spatial::CopperElement {
+                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
+                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
+                net: net.clone(),
+                layer: *l,
+                geom: CopperGeom::Segment {
+                    a: *a,
+                    b: *b,
+                    half_w: nw / 2.0,
+                },
+            };
+            pl.spans.push(session.commit(id));
+            pl.stubs.push((*a, *b, *l));
+        }
+        pl.via_pts.extend(hv);
+        let Some((tail, tv)) = connect(session, &net, pad_b, leg.last, leg.last_layer, leg) else {
+            log::debug!("pair-connector: {net} tail failed");
+            return false;
+        };
+        for (a, b, l) in &tail {
+            let id = crate::spatial::CopperElement {
+                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
+                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
+                net: net.clone(),
+                layer: *l,
+                geom: CopperGeom::Segment {
+                    a: *a,
+                    b: *b,
+                    half_w: nw / 2.0,
+                },
+            };
+            pl.spans.push(session.commit(id));
+            pl.stubs.push((*a, *b, *l));
+        }
+        pl.via_pts.extend(tv);
+        true
+    };
+    if !attach(session, &mut placed_mine, &mine, from, to)
+        || !attach(session, &mut placed_theirs, &theirs, p_from, p_to)
+    {
+        rollback_all(session, placed, &placed_mine, &placed_theirs, ripped);
+        return None;
+    }
 
     let center_len: f64 = r.segments.iter().map(|(a, b, _)| dist(*a, *b)).sum();
     log::info!(
