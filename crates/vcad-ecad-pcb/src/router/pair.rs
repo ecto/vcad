@@ -160,7 +160,8 @@ pub(super) fn try_route_pair(
     // (census 11: leg segments/jogs stepped outside a 2w+gap corridor onto
     // unprobed copper whenever the search dropped a layer change).
     let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
-    let fat_w = (2.0 * w + gap).max(2.0 * via_off + via_d);
+    let voff_max = via_off.max(via_d / 2.0 + clearance + w / 2.0 + 0.02 - half_sep);
+    let fat_w = (2.0 * w + gap).max(2.0 * (voff_max + via_d / 2.0));
     let copper = copper_layers(pcb);
     let first_layer = *copper.first().unwrap_or(&PcbLayer::FCu);
 
@@ -625,8 +626,14 @@ fn realize_legs(
                     let chord = (d0 + d1).length().max(0.5);
                     ((2.0 * via_r + clearance + 0.04) / chord).max(via_off)
                 };
-                let before = j - d0.scale(delta);
-                let after = j + d1.scale(delta);
+                // Perpendicular clearance: the via must clear the OTHER
+                // leg's line (at half_sep on the far side), so its center
+                // sits at least via_r + clearance + w/2 past the centerline
+                // on its OWN side — a centerline via clobbers both legs
+                // whenever via_r exceeds the gap (the unit repro's finding).
+                let voff = via_off.max(via_r + clearance + w / 2.0 + 0.02 - half_sep);
+                let before = j - d0.scale(delta) + d0.perp().scale(run_sign * voff);
+                let after = j + d1.scale(delta) + d1.perp().scale(run_sign * voff);
                 let (own, other) = if sign > 0.0 {
                     (before, after)
                 } else {
@@ -976,5 +983,84 @@ mod tests {
         )
         .is_none());
         assert_eq!(session.len(), baseline);
+    }
+
+    /// Deterministic repro for the layer-transition geometry (censuses
+    /// 11-17): a copper wall on FCu forces the pair through vias to BCu and
+    /// back. The pair must still route, and every committed P element must
+    /// clear every N element — the twin-blocker class of failures rendered
+    /// as a unit test.
+    #[test]
+    fn pair_layer_transition_keeps_twin_clearance() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let mut pcb = pair_board();
+        // Wall of foreign copper across FCu at x=25, leaving no FCu route.
+        pcb.traces.push(Trace {
+            start: Vec2::new(25.0, 0.0),
+            end: Vec2::new(25.0, 30.0),
+            width: 0.4,
+            layer: PcbLayer::FCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let r = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.0, 15.325),
+            &mut placed,
+            &cong,
+            400_000,
+        );
+        let (mine, theirs) = r.expect("pair must route across the FCu wall via BCu");
+        assert!(
+            !mine.via_pts.is_empty() && !theirs.via_pts.is_empty(),
+            "route must actually change layers"
+        );
+        // Twin clearance: every P segment vs every N segment on shared layers.
+        let clearance = 0.15;
+        let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+            let pt_seg = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+                let ab = b - a;
+                let l2 = ab.x * ab.x + ab.y * ab.y;
+                if l2 < 1e-18 {
+                    return dist(p, a);
+                }
+                let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+                dist(p, a + ab.scale(t))
+            };
+            pt_seg(a1, a2, b2)
+                .min(pt_seg(b1, a2, b2))
+                .min(pt_seg(a2, a1, b1))
+                .min(pt_seg(b2, a1, b1))
+        };
+        let all = |p: &Placed| -> Vec<(Vec2, Vec2, PcbLayer, f64)> {
+            let mut v: Vec<(Vec2, Vec2, PcbLayer, f64)> = p
+                .segments
+                .iter()
+                .map(|&(a, b, l)| (a, b, l, p.width))
+                .collect();
+            v.extend(p.stubs.iter().map(|&(a, b, l)| (a, b, l, p.stub_width)));
+            v
+        };
+        let mut worst = f64::INFINITY;
+        for &(a1, b1, l1, w1) in &all(&mine) {
+            for &(a2, b2, l2, w2) in &all(&theirs) {
+                if l1 != l2 {
+                    continue;
+                }
+                let edge = seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0;
+                worst = worst.min(edge);
+            }
+        }
+        assert!(
+            worst >= clearance - 1e-9,
+            "twin edge clearance {worst:.3}mm < {clearance}"
+        );
     }
 }
