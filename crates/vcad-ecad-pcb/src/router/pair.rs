@@ -304,14 +304,15 @@ pub(super) fn try_route_pair(
     };
 
     // Realize the two legs from the centerline.
-    let (leg_a, leg_b) = match realize_legs(&r.segments, half_sep, via_off) {
-        Some(l) => l,
-        None => {
-            log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
-            restore(session, placed, ripped);
-            return None;
-        }
-    };
+    let (leg_a, leg_b) =
+        match realize_legs(&r.segments, half_sep, via_off, via_d / 2.0, clearance, w) {
+            Some(l) => l,
+            None => {
+                log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
+                restore(session, placed, ripped);
+                return None;
+            }
+        };
 
     // Leg → net assignment: the one whose pad connectors are shortest (the
     // non-crossing assignment — crossing connectors are strictly longer).
@@ -527,6 +528,9 @@ fn realize_legs(
     center: &[(Vec2, Vec2, PcbLayer)],
     half_sep: f64,
     via_off: f64,
+    via_r: f64,
+    clearance: f64,
+    w: f64,
 ) -> Option<(Leg, Leg)> {
     // Group the centerline into contiguous same-layer polyline runs.
     let mut runs: Vec<(PcbLayer, Vec<Vec2>)> = Vec::new();
@@ -607,22 +611,61 @@ fn realize_legs(
             if first.is_none() {
                 first = Some((off[0], *layer));
             }
-            // Layer transition from the previous run: one via for this leg,
-            // offset perpendicular from the centerline junction, with jog
-            // connectors on both layers when it doesn't sit on the leg line.
+            // Layer transition: STAGGERED pair vias on the track axis (the
+            // human DDR pattern) — the perpendicular dog-bone interleaved
+            // the two legs' discs and jogs below clearance at corners
+            // (censuses 11–16). The `sign>0` leg vias BEFORE the junction on
+            // the incoming axis, the other AFTER on the outgoing axis; each
+            // jog swerves around the other leg's via when it passes close.
             if let Some((pe, pl)) = prev_end {
-                let junction = pts[0];
-                // Perpendicular at the junction: direction of the new run's
-                // first segment (matches the offset used for the leg points).
-                let n = d_first.perp();
-                let vp = junction + n.scale(run_sign * via_off);
-                if dist(pe, vp) > 1e-9 {
-                    segments.push((pe, vp, pl));
-                }
-                if dist(vp, off[0]) > 1e-9 {
-                    segments.push((vp, off[0], *layer));
-                }
-                vias.push((vp, pl, *layer));
+                let j = pts[0];
+                let d0 = prev_dir.unwrap_or(d_first);
+                let d1 = d_first;
+                let delta = {
+                    let chord = (d0 + d1).length().max(0.5);
+                    ((2.0 * via_r + clearance + 0.04) / chord).max(via_off)
+                };
+                let before = j - d0.scale(delta);
+                let after = j + d1.scale(delta);
+                let (own, other) = if sign > 0.0 {
+                    (before, after)
+                } else {
+                    (after, before)
+                };
+                let s_off = via_r + clearance + w / 2.0 + 0.02;
+                let dodge = |from: Vec2, to: Vec2, obst: Vec2| -> Vec<Vec2> {
+                    let ab = to - from;
+                    let l2 = ab.x * ab.x + ab.y * ab.y;
+                    if l2 < 1e-18 {
+                        return vec![from, to];
+                    }
+                    let t = (((obst.x - from.x) * ab.x + (obst.y - from.y) * ab.y) / l2)
+                        .clamp(0.0, 1.0);
+                    let proj = from + ab.scale(t);
+                    if dist(proj, obst) >= s_off || t <= 1e-6 || t >= 1.0 - 1e-6 {
+                        return vec![from, to];
+                    }
+                    let away = {
+                        let v = proj - obst;
+                        let vl = v.length();
+                        if vl < 1e-9 {
+                            ab.normalize().perp()
+                        } else {
+                            v.scale(1.0 / vl)
+                        }
+                    };
+                    vec![from, obst + away.scale(s_off), to]
+                };
+                let mut emit = |path: Vec<Vec2>, layer: PcbLayer| {
+                    for wp in path.windows(2) {
+                        if dist(wp[0], wp[1]) > 1e-9 {
+                            segments.push((wp[0], wp[1], layer));
+                        }
+                    }
+                };
+                emit(dodge(pe, own, other), pl);
+                emit(dodge(own, off[0], other), *layer);
+                vias.push((own, pl, *layer));
             }
             for wpair in off.windows(2) {
                 if dist(wpair[0], wpair[1]) > 1e-9 {
