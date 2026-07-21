@@ -2403,14 +2403,18 @@ fn reroute_victims_with_restore(
     ) {
         let restored = originals
             .remove(&conn_key(&net, from, to))
-            .filter(|orig| orig.stubs.is_empty())
             .and_then(|orig| {
+                // Stub-carrying routes (fan-out dog-bones, pair connectors)
+                // restore through the thin channel — before it existed they
+                // were dropped as unrouted, and once pair routes made stubs
+                // common the rip-up loop bled routes every round (si3: round
+                // 0 record 509, then pending exploded 56→124).
                 validate_and_commit(
                     session,
                     pcb,
                     Candidate {
-                        thin_segments: vec![],
-                        thin_width: orig.width,
+                        thin_segments: orig.stubs.clone(),
+                        thin_width: orig.stub_width,
                         net: orig.net.clone(),
                         from: orig.from,
                         to: orig.to,
