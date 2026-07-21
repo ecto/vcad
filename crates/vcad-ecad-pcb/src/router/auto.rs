@@ -1490,13 +1490,16 @@ pub(super) fn validate_and_commit(
             b: *b,
             half_w: hw,
         };
-        if !session.probe(&seg, *l, net, clearance).legal {
+        let pr = session.probe(&seg, *l, net, clearance);
+        if !pr.legal {
             log::debug!(
-                "validate: {net} segment ({:.2},{:.2})->({:.2},{:.2}) {l:?} w={w} illegal",
+                "validate: {net} segment ({:.2},{:.2})->({:.2},{:.2}) {l:?} w={w} illegal — blocker {} at {:.3}mm",
                 a.x,
                 a.y,
                 b.x,
-                b.y
+                b.y,
+                pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+                pr.min_clearance
             );
             return None;
         }

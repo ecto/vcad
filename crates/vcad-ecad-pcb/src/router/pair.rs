@@ -543,6 +543,44 @@ fn realize_legs(
         return None;
     }
 
+    // Simplify each centerline run before offsetting: merge collinear steps
+    // and dissolve segments shorter than the offset distance. Offsetting a
+    // grid staircase whose steps are shorter than half_sep folds the offset
+    // polyline back over itself — census 14's twin-blocker shorts.
+    let min_seg = half_sep * 2.0;
+    let simplify = |pts: &[Vec2]| -> Vec<Vec2> {
+        let mut out: Vec<Vec2> = vec![pts[0]];
+        for &p in &pts[1..pts.len() - 1] {
+            let a = *out.last().unwrap();
+            if dist(a, p) < min_seg {
+                continue;
+            }
+            // Drop collinear interior points.
+            if out.len() >= 2 {
+                let b = out[out.len() - 2];
+                let d0 = (a - b).normalize();
+                let d1 = (p - a).normalize();
+                if (d0.x * d1.y - d0.y * d1.x).abs() < 1e-9 && d0.dot(d1) > 0.0 {
+                    out.pop();
+                }
+            }
+            out.push(p);
+        }
+        let last = *pts.last().unwrap();
+        if out.len() >= 2 && dist(*out.last().unwrap(), last) < min_seg {
+            out.pop();
+        }
+        out.push(last);
+        out
+    };
+    let runs: Vec<(PcbLayer, Vec<Vec2>)> = runs
+        .into_iter()
+        .map(|(l, pts)| (l, simplify(&pts)))
+        .collect();
+    if runs.iter().any(|(_, pts)| pts.len() < 2) {
+        return None;
+    }
+
     let leg = |sign: f64| -> Option<Leg> {
         let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
         let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
