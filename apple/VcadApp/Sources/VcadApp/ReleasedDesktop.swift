@@ -1,5 +1,6 @@
 import AppKit
 import RealityKit
+import ScreenCaptureKit
 import SwiftUI
 
 // Release-to-desktop: RealityView's drawable on macOS always clears opaque, so
@@ -27,11 +28,22 @@ final class ReleaseWindowController {
     private var mouseMonitors: [Any] = []
     /// Set by ReleasedARView so the pass-through hit test can raycast the scene.
     weak var arView: ARView?
+    /// The kernel-space frame entity (scale + Z-up + centering applied), set by
+    /// ReleasedARView on rebuild — sketch taps convert world rays through it,
+    /// and the live sketch ink parents under it.
+    weak var centeringEntity: Entity?
+    /// Sketch mode is modal: the overlay owns the mouse everywhere, so clicks
+    /// land on the sketch plane instead of falling through to the desktop.
+    var sketchModal = false
+    /// Image-based lighting built from a snapshot of the desktop *behind* this
+    /// window, so the chrome parts reflect the actual desktop rather than an
+    /// invisible studio skybox. Rebuilt on show and whenever geometry rebuilds.
+    var desktopEnvironment: EnvironmentResource?
     /// Chrome regions (tool windows, pill) in overlay view coords (top-left
     /// origin), reported by SwiftUI — the overlay owns the mouse over these.
     var chromeRects: [String: CGRect] = [:]
 
-    func show(model: EditorModel) {
+    func show(model: EditorModel, intent: IntentEngine) {
         guard window == nil else { return }
         mainWindow = NSApp.keyWindow ?? NSApp.mainWindow
 
@@ -43,10 +55,11 @@ final class ReleaseWindowController {
         w.hasShadow = false
         w.level = .normal                       // stacks like any window, not always-on-top
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        w.contentView = NSHostingView(rootView: ReleasedOverlayView(model: model))
+        w.contentView = NSHostingView(rootView: ReleasedOverlayView(model: model, intent: intent))
         w.makeKeyAndOrderFront(nil)
         window = w
         mainWindow?.orderOut(nil)
+        refreshDesktopEnvironment()
 
         let update: () -> Void = { [weak self] in self?.updatePassThrough() }
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { _ in
@@ -64,6 +77,7 @@ final class ReleaseWindowController {
     private func updatePassThrough() {
         guard let w = window else { return }
         guard NSEvent.pressedMouseButtons == 0 else { return }
+        if sketchModal { w.ignoresMouseEvents = false; return }
         let winPoint = w.convertPoint(fromScreen: NSEvent.mouseLocation)
         let topLeft = CGPoint(x: winPoint.x, y: w.frame.height - winPoint.y)
         if chromeRects.values.contains(where: { $0.insetBy(dx: -8, dy: -8).contains(topLeft) }) {
@@ -80,11 +94,96 @@ final class ReleaseWindowController {
         mouseMonitors.forEach { NSEvent.removeMonitor($0) }
         mouseMonitors = []
         arView = nil
+        centeringEntity = nil
+        sketchModal = false
         chromeRects = [:]
+        desktopEnvironment = nil
         window?.orderOut(nil)
         window = nil
         mainWindow?.makeKeyAndOrderFront(nil)
         mainWindow = nil
+    }
+
+    /// Snapshot the screen *excluding* our transparent window (so the parts
+    /// aren't fed back into their own reflection) and bake it into an
+    /// equirectangular IBL. ScreenCaptureKit is async and needs Screen
+    /// Recording permission — the first release prompts for it; until granted
+    /// the capture returns nil and the chrome just falls back to default
+    /// lighting. Once the bake lands it's applied to the live ARView directly.
+    func refreshDesktopEnvironment() {
+        guard let w = window else { return }
+        let id = CGWindowID(w.windowNumber)
+        Task { @MainActor in
+            guard let shot = await Self.captureDesktop(excludingWindowID: id),
+                  let env = Self.equirectEnvironment(from: shot) else { return }
+            desktopEnvironment = env
+            if let ar = arView, !(arView?.scene.anchors.isEmpty ?? true) {
+                ar.environment.lighting.resource = env
+            }
+        }
+    }
+
+    private static func captureDesktop(excludingWindowID id: CGWindowID) async -> CGImage? {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true),
+              let display = content.displays.first else { return nil }
+        let excluded = content.windows.filter { $0.windowID == id }
+        let filter = SCContentFilter(display: display, excludingWindows: excluded)
+        let cfg = SCStreamConfiguration()
+        cfg.width = display.width
+        cfg.height = display.height
+        cfg.showsCursor = false
+        return try? await SCScreenshotManager.captureImage(
+            contentFilter: filter, configuration: cfg)
+    }
+
+    /// Wrap a flat desktop snapshot into a 2:1 equirectangular environment.
+    /// The desktop is drawn full-bleed (it's the whole visible surround) and a
+    /// vertical tonal gradient is multiplied over it — bright at the horizon,
+    /// falling off toward zenith/nadir — so reflective edges still catch a
+    /// readable highlight line instead of a flat wash, and the overall level is
+    /// pulled down so bright wallpapers don't blow out the chrome.
+    private static func equirectEnvironment(from desktop: CGImage) -> EnvironmentResource? {
+        let w = 2048, h = 1024
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        let fw = CGFloat(w), fh = CGFloat(h)
+        ctx.draw(desktop, in: CGRect(x: 0, y: 0, width: fw, height: fh))
+
+        // Pull the level down and shape it: a soft horizon-bright band keeps the
+        // metal from reading as a mirror of a too-bright screen.
+        ctx.setBlendMode(.multiply)
+        let tone = CGGradient(colorsSpace: cs, colors: [
+            CGColor(gray: 0.25, alpha: 1),   // nadir
+            CGColor(gray: 0.72, alpha: 1),
+            CGColor(gray: 0.85, alpha: 1),   // horizon — brightest
+            CGColor(gray: 0.72, alpha: 1),
+            CGColor(gray: 0.30, alpha: 1),   // zenith
+        ] as CFArray, locations: [0, 0.34, 0.5, 0.66, 1])!
+        ctx.drawLinearGradient(tone, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: fh), options: [])
+
+        guard let img = ctx.makeImage() else { return nil }
+        return try? EnvironmentResource(equirectangular: img)
+    }
+}
+
+extension ReleaseWindowController {
+    /// In-place re-eval → mesh swap for the released scene (the twin of the
+    /// studio's docParamDirty path): parameter scrubs and gizmo drags update
+    /// the floating parts without a rebuild pop. Plain (non-instanced) part
+    /// entities only — instanced docs settle on the next full rebuild.
+    func refreshGeometry(model: EditorModel, collisions: Bool = true) {
+        guard let centering = centeringEntity,
+              let meshes = model.reevalDocumentMeshes() else { return }
+        for (i, m) in meshes.enumerated() {
+            if let pe = centering.findEntity(named: "part\(i)") as? ModelEntity, pe.model != nil {
+                pe.model?.mesh = m
+                if collisions { pe.generateCollisionShapes(recursive: false) }
+            }
+        }
+        model.docParamDirty = false      // consumed here; the studio view is hidden
     }
 }
 
@@ -105,13 +204,14 @@ struct ChromeRegion: ViewModifier {
 /// which re-renders this view).
 struct ReleasedOverlayView: View {
     @Bindable var model: EditorModel
+    @Bindable var intent: IntentEngine
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ReleasedARView(model: model,
                            cameraPosition: model.cameraPosition,
                            lookAt: model.panOffset,
-                           geometryKey: "\(model.baseShape)|\(model.modifier)|\(model.modifierValue)|\(model.triangleCount)|\(model.zebraMode)|\(model.highlightedParts.sorted())|\(model.hiddenParts.sorted())|\(String(describing: model.isolatedPart))")
+                           geometryKey: "\(model.baseShape)|\(model.modifier)|\(model.modifierValue)|\(model.triangleCount)|\(model.zebraMode)|\(model.highlightedParts.sorted())|\(model.hiddenParts.sorted())|\(String(describing: model.isolatedPart))|\(model.sketching)")
                 .ignoresSafeArea()
             // ARView consumes mouse events — capture orbit/zoom on a clear
             // layer above it instead.
@@ -123,7 +223,20 @@ struct ReleasedOverlayView: View {
                 .gesture(SpatialTapGesture(coordinateSpace: .local).modifiers(.command)
                     .onEnded { value in tapSelect(at: value.location, additive: true) })
                 .gesture(SpatialTapGesture(coordinateSpace: .local)
-                    .onEnded { value in tapSelect(at: value.location, additive: false) })
+                    .onEnded { value in
+                        if model.sketching { sketchTap(at: value.location) }
+                        else { tapSelect(at: value.location, additive: false) }
+                    })
+                .onContinuousHover(coordinateSpace: .local) { phase in
+                    guard model.sketching else { return }
+                    switch phase {
+                    case .active(let p):
+                        model.sketchCursor = sketchPlanePoint(at: p)
+                    case .ended:
+                        model.sketchCursor = nil
+                    }
+                    refreshSketchInk()
+                }
             // BCB-style tool windows, hosted in the overlay itself (separate
             // NSPanels break SwiftUI hit testing after auto-resize).
             VStack(alignment: .leading, spacing: 12) {
@@ -146,6 +259,90 @@ struct ReleasedOverlayView: View {
                 .padding(16)
                 .modifier(ChromeRegion(key: "pill"))
         }
+        .overlay(alignment: .top) {
+            // Cross-domain gripper receipt — the released twin of the studio's
+            // top-center verification pill.
+            if model.source.isGripper {
+                GripperReceiptPill(model: model)
+                    .padding(.top, 16)
+                    .modifier(ChromeRegion(key: "gripper"))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            // Bottom cluster: the AI command bar (the app's spine) plus the
+            // kinematic transport when a timeline is loaded. Same views, same
+            // model/engine bindings as the studio — just floated over the desktop.
+            VStack(spacing: 10) {
+                if model.sketching {
+                    SketchHintBar(model: model)
+                        .modifier(ChromeRegion(key: "sketchHint"))
+                    SketchPaletteView(model: model)
+                        .modifier(ChromeRegion(key: "sketchPalette"))
+                } else {
+                    if model.timeline != nil {
+                        PlaybackBar(model: model)
+                            .modifier(ChromeRegion(key: "playback"))
+                    }
+                    if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
+                        ExampleChips(intent: intent)
+                            .modifier(ChromeRegion(key: "examples"))
+                    }
+                    ComposerBar(engine: intent, model: model)
+                        .modifier(ChromeRegion(key: "composer"))
+                }
+            }
+            .padding(.bottom, 16)
+            .animation(Motion.smooth, value: intent.draft.isEmpty)
+            .animation(Motion.smooth, value: model.timeline == nil)
+            .animation(Motion.panel, value: model.sketching)
+        }
+        .onChange(of: model.sketching) { _, on in
+            // Sketch is modal over the desktop: own the mouse everywhere while
+            // drawing, hand non-chrome/non-part mouse back when done.
+            ReleaseWindowController.shared.sketchModal = on
+            refreshSketchInk(force: true)
+        }
+        .onChange(of: model.sketchDirty) { _, dirty in
+            if dirty { refreshSketchInk() }
+        }
+    }
+
+    /// Screen point → kernel-space ray, through the ARView's native ray and
+    /// the kernel-frame (centering) entity — no hand-rolled camera math.
+    private func kernelRay(at p: CGPoint) -> (o: SIMD3<Float>, d: SIMD3<Float>)? {
+        guard let ar = ReleaseWindowController.shared.arView,
+              let centering = ReleaseWindowController.shared.centeringEntity else { return nil }
+        // SwiftUI hands us top-left-origin points; ray(through:) expects the
+        // ARView's native (unflipped AppKit, bottom-left) space — same flip the
+        // pass-through hit test does.
+        var vp = p
+        if !ar.isFlipped { vp.y = ar.bounds.height - vp.y }
+        guard let ray = ar.ray(through: vp) else { return nil }
+        let o = centering.convert(position: ray.origin, from: nil)
+        let d = normalize(centering.convert(direction: ray.direction, from: nil))
+        return (o, d)
+    }
+
+    /// Screen point → 2D sketch-plane coords.
+    private func sketchPlanePoint(at p: CGPoint) -> SIMD2<Float>? {
+        guard let ray = kernelRay(at: p) else { return nil }
+        return model.sketchPlanePoint(originKernel: ray.o, dirKernel: ray.d)
+    }
+
+    private func sketchTap(at p: CGPoint) {
+        guard let pt = sketchPlanePoint(at: p) else { return }
+        model.sketchTap(pt)
+        refreshSketchInk()
+    }
+
+    /// Rebuild the sketch ink under the kernel frame. Imperative (not keyed
+    /// through geometryKey) so a cursor move never re-tessellates the parts.
+    private func refreshSketchInk(force: Bool = false) {
+        guard force || model.sketchDirty || model.sketching else { return }
+        guard let centering = ReleaseWindowController.shared.centeringEntity else { return }
+        centering.findEntity(named: "sketchRoot")?.removeFromParent()
+        if model.sketching { centering.addChild(buildSketchRoot(model: model)) }
+        model.sketchDirty = false
     }
 
     /// Click a part to select it (⌘-click for the boolean multi-selection,
@@ -173,6 +370,27 @@ struct ReleasedOverlayView: View {
     private var orbitGesture: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
+                if model.lastDrag == .zero && !model.draggingHandle {
+                    // A drag that starts on a gizmo handle is a part transform,
+                    // not an orbit — same split the studio's targeted gesture
+                    // makes, done here via hitTest (the clear layer owns events).
+                    if let ar = ReleaseWindowController.shared.arView,
+                       let name = ar.hitTest(value.startLocation)
+                           .first(where: { model.gizmoHandle(for: $0.entity.name) != nil })?.entity.name,
+                       let ray = kernelRay(at: value.startLocation) {
+                        model.draggingHandle = true
+                        NSCursor.closedHand.set()
+                        model.beginGizmoDrag(handle: name, ray: ray)
+                        model.lastDrag = value.translation
+                        return
+                    }
+                }
+                if model.draggingHandle {
+                    if let ray = kernelRay(at: value.location) { model.gizmoDragTo(ray: ray) }
+                    refreshDraggedGeometry(final: false)
+                    model.lastDrag = value.translation
+                    return
+                }
                 if model.lastDrag == .zero { model.beginOrbit() }
                 let dx = Float(value.translation.width - model.lastDrag.width)
                 let dy = Float(value.translation.height - model.lastDrag.height)
@@ -185,8 +403,30 @@ struct ReleasedOverlayView: View {
             }
             .onEnded { _ in
                 model.lastDrag = .zero
-                model.endOrbit()
+                if model.draggingHandle {
+                    NSCursor.arrow.set()
+                    model.draggingHandle = false
+                    model.endGizmoDrag()
+                    refreshDraggedGeometry(final: true)
+                } else {
+                    model.endOrbit()
+                }
             }
+    }
+
+    /// Live-sync the dragged part: re-evaluate the document meshes in place and
+    /// swap them into the existing entities (plain parts only), then slide the
+    /// gizmo with the part. On `final`, also regenerate collision shapes and
+    /// rebuild the gizmo at its settled center.
+    private func refreshDraggedGeometry(final: Bool) {
+        guard let centering = ReleaseWindowController.shared.centeringEntity else { return }
+        ReleaseWindowController.shared.refreshGeometry(model: model, collisions: final)
+        if final {
+            centering.findEntity(named: "gizmoRoot")?.removeFromParent()
+            if model.showsGizmo { centering.addChild(buildGizmo(model: model)) }
+        } else if let c = model.gizmoCenterKernel() {
+            centering.findEntity(named: "gizmoRoot")?.position = c + model.gizmoLiveOffset
+        }
     }
 
     private var zoomGesture: some Gesture {
@@ -226,17 +466,30 @@ struct ReleasedARView: NSViewRepresentable {
         context.coordinator.anchor = anchor
         context.coordinator.camera = camera
         rebuild(in: anchor, coordinator: context.coordinator)
+        applyLighting(ar)
         syncCamera(context.coordinator)
         return ar
+    }
+
+    /// Reflect the real desktop: use the snapshot-derived IBL as the scene
+    /// lighting (zebra still wins when curvature analysis is on). The desktop
+    /// bake is built once on show and reused — re-baking the cubemap on every
+    /// geometry edit would stutter, and the desktop is static while you model.
+    /// Re-entering release mode re-snapshots (hide() clears the bake).
+    private func applyLighting(_ ar: ARView) {
+        if model.zebraMode {
+            ar.environment.lighting.resource = ViewportView.zebraEnvironment
+        } else {
+            let ctl = ReleaseWindowController.shared
+            if ctl.desktopEnvironment == nil { ctl.refreshDesktopEnvironment() }
+            ar.environment.lighting.resource = ctl.desktopEnvironment
+        }
     }
 
     func updateNSView(_ ar: ARView, context: Context) {
         if context.coordinator.builtKey != geometryKey {
             rebuild(in: context.coordinator.anchor, coordinator: context.coordinator)
-            // Zebra in released mode: striped IBL on chrome parts, desktop
-            // still visible behind (lighting only — never a skybox).
-            ar.environment.lighting.resource =
-                model.zebraMode ? ViewportView.zebraEnvironment : nil
+            applyLighting(ar)
         }
         syncCamera(context.coordinator)
     }
@@ -256,7 +509,15 @@ struct ReleasedARView: NSViewRepresentable {
         let sceneScale = 0.6 / max(scene.size, 0.0001)
 
         let centering = Entity()
+        centering.name = "centering"
         centering.position = -scene.center
+        ReleaseWindowController.shared.centeringEntity = centering
+        // Keep the in-progress sketch ink alive across geometry rebuilds.
+        if model.sketching { centering.addChild(buildSketchRoot(model: model)) }
+        // Transform gizmo on the selected part — same shared builder as the
+        // studio; its handle proxies carry collision shapes, so the ARView
+        // hitTest (drag start + pass-through) sees them like parts.
+        if model.showsGizmo { centering.addChild(buildGizmo(model: model)) }
         for (i, item) in scene.meshes.enumerated() {
             var m = PhysicallyBasedMaterial()
             if model.zebraMode {
@@ -469,6 +730,32 @@ struct ObjectInspectorWindow: View {
                         .labelsHidden()
                         .controlSize(.small)
                         .frame(width: 150)
+                    }
+                }
+                if !model.docParameters.isEmpty {
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    // Document-level named parameters — the web app's property
+                    // panel scrub, floating over the desktop. Edits re-solve
+                    // every bound node and mesh-swap in place (no rebuild pop).
+                    ForEach(model.docParameters) { p in
+                        GridRow {
+                            Text(p.name).font(.system(size: 11)).foregroundStyle(.secondary)
+                                .help(p.description ?? p.name)
+                            if let v = p.value {
+                                ScrubField(label: "", value: v, unit: p.unit ?? "mm",
+                                           sensitivity: InspectorView.paramSensitivity(p),
+                                           minValue: p.min ?? -.greatestFiniteMagnitude) { v, s in
+                                    model.editParameter(p.name, value: v, snapshot: s)
+                                    // Collisions on typed commits / scrub start
+                                    // only — per-tick regen would stutter big docs.
+                                    ReleaseWindowController.shared.refreshGeometry(model: model, collisions: s)
+                                }
+                                .frame(width: 150)
+                            } else if let f = p.formula {
+                                Text("= \(f)").font(.system(size: 11).monospacedDigit())
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
                     }
                 }
                 Divider().gridCellUnsizedAxes(.horizontal)

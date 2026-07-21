@@ -107,7 +107,7 @@ struct EditorView: View {
                 .navigationTitle(model.documentName)
                 .onChange(of: model.releaseMode) { _, released in
                     if released {
-                        ReleaseWindowController.shared.show(model: model)
+                        ReleaseWindowController.shared.show(model: model, intent: intent)
                     } else {
                         ReleaseWindowController.shared.hide()
                     }
@@ -122,9 +122,11 @@ struct EditorView: View {
                     if let path = env["VCAD_OPEN"], !path.isEmpty {
                         model.openDocument(URL(fileURLWithPath: path))
                     }
-                    // Dev hook: VCAD_RELEASE=1 enters release-to-desktop on launch
-                    // (headless hit-test debugging without driving the menu).
-                    if env["VCAD_RELEASE"] == "1" {
+                    // Release-to-desktop is the default launch mode; VCAD_RELEASE=0
+                    // opts out (studio window on launch, handy for dev/debugging).
+                    // The 1s delay lets the window exist before the release
+                    // controller reparents it.
+                    if env["VCAD_RELEASE"] != "0" {
                         try? await Task.sleep(for: .seconds(1))
                         model.releaseMode = true
                     }
@@ -1350,7 +1352,7 @@ struct ViewportView: View {
             // way every desktop CAD tool does (zooming never balloons it).
             if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                let gizmo = root.findEntity(named: "gizmoRoot") {
-                gizmo.scale = SIMD3<Float>(repeating: gizmoScreenScale())
+                gizmo.scale = SIMD3<Float>(repeating: gizmoScreenScale(model: model))
             }
             if model.zebraDirty {
                 var mutableContent = content
@@ -1493,7 +1495,7 @@ struct ViewportView: View {
                 if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                    let centering = root.findEntity(named: "centering") {
                     centering.findEntity(named: "sketchRoot")?.removeFromParent()
-                    if model.sketching { centering.addChild(buildSketchRoot()) }
+                    if model.sketching { centering.addChild(buildSketchRoot(model: model)) }
                 }
                 model.sketchDirty = false
             }
@@ -1852,7 +1854,7 @@ struct ViewportView: View {
             centering.addChild(buildCopperRoot(model.routeGripperCopper()))
         }
         if model.showsGizmo {
-            centering.addChild(buildGizmo())
+            centering.addChild(buildGizmo(model: model))
         }
 
         let zUp = Entity()
@@ -2110,15 +2112,27 @@ struct ViewportView: View {
         copperRoot.components.set(OpacityComponent(opacity: dim ? 0.3 : 1.0))
     }
 
-    // MARK: sketch preview overlay
+    // MARK: transform gizmo overlay
 
-    /// Build the in-progress sketch: committed segments + vertex dots in brand
-    /// pink, plus a cyan rubber-band from the last point / anchor to the cursor.
-    private func buildSketchRoot() -> Entity {
-        let root = Entity(); root.name = "sketchRoot"
-        let ink = NSColor(srgbRed: 0.98, green: 0.15, blue: 0.45, alpha: 1.0)   // brand pink
-        let live = NSColor(srgbRed: 0.55, green: 0.92, blue: 1.0, alpha: 1.0)   // cyan
-        let verts = model.sketchVerts
+    /// Near-black unlit material for the feature-edge overlay — reads as ink
+    /// lines over the shaded surfaces, the classic CAD look.
+    private static let edgeMaterial: UnlitMaterial = {
+        UnlitMaterial(color: NSColor(white: 0.09, alpha: 1.0))
+    }()
+}
+
+// MARK: sketch preview overlay (shared: studio viewport + released desktop)
+
+/// Build the in-progress sketch: committed segments + vertex dots in brand
+/// pink, plus a cyan rubber-band from the last point / anchor to the cursor.
+/// Shared between the studio viewport and the released-desktop ARView — both
+/// parent it under their `centering` entity, so kernel coords line up.
+@MainActor
+func buildSketchRoot(model: EditorModel) -> Entity {
+    let root = Entity(); root.name = "sketchRoot"
+    let ink = NSColor(srgbRed: 0.98, green: 0.15, blue: 0.45, alpha: 1.0)   // brand pink
+    let live = NSColor(srgbRed: 0.55, green: 0.92, blue: 1.0, alpha: 1.0)   // cyan
+    let verts = model.sketchVerts
 
         func seg(_ a2: SIMD2<Float>, _ b2: SIMD2<Float>, _ color: NSColor) {
             let a = model.sketchWorld(a2), b = model.sketchWorld(b2)
@@ -2177,47 +2191,49 @@ struct ViewportView: View {
             }
         }
         return root
-    }
+}
 
-    // MARK: transform gizmo overlay
+// MARK: transform gizmo overlay (shared: studio viewport + released desktop)
 
-    /// Near-black unlit material for the feature-edge overlay — reads as ink
-    /// lines over the shaded surfaces, the classic CAD look.
-    private static let edgeMaterial: UnlitMaterial = {
-        UnlitMaterial(color: NSColor(white: 0.09, alpha: 1.0))
-    }()
+/// Gizmo handle ink: X red / Y green / Z blue.
+enum GizmoInk {
+    static let x = NSColor(srgbRed: 0.95, green: 0.30, blue: 0.34, alpha: 1)
+    static let y = NSColor(srgbRed: 0.42, green: 0.80, blue: 0.44, alpha: 1)
+    static let z = NSColor(srgbRed: 0.32, green: 0.58, blue: 0.98, alpha: 1)
 
-    private static let gizmoX = NSColor(srgbRed: 0.95, green: 0.30, blue: 0.34, alpha: 1)
-    private static let gizmoY = NSColor(srgbRed: 0.42, green: 0.80, blue: 0.44, alpha: 1)
-    private static let gizmoZ = NSColor(srgbRed: 0.32, green: 0.58, blue: 0.98, alpha: 1)
-
-    private func brighten(_ c: NSColor) -> NSColor {
+    static func brighten(_ c: NSColor) -> NSColor {
         let s = c.usingColorSpace(.sRGB) ?? c
         return NSColor(srgbRed: min(1, s.redComponent * 1.2 + 0.18),
                        green: min(1, s.greenComponent * 1.2 + 0.18),
                        blue: min(1, s.blueComponent * 1.2 + 0.18), alpha: 1)
     }
+}
 
-    /// Scale factor that keeps the gizmo a constant fraction of the view
-    /// height: target world arm length is proportional to orbit distance, so
-    /// zooming in/out never changes its apparent size.
-    private func gizmoScreenScale() -> Float {
-        let armKernel = model.gizmoArmLength()
-        let armWorld = armKernel * model.displayScale
-        guard armWorld > 1e-6 else { return 1 }
-        return (0.14 * model.distance) / armWorld
-    }
+/// Scale factor that keeps the gizmo a constant fraction of the view
+/// height: target world arm length is proportional to orbit distance, so
+/// zooming in/out never changes its apparent size.
+@MainActor
+func gizmoScreenScale(model: EditorModel) -> Float {
+    let armKernel = model.gizmoArmLength()
+    let armWorld = armKernel * model.displayScale
+    guard armWorld > 1e-6 else { return 1 }
+    return (0.14 * model.distance) / armWorld
+}
 
-    /// A refined translate gizmo: cylinder shafts + cone arrowheads (axis drag),
-    /// corner squares (plane drag), a pearl hub, and invisible full-length grab
-    /// proxies. The hovered handle brightens + thickens. X red / Y green / Z blue.
-    private func buildGizmo() -> Entity {
-        let root = Entity(); root.name = "gizmoRoot"
-        guard let c = model.gizmoCenterKernel() else { return root }
+/// A refined translate gizmo: cylinder shafts + cone arrowheads (axis drag),
+/// corner squares (plane drag), a pearl hub, and invisible full-length grab
+/// proxies. The hovered handle brightens + thickens. X red / Y green / Z blue.
+/// Shared between the studio viewport and the released desktop — both parent
+/// it under their `centering` entity (kernel coords).
+@MainActor
+func buildGizmo(model: EditorModel) -> Entity {
+    func brighten(_ c: NSColor) -> NSColor { GizmoInk.brighten(c) }
+    let root = Entity(); root.name = "gizmoRoot"
+    guard let c = model.gizmoCenterKernel() else { return root }
         // Children live in gizmo-local coords; the root carries the center so
         // the whole gizmo can be scaled per-frame for constant screen size.
         root.position = c
-        root.scale = SIMD3<Float>(repeating: gizmoScreenScale())
+        root.scale = SIMD3<Float>(repeating: gizmoScreenScale(model: model))
         let len = model.gizmoArmLength()
         let shaftR = max(0.3, len * 0.013)
         let headLen = len * 0.2
@@ -2226,9 +2242,9 @@ struct ViewportView: View {
         let hov = model.hoveredGizmoHandle
 
         let axes: [(name: String, dir: SIMD3<Float>, color: NSColor)] = [
-            ("gizmoX", SIMD3(1, 0, 0), Self.gizmoX),
-            ("gizmoY", SIMD3(0, 1, 0), Self.gizmoY),
-            ("gizmoZ", SIMD3(0, 0, 1), Self.gizmoZ),
+            ("gizmoX", SIMD3(1, 0, 0), GizmoInk.x),
+            ("gizmoY", SIMD3(0, 1, 0), GizmoInk.y),
+            ("gizmoZ", SIMD3(0, 0, 1), GizmoInk.z),
         ]
         for a in axes {
             let on = hov == a.name
@@ -2253,9 +2269,9 @@ struct ViewportView: View {
         // Plane handles — a square in the corner of each axis pair (normal colored).
         let pOff = model.gizmoPlaneOffset, pSize = model.gizmoPlaneSize
         let planes: [(name: String, a: SIMD3<Float>, b: SIMD3<Float>, color: NSColor)] = [
-            ("planeXY", SIMD3(1, 0, 0), SIMD3(0, 1, 0), Self.gizmoZ),
-            ("planeYZ", SIMD3(0, 1, 0), SIMD3(0, 0, 1), Self.gizmoX),
-            ("planeXZ", SIMD3(1, 0, 0), SIMD3(0, 0, 1), Self.gizmoY),
+            ("planeXY", SIMD3(1, 0, 0), SIMD3(0, 1, 0), GizmoInk.z),
+            ("planeYZ", SIMD3(0, 1, 0), SIMD3(0, 0, 1), GizmoInk.x),
+            ("planeXZ", SIMD3(1, 0, 0), SIMD3(0, 0, 1), GizmoInk.y),
         ]
         for p in planes {
             let on = hov == p.name
@@ -2278,9 +2294,9 @@ struct ViewportView: View {
         let tube = max(0.25, len * 0.013)
         let segN = 40
         let rings: [(name: String, axis: SIMD3<Float>, color: NSColor)] = [
-            ("rotX", SIMD3(1, 0, 0), Self.gizmoX),
-            ("rotY", SIMD3(0, 1, 0), Self.gizmoY),
-            ("rotZ", SIMD3(0, 0, 1), Self.gizmoZ),
+            ("rotX", SIMD3(1, 0, 0), GizmoInk.x),
+            ("rotY", SIMD3(0, 1, 0), GizmoInk.y),
+            ("rotZ", SIMD3(0, 0, 1), GizmoInk.z),
         ]
         for r in rings {
             let on = hov == r.name
@@ -2308,15 +2324,16 @@ struct ViewportView: View {
 
         let hub = ModelEntity(mesh: .generateSphere(radius: shaftR * 2.4),
                               materials: [UnlitMaterial(color: NSColor(white: 0.95, alpha: 1))])
-        root.addChild(hub)
-        return root
-    }
+    root.addChild(hub)
+    return root
+}
 
+extension ViewportView {
     private func rebuildGizmo(_ content: RealityViewCameraContent) {
         guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
               let centering = root.findEntity(named: "centering") else { return }
         centering.findEntity(named: "gizmoRoot")?.removeFromParent()
-        if model.showsGizmo { centering.addChild(buildGizmo()) }
+        if model.showsGizmo { centering.addChild(buildGizmo(model: model)) }
     }
 
     // MARK: pattern instancing helpers
