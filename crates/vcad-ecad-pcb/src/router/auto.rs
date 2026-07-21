@@ -1491,6 +1491,13 @@ pub(super) fn validate_and_commit(
             half_w: hw,
         };
         if !session.probe(&seg, *l, net, clearance).legal {
+            log::debug!(
+                "validate: {net} segment ({:.2},{:.2})->({:.2},{:.2}) {l:?} w={w} illegal",
+                a.x,
+                a.y,
+                b.x,
+                b.y
+            );
             return None;
         }
     }
@@ -1541,6 +1548,11 @@ pub(super) fn validate_and_commit(
             .iter()
             .all(|&l| session.probe(&disc, l, net, clearance).legal);
         if !legal {
+            log::debug!(
+                "validate: {net} via ({:.2},{:.2}) {la:?}..{lb:?} illegal",
+                p.x,
+                p.y
+            );
             return None;
         }
         new_vias.push((p, la, lb));

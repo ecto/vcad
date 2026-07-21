@@ -153,9 +153,14 @@ pub(super) fn try_route_pair(
 
     let (w, gap) = pair_geometry(session, pcb, net, width);
     let half_sep = (w + gap) / 2.0;
-    let fat_w = 2.0 * w + gap;
     let via_d = pcb.rules.default_rules.via_diameter;
     let clearance = session.clearance_for(net);
+    // The phantom corridor must cover everything realize_legs emits: the two
+    // legs AND the via dog-bones, which sit at ±via_off with via_d discs
+    // (census 11: leg segments/jogs stepped outside a 2w+gap corridor onto
+    // unprobed copper whenever the search dropped a layer change).
+    let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
+    let fat_w = (2.0 * w + gap).max(2.0 * via_off + via_d);
     let copper = copper_layers(pcb);
     let first_layer = *copper.first().unwrap_or(&PcbLayer::FCu);
 
@@ -299,7 +304,6 @@ pub(super) fn try_route_pair(
     };
 
     // Realize the two legs from the centerline.
-    let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
     let (leg_a, leg_b) = match realize_legs(&r.segments, half_sep, via_off) {
         Some(l) => l,
         None => {
