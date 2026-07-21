@@ -400,30 +400,6 @@ pub(super) fn try_route_pair(
             None
         }
     };
-    let build =
-        |session: &RouteSession, leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Option<Candidate> {
-            let (head_segs, head_vias) =
-                connect(session, net, from, leg.first, leg.first_layer, leg)?;
-            let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer, leg)?;
-            // Connectors are the neck-down: they commit at `nw` via the thin
-            // channel, while the coupled leg stays at the class width.
-            let mut thin = head_segs;
-            // Tail connector was searched pad→leg; reverse into leg→pad order.
-            thin.extend(tail_segs.into_iter().rev().map(|(a, b, l)| (b, a, l)));
-            let mut vias = leg.vias.clone();
-            vias.extend(head_vias);
-            vias.extend(tail_vias);
-            Some(Candidate {
-                net: net.to_string(),
-                from,
-                to,
-                width: w,
-                segments: leg.segments.clone(),
-                vias,
-                thin_segments: thin,
-                thin_width: nw,
-            })
-        };
     // Ordering (census 9's lesson): commit BOTH legs first — they are
     // parallel and disjoint by construction — then route the four pad
     // connectors against the complete picture, so no connector can cut the
