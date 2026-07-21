@@ -248,6 +248,9 @@ pub(super) struct Placed {
     /// Fan-out / dog-bone stubs that escape a fine-pitch pad to its via, each on
     /// its own copper layer (the pad's layer). Emitted as traces, not on `layer`.
     pub(super) stubs: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Width the stubs were committed at (fan-out: the net width; pair
+    /// connectors: the board default — the neck-down width).
+    pub(super) stub_width: f64,
     pub(super) via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
     pub(super) spans: Vec<SpanId>,
 }
@@ -471,7 +474,7 @@ pub fn route_all_with_opts(
             traces.push(RoutedTrace {
                 start: *a,
                 end: *b,
-                width: p.width,
+                width: p.stub_width,
                 layer: *l,
                 net: p.net.clone(),
             });
@@ -1310,6 +1313,12 @@ pub(super) struct Candidate {
     pub(super) width: f64,
     pub(super) segments: Vec<(Vec2, Vec2, PcbLayer)>,
     pub(super) vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+    /// Segments probed and committed at [`Candidate::thin_width`] instead of
+    /// `width` — the neck-down channel (pair connectors through pin fields).
+    /// They land in [`Placed::stubs`].
+    pub(super) thin_segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Width for `thin_segments` (defaults to `width` when unused).
+    pub(super) thin_width: f64,
 }
 
 /// The pure-search half of [`try_route`]: find a clearance-legal route
@@ -1404,6 +1413,8 @@ pub(super) fn search_route(
         // every resume because the ratsnest keys completion off traces).
         log::debug!("{net}: connection already satisfied by existing copper contact");
         return Some(Candidate {
+            thin_segments: vec![],
+            thin_width: width,
             net: net.to_string(),
             from,
             to,
@@ -1443,6 +1454,8 @@ pub(super) fn search_route(
     };
 
     Some(Candidate {
+        thin_segments: vec![],
+        thin_width: width,
         net: net.to_string(),
         from,
         to,
@@ -1476,6 +1489,17 @@ pub(super) fn validate_and_commit(
             a: *a,
             b: *b,
             half_w: hw,
+        };
+        if !session.probe(&seg, *l, net, clearance).legal {
+            return None;
+        }
+    }
+    let thin_hw = cand.thin_width / 2.0;
+    for (a, b, l) in &cand.thin_segments {
+        let seg = CopperGeom::Segment {
+            a: *a,
+            b: *b,
+            half_w: thin_hw,
         };
         if !session.probe(&seg, *l, net, clearance).legal {
             return None;
@@ -1526,6 +1550,9 @@ pub(super) fn validate_and_commit(
     for (a, b, l) in &segments {
         spans.push(commit_seg(session, net, *a, *b, hw, *l));
     }
+    for (a, b, l) in &cand.thin_segments {
+        spans.push(commit_seg(session, net, *a, *b, thin_hw, *l));
+    }
     for &(p, la, lb) in &new_vias {
         commit_via(session, net, p, via_r, span_slice(la, lb), &mut spans);
     }
@@ -1535,7 +1562,8 @@ pub(super) fn validate_and_commit(
         to: cand.to,
         width: w,
         segments,
-        stubs: Vec::new(),
+        stubs: cand.thin_segments,
+        stub_width: cand.thin_width,
         via_pts: new_vias,
         spans,
     })
@@ -1822,6 +1850,7 @@ fn try_route_fanout(
         width: w,
         segments: rb.segments.into_iter().map(|(a, b)| (a, b, back)).collect(),
         stubs,
+        stub_width: w,
         via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
     })
@@ -2353,6 +2382,8 @@ fn reroute_victims_with_restore(
                     session,
                     pcb,
                     Candidate {
+                        thin_segments: vec![],
+                        thin_width: orig.width,
                         net: orig.net.clone(),
                         from: orig.from,
                         to: orig.to,
@@ -2543,6 +2574,8 @@ fn joint_window_repair(
                                     }
                                 }
                                 let cand = Candidate {
+                                    thin_segments: vec![],
+                                    thin_width: session.width_for(&conn.0, width),
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
@@ -3703,6 +3736,7 @@ mod tests {
             width: 0.25,
             segments,
             stubs: Vec::new(),
+            stub_width: 0.25,
             via_pts: Vec::new(),
             spans,
         }];

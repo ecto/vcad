@@ -7002,6 +7002,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel-math",
  "vcad-kernel-sheet",
+ "vcad-receipt",
 ]
 
 [[package]]

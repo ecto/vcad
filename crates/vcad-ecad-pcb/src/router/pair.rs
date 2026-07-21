@@ -213,6 +213,8 @@ pub(super) fn try_route_pair(
     let restore = |session: &mut RouteSession, placed: &mut Vec<Placed>, ripped: Vec<Placed>| {
         for orig in ripped {
             let cand = Candidate {
+                thin_segments: vec![],
+                thin_width: orig.width,
                 net: orig.net.clone(),
                 from: orig.from,
                 to: orig.to,
@@ -321,6 +323,10 @@ pub(super) fn try_route_pair(
     // single width when the crow-flight would thread a pin field (the second
     // CM5 bail census: 71 leg validations failed on straight stubs crossing
     // field copper after the neck-down retreat).
+    // Neck-down width for pad connectors: the board's default single-ended
+    // width. A 0.2mm pair leg cannot pass between 0.4mm-pitch pads; the
+    // 0.08mm single can — exactly how the human escapes these fields.
+    let nw = pcb.rules.default_rules.trace_width.min(w);
     type ConnectorCopper = (Vec<(Vec2, Vec2, PcbLayer)>, Vec<(Vec2, PcbLayer, PcbLayer)>);
     let connect = |session: &RouteSession,
                    net: &str,
@@ -331,7 +337,7 @@ pub(super) fn try_route_pair(
         if dist(from, to) <= 1e-9 {
             return Some((vec![], vec![]));
         }
-        if dist(from, to) <= w * 2.0 {
+        if dist(from, to) <= nw * 2.0 {
             return Some((vec![(from, to, to_layer)], vec![]));
         }
         let margin = 4.0 + w;
@@ -348,7 +354,7 @@ pub(super) fn try_route_pair(
             &copper,
             to,
             &[to_layer],
-            w,
+            nw,
             via_d,
             Some(cong),
             120_000,
@@ -361,6 +367,15 @@ pub(super) fn try_route_pair(
         if r.success {
             Some((r.segments, r.vias))
         } else {
+            log::debug!(
+                "pair-connector: {net} {:.2}mm ({:.2},{:.2})->({:.2},{:.2}) layer {:?} failed",
+                dist(from, to),
+                from.x,
+                from.y,
+                to.x,
+                to.y,
+                to_layer
+            );
             None
         }
     };
@@ -368,12 +383,11 @@ pub(super) fn try_route_pair(
         |session: &RouteSession, leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Option<Candidate> {
             let (head_segs, head_vias) = connect(session, net, from, leg.first, leg.first_layer)?;
             let (tail_segs, tail_vias) = connect(session, net, to, leg.last, leg.last_layer)?;
-            let mut segments =
-                Vec::with_capacity(leg.segments.len() + head_segs.len() + tail_segs.len());
-            segments.extend(head_segs);
-            segments.extend(leg.segments.iter().copied());
+            // Connectors are the neck-down: they commit at `nw` via the thin
+            // channel, while the coupled leg stays at the class width.
+            let mut thin = head_segs;
             // Tail connector was searched pad→leg; reverse into leg→pad order.
-            segments.extend(tail_segs.into_iter().rev().map(|(a, b, l)| (b, a, l)));
+            thin.extend(tail_segs.into_iter().rev().map(|(a, b, l)| (b, a, l)));
             let mut vias = leg.vias.clone();
             vias.extend(head_vias);
             vias.extend(tail_vias);
@@ -382,8 +396,10 @@ pub(super) fn try_route_pair(
                 from,
                 to,
                 width: w,
-                segments,
+                segments: leg.segments.clone(),
                 vias,
+                thin_segments: thin,
+                thin_width: nw,
             })
         };
     // Build-and-commit SEQUENTIALLY: leg 2's connectors are searched against
