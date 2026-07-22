@@ -392,7 +392,10 @@ fn render_pcb_view(pcb: &vcad_ir::ecad::Pcb, cli: &Cli) -> String {
         pcb,
         &layers,
         cli.scale,
-        &vcad_render::pcb::PcbRenderOpts::default(),
+        &vcad_render::pcb::PcbRenderOpts {
+            transparent: cli.transparent,
+            ..Default::default()
+        },
     )
 }
 

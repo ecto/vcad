@@ -844,6 +844,12 @@ const STYLES = `
   }
   .spec-expected .run-render { padding: 0; margin: 0; justify-content: center; }
   .spec-expected .run-render svg { max-height: 360px; }
+  /* PCB renders carry a small intrinsic px size (mm × scale); let them
+     grow to the tile instead of rendering postage-stamp sized. */
+  .spec-expected .run-render svg[aria-label="vcad pcb render"],
+  .run-render svg[aria-label="vcad pcb render"] {
+    width: 100%; height: auto; max-height: 420px;
+  }
 
   .check-list { margin: var(--s2) 0; }
   .check-item {
