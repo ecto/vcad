@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-kicad-sch-export-netlist",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "fix",
+  "title": "KiCad schematic export carries the netlist",
+  "summary": "Schematics authored via create_schematic now export with usable symbol bodies and wire-plus-global-label connectivity, so KiCad 9 sees the nets instead of an empty sheet.",
+  "features": ["pcb", "kicad", "export"],
+  "mcpTools": ["export_kicad", "create_schematic"]
+}
