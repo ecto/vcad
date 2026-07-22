@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-pcb-widget-inline-preview",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "fix",
+  "title": "PCB widget shows the placed board in every host",
+  "summary": "place_components and other mount tools now always carry an inline preview GLB, so the viewer widget renders the board instead of 'no geometry to preview' in hosts like Claude Code.",
+  "features": ["mcp-viewer", "pcb"],
+  "mcpTools": ["place_components", "get_preview_glb"]
+}

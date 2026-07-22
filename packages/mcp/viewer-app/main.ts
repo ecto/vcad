@@ -1010,7 +1010,13 @@ async function fetchAndRenderGlb(
   })) as ToolResultLike;
   const glb = findInlineGlb(previewResult);
   if (!glb) {
-    setStatus("no geometry to preview", "idle");
+    // An error result (e.g. the session isn't resident on the instance that
+    // answered) is not the same as an empty document — say so instead of
+    // masquerading as "no geometry".
+    setStatus(
+      previewResult?.isError ? "preview unavailable" : "no geometry to preview",
+      "idle",
+    );
     return;
   }
   const ver = findPreviewVersion(previewResult);
