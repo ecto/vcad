@@ -146,6 +146,10 @@ pub struct RouteSession {
     dead: usize,
     net_ties: NetTieGroups,
     net_clearance: HashMap<String, f64>,
+    /// net → (twin net, gap, leg width) for declared differential pairs: the
+    /// probe enforces the pair GAP between the twins' leg-width copper, so no
+    /// routing stage can emit an intra-pair pinch the DRC would flag.
+    pair_rules: HashMap<String, (String, f64, f64)>,
     default_clearance: f64,
     /// Largest clearance any net requires — the broadphase must reach this far
     /// so a wide net's clearance is never missed when it exceeds the candidate's.
@@ -205,6 +209,14 @@ impl RouteSession {
             dead: 0,
             net_ties: NetTieGroups::from_pcb(pcb),
             net_clearance,
+            pair_rules: {
+                let mut m = HashMap::new();
+                for dp in crate::drc::diff_pairs(pcb) {
+                    m.insert(dp.net_p.clone(), (dp.net_n.clone(), dp.gap, dp.width));
+                    m.insert(dp.net_n.clone(), (dp.net_p.clone(), dp.gap, dp.width));
+                }
+                m
+            },
             default_clearance,
             max_clearance,
             net_width: build_net_trace_width_map(pcb),
@@ -444,7 +456,22 @@ impl RouteSession {
             // DRC clearance pass (which flags the pair from whichever side has
             // the bigger requirement). A wide power net thus pushes thin signals
             // away by its own clearance, not theirs.
-            let required = clearance.max(self.clearance_for(&e.net));
+            let mut required = clearance.max(self.clearance_for(&e.net));
+            // Intra-pair gap rule, mirrored from the DRC: both elements at
+            // the pair's leg width must keep the declared gap (minus the 5um
+            // exact-coupling tolerance). Necks and other thin copper keep the
+            // base clearance — the uncoupled entry region.
+            if let Some((twin, gap, leg_w)) = self.pair_rules.get(net) {
+                if &e.net == twin {
+                    let fat = |g: &CopperGeom| match g {
+                        CopperGeom::Segment { half_w, .. } => 2.0 * half_w >= leg_w - 0.01,
+                        _ => false,
+                    };
+                    if fat(geom) && fat(&e.geom) {
+                        required = required.max(gap - 0.005);
+                    }
+                }
+            }
             if d < required {
                 blockers.push(Blocker {
                     span: se.id,
