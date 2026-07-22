@@ -1,0 +1,531 @@
+{
+  "schema_version": 0,
+  "task_id": "p1-decoupled-mcu-01",
+  "task_sha256": "edc164781ab1b37e793866323026330b98404260ee3226b9771203b10352fb83",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          50
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 40,
+            "width_mm": 40
+          }
+        ],
+        "max_mm": [
+          50,
+          50
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 4
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 4,
+        "min": 4
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "sample": [],
+        "violations": 0
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T135102Z-c9cf",
+  "model": {
+    "id": "gateway-mcp-openai-gpt-5",
+    "name": "AI Gateway (MCP, openai/gpt-5)",
+    "provider": "openai",
+    "params": {
+      "mode": "mcp",
+      "model": "openai/gpt-5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p1-decoupled-mcu-01",
+    "rendered": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors adjacent to its power pins, and a 4-pin programming header. Board outline at most 50mm × 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected — decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.162417000000005
+      },
+      {
+        "n": 1,
+        "tool": "search_footprints",
+        "args": {
+          "query": "TQFP-32 7x7mm 0.8mm"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.989832999999635
+      },
+      {
+        "n": 2,
+        "tool": "search_footprints",
+        "args": {
+          "query": "PinHeader 1x4 P2.54mm"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0667500000017753
+      },
+      {
+        "n": 3,
+        "tool": "search_footprints",
+        "args": {
+          "query": "0603 capacitor"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7033330000012938
+      },
+      {
+        "n": 4,
+        "tool": "create_schematic",
+        "args": {
+          "title": "MCU QFP board with decoupling and 4-pin programmer",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU_TQFP32",
+              "footprint": "Package_QFP:TQFP-32_7x7mm_P0.8mm",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "PROG_CLK",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "PROG_IO",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "IO3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "VCC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "GND1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "IO6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "IO7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "IO8",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "IO9",
+                  "type": "Passive"
+                },
+                {
+                  "number": "10",
+                  "name": "IO10",
+                  "type": "Passive"
+                },
+                {
+                  "number": "11",
+                  "name": "IO11",
+                  "type": "Passive"
+                },
+                {
+                  "number": "12",
+                  "name": "IO12",
+                  "type": "Passive"
+                },
+                {
+                  "number": "13",
+                  "name": "IO13",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "IO14",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "IO15",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "IO16",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "GND2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "VCC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "IO19",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "IO20",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "IO21",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "IO22",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "IO23",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "IO24",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "IO25",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "IO26",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "IO27",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "IO28",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "IO29",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "IO30",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "IO31",
+                  "type": "Passive"
+                },
+                {
+                  "number": "32",
+                  "name": "IO32",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "100nF",
+              "footprint": "Capacitor_SMD:C_0603_1608Metric",
+              "x": 100,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "C1_1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "C1_2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "100nF",
+              "footprint": "Capacitor_SMD:C_0603_1608Metric",
+              "x": 100,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "C2_1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "C2_2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "ProgHeader",
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm",
+              "x": 20,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VCC",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG_CLK",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PROG_IO",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VCC": [
+              "U1.4",
+              "U1.18",
+              "C1.1",
+              "C2.1",
+              "J1.1"
+            ],
+            "GND": [
+              "U1.5",
+              "U1.17",
+              "C1.2",
+              "C2.2",
+              "J1.2"
+            ],
+            "PROG_CLK": [
+              "U1.1",
+              "J1.3"
+            ],
+            "PROG_IO": [
+              "U1.2",
+              "J1.4"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.0899589999971795
+      },
+      {
+        "n": 5,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_ldD88RYWWET5",
+          "board_width": 40,
+          "board_height": 40,
+          "strategy": "force_directed",
+          "edge_margin": 2
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 20.90549999999348
+      },
+      {
+        "n": 6,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ldD88RYWWET5",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 20,
+              "y": 20,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "C1",
+              "x": 27.5,
+              "y": 20,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "C2",
+              "x": 12.5,
+              "y": 20,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 5,
+              "rotation": 90,
+              "side": "top"
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9303329999966081
+      },
+      {
+        "n": 7,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_ldD88RYWWET5",
+          "clearance": 0.2,
+          "track_width": 0.25,
+          "via_diameter": 0.8,
+          "via_drill": 0.4,
+          "edge_clearance": 0.25
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.021374999996624
+      },
+      {
+        "n": 8,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_ldD88RYWWET5",
+          "strategy": "power_first",
+          "effort": 1.5
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.330291999998735
+      },
+      {
+        "n": 9,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_ldD88RYWWET5",
+          "detail": "summary",
+          "sample_size": 20
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4856250000011642
+      },
+      {
+        "n": 10,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_ldD88RYWWET5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4644160000025295
+      }
+    ],
+    "tokens": {
+      "input": 399302,
+      "output": 8221,
+      "total": 407523
+    },
+    "wallclock_sec": 117.282572334
+  },
+  "output": {
+    "vcad_path": "20260722T135102Z-c9cf.vcad",
+    "vcad_sha256": "fdcc0983569abae8062fa878c64c8b003c48e31dbed41e416e629fff8328d33a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T13:51:02.133Z",
+    "ended_at": "2026-07-22T13:52:59.453Z"
+  },
+  "signature": null
+}
