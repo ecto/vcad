@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-kicad-sch-auto-layout",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "feat",
+  "title": "Readable KiCad schematic export layout",
+  "summary": "Exported .kicad_sch sheets whose components were dropped on a naive grid now get a deterministic signal-flow layout with on-grid, non-overlapping symbols and net-label stubs on every declared pin.",
+  "features": ["ecad", "pcb", "kicad"],
+  "mcpTools": ["export_kicad", "create_schematic"]
+}
