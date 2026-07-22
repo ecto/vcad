@@ -781,10 +781,6 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
         // pair commits; any that fail restore verbatim only if the pair
         // failed (the pair outranks a flexible single).
         let band = 2.0 * (w + gap) + 1.0;
-        let (lo, hi) = (
-            Vec2::new(from.x.min(to.x) - band, from.y.min(to.y) - band),
-            Vec2::new(from.x.max(to.x) + band, from.y.max(to.y) + band),
-        );
         let plane_nets: std::collections::BTreeSet<&str> = pcb
             .zones
             .iter()
@@ -820,6 +816,10 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             .collect();
         work.traces.retain(|t| !ripped_nets.contains(&t.net));
         work.vias.retain(|v| !ripped_nets.contains(&v.net));
+        log::debug!(
+            "pair-polish: {pn}: ripping {} corridor singles",
+            ripped_nets.len()
+        );
 
         let mut session = RouteSession::from_pcb(&work);
         let mut placed: Vec<Placed> = Vec::new();
