@@ -128,6 +128,7 @@ import { claudeDirectSolver, makeClaudeDirectSolver } from "./solvers/claude-dir
 import { claudeMcpSolver, makeClaudeMcpSolver } from "./solvers/claude-mcp.js";
 import { openAiDirectSolver, makeOpenAiDirectSolver } from "./solvers/openai-direct.js";
 import { waferDirectSolver, makeWaferDirectSolver } from "./solvers/wafer-direct.js";
+import { gatewayDirectSolver, makeGatewayDirectSolver } from "./solvers/gateway-direct.js";
 
 /** Look up a solver by id. Currently ships:
  *  - default-cube           — baseline villain
@@ -135,6 +136,9 @@ import { waferDirectSolver, makeWaferDirectSolver } from "./solvers/wafer-direct
  *  - claude-mcp[-<m>]       — agentic, drives @vcad/mcp via MCP tool loop
  *  - openai-direct[-<m>]    — single-shot, prompt-only (OpenAI)
  *  - wafer-direct[-<m>]     — single-shot, prompt-only (wafer.ai, default GLM-5.2)
+ *  - gateway-direct[-<p>/<m>] — single-shot, prompt-only via Vercel AI Gateway;
+ *    model is the gateway slug ("anthropic/claude-sonnet-4.5", "xai/grok-4", …)
+ *    and may be given with "/" or "-" as the separator
  *
  *  SDKs (Anthropic, MCP, OpenAI) are loaded lazily inside `solve()`, so
  *  callers that only use DEFAULT_CUBE never pay for the import. */
@@ -156,7 +160,15 @@ export function getSolver(id: string): Solver {
   if (id.startsWith("wafer-direct-")) {
     return makeWaferDirectSolver({ model: id.slice("wafer-direct-".length) });
   }
+  if (id === "gateway-direct") return gatewayDirectSolver;
+  if (id.startsWith("gateway-direct-")) {
+    let model = id.slice("gateway-direct-".length);
+    // Accept both the gateway's native "provider/model" slug and the
+    // filesystem-safe "provider-model" spelling (first "-" → "/").
+    if (!model.includes("/")) model = model.replace("-", "/");
+    return makeGatewayDirectSolver({ model });
+  }
   throw new Error(
-    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]", "openai-direct[-<m>]", "wafer-direct[-<m>]".`,
+    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]", "openai-direct[-<m>]", "wafer-direct[-<m>]", "gateway-direct[-<provider>/<model>]".`,
   );
 }

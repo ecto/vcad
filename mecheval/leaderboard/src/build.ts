@@ -195,8 +195,16 @@ function modelDisplayName(modelId: string): string {
  *  Strips `direct`/`mcp` tokens and collapses the duplicated family token
  *  that leaves behind. */
 function canonicalModelId(modelId: string): string {
+  if (modelId === "default-cube" || modelId === "DEFAULT_CUBE") return modelId;
   const tokens = modelId.split("-");
-  const drop = new Set(["direct", "mcp"]);
+  // Harness plumbing (direct / mcp / gateway) and provider routing prefixes
+  // are not part of the model's identity — the same model reached through
+  // the Anthropic API, the OpenAI API, or the Vercel AI Gateway must
+  // aggregate as one row.
+  const drop = new Set([
+    "direct", "mcp", "gateway",
+    "openai", "anthropic", "google", "xai", "meta", "wafer", "zhipu", "zai",
+  ]);
   let parts = tokens.filter((t) => !drop.has(t.toLowerCase()));
   parts = parts.filter((t, i) => i === 0 || t.toLowerCase() !== parts[i - 1].toLowerCase());
   return parts.join("-");
@@ -1573,7 +1581,9 @@ function paretoScatter(
   // Replace placeholder href with a real one (task page is the safest target —
   // we don't always have a single-run url for an aggregated entry).
   const dotsLinked = dots.replace(
-    /href="run-link-([^"]+?)-((?:claude|default|openai|wafer|zhipu|google|meta|gpt|glm)[^"]+)"/g,
+    // Task ids end in a two-digit serial ("a1-block-01"); split there so
+    // any model id — including arbitrary gateway slugs — parses.
+    /href="run-link-([^"]+?-\d{2})-([^"]+)"/g,
     (_, t) => `href="task/${encodeURIComponent(t as string)}.html"`,
   );
 
