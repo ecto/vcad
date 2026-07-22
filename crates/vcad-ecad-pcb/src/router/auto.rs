@@ -738,11 +738,49 @@ fn route_pass(
             let (cs, scarcity) = plan_with_scarcity(&session, lo, hi, pitch, layers, &conns);
             // Corridor map keyed BEFORE reordering (cs aligns with the
             // original conns order).
-            let map: HashMap<ConnKey, (Vec2, Vec2)> = cs
+            let mut map: HashMap<ConnKey, (Vec2, Vec2)> = cs
                 .into_iter()
                 .zip(conns.iter())
                 .filter_map(|(c, (net, from, to))| c.map(|w| (conn_key(net, *from, *to), w)))
                 .collect();
+            // Bus rivers (the "human look"): members of a length-match group
+            // share ONE corridor — the union of their individual windows —
+            // so a DDR lane or RGMII bank travels as a ribbon through one
+            // channel instead of fanning across the board.
+            {
+                let net_names: Vec<String> = {
+                    let mut v: std::collections::BTreeSet<String> = Default::default();
+                    for (n, _, _) in &conns {
+                        v.insert(n.clone());
+                    }
+                    v.into_iter().collect()
+                };
+                let groups = super::classes::classify_nets(&net_names).match_groups;
+                for members in groups.values() {
+                    let member_set: std::collections::BTreeSet<&str> =
+                        members.iter().map(|s| s.as_str()).collect();
+                    let mut lo = Vec2::new(f64::INFINITY, f64::INFINITY);
+                    let mut hi = Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+                    let mut keys = Vec::new();
+                    for (net, from, to) in &conns {
+                        if member_set.contains(net.as_str()) {
+                            let key = conn_key(net, *from, *to);
+                            if let Some((wl, wh)) = map.get(&key) {
+                                lo.x = lo.x.min(wl.x);
+                                lo.y = lo.y.min(wl.y);
+                                hi.x = hi.x.max(wh.x);
+                                hi.y = hi.y.max(wh.y);
+                                keys.push(key);
+                            }
+                        }
+                    }
+                    if keys.len() > 1 && lo.x.is_finite() {
+                        for key in keys {
+                            map.insert(key, (lo, hi));
+                        }
+                    }
+                }
+            }
             // Scarcest-first ordering (the campaign's decisive lesson,
             // proven by the graft test + apex run): nets with the least
             // corridor slack route on the emptiest board; flexible nets

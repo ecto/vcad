@@ -470,7 +470,27 @@ pub fn route_net_maze3d(
             } else {
                 0.0
             };
-            let tentative = g[node] + step + bend + node_cost(nb % plane);
+            // Per-layer preferred-direction discipline (the "human look"):
+            // inner signal layers alternate horizontal/vertical by stackup
+            // position, so crossings become systematic instead of diagonal
+            // free-for-alls. Outer layers stay free (short escapes). Cost,
+            // not law — a net that must go cross-grain pays 60% extra and
+            // still routes.
+            let grain = if nl > 2 && li > 0 && li + 1 < nl {
+                let horizontal_layer = li % 2 == 1;
+                let moving_h = dy == 0 && dx != 0;
+                let moving_v = dx == 0 && dy != 0;
+                if (horizontal_layer && moving_v) || (!horizontal_layer && moving_h) {
+                    0.6 * grid.pitch
+                } else if dx != 0 && dy != 0 {
+                    0.25 * grid.pitch
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+            let tentative = g[node] + step + bend + grain + node_cost(nb % plane);
             if tentative < g[nb] {
                 g[nb] = tentative;
                 came[nb] = node;
