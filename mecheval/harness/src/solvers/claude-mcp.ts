@@ -78,6 +78,10 @@ const ORACLE_TOOLS = new Set(["verify_part", "list_eval_tasks"]);
 export const BENCHMARK_EXCLUDED_TOOLS = new Set([
   ...ORACLE_TOOLS,
   "close_document",
+  // Writes .vcad files into the harness cwd. No benefit in a scored run
+  // (the grader reads the session via get_document) and it litters the
+  // repo root — agents call it "to be safe" and drop artifacts.
+  "save_document",
 ]);
 
 interface McpToolResult {
