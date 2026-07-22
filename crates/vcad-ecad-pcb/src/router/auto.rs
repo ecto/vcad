@@ -748,11 +748,25 @@ fn route_pass(
             // corridor slack route on the emptiest board; flexible nets
             // route around them. Priority nets stay in front; constraint
             // degree breaks residual ties; length breaks the rest.
+            // Pair legs rank ahead of singles: a coupled phantom needs a
+            // corridor 4-6 tracks wide, which only exists on an empty board —
+            // singles thread around committed pairs far better than pairs
+            // thread around committed singles (si4: 27/49 coupled, every
+            // failure a phantom-search bail against single-net congestion).
+            let pair_nets: std::collections::BTreeSet<&str> = pcb
+                .rules
+                .net_class_assignments
+                .get(super::classes::DIFF_PAIR_CLASS)
+                .map(|v| v.iter().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
             let mut order: Vec<usize> = (0..conns.len()).collect();
             order.sort_by(|&a, &b| {
                 let pa = opts_priority.contains(&conns[a].0);
                 let pb = opts_priority.contains(&conns[b].0);
+                let qa = pair_nets.contains(conns[a].0.as_str());
+                let qb = pair_nets.contains(conns[b].0.as_str());
                 pb.cmp(&pa)
+                    .then_with(|| qb.cmp(&qa))
                     .then_with(|| {
                         scarcity[a]
                             .min_residual
