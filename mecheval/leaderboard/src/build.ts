@@ -188,9 +188,22 @@ function modelDisplayName(modelId: string): string {
  *  - "claude-mcp-claude-opus-4-7"     → { label: "Claude Opus 4.7", mode: "mcp" }
  *  - "wafer-direct-GLM-5.2"           → { label: "GLM-5.2", color: violet }
  */
+/** Collapse solver-harness variants of the same model into one identity.
+ *  "claude-direct-claude-opus-4-7" and "claude-mcp-claude-opus-4-7" are the
+ *  same model reached through different harness plumbing; the harness must
+ *  not affect the result, so the leaderboard aggregates them together.
+ *  Strips `direct`/`mcp` tokens and collapses the duplicated family token
+ *  that leaves behind. */
+function canonicalModelId(modelId: string): string {
+  const tokens = modelId.split("-");
+  const drop = new Set(["direct", "mcp"]);
+  let parts = tokens.filter((t) => !drop.has(t.toLowerCase()));
+  parts = parts.filter((t, i) => i === 0 || t.toLowerCase() !== parts[i - 1].toLowerCase());
+  return parts.join("-");
+}
+
 function modelIdentity(modelId: string): {
   label: string;
-  mode: "mcp" | "direct" | null;
   color: string;
   provider: "openai" | "anthropic" | "zhipu" | "google" | "meta" | null;
 } {
@@ -212,10 +225,9 @@ function modelIdentity(modelId: string): {
     : "var(--accent)";
 
   const tokens = modelId.split("-");
-  const mode = tokens.includes("mcp") ? "mcp" : tokens.includes("direct") ? "direct" : null;
 
   if (modelId === "default-cube" || modelId === "DEFAULT_CUBE") {
-    return { label: "Default cube", mode, color: "var(--ink-faint)", provider: null };
+    return { label: "Default cube", color: "var(--ink-faint)", provider: null };
   }
 
   // Drop provider + mode tokens, collapse a duplicated family token
@@ -246,7 +258,7 @@ function modelIdentity(modelId: string): {
     label = parts.map(cap).join(" ");
   }
 
-  return { label: label || modelId, mode, color, provider };
+  return { label: label || modelId, color, provider };
 }
 
 /** An inline SVG mark for a model's provider, tinted to the brand colour
@@ -1166,7 +1178,7 @@ function modelBarChart(models: ModelSummary[], k: number): string {
       const passk =
         m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
       const id = modelIdentity(m.model_id);
-      const meta = id.mode === "mcp" ? `${passk} · mcp` : passk;
+      const meta = passk;
       const mark = providerMark(id.provider) || `<span class="dot"></span>`;
       return `<a class="vbar${showLeader && i === 0 ? " lead" : ""}" href="model/${encodeURIComponent(m.model_id)}.html" style="--c:${id.color}" title="${escape(m.model_id)} · score ${fmtNum(m.mean_score)} · pass^${k} ${passk}">
         <span class="vbar-col">
@@ -1190,7 +1202,7 @@ function modelTable(models: ModelSummary[], k: number): string {
       const id = modelIdentity(m.model_id);
       return `
       <tr class="${showLeader && i === 0 ? "rank-1" : ""}">
-        <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</a></td>
+        <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(id.label)}</a></td>
         <td class="num">${m.tasks_attempted}</td>
         <td class="num">${m.total_attempts}</td>
         <td class="num">${m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—"}</td>
@@ -1217,7 +1229,7 @@ function matrix(
   const head = modelIds
     .map((mid) => {
       const id = modelIdentity(mid);
-      const label = `${id.label}${id.mode === "mcp" ? " · mcp" : ""}`;
+      const label = id.label;
       return `<th><a href="model/${encodeURIComponent(mid)}.html" title="${escape(mid)}">${escape(label)}</a></th>`;
     })
     .join("");
@@ -1355,7 +1367,7 @@ function paretoScatter(
   // Replace placeholder href with a real one (task page is the safest target —
   // we don't always have a single-run url for an aggregated entry).
   const dotsLinked = dots.replace(
-    /href="run-link-([^"]+?)-((?:claude|default)[^"]+)"/g,
+    /href="run-link-([^"]+?)-((?:claude|default|openai|wafer|zhipu|google|meta|gpt|glm)[^"]+)"/g,
     (_, t) => `href="task/${encodeURIComponent(t as string)}.html"`,
   );
 
@@ -1746,7 +1758,7 @@ function taskPage(
           const mark = providerMark(id.provider) || `<span class="dot"></span>`;
           return `<a class="mr${r.solved ? "" : " unsolved"}" href="../model/${encodeURIComponent(r.modelId)}.html" style="--c:${id.color}">
             <span class="mr-mark">${mark}</span>
-            <span class="mr-name">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</span>
+            <span class="mr-name">${escape(id.label)}</span>
             <span class="mr-pass">${r.passes}/${r.total} pass</span>
             <span class="mr-score">${fmtNum(r.best)}</span>
           </a>`;
@@ -1900,7 +1912,7 @@ function runPage(
   refSvg: string | null,
 ): string {
   const taskId = blob.task_id;
-  const modelId = blob.model.id;
+  const modelId = canonicalModelId(blob.model.id);
   const runId = blob.run_id;
   const id = modelIdentity(modelId);
   const mark = providerMark(id.provider) || `<span class="dot" style="--c:${id.color}"></span>`;
@@ -1984,7 +1996,7 @@ function runPage(
       <div class="run-verdict">${verdictHtml}</div>
       <h1><a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(title)}</a></h1>
       <div class="run-by" style="--c:${id.color}">
-        <span class="run-by-model"><span class="run-mark">${mark}</span><a href="../../../model/${encodeURIComponent(modelId)}.html">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</a></span>
+        <span class="run-by-model"><span class="run-mark">${mark}</span><a href="../../../model/${encodeURIComponent(modelId)}.html">${escape(id.label)}</a></span>
         <span class="muted">·</span>
         <span class="run-id">${escape(runId)}</span>
         <span class="muted">·</span>
@@ -2077,6 +2089,11 @@ async function writePage(relPath: string, html: string): Promise<void> {
 
 async function main(): Promise<void> {
   const runs = await loadAllRuns(RUNS_DIR);
+  // Merge solver-harness variants (direct vs mcp) of the same model before
+  // any aggregation — the harness must not affect the result. Blob paths
+  // keep their original on-disk ids; only the display/aggregation id and
+  // the emitted URLs change.
+  for (const r of runs) r.model_id = canonicalModelId(r.model_id);
   const entries = passKBy(runs, PASS_K);
   const models = modelSummary(entries);
   const taskSpecs = await loadTaskSpecs();
@@ -2095,7 +2112,11 @@ async function main(): Promise<void> {
   const runSvgs = new Map<string, string | null>();
   for (const r of runs) {
     const vcadPath = r.blob_path.replace(/\.json$/, ".vcad");
-    const cacheKey = `runs/${r.task_id}/${r.model_id}/${r.run_id}`;
+    // Cache key follows the on-disk blob path (original solver-qualified
+    // model dir), not the canonicalized model_id — keeps the committed
+    // cache valid across the direct/mcp merge.
+    const diskModelDir = dirname(r.blob_path).split("/").pop() ?? r.model_id;
+    const cacheKey = `runs/${r.task_id}/${diskModelDir}/${r.run_id}`;
     const svg = existsSync(vcadPath)
       ? await getOrRenderSvg(vcadPath, cacheKey)
       : null;
