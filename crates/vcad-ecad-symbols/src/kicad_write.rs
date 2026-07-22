@@ -795,6 +795,10 @@ fn arc_points(center: Vec2, radius: f64, start_deg: f64, end_deg: f64) -> (Vec2,
 /// (wires / labels / junctions) preserved.  It is a faithful editable starting
 /// point rather than a pixel-match of KiCad's built-in symbol artwork.
 ///
+/// Recognizable part classes (resistors, capacitors, diodes/LEDs,
+/// inductors, transistors — see [`symbol_artwork`]) get real schematic
+/// artwork; anything else keeps the generic rectangular body.
+///
 /// When the stored component positions are degenerate (all at one point, or
 /// packed tighter than the symbol bodies allow), a deterministic auto-layout
 /// pass replaces them with a readable left-to-right signal-flow arrangement
@@ -934,6 +938,302 @@ fn write_kicad_sch_impl(
 }
 
 // ---------------------------------------------------------------------------
+// Class-specific symbol artwork
+// ---------------------------------------------------------------------------
+//
+// Recognizable part classes (R/C/D/LED/L/Q, by reference prefix plus value /
+// footprint hints) get real KiCad symbol artwork — zigzag resistors, plate
+// capacitors, diode triangles — instead of the generic bounding rectangle, so
+// exported schematics read like hand-drawn ones. Artwork is generated in a
+// canonical frame (pin 1 at (-d, 0), pin 2 at (d, 0)) and rotated onto the
+// component's actual pin axis, so pin positions — and therefore wire / label
+// connectivity — are untouched.
+
+/// A graphic primitive inside a lib_symbol body.
+enum SymPrim {
+    /// Open polyline through the given points.
+    Polyline(Vec<Vec2>),
+    /// Arc through start → mid → end.
+    Arc { start: Vec2, mid: Vec2, end: Vec2 },
+    /// Circle outline.
+    Circle { center: Vec2, radius: f64 },
+}
+
+/// Class-specific body artwork plus per-pin (angle, length) overrides,
+/// parallel to `comp.pins`.
+struct SymbolArtwork {
+    prims: Vec<SymPrim>,
+    pins: Vec<(f64, f64)>,
+}
+
+/// Two-pin part classes with dedicated artwork.
+enum TwoPinClass {
+    Resistor,
+    Capacitor { polarized: bool },
+    Diode { led: bool },
+    Inductor,
+}
+
+/// Leading alphabetic run of a reference designator, uppercased ("R12" → "R",
+/// "LED3" → "LED").
+fn ref_prefix(reference: &str) -> String {
+    reference
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+
+/// Case-insensitive "any needle appears in value or footprint id".
+fn hints_contain(comp: &SchematicComponent, needles: &[&str]) -> bool {
+    let hay = format!(
+        "{} {}",
+        comp.value.to_ascii_lowercase(),
+        comp.footprint_id.to_ascii_lowercase()
+    );
+    needles.iter().any(|n| hay.contains(n))
+}
+
+/// Classify a component into a two-pin artwork class, if it matches one.
+fn classify_two_pin(comp: &SchematicComponent) -> Option<TwoPinClass> {
+    match ref_prefix(&comp.reference).as_str() {
+        "R" => Some(TwoPinClass::Resistor),
+        "C" => Some(TwoPinClass::Capacitor {
+            polarized: hints_contain(comp, &["elec", "tant", "polar", "cp_"]),
+        }),
+        "LED" => Some(TwoPinClass::Diode { led: true }),
+        "D" => Some(TwoPinClass::Diode {
+            led: hints_contain(comp, &["led"]),
+        }),
+        "L" => Some(TwoPinClass::Inductor),
+        _ => None,
+    }
+}
+
+/// Grid-snapped pin angle pointing from the pin position toward the origin.
+fn axis_pin_angle(p: Vec2) -> f64 {
+    if p.x.abs() >= p.y.abs() {
+        if p.x > 0.0 {
+            180.0
+        } else {
+            0.0
+        }
+    } else if p.y > 0.0 {
+        270.0
+    } else {
+        90.0
+    }
+}
+
+/// Build class-specific artwork for a component, or `None` to keep the
+/// generic rectangle body.
+fn symbol_artwork(comp: &SchematicComponent, pins: &[SchematicPin]) -> Option<SymbolArtwork> {
+    if ref_prefix(&comp.reference) == "Q" {
+        return transistor_artwork(pins);
+    }
+    let class = classify_two_pin(comp)?;
+    two_pin_artwork(pins, &class)
+}
+
+/// Artwork for symmetric two-pin parts. Requires exactly two pins placed
+/// opposite each other through the origin (the layout `create_schematic`
+/// produces: ±2.54 or ±3.81 on an axis).
+fn two_pin_artwork(pins: &[SchematicPin], class: &TwoPinClass) -> Option<SymbolArtwork> {
+    if pins.len() != 2 {
+        return None;
+    }
+    let p1 = pins[0].position;
+    let p2 = pins[1].position;
+    if (p1.x + p2.x).abs() > 1e-6 || (p1.y + p2.y).abs() > 1e-6 {
+        return None;
+    }
+    let d = (p1.x * p1.x + p1.y * p1.y).sqrt();
+    if d < 2.0 {
+        return None;
+    }
+    // Rotation from the canonical frame (pin 1 at (-d, 0)) onto the pin axis.
+    let u = Vec2::new((p2.x - p1.x) / (2.0 * d), (p2.y - p1.y) / (2.0 * d));
+    let map = |x: f64, y: f64| Vec2::new(u.x * x - u.y * y, u.y * x + u.x * y);
+    let poly =
+        |pts: &[(f64, f64)]| SymPrim::Polyline(pts.iter().map(|&(x, y)| map(x, y)).collect());
+    let arc = |s: (f64, f64), m: (f64, f64), e: (f64, f64)| SymPrim::Arc {
+        start: map(s.0, s.1),
+        mid: map(m.0, m.1),
+        end: map(e.0, e.1),
+    };
+
+    let (prims, len1, len2) = match class {
+        TwoPinClass::Resistor => {
+            // IEEE zigzag spanning the body, three peaks up / two down.
+            let b = (0.6 * d).min(2.286);
+            let a = 1.016;
+            let zigzag = poly(&[
+                (-b, 0.0),
+                (-2.0 * b / 3.0, a),
+                (-b / 3.0, -a),
+                (0.0, a),
+                (b / 3.0, -a),
+                (2.0 * b / 3.0, a),
+                (b, 0.0),
+            ]);
+            (vec![zigzag], d - b, d - b)
+        }
+        TwoPinClass::Capacitor { polarized } => {
+            let g = 0.508;
+            let h = 1.27;
+            let mut prims = vec![poly(&[(-g, -h), (-g, h)])];
+            let len2 = if *polarized {
+                // Curved negative plate bowing away from the flat plate,
+                // plus a "+" marker beside pin 1.
+                prims.push(arc((g + 0.55, -h), (g, 0.0), (g + 0.55, h)));
+                prims.push(poly(&[(-g - 1.9, h), (-g - 1.1, h)]));
+                prims.push(poly(&[(-g - 1.5, h - 0.4), (-g - 1.5, h + 0.4)]));
+                d - g - 0.55
+            } else {
+                prims.push(poly(&[(g, -h), (g, h)]));
+                d - g
+            };
+            (prims, d - g, len2)
+        }
+        TwoPinClass::Diode { led } => {
+            // Triangle pointing anode (pin 1) → cathode (pin 2), bar at the
+            // cathode; LEDs add two light-emission arrows.
+            let b = (0.5 * d).min(1.27);
+            let mut prims = vec![
+                poly(&[(-b, b), (-b, -b), (b, 0.0), (-b, b)]),
+                poly(&[(b, -b), (b, b)]),
+            ];
+            if *led {
+                prims.push(poly(&[(-0.3, b + 0.3), (0.6, b + 1.2), (0.25, b + 1.1)]));
+                prims.push(poly(&[(0.5, b + 0.1), (1.4, b + 1.0), (1.05, b + 0.9)]));
+            }
+            (prims, d - b, d - b)
+        }
+        TwoPinClass::Inductor => {
+            // Four humps across the body.
+            let b = (0.75 * d).min(2.54);
+            let r = b / 4.0;
+            let prims = (0..4)
+                .map(|k| {
+                    let c = -b + r + 2.0 * r * k as f64;
+                    arc((c - r, 0.0), (c, r), (c + r, 0.0))
+                })
+                .collect();
+            (prims, d - b, d - b)
+        }
+    };
+
+    if len1 < 0.4 || len2 < 0.4 {
+        return None;
+    }
+    Some(SymbolArtwork {
+        prims,
+        pins: vec![(axis_pin_angle(p1), len1), (axis_pin_angle(p2), len2)],
+    })
+}
+
+/// BJT artwork for the common layout: base alone on the left at y≈0,
+/// collector and emitter on the right at ±y.
+fn transistor_artwork(pins: &[SchematicPin]) -> Option<SymbolArtwork> {
+    if pins.len() != 3 {
+        return None;
+    }
+    let mut base_idx = None;
+    let mut right: Vec<usize> = Vec::new();
+    for (i, p) in pins.iter().enumerate() {
+        if p.position.x < 0.0 {
+            if base_idx.is_some() {
+                return None;
+            }
+            base_idx = Some(i);
+        } else {
+            right.push(i);
+        }
+    }
+    let base_idx = base_idx?;
+    let base = pins[base_idx].position;
+    if right.len() != 2 || base.y.abs() > 0.5 {
+        return None;
+    }
+    let (a, b) = (pins[right[0]].position, pins[right[1]].position);
+    if a.y * b.y >= 0.0 || a.y.abs() < 1.9 || b.y.abs() < 1.9 {
+        return None;
+    }
+    let base_len = -base.x - 0.635;
+    if base_len < 0.4 {
+        return None;
+    }
+    let top = if a.y > 0.0 { a } else { b };
+    let bot = if a.y > 0.0 { b } else { a };
+
+    let prims = vec![
+        // Vertical base bar, branch lines to collector/emitter pin stubs,
+        // and the envelope circle.
+        SymPrim::Polyline(vec![Vec2::new(-0.635, -1.397), Vec2::new(-0.635, 1.397)]),
+        SymPrim::Polyline(vec![Vec2::new(-0.635, 0.508), Vec2::new(top.x, 1.27)]),
+        SymPrim::Polyline(vec![Vec2::new(-0.635, -0.508), Vec2::new(bot.x, -1.27)]),
+        SymPrim::Circle {
+            center: Vec2::new((top.x - 0.635) / 2.0, 0.0),
+            radius: 2.54,
+        },
+    ];
+
+    let mut out = vec![(0.0, 0.0); 3];
+    out[base_idx] = (0.0, base_len);
+    for &i in &right {
+        let p = pins[i].position;
+        out[i] = if p.y > 0.0 {
+            (270.0, p.y - 1.27)
+        } else {
+            (90.0, -p.y - 1.27)
+        };
+    }
+    Some(SymbolArtwork { prims, pins: out })
+}
+
+/// Emit lib_symbol graphic primitives at body depth (inside the `_0_1`
+/// sub-symbol).
+fn write_sym_prims(e: &mut Emitter, prims: &[SymPrim]) {
+    let stroke_fill = |e: &mut Emitter| {
+        e.line(5, "(stroke");
+        e.line(6, "(width 0.254)");
+        e.line(6, "(type default)");
+        e.line(5, ")");
+        e.line(5, "(fill");
+        e.line(6, "(type none)");
+        e.line(5, ")");
+    };
+    for prim in prims {
+        match prim {
+            SymPrim::Polyline(pts) => {
+                e.line(4, "(polyline");
+                e.line(5, "(pts");
+                for v in pts {
+                    e.line(6, &format!("(xy {} {})", num(v.x), num(v.y)));
+                }
+                e.line(5, ")");
+                stroke_fill(e);
+                e.line(4, ")");
+            }
+            SymPrim::Arc { start, mid, end } => {
+                e.line(4, "(arc");
+                e.line(5, &format!("(start {} {})", num(start.x), num(start.y)));
+                e.line(5, &format!("(mid {} {})", num(mid.x), num(mid.y)));
+                e.line(5, &format!("(end {} {})", num(end.x), num(end.y)));
+                stroke_fill(e);
+                e.line(4, ")");
+            }
+            SymPrim::Circle { center, radius } => {
+                e.line(4, "(circle");
+                e.line(5, &format!("(center {} {})", num(center.x), num(center.y)));
+                e.line(5, &format!("(radius {})", num(*radius)));
+                stroke_fill(e);
+                e.line(4, ")");
+            }
+        }
+    }
+}
+
 // Placement pass
 // ---------------------------------------------------------------------------
 
@@ -1420,8 +1720,12 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
     write_lib_property(e, "Footprint", &comp.footprint_id, 2);
     write_lib_property(e, "Datasheet", "", 3);
 
-    // Body rectangle bounding the pins, plus the pins themselves.
+    // Body — real artwork for recognized part classes, otherwise a generic
+    // rectangle bounding the pins. Classify against the *laid-out* pins so a
+    // component whose stored positions are degenerate (the nets flow) still
+    // gets artwork from its synthesized layout.
     let (pins, body) = symbol_layout(comp);
+    let art = symbol_artwork(comp, &pins);
     e.line(
         3,
         &format!(
@@ -1429,17 +1733,21 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
             q(&format!("{}_0_1", sanitize_lib_name(&comp.reference)))
         ),
     );
-    e.line(4, "(rectangle");
-    e.line(5, &format!("(start {} {})", num(body.0.x), num(body.0.y)));
-    e.line(5, &format!("(end {} {})", num(body.1.x), num(body.1.y)));
-    e.line(5, "(stroke");
-    e.line(6, "(width 0.254)");
-    e.line(6, "(type solid)");
-    e.line(5, ")");
-    e.line(5, "(fill");
-    e.line(6, "(type background)");
-    e.line(5, ")");
-    e.line(4, ")");
+    if let Some(a) = &art {
+        write_sym_prims(e, &a.prims);
+    } else {
+        e.line(4, "(rectangle");
+        e.line(5, &format!("(start {} {})", num(body.0.x), num(body.0.y)));
+        e.line(5, &format!("(end {} {})", num(body.1.x), num(body.1.y)));
+        e.line(5, "(stroke");
+        e.line(6, "(width 0.254)");
+        e.line(6, "(type solid)");
+        e.line(5, ")");
+        e.line(5, "(fill");
+        e.line(6, "(type background)");
+        e.line(5, ")");
+        e.line(4, ")");
+    }
     e.line(3, ")");
 
     e.line(
@@ -1449,8 +1757,11 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
             q(&format!("{}_1_1", sanitize_lib_name(&comp.reference)))
         ),
     );
-    for pin in &pins {
-        let angle = pin_angle(comp, pin.position, body);
+    for (i, pin) in pins.iter().enumerate() {
+        let (angle, length) = match &art {
+            Some(a) => a.pins[i],
+            None => (pin_angle(comp, pin.position, body), 2.54),
+        };
         e.line(4, &format!("(pin {} line", pin_type_token(pin.pin_type)));
         e.line(
             5,
@@ -1461,7 +1772,7 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
                 num(angle)
             ),
         );
-        e.line(5, "(length 2.54)");
+        e.line(5, &format!("(length {})", num(length)));
         e.line(5, &format!("(name {}", q(&pin.name)));
         e.line(6, "(effects");
         e.line(7, "(font");
@@ -2281,6 +2592,181 @@ mod tests {
         assert!(text.trim_end().ends_with(')'));
     }
 
+    /// A two-pin component with pins at (-d, 0) and (d, 0).
+    fn two_pin_comp(reference: &str, value: &str, footprint: &str, d: f64) -> SchematicComponent {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: footprint.into(),
+            position: Vec2::new(100.0, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(-d, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(d, 0.0),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    fn sheet_of(components: Vec<SchematicComponent>) -> SchematicSheet {
+        SchematicSheet {
+            title: None,
+            components,
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: None,
+        }
+    }
+
+    #[test]
+    fn resistor_gets_zigzag_not_rectangle() {
+        let sheet = sheet_of(vec![two_pin_comp("R1", "10k", "Resistor_SMD:R_0805", 3.81)]);
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(polyline"), "resistor body is a polyline");
+        assert!(!text.contains("(rectangle"), "no generic rectangle for R");
+        // Pin connection points are untouched.
+        assert!(text.contains("(at -3.81 0 0)"));
+        assert!(text.contains("(at 3.81 0 180)"));
+    }
+
+    #[test]
+    fn capacitor_gets_plates_polarized_gets_arc() {
+        let plain = sheet_of(vec![two_pin_comp(
+            "C1",
+            "100nF",
+            "Capacitor_SMD:C_0603",
+            2.54,
+        )]);
+        let text = write_kicad_sch(&plain);
+        assert!(text.contains("(polyline"));
+        assert!(!text.contains("(rectangle"));
+        assert!(!text.contains("(arc"), "plain cap has two straight plates");
+
+        let polar = sheet_of(vec![two_pin_comp(
+            "C2",
+            "100uF",
+            "Capacitor_THT:CP_Radial_D5.0mm",
+            3.81,
+        )]);
+        let text = write_kicad_sch(&polar);
+        assert!(text.contains("(arc"), "polarized cap has a curved plate");
+    }
+
+    #[test]
+    fn diode_led_and_inductor_get_artwork() {
+        let text = write_kicad_sch(&sheet_of(vec![
+            two_pin_comp("D1", "1N4148", "Diode_SMD:D_SOD-323", 2.54),
+            two_pin_comp("LED1", "Red", "LED_SMD:LED_0805", 2.54),
+            two_pin_comp("L1", "10uH", "Inductor_SMD:L_0805", 3.81),
+        ]));
+        assert!(text.contains("(polyline"), "diode triangle present");
+        assert!(text.contains("(arc"), "inductor humps present");
+        assert!(!text.contains("(rectangle"), "no generic rectangles");
+        // The LED symbol has more polylines than the plain diode (two arrows).
+        let led = write_kicad_sch(&sheet_of(vec![two_pin_comp(
+            "LED1",
+            "Red",
+            "LED_SMD:LED_0805",
+            2.54,
+        )]));
+        let plain = write_kicad_sch(&sheet_of(vec![two_pin_comp(
+            "D1",
+            "1N4148",
+            "Diode_SMD:D_SOD-323",
+            2.54,
+        )]));
+        assert_eq!(
+            led.matches("(polyline").count(),
+            plain.matches("(polyline").count() + 2
+        );
+    }
+
+    #[test]
+    fn transistor_gets_envelope_circle() {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let q = SchematicComponent {
+            reference: "Q1".into(),
+            value: "2N2222".into(),
+            footprint_id: "Package_TO_SOT_SMD:SOT-23".into(),
+            position: Vec2::new(100.0, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "B".into(),
+                    pin_type: PinType::Input,
+                    position: Vec2::new(-2.54, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "C".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(2.54, 2.54),
+                },
+                SchematicPin {
+                    number: "3".into(),
+                    name: "E".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(2.54, -2.54),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let text = write_kicad_sch(&sheet_of(vec![q]));
+        assert!(text.contains("(circle"), "BJT envelope circle present");
+        assert!(!text.contains("(rectangle"));
+        // Connection points untouched.
+        assert!(text.contains("(at -2.54 0 0)"));
+        assert!(text.contains("(at 2.54 2.54 270)"));
+        assert!(text.contains("(at 2.54 -2.54 90)"));
+    }
+
+    #[test]
+    fn unmatched_parts_keep_rectangle_body() {
+        // A U-prefixed IC and an R with asymmetric pins both fall back.
+        let mut ic = two_pin_comp("U1", "LM358", "Package_SO:SOIC-8", 2.54);
+        ic.pins[0].pin_type = PinType::Input;
+        let mut odd_r = two_pin_comp("R9", "10k", "Resistor_SMD:R_0805", 2.54);
+        odd_r.pins[1].position = Vec2::new(5.08, 2.54); // not symmetric
+        let text = write_kicad_sch(&sheet_of(vec![ic, odd_r]));
+        assert_eq!(text.matches("(rectangle").count(), 2);
+        assert!(!text.contains("(polyline"));
+    }
+
+    #[test]
+    fn vertical_two_pin_artwork_is_rotated_onto_axis() {
+        let mut c = two_pin_comp("C1", "100nF", "Capacitor_SMD:C_0603", 2.54);
+        c.pins[0].position = Vec2::new(0.0, 2.54);
+        c.pins[1].position = Vec2::new(0.0, -2.54);
+        let text = write_kicad_sch(&sheet_of(vec![c]));
+        assert!(text.contains("(polyline"));
+        assert!(!text.contains("(rectangle"));
+        assert!(text.contains("(at 0 2.54 270)"));
+        assert!(text.contains("(at 0 -2.54 90)"));
+    }
+
+    #[test]
+    fn schematic_is_deterministic() {
+        let sheet = sample_sheet();
+        assert_eq!(write_kicad_sch(&sheet), write_kicad_sch(&sheet));
+    }
+
     /// Sheet with every component stacked at the origin (the naive
     /// create_schematic drop) plus a declared netlist.
     fn degenerate_sheet() -> SchematicSheet {
@@ -2495,11 +2981,12 @@ mod tests {
         assert_eq!(text.matches("(global_label \"VCC\"").count(), 2);
         assert_eq!(text.matches("(global_label \"GND\"").count(), 2);
 
-        // Nondegenerate synthesized body rectangle (2 pins → left/right at
-        // ±7.62, body x∈[-5.08, 5.08], y∈[-2.54, 2.54]).
-        assert!(text.contains("(start -5.08 2.54)"));
-        assert!(text.contains("(end 5.08 -2.54)"));
+        // Nondegenerate body. R1/C1 are recognized part classes, so the body is
+        // real artwork rather than the synthesized rectangle — but the invariant
+        // this test exists for still holds: nothing collapses onto the origin.
+        assert!(text.contains("(polyline"));
         assert!(!text.contains("(start 0 0)"));
+        assert!(!text.contains("(xy 0 0)"));
 
         // Pins land on the synthesized positions, not stacked at the origin.
         assert!(text.contains("(at -7.62 0 0)"));
@@ -2507,6 +2994,38 @@ mod tests {
 
         // Deterministic.
         assert_eq!(text, write_kicad_sch(&sheet));
+    }
+
+    /// The synthesized-layout body rectangle, which the nets-flow test above
+    /// used to assert before recognized part classes gained artwork. An
+    /// unrecognized reference still gets the generic rect at the layout extent,
+    /// so a regression in `symbol_layout` cannot hide behind the artwork path.
+    #[test]
+    fn degenerate_unrecognized_part_keeps_synthesized_rectangle() {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let degenerate_pin = |number: &str| SchematicPin {
+            number: number.into(),
+            name: "~".into(),
+            pin_type: PinType::Passive,
+            position: Vec2::new(0.0, 0.0),
+        };
+        let sheet = sheet_of(vec![SchematicComponent {
+            reference: "U1".into(),
+            value: "NE555".into(),
+            footprint_id: "Package_SO:SOIC-8".into(),
+            position: Vec2::new(100.0, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![degenerate_pin("1"), degenerate_pin("2")],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        }]);
+        let text = write_kicad_sch(&sheet);
+        // 2 pins → left/right at ±7.62, body x∈[-5.08, 5.08], y∈[-2.54, 2.54].
+        assert!(text.contains("(start -5.08 2.54)"));
+        assert!(text.contains("(end 5.08 -2.54)"));
+        assert!(text.contains("(at -7.62 0 0)"));
+        assert!(text.contains("(at 7.62 0 180)"));
     }
 
     /// Each pin of a degenerate-pin component must get its *own* stub anchor:
