@@ -2374,8 +2374,12 @@ async function main(): Promise<void> {
         continue;
       }
     }
+    // Villain baselines never supply reference imagery — a cube standing
+    // in as the "expected" render for a schematic task is worse than a
+    // dash.
+    const VILLAINS = new Set(["default-cube", "flood-zone"]);
     const taskRuns = runs
-      .filter((r) => r.task_id === tid)
+      .filter((r) => r.task_id === tid && !VILLAINS.has(r.model_id))
       .slice()
       .sort((a, b) => b.run_id.localeCompare(a.run_id));
     const pick =
