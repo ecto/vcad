@@ -64,6 +64,7 @@ pub use length_match::{
     check_length_match, match_lengths, LengthMatchOptions, LengthMatchResult, NetLengthReport,
 };
 pub use maze::route_net_maze;
+pub use pair::polish_pairs;
 
 use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;

@@ -10,7 +10,7 @@
 //! legs to the actual pads, and commit both nets atomically (all-or-nothing)
 //! through [`validate_and_commit`] — so the DRC-clean invariant is untouched.
 
-use vcad_ir::ecad::{Pcb, PcbLayer};
+use vcad_ir::ecad::{Pcb, PcbLayer, Trace, Via};
 use vcad_ir::Vec2;
 
 use crate::session::RouteSession;
@@ -715,6 +715,115 @@ fn realize_legs(
         })
     };
     Some((leg(1.0)?, leg(-1.0)?))
+}
+
+/// Pair polish: on a FINISHED board, rip each still-uncoupled pair and
+/// re-route it coupled against the settled copper. The board is quiet, the
+/// pair gets a focused high-effort attempt, and failure restores the
+/// original copper — strictly non-regressive per pair.
+///
+/// Returns `(polished, attempted)`.
+pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
+    let nets: Vec<String> = {
+        let mut v: std::collections::BTreeSet<String> = Default::default();
+        for f in &pcb.footprints {
+            for pad in &f.pads {
+                if let Some(n) = &pad.net {
+                    if !n.is_empty() {
+                        v.insert(n.clone());
+                    }
+                }
+            }
+        }
+        v.into_iter().collect()
+    };
+    let classifier = super::classes::classify_nets(&nets);
+    let width = pcb.rules.default_rules.trace_width;
+    let (mut polished, mut attempted) = (0usize, 0usize);
+    for (pn, nn) in &classifier.pairs {
+        let (w, gap) = {
+            // Peek the class geometry for the coupling test pitch.
+            let s = RouteSession::from_pcb(pcb);
+            pair_geometry(&s, pcb, pn, width)
+        };
+        let frac = crate::router::si_claims::coupled_fraction(pcb, pn, nn, (w + gap) * 1.75);
+        if frac >= 0.5 {
+            continue;
+        }
+        let p_pads = pads_of_net(pcb, pn);
+        if p_pads.len() < 2 {
+            continue;
+        }
+        attempted += 1;
+        // Rip both nets' routed copper off a working copy of the board.
+        let mut work = pcb.clone();
+        work.traces.retain(|t| &t.net != pn && &t.net != nn);
+        work.vias.retain(|v| &v.net != pn && &v.net != nn);
+        let mut session = RouteSession::from_pcb(&work);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&work.outline.vertices);
+        // MST endpoints: the two farthest pads of the P net.
+        let (mut from, mut to, mut best) = (p_pads[0], p_pads[0], -1.0);
+        for i in 0..p_pads.len() {
+            for j in i + 1..p_pads.len() {
+                let d = dist(p_pads[i], p_pads[j]);
+                if d > best {
+                    best = d;
+                    from = p_pads[i];
+                    to = p_pads[j];
+                }
+            }
+        }
+        if let Some((mine, theirs)) = try_route_pair(
+            &mut session,
+            &work,
+            width,
+            pn,
+            from,
+            to,
+            &mut placed,
+            &cong,
+            effort_expansions,
+        ) {
+            for pl in [&mine, &theirs] {
+                for &(a, b, l) in &pl.segments {
+                    work.traces.push(Trace {
+                        start: a,
+                        end: b,
+                        width: pl.width,
+                        layer: l,
+                        net: pl.net.clone(),
+                        source: None,
+                    });
+                }
+                for &(a, b, l) in &pl.stubs {
+                    work.traces.push(Trace {
+                        start: a,
+                        end: b,
+                        width: pl.stub_width,
+                        layer: l,
+                        net: pl.net.clone(),
+                        source: None,
+                    });
+                }
+                for &(pt, la, lb) in &pl.via_pts {
+                    work.vias.push(Via {
+                        position: pt,
+                        diameter: work.rules.default_rules.via_diameter,
+                        drill: work.rules.default_rules.via_drill,
+                        start_layer: la,
+                        end_layer: lb,
+                        net: pl.net.clone(),
+                        source: None,
+                    });
+                }
+            }
+            *pcb = work;
+            polished += 1;
+            log::info!("pair-polish: {pn} + {nn} now coupled");
+        }
+    }
+    (polished, attempted)
 }
 
 #[cfg(test)]
