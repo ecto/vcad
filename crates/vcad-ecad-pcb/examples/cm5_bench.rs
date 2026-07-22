@@ -16,6 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use vcad_ecad_pcb::router::classes::{apply_classes, classify_nets};
+use vcad_ecad_pcb::router::length_match::net_routed_length;
 use vcad_ecad_pcb::router::{route_all_with_opts, RouteOptions};
 use vcad_ecad_symbols::parse_kicad_pcb;
 use vcad_ir::ecad::{Trace, Via};
@@ -116,6 +118,29 @@ fn main() {
             .collect()
     };
 
+    // Recover electrical intent from net names (diff pairs, match groups)
+    // and realize it as class rules — the SI constraint foundation.
+    let all_nets: Vec<String> = {
+        let mut v: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for f in &pcb.footprints {
+            for pad in &f.pads {
+                if let Some(n) = &pad.net {
+                    if !n.is_empty() {
+                        v.insert(n.clone());
+                    }
+                }
+            }
+        }
+        v.into_iter().collect()
+    };
+    let classifier = classify_nets(&all_nets);
+    apply_classes(&mut pcb, &classifier);
+    println!(
+        "classes: {} diff pairs, {} match groups",
+        classifier.pairs.len(),
+        classifier.match_groups.len()
+    );
+
     let width = pcb.rules.default_rules.trace_width;
     let t0 = Instant::now();
     let r = route_all_with_opts(
@@ -157,6 +182,54 @@ fn main() {
     );
     for d in r.diagnostics.iter().take(10) {
         eprintln!("unrouted {}: {}", d.net, d.reason);
+    }
+
+    // SI scoreboard: skew per length-match group and per differential pair,
+    // measured on the routed copper. This is the gap the meander tuner must
+    // close — and the number the human board is matched to within microns.
+    {
+        let mut with_routes = pcb.clone();
+        for t in &r.traces {
+            with_routes.traces.push(Trace {
+                start: t.start,
+                end: t.end,
+                width: t.width,
+                layer: t.layer,
+                net: t.net.clone(),
+                source: None,
+            });
+        }
+        for (gname, members) in &classifier.match_groups {
+            let lens: Vec<(f64, &str)> = members
+                .iter()
+                .map(|n| (net_routed_length(&with_routes, n), n.as_str()))
+                .filter(|(l, _)| *l > 0.0)
+                .collect();
+            if lens.len() > 1 {
+                let max = lens.iter().map(|(l, _)| *l).fold(f64::MIN, f64::max);
+                let min = lens.iter().map(|(l, _)| *l).fold(f64::MAX, f64::min);
+                println!(
+                    "si-skew group {gname}: {} nets, {:.2}..{:.2} mm, skew {:.2} mm",
+                    lens.len(),
+                    min,
+                    max,
+                    max - min
+                );
+            }
+        }
+        let mut pair_worst: f64 = 0.0;
+        let mut pair_measured = 0usize;
+        for (p, n) in &classifier.pairs {
+            let (lp, ln) = (
+                net_routed_length(&with_routes, p),
+                net_routed_length(&with_routes, n),
+            );
+            if lp > 0.0 && ln > 0.0 {
+                pair_measured += 1;
+                pair_worst = pair_worst.max((lp - ln).abs());
+            }
+        }
+        println!("si-skew pairs: {pair_measured} measured, worst intra-pair {pair_worst:.3} mm");
     }
 
     // Save the routed board for rendering / inspection without re-routing.

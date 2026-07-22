@@ -248,6 +248,9 @@ pub(super) struct Placed {
     /// Fan-out / dog-bone stubs that escape a fine-pitch pad to its via, each on
     /// its own copper layer (the pad's layer). Emitted as traces, not on `layer`.
     pub(super) stubs: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Width the stubs were committed at (fan-out: the net width; pair
+    /// connectors: the board default — the neck-down width).
+    pub(super) stub_width: f64,
     pub(super) via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
     pub(super) spans: Vec<SpanId>,
 }
@@ -471,7 +474,7 @@ pub fn route_all_with_opts(
             traces.push(RoutedTrace {
                 start: *a,
                 end: *b,
-                width: p.width,
+                width: p.stub_width,
                 layer: *l,
                 net: p.net.clone(),
             });
@@ -745,11 +748,25 @@ fn route_pass(
             // corridor slack route on the emptiest board; flexible nets
             // route around them. Priority nets stay in front; constraint
             // degree breaks residual ties; length breaks the rest.
+            // Pair legs rank ahead of singles: a coupled phantom needs a
+            // corridor 4-6 tracks wide, which only exists on an empty board —
+            // singles thread around committed pairs far better than pairs
+            // thread around committed singles (si4: 27/49 coupled, every
+            // failure a phantom-search bail against single-net congestion).
+            let pair_nets: std::collections::BTreeSet<&str> = pcb
+                .rules
+                .net_class_assignments
+                .get(super::classes::DIFF_PAIR_CLASS)
+                .map(|v| v.iter().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
             let mut order: Vec<usize> = (0..conns.len()).collect();
             order.sort_by(|&a, &b| {
                 let pa = opts_priority.contains(&conns[a].0);
                 let pb = opts_priority.contains(&conns[b].0);
+                let qa = pair_nets.contains(conns[a].0.as_str());
+                let qb = pair_nets.contains(conns[b].0.as_str());
                 pb.cmp(&pa)
+                    .then_with(|| qb.cmp(&qa))
                     .then_with(|| {
                         scarcity[a]
                             .min_residual
@@ -767,6 +784,60 @@ fn route_pass(
             map
         }
     };
+
+    // Pair-first stage: differential-pair legs route FIRST and COUPLED, on
+    // the emptiest board — the anti-pattern proven by the CM5 campaign was
+    // pairs entering the batch as independent singles and the pair stage
+    // firing only as a rescue. Membership comes from the declared diff-pair
+    // class (see router::classes). A pair that fails coupled routing falls
+    // back into the batch as singles, so routability can never regress.
+    let pair_nets: std::collections::BTreeSet<&str> = pcb
+        .rules
+        .net_class_assignments
+        .get(super::classes::DIFF_PAIR_CLASS)
+        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    if !pair_nets.is_empty() {
+        let mut routed_pairs: std::collections::BTreeSet<String> = Default::default();
+        let mut deferred = Vec::with_capacity(conns.len());
+        let mut coupled = 0usize;
+        for (net, from, to) in std::mem::take(&mut conns) {
+            let base = super::pair::pair_partner(&net).map(|p| {
+                if p < net {
+                    format!("{p}|{net}")
+                } else {
+                    format!("{net}|{p}")
+                }
+            });
+            let done = base.as_ref().is_some_and(|b| routed_pairs.contains(b));
+            if !done && pair_nets.contains(net.as_str()) {
+                if let Some((mine, theirs)) = super::pair::try_route_pair(
+                    &mut session,
+                    pcb,
+                    width,
+                    &net,
+                    from,
+                    to,
+                    &mut placed,
+                    cong,
+                    max_expansions,
+                ) {
+                    placed.push(mine);
+                    placed.push(theirs);
+                    coupled += 1;
+                    if let Some(b) = base {
+                        routed_pairs.insert(b);
+                    }
+                    continue;
+                }
+            }
+            deferred.push((net, from, to));
+        }
+        conns = deferred;
+        if coupled > 0 {
+            log::info!("pair-first: {coupled} pairs routed coupled");
+        }
+    }
 
     let unrouted_conns = route_batch(
         &mut session,
@@ -863,7 +934,10 @@ fn incremental_round(
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
-    let budget_ms = 1_200_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
+    // Flat 20-minute budget regardless of effort: scaling by expansion
+    // budget multiplied speculative-round cost right back up at high effort
+    // (effort 10 → 3.3h/round), exactly what the budget exists to prevent.
+    let budget_ms = 1_200_000.0;
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -1253,6 +1327,12 @@ pub(super) struct Candidate {
     pub(super) width: f64,
     pub(super) segments: Vec<(Vec2, Vec2, PcbLayer)>,
     pub(super) vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+    /// Segments probed and committed at [`Candidate::thin_width`] instead of
+    /// `width` — the neck-down channel (pair connectors through pin fields).
+    /// They land in [`Placed::stubs`].
+    pub(super) thin_segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Width for `thin_segments` (defaults to `width` when unused).
+    pub(super) thin_width: f64,
 }
 
 /// The pure-search half of [`try_route`]: find a clearance-legal route
@@ -1347,6 +1427,8 @@ pub(super) fn search_route(
         // every resume because the ratsnest keys completion off traces).
         log::debug!("{net}: connection already satisfied by existing copper contact");
         return Some(Candidate {
+            thin_segments: vec![],
+            thin_width: width,
             net: net.to_string(),
             from,
             to,
@@ -1386,6 +1468,8 @@ pub(super) fn search_route(
     };
 
     Some(Candidate {
+        thin_segments: vec![],
+        thin_width: width,
         net: net.to_string(),
         from,
         to,
@@ -1420,7 +1504,29 @@ pub(super) fn validate_and_commit(
             b: *b,
             half_w: hw,
         };
+        let pr = session.probe(&seg, *l, net, clearance);
+        if !pr.legal {
+            log::debug!(
+                "validate: {net} segment ({:.2},{:.2})->({:.2},{:.2}) {l:?} w={w} illegal — blocker {} at {:.3}mm",
+                a.x,
+                a.y,
+                b.x,
+                b.y,
+                pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+                pr.min_clearance
+            );
+            return None;
+        }
+    }
+    let thin_hw = cand.thin_width / 2.0;
+    for (a, b, l) in &cand.thin_segments {
+        let seg = CopperGeom::Segment {
+            a: *a,
+            b: *b,
+            half_w: thin_hw,
+        };
         if !session.probe(&seg, *l, net, clearance).legal {
+            log::debug!("validate: {net} THIN segment illegal");
             return None;
         }
     }
@@ -1456,10 +1562,26 @@ pub(super) fn validate_and_commit(
             center: p,
             r: via_r,
         };
-        let legal = span_slice(la, lb)
-            .iter()
-            .all(|&l| session.probe(&disc, l, net, clearance).legal);
-        if !legal {
+        let mut bad: Option<(PcbLayer, String, f64)> = None;
+        for &l in span_slice(la, lb) {
+            let pr = session.probe(&disc, l, net, clearance);
+            if !pr.legal {
+                bad = Some((
+                    l,
+                    pr.blockers
+                        .first()
+                        .map(|b| b.net.clone())
+                        .unwrap_or_default(),
+                    pr.min_clearance,
+                ));
+                break;
+            }
+        }
+        if let Some((l, bnet, d)) = bad {
+            log::debug!(
+                "validate: {net} via ({:.3},{:.3}) {la:?}..{lb:?} illegal on {l:?} — blocker {bnet} at {d:.3}mm",
+                p.x, p.y
+            );
             return None;
         }
         new_vias.push((p, la, lb));
@@ -1468,6 +1590,9 @@ pub(super) fn validate_and_commit(
     let mut spans = Vec::new();
     for (a, b, l) in &segments {
         spans.push(commit_seg(session, net, *a, *b, hw, *l));
+    }
+    for (a, b, l) in &cand.thin_segments {
+        spans.push(commit_seg(session, net, *a, *b, thin_hw, *l));
     }
     for &(p, la, lb) in &new_vias {
         commit_via(session, net, p, via_r, span_slice(la, lb), &mut spans);
@@ -1478,7 +1603,8 @@ pub(super) fn validate_and_commit(
         to: cand.to,
         width: w,
         segments,
-        stubs: Vec::new(),
+        stubs: cand.thin_segments,
+        stub_width: cand.thin_width,
         via_pts: new_vias,
         spans,
     })
@@ -1765,6 +1891,7 @@ fn try_route_fanout(
         width: w,
         segments: rb.segments.into_iter().map(|(a, b)| (a, b, back)).collect(),
         stubs,
+        stub_width: w,
         via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
     })
@@ -2290,12 +2417,18 @@ fn reroute_victims_with_restore(
     ) {
         let restored = originals
             .remove(&conn_key(&net, from, to))
-            .filter(|orig| orig.stubs.is_empty())
             .and_then(|orig| {
+                // Stub-carrying routes (fan-out dog-bones, pair connectors)
+                // restore through the thin channel — before it existed they
+                // were dropped as unrouted, and once pair routes made stubs
+                // common the rip-up loop bled routes every round (si3: round
+                // 0 record 509, then pending exploded 56→124).
                 validate_and_commit(
                     session,
                     pcb,
                     Candidate {
+                        thin_segments: orig.stubs.clone(),
+                        thin_width: orig.stub_width,
                         net: orig.net.clone(),
                         from: orig.from,
                         to: orig.to,
@@ -2486,6 +2619,8 @@ fn joint_window_repair(
                                     }
                                 }
                                 let cand = Candidate {
+                                    thin_segments: vec![],
+                                    thin_width: session.width_for(&conn.0, width),
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
@@ -3646,6 +3781,7 @@ mod tests {
             width: 0.25,
             segments,
             stubs: Vec::new(),
+            stub_width: 0.25,
             via_pts: Vec::new(),
             spans,
         }];

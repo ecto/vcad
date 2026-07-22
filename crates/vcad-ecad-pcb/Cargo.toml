@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+vcad-receipt = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-ecad-package = { workspace = true }
 vcad-kernel-math = { workspace = true }
@@ -21,5 +22,6 @@ rayon = "1.10"
 log = "0.4"
 
 [dev-dependencies]
+vcad-ecad-sim = { path = "../vcad-ecad-sim" }
 vcad-ecad-symbols = { workspace = true }
 env_logger = "0.11"
