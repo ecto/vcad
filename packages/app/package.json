@@ -80,7 +80,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.172.0",
-    "@vercel/node": "^3.2.0",
+    "@vercel/node": "^5.8.26",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "eslint": "^9.18.0",
