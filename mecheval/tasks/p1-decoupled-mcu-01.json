@@ -1,0 +1,18 @@
+{
+  "id": "p1-decoupled-mcu-01",
+  "suite": "P",
+  "tier": "P1",
+  "title": "Decoupled microcontroller",
+  "prompt": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors adjacent to its power pins, and a 4-pin programming header. Board outline at most 50mm × 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected — decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+  "inputs": [],
+  "checks": [
+    { "type": "board_envelope", "max_mm": [50.0, 50.0] },
+    { "type": "component_count", "min": 4 },
+    { "type": "nets_fully_connected" },
+    { "type": "drc_clean" }
+  ],
+  "anti_cheese": {},
+  "limits": {},
+  "pass_k": 5,
+  "tags": ["pcbeval", "layout", "decoupling", "drc"]
+}

@@ -23,6 +23,7 @@ pub mod fit;
 pub mod fit_physics;
 pub mod grader;
 pub mod holes;
+pub mod pcb;
 pub mod suite_c;
 pub mod task;
 pub mod visual;

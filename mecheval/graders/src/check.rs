@@ -55,11 +55,25 @@ pub enum CheckSpec {
     /// Export to STEP, re-import, mass-props match within tolerance.
     StepRoundtrip { tolerance_pct: f64 },
 
-    /// ECAD design-rule check passes clean.
+    /// ECAD design-rule check passes clean. Fail-closed: a document with
+    /// no PCB fails.
     DrcClean,
 
-    /// ECAD electrical-rule check passes clean.
+    /// ECAD electrical-rule check passes clean. Fail-closed: a document
+    /// with no schematic fails.
     ErcClean,
+
+    /// Every named net's realized copper is one galvanically-connected
+    /// island (the NetIslands / UnconnectedNet / Short subset of DRC).
+    /// The ECAD analogue of `valid_solid`.
+    NetsFullyConnected,
+
+    /// Board outline bounding box fits inside `max_mm` ([x, y]).
+    BoardEnvelope { max_mm: [f64; 2] },
+
+    /// At least `min` placed footprints on the board. Anti-cheese floor —
+    /// stops degenerate near-empty boards from passing trivially.
+    ComponentCount { min: usize },
 
     /// DFM rule set passes for the named manufacturing process. The
     /// optional `rules` field is informational (legacy hint about which
@@ -188,6 +202,9 @@ impl CheckSpec {
             CheckSpec::StepRoundtrip { .. } => "step_roundtrip",
             CheckSpec::DrcClean => "drc_clean",
             CheckSpec::ErcClean => "erc_clean",
+            CheckSpec::NetsFullyConnected => "nets_fully_connected",
+            CheckSpec::BoardEnvelope { .. } => "board_envelope",
+            CheckSpec::ComponentCount { .. } => "component_count",
             CheckSpec::Dfm { .. } => "dfm",
             CheckSpec::RefactorInvariant { .. } => "refactor_invariant",
             CheckSpec::BodyValid => "body_valid",

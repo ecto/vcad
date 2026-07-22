@@ -1,0 +1,15 @@
+{
+  "id": "e1-led-driver-01",
+  "suite": "E",
+  "tier": "E1",
+  "title": "LED driver schematic",
+  "prompt": "Capture a schematic for a battery-powered LED: a battery symbol, a current-limiting resistor, and an LED in series, returning to the battery's negative terminal. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean. Output a .vcad document with the schematic sheet in the document's schematic field.",
+  "inputs": [],
+  "checks": [
+    { "type": "erc_clean" }
+  ],
+  "anti_cheese": {},
+  "limits": {},
+  "pass_k": 5,
+  "tags": ["pcbeval", "schematic", "erc"]
+}
