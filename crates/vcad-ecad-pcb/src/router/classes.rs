@@ -131,7 +131,14 @@ pub fn apply_classes(pcb: &mut Pcb, classifier: &NetClassifier) {
         return;
     }
     let d = &pcb.rules.default_rules;
-    let dp_width = d.diff_pair_width.unwrap_or(d.trace_width);
+    // Boards imported without net-class geometry (calibrated .kicad_pcb —
+    // classes live in the .kicad_pro that never ships with it) get the
+    // CM5-class defaults: 0.2 mm legs, 0.25 mm gap — the values the CM5's
+    // own project file declares, and a typical 90-100 ohm pair on this
+    // stackup family. Without this, pair_geometry silently fell back to
+    // single-ended width and 1.5x clearance for EVERY pair.
+    let dp_width = d.diff_pair_width.unwrap_or(0.2);
+    let dp_gap = d.diff_pair_gap.unwrap_or(0.25);
     let rule = NetClassRules {
         name: DIFF_PAIR_CLASS.to_string(),
         trace_width: dp_width,
@@ -141,8 +148,8 @@ pub fn apply_classes(pcb: &mut Pcb, classifier: &NetClassifier) {
         // the modal microvia).
         via_diameter: d.via_diameter,
         via_drill: d.via_drill,
-        diff_pair_gap: d.diff_pair_gap,
-        diff_pair_width: d.diff_pair_width,
+        diff_pair_gap: Some(dp_gap),
+        diff_pair_width: Some(dp_width),
     };
     match pcb
         .rules
