@@ -261,7 +261,11 @@ pub(super) fn try_route_pair(
         (4.0, 0.0),
         (0.0, 4.0),
         (4.0, 4.0),
+        (8.0, 4.0),
+        (4.0, 8.0),
         (8.0, 8.0),
+        (12.0, 12.0),
+        (16.0, 16.0),
     ] {
         let usable = span - 2.0 * lead;
         if r_from + r_to >= usable - 1.0 {
@@ -864,8 +868,38 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                     true,
                 );
                 if !r.success {
-                    singles_ok = false;
-                    break 'singles;
+                    // Fall back to the single's ORIGINAL copper when it is
+                    // still legal beside the new pair.
+                    let orig: Vec<(Vec2, Vec2, PcbLayer)> = ripped_copper
+                        .iter()
+                        .filter(|t| &t.net == net)
+                        .map(|t| (t.start, t.end, t.layer))
+                        .collect();
+                    let ovias: Vec<(Vec2, PcbLayer, PcbLayer)> = ripped_vias
+                        .iter()
+                        .filter(|v| &v.net == net)
+                        .map(|v| (v.position, v.start_layer, v.end_layer))
+                        .collect();
+                    let cand = Candidate {
+                        net: net.clone(),
+                        from: pads[0],
+                        to: pads[pads.len() - 1],
+                        width: session.width_for(net, width),
+                        segments: orig,
+                        vias: ovias,
+                        thin_segments: vec![],
+                        thin_width: width,
+                    };
+                    match validate_and_commit(&mut session, &work, cand, &placed) {
+                        Some(pl) => {
+                            rerouted.push(pl);
+                            continue 'singles;
+                        }
+                        None => {
+                            singles_ok = false;
+                            break 'singles;
+                        }
+                    }
                 }
                 let cand = Candidate {
                     net: net.clone(),
@@ -891,10 +925,8 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             continue;
         }
         // Success: write pair + rerouted singles back onto the working
-        // board (the ripped originals were removed above; reroutes replace
-        // them).
-        drop(ripped_copper);
-        drop(ripped_vias);
+        // board (the ripped originals were removed above; reroutes or
+        // restored originals replace them).
         for pl in rerouted.iter() {
             for &(a, b, l) in &pl.segments {
                 work.traces.push(Trace {
