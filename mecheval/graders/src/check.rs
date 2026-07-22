@@ -75,6 +75,30 @@ pub enum CheckSpec {
     /// stops degenerate near-empty boards from passing trivially.
     ComponentCount { min: usize },
 
+    /// Decoupling discipline: every IC (footprint with at least
+    /// `min_ic_pads` pads) that has a pad on one of `power_nets` must have
+    /// a two-pad footprint (a capacitor) bridging that same power net to
+    /// one of `ground_nets`, with the cap's power pad within `max_mm` of
+    /// the IC's power pad. Fail-closed: a board with no qualifying IC
+    /// fails.
+    DecouplingProximity {
+        power_nets: Vec<String>,
+        ground_nets: Vec<String>,
+        max_mm: f64,
+        #[serde(default = "default_min_ic_pads")]
+        min_ic_pads: usize,
+    },
+
+    /// Suite E: the candidate schematic's netlist is graph-isomorphic to a
+    /// grader-only golden netlist (`golden` names an `inputs[]` entry by
+    /// kind). Refdes-agnostic: components match by class (R/C/L/LED/J/B/U,
+    /// classified from footprint + value) and pin-level connectivity.
+    NetlistIsomorphic { golden: String },
+
+    /// The board is fabrication-ready: DRC clean AND Gerber serialization
+    /// of every layer succeeds. The pcbeval P5 gate.
+    FabReady,
+
     /// DFM rule set passes for the named manufacturing process. The
     /// optional `rules` field is informational (legacy hint about which
     /// rules a task author cared about); the grader uses the process's
@@ -205,6 +229,9 @@ impl CheckSpec {
             CheckSpec::NetsFullyConnected => "nets_fully_connected",
             CheckSpec::BoardEnvelope { .. } => "board_envelope",
             CheckSpec::ComponentCount { .. } => "component_count",
+            CheckSpec::DecouplingProximity { .. } => "decoupling_proximity",
+            CheckSpec::NetlistIsomorphic { .. } => "netlist_isomorphic",
+            CheckSpec::FabReady => "fab_ready",
             CheckSpec::Dfm { .. } => "dfm",
             CheckSpec::RefactorInvariant { .. } => "refactor_invariant",
             CheckSpec::BodyValid => "body_valid",
@@ -252,4 +279,10 @@ impl CheckSpec {
     pub fn is_suite_d(&self) -> bool {
         matches!(self, CheckSpec::ShapeSimilarityChamfer { .. })
     }
+}
+
+/// Serde default for `DecouplingProximity::min_ic_pads`: 8 pads —
+/// catches QFPs and SOICs while excluding SOT-23-class regulators.
+fn default_min_ic_pads() -> usize {
+    8
 }

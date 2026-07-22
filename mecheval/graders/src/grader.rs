@@ -105,6 +105,26 @@ pub fn grade(
         None
     };
 
+    // Suite E: preload the grader-only golden netlist (by input kind) so
+    // the dispatch stays synchronous and path-free.
+    let golden_netlist: Option<Result<String, String>> = task
+        .checks
+        .iter()
+        .find_map(|c| match c {
+            CheckSpec::NetlistIsomorphic { golden } => Some(golden.clone()),
+            _ => None,
+        })
+        .map(|kind| {
+            let input = task
+                .private_input(&kind)
+                .ok_or_else(|| format!("no inputs[] entry of kind '{kind}'"))?;
+            let rel = input
+                .path
+                .as_ref()
+                .ok_or_else(|| format!("inputs[] entry '{kind}' has no path"))?;
+            std::fs::read_to_string(task_dir.join(rel)).map_err(|e| e.to_string())
+        });
+
     let mut records: Vec<CheckRecord> = Vec::with_capacity(task.checks.len());
     for (n, spec) in task.checks.iter().enumerate() {
         let (outcome, details) = run_check(
@@ -116,6 +136,7 @@ pub fn grade(
             candidate_solid.as_ref(),
             &mut host_state,
             &mut target_state,
+            golden_netlist.as_ref(),
         );
         records.push(CheckRecord {
             n,
@@ -193,6 +214,7 @@ fn run_check(
     candidate_solid: Option<&vcad_kernel::Solid>,
     host_state: &mut HostState,
     target_state: &mut HostState,
+    golden_netlist: Option<&Result<String, String>>,
 ) -> (CheckOutcome, serde_json::Value) {
     let stub_reason = "skeleton — kernel wiring pending";
     match spec {
@@ -250,6 +272,22 @@ fn run_check(
         CheckSpec::NetsFullyConnected => crate::pcb::check_nets_fully_connected(snapshot),
         CheckSpec::BoardEnvelope { max_mm } => crate::pcb::check_board_envelope(snapshot, *max_mm),
         CheckSpec::ComponentCount { min } => crate::pcb::check_component_count(snapshot, *min),
+        CheckSpec::DecouplingProximity {
+            power_nets,
+            ground_nets,
+            max_mm,
+            min_ic_pads,
+        } => crate::pcb::check_decoupling_proximity(
+            snapshot,
+            power_nets,
+            ground_nets,
+            *max_mm,
+            *min_ic_pads,
+        ),
+        CheckSpec::NetlistIsomorphic { .. } => {
+            crate::pcb::check_netlist_isomorphic(snapshot, golden_netlist)
+        }
+        CheckSpec::FabReady => crate::pcb::check_fab_ready(snapshot),
 
         CheckSpec::RefactorInvariant { .. } => (
             CheckOutcome::NotImplemented,

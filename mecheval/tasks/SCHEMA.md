@@ -113,6 +113,27 @@ Every check is something the vcad kernel (or the vcad gym, for Suite C) can comp
 // near-empty boards.
 { "type": "component_count", "min": 5 }
 
+// Decoupling discipline: every IC (footprint with ≥ min_ic_pads pads,
+// default 8) with a pad on a named power net must have a 2-pad
+// capacitor bridging that net to ground within max_mm (pad-to-pad).
+{ "type": "decoupling_proximity",
+  "power_nets": ["VCC", "3V3", "VDD"],
+  "ground_nets": ["GND"],
+  "max_mm": 6.0 }
+
+// Suite E: the candidate schematic's explicit netlist (sheet.nets) is
+// graph-isomorphic to a grader-only golden. `golden` names an inputs[]
+// entry by kind; the file maps refs → class labels + net → pin refs
+// (golden refs/net names are labels only — matching is structural).
+// Component classes are derived from footprint id + value:
+// R, C, L, LED, D, J (headers/connectors/testpoints), B (battery), U.
+// Pin order within a component is ignored (R/C are symmetric).
+{ "type": "netlist_isomorphic", "golden": "golden_netlist" }
+
+// The P5 gate: DRC clean AND Gerber serialization of every layer
+// succeeds — if it can't be exported for manufacture, it doesn't pass.
+{ "type": "fab_ready" }
+
 // DFM rule check.
 { "type": "dfm",
   "rules": ["min_wall_1.5mm", "draft_1deg", "no_undercut"] }

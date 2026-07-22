@@ -3,13 +3,29 @@
   "suite": "E",
   "tier": "E1",
   "title": "Voltage divider schematic",
-  "prompt": "Capture a schematic for a resistive voltage divider: an input terminal VIN, two resistors in series to ground, and an output terminal VOUT tapped between them. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean. Output a .vcad document with the schematic sheet in the document's schematic field.",
-  "inputs": [],
+  "prompt": "Capture a schematic for a resistive voltage divider: a 1-pin input terminal VIN, two resistors in series, a 1-pin output terminal VOUT tapped between them, and a 1-pin ground terminal GND at the bottom of the chain. Every component pin must be connected to a net \u2014 no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+  "inputs": [
+    {
+      "kind": "golden_netlist",
+      "path": "assets/e1-voltage-divider-netlist.json",
+      "agent_visible": false
+    }
+  ],
   "checks": [
-    { "type": "erc_clean" }
+    {
+      "type": "erc_clean"
+    },
+    {
+      "type": "netlist_isomorphic",
+      "golden": "golden_netlist"
+    }
   ],
   "anti_cheese": {},
   "limits": {},
   "pass_k": 5,
-  "tags": ["pcbeval", "schematic", "erc"]
+  "tags": [
+    "pcbeval",
+    "schematic",
+    "erc"
+  ]
 }

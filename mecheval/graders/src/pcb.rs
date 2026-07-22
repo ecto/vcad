@@ -367,3 +367,203 @@ mod tests {
         assert_eq!(out, CheckOutcome::Fail, "detail: {detail}");
     }
 }
+
+/// `decoupling_proximity` — every qualifying IC power pad has a two-pad
+/// capacitor bridging its power net to ground within `max_mm`.
+pub fn check_decoupling_proximity(
+    snapshot: &EvalSnapshot,
+    power_nets: &[String],
+    ground_nets: &[String],
+    max_mm: f64,
+    min_ic_pads: usize,
+) -> (CheckOutcome, Value) {
+    use vcad_ecad_pcb::geometry::pad_world_position;
+    let (_, pcbs) = match require_pcbs(snapshot) {
+        Ok(v) => v,
+        Err(out) => return out,
+    };
+    let is_power = |n: &str| power_nets.iter().any(|p| p.eq_ignore_ascii_case(n));
+    let is_ground = |n: &str| ground_nets.iter().any(|p| p.eq_ignore_ascii_case(n));
+
+    let mut findings = Vec::new();
+    let mut ic_pads_checked = 0usize;
+    let mut ok = true;
+    for pcb in &pcbs {
+        // Candidate decoupling caps: 2-pad footprints bridging power→ground.
+        let caps: Vec<_> = pcb
+            .footprints
+            .iter()
+            .filter(|f| f.pads.len() == 2)
+            .filter_map(|f| {
+                let net = |i: usize| f.pads[i].net.as_deref().unwrap_or("");
+                let (p, g) = (net(0), net(1));
+                if is_power(p) && is_ground(g) {
+                    Some((f, 0usize, p.to_string()))
+                } else if is_power(g) && is_ground(p) {
+                    Some((f, 1usize, g.to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for ic in pcb
+            .footprints
+            .iter()
+            .filter(|f| f.pads.len() >= min_ic_pads)
+        {
+            for pad in &ic.pads {
+                let Some(net) = pad.net.as_deref() else {
+                    continue;
+                };
+                if !is_power(net) {
+                    continue;
+                }
+                ic_pads_checked += 1;
+                let ppos = pad_world_position(ic, pad);
+                let best = caps
+                    .iter()
+                    .filter(|(_, _, cnet)| cnet.eq_ignore_ascii_case(net))
+                    .map(|(f, pi, _)| {
+                        let cpos = pad_world_position(f, &f.pads[*pi]);
+                        (
+                            ((cpos.x - ppos.x).powi(2) + (cpos.y - ppos.y).powi(2)).sqrt(),
+                            f.reference.clone(),
+                        )
+                    })
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                let (dist, cap_ref) = match best {
+                    Some((d, r)) => (d, r),
+                    None => (f64::INFINITY, "-".to_string()),
+                };
+                if dist > max_mm {
+                    ok = false;
+                }
+                findings.push(json!({
+                    "ic": ic.reference, "pad": pad.number, "net": net,
+                    "nearest_cap": cap_ref,
+                    "distance_mm": if dist.is_finite() { json!(dist) } else { json!(null) },
+                    "ok": dist <= max_mm,
+                }));
+            }
+        }
+    }
+    if ic_pads_checked == 0 {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": format!(
+                "no IC (footprint with ≥{min_ic_pads} pads) has a pad on a named power net — fail-closed"
+            ) }),
+        );
+    }
+    let outcome = if ok {
+        CheckOutcome::Pass
+    } else {
+        CheckOutcome::Fail
+    };
+    (
+        outcome,
+        json!({ "max_mm": max_mm, "ic_power_pads": ic_pads_checked, "findings": findings }),
+    )
+}
+
+/// `fab_ready` — DRC clean AND Gerber serialization of every board
+/// succeeds. The pcbeval P5 gate.
+pub fn check_fab_ready(snapshot: &EvalSnapshot) -> (CheckOutcome, Value) {
+    let (drc_outcome, drc_detail) = check_drc_clean(snapshot);
+    if drc_outcome != CheckOutcome::Pass {
+        return (drc_outcome, json!({ "stage": "drc", "detail": drc_detail }));
+    }
+    let (_, pcbs) = match require_pcbs(snapshot) {
+        Ok(v) => v,
+        Err(out) => return out,
+    };
+    let mut layers_total = 0usize;
+    for pcb in &pcbs {
+        match vcad_ecad_export::gerber::generate_gerbers(pcb) {
+            Ok(files) => {
+                if files.is_empty() {
+                    return (
+                        CheckOutcome::Fail,
+                        json!({ "stage": "gerber", "reason": "gerber generation produced no layers" }),
+                    );
+                }
+                layers_total += files.len();
+            }
+            Err(e) => {
+                return (
+                    CheckOutcome::Fail,
+                    json!({ "stage": "gerber", "reason": e.to_string() }),
+                );
+            }
+        }
+    }
+    (
+        CheckOutcome::Pass,
+        json!({ "drc": "clean", "gerber_layers": layers_total, "boards": pcbs.len() }),
+    )
+}
+
+/// `netlist_isomorphic` — candidate schematic vs the grader-only golden.
+pub fn check_netlist_isomorphic(
+    snapshot: &EvalSnapshot,
+    golden_raw: Option<&Result<String, String>>,
+) -> (CheckOutcome, Value) {
+    use crate::netlist;
+    let Some(golden_raw) = golden_raw else {
+        return (
+            CheckOutcome::Error,
+            json!({ "reason": "task has a netlist_isomorphic check but no golden_netlist input" }),
+        );
+    };
+    let raw = match golden_raw {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                CheckOutcome::Error,
+                json!({ "reason": format!("golden netlist unreadable: {e}") }),
+            )
+        }
+    };
+    let golden: netlist::GoldenNetlist = match serde_json::from_str(raw) {
+        Ok(g) => g,
+        Err(e) => {
+            return (
+                CheckOutcome::Error,
+                json!({ "reason": format!("golden netlist malformed: {e}") }),
+            )
+        }
+    };
+    let Some(doc) = snapshot.doc.as_ref() else {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "document failed to parse", "error": snapshot.fatal }),
+        );
+    };
+    let Some(sheet) = doc.schematic.as_ref() else {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "no schematic in document (fail-closed)" }),
+        );
+    };
+    let Some(cand) = netlist::candidate_graph(sheet) else {
+        return (
+            CheckOutcome::Fail,
+            json!({ "reason": "schematic has no explicit netlist (sheet.nets) — fail-closed" }),
+        );
+    };
+    let gold = netlist::golden_graph(&golden);
+    let iso = netlist::isomorphic(&cand, &gold);
+    let detail = json!({
+        "isomorphic": iso,
+        "candidate": { "components": cand.comps.len(), "nets": cand.net_count },
+        "golden": { "components": gold.comps.len(), "nets": gold.net_count },
+    });
+    (
+        if iso {
+            CheckOutcome::Pass
+        } else {
+            CheckOutcome::Fail
+        },
+        detail,
+    )
+}
