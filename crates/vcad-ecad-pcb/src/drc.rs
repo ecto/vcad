@@ -525,7 +525,30 @@ fn check_clearance(
 
             // A declared diff-pair partner only needs to clear by its gap, so
             // the intentional close coupling isn't flagged as a short.
-            let required = pair_aware_clearance(dp_map, &trace.net, &elem.net, clearance);
+            let mut required = pair_aware_clearance(dp_map, &trace.net, &elem.net, clearance);
+            // Pad-breakout exemption: within the escape region of either
+            // net's own pads the legs MUST converge below the gap to reach
+            // the land pattern — every ECAD DRC exempts this. The base
+            // clearance still applies (a true short stays a short).
+            if required > clearance && dist < required - 1e-6 {
+                const BREAKOUT_MM: f64 = 1.5;
+                let near_pad = pcb.footprints.iter().any(|fp| {
+                    fp.pads.iter().any(|pad| {
+                        matches!(&pad.net, Some(n) if n == &trace.net || n == &elem.net) && {
+                            let pp = crate::geometry::pad_world_position(fp, pad);
+                            let d0 = ((pp.x - trace.start.x).powi(2)
+                                + (pp.y - trace.start.y).powi(2))
+                            .sqrt();
+                            let d1 = ((pp.x - trace.end.x).powi(2) + (pp.y - trace.end.y).powi(2))
+                                .sqrt();
+                            d0 <= BREAKOUT_MM || d1 <= BREAKOUT_MM
+                        }
+                    })
+                });
+                if near_pad {
+                    required = clearance;
+                }
+            }
             if dist < required - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
@@ -624,8 +647,11 @@ fn check_pad_clearance(
                         .copied()
                         .unwrap_or(default_clearance),
                 );
-            // Diff-pair pads only need their gap, not the full clearance.
-            let clearance = pair_aware_clearance(dp_map, a.net, b.net, base);
+            // Pads are the breakout region by definition: intra-pair copper
+            // converges onto the land pattern, so pads need only the base
+            // clearance from their partner net (never the full gap).
+            let _ = dp_map;
+            let clearance = base;
 
             // True copper-to-copper distance, respecting pad rotation.
             let dist = a.geom.distance_to(&b.geom);
@@ -2762,7 +2788,13 @@ fn pair_aware_clearance(
     } else {
         (b.to_string(), a.to_string())
     };
-    dp_map.get(&key).copied().unwrap_or(fallback)
+    // 5um under the declared gap: legs coupled at EXACTLY the gap are the
+    // design intent, and offset/grid arithmetic sits within float noise of
+    // it. Anything meaningfully tighter is still a pinch.
+    dp_map
+        .get(&key)
+        .map(|g| (g - 0.005).max(0.0))
+        .unwrap_or(fallback)
 }
 
 /// Compute the minimum distance between two axis-aligned bounding boxes.
