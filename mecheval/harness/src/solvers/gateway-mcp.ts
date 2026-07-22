@@ -47,11 +47,35 @@ interface OpenAiToolCall {
   function: { name: string; arguments: string };
 }
 
+type CacheControl = { type: "ephemeral" };
+type ContentPart = { type: "text"; text: string; cache_control?: CacheControl };
+
 type OpenAiMessage =
-  | { role: "system"; content: string }
+  | { role: "system"; content: ContentPart[] }
   | { role: "user"; content: string }
   | { role: "assistant"; content: string | null; tool_calls?: OpenAiToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
+  | { role: "tool"; tool_call_id: string; content: ContentPart[] };
+
+/** Sliding prompt-cache breakpoints, verified against the gateway's
+ *  OpenAI-compat endpoint: anthropic models honor `cache_control` on
+ *  content parts (12x cheaper on the cached prefix, measured); other
+ *  providers ignore the field harmlessly (openai auto-caches prefixes
+ *  on its own). Strategy mirrors claude-mcp: one breakpoint on the
+ *  system block (which also covers the tool schemas — they precede it
+ *  in anthropic's prompt order) plus the two most recent tool results,
+ *  so the reusable prefix grows with the conversation. */
+export function applyGatewayCacheBreakpoints(messages: OpenAiMessage[]): void {
+  let marked = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "tool" && m.role !== "system") continue;
+    for (const part of m.content) delete part.cache_control;
+    if (m.role === "tool" && marked < 2 && m.content.length > 0) {
+      m.content[m.content.length - 1].cache_control = { type: "ephemeral" };
+      marked++;
+    }
+  }
+}
 
 /** Build a Solver bound to the given config. */
 export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solver {
@@ -83,6 +107,8 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
       let nextN = 0;
       let totalIn = 0;
       let totalOut = 0;
+      let totalCacheCreate = 0;
+      let totalCacheRead = 0;
       let lastDocumentId: string | null = null;
 
       const recordToolRaw = async (
@@ -141,7 +167,16 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
 
         const isPcbTask = task.suite === "E" || task.suite === "P";
         const messages: OpenAiMessage[] = [
-          { role: "system", content: isPcbTask ? PCB_SYSTEM_PROMPT : SYSTEM_PROMPT },
+          {
+            role: "system",
+            content: [
+              {
+                type: "text",
+                text: isPcbTask ? PCB_SYSTEM_PROMPT : SYSTEM_PROMPT,
+                cache_control: { type: "ephemeral" },
+              },
+            ],
+          },
           {
             role: "user",
             content: `${prompt}\n\nThe document_id for this session is "${lastDocumentId}". Use it on every tool call that requires it (unless a tool returns a new document_id — then switch to that one). Stop calling tools once you believe the document satisfies the task.`,
@@ -153,14 +188,25 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
 
         // 3. Agentic loop.
         for (let iter = 0; iter < config.maxIterations; iter++) {
+          applyGatewayCacheBreakpoints(messages);
           const resp = await client.chat.completions.create({
             model: config.model,
             messages: messages as never,
             tools: openAiTools as never,
             max_tokens: config.maxOutputTokens,
           });
-          totalIn += resp.usage?.prompt_tokens ?? 0;
-          totalOut += resp.usage?.completion_tokens ?? 0;
+          // Gateway usage: prompt_tokens INCLUDES cached + cache-write
+          // tokens; the details break them out for cost analysis.
+          const u = resp.usage as
+            | (typeof resp.usage & {
+                prompt_tokens_details?: { cached_tokens?: number };
+                cache_creation_input_tokens?: number;
+              })
+            | undefined;
+          totalIn += u?.prompt_tokens ?? 0;
+          totalOut += u?.completion_tokens ?? 0;
+          totalCacheRead += u?.prompt_tokens_details?.cached_tokens ?? 0;
+          totalCacheCreate += u?.cache_creation_input_tokens ?? 0;
 
           const msg = resp.choices[0]?.message;
           if (!msg) break;
@@ -182,7 +228,7 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
               messages.push({
                 role: "tool",
                 tool_call_id: call.id,
-                content: "ERROR: tool arguments were not valid JSON.",
+                content: [{ type: "text", text: "ERROR: tool arguments were not valid JSON." }],
               });
               trace.push({
                 n: nextN++,
@@ -204,7 +250,9 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
               messages.push({
                 role: "tool",
                 tool_call_id: call.id,
-                content: `ERROR: ${name} is not available during benchmark runs.`,
+                content: [
+                  { type: "text", text: `ERROR: ${name} is not available during benchmark runs.` },
+                ],
               });
               continue;
             }
@@ -212,10 +260,12 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
             messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content:
-                "error" in out
-                  ? `ERROR: ${out.error}`
-                  : mcpResultToText(out.result),
+              content: [
+                {
+                  type: "text",
+                  text: "error" in out ? `ERROR: ${out.error}` : mcpResultToText(out.result),
+                },
+              ],
             });
           }
         }
@@ -237,7 +287,13 @@ export function makeGatewayMcpSolver(cfg: Partial<GatewayMcpConfig> = {}): Solve
           vcadJson,
           controlPolicy: null,
           toolCalls: trace,
-          tokens: { input: totalIn, output: totalOut, total: totalIn + totalOut },
+          tokens: {
+            input: totalIn,
+            output: totalOut,
+            total: totalIn + totalOut,
+            cache_creation_input: totalCacheCreate,
+            cache_read_input: totalCacheRead,
+          },
           wallclockSec,
         };
       } finally {
