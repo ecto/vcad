@@ -1416,10 +1416,16 @@ export async function createServer(
           // the content-addressed GLB cache for the poll loop. Best-effort
           // and size-capped; hosts that strip `_meta` (and oversized docs)
           // fall back to the fetch path unchanged.
-          if (
-            def.behavior.mount &&
-            (clientHasInlineUi() || context.assumeUiClient === true)
-          ) {
+          //
+          // NOT gated on the client's declared UI capability: Claude Code
+          // mounts the widget without ever declaring
+          // `extensions["io.modelcontextprotocol/ui"]` at initialize, and in
+          // that host the widget's fallback `get_preview_glb` round trip is
+          // not dependable — gating on the capability left the freshly
+          // placed board rendering as "no geometry to preview". `_meta` is
+          // ignored by UI-less clients and never model-visible, so the only
+          // cost of always attaching is transport bytes.
+          if (def.behavior.mount) {
             await attachInlinePreview(result, docId, engine);
           }
         }
