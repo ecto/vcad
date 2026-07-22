@@ -1323,6 +1323,13 @@ fn pin_world(comp: &SchematicComponent, comp_pos: Vec2, pin_pos: Vec2) -> Vec2 {
 /// pin's connection end, so the netlist survives into KiCad as visible,
 /// electrically-connected stubs. Uses the placed (possibly auto-laid-out)
 /// positions, never the stored ones.
+/// Two schematic points that coincide once written at the emitter's precision.
+/// `num` rounds to 6 decimals, so anything closer than that is the same point
+/// in the emitted file.
+fn same_point(a: Vec2, b: Vec2) -> bool {
+    (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6
+}
+
 fn write_net_stubs(e: &mut Emitter, sheet: &SchematicSheet, placements: &[Vec2]) {
     let Some(nets) = &sheet.nets else {
         return;
@@ -1337,6 +1344,19 @@ fn write_net_stubs(e: &mut Emitter, sheet: &SchematicSheet, placements: &[Vec2])
                 continue;
             };
             let pos = pin_world(comp, placements[idx], pin.position);
+            // Stubs exist so connectivity survives *without* drawn wires. A pin
+            // that a wire already lands on is connected in the file already, so
+            // emitting a stub there would duplicate it — and since parsing
+            // reconstructs `nets` from that same drawn connectivity, a
+            // write → parse → write cycle would otherwise accumulate a fresh
+            // label every round trip.
+            if sheet
+                .wires
+                .iter()
+                .any(|w| same_point(w.start, pos) || same_point(w.end, pos))
+            {
+                continue;
+            }
             // Point the label away from the body: pin_angle is the stub
             // direction toward the body, so the label faces the other way.
             let body = symbol_body(comp);

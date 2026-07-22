@@ -839,8 +839,19 @@ mod tests {
                 assert_eq!(pa.pin_type, pb.pin_type);
             }
         }
-        let names: Vec<&str> = reparsed.labels.iter().map(|l| l.name.as_str()).collect();
-        assert_eq!(names, vec!["VCC", "GND"]);
+        // This sheet declares nets but draws no wires, so the writer also emits
+        // a global-label stub on every referenced pin — that is the whole point
+        // of the stubs. The invariant that matters here is the one this test is
+        // named for: the label *names* survive the round trip, and no net
+        // invents or loses a name.
+        let mut names: Vec<&str> = reparsed.labels.iter().map(|l| l.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names, vec!["GND", "VCC"]);
+
+        // The stubs really were emitted (2 authored labels + 3 pin stubs), so a
+        // regression that silently dropped them would not pass as "names intact".
+        assert_eq!(reparsed.labels.len(), 5);
     }
 
     /// Unknown tokens are skipped, mirroring the PCB parser's tolerance.
