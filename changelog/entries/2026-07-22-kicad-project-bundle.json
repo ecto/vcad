@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-kicad-project-bundle",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "feat",
+  "title": "Linked KiCad project bundle export",
+  "summary": "export_kicad with a .kicad_pro filename (or bare name) now emits a linked project — .kicad_pro + .kicad_sch + .kicad_pcb with cross-probe symbol↔footprint paths.",
+  "features": ["pcb", "export", "kicad"],
+  "mcpTools": ["export_kicad"]
+}

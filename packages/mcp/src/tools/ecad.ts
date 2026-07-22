@@ -50,6 +50,7 @@ import {
   exportFabFiles,
   pcbPreviewMeshes,
   exportKicadPcb,
+  exportKicadProject,
   exportKicadSch,
   tryExportFabFiles,
   tryRunDrc,
@@ -1115,11 +1116,14 @@ export const exportKicadSchema = {
     filename: {
       type: "string" as const,
       description:
-        "Output filename ending in .kicad_pcb (board) or .kicad_sch (schematic). " +
-        "The extension selects what is exported: .kicad_pcb writes the session's " +
-        "board (footprints, pads, nets, traces, vias, zones, layers, outline) as a " +
-        "native, editable KiCad 9 file a human can open and finish routing; " +
-        ".kicad_sch writes the session's schematic. Defaults to board.kicad_pcb.",
+        "Output filename ending in .kicad_pcb (board), .kicad_sch (schematic), or " +
+        ".kicad_pro (linked project bundle). The extension selects what is exported: " +
+        ".kicad_pcb writes the session's board (footprints, pads, nets, traces, vias, " +
+        "zones, layers, outline) as a native, editable KiCad 9 file a human can open " +
+        "and finish routing; .kicad_sch writes the session's schematic; .kicad_pro " +
+        "(or a bare name with no extension) writes all three files with board " +
+        "footprints linked to their schematic symbols so KiCad can cross-probe " +
+        "(click a symbol → highlight its footprint). Defaults to board.kicad_pcb.",
     },
     output_dir: {
       type: "string" as const,
@@ -4804,6 +4808,87 @@ function deliverFabFiles(files: FabFile[], diskFailReason?: string) {
 }
 
 /**
+ * Return a linked KiCad project bundle to the caller. When output_dir is
+ * writable the three files land on disk; otherwise they ride inline under the
+ * cap, or offload to the artifact store above it (same mechanism as Gerbers).
+ */
+async function deliverKicadProject(
+  files: FabFile[],
+  name: string,
+  outputDir: string | undefined,
+  documentId: string | undefined,
+) {
+  const total = bundleBytes(files);
+  const docField = documentId ? { document_id: documentId } : {};
+
+  if (outputDir) {
+    try {
+      const fs = await import("node:fs/promises");
+      const { resolveWithinRoot } = await import("./safe-path.js");
+      const dir = resolveWithinRoot(outputDir);
+      await fs.mkdir(dir, { recursive: true });
+      const paths: string[] = [];
+      for (const f of files) {
+        const path = resolveWithinRoot(f.name, dir);
+        await fs.writeFile(path, f.content, "utf8");
+        paths.push(path);
+      }
+      const payload = {
+        success: true,
+        format: "kicad_project" as const,
+        name,
+        bytes: total,
+        paths,
+        note: `Linked KiCad project written; open ${name}.kicad_pro in KiCad 9 to cross-probe schematic and board.`,
+        ...docField,
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        structuredContent: { export_kicad: payload },
+      };
+    } catch {
+      // Sandboxed/hosted host — fall through to inline/artifact delivery.
+    }
+  }
+
+  const cap = maxInlineArtifactBytes();
+  if (total <= cap) {
+    const payload = {
+      success: true,
+      format: "kicad_project" as const,
+      name,
+      bytes: total,
+      files,
+      ...docField,
+    };
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+      structuredContent: { export_kicad: payload },
+    };
+  }
+
+  const handle = storeArtifact(files);
+  const payload = {
+    success: true,
+    format: "kicad_project" as const,
+    name,
+    bytes: total,
+    artifact_id: handle.artifact_id,
+    artifact_url: handle.artifact_url,
+    manifest: handle.manifest,
+    expires_at: handle.expires_at,
+    note:
+      "Project files are at artifact_url (the manifest lists each file with bytes + sha256; " +
+      "download one at <artifact_url>/<file>).",
+    ...docField,
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: { export_kicad: payload },
+  };
+}
+
+/**
  * Export the session's board or schematic as a native, editable KiCad 9 file.
  *
  * `.kicad_pcb` serializes the board (the inverse of import_pcb); `.kicad_sch`
@@ -4820,7 +4905,41 @@ export async function exportKicad(args: Record<string, unknown>) {
       : "board.kicad_pcb";
   const outputDir = args.output_dir as string | undefined;
 
-  const ext = filename.toLowerCase().split(".").pop();
+  const ext = filename.includes(".")
+    ? filename.toLowerCase().split(".").pop()
+    : undefined;
+
+  // Linked project bundle: .kicad_pro (or a bare name) exports all three
+  // files — <name>.kicad_pro / .kicad_sch / .kicad_pcb — with board
+  // footprints carrying (path …) references to their schematic symbol uuids
+  // so KiCad can cross-probe.
+  if (ext === "kicad_pro" || ext === undefined) {
+    const name = ext === undefined ? filename : filename.slice(0, -".kicad_pro".length);
+    if (!name) {
+      return ecadError("Project filename must have a basename, e.g. 'board.kicad_pro'.");
+    }
+    const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+    if (!sheet) {
+      return ecadError(
+        "A KiCad project bundle needs a schematic; this document has none. " +
+          "Create one with create_schematic, or export the board alone as .kicad_pcb.",
+      );
+    }
+    const pcb = getDocPcb(doc);
+    if (!pcb) {
+      return ecadError(
+        "A KiCad project bundle needs a board; this document has none. " +
+          "Export the schematic alone as .kicad_sch.",
+      );
+    }
+    const bundle = await exportKicadProject(sheet, pcb, name);
+    if (!bundle) {
+      return ecadError("KiCad project export unavailable (kernel WASM not loaded or outdated)");
+    }
+    const files = bundle.map(([n, c]) => ({ name: n, content: c }));
+    return deliverKicadProject(files, name, outputDir, documentId);
+  }
+
   let content: string | null;
   let format: "kicad_pcb" | "kicad_sch";
 
@@ -13034,7 +13153,10 @@ export const toolDefs: ToolDef[] = [
     description:
       "Export the session as a native, editable KiCad 9 file. " +
       "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
-      "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
+      "traces, vias, zones, layers, outline); .kicad_sch writes the schematic; " +
+      ".kicad_pro (or a bare name) writes a linked project bundle (.kicad_pro + " +
+      ".kicad_sch + .kicad_pcb) with footprints tied to their schematic symbols " +
+      "for cross-probing. " +
       "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
       "it in KiCad to finish routing nets the autorouter couldn't close, then " +
       "re-import. Large files respect the inline byte cap (use output_dir for those).",

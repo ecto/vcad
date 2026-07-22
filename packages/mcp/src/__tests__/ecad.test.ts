@@ -1418,6 +1418,46 @@ describe("ecad session flow", () => {
     expect(bad.isError).toBe(true);
   });
 
+  it("export_kicad .kicad_pro exports a linked project bundle", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+
+    const result = await exportKicad({ document_id: id, filename: "demo.kicad_pro" });
+    if ((result as { isError?: boolean }).isError) {
+      // The checked-in kernel WASM predates exportKicadProject (artifacts are
+      // only refreshed on main); the tool must degrade with a clear error.
+      expect(JSON.stringify(result)).toContain("unavailable");
+      return;
+    }
+    const bundle = out(result);
+    expect(bundle.success).toBe(true);
+    expect(bundle.format).toBe("kicad_project");
+    expect(bundle.document_id).toBe(id);
+    const names = (bundle.files as Array<{ name: string }>).map((f) => f.name);
+    expect(names).toEqual(["demo.kicad_pro", "demo.kicad_sch", "demo.kicad_pcb"]);
+    const get = (n: string) =>
+      (bundle.files as Array<{ name: string; content: string }>).find((f) => f.name === n)!
+        .content;
+    // The project file is valid JSON recording the sheet root uuid.
+    const pro = JSON.parse(get("demo.kicad_pro"));
+    expect(pro.meta.filename).toBe("demo.kicad_pro");
+    const rootUuid = pro.sheets[0][0];
+    expect(get("demo.kicad_sch")).toContain(`(uuid "${rootUuid}")`);
+    // The board footprints are linked to schematic symbols (cross-probe paths).
+    expect(get("demo.kicad_pcb")).toContain('(sheetfile "demo.kicad_sch")');
+    expect(get("demo.kicad_pcb")).toMatch(/\(path "\/[0-9a-f-]{36}"\)/);
+
+    // A bare name (no extension) takes the same bundle path.
+    const bare = out(await exportKicad({ document_id: id, filename: "demo" }));
+    expect(bare.format).toBe("kicad_project");
+  });
+
   it("export_gerber blocks a dirty (unconnected-net) board and returns the DRC summary", async () => {
     const created = out(
       await createSchematic({

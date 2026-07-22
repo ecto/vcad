@@ -898,6 +898,35 @@ export async function exportKicadSch(sheet: SchematicSheet): Promise<string | nu
   }
 }
 
+/**
+ * Export a linked KiCad 9 project bundle (`<name>.kicad_pro` / `.kicad_sch` /
+ * `.kicad_pcb`) with footprint→symbol cross-probe paths. Returns
+ * `[filename, contents]` pairs, or null if the ECAD WASM is unavailable or
+ * predates the bundle export.
+ */
+export async function exportKicadProject(
+  sheet: SchematicSheet,
+  pcb: Pcb,
+  name: string,
+): Promise<Array<[string, string]> | null> {
+  // Structural cast: the checked-in WASM package may predate this binding
+  // (artifacts are only refreshed on main), so probe for it at runtime.
+  const wasm = (await loadEcadWasm()) as {
+    exportKicadProject?: (sheetJson: string, pcbJson: string, name: string) => unknown;
+  } | null;
+  if (!wasm || typeof wasm.exportKicadProject !== "function") return null;
+  try {
+    return wasm.exportKicadProject(
+      JSON.stringify(sheet),
+      JSON.stringify(pcb),
+      name,
+    ) as Array<[string, string]>;
+  } catch (e) {
+    console.warn("[ECAD] KiCad project export failed:", e);
+    return null;
+  }
+}
+
 /** Fill copper pour zones on the PCB. */
 export async function fillZones(pcb: Pcb): Promise<FilledZoneResult[]> {
   const wasm = await loadEcadWasm();
