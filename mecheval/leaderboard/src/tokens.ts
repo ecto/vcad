@@ -142,7 +142,7 @@ export const domains: readonly DomainSpec[] = [
     tagline:
       "Schematic and layout graded by real DRC, ERC, and circuit simulation. Passing boards are orderable.",
     comDomain: "pcbeval.com",
-    live: false,
+    live: true,
   },
   {
     slug: "sim",

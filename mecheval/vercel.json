@@ -9,32 +9,47 @@
   "redirects": [
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "(www\\.)?mecheval\\.com" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "(www\\.)?mecheval\\.com"
+        }
+      ],
       "destination": "https://eval.vcad.io/mech/:path*",
       "permanent": true
     },
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "(www\\.)?pcbeval\\.com" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "(www\\.)?pcbeval\\.com"
+        }
+      ],
       "destination": "https://eval.vcad.io/pcb/:path*",
       "permanent": true
     },
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "(www\\.)?simeval\\.com" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "(www\\.)?simeval\\.com"
+        }
+      ],
       "destination": "https://eval.vcad.io/sim/:path*",
       "permanent": true
     },
     {
       "source": "/:path*",
-      "has": [{ "type": "host", "value": "(www\\.)?atomeval\\.com" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "(www\\.)?atomeval\\.com"
+        }
+      ],
       "destination": "https://eval.vcad.io/atom/:path*",
       "permanent": true
-    },
-    {
-      "source": "/pcb/:path*",
-      "destination": "/",
-      "permanent": false
     },
     {
       "source": "/sim/:path*",
@@ -51,13 +66,19 @@
     {
       "source": "/(.*)\\.html",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
       ]
     },
     {
       "source": "/(.*)\\.svg",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, must-revalidate"
+        }
       ]
     }
   ]

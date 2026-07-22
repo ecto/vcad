@@ -30,6 +30,23 @@ const PASS_K = 5;
 // internal links are relative, so the whole site relocates by prefixing
 // its emitted paths here. mecheval.com 301s to /mech (vercel.json).
 const MECH = domains.find((d) => d.slug === "mech")!.pathPrefix;
+
+// The chapter currently being emitted. Chapter pages (index/task/model/run)
+// read their brand + tagline from here; main() swaps it per domain.
+const CHAPTER: { brand: string; tagline: string } = {
+  brand: copy.brand,
+  tagline: copy.tagline,
+};
+
+/** Which chapter a task belongs to, by suite (E/P → pcb, else mech). */
+function suiteDomain(suite: string): "mech" | "pcb" {
+  return suite === "E" || suite === "P" ? "pcb" : "mech";
+}
+
+/** Fallback when a run's task has no spec on disk: the id's tier letter. */
+function taskIdDomain(taskId: string): "mech" | "pcb" {
+  return /^[ep]\d/.test(taskId) ? "pcb" : "mech";
+}
 // Resolve REPO_ROOT relative to this script (mecheval/leaderboard/dist/build.js)
 // so we work the same whether invoked via `npm run build -w …` (cwd = leaderboard
 // package), `node mecheval/leaderboard/dist/build.js` (cwd = repo root), or
@@ -1027,7 +1044,7 @@ function titleBlockHtml(tb: TitleBlock, generatedAt: string): string {
 function footerHtml(): string {
   return `<div class="footer">
     <div class="stack">
-      <b>${escape(copy.brand)}</b> &middot; part of <a href="/">${escape(family.brand)}</a> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+      <b>${escape(CHAPTER.brand)}</b> &middot; part of <a href="/">${escape(family.brand)}</a> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
     </div>
     <div>
       sibling project: <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
@@ -1058,8 +1075,7 @@ const SCALE_BANDS: Record<string, [number, number]> = {
 
 function familyIndexPage(
   models: ModelSummary[],
-  taskCount: number,
-  runCount: number,
+  stats: Record<string, { models: number; tasks: number; runs: number }>,
   k: number,
 ): string {
   const generatedAt = new Date().toISOString();
@@ -1116,9 +1132,11 @@ function familyIndexPage(
       const chapterCell = d.live
         ? `<a class="ch-name" href="/${d.pathPrefix}/">${escape(d.name)}</a>`
         : `<span class="ch-name ch-soon">${escape(d.name)}</span>`;
-      const status = d.live
-        ? `<span class="status-live">${models.length} models · ${taskCount} tasks · ${fmtCompact(runCount)} runs</span>`
-        : `<span class="status-soon">in preparation · <span class="mono">${escape(d.comDomain)}</span></span>`;
+      const st = stats[d.slug];
+      const status =
+        d.live && st
+          ? `<span class="status-live">${st.models} models · ${st.tasks} tasks · ${fmtCompact(st.runs)} runs</span>`
+          : `<span class="status-soon">in preparation · <span class="mono">${escape(d.comDomain)}</span></span>`;
       return `<tr${d.live ? "" : ` class="row-soon"`}>
         <td class="mono cell-sheet">${sheet}</td>
         <td>${chapterCell}<div class="ch-tagline">${escape(d.tagline)}</div></td>
@@ -1362,7 +1380,7 @@ function pageShell(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="${escape(copy.tagline)}">
+<meta name="description" content="${escape(CHAPTER.tagline)}">
 <meta name="theme-color" content="${theme.light.ground}" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="${theme.dark.ground}" media="(prefers-color-scheme: dark)">
 <title>${escape(title)}</title>
@@ -1786,8 +1804,8 @@ function indexPage(
   const body = `
     <div class="hero">
       <div>
-        <div class="wordmark"><span class="dot"></span><h1>${escape(copy.brand)}</h1></div>
-        <p class="tagline-main">${escape(copy.tagline)}</p>
+        <div class="wordmark"><span class="dot"></span><h1>${escape(CHAPTER.brand)}</h1></div>
+        <p class="tagline-main">${escape(CHAPTER.tagline)}</p>
         ${heroMetricHtml}
       </div>
       <div class="mascot">${mascotSvg ?? ""}</div>
@@ -1819,11 +1837,11 @@ function indexPage(
       Corpus: ${runs.length} run blobs across ${rankedModels.length} models and ${taskIds.length} tasks.
     </p>`;
   return pageShell(
-    "mecheval — eval suite for AI mechanical design",
+    `${CHAPTER.brand} — ${CHAPTER.tagline}`,
     "",
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: "INDEX",
       scale: passKReady > 0 ? `pass^${k} · ${passKAchieved}/${passKReady}` : `pass^${k}`,
       project: "leaderboard",
@@ -1955,10 +1973,10 @@ function taskPage(
   if (!spec) {
     return pageShell(
       `mecheval — ${taskId}`,
-      `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
+      `<a href="../index.html">← ${escape(CHAPTER.brand)}</a> / task / ${escape(taskId)}`,
       `<h1>${escape(taskId)}</h1>
        <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json</div>`,
-      { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
+      { drawing: CHAPTER.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
     );
   }
   // ── per-task model results (a mini leaderboard for this task) ──
@@ -2062,10 +2080,10 @@ function taskPage(
   `;
   return pageShell(
     `mecheval — ${taskId}`,
-    `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
+    `<a href="../index.html">← ${escape(CHAPTER.brand)}</a> / task / ${escape(taskId)}`,
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: `TASK · ${taskId}`,
       scale: `${runsForTask.length} runs`,
       project: `${spec.suite} · ${spec.tier}`,
@@ -2084,10 +2102,10 @@ function modelPage(modelId: string, runsForModel: RunMeta[]): string {
   const taskCount = new Set(runsForModel.map((r) => r.task_id)).size;
   return pageShell(
     `mecheval — ${modelId}`,
-    `<a href="../index.html">← ${escape(copy.brand)}</a> / model / ${escape(modelId)}`,
+    `<a href="../index.html">← ${escape(CHAPTER.brand)}</a> / model / ${escape(modelId)}`,
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: `MODEL · ${modelId}`,
       scale: `${runsForModel.length} runs · ${taskCount} tasks`,
       project: modelDisplayName(modelId),
@@ -2251,10 +2269,10 @@ function runPage(
   `;
   return pageShell(
     `mecheval — ${title} · ${id.label}`,
-    `<a href="../../../index.html">← ${escape(copy.brand)}</a> / <a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(taskId)}</a> / ${escape(id.label)}`,
+    `<a href="../../../index.html">← ${escape(CHAPTER.brand)}</a> / <a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(taskId)}</a> / ${escape(id.label)}`,
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: `RUN · ${runId}`,
       scale: passed ? "PASS" : `${blob.summary.checks_passed}/${blob.summary.checks_total}`,
       project: `${taskId} · ${modelDisplayName(modelId)}`,
@@ -2376,42 +2394,71 @@ async function main(): Promise<void> {
     taskRefSvgs.set(tid, svg);
   }
 
+  // Partition tasks + runs into chapters by suite (E/P → pcb, else mech).
+  const domainOfTask = (tid: string): "mech" | "pcb" => {
+    const spec = taskSpecs.get(tid);
+    return spec ? suiteDomain(spec.suite) : taskIdDomain(tid);
+  };
+  const chapterSlugs = ["mech", "pcb"] as const;
+  const chapterData = chapterSlugs.map((slug) => {
+    const chTaskIds = [...seenTaskIds].filter((t) => domainOfTask(t) === slug).sort();
+    const chRuns = runs.filter((r) => domainOfTask(r.task_id) === slug);
+    const chEntries = passKBy(chRuns, PASS_K);
+    const chModels = modelSummary(chEntries);
+    return { slug, taskIds: chTaskIds, runs: chRuns, entries: chEntries, models: chModels };
+  });
+
   // Family index at the site root. Chapter sites live under their
   // pathPrefix; the branded .com domains 301 into them (vercel.json).
+  const familyStats = Object.fromEntries(
+    chapterData.map((c) => [
+      c.slug,
+      { models: c.models.length, tasks: c.taskIds.length, runs: c.runs.length },
+    ]),
+  );
   await writePage(
     "index.html",
-    familyIndexPage(models, seenTaskIds.size, runs.length, PASS_K),
+    familyIndexPage(models, familyStats, PASS_K),
   );
 
-  // MechEval chapter index.
-  await writePage(
-    `${MECH}/index.html`,
-    indexPage(
-      runs,
-      entries,
-      models,
-      [...seenTaskIds].sort(),
-      PASS_K,
-      mascotSvg,
-      taskRefSvgs,
-    ),
-  );
+  // Chapter sites: index + task + model pages, each under its pathPrefix
+  // with its own brand.
+  for (const ch of chapterData) {
+    const domain = domains.find((d) => d.slug === ch.slug)!;
+    if (!domain.live) continue;
+    const prefix = domain.pathPrefix;
+    CHAPTER.brand = domain.name;
+    CHAPTER.tagline = domain.tagline;
 
-  // Task pages.
-  for (const tid of seenTaskIds) {
-    const runsForTask = runs.filter((r) => r.task_id === tid);
     await writePage(
-      `${MECH}/task/${tid}.html`,
-      taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs, taskRefSvgs.get(tid) ?? null),
+      `${prefix}/index.html`,
+      indexPage(
+        ch.runs,
+        ch.entries,
+        ch.models,
+        ch.taskIds,
+        PASS_K,
+        ch.slug === "mech" ? mascotSvg : null,
+        taskRefSvgs,
+      ),
     );
-  }
 
-  // Model pages.
-  const modelIds = new Set(runs.map((r) => r.model_id));
-  for (const mid of modelIds) {
-    const runsForModel = runs.filter((r) => r.model_id === mid);
-    await writePage(`${MECH}/model/${mid}.html`, modelPage(mid, runsForModel));
+    for (const tid of ch.taskIds) {
+      const runsForTask = ch.runs.filter((r) => r.task_id === tid);
+      await writePage(
+        `${prefix}/task/${tid}.html`,
+        taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs, taskRefSvgs.get(tid) ?? null),
+      );
+    }
+
+    const chModelIds = new Set(ch.runs.map((r) => r.model_id));
+    for (const mid of chModelIds) {
+      const runsForModel = ch.runs.filter((r) => r.model_id === mid);
+      await writePage(`${prefix}/model/${mid}.html`, modelPage(mid, runsForModel));
+    }
   }
+  CHAPTER.brand = copy.brand;
+  CHAPTER.tagline = copy.tagline;
 
   // Run pages — reuse the SVG map populated above; copy each .vcad
   // into dist alongside the blob so the run page can offer it as a
@@ -2423,8 +2470,9 @@ async function main(): Promise<void> {
     const svgKey = `${r.task_id}::${r.model_id}::${r.run_id}`;
     const vcadSvg = runSvgs.get(svgKey) ?? null;
     if (vcadSvg) renderedRuns++;
+    const runPrefix = domainOfTask(r.task_id) === "pcb" ? "pcb" : MECH;
     await writePage(
-      `${MECH}/run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
+      `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
       runPage(blob, vcad, vcadSvg, taskSpecs.get(r.task_id) ?? null, taskRefSvgs.get(r.task_id) ?? null),
     );
     // Drop the .vcad file alongside the HTML so it can be linked.
@@ -2432,7 +2480,7 @@ async function main(): Promise<void> {
       await writeFile(
         resolve(
           OUT_DIR,
-          `${MECH}/run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
+          `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
         ),
         vcad,
         "utf8",
@@ -2442,7 +2490,7 @@ async function main(): Promise<void> {
   console.log(`rendered ${renderedRuns} of ${runs.length} run artifacts`);
 
   console.log(
-    `wrote ${OUT_DIR}: index + ${seenTaskIds.size} tasks + ${modelIds.size} models + ${runs.length} runs`,
+    `wrote ${OUT_DIR}: family index + ${chapterData.map((c) => `${c.slug}(${c.taskIds.length}t/${c.models.length}m/${c.runs.length}r)`).join(" + ")}`,
   );
 }
 

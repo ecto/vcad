@@ -129,6 +129,7 @@ import { claudeMcpSolver, makeClaudeMcpSolver } from "./solvers/claude-mcp.js";
 import { openAiDirectSolver, makeOpenAiDirectSolver } from "./solvers/openai-direct.js";
 import { waferDirectSolver, makeWaferDirectSolver } from "./solvers/wafer-direct.js";
 import { gatewayDirectSolver, makeGatewayDirectSolver } from "./solvers/gateway-direct.js";
+import { floodZoneSolver } from "./solvers/flood-zone.js";
 
 /** Look up a solver by id. Currently ships:
  *  - default-cube           — baseline villain
@@ -144,6 +145,7 @@ import { gatewayDirectSolver, makeGatewayDirectSolver } from "./solvers/gateway-
  *  callers that only use DEFAULT_CUBE never pay for the import. */
 export function getSolver(id: string): Solver {
   if (id === "default-cube" || id === "DEFAULT_CUBE") return defaultCubeSolver;
+  if (id === "flood-zone" || id === "FLOOD_ZONE") return floodZoneSolver;
   if (id === "claude-direct") return claudeDirectSolver;
   if (id.startsWith("claude-direct-")) {
     return makeClaudeDirectSolver({ model: id.slice("claude-direct-".length) });
