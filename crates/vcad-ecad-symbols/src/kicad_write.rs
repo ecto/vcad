@@ -920,10 +920,29 @@ fn comp_half_extents(comp: &SchematicComponent) -> (f64, f64) {
 /// a deterministic auto-layout when they are degenerate.
 fn sheet_placements(sheet: &SchematicSheet) -> Vec<Vec2> {
     if placement_is_degenerate(sheet) {
-        auto_layout(sheet)
-    } else {
-        sheet.components.iter().map(|c| c.position).collect()
+        return auto_layout(sheet);
     }
+    // Stored positions pass through — but snap them to the schematic grid when
+    // nothing on the sheet is drawn at fixed coordinates. KiCad's connection
+    // grid is 1.27 mm, and a pin landing off it (`endpoint_off_grid`) can't be
+    // wired to without dropping the grid size, which defeats the editable
+    // handoff even though our synthesized connectivity is internally correct.
+    //
+    // Only safe when connectivity is fully synthesized: snapping moves symbols
+    // by up to half a grid step, which would pull pins off any hand-drawn wire
+    // or label placed at explicit coordinates. Those sheets keep raw positions.
+    let synthesized_only = sheet.wires.is_empty() && sheet.labels.is_empty();
+    sheet
+        .components
+        .iter()
+        .map(|c| {
+            if synthesized_only {
+                Vec2::new(snap_grid(c.position.x), snap_grid(c.position.y))
+            } else {
+                c.position
+            }
+        })
+        .collect()
 }
 
 /// Stored positions are degenerate when two or more symbols overlap — which
@@ -2388,5 +2407,229 @@ mod tests {
         // sample_sheet declares no data nets — no synthesized stubs beyond the
         // one drawn wire.
         assert_eq!(text.matches("(wire").count(), 1);
+    }
+
+    /// Synthesized-connectivity sheets get their stored positions snapped to
+    /// KiCad's 1.27 mm connection grid, so pins are wirable by hand after the
+    /// handoff (KiCad ERC flagged `endpoint_off_grid` before this).
+    #[test]
+    fn synthesized_sheets_snap_stored_positions_to_grid() {
+        // degenerate_pins_sheet stores y = 50.0, which is off the 1.27 grid,
+        // and is spaced widely enough that auto_layout does not take over.
+        let sheet = degenerate_pins_sheet();
+        assert!(
+            !placement_is_degenerate(&sheet),
+            "would bypass the snap path"
+        );
+        for p in sheet_placements(&sheet) {
+            // snap_grid is idempotent on grid points, so it is its own oracle
+            // here — 1.27 has no exact binary representation, which makes a
+            // fract()-based check unreliable.
+            assert!(
+                (snap_grid(p.x) - p.x).abs() < 1e-9 && (snap_grid(p.y) - p.y).abs() < 1e-9,
+                "placement {p:?} is off the {SCH_GRID} mm grid"
+            );
+        }
+    }
+
+    /// ...but a sheet with drawn geometry keeps its raw positions: snapping
+    /// would shift symbols off the wires and labels placed at fixed
+    /// coordinates, silently breaking connectivity.
+    #[test]
+    fn drawn_sheets_keep_raw_positions() {
+        let sheet = sample_sheet();
+        assert!(!sheet.wires.is_empty(), "sample must carry drawn geometry");
+        let placed = sheet_placements(&sheet);
+        for (c, p) in sheet.components.iter().zip(&placed) {
+            assert_eq!(c.position, *p);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Real-KiCad verification (requires kicad-cli; ignored by default)
+    // -----------------------------------------------------------------------
+    //
+    // The tests above assert what *we* believe the exported file says. These
+    // close the loop by handing the file to KiCad 9 itself and asking what it
+    // reads back — the only check that catches a self-consistent-but-wrong
+    // coordinate or connectivity convention.
+    //
+    // Run locally with:
+    //   cargo test -p vcad-ecad-symbols -- --ignored --nocapture
+    // kicad-cli is found via $KICAD_CLI, PATH, or the macOS app bundle.
+
+    /// Locate a KiCad 9 `kicad-cli` binary, or `None` (tests skip cleanly).
+    fn kicad_cli() -> Option<std::path::PathBuf> {
+        use std::path::PathBuf;
+        if let Ok(p) = std::env::var("KICAD_CLI") {
+            let p = PathBuf::from(p);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("which")
+            .arg("kicad-cli")
+            .output()
+        {
+            if out.status.success() {
+                let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+        let mac = PathBuf::from("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli");
+        if mac.is_file() {
+            return Some(mac);
+        }
+        None
+    }
+
+    /// Write the nets-flow sheet to a scratch dir and return its path.
+    /// Honors VCAD_KICAD_OUT so the artifacts can be kept for inspection.
+    fn export_nets_flow_sheet(subdir: &str) -> std::path::PathBuf {
+        let dir = std::env::var("VCAD_KICAD_OUT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vcad_kicad"))
+            .join(subdir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("nets_flow.kicad_sch");
+        std::fs::write(&path, write_kicad_sch(&degenerate_pins_sheet())).unwrap();
+        path
+    }
+
+    /// ERC gate: KiCad 9's own electrical-rules check reports zero errors on
+    /// the sheet the `nets` flow exports.  Warnings are printed but tolerated;
+    /// the two KiCad 9 currently raises on our output are both artifacts of
+    /// exporting a self-contained file rather than defects in it:
+    ///
+    /// - `lib_symbol_issues` — symbols are generated inline, so there is no
+    ///   on-disk `vcad` symbol library for KiCad to resolve against.
+    /// - `footprint_link_issues` — footprint ids reference the standard KiCad
+    ///   libraries, which need not be installed to check the schematic.
+    ///
+    /// `endpoint_off_grid` used to appear here too, from stored component
+    /// positions bypassing the grid snap; see `sheet_placements`.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_erc_reports_zero_errors() {
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_nets_flow_sheet("erc");
+        let report = sch.with_file_name("erc.json");
+        let out = std::process::Command::new(&cli)
+            .args(["sch", "erc", "--format", "json", "--output"])
+            .arg(&report)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch erc");
+        assert!(
+            out.status.success(),
+            "kicad-cli sch erc failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report).unwrap())
+                .expect("parse ERC json");
+        let mut errors = Vec::new();
+        for sheet in json["sheets"].as_array().unwrap_or(&Vec::new()) {
+            for v in sheet["violations"].as_array().unwrap_or(&Vec::new()) {
+                let line = format!(
+                    "[{}] {}: {}",
+                    v["severity"].as_str().unwrap_or("?"),
+                    v["type"].as_str().unwrap_or("?"),
+                    v["description"].as_str().unwrap_or("?")
+                );
+                if v["severity"].as_str() == Some("error") {
+                    errors.push(line);
+                } else {
+                    eprintln!("ERC warning (tolerated): {line}");
+                }
+            }
+        }
+        assert!(
+            errors.is_empty(),
+            "KiCad ERC errors:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Netlist equivalence — the real guarantee behind the `nets` flow: given
+    /// only data-declared connectivity (pins all at the (0,0) default), the
+    /// exporter synthesizes a layout whose geometry KiCad reads back as
+    /// *exactly* the netlist we declared.  Asserting against `sheet.nets`
+    /// rather than against our own expectations is what makes this a check on
+    /// the convention itself and not just on the writer's self-consistency.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_netlist_matches_declared_nets() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_nets_flow_sheet("netlist");
+        let netfile = sch.with_file_name("nets_flow.net");
+        let out = std::process::Command::new(&cli)
+            .args([
+                "sch",
+                "export",
+                "netlist",
+                "--format",
+                "kicadsexpr",
+                "--output",
+            ])
+            .arg(&netfile)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch export netlist");
+        assert!(
+            out.status.success(),
+            "kicad-cli netlist export failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let text = std::fs::read_to_string(&netfile).unwrap();
+        let (_, root) = crate::sexpr::parse_sexpr(&text).expect("parse netlist s-expr");
+        let nets_node = root.find("nets").expect("netlist has (nets ...)");
+        let mut extracted: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for net in nets_node.find_all("net") {
+            let name = net
+                .find("name")
+                .and_then(|n| n.children().and_then(|c| c.get(1)).and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let mut pins = BTreeSet::new();
+            for node in net.find_all("node") {
+                let get = |key: &str| {
+                    node.find(key)
+                        .and_then(|n| n.children().and_then(|c| c.get(1)))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                pins.insert(format!("{}.{}", get("ref"), get("pin")));
+            }
+            if !pins.is_empty() {
+                extracted.insert(name, pins);
+            }
+        }
+
+        let declared: BTreeMap<String, BTreeSet<String>> = degenerate_pins_sheet()
+            .nets
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
+
+        assert_eq!(
+            extracted, declared,
+            "KiCad-derived connectivity differs from the declared sheet.nets"
+        );
     }
 }

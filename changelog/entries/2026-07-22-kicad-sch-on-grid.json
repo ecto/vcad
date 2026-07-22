@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-kicad-sch-on-grid",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "fix",
+  "title": "Exported schematic pins land on KiCad's wiring grid",
+  "summary": "Synthesized .kicad_sch sheets now snap component positions to the 1.27 mm connection grid, so pins can be wired by hand in KiCad instead of tripping its off-grid endpoint warning.",
+  "features": ["ecad", "kicad-export"],
+  "mcpTools": ["export_kicad"]
+}
