@@ -760,9 +760,18 @@ fn arc_points(center: Vec2, radius: f64, start_deg: f64, end_deg: f64) -> (Vec2,
 /// opens and is editable in KiCad 9 with references, values, and connectivity
 /// (wires / labels / junctions) preserved.  It is a faithful editable starting
 /// point rather than a pixel-match of KiCad's built-in symbol artwork.
+///
+/// When the stored component positions are degenerate (all at one point, or
+/// packed tighter than the symbol bodies allow), a deterministic auto-layout
+/// pass replaces them with a readable left-to-right signal-flow arrangement
+/// derived from `sheet.nets`; otherwise stored positions pass through
+/// untouched.  Declared nets are additionally emitted as global-label stubs on
+/// every referenced pin so connectivity survives into KiCad even without
+/// drawn wires.
 pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     let mut e = Emitter::new();
     let root_uuid = e.uuid();
+    let placements = sheet_placements(sheet);
 
     e.line(0, "(kicad_sch");
     e.line(1, "(version 20250114)");
@@ -779,8 +788,8 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     e.line(1, ")");
 
     // Component instances.
-    for comp in &sheet.components {
-        write_sch_symbol(&mut e, comp, &root_uuid);
+    for (comp, pos) in sheet.components.iter().zip(&placements) {
+        write_sch_symbol(&mut e, comp, *pos, &root_uuid);
     }
 
     // Wires.
@@ -818,6 +827,9 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
         write_label(&mut e, l);
     }
 
+    // Declared-net stubs (global labels on every referenced pin).
+    write_net_stubs(&mut e, sheet, &placements);
+
     e.line(1, "(sheet_instances");
     e.line(2, "(path \"/\"");
     e.line(3, "(page \"1\")");
@@ -826,6 +838,220 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     e.line(1, "(embedded_fonts no)");
     e.line(0, ")");
     e.buf
+}
+
+// ---------------------------------------------------------------------------
+// Placement pass
+// ---------------------------------------------------------------------------
+
+/// KiCad schematic grid pitch (mm). Pin offsets in generated symbols are
+/// multiples of this, so snapping component origins keeps pin ends on-grid.
+const SCH_GRID: f64 = 1.27;
+
+/// Snap a coordinate to the schematic grid.
+fn snap_grid(v: f64) -> f64 {
+    (v / SCH_GRID).round() * SCH_GRID
+}
+
+/// Half-extents (x, y) of a component's pin bounding box — the space the
+/// symbol itself needs on the sheet.
+fn comp_half_extents(comp: &SchematicComponent) -> (f64, f64) {
+    let mut hx: f64 = 2.54;
+    let mut hy: f64 = 2.54;
+    for p in &comp.pins {
+        hx = hx.max(p.position.x.abs());
+        hy = hy.max(p.position.y.abs());
+    }
+    (hx, hy)
+}
+
+/// One position per component: the stored positions when they are usable, or
+/// a deterministic auto-layout when they are degenerate.
+fn sheet_placements(sheet: &SchematicSheet) -> Vec<Vec2> {
+    if placement_is_degenerate(sheet) {
+        auto_layout(sheet)
+    } else {
+        sheet.components.iter().map(|c| c.position).collect()
+    }
+}
+
+/// Stored positions are degenerate when two or more symbols overlap — which
+/// covers everything-at-origin and any spacing tighter than the symbol bodies
+/// allow.
+fn placement_is_degenerate(sheet: &SchematicSheet) -> bool {
+    let comps = &sheet.components;
+    for i in 0..comps.len() {
+        let (hxi, hyi) = comp_half_extents(&comps[i]);
+        for j in (i + 1)..comps.len() {
+            let (hxj, hyj) = comp_half_extents(&comps[j]);
+            let dx = (comps[i].position.x - comps[j].position.x).abs();
+            let dy = (comps[i].position.y - comps[j].position.y).abs();
+            if dx < hxi + hxj && dy < hyi + hyj {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Component index for a `"R1.2"`-style pin reference, or `None` if the
+/// reference names no component on the sheet.
+fn pin_ref_comp<'a>(sheet: &SchematicSheet, pin_ref: &'a str) -> Option<(usize, &'a str)> {
+    let (comp_ref, pin_no) = pin_ref.rsplit_once('.')?;
+    let idx = sheet
+        .components
+        .iter()
+        .position(|c| c.reference == comp_ref)?;
+    Some((idx, pin_no))
+}
+
+/// Deterministic readable layout from declared connectivity: BFS rank from
+/// signal sources into columns (sources left, sinks right), each column
+/// ordered top-to-bottom by shared-net count, spaced by symbol extents plus
+/// label clearance, all origins snapped to the schematic grid.
+fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
+    let n = sheet.components.len();
+
+    // Per-component net degree and adjacency, from the declared netlist.
+    let mut degree = vec![0u32; n];
+    let mut adjacency: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); n];
+    if let Some(nets) = &sheet.nets {
+        for pins in nets.values() {
+            let mut members = std::collections::BTreeSet::new();
+            for pin_ref in pins {
+                if let Some((idx, _)) = pin_ref_comp(sheet, pin_ref) {
+                    members.insert(idx);
+                }
+            }
+            for &i in &members {
+                degree[i] += 1;
+                for &j in &members {
+                    if i != j {
+                        adjacency[i].insert(j);
+                    }
+                }
+            }
+        }
+    }
+
+    // BFS roots: components that drive signal (output/power-output pins);
+    // fall back to the first component so the walk always starts somewhere.
+    let mut roots: Vec<usize> = (0..n)
+        .filter(|&i| {
+            sheet.components[i]
+                .pins
+                .iter()
+                .any(|p| matches!(p.pin_type, PinType::Output | PinType::PowerOutput))
+        })
+        .collect();
+    if roots.is_empty() && n > 0 {
+        roots.push(0);
+    }
+
+    // Multi-source BFS rank → column index.
+    let mut column = vec![usize::MAX; n];
+    let mut queue = std::collections::VecDeque::new();
+    for &r in &roots {
+        column[r] = 0;
+        queue.push_back(r);
+    }
+    let mut max_col = 0;
+    while let Some(i) = queue.pop_front() {
+        for &j in &adjacency[i] {
+            if column[j] == usize::MAX {
+                column[j] = column[i] + 1;
+                max_col = max_col.max(column[j]);
+                queue.push_back(j);
+            }
+        }
+    }
+    // Components the netlist never reached: park them in a trailing column,
+    // wrapped so an unconnected sheet still lays out as a compact grid.
+    let unreached: Vec<usize> = (0..n).filter(|&i| column[i] == usize::MAX).collect();
+    const WRAP: usize = 4;
+    for (k, &i) in unreached.iter().enumerate() {
+        column[i] = max_col + 1 + k / WRAP;
+    }
+
+    // Group by column; order each column by shared-net count (heaviest at the
+    // top), tying back to the stable component index.
+    let n_cols = column.iter().map(|c| c + 1).max().unwrap_or(0);
+    let mut cols: Vec<Vec<usize>> = vec![Vec::new(); n_cols];
+    for i in 0..n {
+        cols[column[i]].push(i);
+    }
+    for col in &mut cols {
+        col.sort_by_key(|&i| (std::cmp::Reverse(degree[i]), i));
+    }
+
+    // Clearance around each symbol for reference/value and net-stub labels.
+    const LABEL_CLEARANCE_X: f64 = 10.16;
+    const LABEL_CLEARANCE_Y: f64 = 6.35;
+    const ORIGIN: f64 = 25.4;
+
+    let mut positions = vec![Vec2::new(0.0, 0.0); n];
+    let mut x_cursor = ORIGIN;
+    for col in &cols {
+        let col_half_w = col
+            .iter()
+            .map(|&i| comp_half_extents(&sheet.components[i]).0 + LABEL_CLEARANCE_X)
+            .fold(0.0f64, f64::max);
+        let cx = snap_grid(x_cursor + col_half_w);
+        let mut y_cursor = ORIGIN;
+        for &i in col {
+            let (_, hy) = comp_half_extents(&sheet.components[i]);
+            let cy = snap_grid(y_cursor + hy + LABEL_CLEARANCE_Y);
+            positions[i] = Vec2::new(cx, cy);
+            y_cursor = cy + hy + LABEL_CLEARANCE_Y;
+        }
+        x_cursor = cx + col_half_w;
+    }
+    positions
+}
+
+/// World position of a pin's connection end, given the component's placed
+/// origin. Symbol-local coordinates are Y-up; the sheet is Y-down.
+fn pin_world(comp: &SchematicComponent, comp_pos: Vec2, pin_pos: Vec2) -> Vec2 {
+    let px = if comp.mirror { -pin_pos.x } else { pin_pos.x };
+    let py = pin_pos.y;
+    let th = comp.rotation.to_radians();
+    let (s, c) = (th.sin(), th.cos());
+    Vec2::new(comp_pos.x + px * c - py * s, comp_pos.y - (px * s + py * c))
+}
+
+/// Emit one global label per declared-net pin reference, anchored on the
+/// pin's connection end, so the netlist survives into KiCad as visible,
+/// electrically-connected stubs. Uses the placed (possibly auto-laid-out)
+/// positions, never the stored ones.
+fn write_net_stubs(e: &mut Emitter, sheet: &SchematicSheet, placements: &[Vec2]) {
+    let Some(nets) = &sheet.nets else {
+        return;
+    };
+    for (net, pins) in nets {
+        for pin_ref in pins {
+            let Some((idx, pin_no)) = pin_ref_comp(sheet, pin_ref) else {
+                continue;
+            };
+            let comp = &sheet.components[idx];
+            let Some(pin) = comp.pins.iter().find(|p| p.number == pin_no) else {
+                continue;
+            };
+            let pos = pin_world(comp, placements[idx], pin.position);
+            // Point the label away from the body: pin_angle is the stub
+            // direction toward the body, so the label faces the other way.
+            let body = symbol_body(comp);
+            let away = (pin_angle(comp, pin.position, body) + 180.0 + comp.rotation) % 360.0;
+            write_label(
+                e,
+                &SchematicLabel {
+                    name: net.clone(),
+                    position: pos,
+                    rotation: away,
+                    scope: LabelScope::Global,
+                },
+            );
+        }
+    }
 }
 
 /// KiCad pin electrical-type token for a [`PinType`].
@@ -1019,17 +1245,12 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
     }
 }
 
-fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str) {
+fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, pos: Vec2, root_uuid: &str) {
     let lib_id = comp_lib_id(comp);
     let uuid = e.uuid();
     e.line(1, "(symbol");
     e.line(2, &format!("(lib_id {})", q(&lib_id)));
-    let at = format!(
-        "(at {} {} {})",
-        num(comp.position.x),
-        num(comp.position.y),
-        num(comp.rotation)
-    );
+    let at = format!("(at {} {} {})", num(pos.x), num(pos.y), num(comp.rotation));
     e.line(2, &at);
     if comp.mirror {
         e.line(2, "(mirror y)");
@@ -1566,5 +1787,152 @@ mod tests {
         assert!(text.contains("(global_label \"VCC\""));
         assert!(text.contains("(wire"));
         assert!(text.trim_end().ends_with(')'));
+    }
+
+    /// Sheet with every component stacked at the origin (the naive
+    /// create_schematic drop) plus a declared netlist.
+    fn degenerate_sheet() -> SchematicSheet {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let two_pin = |number: &str, x: f64| SchematicPin {
+            number: number.into(),
+            name: "~".into(),
+            pin_type: PinType::Passive,
+            position: Vec2::new(x, 0.0),
+        };
+        let comp = |reference: &str, value: &str, pins: Vec<SchematicPin>| SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: String::new(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            mirror: false,
+            pins,
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "VCC".to_string(),
+            vec!["U1.1".to_string(), "R1.1".to_string(), "C1.1".to_string()],
+        );
+        nets.insert(
+            "OUT".to_string(),
+            vec!["U1.2".to_string(), "R2.1".to_string()],
+        );
+        nets.insert(
+            "GND".to_string(),
+            vec![
+                "R1.2".to_string(),
+                "R2.2".to_string(),
+                "C1.2".to_string(),
+                "C2.2".to_string(),
+            ],
+        );
+        SchematicSheet {
+            title: Some("degenerate".into()),
+            components: vec![
+                comp(
+                    "U1",
+                    "AMP",
+                    vec![
+                        SchematicPin {
+                            number: "1".into(),
+                            name: "IN".into(),
+                            pin_type: PinType::Input,
+                            position: Vec2::new(-5.08, 0.0),
+                        },
+                        SchematicPin {
+                            number: "2".into(),
+                            name: "OUT".into(),
+                            pin_type: PinType::Output,
+                            position: Vec2::new(5.08, 0.0),
+                        },
+                    ],
+                ),
+                comp("R1", "10k", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+                comp("R2", "1k", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+                comp("C1", "100nF", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+                comp("C2", "1uF", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: Some(nets),
+        }
+    }
+
+    #[test]
+    fn degenerate_placement_is_auto_laid_out() {
+        let sheet = degenerate_sheet();
+        assert!(placement_is_degenerate(&sheet));
+        let placements = sheet_placements(&sheet);
+        assert_eq!(placements.len(), sheet.components.len());
+
+        for (i, p) in placements.iter().enumerate() {
+            // On-grid origins (pin offsets are grid multiples, so pin ends
+            // stay on-grid too).
+            assert!(
+                (p.x / SCH_GRID - (p.x / SCH_GRID).round()).abs() < 1e-9,
+                "component {} x off-grid: {}",
+                i,
+                p.x
+            );
+            assert!(
+                (p.y / SCH_GRID - (p.y / SCH_GRID).round()).abs() < 1e-9,
+                "component {} y off-grid: {}",
+                i,
+                p.y
+            );
+            // Distinct positions.
+            for (j, q2) in placements.iter().enumerate().skip(i + 1) {
+                assert!(
+                    p.x != q2.x || p.y != q2.y,
+                    "components {} and {} share a position",
+                    i,
+                    j
+                );
+                // Non-overlapping symbol bodies.
+                let (hxi, hyi) = comp_half_extents(&sheet.components[i]);
+                let (hxj, hyj) = comp_half_extents(&sheet.components[j]);
+                assert!(
+                    (p.x - q2.x).abs() >= hxi + hxj || (p.y - q2.y).abs() >= hyi + hyj,
+                    "components {} and {} overlap",
+                    i,
+                    j
+                );
+            }
+        }
+
+        // The source (U1, output pin) leads the signal flow: leftmost column.
+        let u1_x = placements[0].x;
+        for p in &placements[1..] {
+            assert!(p.x >= u1_x, "source U1 is not leftmost");
+        }
+
+        // Byte-stable output, with net stubs on the adjusted positions.
+        let text = write_kicad_sch(&sheet);
+        assert_eq!(text, write_kicad_sch(&sheet));
+        assert!(text.contains("(global_label \"VCC\""));
+        assert!(text.contains("(global_label \"OUT\""));
+        assert!(text.contains("(global_label \"GND\""));
+        // Stub anchors sit on placed pin ends, not the stored origin.
+        let u1_out = pin_world(
+            &sheet.components[0],
+            placements[0],
+            sheet.components[0].pins[1].position,
+        );
+        assert!(text.contains(&format!("(at {} {} ", num(u1_out.x), num(u1_out.y))));
+    }
+
+    #[test]
+    fn healthy_placement_passes_through() {
+        let sheet = sample_sheet();
+        assert!(!placement_is_degenerate(&sheet));
+        let placements = sheet_placements(&sheet);
+        assert_eq!(placements[0], Vec2::new(100.0, 50.0));
+        assert_eq!(placements[1], Vec2::new(120.0, 50.0));
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(at 100 50 0)"));
+        assert!(text.contains("(at 120 50 90)"));
     }
 }
