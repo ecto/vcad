@@ -226,11 +226,30 @@ impl NetTable {
 }
 
 // ---------------------------------------------------------------------------
+// Schematic ↔ board linkage
+// ---------------------------------------------------------------------------
+
+/// UUIDs captured while writing a schematic, used to link the board file back
+/// to it so KiCad can cross-probe (click a symbol → highlight its footprint).
+struct SchematicLinks {
+    /// The schematic's root sheet uuid (also recorded in the `.kicad_pro`).
+    root_uuid: String,
+    /// Reference designator (e.g. `R1`) → symbol instance uuid.
+    symbol_uuids: BTreeMap<String, String>,
+    /// The schematic filename, emitted as each footprint's `sheetfile`.
+    sch_filename: String,
+}
+
+// ---------------------------------------------------------------------------
 // PCB writer
 // ---------------------------------------------------------------------------
 
 /// Serialize a [`Pcb`] to a KiCad 9 `.kicad_pcb` board file.
 pub fn write_kicad_pcb(pcb: &Pcb) -> String {
+    write_kicad_pcb_impl(pcb, None)
+}
+
+fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
     let mut e = Emitter::new();
     let nets = NetTable::build(pcb);
 
@@ -256,7 +275,7 @@ pub fn write_kicad_pcb(pcb: &Pcb) -> String {
 
     // Footprints
     for fp in &pcb.footprints {
-        write_footprint(&mut e, fp, &nets);
+        write_footprint(&mut e, fp, &nets, links);
     }
 
     // Board outline (Edge.Cuts)
@@ -378,7 +397,12 @@ fn write_closed_loop(e: &mut Emitter, verts: &[Vec2], edge: &dyn Fn(&mut Emitter
     }
 }
 
-fn write_footprint(e: &mut Emitter, fp: &Footprint, nets: &NetTable) {
+fn write_footprint(
+    e: &mut Emitter,
+    fp: &Footprint,
+    nets: &NetTable,
+    links: Option<&SchematicLinks>,
+) {
     let layer = if fp.front { "F.Cu" } else { "B.Cu" };
     let uuid = e.uuid();
     let name = if fp.footprint_name.is_empty() {
@@ -403,6 +427,16 @@ fn write_footprint(e: &mut Emitter, fp: &Footprint, nets: &NetTable) {
 
     write_fp_property(e, "Reference", &fp.reference, "F.SilkS");
     write_fp_property(e, "Value", &fp.value, "F.Fab");
+
+    // Cross-probe linkage: point the footprint at its schematic symbol
+    // instance (KiCad 9 root-sheet paths are "/<symbol-uuid>").
+    if let Some(links) = links {
+        if let Some(sym_uuid) = links.symbol_uuids.get(&fp.reference) {
+            e.line(2, &format!("(path {})", q(&format!("/{}", sym_uuid))));
+            e.line(2, "(sheetname \"/\")");
+            e.line(2, &format!("(sheetfile {})", q(&links.sch_filename)));
+        }
+    }
 
     for g in &fp.graphics {
         write_fp_graphic(e, g);
@@ -761,8 +795,22 @@ fn arc_points(center: Vec2, radius: f64, start_deg: f64, end_deg: f64) -> (Vec2,
 /// (wires / labels / junctions) preserved.  It is a faithful editable starting
 /// point rather than a pixel-match of KiCad's built-in symbol artwork.
 pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
+    write_kicad_sch_impl(sheet, "", "").0
+}
+
+/// Writer core shared by [`write_kicad_sch`] and [`write_kicad_project`].
+///
+/// `project_name` is embedded in each symbol's `(instances (project …))`
+/// block and `sch_filename` is recorded in the returned links; both are empty
+/// for a standalone (projectless) export, which keeps that output unchanged.
+fn write_kicad_sch_impl(
+    sheet: &SchematicSheet,
+    project_name: &str,
+    sch_filename: &str,
+) -> (String, SchematicLinks) {
     let mut e = Emitter::new();
     let root_uuid = e.uuid();
+    let mut symbol_uuids = BTreeMap::new();
 
     e.line(0, "(kicad_sch");
     e.line(1, "(version 20250114)");
@@ -780,7 +828,8 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
 
     // Component instances.
     for comp in &sheet.components {
-        write_sch_symbol(&mut e, comp, &root_uuid);
+        let uuid = write_sch_symbol(&mut e, comp, &root_uuid, project_name);
+        symbol_uuids.insert(comp.reference.clone(), uuid);
     }
 
     // Wires.
@@ -825,7 +874,14 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     e.line(1, ")");
     e.line(1, "(embedded_fonts no)");
     e.line(0, ")");
-    e.buf
+    (
+        e.buf,
+        SchematicLinks {
+            root_uuid,
+            symbol_uuids,
+            sch_filename: sch_filename.to_string(),
+        },
+    )
 }
 
 /// KiCad pin electrical-type token for a [`PinType`].
@@ -1019,7 +1075,13 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
     }
 }
 
-fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str) {
+/// Emit one symbol instance and return its uuid (the board's cross-probe key).
+fn write_sch_symbol(
+    e: &mut Emitter,
+    comp: &SchematicComponent,
+    root_uuid: &str,
+    project_name: &str,
+) -> String {
     let lib_id = comp_lib_id(comp);
     let uuid = e.uuid();
     e.line(1, "(symbol");
@@ -1052,7 +1114,7 @@ fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str)
     }
 
     e.line(2, "(instances");
-    e.line(3, "(project \"\"");
+    e.line(3, &format!("(project {}", q(project_name)));
     e.line(4, &format!("(path {}", q(&format!("/{}", root_uuid))));
     e.line(5, &format!("(reference {})", q(&comp.reference)));
     e.line(5, "(unit 1)");
@@ -1060,6 +1122,7 @@ fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str)
     e.line(3, ")");
     e.line(2, ")");
     e.line(1, ")");
+    uuid
 }
 
 fn write_inst_property(e: &mut Emitter, key: &str, value: &str, y_off: f64, hide: bool) {
@@ -1103,6 +1166,93 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
     e.line(2, ")");
     e.line(2, &format!("(uuid {})", q(&uuid)));
     e.line(1, ")");
+}
+
+// ---------------------------------------------------------------------------
+// Project bundle writer
+// ---------------------------------------------------------------------------
+
+/// Serialize a linked KiCad 9 project bundle: `<name>.kicad_pro`,
+/// `<name>.kicad_sch`, and `<name>.kicad_pcb` as `(filename, contents)` pairs.
+///
+/// Unlike exporting the two files separately, the bundle is *linked*: each
+/// board footprint carries a `(path "/<symbol-uuid>")` pointing at the
+/// schematic symbol instance with the same reference designator, and the
+/// project file records the schematic's root sheet uuid — so KiCad can
+/// cross-probe (click a symbol → highlight its footprint, and vice versa).
+/// Output is deterministic: the same inputs always produce identical bytes.
+pub fn write_kicad_project(sheet: &SchematicSheet, pcb: &Pcb, name: &str) -> Vec<(String, String)> {
+    let sch_filename = format!("{}.kicad_sch", name);
+    let (sch, links) = write_kicad_sch_impl(sheet, name, &sch_filename);
+    let board = write_kicad_pcb_impl(pcb, Some(&links));
+    let pro = write_kicad_pro(name, &links.root_uuid);
+    vec![
+        (format!("{}.kicad_pro", name), pro),
+        (sch_filename, sch),
+        (format!("{}.kicad_pcb", name), board),
+    ]
+}
+
+/// Minimal valid KiCad 9 project JSON (`meta.version` 3), recording the
+/// schematic's root sheet uuid in `sheets` the way KiCad itself does.
+fn write_kicad_pro(name: &str, root_uuid: &str) -> String {
+    let pro = serde_json::json!({
+        "board": {
+            "3dviewports": [],
+            "design_settings": {
+                "defaults": {},
+                "diff_pair_dimensions": [],
+                "drc_exclusions": [],
+                "meta": { "version": 2 },
+                "rule_severities": {},
+                "rules": {},
+                "track_widths": [],
+                "via_dimensions": []
+            },
+            "layer_presets": [],
+            "viewports": []
+        },
+        "boards": [],
+        "cvpcb": { "equivalence_files": [] },
+        "libraries": {
+            "pinned_footprint_libs": [],
+            "pinned_symbol_libs": []
+        },
+        "meta": {
+            "filename": format!("{}.kicad_pro", name),
+            "version": 3
+        },
+        "net_settings": {
+            "classes": [],
+            "meta": { "version": 4 },
+            "net_colors": null,
+            "netclass_assignments": null,
+            "netclass_patterns": []
+        },
+        "pcbnew": {
+            "last_paths": {
+                "gencad": "",
+                "idf": "",
+                "netlist": "",
+                "plot": "",
+                "pos_files": "",
+                "specctra_dsn": "",
+                "step": "",
+                "svg": "",
+                "vrml": ""
+            },
+            "page_layout_descr_file": ""
+        },
+        "schematic": {
+            "legacy_lib_dir": "",
+            "legacy_lib_list": []
+        },
+        "sheets": [[root_uuid, "Root"]],
+        "text_variables": {}
+    });
+    let mut s = serde_json::to_string_pretty(&pro).expect("static project JSON serializes");
+    s.push('\n');
+    s
 }
 
 #[cfg(test)]
@@ -1444,6 +1594,15 @@ mod tests {
         let sch = dir.join("sheet.kicad_sch");
         std::fs::write(&sch, write_kicad_sch(&sheet)).unwrap();
         println!("wrote {}", sch.display());
+
+        // Linked project bundle in its own subdirectory.
+        let proj_dir = dir.join("project");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        for (name, contents) in write_kicad_project(&sheet, &sample_pcb(), "vcad_demo") {
+            let path = proj_dir.join(&name);
+            std::fs::write(&path, contents).unwrap();
+            println!("wrote {}", path.display());
+        }
     }
 
     fn sample_sheet() -> SchematicSheet {
@@ -1515,6 +1674,64 @@ mod tests {
             }],
             nets: None,
         }
+    }
+
+    #[test]
+    fn project_bundle_links_symbols_to_footprints() {
+        let sheet = sample_sheet();
+        let pcb = sample_pcb();
+        let files = write_kicad_project(&sheet, &pcb, "demo");
+
+        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["demo.kicad_pro", "demo.kicad_sch", "demo.kicad_pcb"]
+        );
+        let get = |n: &str| &files.iter().find(|(f, _)| f == n).unwrap().1;
+        let pro = get("demo.kicad_pro");
+        let sch = get("demo.kicad_sch");
+        let board = get("demo.kicad_pcb");
+
+        // The project file parses as JSON and records the sch root sheet uuid.
+        let pro_json: serde_json::Value = serde_json::from_str(pro).expect("valid project JSON");
+        assert_eq!(pro_json["meta"]["filename"], "demo.kicad_pro");
+        let root_uuid = pro_json["sheets"][0][0].as_str().expect("root sheet uuid");
+        assert!(sch.contains(&format!("(uuid \"{}\")", root_uuid)));
+
+        // R1's schematic symbol uuid appears as R1's footprint path in the pcb.
+        // The symbol instance uuid is the `(uuid …)` line inside the `(symbol`
+        // block whose reference is R1.
+        let sym_block = sch
+            .split("\n\t(symbol\n")
+            .find(|b| b.contains("(property \"Reference\" \"R1\""))
+            .expect("R1 symbol instance in sch");
+        let sym_uuid = sym_block
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("(uuid \""))
+            .and_then(|s| s.strip_suffix("\")"))
+            .expect("R1 symbol uuid");
+        assert!(
+            board.contains(&format!("(path \"/{}\")", sym_uuid)),
+            "footprint path should reference R1's symbol uuid {}",
+            sym_uuid
+        );
+        assert!(board.contains("(sheetfile \"demo.kicad_sch\")"));
+
+        // Instances carry the project name; sch symbols use it for cross-probe.
+        assert!(sch.contains("(project \"demo\""));
+
+        // Deterministic: same inputs → identical bytes.
+        assert_eq!(files, write_kicad_project(&sheet, &pcb, "demo"));
+    }
+
+    #[test]
+    fn standalone_exports_unchanged_by_bundle_refactor() {
+        // Standalone sch/pcb writers must not gain project linkage artifacts.
+        let sch = write_kicad_sch(&sample_sheet());
+        assert!(sch.contains("(project \"\""));
+        let board = write_kicad_pcb(&sample_pcb());
+        assert!(!board.contains("(sheetfile"));
+        assert!(!board.contains("(path \"/"));
     }
 
     #[test]

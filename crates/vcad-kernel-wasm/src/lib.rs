@@ -6389,6 +6389,31 @@ mod ecad_wasm {
         Ok(vcad_ecad_symbols::write_kicad_sch(&sheet))
     }
 
+    /// Export a linked KiCad 9 project bundle: `<name>.kicad_pro`,
+    /// `<name>.kicad_sch`, and `<name>.kicad_pcb`, with board footprints
+    /// carrying `(path …)` references to their schematic symbol uuids so
+    /// KiCad can cross-probe between the two editors.
+    ///
+    /// # Arguments
+    /// * `sheet_json` - JSON-serialized `SchematicSheet` struct
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    /// * `name` - Project basename (no extension)
+    ///
+    /// # Returns
+    /// Array of `[filename, contents]` string pairs as JsValue.
+    #[wasm_bindgen(js_name = exportKicadProject)]
+    pub fn export_kicad_project(
+        sheet_json: &str,
+        pcb_json: &str,
+        name: &str,
+    ) -> Result<JsValue, JsError> {
+        let sheet: SchematicSheet =
+            serde_json::from_str(sheet_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let files = vcad_ecad_symbols::write_kicad_project(&sheet, &pcb, name);
+        serde_wasm_bindgen::to_value(&files).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Return all builtin symbol definitions.
     ///
     /// # Returns

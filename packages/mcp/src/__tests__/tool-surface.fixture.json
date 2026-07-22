@@ -9577,7 +9577,7 @@
   {
     "name": "export_kicad",
     "title": "Export KiCad",
-    "description": "Export the session as a native, editable KiCad 9 file. filename ending in .kicad_pcb writes the board (footprints, pads, nets, traces, vias, zones, layers, outline); .kicad_sch writes the schematic. Unlike export_gerber (fab-only output), this round-trips: a human can open it in KiCad to finish routing nets the autorouter couldn't close, then re-import. Large files respect the inline byte cap (use output_dir for those).",
+    "description": "Export the session as a native, editable KiCad 9 file. filename ending in .kicad_pcb writes the board (footprints, pads, nets, traces, vias, zones, layers, outline); .kicad_sch writes the schematic; .kicad_pro (or a bare name) writes a linked project bundle (.kicad_pro + .kicad_sch + .kicad_pcb) with footprints tied to their schematic symbols for cross-probing. Unlike export_gerber (fab-only output), this round-trips: a human can open it in KiCad to finish routing nets the autorouter couldn't close, then re-import. Large files respect the inline byte cap (use output_dir for those).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9591,7 +9591,7 @@
         },
         "filename": {
           "type": "string",
-          "description": "Output filename ending in .kicad_pcb (board) or .kicad_sch (schematic). The extension selects what is exported: .kicad_pcb writes the session's board (footprints, pads, nets, traces, vias, zones, layers, outline) as a native, editable KiCad 9 file a human can open and finish routing; .kicad_sch writes the session's schematic. Defaults to board.kicad_pcb."
+          "description": "Output filename ending in .kicad_pcb (board), .kicad_sch (schematic), or .kicad_pro (linked project bundle). The extension selects what is exported: .kicad_pcb writes the session's board (footprints, pads, nets, traces, vias, zones, layers, outline) as a native, editable KiCad 9 file a human can open and finish routing; .kicad_sch writes the session's schematic; .kicad_pro (or a bare name with no extension) writes all three files with board footprints linked to their schematic symbols so KiCad can cross-probe (click a symbol → highlight its footprint). Defaults to board.kicad_pcb."
         },
         "output_dir": {
           "type": "string",
