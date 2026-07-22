@@ -5231,6 +5231,38 @@ export function exportKicadPcb(pcb_json) {
 }
 
 /**
+ * Export a linked KiCad 9 project bundle: `<name>.kicad_pro`,
+ * `<name>.kicad_sch`, and `<name>.kicad_pcb`, with board footprints
+ * carrying `(path …)` references to their schematic symbol uuids so
+ * KiCad can cross-probe between the two editors.
+ *
+ * # Arguments
+ * * `sheet_json` - JSON-serialized `SchematicSheet` struct
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `name` - Project basename (no extension)
+ *
+ * # Returns
+ * Array of `[filename, contents]` string pairs as JsValue.
+ * @param {string} sheet_json
+ * @param {string} pcb_json
+ * @param {string} name
+ * @returns {any}
+ */
+export function exportKicadProject(sheet_json, pcb_json, name) {
+    const ptr0 = passStringToWasm0(sheet_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.exportKicadProject(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Export a `SchematicSheet` to a native, editable KiCad 9 `.kicad_sch`
  * schematic file.
  *
@@ -9256,12 +9288,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3738, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3739, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3739, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3740, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3763, function: Function { arguments: [Externref], shim_idx: 3764, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3764, function: Function { arguments: [Externref], shim_idx: 3765, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
