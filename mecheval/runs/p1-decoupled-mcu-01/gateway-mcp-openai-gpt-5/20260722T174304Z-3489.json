@@ -1,0 +1,359 @@
+{
+  "schema_version": 0,
+  "task_id": "p1-decoupled-mcu-01",
+  "task_sha256": "4b296c97ea3e47bba3b2c3c9b1e58e32d729a43e4cceaafbc6b655d29b326cae",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          50
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 50,
+            "width_mm": 50
+          }
+        ],
+        "max_mm": [
+          50,
+          50
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 4
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 4,
+        "min": 4
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "pass",
+      "details": {
+        "findings": [
+          {
+            "distance_mm": 2.5401771591761073,
+            "ic": "U1",
+            "nearest_cap": "C2",
+            "net": "VCC",
+            "ok": true,
+            "pad": "16"
+          }
+        ],
+        "ic_power_pads": 1,
+        "max_mm": 6
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 5,
+    "checks_total": 5,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T174304Z-3489",
+  "model": {
+    "id": "gateway-mcp-openai-gpt-5",
+    "name": "AI Gateway (MCP, openai/gpt-5)",
+    "provider": "openai",
+    "params": {
+      "mode": "mcp",
+      "model": "openai/gpt-5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p1-decoupled-mcu-01",
+    "rendered": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors adjacent to its power pins, and a 4-pin programming header. Board outline at most 50mm × 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected — decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.6533340000000294
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "MCU QFP board with decoupling and 4-pin header",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU_QFP32",
+              "footprint": "Package_QFP:LQFP-32_7x7mm_P0.8mm",
+              "x": 20,
+              "y": 20,
+              "pins": [
+                {
+                  "number": "16",
+                  "name": "VCC",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "8",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "PROG_CLK",
+                  "type": "Input"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG_IO",
+                  "type": "Bidirectional"
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "100nF",
+              "footprint": "Capacitor_SMD:C_0603_1608Metric",
+              "x": 30,
+              "y": 20,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "C1_1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "C1_2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "100nF",
+              "footprint": "Capacitor_SMD:C_0603_1608Metric",
+              "x": 20,
+              "y": 30,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "C2_1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "C2_2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "PROG_HDR",
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
+              "x": 10,
+              "y": 20,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VCC",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG_CLK",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PROG_IO",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VCC": [
+              "J1.1",
+              "U1.16",
+              "C1.1",
+              "C2.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U1.8",
+              "C1.2",
+              "C2.2"
+            ],
+            "PROG_CLK": [
+              "J1.3",
+              "U1.2"
+            ],
+            "PROG_IO": [
+              "J1.4",
+              "U1.3"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.801500000001397
+      },
+      {
+        "n": 2,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_42z8gfHrEJiZ",
+          "board_width": 50,
+          "board_height": 50,
+          "board_thickness": 1.6,
+          "strategy": "force_directed",
+          "edge_margin": 2
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.205708000001323
+      },
+      {
+        "n": 3,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_42z8gfHrEJiZ",
+          "clearance": 0.2,
+          "track_width": 0.25,
+          "via_diameter": 0.8,
+          "via_drill": 0.4,
+          "edge_clearance": 0.5
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8769169999941369
+      },
+      {
+        "n": 4,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_42z8gfHrEJiZ",
+          "strategy": "auto",
+          "effort": 1.5,
+          "receipt": true
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.81416700000409
+      },
+      {
+        "n": 5,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_42z8gfHrEJiZ",
+          "detail": "summary",
+          "sample_size": 20
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1182079999998678
+      },
+      {
+        "n": 6,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_42z8gfHrEJiZ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7587919999932637
+      }
+    ],
+    "tokens": {
+      "input": 293429,
+      "output": 5802,
+      "total": 299231,
+      "cache_creation_input": 0,
+      "cache_read_input": 290944
+    },
+    "wallclock_sec": 86.485143208
+  },
+  "output": {
+    "vcad_path": "20260722T174304Z-3489.vcad",
+    "vcad_sha256": "e7da693dba68eaac6db9a0e492d8567a2370f1713d0bd603517051a4169b3b37",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T17:43:04.630Z",
+    "ended_at": "2026-07-22T17:44:31.157Z"
+  },
+  "signature": null
+}

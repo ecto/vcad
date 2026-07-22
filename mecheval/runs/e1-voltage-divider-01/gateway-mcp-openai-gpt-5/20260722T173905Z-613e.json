@@ -1,0 +1,236 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-voltage-divider-01",
+  "task_sha256": "27b3a9beb4e09c4d6661bc4d746a2510d1905f7d51399d1b6eac169b52d4d26a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "pass",
+      "details": {
+        "candidate": {
+          "components": 5,
+          "nets": 3
+        },
+        "golden": {
+          "components": 5,
+          "nets": 3
+        },
+        "isomorphic": true
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 2,
+    "checks_total": 2,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T173905Z-613e",
+  "model": {
+    "id": "gateway-mcp-openai-gpt-5",
+    "name": "AI Gateway (MCP, openai/gpt-5)",
+    "provider": "openai",
+    "params": {
+      "mode": "mcp",
+      "model": "openai/gpt-5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-voltage-divider-01",
+    "rendered": "Capture a schematic for a resistive voltage divider: a 1-pin input terminal VIN, two resistors in series, a 1-pin output terminal VOUT tapped between them, and a 1-pin ground terminal GND at the bottom of the chain. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-voltage-divider-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.072125000000028
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "Resistive Voltage Divider",
+          "components": [
+            {
+              "ref": "J1",
+              "value": "VIN",
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "x": 20,
+              "y": 20,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "10k",
+              "footprint": "Resistor_SMD:R_0805",
+              "x": 60,
+              "y": 20,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J2",
+              "value": "VOUT",
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "x": 60,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VOUT",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R2",
+              "value": "10k",
+              "footprint": "Resistor_SMD:R_0805",
+              "x": 60,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J3",
+              "value": "GND",
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "x": 60,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "GND",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "R1.1"
+            ],
+            "VOUT": [
+              "J2.1",
+              "R1.2",
+              "R2.1"
+            ],
+            "GND": [
+              "J3.1",
+              "R2.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0338749999973516
+      },
+      {
+        "n": 2,
+        "tool": "run_erc",
+        "args": {
+          "document_id": "doc_2_-kTPrgu-HUfi"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.7561249999998836
+      },
+      {
+        "n": 3,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_-kTPrgu-HUfi"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6455000000059954
+      }
+    ],
+    "tokens": {
+      "input": 144513,
+      "output": 2556,
+      "total": 147069,
+      "cache_creation_input": 0,
+      "cache_read_input": 143616
+    },
+    "wallclock_sec": 36.236298917
+  },
+  "output": {
+    "vcad_path": "20260722T173905Z-613e.vcad",
+    "vcad_sha256": "23287c65f28c18a02371893bf4d8b5dbedd6ac28f775ee91ca24dca622ffa005",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T17:39:05.851Z",
+    "ended_at": "2026-07-22T17:39:42.098Z"
+  },
+  "signature": null
+}

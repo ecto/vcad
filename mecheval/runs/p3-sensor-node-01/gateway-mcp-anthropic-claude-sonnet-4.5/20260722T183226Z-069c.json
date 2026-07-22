@@ -1,0 +1,2764 @@
+{
+  "schema_version": 0,
+  "task_id": "p3-sensor-node-01",
+  "task_sha256": "82e39a374ecf15f83d99246ba48c991302edd47f2aa871521d3593b1d82463d8",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          45,
+          35
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 35,
+            "width_mm": 45
+          }
+        ],
+        "max_mm": [
+          45,
+          35
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 10
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 11,
+        "min": 10
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 23,
+        "sample": [
+          {
+            "actual": 0,
+            "message": "Short: nets 'GND' and 'VIN' are connected by copper",
+            "position": [
+              5.0632529204075745,
+              18.722486319757646
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'GND' and 'PROG1' are connected by copper",
+            "position": [
+              21.89,
+              19.75
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'PROG2' and 'SDA' are connected by copper",
+            "position": [
+              21.25,
+              20.54
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'PROG2' and 'SCL' are connected by copper",
+            "position": [
+              21.06,
+              20.315
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'PROG2' and 'PROG1' are connected by copper",
+            "position": [
+              5.760000000000002,
+              23.24
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'GND' and 'PROG2' are connected by copper",
+            "position": [
+              21.20475982532751,
+              19.58930131004367
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'SDA' and 'SCL' are connected by copper",
+            "position": [
+              21.25,
+              20.75
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'SDA' and 'PROG1' are connected by copper",
+            "position": [
+              21.25,
+              20.75
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'SCL' and 'PROG1' are connected by copper",
+            "position": [
+              21.25,
+              20.25
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 10,
+            "message": "Unconnected net '3V3': pads split across 10 disjoint copper groups",
+            "position": [
+              21.25,
+              21.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 9,
+            "message": "Unconnected net 'GND': pads split across 9 disjoint copper groups",
+            "position": [
+              21.25,
+              21.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'PROG1': pads split across 2 disjoint copper groups",
+            "position": [
+              21.25,
+              19.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'PROG2': pads split across 2 disjoint copper groups",
+            "position": [
+              21.25,
+              19.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SCL': pads split across 3 disjoint copper groups",
+            "position": [
+              21.25,
+              20.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SDA': pads split across 3 disjoint copper groups",
+            "position": [
+              21.25,
+              20.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'VIN': pads split across 3 disjoint copper groups",
+            "position": [
+              9.05,
+              11.1
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 15,
+            "message": "Disjoint net '3V3': realized as 15 disjoint copper islands — #1 (copper only, no pads); #2 (copper only, no pads); #3 (copper only, no pads); #4 (copper only, no pads); #5 (copper only, no pads); #6 [U1.1]; #7 [U2.3]; #8 [U2.5]; #9 [U3.1]; #10 [R1.1]; #11 [R2.1]; #12 [C2.1]; #13 [C3.1]; #14 [C4.1]; #15 [R3.1]",
+            "position": [
+              18.875,
+              12.745000000000001
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          },
+          {
+            "actual": 11,
+            "message": "Disjoint net 'GND': realized as 11 disjoint copper islands — #1 [C2.2]; #2 (copper only, no pads); #3 (copper only, no pads); #4 [U1.2]; #5 [U2.2]; #6 [U3.2]; #7 [C1.2]; #8 [C3.2]; #9 [C4.2]; #10 [R3.2]; #11 [J1.2]",
+            "position": [
+              14.599999999999996,
+              16.4
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Disjoint net 'PROG1': realized as 3 disjoint copper islands — #1 (copper only, no pads); #2 [U1.5]; #3 [J1.3]",
+            "position": [
+              14.760000000000002,
+              21.265
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Disjoint net 'PROG2': realized as 3 disjoint copper islands — #1 (copper only, no pads); #2 [U1.6]; #3 [J1.4]",
+            "position": [
+              22.41,
+              20.54
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          },
+          {
+            "actual": 4,
+            "message": "Disjoint net 'SCL': realized as 4 disjoint copper islands — #1 (copper only, no pads); #2 [U1.4]; #3 [U3.4]; #4 [R2.2]",
+            "position": [
+              23.535,
+              21.54
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          },
+          {
+            "actual": 5,
+            "message": "Disjoint net 'SDA': realized as 5 disjoint copper islands — #1 (copper only, no pads); #2 (copper only, no pads); #3 [U1.3]; #4 [U3.3]; #5 [R1.2]",
+            "position": [
+              28.884999999999998,
+              11.265
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          },
+          {
+            "actual": 4,
+            "message": "Disjoint net 'VIN': realized as 4 disjoint copper islands — #1 (copper only, no pads); #2 [U2.1]; #3 [C1.1]; #4 [J1.1]",
+            "position": [
+              13.515,
+              19.820000000000004
+            ],
+            "required": 1,
+            "rule": "NetIslands",
+            "severity": "Error"
+          }
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "sample": [
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net 'VIN': 0.000mm < 0.200mm",
+            "position": [
+              7.062499999999999,
+              18.215000000000003
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.01642135623731153,
+            "message": "Clearance violation: trace net 'SDA' to net '3V3': 0.016mm < 0.200mm",
+            "position": [
+              29.042499999999997,
+              11.6325
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.14500000000000313,
+            "message": "Clearance violation: trace net 'GND' to net 'PROG2': 0.145mm < 0.200mm",
+            "position": [
+              21.57,
+              19.497500000000002
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net 'PROG1': 0.000mm < 0.200mm",
+            "position": [
+              21.57,
+              19.747500000000002
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.15500000000000114,
+            "message": "Clearance violation: trace net 'GND' to net 'SCL': 0.155mm < 0.200mm",
+            "position": [
+              21.57,
+              19.997500000000002
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'SDA' to net '': 0.000mm < 0.200mm",
+            "position": [
+              25.655,
+              16.895
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.03500000000000014,
+            "message": "Clearance violation: trace net 'SDA' to net '': 0.035mm < 0.200mm",
+            "position": [
+              25.405,
+              16.895
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net '': 0.000mm < 0.200mm",
+            "position": [
+              28.6175,
+              19.8825
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net '': 0.000mm < 0.200mm",
+            "position": [
+              28.6175,
+              20.8825
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net '': 0.000mm < 0.200mm",
+            "position": [
+              28.6175,
+              20.1325
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net '': 0.000mm < 0.200mm",
+            "position": [
+              28.6175,
+              20.6325
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'GND' to net '': 0.000mm < 0.200mm",
+            "position": [
+              28.6175,
+              20.3825
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.099802307403552,
+            "message": "Clearance violation: trace net 'PROG1' to net 'GND': 0.100mm < 0.200mm",
+            "position": [
+              9.88,
+              20.997500000000002
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'PROG1' to net 'GND': 0.000mm < 0.200mm",
+            "position": [
+              18.005000000000003,
+              21.2575
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.05894252693909652,
+            "message": "Clearance violation: trace net 'PROG1' to net 'SDA': 0.059mm < 0.200mm",
+            "position": [
+              18.005000000000003,
+              21.0075
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'VIN' to net '': 0.000mm < 0.200mm",
+            "position": [
+              21.17,
+              18.835
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.054999999999999716,
+            "message": "Clearance violation: trace net 'VIN' to net 'PROG2': 0.055mm < 0.200mm",
+            "position": [
+              21.17,
+              19.085
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'VIN' to net '': 0.000mm < 0.200mm",
+            "position": [
+              26.295,
+              16.197500000000005
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.134999999999998,
+            "message": "Clearance violation: trace net 'VIN' to net '': 0.135mm < 0.200mm",
+            "position": [
+              26.545,
+              16.197500000000005
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.015000000000000568,
+            "message": "Clearance violation: trace net 'PROG2' to net 'SCL': 0.015mm < 0.200mm",
+            "position": [
+              21.83,
+              20.395
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'PROG2' to net 'SDA': 0.000mm < 0.200mm",
+            "position": [
+              21.83,
+              20.645
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'PROG2' to net 'SCL': 0.000mm < 0.200mm",
+            "position": [
+              21.155,
+              20.33875
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'PROG2' to net 'SDA': 0.000mm < 0.200mm",
+            "position": [
+              21.155,
+              20.58875
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'PROG2' to net 'PROG1': 0.000mm < 0.200mm",
+            "position": [
+              9.205,
+              22.52375
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.0729898987322341,
+            "message": "Clearance violation: trace net 'SCL' to net '': 0.073mm < 0.200mm",
+            "position": [
+              23.478483495705504,
+              17.068483495705504
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          }
+        ],
+        "violations": 51
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "fail",
+      "details": {
+        "findings": [
+          {
+            "distance_mm": 6.750185182644992,
+            "ic": "U1",
+            "nearest_cap": "C3",
+            "net": "3V3",
+            "ok": false,
+            "pad": "1"
+          },
+          {
+            "distance_mm": 8.3108152428026,
+            "ic": "U3",
+            "nearest_cap": "C4",
+            "net": "3V3",
+            "ok": false,
+            "pad": "1"
+          }
+        ],
+        "ic_power_pads": 2,
+        "max_mm": 6
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 5,
+    "score": 0.4,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T183226Z-069c",
+  "model": {
+    "id": "gateway-mcp-anthropic-claude-sonnet-4.5",
+    "name": "AI Gateway (MCP, anthropic/claude-sonnet-4.5)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "anthropic/claude-sonnet-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p3-sensor-node-01",
+    "rendered": "Design a printed circuit board for a battery-powered I2C sensor node: a microcontroller in a quad flat package, a 3.3V LDO regulator, an I2C sensor in a SOIC-8 package, two I2C pull-up resistors, at least three decoupling/bulk capacitors, and a 4-pin power/programming header — at least ten footprints total. Board outline at most 45mm × 35mm, two copper layers. Declare nets VIN, 3V3, GND, SDA, SCL, and the two programming signals; the sensor and MCU share the I2C bus with pull-ups to 3V3, and every power pin gets a decoupling capacitor. Place all components and route every net so its copper is fully connected. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.5670000000000073
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PROG1",
+                  "type": "Input"
+                },
+                {
+                  "number": "6",
+                  "name": "PROG2",
+                  "type": "Input"
+                },
+                {
+                  "number": "7",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "10",
+                  "name": "NC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "11",
+                  "name": "NC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "12",
+                  "name": "NC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "13",
+                  "name": "NC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "NC8",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "NC9",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "NC10",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "NC11",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "NC12",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "NC13",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "NC14",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "NC15",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "NC16",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "NC17",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "NC18",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "NC19",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "NC20",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "NC21",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "NC22",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "NC23",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "NC24",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NC25",
+                  "type": "Passive"
+                },
+                {
+                  "number": "32",
+                  "name": "NC26",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-23-5",
+              "x": 50,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "EN",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "NC",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "VOUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "I2C_Sensor",
+              "footprint": "SOIC-8",
+              "x": 100,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC4",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 80,
+              "y": 40
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 90,
+              "y": 40
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 40,
+              "y": 80
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 60,
+              "y": 80
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 40,
+              "y": 50
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 110,
+              "y": 50
+            },
+            {
+              "ref": "J1",
+              "value": "Header_4pin",
+              "footprint": "PinHeader_1x04_P2.54mm",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PROG2",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C4.2",
+              "U1.2",
+              "U3.2"
+            ],
+            "3V3": [
+              "U2.5",
+              "C2.1",
+              "U1.1",
+              "U3.1",
+              "C3.1",
+              "C4.1",
+              "R1.1",
+              "R2.1"
+            ],
+            "SDA": [
+              "U1.3",
+              "U3.3",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.4",
+              "U3.4",
+              "R2.2"
+            ],
+            "PROG1": [
+              "J1.3",
+              "U1.5"
+            ],
+            "PROG2": [
+              "J1.4",
+              "U1.6"
+            ],
+            "EN": [
+              "U2.3"
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.4646670000001905
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PROG1",
+                  "type": "Input"
+                },
+                {
+                  "number": "6",
+                  "name": "PROG2",
+                  "type": "Input"
+                },
+                {
+                  "number": "7",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "10",
+                  "name": "NC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "11",
+                  "name": "NC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "12",
+                  "name": "NC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "13",
+                  "name": "NC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "NC8",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "NC9",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "NC10",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "NC11",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "NC12",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "NC13",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "NC14",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "NC15",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "NC16",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "NC17",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "NC18",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "NC19",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "NC20",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "NC21",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "NC22",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "NC23",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "NC24",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NC25",
+                  "type": "Passive"
+                },
+                {
+                  "number": "32",
+                  "name": "NC26",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-23-5",
+              "x": 50,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "EN",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "NC",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "VOUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "I2C_Sensor",
+              "footprint": "SOIC-8",
+              "x": 100,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC4",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 80,
+              "y": 40
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 90,
+              "y": 40
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 40,
+              "y": 80
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 60,
+              "y": 80
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 40,
+              "y": 50
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 110,
+              "y": 50
+            },
+            {
+              "ref": "J1",
+              "value": "Header_4pin",
+              "footprint": "PinHeader_1x04_P2.54mm",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PROG2",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "U1.2",
+              "U3.2"
+            ],
+            "3V3": [
+              "U2.5",
+              "U1.1",
+              "U3.1"
+            ],
+            "SDA": [
+              "U1.3",
+              "U3.3"
+            ],
+            "SCL": [
+              "U1.4",
+              "U3.4"
+            ],
+            "PROG1": [
+              "J1.3",
+              "U1.5"
+            ],
+            "PROG2": [
+              "J1.4",
+              "U1.6"
+            ],
+            "EN": [
+              "U2.3"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.649249999994936
+      },
+      {
+        "n": 3,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_2_UQ9VcikNNMfM"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4799159999965923
+      },
+      {
+        "n": 4,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PROG1",
+                  "type": "Input"
+                },
+                {
+                  "number": "6",
+                  "name": "PROG2",
+                  "type": "Input"
+                },
+                {
+                  "number": "7",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "10",
+                  "name": "NC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "11",
+                  "name": "NC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "12",
+                  "name": "NC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "13",
+                  "name": "NC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "NC8",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "NC9",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "NC10",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "NC11",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "NC12",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "NC13",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "NC14",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "NC15",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "NC16",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "NC17",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "NC18",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "NC19",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "NC20",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "NC21",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "NC22",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "NC23",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "NC24",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NC25",
+                  "type": "Passive"
+                },
+                {
+                  "number": "32",
+                  "name": "NC26",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-23-5",
+              "x": 50,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "EN",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "NC",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "VOUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "I2C_Sensor",
+              "footprint": "SOIC-8",
+              "x": 100,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC4",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 80,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 90,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 40,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 60,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 40,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 110,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "Header_4pin",
+              "footprint": "PinHeader_1x04_P2.54mm",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PROG2",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C4.2",
+              "U1.2",
+              "U3.2"
+            ],
+            "3V3": [
+              "U2.5",
+              "C2.1",
+              "U1.1",
+              "U3.1",
+              "C3.1",
+              "C4.1",
+              "R1.1",
+              "R2.1"
+            ],
+            "SDA": [
+              "U1.3",
+              "U3.3",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.4",
+              "U3.4",
+              "R2.2"
+            ],
+            "PROG1": [
+              "J1.3",
+              "U1.5"
+            ],
+            "PROG2": [
+              "J1.4",
+              "U1.6"
+            ],
+            "EN": [
+              "U2.3",
+              "U2.1"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.877082999999402
+      },
+      {
+        "n": 5,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PROG1",
+                  "type": "Input"
+                },
+                {
+                  "number": "6",
+                  "name": "PROG2",
+                  "type": "Input"
+                },
+                {
+                  "number": "7",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "10",
+                  "name": "NC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "11",
+                  "name": "NC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "12",
+                  "name": "NC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "13",
+                  "name": "NC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "NC8",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "NC9",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "NC10",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "NC11",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "NC12",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "NC13",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "NC14",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "NC15",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "NC16",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "NC17",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "NC18",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "NC19",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "NC20",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "NC21",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "NC22",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "NC23",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "NC24",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NC25",
+                  "type": "Passive"
+                },
+                {
+                  "number": "32",
+                  "name": "NC26",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-23-5",
+              "x": 50,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "EN",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "NC",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "VOUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "I2C_Sensor",
+              "footprint": "SOIC-8",
+              "x": 100,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCL",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "NC4",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 80,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 90,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 40,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 60,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 40,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 110,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R3",
+              "value": "10k",
+              "footprint": "R_0603",
+              "x": 45,
+              "y": 75,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "P2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "Header_4pin",
+              "footprint": "PinHeader_1x04_P2.54mm",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PROG1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PROG2",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C4.2",
+              "U1.2",
+              "U3.2",
+              "R3.2"
+            ],
+            "3V3": [
+              "U2.5",
+              "C2.1",
+              "U1.1",
+              "U3.1",
+              "C3.1",
+              "C4.1",
+              "R1.1",
+              "R2.1",
+              "R3.1"
+            ],
+            "SDA": [
+              "U1.3",
+              "U3.3",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.4",
+              "U3.4",
+              "R2.2"
+            ],
+            "PROG1": [
+              "J1.3",
+              "U1.5"
+            ],
+            "PROG2": [
+              "J1.4",
+              "U1.6"
+            ],
+            "EN": [
+              "U2.3",
+              "R3.1"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.034708999999566
+      },
+      {
+        "n": 6,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "board_width": 45,
+          "board_height": 35,
+          "strategy": "force_directed"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.542291000005207
+      },
+      {
+        "n": 7,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 143.8480830000044
+      },
+      {
+        "n": 8,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.582791000008001
+      },
+      {
+        "n": 9,
+        "tool": "describe_pcb",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 16.095708000008017
+      },
+      {
+        "n": 10,
+        "tool": "get_pad_positions",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "VIN"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8412090000056196
+      },
+      {
+        "n": 11,
+        "tool": "add_trace",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "VIN",
+          "layer": "BCu",
+          "points": [
+            {
+              "x": 21.17,
+              "y": 21.87
+            },
+            {
+              "x": 26.72,
+              "y": 16.87
+            }
+          ],
+          "width": 0.25
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.226792000001296
+      },
+      {
+        "n": 12,
+        "tool": "get_pad_positions",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "PROG1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.820584000000963
+      },
+      {
+        "n": 13,
+        "tool": "add_trace",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "PROG1",
+          "layer": "BCu",
+          "points": [
+            {
+              "x": 21.17,
+              "y": 26.95
+            },
+            {
+              "x": 24.21,
+              "y": 26.95
+            },
+            {
+              "x": 24.21,
+              "y": 21.04
+            }
+          ],
+          "width": 0.25
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.6077910000021802
+      },
+      {
+        "n": 14,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8644589999894379
+      },
+      {
+        "n": 15,
+        "tool": "add_via",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "PROG1",
+          "position": {
+            "x": 24.21,
+            "y": 21.04
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.9987919999985024
+      },
+      {
+        "n": 16,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6627499999885913
+      },
+      {
+        "n": 17,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "placements": [
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 17.5,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.037333000014769
+      },
+      {
+        "n": 18,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "nets": [
+            "PROG1",
+            "VIN"
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 41.374832999979844
+      },
+      {
+        "n": 19,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8414169999887235
+      },
+      {
+        "n": 20,
+        "tool": "delete_trace",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "VIN",
+          "layer": "BCu"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.453125
+      },
+      {
+        "n": 21,
+        "tool": "delete_trace",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "index": 40,
+          "net": "VIN"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4864589999779128
+      },
+      {
+        "n": 22,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "nets": [
+            "VIN"
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.562082999997074
+      },
+      {
+        "n": 23,
+        "tool": "get_copper",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "net": "VIN"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7987499999871943
+      },
+      {
+        "n": 24,
+        "tool": "delete_trace",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "index": 47,
+          "net": "VIN"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.052957999985665
+      },
+      {
+        "n": 25,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "nets": [
+            "VIN"
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7.28987499998766
+      },
+      {
+        "n": 26,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4674579999991693
+      },
+      {
+        "n": 27,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "placements": [
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 20,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1014169999980368
+      },
+      {
+        "n": 28,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 183.36383299998124
+      },
+      {
+        "n": 29,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4685409999801777
+      },
+      {
+        "n": 30,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa",
+          "placements": [
+            {
+              "ref": "U2",
+              "x": 10,
+              "y": 10
+            },
+            {
+              "ref": "C1",
+              "x": 7,
+              "y": 15
+            },
+            {
+              "ref": "C2",
+              "x": 13,
+              "y": 15
+            },
+            {
+              "ref": "U1",
+              "x": 25,
+              "y": 20
+            },
+            {
+              "ref": "U3",
+              "x": 35,
+              "y": 20
+            },
+            {
+              "ref": "R1",
+              "x": 30,
+              "y": 12
+            },
+            {
+              "ref": "R2",
+              "x": 33,
+              "y": 12
+            },
+            {
+              "ref": "C3",
+              "x": 22,
+              "y": 15
+            },
+            {
+              "ref": "C4",
+              "x": 38,
+              "y": 15
+            },
+            {
+              "ref": "R3",
+              "x": 10,
+              "y": 5
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 22
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5143329999991693
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_4_7dL64pNrhlwa"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.229957999981707
+      }
+    ],
+    "tokens": {
+      "input": 2726882,
+      "output": 10660,
+      "total": 2737542,
+      "cache_creation_input": 97305,
+      "cache_read_input": 2553351
+    },
+    "wallclock_sec": 179.98118945899998
+  },
+  "output": {
+    "vcad_path": "20260722T183226Z-069c.vcad",
+    "vcad_sha256": "ccdf245f472d6fbbaac1a8d861fa16337dc0ac0e6919dc6f14557a15a9418766",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:32:26.922Z",
+    "ended_at": "2026-07-22T18:35:27.009Z"
+  },
+  "signature": null
+}

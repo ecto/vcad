@@ -3,7 +3,7 @@
   "suite": "P",
   "tier": "P1",
   "title": "Decoupled microcontroller",
-  "prompt": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors adjacent to its power pins, and a 4-pin programming header. Board outline at most 50mm \u00d7 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected \u2014 decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+  "prompt": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors placed within 6mm (pad-to-pad) of the MCU power pins they serve, and a 4-pin programming header. Board outline at most 50mm \u00d7 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected \u2014 decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
   "inputs": [],
   "checks": [
     {

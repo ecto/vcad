@@ -1,0 +1,153 @@
+{
+  "version": "0.1",
+  "nodes": {},
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "schematic": {
+    "title": "Resistive Voltage Divider",
+    "components": [
+      {
+        "ref": "J1",
+        "value": "VIN",
+        "footprintId": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+        "position": {
+          "x": 20,
+          "y": 20
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "VIN",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "R1",
+        "value": "10k",
+        "footprintId": "Resistor_SMD:R_0805",
+        "position": {
+          "x": 60,
+          "y": 20
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "2",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "J2",
+        "value": "VOUT",
+        "footprintId": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+        "position": {
+          "x": 60,
+          "y": 40
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "VOUT",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "R2",
+        "value": "10k",
+        "footprintId": "Resistor_SMD:R_0805",
+        "position": {
+          "x": 60,
+          "y": 60
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "2",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "J3",
+        "value": "GND",
+        "footprintId": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+        "position": {
+          "x": 60,
+          "y": 80
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "GND",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "labels": [],
+    "nets": {
+      "VIN": [
+        "J1.1",
+        "R1.1"
+      ],
+      "VOUT": [
+        "J2.1",
+        "R1.2",
+        "R2.1"
+      ],
+      "GND": [
+        "J3.1",
+        "R2.2"
+      ]
+    }
+  }
+}

@@ -1,0 +1,2888 @@
+{
+  "schema_version": 0,
+  "task_id": "p3-led-bar-01",
+  "task_sha256": "140879121d98a5e876fa432bcfcb3296c81a576c7e594711015f47d2b8dd342c",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          60,
+          25
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 25,
+            "width_mm": 60
+          }
+        ],
+        "max_mm": [
+          60,
+          25
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 18
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 18,
+        "min": 18
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 67,
+        "sample": [
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED8' and 'LED5' are connected by copper",
+            "position": [
+              27.575000000000003,
+              12.775
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED8' and 'GND' are connected by copper",
+            "position": [
+              32.425,
+              12.775
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED8' and 'D8_R' are connected by copper",
+            "position": [
+              56.168103448275865,
+              19.607758620689655
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED6' and 'LED2' are connected by copper",
+            "position": [
+              27.575,
+              17.275
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED6' and 'VCC' are connected by copper",
+            "position": [
+              32.425,
+              17.275
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D6_R' and 'LED7' are connected by copper",
+            "position": [
+              48.05,
+              19.55
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D5_R' and 'LED6' are connected by copper",
+            "position": [
+              42.55,
+              19.55
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D1_R' and 'LED4' are connected by copper",
+            "position": [
+              22,
+              20.450000000000003
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D7_R' and 'LED8' are connected by copper",
+            "position": [
+              53.55,
+              19.55
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED4' and 'LED5' are connected by copper",
+            "position": [
+              35.5,
+              20
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED2' and 'D4_R' are connected by copper",
+            "position": [
+              24.5,
+              20
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'CLK' and 'LATCH' are connected by copper",
+            "position": [
+              7.529999999999999,
+              13.05
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED1' and 'D2_R' are connected by copper",
+            "position": [
+              12.425,
+              19.425
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED1' and 'LED3' are connected by copper",
+            "position": [
+              16,
+              19.425
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED1' and 'D3_R' are connected by copper",
+            "position": [
+              18,
+              19.425
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D1_R' and 'D4_R' are connected by copper",
+            "position": [
+              23.625,
+              20.225
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D1_R' and 'LED2' are connected by copper",
+            "position": [
+              22.35,
+              20.450000000000003
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED2' and 'LED4' are connected by copper",
+            "position": [
+              7.726966991411008,
+              10.578033008588992
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED4' and 'D4_R' are connected by copper",
+            "position": [
+              22,
+              20
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D2_R' and 'LED3' are connected by copper",
+            "position": [
+              12,
+              20
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'D2_R' and 'D3_R' are connected by copper",
+            "position": [
+              12,
+              20
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED3' and 'D3_R' are connected by copper",
+            "position": [
+              16,
+              20
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED5' and 'GND' are connected by copper",
+            "position": [
+              27.575,
+              13.135
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'LED5' and 'D8_R' are connected by copper",
+            "position": [
+              27.575,
+              13.135
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Short: nets 'GND' and 'D8_R' are connected by copper",
+            "position": [
+              27.575,
+              8.055
+            ],
+            "required": 0,
+            "rule": "Short",
+            "severity": "Error"
+          }
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "sample": [
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED8' to net 'LED5': 0.000mm < 0.200mm",
+            "position": [
+              30.15,
+              12.955
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED8' to net 'GND': 0.000mm < 0.200mm",
+            "position": [
+              32.575,
+              12.955
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED8' to net 'D8_R': 0.000mm < 0.200mm",
+            "position": [
+              55.725,
+              19.65
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.19500000000000028,
+            "message": "Clearance violation: trace net 'LED7' to net 'LED4': 0.195mm < 0.200mm",
+            "position": [
+              29.627499999999998,
+              14.715
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.19500000000000028,
+            "message": "Clearance violation: trace net 'LED7' to net 'DATA': 0.195mm < 0.200mm",
+            "position": [
+              32.052499999999995,
+              14.715
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED6' to net 'LED2': 0.000mm < 0.200mm",
+            "position": [
+              29.442500000000003,
+              17.11
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED6' to net 'VCC': 0.000mm < 0.200mm",
+            "position": [
+              31.8675,
+              17.11
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'D6_R' to net 'LED7': 0.000mm < 0.200mm",
+            "position": [
+              47.9125,
+              19.6625
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'D5_R' to net 'LED6': 0.000mm < 0.200mm",
+            "position": [
+              42.275,
+              19.4375
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'D1_R' to net 'LED4': 0.000mm < 0.200mm",
+            "position": [
+              22.175,
+              20.225
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.125,
+            "message": "Clearance violation: trace net 'D1_R' to net 'D4_R': 0.125mm < 0.200mm",
+            "position": [
+              23.175,
+              20.225
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'D7_R' to net 'LED8': 0.000mm < 0.200mm",
+            "position": [
+              53.6625,
+              19.6625
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED4' to net 'LED5': 0.000mm < 0.200mm",
+            "position": [
+              35.698750000000004,
+              19.99375
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED2' to net 'D4_R': 0.000mm < 0.200mm",
+            "position": [
+              24.28875,
+              19.99375
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'CLK' to net 'LATCH': 0.000mm < 0.200mm",
+            "position": [
+              7.954999999999999,
+              12.925
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED1' to net 'D3_R': 0.000mm < 0.200mm",
+            "position": [
+              16.7875,
+              19.7125
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED1' to net 'LED3': 0.000mm < 0.200mm",
+            "position": [
+              15.787500000000001,
+              19.7125
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0,
+            "message": "Clearance violation: trace net 'LED1' to net 'D2_R': 0.000mm < 0.200mm",
+            "position": [
+              13.787500000000001,
+              19.7125
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.06444696834422403,
+            "message": "Clearance violation: trace net 'DATA' to net 'CLK': 0.064mm < 0.200mm",
+            "position": [
+              5.567500000000001,
+              13.2625
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.1158858785409228,
+            "message": "Clearance violation: trace net 'VCC' to net 'GND': 0.116mm < 0.200mm",
+            "position": [
+              0.09800000000000011,
+              13.02725
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.1158858785409228,
+            "message": "Clearance violation: trace net 'VCC' to net 'GND': 0.116mm < 0.200mm",
+            "position": [
+              -0.021249999999999852,
+              12.908000000000001
+            ],
+            "required": 0.2,
+            "rule": "Clearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.375,
+            "message": "Trace net 'D8_R' edge clearance 0.375mm < 0.500mm",
+            "position": [
+              59.5,
+              17.3
+            ],
+            "required": 0.5,
+            "rule": "EdgeClearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.375,
+            "message": "Trace net 'D8_R' edge clearance 0.375mm < 0.500mm",
+            "position": [
+              59.275,
+              14.825
+            ],
+            "required": 0.5,
+            "rule": "EdgeClearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.08800000000000008,
+            "message": "Trace net 'VCC' edge clearance 0.088mm < 0.500mm",
+            "position": [
+              0.45150000000000023,
+              14.27
+            ],
+            "required": 0.5,
+            "rule": "EdgeClearance",
+            "severity": "Error"
+          },
+          {
+            "actual": 0.08800000000000008,
+            "message": "Trace net 'VCC' edge clearance 0.088mm < 0.500mm",
+            "position": [
+              0.21300000000000008,
+              14.0315
+            ],
+            "required": 0.5,
+            "rule": "EdgeClearance",
+            "severity": "Error"
+          }
+        ],
+        "violations": 95
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T185022Z-a84b",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-pro",
+    "name": "AI Gateway (MCP, google/gemini-2.5-pro)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-pro",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p3-led-bar-01",
+    "rendered": "Design a printed circuit board for an 8-LED indicator bar driven by a serial shift register: one shift register in a SOIC-16 package, eight LEDs, eight current-limiting resistors, and a 5-pin input header (VCC, GND, DATA, CLK, LATCH) — at least eighteen footprints total. Board outline at most 60mm × 25mm (a bar), two copper layers. Each shift-register output drives one LED through its own resistor to GND. Declare all nets, place components so the LEDs form a row, and route every net so its copper is fully connected — the parallel LED nets across a narrow board make routing discipline matter. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.9865839999999935
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "nets": {
+            "D2_R": [
+              "D2.2",
+              "R2.1"
+            ],
+            "D5_R": [
+              "D5.2",
+              "R5.1"
+            ],
+            "LED2": [
+              "U1.1",
+              "D2.1"
+            ],
+            "LED6": [
+              "U1.5",
+              "D6.1"
+            ],
+            "D4_R": [
+              "D4.2",
+              "R4.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U1.8",
+              "U1.13",
+              "R1.2",
+              "R2.2",
+              "R3.2",
+              "R4.2",
+              "R5.2",
+              "R6.2",
+              "R7.2",
+              "R8.2"
+            ],
+            "D8_R": [
+              "D8.2",
+              "R8.1"
+            ],
+            "D6_R": [
+              "D6.2",
+              "R6.1"
+            ],
+            "LED5": [
+              "U1.4",
+              "D5.1"
+            ],
+            "CLK": [
+              "J1.4",
+              "U1.11"
+            ],
+            "DATA": [
+              "J1.3",
+              "U1.14"
+            ],
+            "LED8": [
+              "U1.7",
+              "D8.1"
+            ],
+            "LED4": [
+              "U1.3",
+              "D4.1"
+            ],
+            "LED1": [
+              "U1.15",
+              "D1.1"
+            ],
+            "D1_R": [
+              "D1.2",
+              "R1.1"
+            ],
+            "LED7": [
+              "U1.6",
+              "D7.1"
+            ],
+            "LED3": [
+              "U1.2",
+              "D3.1"
+            ],
+            "LATCH": [
+              "J1.5",
+              "U1.12"
+            ],
+            "VCC": [
+              "J1.1",
+              "U1.16",
+              "U1.10"
+            ],
+            "D7_R": [
+              "D7.2",
+              "R7.1"
+            ],
+            "D3_R": [
+              "D3.2",
+              "R3.1"
+            ]
+          },
+          "components": [
+            {
+              "ref": "U1",
+              "y": 50,
+              "footprint": "SOIC-16_W5.4mm",
+              "x": 50,
+              "part": "74HC595"
+            },
+            {
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "number": "1",
+                  "name": "VCC"
+                },
+                {
+                  "type": "PowerInput",
+                  "number": "2",
+                  "name": "GND"
+                },
+                {
+                  "number": "3",
+                  "name": "DATA",
+                  "type": "Input"
+                },
+                {
+                  "type": "Input",
+                  "name": "CLK",
+                  "number": "4"
+                },
+                {
+                  "type": "Input",
+                  "number": "5",
+                  "name": "LATCH"
+                }
+              ],
+              "value": "CONN_5",
+              "x": 10,
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical",
+              "ref": "J1",
+              "y": 50
+            },
+            {
+              "x": 100,
+              "footprint": "LED_SMD:LED_0805",
+              "value": "LED",
+              "y": 10,
+              "ref": "D1"
+            },
+            {
+              "x": 100,
+              "footprint": "LED_SMD:LED_0805",
+              "value": "LED",
+              "y": 20,
+              "ref": "D2"
+            },
+            {
+              "y": 30,
+              "ref": "D3",
+              "footprint": "LED_SMD:LED_0805",
+              "x": 100,
+              "value": "LED"
+            },
+            {
+              "x": 100,
+              "footprint": "LED_SMD:LED_0805",
+              "value": "LED",
+              "y": 40,
+              "ref": "D4"
+            },
+            {
+              "value": "LED",
+              "x": 100,
+              "footprint": "LED_SMD:LED_0805",
+              "ref": "D5",
+              "y": 50
+            },
+            {
+              "y": 60,
+              "ref": "D6",
+              "x": 100,
+              "footprint": "LED_SMD:LED_0805",
+              "value": "LED"
+            },
+            {
+              "ref": "D7",
+              "y": 70,
+              "value": "LED",
+              "x": 100,
+              "footprint": "LED_SMD:LED_0805"
+            },
+            {
+              "footprint": "LED_SMD:LED_0805",
+              "x": 100,
+              "value": "LED",
+              "y": 80,
+              "ref": "D8"
+            },
+            {
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R",
+              "y": 10,
+              "ref": "R1"
+            },
+            {
+              "y": 20,
+              "ref": "R2",
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R"
+            },
+            {
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R",
+              "y": 30,
+              "ref": "R3"
+            },
+            {
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R",
+              "y": 40,
+              "ref": "R4"
+            },
+            {
+              "footprint": "Resistor_SMD:R_0805",
+              "x": 120,
+              "value": "330R",
+              "y": 50,
+              "ref": "R5"
+            },
+            {
+              "y": 60,
+              "ref": "R6",
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R"
+            },
+            {
+              "value": "330R",
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "ref": "R7",
+              "y": 70
+            },
+            {
+              "y": 80,
+              "ref": "R8",
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R"
+            }
+          ],
+          "title": "8-LED Shift Register Bar"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.0506659999955446
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "nets": {
+            "LATCH": [
+              "J1.5",
+              "U1.12"
+            ],
+            "D7_R": [
+              "D7.2",
+              "R7.1"
+            ],
+            "LED5": [
+              "U1.4",
+              "D5.1"
+            ],
+            "D2_R": [
+              "D2.2",
+              "R2.1"
+            ],
+            "D6_R": [
+              "D6.2",
+              "R6.1"
+            ],
+            "CLK": [
+              "J1.4",
+              "U1.11"
+            ],
+            "D5_R": [
+              "D5.2",
+              "R5.1"
+            ],
+            "LED4": [
+              "U1.3",
+              "D4.1"
+            ],
+            "LED3": [
+              "U1.2",
+              "D3.1"
+            ],
+            "LED1": [
+              "U1.15",
+              "D1.1"
+            ],
+            "D8_R": [
+              "D8.2",
+              "R8.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U1.8",
+              "U1.13",
+              "R1.2",
+              "R2.2",
+              "R3.2",
+              "R4.2",
+              "R5.2",
+              "R6.2",
+              "R7.2",
+              "R8.2"
+            ],
+            "VCC": [
+              "J1.1",
+              "U1.16",
+              "U1.10"
+            ],
+            "D1_R": [
+              "D1.2",
+              "R1.1"
+            ],
+            "D3_R": [
+              "D3.2",
+              "R3.1"
+            ],
+            "LED6": [
+              "U1.5",
+              "D6.1"
+            ],
+            "D4_R": [
+              "D4.2",
+              "R4.1"
+            ],
+            "DATA": [
+              "J1.3",
+              "U1.14"
+            ],
+            "LED8": [
+              "U1.7",
+              "D8.1"
+            ],
+            "LED2": [
+              "U1.1",
+              "D2.1"
+            ],
+            "LED7": [
+              "U1.6",
+              "D7.1"
+            ]
+          },
+          "components": [
+            {
+              "footprint": "SOIC-16_W5.4mm",
+              "y": 50,
+              "part": "74HC595",
+              "ref": "U1",
+              "x": 50
+            },
+            {
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical",
+              "value": "CONN_5",
+              "x": 10,
+              "ref": "J1",
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VCC",
+                  "type": "PowerInput"
+                },
+                {
+                  "name": "GND",
+                  "number": "2",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "DATA",
+                  "type": "Input"
+                },
+                {
+                  "type": "Input",
+                  "name": "CLK",
+                  "number": "4"
+                },
+                {
+                  "type": "Input",
+                  "number": "5",
+                  "name": "LATCH"
+                }
+              ]
+            },
+            {
+              "x": 100,
+              "value": "LED",
+              "ref": "D1",
+              "y": 10,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "name": "K",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "footprint": "LED_SMD:LED_0805"
+            },
+            {
+              "pins": [
+                {
+                  "name": "A",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "K",
+                  "type": "Passive"
+                }
+              ],
+              "y": 20,
+              "value": "LED",
+              "x": 100,
+              "ref": "D2",
+              "footprint": "LED_SMD:LED_0805"
+            },
+            {
+              "footprint": "LED_SMD:LED_0805",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "number": "2",
+                  "name": "K"
+                }
+              ],
+              "y": 30,
+              "x": 100,
+              "value": "LED",
+              "ref": "D3"
+            },
+            {
+              "footprint": "LED_SMD:LED_0805",
+              "y": 40,
+              "pins": [
+                {
+                  "name": "A",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "name": "K",
+                  "number": "2"
+                }
+              ],
+              "ref": "D4",
+              "x": 100,
+              "value": "LED"
+            },
+            {
+              "y": 50,
+              "pins": [
+                {
+                  "type": "Passive",
+                  "number": "1",
+                  "name": "A"
+                },
+                {
+                  "number": "2",
+                  "name": "K",
+                  "type": "Passive"
+                }
+              ],
+              "value": "LED",
+              "x": 100,
+              "ref": "D5",
+              "footprint": "LED_SMD:LED_0805"
+            },
+            {
+              "footprint": "LED_SMD:LED_0805",
+              "y": 60,
+              "pins": [
+                {
+                  "name": "A",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "name": "K",
+                  "number": "2"
+                }
+              ],
+              "x": 100,
+              "value": "LED",
+              "ref": "D6"
+            },
+            {
+              "y": 70,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "number": "2",
+                  "name": "K"
+                }
+              ],
+              "value": "LED",
+              "x": 100,
+              "ref": "D7",
+              "footprint": "LED_SMD:LED_0805"
+            },
+            {
+              "footprint": "LED_SMD:LED_0805",
+              "ref": "D8",
+              "x": 100,
+              "value": "LED",
+              "pins": [
+                {
+                  "name": "A",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "name": "K",
+                  "number": "2"
+                }
+              ],
+              "y": 80
+            },
+            {
+              "footprint": "Resistor_SMD:R_0805",
+              "pins": [
+                {
+                  "name": "1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "name": "2",
+                  "number": "2"
+                }
+              ],
+              "y": 10,
+              "value": "330R",
+              "x": 120,
+              "ref": "R1"
+            },
+            {
+              "pins": [
+                {
+                  "name": "1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ],
+              "y": 20,
+              "value": "330R",
+              "x": 120,
+              "ref": "R2",
+              "footprint": "Resistor_SMD:R_0805"
+            },
+            {
+              "footprint": "Resistor_SMD:R_0805",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "name": "2",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "y": 30,
+              "ref": "R3",
+              "x": 120,
+              "value": "330R"
+            },
+            {
+              "pins": [
+                {
+                  "name": "1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ],
+              "y": 40,
+              "value": "330R",
+              "x": 120,
+              "ref": "R4",
+              "footprint": "Resistor_SMD:R_0805"
+            },
+            {
+              "footprint": "Resistor_SMD:R_0805",
+              "value": "330R",
+              "x": 120,
+              "ref": "R5",
+              "pins": [
+                {
+                  "name": "1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "type": "Passive",
+                  "name": "2",
+                  "number": "2"
+                }
+              ],
+              "y": 50
+            },
+            {
+              "value": "330R",
+              "x": 120,
+              "ref": "R6",
+              "pins": [
+                {
+                  "name": "1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "name": "2",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "y": 60,
+              "footprint": "Resistor_SMD:R_0805"
+            },
+            {
+              "footprint": "Resistor_SMD:R_0805",
+              "ref": "R7",
+              "value": "330R",
+              "x": 120,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "name": "2",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "y": 70
+            },
+            {
+              "y": 80,
+              "pins": [
+                {
+                  "name": "1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "name": "2",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "ref": "R8",
+              "value": "330R",
+              "x": 120,
+              "footprint": "Resistor_SMD:R_0805"
+            }
+          ],
+          "title": "8-LED Shift Register Bar"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.231832999998005
+      },
+      {
+        "n": 3,
+        "tool": "place_components",
+        "args": {
+          "board_height": 25,
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "strategy": "force_directed",
+          "board_width": 60
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 19.8600829999923
+      },
+      {
+        "n": 4,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "placements": [
+            {
+              "x": 10,
+              "y": 18,
+              "ref": "D1"
+            },
+            {
+              "ref": "D2",
+              "x": 16,
+              "y": 18
+            },
+            {
+              "x": 22,
+              "y": 18,
+              "ref": "D3"
+            },
+            {
+              "x": 28,
+              "y": 18,
+              "ref": "D4"
+            },
+            {
+              "x": 34,
+              "y": 18,
+              "ref": "D5"
+            },
+            {
+              "ref": "D6",
+              "x": 40,
+              "y": 18
+            },
+            {
+              "x": 46,
+              "y": 18,
+              "ref": "D7"
+            },
+            {
+              "y": 18,
+              "x": 52,
+              "ref": "D8"
+            },
+            {
+              "rotation": 90,
+              "ref": "R1",
+              "y": 12,
+              "x": 10
+            },
+            {
+              "rotation": 90,
+              "ref": "R2",
+              "y": 12,
+              "x": 16
+            },
+            {
+              "rotation": 90,
+              "ref": "R3",
+              "y": 12,
+              "x": 22
+            },
+            {
+              "y": 12,
+              "x": 28,
+              "rotation": 90,
+              "ref": "R4"
+            },
+            {
+              "rotation": 90,
+              "ref": "R5",
+              "y": 12,
+              "x": 34
+            },
+            {
+              "ref": "R6",
+              "rotation": 90,
+              "x": 40,
+              "y": 12
+            },
+            {
+              "x": 46,
+              "y": 12,
+              "ref": "R7",
+              "rotation": 90
+            },
+            {
+              "rotation": 90,
+              "ref": "R8",
+              "y": 12,
+              "x": 52
+            },
+            {
+              "x": 31,
+              "y": 4,
+              "ref": "U1"
+            },
+            {
+              "y": 5,
+              "x": 5,
+              "ref": "J1"
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0014159999991534
+      },
+      {
+        "n": 5,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 25.816874999989523
+      },
+      {
+        "n": 6,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.46379199999501
+      },
+      {
+        "n": 7,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "y": 20,
+              "ref": "D1",
+              "x": 10
+            },
+            {
+              "x": 16,
+              "y": 20,
+              "ref": "D2"
+            },
+            {
+              "y": 20,
+              "ref": "D3",
+              "x": 22
+            },
+            {
+              "y": 20,
+              "ref": "D4",
+              "x": 28
+            },
+            {
+              "y": 20,
+              "ref": "D5",
+              "x": 34
+            },
+            {
+              "x": 40,
+              "y": 20,
+              "ref": "D6"
+            },
+            {
+              "y": 20,
+              "ref": "D7",
+              "x": 46
+            },
+            {
+              "ref": "D8",
+              "y": 20,
+              "x": 52
+            },
+            {
+              "x": 10,
+              "ref": "R1",
+              "rotation": 90,
+              "y": 14
+            },
+            {
+              "x": 16,
+              "ref": "R2",
+              "rotation": 90,
+              "y": 14
+            },
+            {
+              "x": 22,
+              "ref": "R3",
+              "rotation": 90,
+              "y": 14
+            },
+            {
+              "ref": "R4",
+              "rotation": 90,
+              "y": 14,
+              "x": 28
+            },
+            {
+              "x": 34,
+              "ref": "R5",
+              "rotation": 90,
+              "y": 14
+            },
+            {
+              "x": 40,
+              "y": 14,
+              "ref": "R6",
+              "rotation": 90
+            },
+            {
+              "x": 46,
+              "y": 14,
+              "ref": "R7",
+              "rotation": 90
+            },
+            {
+              "ref": "R8",
+              "rotation": 90,
+              "y": 14,
+              "x": 52
+            },
+            {
+              "x": 31,
+              "y": 7,
+              "ref": "U1"
+            },
+            {
+              "ref": "J1",
+              "rotation": 180,
+              "y": 7,
+              "x": 5
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.9457079999992857
+      },
+      {
+        "n": 8,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "placements": [
+            {
+              "x": 4,
+              "ref": "J1",
+              "rotation": -90,
+              "y": 12.5
+            },
+            {
+              "ref": "U1",
+              "rotation": 90,
+              "x": 12,
+              "y": 12.5
+            },
+            {
+              "y": 20,
+              "ref": "D1",
+              "x": 20
+            },
+            {
+              "y": 15,
+              "ref": "R1",
+              "x": 20
+            },
+            {
+              "y": 20,
+              "ref": "D2",
+              "x": 25
+            },
+            {
+              "ref": "R2",
+              "x": 25,
+              "y": 15
+            },
+            {
+              "y": 20,
+              "ref": "D3",
+              "x": 30
+            },
+            {
+              "y": 15,
+              "ref": "R3",
+              "x": 30
+            },
+            {
+              "y": 20,
+              "x": 35,
+              "ref": "D4"
+            },
+            {
+              "x": 35,
+              "ref": "R4",
+              "y": 15
+            },
+            {
+              "y": 20,
+              "x": 40,
+              "ref": "D5"
+            },
+            {
+              "y": 15,
+              "x": 40,
+              "ref": "R5"
+            },
+            {
+              "y": 20,
+              "x": 45,
+              "ref": "D6"
+            },
+            {
+              "x": 45,
+              "ref": "R6",
+              "y": 15
+            },
+            {
+              "y": 20,
+              "x": 50,
+              "ref": "D7"
+            },
+            {
+              "y": 15,
+              "x": 50,
+              "ref": "R7"
+            },
+            {
+              "x": 55,
+              "ref": "D8",
+              "y": 20
+            },
+            {
+              "y": 15,
+              "ref": "R8",
+              "x": 55
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.19345799999428
+      },
+      {
+        "n": 9,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "y": 8,
+              "rotation": 0,
+              "ref": "U1",
+              "x": 30
+            },
+            {
+              "y": 8,
+              "ref": "J1",
+              "rotation": -90,
+              "x": 3
+            },
+            {
+              "ref": "D1",
+              "x": 5,
+              "y": 21
+            },
+            {
+              "y": 21,
+              "x": 12,
+              "ref": "D2"
+            },
+            {
+              "x": 19,
+              "ref": "D3",
+              "y": 21
+            },
+            {
+              "y": 21,
+              "ref": "D4",
+              "x": 26
+            },
+            {
+              "ref": "D5",
+              "x": 33,
+              "y": 21
+            },
+            {
+              "y": 21,
+              "x": 40,
+              "ref": "D6"
+            },
+            {
+              "y": 21,
+              "x": 47,
+              "ref": "D7"
+            },
+            {
+              "ref": "D8",
+              "x": 54,
+              "y": 21
+            },
+            {
+              "y": 15,
+              "ref": "R1",
+              "x": 5
+            },
+            {
+              "x": 12,
+              "ref": "R2",
+              "y": 15
+            },
+            {
+              "y": 15,
+              "x": 19,
+              "ref": "R3"
+            },
+            {
+              "ref": "R4",
+              "x": 26,
+              "y": 15
+            },
+            {
+              "y": 15,
+              "ref": "R5",
+              "x": 33
+            },
+            {
+              "x": 40,
+              "ref": "R6",
+              "y": 15
+            },
+            {
+              "ref": "R7",
+              "x": 47,
+              "y": 15
+            },
+            {
+              "y": 15,
+              "ref": "R8",
+              "x": 54
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.131999999983236
+      },
+      {
+        "n": 10,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "placements": [
+            {
+              "x": 30,
+              "y": 7,
+              "rotation": 0,
+              "ref": "U1"
+            },
+            {
+              "y": 8,
+              "rotation": -90,
+              "x": 3,
+              "ref": "J1"
+            },
+            {
+              "ref": "D1",
+              "x": 5,
+              "rotation": -90,
+              "y": 21
+            },
+            {
+              "ref": "D2",
+              "x": 12,
+              "y": 21,
+              "rotation": -90
+            },
+            {
+              "ref": "D3",
+              "x": 19,
+              "y": 21,
+              "rotation": -90
+            },
+            {
+              "x": 26,
+              "y": 21,
+              "rotation": -90,
+              "ref": "D4"
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "x": 33,
+              "ref": "D5"
+            },
+            {
+              "y": 21,
+              "rotation": -90,
+              "x": 40,
+              "ref": "D6"
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "x": 47,
+              "ref": "D7"
+            },
+            {
+              "ref": "D8",
+              "y": 21,
+              "rotation": -90,
+              "x": 54
+            },
+            {
+              "x": 5,
+              "rotation": 90,
+              "y": 15,
+              "ref": "R1"
+            },
+            {
+              "ref": "R2",
+              "y": 15,
+              "rotation": 90,
+              "x": 12
+            },
+            {
+              "x": 19,
+              "rotation": 90,
+              "y": 15,
+              "ref": "R3"
+            },
+            {
+              "ref": "R4",
+              "x": 26,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "R5",
+              "rotation": 90,
+              "y": 15,
+              "x": 33
+            },
+            {
+              "ref": "R6",
+              "rotation": 90,
+              "y": 15,
+              "x": 40
+            },
+            {
+              "rotation": 90,
+              "y": 15,
+              "x": 47,
+              "ref": "R7"
+            },
+            {
+              "ref": "R8",
+              "y": 15,
+              "rotation": 90,
+              "x": 54
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6757499999948777
+      },
+      {
+        "n": 11,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "rotation": 0,
+              "y": 12.5,
+              "ref": "U1",
+              "x": 30,
+              "side": "bottom"
+            },
+            {
+              "y": 12.5,
+              "ref": "J1",
+              "rotation": -90,
+              "x": 3
+            },
+            {
+              "y": 20,
+              "ref": "D1",
+              "rotation": -90,
+              "x": 5
+            },
+            {
+              "x": 12,
+              "y": 20,
+              "ref": "D2",
+              "rotation": -90
+            },
+            {
+              "x": 19,
+              "rotation": -90,
+              "y": 20,
+              "ref": "D3"
+            },
+            {
+              "x": 26,
+              "rotation": -90,
+              "y": 20,
+              "ref": "D4"
+            },
+            {
+              "y": 20,
+              "ref": "D5",
+              "rotation": -90,
+              "x": 33
+            },
+            {
+              "rotation": -90,
+              "y": 20,
+              "ref": "D6",
+              "x": 40
+            },
+            {
+              "x": 47,
+              "y": 20,
+              "ref": "D7",
+              "rotation": -90
+            },
+            {
+              "x": 54,
+              "rotation": -90,
+              "y": 20,
+              "ref": "D8"
+            },
+            {
+              "x": 5,
+              "y": 15,
+              "ref": "R1"
+            },
+            {
+              "ref": "R2",
+              "y": 15,
+              "x": 12
+            },
+            {
+              "ref": "R3",
+              "y": 15,
+              "x": 19
+            },
+            {
+              "y": 15,
+              "ref": "R4",
+              "x": 26
+            },
+            {
+              "y": 15,
+              "ref": "R5",
+              "x": 33
+            },
+            {
+              "x": 40,
+              "y": 15,
+              "ref": "R6"
+            },
+            {
+              "x": 47,
+              "ref": "R7",
+              "y": 15
+            },
+            {
+              "ref": "R8",
+              "y": 15,
+              "x": 54
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.171042000001762
+      },
+      {
+        "n": 12,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "y": 7,
+              "rotation": 0,
+              "x": 30,
+              "ref": "U1"
+            },
+            {
+              "rotation": 180,
+              "y": 7,
+              "ref": "J1",
+              "x": 4
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "ref": "D1",
+              "x": 2
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "ref": "D2",
+              "x": 10
+            },
+            {
+              "ref": "D3",
+              "x": 18,
+              "rotation": -90,
+              "y": 21
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "ref": "D4",
+              "x": 26
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "ref": "D5",
+              "x": 34
+            },
+            {
+              "x": 42,
+              "ref": "D6",
+              "y": 21,
+              "rotation": -90
+            },
+            {
+              "rotation": -90,
+              "y": 21,
+              "ref": "D7",
+              "x": 50
+            },
+            {
+              "y": 21,
+              "rotation": -90,
+              "x": 58,
+              "ref": "D8"
+            },
+            {
+              "y": 15,
+              "ref": "R1",
+              "x": 2
+            },
+            {
+              "x": 10,
+              "ref": "R2",
+              "y": 15
+            },
+            {
+              "ref": "R3",
+              "x": 18,
+              "y": 15
+            },
+            {
+              "y": 15,
+              "x": 26,
+              "ref": "R4"
+            },
+            {
+              "y": 15,
+              "ref": "R5",
+              "x": 34
+            },
+            {
+              "ref": "R6",
+              "x": 42,
+              "y": 15
+            },
+            {
+              "x": 50,
+              "ref": "R7",
+              "y": 15
+            },
+            {
+              "y": 15,
+              "ref": "R8",
+              "x": 58
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9119579999824055
+      },
+      {
+        "n": 13,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "rotation": 90,
+              "x": 8,
+              "ref": "U1",
+              "y": 12.5
+            },
+            {
+              "ref": "J1",
+              "rotation": -90,
+              "x": 56,
+              "y": 12.5
+            },
+            {
+              "rotation": 0,
+              "x": 18,
+              "ref": "D1",
+              "y": 20
+            },
+            {
+              "y": 20,
+              "ref": "D2",
+              "x": 22,
+              "rotation": 0
+            },
+            {
+              "y": 20,
+              "ref": "D3",
+              "rotation": 0,
+              "x": 26
+            },
+            {
+              "y": 20,
+              "ref": "D4",
+              "x": 30,
+              "rotation": 0
+            },
+            {
+              "ref": "D5",
+              "rotation": 0,
+              "x": 34,
+              "y": 20
+            },
+            {
+              "x": 38,
+              "rotation": 0,
+              "ref": "D6",
+              "y": 20
+            },
+            {
+              "x": 42,
+              "rotation": 0,
+              "ref": "D7",
+              "y": 20
+            },
+            {
+              "x": 46,
+              "rotation": 0,
+              "ref": "D8",
+              "y": 20
+            },
+            {
+              "y": 10,
+              "x": 18,
+              "rotation": 90,
+              "ref": "R1"
+            },
+            {
+              "ref": "R2",
+              "x": 22,
+              "rotation": 90,
+              "y": 10
+            },
+            {
+              "y": 10,
+              "x": 26,
+              "rotation": 90,
+              "ref": "R3"
+            },
+            {
+              "ref": "R4",
+              "x": 30,
+              "rotation": 90,
+              "y": 10
+            },
+            {
+              "y": 10,
+              "ref": "R5",
+              "rotation": 90,
+              "x": 34
+            },
+            {
+              "y": 10,
+              "rotation": 90,
+              "x": 38,
+              "ref": "R6"
+            },
+            {
+              "y": 10,
+              "x": 42,
+              "rotation": 90,
+              "ref": "R7"
+            },
+            {
+              "rotation": 90,
+              "x": 46,
+              "ref": "R8",
+              "y": 10
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6847910000069533
+      },
+      {
+        "n": 14,
+        "tool": "add_zone",
+        "args": {
+          "net": "GND",
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "layer": "FCu",
+          "fill_board": true
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2198750000097789
+      },
+      {
+        "n": 15,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 974.5401249999995
+      },
+      {
+        "n": 16,
+        "tool": "add_zone",
+        "args": {
+          "fill_board": true,
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "net": "GND",
+          "layer": "BCu"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0437499999825377
+      },
+      {
+        "n": 17,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 978.1427920000278
+      },
+      {
+        "n": 18,
+        "tool": "get_pad_positions",
+        "args": {
+          "net": "LATCH",
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7164579999807756
+      },
+      {
+        "n": 19,
+        "tool": "add_via",
+        "args": {
+          "net": "LATCH",
+          "position": {
+            "y": 14.925,
+            "x": 9.5
+          },
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 22.876332999992883
+      },
+      {
+        "n": 20,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7222919999912847
+      },
+      {
+        "n": 21,
+        "tool": "add_via",
+        "args": {
+          "net": "LATCH",
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "position": {
+            "y": 15.5,
+            "x": 9.5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 17.614958000020124
+      },
+      {
+        "n": 22,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0422919999982696
+      },
+      {
+        "n": 23,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "ref": "J1",
+              "y": 12.5,
+              "rotation": -90,
+              "x": 4
+            },
+            {
+              "x": 12,
+              "rotation": 90,
+              "y": 12.5,
+              "ref": "U1"
+            },
+            {
+              "x": 20,
+              "y": 20,
+              "ref": "D1"
+            },
+            {
+              "ref": "R1",
+              "y": 15,
+              "x": 20
+            },
+            {
+              "ref": "D2",
+              "y": 20,
+              "x": 26
+            },
+            {
+              "x": 26,
+              "y": 15,
+              "ref": "R2"
+            },
+            {
+              "x": 32,
+              "y": 20,
+              "ref": "D3"
+            },
+            {
+              "y": 15,
+              "x": 32,
+              "ref": "R3"
+            },
+            {
+              "y": 20,
+              "x": 38,
+              "ref": "D4"
+            },
+            {
+              "ref": "R4",
+              "x": 38,
+              "y": 15
+            },
+            {
+              "ref": "D5",
+              "x": 44,
+              "y": 20
+            },
+            {
+              "y": 15,
+              "x": 44,
+              "ref": "R5"
+            },
+            {
+              "y": 20,
+              "x": 50,
+              "ref": "D6"
+            },
+            {
+              "ref": "R6",
+              "x": 50,
+              "y": 15
+            },
+            {
+              "ref": "D7",
+              "x": 56,
+              "y": 20
+            },
+            {
+              "y": 15,
+              "x": 56,
+              "ref": "R7"
+            },
+            {
+              "y": 20,
+              "x": 62,
+              "ref": "D8"
+            },
+            {
+              "ref": "R8",
+              "x": 62,
+              "y": 15
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 9.183209000038914
+      },
+      {
+        "n": 24,
+        "tool": "set_placement",
+        "args": {
+          "placements": [
+            {
+              "x": 4,
+              "y": 12.5,
+              "ref": "J1",
+              "rotation": -90
+            },
+            {
+              "y": 12.5,
+              "ref": "U1",
+              "x": 12,
+              "rotation": 90
+            },
+            {
+              "x": 20,
+              "y": 20,
+              "ref": "D1"
+            },
+            {
+              "ref": "R1",
+              "y": 15,
+              "x": 20
+            },
+            {
+              "x": 25.5,
+              "ref": "D2",
+              "y": 20
+            },
+            {
+              "y": 15,
+              "ref": "R2",
+              "x": 25.5
+            },
+            {
+              "x": 31,
+              "ref": "D3",
+              "y": 20
+            },
+            {
+              "ref": "R3",
+              "y": 15,
+              "x": 31
+            },
+            {
+              "x": 36.5,
+              "ref": "D4",
+              "y": 20
+            },
+            {
+              "x": 36.5,
+              "y": 15,
+              "ref": "R4"
+            },
+            {
+              "ref": "D5",
+              "y": 20,
+              "x": 42
+            },
+            {
+              "x": 42,
+              "ref": "R5",
+              "y": 15
+            },
+            {
+              "ref": "D6",
+              "y": 20,
+              "x": 47.5
+            },
+            {
+              "x": 47.5,
+              "y": 15,
+              "ref": "R6"
+            },
+            {
+              "ref": "D7",
+              "y": 20,
+              "x": 53
+            },
+            {
+              "x": 53,
+              "ref": "R7",
+              "y": 15
+            },
+            {
+              "ref": "D8",
+              "y": 20,
+              "x": 58.5
+            },
+            {
+              "y": 15,
+              "ref": "R8",
+              "x": 58.5
+            }
+          ],
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 9.155584000051022
+      },
+      {
+        "n": 25,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 127.86774999997579
+      },
+      {
+        "n": 26,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8.444292000029236
+      },
+      {
+        "n": 27,
+        "tool": "add_via_array",
+        "args": {
+          "pitch": 5,
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "net": "GND",
+          "region": {
+            "y": 0,
+            "x": 0,
+            "h": 25,
+            "w": 60
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 17.019916000019293
+      },
+      {
+        "n": 28,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0453749999869615
+      },
+      {
+        "n": 29,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "placements": [
+            {
+              "x": 15,
+              "rotation": 0,
+              "ref": "U1",
+              "y": 4
+            },
+            {
+              "x": 55,
+              "rotation": -90,
+              "ref": "J1",
+              "y": 12.5
+            },
+            {
+              "y": 15,
+              "ref": "D1",
+              "x": 9
+            },
+            {
+              "ref": "D2",
+              "y": 15,
+              "x": 15
+            },
+            {
+              "x": 21,
+              "ref": "D3",
+              "y": 15
+            },
+            {
+              "x": 27,
+              "y": 15,
+              "ref": "D4"
+            },
+            {
+              "y": 15,
+              "ref": "D5",
+              "x": 33
+            },
+            {
+              "y": 15,
+              "ref": "D6",
+              "x": 39
+            },
+            {
+              "x": 45,
+              "y": 15,
+              "ref": "D7"
+            },
+            {
+              "x": 51,
+              "ref": "D8",
+              "y": 15
+            },
+            {
+              "y": 9,
+              "ref": "R1",
+              "x": 9
+            },
+            {
+              "y": 9,
+              "ref": "R2",
+              "x": 15
+            },
+            {
+              "x": 21,
+              "y": 9,
+              "ref": "R3"
+            },
+            {
+              "x": 27,
+              "ref": "R4",
+              "y": 9
+            },
+            {
+              "y": 9,
+              "ref": "R5",
+              "x": 33
+            },
+            {
+              "ref": "R6",
+              "y": 9,
+              "x": 39
+            },
+            {
+              "y": 9,
+              "ref": "R7",
+              "x": 45
+            },
+            {
+              "ref": "R8",
+              "y": 9,
+              "x": 51
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8.365042000019457
+      },
+      {
+        "n": 30,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0",
+          "placements": [
+            {
+              "y": 12.5,
+              "ref": "U1",
+              "x": 30
+            },
+            {
+              "x": 3,
+              "rotation": -90,
+              "ref": "J1",
+              "y": 12.5
+            },
+            {
+              "ref": "D1",
+              "y": 20,
+              "x": 5
+            },
+            {
+              "ref": "D2",
+              "y": 20,
+              "x": 11
+            },
+            {
+              "ref": "D3",
+              "y": 20,
+              "x": 17
+            },
+            {
+              "x": 23,
+              "ref": "D4",
+              "y": 20
+            },
+            {
+              "ref": "D5",
+              "y": 20,
+              "x": 37
+            },
+            {
+              "y": 20,
+              "ref": "D6",
+              "x": 43
+            },
+            {
+              "y": 20,
+              "ref": "D7",
+              "x": 49
+            },
+            {
+              "x": 55,
+              "y": 20,
+              "ref": "D8"
+            },
+            {
+              "rotation": 90,
+              "x": 5,
+              "y": 5,
+              "ref": "R1"
+            },
+            {
+              "y": 5,
+              "ref": "R2",
+              "rotation": 90,
+              "x": 11
+            },
+            {
+              "x": 17,
+              "rotation": 90,
+              "y": 5,
+              "ref": "R3"
+            },
+            {
+              "x": 23,
+              "rotation": 90,
+              "y": 5,
+              "ref": "R4"
+            },
+            {
+              "ref": "R5",
+              "y": 5,
+              "x": 37,
+              "rotation": 90
+            },
+            {
+              "rotation": 90,
+              "x": 43,
+              "y": 5,
+              "ref": "R6"
+            },
+            {
+              "rotation": 90,
+              "x": 49,
+              "ref": "R7",
+              "y": 5
+            },
+            {
+              "y": 5,
+              "ref": "R8",
+              "rotation": 90,
+              "x": 55
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7.906374999962281
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_XOfUNe7k_tv0"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.014666999981273
+      }
+    ],
+    "tokens": {
+      "input": 1731774,
+      "output": 15028,
+      "total": 1746802,
+      "cache_creation_input": 0,
+      "cache_read_input": 1539486
+    },
+    "wallclock_sec": 327.318605041
+  },
+  "output": {
+    "vcad_path": "20260722T185022Z-a84b.vcad",
+    "vcad_sha256": "8ad387fe1c006bdfb35530707463be74a25c5b75cfd1e16249b529abd5c4e80c",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:50:22.198Z",
+    "ended_at": "2026-07-22T18:55:49.761Z"
+  },
+  "signature": null
+}

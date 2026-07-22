@@ -1,0 +1,132 @@
+{
+  "schema_version": 0,
+  "task_id": "p2-usb-power-01",
+  "task_sha256": "15300396c3052e1e4b54b61bb8cf5649bb0caea8f5450e15c5fe3486c6901dac",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          40,
+          25
+        ]
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T172809Z-54c1",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-flash",
+    "name": "AI Gateway (MCP, google/gemini-2.5-flash)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-flash",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p2-usb-power-01",
+    "rendered": "Design a printed circuit board that takes 5V from a USB connector and regulates it to 3.3V with a linear regulator. Required components: USB connector, LDO regulator, input capacitor, output capacitor, and a power-indicator LED with its resistor — at least five footprints. Board outline at most 40mm × 25mm, two copper layers. Declare nets VBUS, 3V3, and GND; place components and route every net so its copper is fully connected, with input/output capacitors electrically adjacent to the regulator pins. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.0382079999999974
+      },
+      {
+        "n": 1,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1_Yw4fzB-0xQZ9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9873749999987922
+      }
+    ],
+    "tokens": {
+      "input": 45451,
+      "output": 0,
+      "total": 45451,
+      "cache_creation_input": 0,
+      "cache_read_input": 0
+    },
+    "wallclock_sec": 11.446322208
+  },
+  "output": {
+    "vcad_path": "20260722T172809Z-54c1.vcad",
+    "vcad_sha256": "88702a434c8a56dd90e18ceeb72570261b14b6a1853d5ae2404b15d12f82630a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T17:28:09.395Z",
+    "ended_at": "2026-07-22T17:28:20.852Z"
+  },
+  "signature": null
+}
