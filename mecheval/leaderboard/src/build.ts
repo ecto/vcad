@@ -930,6 +930,67 @@ const STYLES = `
 
   /* tool-call trace */
   .tool-list { margin: var(--s2) 0; }
+
+  /* ── run transcript timeline ─────────────────────────────────────── */
+  .run-exports {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s4);
+    margin: var(--s3) 0 var(--s5);
+  }
+  .export-btn {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+    color: var(--ink); border: 1px solid var(--rule-strong);
+    border-radius: 6px; padding: 5px 10px;
+  }
+  .export-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .export-prompt summary {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .export-prompt pre {
+    font-size: 12.5px; background: var(--sunken); border: 1px solid var(--rule);
+    border-radius: 8px; padding: var(--s4); white-space: pre-wrap;
+    max-width: 72ch; margin-top: var(--s3);
+  }
+  .timeline { margin: var(--s2) 0; }
+  .tl-item { display: grid; grid-template-columns: 22px 1fr; gap: var(--s3); }
+  .tl-rail { position: relative; }
+  .tl-rail::before {
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 1px; background: var(--rule);
+  }
+  .tl-item:first-child .tl-rail::before { top: 10px; }
+  .tl-item:last-child .tl-rail::before { bottom: auto; height: 10px; }
+  .tl-dot {
+    position: absolute; left: 50%; top: 7px; transform: translateX(-50%);
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--tl-c, var(--ink-faint));
+    box-shadow: 0 0 0 3px var(--ground);
+  }
+  .tl-body { padding: 3px 0 var(--s4); min-width: 0; }
+  .tl-head { display: flex; align-items: baseline; gap: var(--s3); }
+  .tl-tool { font-size: 13.5px; font-weight: 600; color: var(--tl-c, var(--ink)); }
+  .tl-kind { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .tl-kind.ok { color: var(--ink-faint); }
+  .tl-kind.bad { color: var(--fail); font-weight: 700; }
+  .tl-ms { font-size: 11.5px; color: var(--ink-faint); margin-left: auto; }
+  .tl-summary { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
+  .tl-raw summary {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+    cursor: pointer; margin-top: 4px;
+  }
+  .tl-raw pre {
+    font-size: 12px; background: var(--sunken); border: 1px solid var(--rule);
+    border-radius: 8px; padding: var(--s3); overflow-x: auto; margin-top: var(--s2);
+  }
+  .tl-err .tl-summary { color: var(--fail); }
+  /* Category tints — the pcb renderer's own layer colours. */
+  .tl-author  { --tl-c: var(--accent); }
+  .tl-place   { --tl-c: #A24BFF; }
+  .tl-route   { --tl-c: #9DFF34; }
+  .tl-verify  { --tl-c: var(--pass); }
+  .tl-see     { --tl-c: #00E5D0; }
+  .tl-session { --tl-c: var(--ink-faint); }
+  .tl-other   { --tl-c: var(--ink-faint); }
   .tool-item {
     display: grid; grid-template-columns: 28px 1fr auto auto;
     align-items: baseline; gap: var(--s4);
@@ -2144,6 +2205,69 @@ function measuredValue(c: { type: string; details: Record<string, unknown> }): s
   }
 }
 
+/** Category tint for a tool-call timeline entry. */
+function toolCategory(tool: string): string {
+  if (/^(create_schematic|create_cad_loon|create|define_loon|import_)/.test(tool)) return "author";
+  if (/^(place_components|set_placement|set_board_outline|board_from_solid)/.test(tool)) return "place";
+  if (/^(route_nets|route_diff_pair|add_trace|add_via|add_zone|add_coil|length_match)/.test(tool)) return "route";
+  if (/^(run_drc|run_erc|validate_for_fab|verify_|check_|dfm_|placement_drc)/.test(tool)) return "verify";
+  if (/^(render_|describe_|inspect_|measure|get_pad_positions|get_copper)/.test(tool)) return "see";
+  if (/^(open_document|get_document|save_document|checkpoint|update|delete)/.test(tool)) return "session";
+  return "other";
+}
+
+/** One-line human summary of a tool call, derived from its args. Falls
+ *  back to a compact key list so unknown tools still narrate. */
+function toolSummary(tool: string, args: unknown): string {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const n = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+  switch (tool) {
+    case "open_document":
+      return "opened a fresh session";
+    case "create_schematic": {
+      const nets = a.nets && typeof a.nets === "object" ? Object.keys(a.nets as object).length : 0;
+      return `declared ${n(a.components)} components and ${nets} nets`;
+    }
+    case "place_components": {
+      const size =
+        a.board_width && a.board_height ? `${a.board_width}×${a.board_height}mm board` : "board";
+      return `placed components on a ${size} (${a.strategy ?? "grid"})`;
+    }
+    case "set_placement":
+      return `moved ${n(a.placements)} component${n(a.placements) === 1 ? "" : "s"} by hand`;
+    case "route_nets": {
+      const which = n(a.nets) ? `${n(a.nets)} nets` : "all nets";
+      const effort = a.effort ? ` at effort ${a.effort}` : "";
+      return `routed ${which}${effort}`;
+    }
+    case "run_drc":
+      return "ran the design-rule check";
+    case "run_erc":
+      return "ran the electrical-rule check";
+    case "validate_for_fab":
+      return "ran the fab-readiness gate";
+    case "render_pcb":
+      return "looked at the board";
+    case "render_view":
+      return "looked at the part";
+    case "get_document":
+      return "read the final document";
+    case "create_cad_loon":
+      return `authored geometry in loon (${String((a.code as string) ?? "").length} chars)`;
+    case "inspect_cad":
+      return "measured the document";
+    default: {
+      const keys = Object.keys(a).filter((k) => k !== "document_id");
+      return keys.length ? `args: ${keys.slice(0, 5).join(", ")}` : "";
+    }
+  }
+}
+
+/** Compact duration: ms under a second, seconds above. */
+function fmtMs(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms.toFixed(0)}ms`;
+}
+
 function runPage(
   blob: FullBlob,
   vcad: string | null,
@@ -2216,20 +2340,39 @@ function runPage(
         .join("")}</div>`
     : `<div class="nodata">no checks</div>`;
 
-  // ── tool-call trace ──
+  // (helpers for the timeline live at module scope: toolCategory,
+  // toolSummary, fmtMs)
+  // ── transcript timeline ──
+  // The run blob's trace, rendered as a narrated timeline rather than a
+  // raw call table: each entry gets a category tint and a one-line human
+  // summary derived from its args, with the raw JSON one click away.
   const traceHtml = blob.trace.tool_calls.length
-    ? `<div class="tool-list">${blob.trace.tool_calls
-        .map(
-          (tc) => `<div class="tool-item">
-        <span class="tool-num">${tc.n}</span>
-        <span class="tool-name">${escape(tc.tool)}</span>
-        <span class="tool-kind ${tc.result_kind === "ok" ? "ok" : "bad"}">${escape(tc.result_kind)}</span>
-        <span class="tool-ms">${tc.wallclock_ms.toFixed(0)} ms</span>
-        <details class="tool-args"><summary>args</summary><pre>${escape(JSON.stringify(tc.args, null, 2))}</pre></details>
-      </div>`,
-        )
+    ? `<div class="timeline">${blob.trace.tool_calls
+        .map((tc) => {
+          const cat = toolCategory(tc.tool);
+          const summary = toolSummary(tc.tool, tc.args);
+          const ok = tc.result_kind === "ok";
+          return `<div class="tl-item tl-${cat}${ok ? "" : " tl-err"}">
+        <span class="tl-rail"><span class="tl-dot"></span></span>
+        <div class="tl-body">
+          <div class="tl-head">
+            <span class="tl-tool mono">${escape(tc.tool)}</span>
+            <span class="tl-kind ${ok ? "ok" : "bad"}">${ok ? "ok" : "error"}</span>
+            <span class="tl-ms mono">${fmtMs(tc.wallclock_ms)}</span>
+          </div>
+          ${summary ? `<div class="tl-summary">${escape(summary)}</div>` : ""}
+          <details class="tl-raw"><summary>raw args</summary><pre>${escape(JSON.stringify(tc.args, null, 2))}</pre></details>
+        </div>
+      </div>`;
+        })
         .join("")}</div>`
     : `<div class="nodata">single-shot solver — no tool calls</div>`;
+
+  const exportsHtml = `<div class="run-exports">
+    ${vcad ? `<a class="export-btn" href="${escape(runId)}.vcad" download>⬇ .vcad output</a>` : ""}
+    <a class="export-btn" href="${escape(runId)}.json" download>⬇ run blob (JSON)</a>
+    <details class="export-prompt"><summary>rendered prompt</summary><pre>${escape(blob.prompt.rendered)}</pre></details>
+  </div>`;
 
   const body = `
     <div class="run-head">
@@ -2256,6 +2399,7 @@ function runPage(
     ${checksHtml}
 
     <h2>Process</h2>
+    ${exportsHtml}
     ${traceHtml}
 
     <details style="margin-top: 22px;"><summary>Prompt sent to the model</summary>
@@ -2484,6 +2628,13 @@ async function main(): Promise<void> {
     await writePage(
       `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
       runPage(blob, vcad, vcadSvg, taskSpecs.get(r.task_id) ?? null, taskRefSvgs.get(r.task_id) ?? null),
+    );
+    // Drop the full forensic blob alongside the HTML — the "run blob
+    // (JSON)" export button on the Process section links to it.
+    await writeFile(
+      resolve(OUT_DIR, `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.json`),
+      JSON.stringify(blob, null, 2),
+      "utf8",
     );
     // Drop the .vcad file alongside the HTML so it can be linked.
     if (vcad) {
