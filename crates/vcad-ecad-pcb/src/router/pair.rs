@@ -1368,8 +1368,12 @@ mod tests {
         );
     }
 
-    /// Twin-clearance check shared by the transition repros.
+    /// Twin-clearance check shared by the transition repros, using the
+    /// DRC's own pair semantics: LEG copper must keep the declared gap
+    /// (minus the 5um tolerance); stub/connector copper (the pad breakout)
+    /// needs only the base clearance.
     fn assert_twin_clear(mine: &Placed, theirs: &Placed, clearance: f64) {
+        let gap_req = 0.25 - 0.005;
         let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
             let pt_seg = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
                 let ab = b - a;
@@ -1394,6 +1398,25 @@ mod tests {
             v.extend(p.stubs.iter().map(|&(a, b, l)| (a, b, l, p.stub_width)));
             v
         };
+        // Legs vs legs: full gap. Anything touching a stub: base clearance.
+        let legs = |p: &Placed| -> Vec<(Vec2, Vec2, PcbLayer, f64)> {
+            p.segments
+                .iter()
+                .map(|&(a, b, l)| (a, b, l, p.width))
+                .collect()
+        };
+        let mut worst_leg = f64::INFINITY;
+        for &(a1, b1, l1, w1) in &legs(mine) {
+            for &(a2, b2, l2, w2) in &legs(theirs) {
+                if l1 == l2 {
+                    worst_leg = worst_leg.min(seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0);
+                }
+            }
+        }
+        assert!(
+            worst_leg >= gap_req - 1e-9,
+            "twin LEG gap {worst_leg:.3}mm < {gap_req} (DRC pair-gap rule)"
+        );
         let mut worst = f64::INFINITY;
         for &(a1, b1, l1, w1) in &all(mine) {
             for &(a2, b2, l2, w2) in &all(theirs) {

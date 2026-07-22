@@ -465,7 +465,7 @@ fn check_clearance(
     pcb: &Pcb,
     index: &SpatialIndex,
     net_ties: &NetTieGroups,
-    dp_map: &HashMap<(String, String), f64>,
+    dp_map: &HashMap<(String, String), (f64, f64)>,
     region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
@@ -525,7 +525,18 @@ fn check_clearance(
 
             // A declared diff-pair partner only needs to clear by its gap, so
             // the intentional close coupling isn't flagged as a short.
-            let mut required = pair_aware_clearance(dp_map, &trace.net, &elem.net, clearance);
+            let elem_w = match &elem.geom {
+                CopperGeom::Segment { half_w, .. } => Some(2.0 * half_w),
+                _ => None,
+            };
+            let mut required = pair_aware_clearance_w(
+                dp_map,
+                &trace.net,
+                &elem.net,
+                Some(trace.width),
+                elem_w,
+                clearance,
+            );
             // Pad-breakout exemption: within the escape region of either
             // net's own pads the legs MUST converge below the gap to reach
             // the land pattern — every ECAD DRC exempts this. The base
@@ -575,7 +586,7 @@ fn check_clearance(
 fn check_pad_clearance(
     pcb: &Pcb,
     net_ties: &NetTieGroups,
-    dp_map: &HashMap<(String, String), f64>,
+    dp_map: &HashMap<(String, String), (f64, f64)>,
     region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
@@ -2762,7 +2773,7 @@ pub(crate) fn diff_pairs(pcb: &Pcb) -> Vec<DiffPair> {
 /// Map an unordered net pair to its differential-pair gap (its required
 /// clearance), so the clearance passes let a pair couple to its declared gap
 /// instead of false-flagging the intentional close spacing as a short.
-fn build_diff_pair_gap_map(pcb: &Pcb) -> HashMap<(String, String), f64> {
+fn build_diff_pair_gap_map(pcb: &Pcb) -> HashMap<(String, String), (f64, f64)> {
     let mut map = HashMap::new();
     for dp in diff_pairs(pcb) {
         let key = if dp.net_p <= dp.net_n {
@@ -2770,17 +2781,23 @@ fn build_diff_pair_gap_map(pcb: &Pcb) -> HashMap<(String, String), f64> {
         } else {
             (dp.net_n.clone(), dp.net_p.clone())
         };
-        map.insert(key, dp.gap);
+        map.insert(key, (dp.gap, dp.width));
     }
     map
 }
 
 /// The required clearance between two nets: their diff-pair gap if they are a
 /// declared pair, else `fallback`.
-fn pair_aware_clearance(
-    dp_map: &HashMap<(String, String), f64>,
+/// Width-aware variant: the pair-gap requirement binds the COUPLED section —
+/// both elements at the pair's leg width. A neck/breakout connector (thinner
+/// than the leg) is the uncoupled entry by definition and needs only the
+/// base clearance, exactly as commercial DRC treats uncoupled length.
+fn pair_aware_clearance_w(
+    dp_map: &HashMap<(String, String), (f64, f64)>,
     a: &str,
     b: &str,
+    w_a: Option<f64>,
+    w_b: Option<f64>,
     fallback: f64,
 ) -> f64 {
     let key = if a <= b {
@@ -2788,13 +2805,17 @@ fn pair_aware_clearance(
     } else {
         (b.to_string(), a.to_string())
     };
+    let Some(&(gap, leg_w)) = dp_map.get(&key) else {
+        return fallback;
+    };
+    let is_leg = |w: Option<f64>| w.map(|w| w >= leg_w - 0.01).unwrap_or(true);
+    if !is_leg(w_a) || !is_leg(w_b) {
+        return fallback;
+    }
     // 5um under the declared gap: legs coupled at EXACTLY the gap are the
     // design intent, and offset/grid arithmetic sits within float noise of
     // it. Anything meaningfully tighter is still a pinch.
-    dp_map
-        .get(&key)
-        .map(|g| (g - 0.005).max(0.0))
-        .unwrap_or(fallback)
+    (gap - 0.005).max(0.0)
 }
 
 /// Compute the minimum distance between two axis-aligned bounding boxes.
