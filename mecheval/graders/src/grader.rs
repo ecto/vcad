@@ -248,9 +248,7 @@ fn run_check(
         CheckSpec::DrcClean => crate::pcb::check_drc_clean(snapshot),
         CheckSpec::ErcClean => crate::pcb::check_erc_clean(snapshot),
         CheckSpec::NetsFullyConnected => crate::pcb::check_nets_fully_connected(snapshot),
-        CheckSpec::BoardEnvelope { max_mm } => {
-            crate::pcb::check_board_envelope(snapshot, *max_mm)
-        }
+        CheckSpec::BoardEnvelope { max_mm } => crate::pcb::check_board_envelope(snapshot, *max_mm),
         CheckSpec::ComponentCount { min } => crate::pcb::check_component_count(snapshot, *min),
 
         CheckSpec::RefactorInvariant { .. } => (

@@ -41,9 +41,7 @@ fn extract_pcbs(doc: &Document) -> Vec<&Pcb> {
 
 /// Shared preamble: parsed document with at least one PCB, else the
 /// fail-closed outcome.
-fn require_pcbs(
-    snapshot: &EvalSnapshot,
-) -> Result<(&Document, Vec<&Pcb>), (CheckOutcome, Value)> {
+fn require_pcbs(snapshot: &EvalSnapshot) -> Result<(&Document, Vec<&Pcb>), (CheckOutcome, Value)> {
     let Some(doc) = snapshot.doc.as_ref() else {
         return Err((
             CheckOutcome::Fail,
@@ -143,8 +141,12 @@ pub fn check_board_envelope(snapshot: &EvalSnapshot, max_mm: [f64; 2]) -> (Check
             sizes.push(json!({ "error": "empty outline" }));
             continue;
         }
-        let (mut min_x, mut min_y, mut max_x, mut max_y) =
-            (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        );
         for v in vs {
             min_x = min_x.min(v.x);
             min_y = min_y.min(v.y);
@@ -158,7 +160,11 @@ pub fn check_board_envelope(snapshot: &EvalSnapshot, max_mm: [f64; 2]) -> (Check
         }
         sizes.push(json!({ "width_mm": w, "height_mm": h }));
     }
-    let outcome = if ok { CheckOutcome::Pass } else { CheckOutcome::Fail };
+    let outcome = if ok {
+        CheckOutcome::Pass
+    } else {
+        CheckOutcome::Fail
+    };
     (outcome, json!({ "max_mm": max_mm, "boards": sizes }))
 }
 
@@ -300,7 +306,10 @@ mod tests {
         );
         assert_eq!(check_drc_clean(&snap).0, CheckOutcome::Fail);
         assert_eq!(check_nets_fully_connected(&snap).0, CheckOutcome::Fail);
-        assert_eq!(check_board_envelope(&snap, [100.0, 100.0]).0, CheckOutcome::Fail);
+        assert_eq!(
+            check_board_envelope(&snap, [100.0, 100.0]).0,
+            CheckOutcome::Fail
+        );
         assert_eq!(check_component_count(&snap, 1).0, CheckOutcome::Fail);
         assert_eq!(check_erc_clean(&snap).0, CheckOutcome::Fail);
     }
@@ -311,9 +320,15 @@ mod tests {
         let (out, detail) = check_drc_clean(&snap);
         assert_eq!(out, CheckOutcome::Pass, "detail: {detail}");
         assert_eq!(check_nets_fully_connected(&snap).0, CheckOutcome::Pass);
-        assert_eq!(check_board_envelope(&snap, [60.0, 40.0]).0, CheckOutcome::Pass);
+        assert_eq!(
+            check_board_envelope(&snap, [60.0, 40.0]).0,
+            CheckOutcome::Pass
+        );
         // Envelope tighter than the 50×30 outline → fail.
-        assert_eq!(check_board_envelope(&snap, [40.0, 40.0]).0, CheckOutcome::Fail);
+        assert_eq!(
+            check_board_envelope(&snap, [40.0, 40.0]).0,
+            CheckOutcome::Fail
+        );
         // No footprints → component floor fails.
         assert_eq!(check_component_count(&snap, 1).0, CheckOutcome::Fail);
         assert_eq!(check_component_count(&snap, 0).0, CheckOutcome::Pass);
@@ -325,7 +340,10 @@ mod tests {
         // villain's mirror image: declared connectivity that copper doesn't
         // realize must fail nets_fully_connected.
         let mut pcb = minimal_pcb();
-        pcb.nets = vec![Net { id: "SIG".into(), name: "SIG".into() }];
+        pcb.nets = vec![Net {
+            id: "SIG".into(),
+            name: "SIG".into(),
+        }];
         pcb.traces = vec![
             Trace {
                 net: "SIG".into(),
