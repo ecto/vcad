@@ -889,6 +889,14 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
     write_lib_property(e, "Datasheet", "", 3);
 
     // Body rectangle bounding the pins, plus the pins themselves.
+    //
+    // Coordinate convention: vcad schematic space is Y-down (same as the
+    // KiCad *sheet*), but KiCad lib-symbol space is Y-up.  KiCad places a
+    // lib point p in the sheet as `at + flip_y(rot_ccw(p))`, while vcad's
+    // pin_world_position is `at + rot(p)` in Y-down space.  Emitting lib
+    // coordinates with y negated (and the instance rotation negated, see
+    // write_sch_symbol) makes KiCad's derived pin positions land exactly on
+    // vcad's — which is what wires/labels (emitted verbatim) connect to.
     let body = symbol_body(comp);
     e.line(
         3,
@@ -898,8 +906,8 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
         ),
     );
     e.line(4, "(rectangle");
-    e.line(5, &format!("(start {} {})", num(body.0.x), num(body.0.y)));
-    e.line(5, &format!("(end {} {})", num(body.1.x), num(body.1.y)));
+    e.line(5, &format!("(start {} {})", num(body.0.x), num(-body.0.y)));
+    e.line(5, &format!("(end {} {})", num(body.1.x), num(-body.1.y)));
     e.line(5, "(stroke");
     e.line(6, "(width 0.254)");
     e.line(6, "(type solid)");
@@ -925,7 +933,7 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
             &format!(
                 "(at {} {} {})",
                 num(pin.position.x),
-                num(pin.position.y),
+                num(-pin.position.y),
                 num(angle)
             ),
         );
@@ -999,13 +1007,18 @@ fn symbol_body(comp: &SchematicComponent) -> (Vec2, Vec2) {
 }
 
 /// Pin rotation (degrees) so the stub points from the body toward the pin.
+///
+/// `pos`/`body` are in vcad (Y-down) coordinates; the returned angle is in
+/// KiCad lib-symbol (Y-up) convention: 0 = stub points right, 90 = up.
 fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
     let cx = (body.0.x + body.1.x) / 2.0;
     let cy = (body.0.y + body.1.y) / 2.0;
     let dx = pos.x - cx;
     let dy = pos.y - cy;
     // KiCad pin angle points from the pin's connection end toward the body, so
-    // a pin on the right of the body has angle 180.
+    // a pin on the right of the body has angle 180.  A pin below the body in
+    // vcad space (dy > 0, Y-down) sits below in lib space too, so its stub
+    // points up (90 in Y-up convention).
     if dx.abs() >= dy.abs() {
         if dx >= 0.0 {
             180.0
@@ -1013,9 +1026,9 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
             0.0
         }
     } else if dy >= 0.0 {
-        270.0
-    } else {
         90.0
+    } else {
+        270.0
     }
 }
 
@@ -1024,11 +1037,16 @@ fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str)
     let uuid = e.uuid();
     e.line(1, "(symbol");
     e.line(2, &format!("(lib_id {})", q(&lib_id)));
+    // vcad rotation is clockwise in Y-down sheet space; KiCad's symbol
+    // rotation is counter-clockwise in lib (Y-up) space.  Combined with the
+    // y-negated lib coordinates (see write_lib_symbol), emitting the negated
+    // angle reproduces vcad's pin_world_position exactly.
+    let kicad_rot = (360.0 - comp.rotation.rem_euclid(360.0)).rem_euclid(360.0);
     let at = format!(
         "(at {} {} {})",
         num(comp.position.x),
         num(comp.position.y),
-        num(comp.rotation)
+        num(kicad_rot)
     );
     e.line(2, &at);
     if comp.mirror {
@@ -1566,5 +1584,355 @@ mod tests {
         assert!(text.contains("(global_label \"VCC\""));
         assert!(text.contains("(wire"));
         assert!(text.trim_end().ends_with(')'));
+    }
+
+    // -----------------------------------------------------------------------
+    // Real-KiCad verification (requires kicad-cli; ignored by default)
+    // -----------------------------------------------------------------------
+    //
+    // Run locally with:
+    //   cargo test -p vcad-ecad-symbols -- --ignored --nocapture
+    // kicad-cli is found via $KICAD_CLI, PATH, or the macOS app bundle.
+
+    /// Locate a KiCad 9 `kicad-cli` binary, or `None` (tests skip cleanly).
+    fn kicad_cli() -> Option<std::path::PathBuf> {
+        use std::path::PathBuf;
+        if let Ok(p) = std::env::var("KICAD_CLI") {
+            let p = PathBuf::from(p);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("which")
+            .arg("kicad-cli")
+            .output()
+        {
+            if out.status.success() {
+                let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+        let mac = PathBuf::from("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli");
+        if mac.is_file() {
+            return Some(mac);
+        }
+        None
+    }
+
+    /// vcad-side pin world position (mirror, then rotate CW in Y-down space,
+    /// then translate) — mirrors `vcad_ecad_schematic::pin_world_position`.
+    fn pin_world(comp: &SchematicComponent, pin_idx: usize) -> Vec2 {
+        let pin = &comp.pins[pin_idx];
+        let a = comp.rotation.to_radians();
+        let (sin, cos) = a.sin_cos();
+        let px = if comp.mirror {
+            -pin.position.x
+        } else {
+            pin.position.x
+        };
+        let py = pin.position.y;
+        Vec2::new(
+            comp.position.x + px * cos - py * sin,
+            comp.position.y + px * sin + py * cos,
+        )
+    }
+
+    /// The "nets flow" reference sheet: connectivity declared as data in
+    /// `sheet.nets`, realized geometrically by wires + global labels, with
+    /// components at all four rotations (0/90/180/270) so the lib-space
+    /// coordinate mapping is exercised, not just the trivial case.  All
+    /// coordinates are on the 1.27 mm grid so KiCad raises no off-grid ERC.
+    fn nets_flow_sheet() -> SchematicSheet {
+        use std::collections::BTreeMap;
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin, SchematicWire};
+
+        let passive = |number: &str, pos: Vec2| SchematicPin {
+            number: number.into(),
+            name: "~".into(),
+            pin_type: PinType::Passive,
+            position: pos,
+        };
+        let comp = |reference: &str,
+                    value: &str,
+                    footprint: &str,
+                    pos: Vec2,
+                    rot: f64,
+                    pins: Vec<SchematicPin>| SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: footprint.into(),
+            position: pos,
+            rotation: rot,
+            mirror: false,
+            pins,
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+
+        let r1 = comp(
+            "R1",
+            "10k",
+            "Resistor_SMD:R_0805_2012Metric",
+            Vec2::new(101.6, 50.8),
+            0.0,
+            vec![
+                passive("1", Vec2::new(-2.54, 0.0)),
+                passive("2", Vec2::new(2.54, 0.0)),
+            ],
+        );
+        let c1 = comp(
+            "C1",
+            "100nF",
+            "Capacitor_SMD:C_0603_1608Metric",
+            Vec2::new(127.0, 50.8),
+            90.0,
+            vec![
+                passive("1", Vec2::new(0.0, 2.54)),
+                passive("2", Vec2::new(0.0, -2.54)),
+            ],
+        );
+        let r2 = comp(
+            "R2",
+            "4.7k",
+            "Resistor_SMD:R_0805_2012Metric",
+            Vec2::new(101.6, 76.2),
+            180.0,
+            vec![
+                passive("1", Vec2::new(-2.54, 0.0)),
+                passive("2", Vec2::new(2.54, 0.0)),
+            ],
+        );
+        let c2 = comp(
+            "C2",
+            "1uF",
+            "Capacitor_SMD:C_0603_1608Metric",
+            Vec2::new(127.0, 76.2),
+            270.0,
+            vec![
+                passive("1", Vec2::new(0.0, 2.54)),
+                passive("2", Vec2::new(0.0, -2.54)),
+            ],
+        );
+
+        // Wire stubs + labels realize the declared nets.  Labels sit at wire
+        // endpoints so vcad's coincidence-based netlist agrees with KiCad's.
+        let mut wires = Vec::new();
+        let mut labels = Vec::new();
+        let mut label = |name: &str, at: Vec2| {
+            labels.push(SchematicLabel {
+                name: name.into(),
+                position: at,
+                rotation: 0.0,
+                scope: LabelScope::Global,
+            })
+        };
+
+        // VCC: R1.1, C2.1
+        let r1_1 = pin_world(&r1, 0);
+        let vcc_a = Vec2::new(r1_1.x - 2.54, r1_1.y);
+        wires.push(SchematicWire {
+            start: r1_1,
+            end: vcc_a,
+        });
+        label("VCC", vcc_a);
+        let c2_1 = pin_world(&c2, 0);
+        let vcc_b = Vec2::new(c2_1.x + 2.54, c2_1.y);
+        wires.push(SchematicWire {
+            start: c2_1,
+            end: vcc_b,
+        });
+        label("VCC", vcc_b);
+
+        // N1: R1.2 — C1.1 (direct wire, labeled at one endpoint)
+        let r1_2 = pin_world(&r1, 1);
+        let c1_1 = pin_world(&c1, 0);
+        wires.push(SchematicWire {
+            start: r1_2,
+            end: c1_1,
+        });
+        label("N1", r1_2);
+
+        // N2: R2.1 — C2.2
+        let r2_1 = pin_world(&r2, 0);
+        let c2_2 = pin_world(&c2, 1);
+        wires.push(SchematicWire {
+            start: r2_1,
+            end: c2_2,
+        });
+        label("N2", r2_1);
+
+        // GND: C1.2, R2.2
+        let c1_2 = pin_world(&c1, 1);
+        let gnd_a = Vec2::new(c1_2.x + 2.54, c1_2.y);
+        wires.push(SchematicWire {
+            start: c1_2,
+            end: gnd_a,
+        });
+        label("GND", gnd_a);
+        let r2_2 = pin_world(&r2, 1);
+        let gnd_b = Vec2::new(r2_2.x - 2.54, r2_2.y);
+        wires.push(SchematicWire {
+            start: r2_2,
+            end: gnd_b,
+        });
+        label("GND", gnd_b);
+
+        let mut nets = BTreeMap::new();
+        let refs = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        nets.insert("VCC".to_string(), refs(&["R1.1", "C2.1"]));
+        nets.insert("N1".to_string(), refs(&["R1.2", "C1.1"]));
+        nets.insert("N2".to_string(), refs(&["R2.1", "C2.2"]));
+        nets.insert("GND".to_string(), refs(&["C1.2", "R2.2"]));
+
+        SchematicSheet {
+            title: Some("nets flow".into()),
+            components: vec![r1, c1, r2, c2],
+            wires,
+            junctions: vec![],
+            labels,
+            nets: Some(nets),
+        }
+    }
+
+    /// Write the nets-flow sheet to a scratch dir and return its path.
+    /// Honors VCAD_KICAD_OUT so the artifacts can be kept for inspection.
+    fn export_nets_flow_sheet(subdir: &str) -> std::path::PathBuf {
+        let dir = std::env::var("VCAD_KICAD_OUT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vcad_kicad"))
+            .join(subdir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("nets_flow.kicad_sch");
+        std::fs::write(&path, write_kicad_sch(&nets_flow_sheet())).unwrap();
+        path
+    }
+
+    /// ERC gate: KiCad 9's own electrical-rules check reports zero errors on
+    /// an exported sheet.  Warnings are printed but tolerated — the only one
+    /// KiCad 9 currently raises on our output is `lib_symbol_issues` ("the
+    /// current configuration does not include the symbol library 'vcad'"),
+    /// expected because symbols are generated inline, not from an on-disk
+    /// library.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_erc_reports_zero_errors() {
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_nets_flow_sheet("erc");
+        let report = sch.with_file_name("erc.json");
+        let out = std::process::Command::new(&cli)
+            .args(["sch", "erc", "--format", "json", "--output"])
+            .arg(&report)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch erc");
+        assert!(
+            out.status.success(),
+            "kicad-cli sch erc failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report).unwrap())
+                .expect("parse ERC json");
+        let mut errors = Vec::new();
+        for sheet in json["sheets"].as_array().unwrap_or(&Vec::new()) {
+            for v in sheet["violations"].as_array().unwrap_or(&Vec::new()) {
+                let line = format!(
+                    "[{}] {}: {}",
+                    v["severity"].as_str().unwrap_or("?"),
+                    v["type"].as_str().unwrap_or("?"),
+                    v["description"].as_str().unwrap_or("?")
+                );
+                if v["severity"].as_str() == Some("error") {
+                    errors.push(line);
+                } else {
+                    eprintln!("ERC warning (tolerated): {line}");
+                }
+            }
+        }
+        assert!(
+            errors.is_empty(),
+            "KiCad ERC errors:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Netlist equivalence — the real guarantee: KiCad, reading only the
+    /// exported geometry (wires, labels, pin positions it derives from our
+    /// lib symbols), extracts exactly the connectivity we declared in
+    /// `sheet.nets`.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_netlist_matches_declared_nets() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_nets_flow_sheet("netlist");
+        let netfile = sch.with_file_name("nets_flow.net");
+        let out = std::process::Command::new(&cli)
+            .args([
+                "sch",
+                "export",
+                "netlist",
+                "--format",
+                "kicadsexpr",
+                "--output",
+            ])
+            .arg(&netfile)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch export netlist");
+        assert!(
+            out.status.success(),
+            "kicad-cli netlist export failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let text = std::fs::read_to_string(&netfile).unwrap();
+        let (_, root) = crate::sexpr::parse_sexpr(&text).expect("parse netlist s-expr");
+        let nets_node = root.find("nets").expect("netlist has (nets ...)");
+        let mut extracted: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for net in nets_node.find_all("net") {
+            let name = net
+                .find("name")
+                .and_then(|n| n.children().and_then(|c| c.get(1)).and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let mut pins = BTreeSet::new();
+            for node in net.find_all("node") {
+                let get = |key: &str| {
+                    node.find(key)
+                        .and_then(|n| n.children().and_then(|c| c.get(1)))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                pins.insert(format!("{}.{}", get("ref"), get("pin")));
+            }
+            if !pins.is_empty() {
+                extracted.insert(name, pins);
+            }
+        }
+
+        let declared: BTreeMap<String, BTreeSet<String>> = nets_flow_sheet()
+            .nets
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
+
+        assert_eq!(
+            extracted, declared,
+            "KiCad-derived connectivity differs from the declared sheet.nets"
+        );
     }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-kicad-sch-connectivity",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "fix",
+  "title": "Exported schematics keep their connectivity in KiCad 9",
+  "summary": "The .kicad_sch writer now maps vcad's Y-down/CW conventions into KiCad's Y-up lib-symbol space, so rotated symbols' pins land on their wires; verified by real kicad-cli ERC and netlist-equivalence tests.",
+  "features": ["ecad", "kicad-export"],
+  "mcpTools": ["export_kicad"]
+}
