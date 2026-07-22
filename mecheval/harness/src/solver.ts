@@ -130,6 +130,7 @@ import { openAiDirectSolver, makeOpenAiDirectSolver } from "./solvers/openai-dir
 import { waferDirectSolver, makeWaferDirectSolver } from "./solvers/wafer-direct.js";
 import { gatewayDirectSolver, makeGatewayDirectSolver } from "./solvers/gateway-direct.js";
 import { floodZoneSolver } from "./solvers/flood-zone.js";
+import { gatewayMcpSolver, makeGatewayMcpSolver } from "./solvers/gateway-mcp.js";
 
 /** Look up a solver by id. Currently ships:
  *  - default-cube           — baseline villain
@@ -161,6 +162,12 @@ export function getSolver(id: string): Solver {
   if (id === "wafer-direct") return waferDirectSolver;
   if (id.startsWith("wafer-direct-")) {
     return makeWaferDirectSolver({ model: id.slice("wafer-direct-".length) });
+  }
+  if (id === "gateway-mcp") return gatewayMcpSolver;
+  if (id.startsWith("gateway-mcp-")) {
+    let model = id.slice("gateway-mcp-".length);
+    if (!model.includes("/")) model = model.replace("-", "/");
+    return makeGatewayMcpSolver({ model });
   }
   if (id === "gateway-direct") return gatewayDirectSolver;
   if (id.startsWith("gateway-direct-")) {

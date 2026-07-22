@@ -38,7 +38,18 @@ export const DEFAULT_CLAUDE_MCP: ClaudeMcpConfig = {
   maxIterations: 30,
 };
 
-const SYSTEM_PROMPT = `You are a CAD modeling agent for vcad. You receive an engineering task and edit a vcad document via the MCP tool surface to satisfy it.
+export const PCB_SYSTEM_PROMPT = `You are an ECAD agent for vcad. You receive an electronics task and author a schematic and/or PCB via the MCP tool surface to satisfy it.
+
+Workflow:
+- Start with \`create_schematic\`: declare every component (ref, footprint, pins) and the full connectivity as data via \`nets\` ({"VCC": ["J1.1", "R1.1"], ...}). This is the most reliable way to declare connectivity.
+- IMPORTANT: \`create_schematic\` returns a NEW \`document_id\`. Use THAT id on every subsequent tool call — the one you were given initially is superseded.
+- For board (layout) tasks: \`place_components\` (set board_width/board_height to fit the task's envelope) → \`route_nets\` → \`run_drc\`. Iterate — fix placement with \`set_placement\` or re-route — until DRC reports zero violations.
+- For schematic-only tasks: \`run_erc\` and fix anything it reports.
+- Units are millimeters.
+
+When the board/schematic satisfies the task (DRC/ERC clean), stop calling tools and reply with a one-sentence summary. Don't call \`close_document\` — the grader needs the session open to read it.`;
+
+export const SYSTEM_PROMPT = `You are a CAD modeling agent for vcad. You receive an engineering task and edit a vcad document via the MCP tool surface to satisfy it.
 
 You are given a \`document_id\` for a fresh, empty document. Use the MCP tools to mutate it. The grader will read the final document from \`get_document\` after you stop.
 
@@ -80,7 +91,24 @@ interface MinimalMcpClient {
   close(): Promise<void>;
 }
 
-async function connectMcp(mcpBin: string): Promise<MinimalMcpClient> {
+/** Scan a tool result's text blocks for a `document_id` — tools like
+ *  `create_schematic` open a NEW session and return its id; the final
+ *  `get_document` must read from the latest session, not the one the
+ *  loop opened at kickoff. */
+export function findDocumentId(result: McpToolResult): string | null {
+  for (const c of result.content ?? []) {
+    if (c.type !== "text" || c.text == null) continue;
+    try {
+      const parsed = JSON.parse(c.text);
+      if (typeof parsed.document_id === "string") return parsed.document_id;
+    } catch {
+      // try next block
+    }
+  }
+  return null;
+}
+
+export async function connectMcp(mcpBin: string): Promise<MinimalMcpClient> {
   // Lazy imports — the SDK is heavy and only needed when this solver runs.
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StdioClientTransport } = await import(
@@ -98,7 +126,7 @@ async function connectMcp(mcpBin: string): Promise<MinimalMcpClient> {
   return client as unknown as MinimalMcpClient;
 }
 
-function defaultMcpBin(): string {
+export function defaultMcpBin(): string {
   if (process.env.MECHEVAL_VCAD_MCP_BIN) return process.env.MECHEVAL_VCAD_MCP_BIN;
   return require.resolve("@vcad/mcp");
 }
@@ -304,6 +332,12 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             result_kind: result.isError ? "err" : "ok",
             wallclock_ms: ms,
           });
+          // Follow session handoffs (create_schematic et al. return a
+          // fresh document_id) so the final read targets the live session.
+          if (!result.isError) {
+            const did = findDocumentId(result);
+            if (did) lastDocumentId = did;
+          }
           return { result };
         } catch (e) {
           const ms = performance.now() - t0;
@@ -360,6 +394,7 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             type: "ephemeral",
           };
         }
+        const isPcbTask = task.suite === "E" || task.suite === "P";
         const system: Array<{
           type: "text";
           text: string;
@@ -367,7 +402,7 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         }> = [
           {
             type: "text",
-            text: SYSTEM_PROMPT,
+            text: isPcbTask ? PCB_SYSTEM_PROMPT : SYSTEM_PROMPT,
             cache_control: { type: "ephemeral" },
           },
         ];
