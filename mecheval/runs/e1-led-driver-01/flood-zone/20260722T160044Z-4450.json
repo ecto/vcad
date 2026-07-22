@@ -1,0 +1,100 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-led-driver-01",
+  "task_sha256": "cd80c25d470b71491491a205b829b76267f84ac53e9bcc96e1e6a4f2ccd285a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no schematic in document (fail-closed: erc_clean requires document.schematic)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no schematic in document (fail-closed)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 2,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T160044Z-4450",
+  "model": {
+    "id": "flood-zone",
+    "name": "FLOOD_ZONE (pcbeval baseline villain)",
+    "provider": "stub",
+    "params": {
+      "crime": "one giant GND zone, zero clearance, zero traces"
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-led-driver-01",
+    "rendered": "Capture a schematic for a battery-powered LED: a 2-pin battery, a current-limiting resistor, and an LED in series, returning to the battery's other terminal. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-led-driver-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "flood_zone_stub",
+        "args": {
+          "stub": "FLOOD_ZONE"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.0011670000000023606
+      }
+    ],
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wallclock_sec": 0.0000011670000000023607
+  },
+  "output": {
+    "vcad_path": "20260722T160044Z-4450.vcad",
+    "vcad_sha256": "27b14f559064a09de1e491765367c0ce64aa6b0ae7ebfa6029d2f732e45ba447",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T16:00:44.559Z",
+    "ended_at": "2026-07-22T16:00:44.591Z"
+  },
+  "signature": null
+}

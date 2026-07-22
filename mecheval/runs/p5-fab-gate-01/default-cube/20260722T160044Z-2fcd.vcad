@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "DEFAULT_CUBE",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 50,
+          "z": 50
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    }
+  ]
+}

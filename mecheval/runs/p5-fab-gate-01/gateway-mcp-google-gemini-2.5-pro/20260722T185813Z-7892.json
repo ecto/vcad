@@ -1,0 +1,1073 @@
+{
+  "schema_version": 0,
+  "task_id": "p5-fab-gate-01",
+  "task_sha256": "3aa56088fcc221b92611e9a74f8eb8881b899aa92b946c76d84b3281d858116d",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          40,
+          25
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 25,
+            "width_mm": 40
+          }
+        ],
+        "max_mm": [
+          40,
+          25
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 5
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 6,
+        "min": 5
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "fab_ready",
+      "params": {
+        "type": "fab_ready"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "drc": "clean",
+        "gerber_layers": 8
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T185813Z-7892",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-pro",
+    "name": "AI Gateway (MCP, google/gemini-2.5-pro)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-pro",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p5-fab-gate-01",
+    "rendered": "Design a fabrication-ready printed circuit board: 5V from a USB connector regulated to 3.3V by a linear regulator, with input and output capacitors and a power-indicator LED with its resistor — at least five footprints. Board outline at most 40mm × 25mm, two copper layers. Declare nets VBUS, 3V3, and GND; place and route so every net's copper is fully connected. This is the fab gate: beyond a clean design-rule check, the board must survive Gerber serialization of every layer — if it can't be exported for manufacture, it doesn't pass. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.348957999999982
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "nets": {
+            "3V3": [
+              "U1.2",
+              "C2.1",
+              "R1.1"
+            ],
+            "GND": [
+              "J1.5",
+              "C1.2",
+              "U1.1",
+              "C2.2",
+              "LED1.2"
+            ],
+            "VBUS": [
+              "J1.1",
+              "C1.1",
+              "U1.3"
+            ],
+            "unnamed_1": [
+              "R1.2",
+              "LED1.1"
+            ]
+          },
+          "components": [
+            {
+              "part": "USB_Micro-B",
+              "y": 50,
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "number": "1",
+                  "name": "VBUS"
+                },
+                {
+                  "type": "PowerInput",
+                  "name": "GND",
+                  "number": "5"
+                }
+              ],
+              "x": 50,
+              "ref": "J1",
+              "footprint": "Connector_USB:USB_Micro-B_Molex-105017-0001"
+            },
+            {
+              "value": "LD1117S33",
+              "part": "LD1117S33",
+              "y": 50,
+              "pins": [
+                {
+                  "name": "GND",
+                  "number": "1",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VO",
+                  "type": "PowerOutput"
+                },
+                {
+                  "name": "VI",
+                  "number": "3",
+                  "type": "PowerInput"
+                }
+              ],
+              "x": 150,
+              "ref": "U1",
+              "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
+            },
+            {
+              "x": 100,
+              "y": 30,
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "ref": "C1",
+              "value": "10uF"
+            },
+            {
+              "value": "10uF",
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "ref": "C2",
+              "y": 30,
+              "x": 200
+            },
+            {
+              "footprint": "Resistor_SMD:R_0603_1608Metric",
+              "ref": "R1",
+              "y": 80,
+              "x": 200,
+              "value": "330"
+            },
+            {
+              "footprint": "LED_SMD:LED_0603_1608Metric",
+              "ref": "LED1",
+              "y": 80,
+              "x": 250,
+              "value": "LED"
+            }
+          ]
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.4875409999986005
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "nets": {
+            "VBUS": [
+              "J1.1",
+              "C1.1",
+              "U1.3"
+            ],
+            "NET_R1_LED1": [
+              "R1.2",
+              "LED1.1"
+            ],
+            "3V3": [
+              "U1.2",
+              "C2.1",
+              "R1.1"
+            ],
+            "GND": [
+              "J1.5",
+              "C1.2",
+              "U1.1",
+              "C2.2",
+              "LED1.2"
+            ]
+          },
+          "components": [
+            {
+              "footprint": "Connector_USB:USB_Micro-B_Molex-105017-0001",
+              "pins": [
+                {
+                  "name": "VBUS",
+                  "number": "1",
+                  "type": "PowerInput"
+                },
+                {
+                  "name": "GND",
+                  "type": "PowerInput",
+                  "number": "5"
+                }
+              ],
+              "part": "USB_Micro-B",
+              "x": 50,
+              "y": 50,
+              "ref": "J1"
+            },
+            {
+              "part": "LD1117S33",
+              "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+              "pins": [
+                {
+                  "number": "1",
+                  "type": "PowerInput",
+                  "name": "GND"
+                },
+                {
+                  "name": "VO",
+                  "number": "2",
+                  "type": "PowerOutput"
+                },
+                {
+                  "name": "VI",
+                  "number": "3",
+                  "type": "PowerInput"
+                }
+              ],
+              "y": 50,
+              "ref": "U1",
+              "x": 150,
+              "value": "LD1117S33"
+            },
+            {
+              "pins": [
+                {
+                  "name": "P1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "type": "Passive",
+                  "name": "P2"
+                }
+              ],
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "ref": "C1",
+              "y": 30,
+              "value": "10uF",
+              "x": 100
+            },
+            {
+              "x": 200,
+              "value": "10uF",
+              "y": 30,
+              "ref": "C2",
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "pins": [
+                {
+                  "type": "Passive",
+                  "number": "1",
+                  "name": "P1"
+                },
+                {
+                  "name": "P2",
+                  "type": "Passive",
+                  "number": "2"
+                }
+              ]
+            },
+            {
+              "value": "330",
+              "x": 200,
+              "y": 80,
+              "ref": "R1",
+              "pins": [
+                {
+                  "name": "P1",
+                  "type": "Passive",
+                  "number": "1"
+                },
+                {
+                  "type": "Passive",
+                  "number": "2",
+                  "name": "P2"
+                }
+              ],
+              "footprint": "Resistor_SMD:R_0603_1608Metric"
+            },
+            {
+              "x": 250,
+              "value": "LED",
+              "ref": "LED1",
+              "y": 80,
+              "pins": [
+                {
+                  "name": "A",
+                  "type": "Passive",
+                  "number": "1"
+                },
+                {
+                  "name": "K",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "footprint": "LED_SMD:LED_0603_1608Metric"
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2330419999998412
+      },
+      {
+        "n": 3,
+        "tool": "place_components",
+        "args": {
+          "board_width": 40,
+          "strategy": "force_directed",
+          "document_id": "doc_2_WDAz49dvtqun",
+          "board_height": 25
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10.861124999995809
+      },
+      {
+        "n": 4,
+        "tool": "create_schematic",
+        "args": {
+          "components": [
+            {
+              "ref": "J1",
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "number": "1",
+                  "name": "VBUS"
+                },
+                {
+                  "number": "5",
+                  "type": "PowerInput",
+                  "name": "GND"
+                }
+              ],
+              "x": 50,
+              "part": "USB_Micro-B",
+              "footprint": "Connector_USB:USB_Micro-B_Receptacle_Molex_105017-0001",
+              "y": 50
+            },
+            {
+              "ref": "U1",
+              "value": "LD1117S33",
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "number": "1",
+                  "name": "GND"
+                },
+                {
+                  "number": "2",
+                  "type": "PowerOutput",
+                  "name": "VO"
+                },
+                {
+                  "name": "VI",
+                  "type": "PowerInput",
+                  "number": "3"
+                }
+              ],
+              "part": "LD1117S33",
+              "x": 150,
+              "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+              "y": 50
+            },
+            {
+              "y": 30,
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "x": 100,
+              "pins": [
+                {
+                  "name": "P1",
+                  "type": "Passive",
+                  "number": "1"
+                },
+                {
+                  "type": "Passive",
+                  "number": "2",
+                  "name": "P2"
+                }
+              ],
+              "value": "10uF",
+              "ref": "C1"
+            },
+            {
+              "pins": [
+                {
+                  "type": "Passive",
+                  "number": "1",
+                  "name": "P1"
+                },
+                {
+                  "name": "P2",
+                  "type": "Passive",
+                  "number": "2"
+                }
+              ],
+              "x": 200,
+              "ref": "C2",
+              "value": "10uF",
+              "y": 30,
+              "footprint": "Capacitor_SMD:C_0805_2012Metric"
+            },
+            {
+              "ref": "R1",
+              "value": "330",
+              "pins": [
+                {
+                  "name": "P1",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "type": "Passive",
+                  "name": "P2"
+                }
+              ],
+              "x": 200,
+              "footprint": "Resistor_SMD:R_0603_1608Metric",
+              "y": 80
+            },
+            {
+              "pins": [
+                {
+                  "name": "A",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "name": "K",
+                  "type": "Passive",
+                  "number": "2"
+                }
+              ],
+              "x": 250,
+              "ref": "LED1",
+              "value": "LED",
+              "y": 80,
+              "footprint": "LED_SMD:LED_0603_1608Metric"
+            }
+          ],
+          "nets": {
+            "NET_R1_LED1": [
+              "R1.2",
+              "LED1.1"
+            ],
+            "VBUS": [
+              "J1.1",
+              "C1.1",
+              "U1.3"
+            ],
+            "3V3": [
+              "U1.2",
+              "C2.1",
+              "R1.1"
+            ],
+            "GND": [
+              "J1.5",
+              "C1.2",
+              "U1.1",
+              "C2.2",
+              "LED1.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1292499999981374
+      },
+      {
+        "n": 5,
+        "tool": "place_components",
+        "args": {
+          "board_width": 40,
+          "board_height": 25,
+          "document_id": "doc_3_2T5axQEJHvfu",
+          "strategy": "force_directed"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9002499999987776
+      },
+      {
+        "n": 6,
+        "tool": "create_schematic",
+        "args": {
+          "components": [
+            {
+              "y": 50,
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "name": "GND",
+                  "number": "A1"
+                },
+                {
+                  "name": "VBUS",
+                  "type": "PowerInput",
+                  "number": "A4"
+                }
+              ],
+              "footprint": "Connector_USB:USB_C_Receptacle_XKB_U262-16XN-4BVC11",
+              "x": 50,
+              "ref": "J1",
+              "part": "USB_C"
+            },
+            {
+              "part": "LD1117S33",
+              "ref": "U1",
+              "value": "LD1117S33",
+              "x": 150,
+              "footprint": "Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "name": "GND",
+                  "number": "1"
+                },
+                {
+                  "name": "VO",
+                  "type": "PowerOutput",
+                  "number": "2"
+                },
+                {
+                  "name": "VI",
+                  "type": "PowerInput",
+                  "number": "3"
+                }
+              ],
+              "y": 50
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "pins": [
+                {
+                  "type": "Passive",
+                  "name": "P1",
+                  "number": "1"
+                },
+                {
+                  "number": "2",
+                  "type": "Passive",
+                  "name": "P2"
+                }
+              ],
+              "y": 30,
+              "x": 100,
+              "footprint": "Capacitor_SMD:C_0805_2012Metric"
+            },
+            {
+              "value": "10uF",
+              "ref": "C2",
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "x": 200,
+              "pins": [
+                {
+                  "type": "Passive",
+                  "name": "P1",
+                  "number": "1"
+                },
+                {
+                  "name": "P2",
+                  "type": "Passive",
+                  "number": "2"
+                }
+              ],
+              "y": 30
+            },
+            {
+              "footprint": "Resistor_SMD:R_0603_1608Metric",
+              "x": 200,
+              "y": 80,
+              "pins": [
+                {
+                  "type": "Passive",
+                  "name": "P1",
+                  "number": "1"
+                },
+                {
+                  "number": "2",
+                  "type": "Passive",
+                  "name": "P2"
+                }
+              ],
+              "value": "330",
+              "ref": "R1"
+            },
+            {
+              "ref": "LED1",
+              "value": "LED",
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "name": "K",
+                  "type": "Passive",
+                  "number": "2"
+                }
+              ],
+              "x": 250,
+              "footprint": "LED_SMD:LED_0603_1608Metric"
+            }
+          ],
+          "nets": {
+            "VBUS": [
+              "J1.A4",
+              "C1.1",
+              "U1.3"
+            ],
+            "NET_R1_LED1": [
+              "R1.2",
+              "LED1.1"
+            ],
+            "3V3": [
+              "U1.2",
+              "C2.1",
+              "R1.1"
+            ],
+            "GND": [
+              "J1.A1",
+              "C1.2",
+              "U1.1",
+              "C2.2",
+              "LED1.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.074625000008382
+      },
+      {
+        "n": 7,
+        "tool": "place_components",
+        "args": {
+          "board_width": 40,
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "strategy": "force_directed",
+          "board_height": 25
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.164374999993015
+      },
+      {
+        "n": 8,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "placements": [
+            {
+              "ref": "J1",
+              "y": 12.5,
+              "x": 5
+            },
+            {
+              "ref": "C1",
+              "y": 7,
+              "x": 12
+            },
+            {
+              "ref": "U1",
+              "y": 12.5,
+              "x": 18
+            },
+            {
+              "y": 7,
+              "ref": "C2",
+              "x": 25
+            },
+            {
+              "x": 30,
+              "ref": "R1",
+              "y": 15
+            },
+            {
+              "ref": "LED1",
+              "y": 15,
+              "x": 35
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4896670000016456
+      },
+      {
+        "n": 9,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 9.389416999998502
+      },
+      {
+        "n": 10,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4735840000066673
+      },
+      {
+        "n": 11,
+        "tool": "add_zone",
+        "args": {
+          "layer": "FCu",
+          "fill_board": true,
+          "net": "GND",
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0748750000057044
+      },
+      {
+        "n": 12,
+        "tool": "add_zone",
+        "args": {
+          "fill_board": true,
+          "net": "GND",
+          "layer": "BCu",
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7942089999996824
+      },
+      {
+        "n": 13,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.287166000009165
+      },
+      {
+        "n": 14,
+        "tool": "add_via_array",
+        "args": {
+          "pitch": 5,
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "region": {
+            "x": 2,
+            "y": 2,
+            "h": 21,
+            "w": 36
+          },
+          "net": "GND"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.276499999992666
+      },
+      {
+        "n": 15,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4272499999933643
+      },
+      {
+        "n": 16,
+        "tool": "add_via_array",
+        "args": {
+          "net": "GND",
+          "points": [
+            {
+              "y": 2,
+              "x": 2
+            },
+            {
+              "x": 38,
+              "y": 2
+            },
+            {
+              "y": 23,
+              "x": 2
+            },
+            {
+              "x": 38,
+              "y": 23
+            }
+          ],
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7.800999999977648
+      },
+      {
+        "n": 17,
+        "tool": "add_via_array",
+        "args": {
+          "net": "GND",
+          "points": [
+            {
+              "y": 23,
+              "x": 10
+            },
+            {
+              "y": 23,
+              "x": 20
+            },
+            {
+              "y": 23,
+              "x": 30
+            },
+            {
+              "y": 2,
+              "x": 10
+            },
+            {
+              "y": 2,
+              "x": 20
+            },
+            {
+              "y": 2,
+              "x": 30
+            },
+            {
+              "y": 12.5,
+              "x": 2
+            },
+            {
+              "y": 12.5,
+              "x": 38
+            }
+          ],
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.040666999993846
+      },
+      {
+        "n": 18,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.397583999991184
+      },
+      {
+        "n": 19,
+        "tool": "add_via_array",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "points": [
+            {
+              "y": 18,
+              "x": 15
+            },
+            {
+              "x": 22,
+              "y": 18
+            },
+            {
+              "x": 28,
+              "y": 18
+            },
+            {
+              "y": 5,
+              "x": 15
+            },
+            {
+              "y": 5,
+              "x": 22
+            },
+            {
+              "x": 28,
+              "y": 5
+            }
+          ],
+          "net": "GND"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.445708000013838
+      },
+      {
+        "n": 20,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2577499999897555
+      },
+      {
+        "n": 21,
+        "tool": "render_pcb",
+        "args": {
+          "layers": [
+            "FCu",
+            "Edge_Cuts"
+          ],
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "highlight": {
+            "nets": [
+              "GND"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 173.60987500002375
+      },
+      {
+        "n": 22,
+        "tool": "render_pcb",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "highlight": {
+            "nets": [
+              "GND"
+            ]
+          },
+          "layers": [
+            "BCu",
+            "Edge_Cuts"
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 157.5596249999944
+      },
+      {
+        "n": 23,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9",
+          "classes": [
+            {
+              "nets": [
+                "VBUS",
+                "3V3"
+              ],
+              "name": "power",
+              "track_width": 0.5
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0040420000150334
+      },
+      {
+        "n": 24,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2652499999967404
+      },
+      {
+        "n": 25,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8479999999981374
+      },
+      {
+        "n": 26,
+        "tool": "validate_for_fab",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 16.837208999990253
+      },
+      {
+        "n": 27,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_4_EJsdDfvETnW9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1358750000072177
+      }
+    ],
+    "tokens": {
+      "input": 1463065,
+      "output": 9879,
+      "total": 1472944,
+      "cache_creation_input": 0,
+      "cache_read_input": 1372459
+    },
+    "wallclock_sec": 222.983469167
+  },
+  "output": {
+    "vcad_path": "20260722T185813Z-7892.vcad",
+    "vcad_sha256": "77cd8248c7ce9adfa0308b563ff4e0ae481331d587f305bf403e676ab33114c0",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:58:13.773Z",
+    "ended_at": "2026-07-22T19:01:56.879Z"
+  },
+  "signature": null
+}

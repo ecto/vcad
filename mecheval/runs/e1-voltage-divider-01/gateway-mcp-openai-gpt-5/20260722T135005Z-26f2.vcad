@@ -1,0 +1,131 @@
+{
+  "version": "0.1",
+  "nodes": {},
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "schematic": {
+    "title": "Voltage Divider",
+    "components": [
+      {
+        "ref": "J1",
+        "value": "VIN",
+        "footprintId": "TestPoint:TestPoint_Pad_D1.0mm",
+        "position": {
+          "x": 20,
+          "y": 20
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 20,
+              "y": 20
+            }
+          }
+        ]
+      },
+      {
+        "ref": "R1",
+        "value": "100k",
+        "footprintId": "Resistor_SMD:R_0805",
+        "position": {
+          "x": 50,
+          "y": 20
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 46,
+              "y": 20
+            }
+          },
+          {
+            "number": "2",
+            "name": "2",
+            "pin_type": "Passive",
+            "position": {
+              "x": 54,
+              "y": 20
+            }
+          }
+        ]
+      },
+      {
+        "ref": "R2",
+        "value": "100k",
+        "footprintId": "Resistor_SMD:R_0805",
+        "position": {
+          "x": 80,
+          "y": 20
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 76,
+              "y": 20
+            }
+          },
+          {
+            "number": "2",
+            "name": "2",
+            "pin_type": "Passive",
+            "position": {
+              "x": 84,
+              "y": 20
+            }
+          }
+        ]
+      },
+      {
+        "ref": "J2",
+        "value": "VOUT",
+        "footprintId": "TestPoint:TestPoint_Pad_D1.0mm",
+        "position": {
+          "x": 65,
+          "y": 35
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 65,
+              "y": 35
+            }
+          }
+        ]
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "labels": [],
+    "nets": {
+      "VIN": [
+        "J1.1",
+        "R1.1"
+      ],
+      "VOUT": [
+        "R1.2",
+        "R2.1",
+        "J2.1"
+      ],
+      "GND": [
+        "R2.2"
+      ]
+    }
+  }
+}

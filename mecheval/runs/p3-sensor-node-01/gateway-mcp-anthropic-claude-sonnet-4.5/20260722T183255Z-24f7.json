@@ -1,0 +1,1081 @@
+{
+  "schema_version": 0,
+  "task_id": "p3-sensor-node-01",
+  "task_sha256": "82e39a374ecf15f83d99246ba48c991302edd47f2aa871521d3593b1d82463d8",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          45,
+          35
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 35,
+            "width_mm": 45
+          }
+        ],
+        "max_mm": [
+          45,
+          35
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 10
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 11,
+        "min": 10
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "fail",
+      "details": {
+        "findings": [
+          {
+            "distance_mm": 7.3569694847810805,
+            "ic": "U1",
+            "nearest_cap": "C2",
+            "net": "3V3",
+            "ok": false,
+            "pad": "7"
+          },
+          {
+            "distance_mm": 8.986934961375876,
+            "ic": "U1",
+            "nearest_cap": "C4",
+            "net": "3V3",
+            "ok": false,
+            "pad": "20"
+          },
+          {
+            "distance_mm": 9.256773195882031,
+            "ic": "U3",
+            "nearest_cap": "C5",
+            "net": "3V3",
+            "ok": false,
+            "pad": "6"
+          },
+          {
+            "distance_mm": 8.523945682604976,
+            "ic": "U3",
+            "nearest_cap": "C5",
+            "net": "3V3",
+            "ok": false,
+            "pad": "8"
+          }
+        ],
+        "ic_power_pads": 4,
+        "max_mm": 6
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 4,
+    "checks_total": 5,
+    "score": 0.8,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T183255Z-24f7",
+  "model": {
+    "id": "gateway-mcp-anthropic-claude-sonnet-4.5",
+    "name": "AI Gateway (MCP, anthropic/claude-sonnet-4.5)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "anthropic/claude-sonnet-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p3-sensor-node-01",
+    "rendered": "Design a printed circuit board for a battery-powered I2C sensor node: a microcontroller in a quad flat package, a 3.3V LDO regulator, an I2C sensor in a SOIC-8 package, two I2C pull-up resistors, at least three decoupling/bulk capacitors, and a 4-pin power/programming header — at least ten footprints total. Board outline at most 45mm × 35mm, two copper layers. Declare nets VIN, 3V3, GND, SDA, SCL, and the two programming signals; the sensor and MCU share the I2C bus with pull-ups to 3V3, and every power pin gets a decoupling capacitor. Place all components and route every net so its copper is fully connected. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.007874999999956
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "ATmega328P",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50
+            },
+            {
+              "ref": "U2",
+              "value": "AMS1117-3.3",
+              "footprint": "SOT-223",
+              "x": 20,
+              "y": 30
+            },
+            {
+              "ref": "U3",
+              "value": "BME280",
+              "footprint": "SOIC-8",
+              "x": 80,
+              "y": 50
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0805",
+              "x": 70,
+              "y": 30
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0805",
+              "x": 75,
+              "y": 30
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 15,
+              "y": 40
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 25,
+              "y": 40
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 45,
+              "y": 60
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 55,
+              "y": 60
+            },
+            {
+              "ref": "C5",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 85,
+              "y": 60
+            },
+            {
+              "ref": "J1",
+              "value": "PROG_HEADER",
+              "footprint": "PinHeader_1x04",
+              "x": 30,
+              "y": 70
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.3",
+              "C2.1",
+              "U1.7",
+              "U1.20",
+              "U3.8",
+              "U3.6",
+              "R1.1",
+              "R2.1",
+              "C3.1",
+              "C4.1",
+              "C5.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "U1.8",
+              "U1.21",
+              "U3.5",
+              "C3.2",
+              "C4.2",
+              "C5.2"
+            ],
+            "SDA": [
+              "U1.27",
+              "U3.1",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.28",
+              "U3.2",
+              "R2.2"
+            ],
+            "MOSI": [
+              "J1.3",
+              "U1.17"
+            ],
+            "SCK": [
+              "J1.4",
+              "U1.19"
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.228041999998823
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "ATmega328P",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "7",
+                  "name": "VCC",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "8",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "20",
+                  "name": "AVCC",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "21",
+                  "name": "AGND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "17",
+                  "name": "MOSI",
+                  "type": "Output"
+                },
+                {
+                  "number": "19",
+                  "name": "SCK",
+                  "type": "Output"
+                },
+                {
+                  "number": "27",
+                  "name": "SDA",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "SCL",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "AMS1117-3.3",
+              "footprint": "SOT-223",
+              "x": 20,
+              "y": 30,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "OUT",
+                  "type": "Output"
+                },
+                {
+                  "number": "3",
+                  "name": "IN",
+                  "type": "Input"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "BME280",
+              "footprint": "SOIC-8",
+              "x": 80,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "CSB",
+                  "type": "Input"
+                },
+                {
+                  "number": "3",
+                  "name": "SDI",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCK",
+                  "type": "Input"
+                },
+                {
+                  "number": "5",
+                  "name": "SDO",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "VCC",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "7",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "8",
+                  "name": "VCC",
+                  "type": "PowerInput"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0805",
+              "x": 70,
+              "y": 30,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0805",
+              "x": 75,
+              "y": 30,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 15,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 25,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 45,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 55,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C5",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 85,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "PROG_HEADER",
+              "footprint": "PinHeader_1x04",
+              "x": 30,
+              "y": 70,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "MOSI",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "SCK",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.3",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.2",
+              "C2.1",
+              "U1.7",
+              "U1.20",
+              "U3.6",
+              "U3.8",
+              "R1.1",
+              "R2.1",
+              "C3.1",
+              "C4.1",
+              "C5.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.1",
+              "C1.2",
+              "C2.2",
+              "U1.8",
+              "U1.21",
+              "U3.1",
+              "U3.7",
+              "C3.2",
+              "C4.2",
+              "C5.2"
+            ],
+            "SDA": [
+              "U1.27",
+              "U3.3",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.28",
+              "U3.4",
+              "R2.2"
+            ],
+            "MOSI": [
+              "J1.3",
+              "U1.17"
+            ],
+            "SCK": [
+              "J1.4",
+              "U1.19"
+            ],
+            "CSB": [
+              "U3.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8050829999992857
+      },
+      {
+        "n": 3,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "board_width": 45,
+          "board_height": 35,
+          "strategy": "force_directed"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14.002499999995052
+      },
+      {
+        "n": 4,
+        "tool": "get_pad_positions",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1880000000019209
+      },
+      {
+        "n": 5,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "placements": [
+            {
+              "ref": "U3",
+              "x": 22.63,
+              "y": 25.27,
+              "rotation": 270
+            },
+            {
+              "ref": "R1",
+              "x": 23.65,
+              "y": 20.6
+            },
+            {
+              "ref": "R2",
+              "x": 16.95,
+              "y": 21.5
+            },
+            {
+              "ref": "C4",
+              "x": 18.33,
+              "y": 20
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.2209159999983967
+      },
+      {
+        "n": 6,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 26,
+              "y": 20
+            },
+            {
+              "ref": "U2",
+              "x": 12,
+              "y": 10
+            },
+            {
+              "ref": "U3",
+              "x": 35,
+              "y": 20,
+              "rotation": 270
+            },
+            {
+              "ref": "R1",
+              "x": 30,
+              "y": 26
+            },
+            {
+              "ref": "R2",
+              "x": 35,
+              "y": 26
+            },
+            {
+              "ref": "C1",
+              "x": 10,
+              "y": 15
+            },
+            {
+              "ref": "C2",
+              "x": 16,
+              "y": 20
+            },
+            {
+              "ref": "C3",
+              "x": 22,
+              "y": 26
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 26
+            },
+            {
+              "ref": "C5",
+              "x": 37,
+              "y": 27
+            },
+            {
+              "ref": "J1",
+              "x": 10,
+              "y": 28
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7313330000033602
+      },
+      {
+        "n": 7,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "placements": [
+            {
+              "ref": "R2",
+              "x": 32,
+              "y": 26
+            },
+            {
+              "ref": "C5",
+              "x": 39,
+              "y": 26
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7913750000006985
+      },
+      {
+        "n": 8,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "placements": [
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 26
+            },
+            {
+              "ref": "R2",
+              "x": 32,
+              "y": 26
+            },
+            {
+              "ref": "C3",
+              "x": 22,
+              "y": 27.5
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 27.5
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1800419999999576
+      },
+      {
+        "n": 9,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "effort": 2
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 35.03233299999556
+      },
+      {
+        "n": 10,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5740420000074664
+      },
+      {
+        "n": 11,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "hole_to_hole": 0.3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.077584000013303
+      },
+      {
+        "n": 12,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7808749999967404
+      },
+      {
+        "n": 13,
+        "tool": "get_copper",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "kind": "via"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8378329999977723
+      },
+      {
+        "n": 14,
+        "tool": "delete_via",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "index": 15,
+          "net": "3V3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.133291999998619
+      },
+      {
+        "n": 15,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7996659999917028
+      },
+      {
+        "n": 16,
+        "tool": "delete_via",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "index": 10,
+          "net": "GND"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.565708000009181
+      },
+      {
+        "n": 17,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.739291999998386
+      },
+      {
+        "n": 18,
+        "tool": "delete_via",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "index": 9,
+          "net": "GND"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0001249999913853
+      },
+      {
+        "n": 19,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6379589999996824
+      },
+      {
+        "n": 20,
+        "tool": "get_copper",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "kind": "via",
+          "bbox": {
+            "x": 26,
+            "y": 27,
+            "w": 2,
+            "h": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7565420000028098
+      },
+      {
+        "n": 21,
+        "tool": "delete_via",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "index": 13,
+          "net": "GND"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.2341249999881256
+      },
+      {
+        "n": 22,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9029589999991003
+      },
+      {
+        "n": 23,
+        "tool": "delete_via",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "index": 9,
+          "net": "GND"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.90008300000045
+      },
+      {
+        "n": 24,
+        "tool": "undo",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9759170000033919
+      },
+      {
+        "n": 25,
+        "tool": "get_copper",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "kind": "via",
+          "bbox": {
+            "x": 30.5,
+            "y": 19,
+            "w": 2,
+            "h": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.48804099998960737
+      },
+      {
+        "n": 26,
+        "tool": "delete_via",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "index": 4,
+          "net": "3V3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.168499999999767
+      },
+      {
+        "n": 27,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4078750000044238
+      },
+      {
+        "n": 28,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z",
+          "hole_to_hole": 0.15
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0638749999925494
+      },
+      {
+        "n": 29,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6367499999760184
+      },
+      {
+        "n": 30,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_N_qLXFJ_uG4z"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6352500000211876
+      }
+    ],
+    "tokens": {
+      "input": 2651734,
+      "output": 5945,
+      "total": 2657679,
+      "cache_creation_input": 94298,
+      "cache_read_input": 2481213
+    },
+    "wallclock_sec": 145.819662125
+  },
+  "output": {
+    "vcad_path": "20260722T183255Z-24f7.vcad",
+    "vcad_sha256": "961454f890b4c21eed3d24f87521c100a5fc365a849b2a13b30e08fcdcf34d7e",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:32:55.874Z",
+    "ended_at": "2026-07-22T18:35:21.812Z"
+  },
+  "signature": null
+}

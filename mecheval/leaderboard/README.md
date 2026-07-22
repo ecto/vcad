@@ -1,8 +1,13 @@
 # @mecheval/leaderboard
 
-Static site that renders the MechEval leaderboard from `mecheval/runs/`,
-`mecheval/tasks/`, and `mecheval/corpus/operator.vcad`. Lives at
-[mecheval.com](https://mecheval.com).
+Static site for the **vcad evals** family, canonical at
+[eval.vcad.io](https://eval.vcad.io). Emits the family index at `/` and the
+MechEval chapter under `/mech/` (from `mecheval/runs/`, `mecheval/tasks/`,
+and `mecheval/corpus/`). The branded chapter domains 301 in via
+`mecheval/vercel.json`: mecheval.com → `/mech`, pcbeval.com → `/pcb`,
+simeval.com → `/sim`, atomeval.com → `/atom` (path-preserving, so old
+mecheval.com deep links keep working). Not-yet-live chapter paths
+temp-redirect to the family index.
 
 ## Local dev
 

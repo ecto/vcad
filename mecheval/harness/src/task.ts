@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 
-export type Suite = "A" | "B" | "C" | "F";
+export type Suite = "A" | "B" | "C" | "D" | "E" | "F" | "P";
 
 export interface Task {
   id: string;

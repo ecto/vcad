@@ -105,6 +105,26 @@ pub fn grade(
         None
     };
 
+    // Suite E: preload the grader-only golden netlist (by input kind) so
+    // the dispatch stays synchronous and path-free.
+    let golden_netlist: Option<Result<String, String>> = task
+        .checks
+        .iter()
+        .find_map(|c| match c {
+            CheckSpec::NetlistIsomorphic { golden } => Some(golden.clone()),
+            _ => None,
+        })
+        .map(|kind| {
+            let input = task
+                .private_input(&kind)
+                .ok_or_else(|| format!("no inputs[] entry of kind '{kind}'"))?;
+            let rel = input
+                .path
+                .as_ref()
+                .ok_or_else(|| format!("inputs[] entry '{kind}' has no path"))?;
+            std::fs::read_to_string(task_dir.join(rel)).map_err(|e| e.to_string())
+        });
+
     let mut records: Vec<CheckRecord> = Vec::with_capacity(task.checks.len());
     for (n, spec) in task.checks.iter().enumerate() {
         let (outcome, details) = run_check(
@@ -116,6 +136,7 @@ pub fn grade(
             candidate_solid.as_ref(),
             &mut host_state,
             &mut target_state,
+            golden_netlist.as_ref(),
         );
         records.push(CheckRecord {
             n,
@@ -193,6 +214,7 @@ fn run_check(
     candidate_solid: Option<&vcad_kernel::Solid>,
     host_state: &mut HostState,
     target_state: &mut HostState,
+    golden_netlist: Option<&Result<String, String>>,
 ) -> (CheckOutcome, serde_json::Value) {
     let stub_reason = "skeleton — kernel wiring pending";
     match spec {
@@ -245,7 +267,29 @@ fn run_check(
             max_severity,
         } => crate::dfm::check_dfm(snapshot, process.as_deref(), max_severity.as_deref(), rules),
 
-        CheckSpec::DrcClean | CheckSpec::ErcClean | CheckSpec::RefactorInvariant { .. } => (
+        CheckSpec::DrcClean => crate::pcb::check_drc_clean(snapshot),
+        CheckSpec::ErcClean => crate::pcb::check_erc_clean(snapshot),
+        CheckSpec::NetsFullyConnected => crate::pcb::check_nets_fully_connected(snapshot),
+        CheckSpec::BoardEnvelope { max_mm } => crate::pcb::check_board_envelope(snapshot, *max_mm),
+        CheckSpec::ComponentCount { min } => crate::pcb::check_component_count(snapshot, *min),
+        CheckSpec::DecouplingProximity {
+            power_nets,
+            ground_nets,
+            max_mm,
+            min_ic_pads,
+        } => crate::pcb::check_decoupling_proximity(
+            snapshot,
+            power_nets,
+            ground_nets,
+            *max_mm,
+            *min_ic_pads,
+        ),
+        CheckSpec::NetlistIsomorphic { .. } => {
+            crate::pcb::check_netlist_isomorphic(snapshot, golden_netlist)
+        }
+        CheckSpec::FabReady => crate::pcb::check_fab_ready(snapshot),
+
+        CheckSpec::RefactorInvariant { .. } => (
             CheckOutcome::NotImplemented,
             json!({ "reason": stub_reason }),
         ),
@@ -1160,12 +1204,28 @@ mod tests {
 
     #[test]
     fn unwired_checks_still_return_not_implemented() {
-        // DRC is still unwired; this catches accidental dispatch leaks.
-        let (task, task_bytes) = task_with(vec![CheckSpec::DrcClean]);
+        // RefactorInvariant is still unwired; this catches accidental
+        // dispatch leaks.
+        let (task, task_bytes) = task_with(vec![CheckSpec::RefactorInvariant {
+            untouched_parts: vec![],
+            tolerance_pct: 0.01,
+        }]);
         let tmp = write_tmp_vcad("mecheval-unwired.vcad", &cube_vcad(10.0));
         let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
         assert_eq!(blob.checks.len(), 1);
         assert_eq!(blob.checks[0].result, CheckOutcome::NotImplemented);
+    }
+
+    #[test]
+    fn drc_on_a_bare_cube_fails_closed() {
+        // The DEFAULT_CUBE villain must fail every ECAD check — a solid
+        // with no PCB cannot vacuously pass drc_clean.
+        let (task, task_bytes) = task_with(vec![CheckSpec::DrcClean]);
+        let tmp = write_tmp_vcad("mecheval-drc-cube.vcad", &cube_vcad(10.0));
+        let blob = grade(&task, &task_bytes, &tmp, std::path::Path::new(".")).expect("grade");
+        assert_eq!(blob.checks.len(), 1);
+        assert_eq!(blob.checks[0].result, CheckOutcome::Fail);
+        assert!(!blob.summary.passed);
     }
 
     #[test]

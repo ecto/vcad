@@ -1,0 +1,49 @@
+{
+  "id": "p3-sensor-node-01",
+  "suite": "P",
+  "tier": "P3",
+  "title": "I2C sensor node",
+  "prompt": "Design a printed circuit board for a battery-powered I2C sensor node: a microcontroller in a quad flat package, a 3.3V LDO regulator, an I2C sensor in a SOIC-8 package, two I2C pull-up resistors, at least three decoupling/bulk capacitors, and a 4-pin power/programming header \u2014 at least ten footprints total. Board outline at most 45mm \u00d7 35mm, two copper layers. Declare nets VIN, 3V3, GND, SDA, SCL, and the two programming signals; the sensor and MCU share the I2C bus with pull-ups to 3V3, and every IC power pin gets a decoupling capacitor placed within 6mm (pad-to-pad) of the pin it serves. Place all components and route every net so its copper is fully connected. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+  "inputs": [],
+  "checks": [
+    {
+      "type": "board_envelope",
+      "max_mm": [
+        45.0,
+        35.0
+      ]
+    },
+    {
+      "type": "component_count",
+      "min": 10
+    },
+    {
+      "type": "nets_fully_connected"
+    },
+    {
+      "type": "drc_clean"
+    },
+    {
+      "type": "decoupling_proximity",
+      "power_nets": [
+        "VCC",
+        "3V3",
+        "VDD"
+      ],
+      "ground_nets": [
+        "GND"
+      ],
+      "max_mm": 6.0
+    }
+  ],
+  "anti_cheese": {},
+  "limits": {},
+  "pass_k": 5,
+  "tags": [
+    "pcbeval",
+    "layout",
+    "i2c",
+    "power",
+    "drc"
+  ]
+}

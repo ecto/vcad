@@ -87,6 +87,23 @@ WAFER_API_KEY=wfr_... node mecheval/harness/dist/cli.js \
   --task a1-cube-01 --solver wafer-direct-GLM-5.1  # override the model
 ```
 
+Run **any model** via the Vercel AI Gateway — one key, every provider.
+Models are addressed by the gateway's `<provider>/<model>` slug (either
+`/` or `-` works as the separator in the solver id):
+
+```
+AI_GATEWAY_API_KEY=vck_... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver gateway-direct-xai/grok-4
+AI_GATEWAY_API_KEY=vck_... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver gateway-direct-google/gemini-2.5-pro
+AI_GATEWAY_API_KEY=vck_... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver gateway-direct-meta/llama-4-maverick
+```
+
+The leaderboard canonicalizes model identity across harness routes —
+`openai-direct-gpt-5` and `gateway-direct-openai-gpt-5` aggregate as the
+same model. The harness must not affect the result.
+
 Each run writes a forensic blob to `mecheval/runs/<task_id>/<model_id>/<run_id>.json`.
 
 ## License

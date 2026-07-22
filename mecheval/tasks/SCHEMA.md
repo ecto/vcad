@@ -25,8 +25,8 @@ One JSON file per task. Filename must match the `id` field. Files in this direct
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | Unique. Matches filename. Convention: `<tier>-<short-name>-<NN>`. Lowercase, hyphenated. |
-| `suite` | `"A" \| "B" \| "C" \| "D" \| "F"` | Which suite. |
-| `tier` | string | `A1`–`A6`, `B-boolean` / `B-step` / `B-fillet` / `B-solver` / `B-tessellate` / `B-dynamics`, `C-reacher` / `C-picker` / etc., `F1`–`F4` (Fit), or `D1`–`D…` (Visual). |
+| `suite` | `"A" \| "B" \| "C" \| "D" \| "E" \| "F" \| "P"` | Which suite. E (schematic) and P (layout) are the **pcbeval** suites. |
+| `tier` | string | `A1`–`A6`, `B-boolean` / `B-step` / `B-fillet` / `B-solver` / `B-tessellate` / `B-dynamics`, `C-reacher` / `C-picker` / etc., `E1`–`E…` (Schematic), `F1`–`F4` (Fit), `P1`–`P5` (Layout), or `D1`–`D…` (Visual). |
 | `title` | string | Short human label. |
 | `prompt` | string | The natural-language spec given to the agent. |
 | `checks` | array | One or more grader checks (see below). All must pass for the task to score. |
@@ -89,9 +89,50 @@ Every check is something the vcad kernel (or the vcad gym, for Suite C) can comp
 // Round-trip: export to STEP, re-import, mass-props match within tolerance.
 { "type": "step_roundtrip", "tolerance_pct": 0.1 }
 
-// DRC / ERC clean (ECAD tasks).
+// ── pcbeval checks (suites E & P) ─────────────────────────────────────
+// All fail-closed: a document with no PcbBoard node fails the board
+// checks; no schematic fails erc_clean. DEFAULT_CUBE stays dead.
+
+// Full design-rule check across every board in the document
+// (clearance, widths, annular ring, courtyards, keepouts, shorts,
+// net islands, …) via vcad-ecad-pcb's check_drc.
 { "type": "drc_clean" }
+
+// Electrical-rule check on document.schematic via vcad-ecad-schematic.
 { "type": "erc_clean" }
+
+// The connectivity subset of DRC: every declared net's copper is one
+// island — no NetIslands, no UnconnectedNet, no Short. The ECAD
+// analogue of valid_solid.
+{ "type": "nets_fully_connected" }
+
+// Board outline bounding box fits inside [x, y] mm.
+{ "type": "board_envelope", "max_mm": [40, 25] }
+
+// At least `min` placed footprints. Anti-cheese floor against
+// near-empty boards.
+{ "type": "component_count", "min": 5 }
+
+// Decoupling discipline: every IC (footprint with ≥ min_ic_pads pads,
+// default 8) with a pad on a named power net must have a 2-pad
+// capacitor bridging that net to ground within max_mm (pad-to-pad).
+{ "type": "decoupling_proximity",
+  "power_nets": ["VCC", "3V3", "VDD"],
+  "ground_nets": ["GND"],
+  "max_mm": 6.0 }
+
+// Suite E: the candidate schematic's explicit netlist (sheet.nets) is
+// graph-isomorphic to a grader-only golden. `golden` names an inputs[]
+// entry by kind; the file maps refs → class labels + net → pin refs
+// (golden refs/net names are labels only — matching is structural).
+// Component classes are derived from footprint id + value:
+// R, C, L, LED, D, J (headers/connectors/testpoints), B (battery), U.
+// Pin order within a component is ignored (R/C are symmetric).
+{ "type": "netlist_isomorphic", "golden": "golden_netlist" }
+
+// The P5 gate: DRC clean AND Gerber serialization of every layer
+// succeeds — if it can't be exported for manufacture, it doesn't pass.
+{ "type": "fab_ready" }
 
 // DFM rule check.
 { "type": "dfm",
