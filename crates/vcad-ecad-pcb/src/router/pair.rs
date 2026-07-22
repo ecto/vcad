@@ -787,12 +787,21 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             .filter(|z| !z.net.is_empty())
             .map(|z| z.net.as_str())
             .collect();
-        let in_band = |a: Vec2, b: Vec2| {
-            a.x.max(b.x) >= lo.x
-                && a.x.min(b.x) <= hi.x
-                && a.y.max(b.y) >= lo.y
-                && a.y.min(b.y) <= hi.y
+        // Corridor test: distance from the segment ends to the from→to LINE
+        // — a bbox test on a long diagonal span sweeps half the board into
+        // the rip set and the all-must-reroute bar becomes unmeetable.
+        let span_dir = {
+            let d = to - from;
+            let l = dist(from, to).max(1e-9);
+            d.scale(1.0 / l)
         };
+        let span_len = dist(from, to);
+        let to_line = |p: Vec2| -> f64 {
+            let v = p - from;
+            let t = (v.x * span_dir.x + v.y * span_dir.y).clamp(0.0, span_len);
+            dist(p, from + span_dir.scale(t))
+        };
+        let in_band = |a: Vec2, b: Vec2| to_line(a) <= band || to_line(b) <= band;
         let mut ripped_nets: std::collections::BTreeSet<String> = Default::default();
         for t in &work.traces {
             if !classifier.is_pair_member(&t.net)
