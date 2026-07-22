@@ -759,9 +759,6 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
         let mut work = pcb.clone();
         work.traces.retain(|t| &t.net != pn && &t.net != nn);
         work.vias.retain(|v| &v.net != pn && &v.net != nn);
-        let mut session = RouteSession::from_pcb(&work);
-        let mut placed: Vec<Placed> = Vec::new();
-        let cong = Congestion::new(&work.outline.vertices);
         // MST endpoints: the two farthest pads of the P net.
         let (mut from, mut to, mut best) = (p_pads[0], p_pads[0], -1.0);
         for i in 0..p_pads.len() {
@@ -774,7 +771,56 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                 }
             }
         }
-        if let Some((mine, theirs)) = try_route_pair(
+        // Corridor rip: single-ended (non-pair, non-plane) traces crossing
+        // the pair's corridor band move aside — the same negotiation right
+        // singles hold against each other. Ripped singles re-route after the
+        // pair commits; any that fail restore verbatim only if the pair
+        // failed (the pair outranks a flexible single).
+        let band = 2.0 * (w + gap) + 1.0;
+        let (lo, hi) = (
+            Vec2::new(from.x.min(to.x) - band, from.y.min(to.y) - band),
+            Vec2::new(from.x.max(to.x) + band, from.y.max(to.y) + band),
+        );
+        let plane_nets: std::collections::BTreeSet<&str> = pcb
+            .zones
+            .iter()
+            .filter(|z| !z.net.is_empty())
+            .map(|z| z.net.as_str())
+            .collect();
+        let in_band = |a: Vec2, b: Vec2| {
+            a.x.max(b.x) >= lo.x
+                && a.x.min(b.x) <= hi.x
+                && a.y.max(b.y) >= lo.y
+                && a.y.min(b.y) <= hi.y
+        };
+        let mut ripped_nets: std::collections::BTreeSet<String> = Default::default();
+        for t in &work.traces {
+            if !classifier.is_pair_member(&t.net)
+                && !plane_nets.contains(t.net.as_str())
+                && in_band(t.start, t.end)
+            {
+                ripped_nets.insert(t.net.clone());
+            }
+        }
+        let ripped_copper: Vec<Trace> = work
+            .traces
+            .iter()
+            .filter(|t| ripped_nets.contains(&t.net))
+            .cloned()
+            .collect();
+        let ripped_vias: Vec<Via> = work
+            .vias
+            .iter()
+            .filter(|v| ripped_nets.contains(&v.net))
+            .cloned()
+            .collect();
+        work.traces.retain(|t| !ripped_nets.contains(&t.net));
+        work.vias.retain(|v| !ripped_nets.contains(&v.net));
+
+        let mut session = RouteSession::from_pcb(&work);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&work.outline.vertices);
+        let pair_result = try_route_pair(
             &mut session,
             &work,
             width,
@@ -784,7 +830,95 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             &mut placed,
             &cong,
             effort_expansions,
-        ) {
+        );
+        let Some((mine, theirs)) = pair_result else {
+            continue; // original board untouched — nothing was committed to pcb
+        };
+        // Re-route each ripped single against the pair-carrying session; a
+        // single that fails brings the whole attempt down (restore original).
+        let mut singles_ok = true;
+        let mut rerouted: Vec<Placed> = Vec::new();
+        'singles: for net in &ripped_nets {
+            let pads = pads_of_net(&work, net);
+            if pads.len() < 2 {
+                continue;
+            }
+            for i in 1..pads.len() {
+                let r = route_net_maze3d(
+                    &session,
+                    &work.outline.vertices,
+                    &copper_layers(&work),
+                    net,
+                    pads[i - 1],
+                    &copper_layers(&work),
+                    pads[i],
+                    &copper_layers(&work),
+                    session.width_for(net, width),
+                    work.rules.default_rules.via_diameter,
+                    Some(&cong),
+                    effort_expansions,
+                    1.0,
+                    None,
+                    &[],
+                    &[],
+                    true,
+                );
+                if !r.success {
+                    singles_ok = false;
+                    break 'singles;
+                }
+                let cand = Candidate {
+                    net: net.clone(),
+                    from: pads[i - 1],
+                    to: pads[i],
+                    width: session.width_for(net, width),
+                    segments: r.segments,
+                    vias: r.vias,
+                    thin_segments: vec![],
+                    thin_width: width,
+                };
+                match validate_and_commit(&mut session, &work, cand, &placed) {
+                    Some(pl) => rerouted.push(pl),
+                    None => {
+                        singles_ok = false;
+                        break 'singles;
+                    }
+                }
+            }
+        }
+        if !singles_ok {
+            log::debug!("pair-polish: {pn}: displaced single failed to re-route — reverting");
+            continue;
+        }
+        // Success: write pair + rerouted singles back onto the working
+        // board (the ripped originals were removed above; reroutes replace
+        // them).
+        drop(ripped_copper);
+        drop(ripped_vias);
+        for pl in rerouted.iter() {
+            for &(a, b, l) in &pl.segments {
+                work.traces.push(Trace {
+                    start: a,
+                    end: b,
+                    width: pl.width,
+                    layer: l,
+                    net: pl.net.clone(),
+                    source: None,
+                });
+            }
+            for &(pt, la, lb) in &pl.via_pts {
+                work.vias.push(Via {
+                    position: pt,
+                    diameter: work.rules.default_rules.via_diameter,
+                    drill: work.rules.default_rules.via_drill,
+                    start_layer: la,
+                    end_layer: lb,
+                    net: pl.net.clone(),
+                    source: None,
+                });
+            }
+        }
+        {
             for pl in [&mine, &theirs] {
                 for &(a, b, l) in &pl.segments {
                     work.traces.push(Trace {
