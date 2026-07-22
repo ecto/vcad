@@ -23,9 +23,13 @@ import {
   type PassKEntry,
   type RunMeta,
 } from "@mecheval/harness/pass_k";
-import { copy, fonts, fontsHref, theme, type TitleBlock } from "./tokens.js";
+import { copy, domains, family, fonts, fontsHref, theme, type TitleBlock } from "./tokens.js";
 
 const PASS_K = 5;
+// Path prefix for the MechEval chapter inside dist/. All of the chapter's
+// internal links are relative, so the whole site relocates by prefixing
+// its emitted paths here. mecheval.com 301s to /mech (vercel.json).
+const MECH = domains.find((d) => d.slug === "mech")!.pathPrefix;
 // Resolve REPO_ROOT relative to this script (mecheval/leaderboard/dist/build.js)
 // so we work the same whether invoked via `npm run build -w …` (cwd = leaderboard
 // package), `node mecheval/leaderboard/dist/build.js` (cwd = repo root), or
@@ -1003,13 +1007,121 @@ function titleBlockHtml(tb: TitleBlock, generatedAt: string): string {
 function footerHtml(): string {
   return `<div class="footer">
     <div class="stack">
-      <b>${escape(copy.brand)}</b> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+      <b>${escape(copy.brand)}</b> &middot; part of <a href="/">${escape(family.brand)}</a> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
     </div>
     <div>
       sibling project: <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
       &middot; <a href="${copy.repoUrl}">github</a>
     </div>
   </div>`;
+}
+
+/** Footer for the umbrella index — family-first, no chapter branding. */
+function familyFooterHtml(): string {
+  return `<div class="footer">
+    <div class="stack">
+      <b>${escape(family.brand)}</b> &middot; an evaluation family by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+    </div>
+    <div>
+      graded by <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
+      &middot; <a href="${copy.repoUrl}">github</a>
+    </div>
+  </div>`;
+}
+
+/** The umbrella index at `/` — the scale ladder of eval chapters plus a
+ *  roll-up of the live leaderboards. Chapter pages carry their own brand;
+ *  this page carries the family's. */
+function familyIndexPage(models: ModelSummary[], taskCount: number, runCount: number, k: number): string {
+  const cards = domains
+    .map((d) => {
+      const stats = d.live
+        ? `<div class="fam-stats">${models.length} models · ${taskCount} tasks · ${runCount} runs</div>`
+        : `<div class="fam-stats fam-soon">coming soon · <span class="mono">${escape(d.comDomain)}</span> reserved</div>`;
+      const inner = `
+        <div class="fam-scale mono">${escape(d.scale)}</div>
+        <h2>${escape(d.name)}</h2>
+        <p>${escape(d.tagline)}</p>
+        ${stats}`;
+      return d.live
+        ? `<a class="fam-card" href="/${d.pathPrefix}/">${inner}</a>`
+        : `<div class="fam-card fam-card-soon">${inner}</div>`;
+    })
+    .join("\n");
+
+  const roster =
+    models.length > 0
+      ? `<div class="card">
+      <h2>the roster</h2>
+      <p class="muted">Every model with official runs, across all live chapters. The cross-chapter index appears once a model has runs in two or more chapters.</p>
+      <table class="table">
+        <thead><tr><th>model</th><th>chapters</th><th>mean score</th><th>pass^${k}</th></tr></thead>
+        <tbody>
+        ${models
+          .map((m) => {
+            const passk = m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
+            return `<tr>
+              <td class="id"><a href="/mech/model/${encodeURIComponent(m.model_id)}.html">${escape(m.model_id)}</a></td>
+              <td>mech</td>
+              <td>${fmtNum(m.mean_score)}</td>
+              <td>${passk}</td>
+            </tr>`;
+          })
+          .join("\n")}
+        </tbody>
+      </table>
+    </div>`
+      : "";
+
+  const body = `
+    <div class="hero">
+      <div class="hero-copy">
+        <h1>${escape(family.brand)}</h1>
+        <p class="tagline">${escape(family.tagline)}</p>
+        <p class="muted">${escape(family.subtagline)}</p>
+      </div>
+    </div>
+    <div class="fam-grid">
+      ${cards}
+    </div>
+    ${roster}
+    <div class="card">
+      <h2>how grading works</h2>
+      <p class="muted">One kernel grades all of it. Every check is a deterministic computation — mass properties, DRC, circuit simulation, physics rollouts — never an LLM judgment. Tasks run pass^${k}; villain baselines must fail; held-out splits rotate. Click any number to read the full forensic run blob.</p>
+    </div>
+    <style>
+      .fam-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s4, 16px); margin: var(--s6, 32px) 0; }
+      .fam-card { display: block; border: 1px solid var(--rule); border-radius: 8px; padding: var(--s5, 20px); background: var(--surface); color: inherit; text-decoration: none; }
+      a.fam-card:hover { background: var(--hover); }
+      .fam-card h2 { margin: 6px 0 8px; }
+      .fam-card p { color: var(--ink-soft, inherit); font-size: 14px; margin: 0 0 12px; }
+      .fam-scale { font-size: 12px; color: var(--inkFaint, #9aa1ad); letter-spacing: 0.04em; }
+      .fam-stats { font-size: 13px; }
+      .fam-soon { color: var(--inkFaint, #9aa1ad); }
+      .fam-card-soon { opacity: 0.75; }
+    </style>`;
+
+  const generatedAt = new Date().toISOString();
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="${escape(family.subtagline)}">
+<meta name="theme-color" content="${theme.light.ground}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="${theme.dark.ground}" media="(prefers-color-scheme: dark)">
+<title>${escape(family.brand)} — ${escape(family.tagline)}</title>
+${fontsHref ? `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="${fontsHref}">` : ""}
+<style>${STYLES}</style>
+</head>
+<body><main class="sheet">
+${titleBlockHtml({ drawing: "vcad-evals", sheet: "0 of n", project: "family index" }, generatedAt)}
+${body}
+${familyFooterHtml()}
+<p class="meta">generated ${generatedAt} · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
+</main></body></html>`;
 }
 
 function pageShell(
@@ -2027,9 +2139,16 @@ async function main(): Promise<void> {
     taskRefSvgs.set(tid, svg);
   }
 
-  // Index.
+  // Family index at the site root. Chapter sites live under their
+  // pathPrefix; the branded .com domains 301 into them (vercel.json).
   await writePage(
     "index.html",
+    familyIndexPage(models, seenTaskIds.size, runs.length, PASS_K),
+  );
+
+  // MechEval chapter index.
+  await writePage(
+    `${MECH}/index.html`,
     indexPage(
       runs,
       entries,
@@ -2045,7 +2164,7 @@ async function main(): Promise<void> {
   for (const tid of seenTaskIds) {
     const runsForTask = runs.filter((r) => r.task_id === tid);
     await writePage(
-      `task/${tid}.html`,
+      `${MECH}/task/${tid}.html`,
       taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs, taskRefSvgs.get(tid) ?? null),
     );
   }
@@ -2054,7 +2173,7 @@ async function main(): Promise<void> {
   const modelIds = new Set(runs.map((r) => r.model_id));
   for (const mid of modelIds) {
     const runsForModel = runs.filter((r) => r.model_id === mid);
-    await writePage(`model/${mid}.html`, modelPage(mid, runsForModel));
+    await writePage(`${MECH}/model/${mid}.html`, modelPage(mid, runsForModel));
   }
 
   // Run pages — reuse the SVG map populated above; copy each .vcad
@@ -2068,7 +2187,7 @@ async function main(): Promise<void> {
     const vcadSvg = runSvgs.get(svgKey) ?? null;
     if (vcadSvg) renderedRuns++;
     await writePage(
-      `run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
+      `${MECH}/run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
       runPage(blob, vcad, vcadSvg, taskSpecs.get(r.task_id) ?? null, taskRefSvgs.get(r.task_id) ?? null),
     );
     // Drop the .vcad file alongside the HTML so it can be linked.
@@ -2076,7 +2195,7 @@ async function main(): Promise<void> {
       await writeFile(
         resolve(
           OUT_DIR,
-          `run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
+          `${MECH}/run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
         ),
         vcad,
         "utf8",

@@ -6,6 +6,47 @@
   "framework": null,
   "cleanUrls": true,
   "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "(www\\.)?mecheval\\.com" }],
+      "destination": "https://eval.vcad.io/mech/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "(www\\.)?pcbeval\\.com" }],
+      "destination": "https://eval.vcad.io/pcb/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "(www\\.)?simeval\\.com" }],
+      "destination": "https://eval.vcad.io/sim/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "(www\\.)?atomeval\\.com" }],
+      "destination": "https://eval.vcad.io/atom/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/pcb/:path*",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/sim/:path*",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/atom/:path*",
+      "destination": "/",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)\\.html",

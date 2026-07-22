@@ -90,6 +90,72 @@ export const fonts = {
 export const fontsHref =
   "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
+/** The umbrella brand: eval.vcad.io. Chapters (mecheval, pcbeval, …)
+ *  live under their own path prefix; the branded .com domains 301 here. */
+export const family = {
+  brand: "vcad evals",
+  tagline: "Evals for atoms, not tokens. Graded by kernels, not vibes.",
+  subtagline:
+    "AI models graded by a real CAD kernel, real DRC, and real physics — every check deterministic, every number auditable.",
+  canonicalHost: "eval.vcad.io",
+} as const;
+
+/** One entry per eval chapter, in scale-ladder order (atoms → machines).
+ *  `pathPrefix` is where the chapter's pages are emitted inside dist/;
+ *  `comDomain` 301s to that prefix. Only `live` chapters get built. */
+export interface DomainSpec {
+  slug: string;
+  pathPrefix: string;
+  name: string;
+  scale: string;
+  tagline: string;
+  comDomain: string;
+  live: boolean;
+}
+
+export const domains: readonly DomainSpec[] = [
+  {
+    slug: "atom",
+    pathPrefix: "atom",
+    name: "atomeval",
+    scale: "atoms → materials",
+    tagline:
+      "Matter design graded by molecular dynamics, energy minimization, and atoms-to-continuum homogenization.",
+    comDomain: "atomeval.com",
+    live: false,
+  },
+  {
+    slug: "mech",
+    pathPrefix: "mech",
+    name: "mecheval",
+    scale: "parts → machines",
+    tagline:
+      "The mechanical, physical, and CAD evaluation suite. The AI designs the robot and drives it.",
+    comDomain: "mecheval.com",
+    live: true,
+  },
+  {
+    slug: "pcb",
+    pathPrefix: "pcb",
+    name: "pcbeval",
+    scale: "boards → circuits",
+    tagline:
+      "Schematic and layout graded by real DRC, ERC, and circuit simulation. Passing boards are orderable.",
+    comDomain: "pcbeval.com",
+    live: false,
+  },
+  {
+    slug: "sim",
+    pathPrefix: "sim",
+    name: "simeval",
+    scale: "fields → systems",
+    tagline:
+      "Devices graded by field behavior: thermal, EM, photonics, antennas, acoustics.",
+    comDomain: "simeval.com",
+    live: false,
+  },
+] as const;
+
 export const copy = {
   brand: "mecheval",
   tagline: "The mechanical, physical, and CAD evaluation suite for AI models.",
