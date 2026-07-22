@@ -839,8 +839,25 @@ mod tests {
                 assert_eq!(pa.pin_type, pb.pin_type);
             }
         }
-        let names: Vec<&str> = reparsed.labels.iter().map(|l| l.name.as_str()).collect();
-        assert_eq!(names, vec!["VCC", "GND"]);
+        // Label names survive. The sheet's own two labels are joined by the
+        // generated net stubs — the declared netlist has three pin refs whose
+        // pins no drawn label touches, and emitting those is the whole point
+        // of the nets flow — so assert on the distinct names, not the count.
+        let names: std::collections::BTreeSet<&str> =
+            reparsed.labels.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(
+            names,
+            std::collections::BTreeSet::from(["VCC", "GND"]),
+            "unexpected label names after round trip"
+        );
+        // Every declared net reached the file (the pre-fix exporter dropped
+        // them silently, leaving KiCad with no netlist at all).
+        for net in sheet.nets.as_ref().unwrap().keys() {
+            assert!(
+                reparsed.labels.iter().any(|l| &l.name == net),
+                "declared net {net} has no label after round trip"
+            );
+        }
     }
 
     /// Unknown tokens are skipped, mirroring the PCB parser's tolerance.

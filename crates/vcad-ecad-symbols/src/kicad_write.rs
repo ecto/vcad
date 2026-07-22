@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 
 use vcad_ir::ecad::{
     BoardOutline, Footprint, FootprintGraphic, LabelScope, LayerStackup, Pad, PadShape, PadType,
-    Pcb, PcbLayer, PinType, SchematicComponent, SchematicLabel, SchematicSheet, Trace, TraceArc,
-    Via, Zone,
+    Pcb, PcbLayer, PinType, SchematicComponent, SchematicLabel, SchematicPin, SchematicSheet,
+    Trace, TraceArc, Via, Zone,
 };
 use vcad_ir::Vec2;
 
@@ -794,18 +794,7 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
 
     // Wires.
     for w in &sheet.wires {
-        let uuid = e.uuid();
-        e.line(1, "(wire");
-        e.line(2, "(pts");
-        e.line(3, &format!("(xy {} {})", num(w.start.x), num(w.start.y)));
-        e.line(3, &format!("(xy {} {})", num(w.end.x), num(w.end.y)));
-        e.line(2, ")");
-        e.line(2, "(stroke");
-        e.line(3, "(width 0)");
-        e.line(3, "(type default)");
-        e.line(2, ")");
-        e.line(2, &format!("(uuid {})", q(&uuid)));
-        e.line(1, ")");
+        write_wire(&mut e, w.start, w.end);
     }
 
     // Junctions.
@@ -827,7 +816,9 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
         write_label(&mut e, l);
     }
 
-    // Declared-net stubs (global labels on every referenced pin).
+    // Netlist declared as data (the MCP `nets` flow): a wire stub plus a
+    // global label at every connected pin, on the placed positions, so
+    // connectivity reaches KiCad even when the sheet has no drawn wires.
     write_net_stubs(&mut e, sheet, &placements);
 
     e.line(1, "(sheet_instances");
@@ -858,7 +849,11 @@ fn snap_grid(v: f64) -> f64 {
 fn comp_half_extents(comp: &SchematicComponent) -> (f64, f64) {
     let mut hx: f64 = 2.54;
     let mut hy: f64 = 2.54;
-    for p in &comp.pins {
+    // Measure the pins the symbol will actually be drawn with: a component
+    // whose stored pins are degenerate gets a synthesized layout that is far
+    // wider than the stored (0,0) stack, and spacing must account for it.
+    let (pins, _) = symbol_layout(comp);
+    for p in &pins {
         hx = hx.max(p.position.x.abs());
         hy = hy.max(p.position.y.abs());
     }
@@ -1019,34 +1014,91 @@ fn pin_world(comp: &SchematicComponent, comp_pos: Vec2, pin_pos: Vec2) -> Vec2 {
     Vec2::new(comp_pos.x + px * c - py * s, comp_pos.y - (px * s + py * c))
 }
 
-/// Emit one global label per declared-net pin reference, anchored on the
-/// pin's connection end, so the netlist survives into KiCad as visible,
-/// electrically-connected stubs. Uses the placed (possibly auto-laid-out)
-/// positions, never the stored ones.
+/// Emit connectivity for `sheet.nets` (net name → `"R1.2"` pin refs): a short
+/// wire stub extending outward from each connected pin, capped with a global
+/// label carrying the net name. This is how a data-declared netlist reaches
+/// KiCad's ERC/netlister when the sheet has no coordinate-drawn wires.
+///
+/// Pins resolve through [`symbol_layout`], so components whose stored pin
+/// positions are degenerate get stubs on their *synthesized* pin ends rather
+/// than every stub collapsing onto the component origin. Positions come from
+/// the placement pass, never the stored ones.
 fn write_net_stubs(e: &mut Emitter, sheet: &SchematicSheet, placements: &[Vec2]) {
     let Some(nets) = &sheet.nets else {
         return;
     };
-    for (net, pins) in nets {
-        for pin_ref in pins {
+    // Points where the sheet already carries drawn connectivity. A pin sitting
+    // on one of these is wired up in KiCad's eyes, so adding a stub there would
+    // duplicate the net — and because a re-import reconstructs `nets` from that
+    // same drawn geometry, the duplicates would compound on every export cycle.
+    let mut drawn: Vec<Vec2> = Vec::new();
+    for w in &sheet.wires {
+        drawn.push(w.start);
+        drawn.push(w.end);
+    }
+    for l in &sheet.labels {
+        drawn.push(l.position);
+    }
+    let already_drawn = |p: Vec2| {
+        drawn
+            .iter()
+            .any(|d| (d.x - p.x).abs() < 1e-6 && (d.y - p.y).abs() < 1e-6)
+    };
+
+    for (net, pin_refs) in nets {
+        if net.is_empty() {
+            continue;
+        }
+        for pin_ref in pin_refs {
             let Some((idx, pin_no)) = pin_ref_comp(sheet, pin_ref) else {
                 continue;
             };
             let comp = &sheet.components[idx];
-            let Some(pin) = comp.pins.iter().find(|p| p.number == pin_no) else {
+            let (pins, body) = symbol_layout(comp);
+            let Some(pin) = pins.iter().find(|p| p.number == pin_no) else {
                 continue;
             };
-            let pos = pin_world(comp, placements[idx], pin.position);
-            // Point the label away from the body: pin_angle is the stub
-            // direction toward the body, so the label faces the other way.
-            let body = symbol_body(comp);
-            let away = (pin_angle(comp, pin.position, body) + 180.0 + comp.rotation) % 360.0;
+            if already_drawn(pin_world(comp, placements[idx], pin.position)) {
+                continue;
+            }
+            // Outward direction in symbol space (Y-up): opposite the pin's
+            // stub direction, which points toward the body.
+            let (ox, oy) = match pin_angle(comp, pin.position, body) as i64 {
+                0 => (-1.0, 0.0),
+                180 => (1.0, 0.0),
+                90 => (0.0, -1.0),
+                _ => (0.0, 1.0),
+            };
+            let start = pin_world(comp, placements[idx], pin.position);
+            let end = pin_world(
+                comp,
+                placements[idx],
+                Vec2::new(
+                    pin.position.x + ox * PIN_PITCH,
+                    pin.position.y + oy * PIN_PITCH,
+                ),
+            );
+            write_wire(e, start, end);
+
+            // Label faces along the stub, reading away from the body.
+            let (dx, dy) = (end.x - start.x, end.y - start.y);
+            let rotation = if dx.abs() >= dy.abs() {
+                if dx >= 0.0 {
+                    0.0
+                } else {
+                    180.0
+                }
+            } else if dy >= 0.0 {
+                270.0
+            } else {
+                90.0
+            };
             write_label(
                 e,
                 &SchematicLabel {
                     name: net.clone(),
-                    position: pos,
-                    rotation: away,
+                    position: end,
+                    rotation,
                     scope: LabelScope::Global,
                 },
             );
@@ -1095,6 +1147,60 @@ fn sanitize_lib_name(s: &str) -> String {
     }
 }
 
+/// Schematic grid pitch (mm) — pins, stubs, and synthesized layouts snap to it.
+const PIN_PITCH: f64 = 2.54;
+/// Synthesized IC-style layout: pin connection points sit at ±this x.
+const SYNTH_PIN_X: f64 = 7.62;
+/// Synthesized layout body half-width (pin x minus the 2.54 pin length).
+const SYNTH_BODY_X: f64 = 5.08;
+
+/// True when the component's pin positions carry no usable geometry — every
+/// pin stacked at a single point. The MCP `create_schematic` `nets` flow
+/// leaves them all at the (0,0) default, which would collapse the symbol body
+/// to a zero-area rectangle.
+fn pins_degenerate(comp: &SchematicComponent) -> bool {
+    match comp.pins.first() {
+        None => false,
+        Some(first) => comp.pins.iter().all(|p| p.position == first.position),
+    }
+}
+
+/// Effective pin layout and body rectangle for a component's symbol.
+///
+/// When pin positions are usable they pass through untouched (body from
+/// [`symbol_body`]). When they are missing/degenerate, an IC-style layout is
+/// synthesized: pins distributed down the left then right edges at 2.54mm
+/// pitch, body rectangle derived from the pin extents.
+fn symbol_layout(comp: &SchematicComponent) -> (Vec<SchematicPin>, (Vec2, Vec2)) {
+    if !pins_degenerate(comp) {
+        return (comp.pins.clone(), symbol_body(comp));
+    }
+    let n = comp.pins.len();
+    let n_left = n.div_ceil(2);
+    let rows = n_left.max(n - n_left).max(1);
+    let top = (rows as f64 - 1.0) * PIN_PITCH / 2.0;
+    let pins: Vec<SchematicPin> = comp
+        .pins
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let (x, row) = if i < n_left {
+                (-SYNTH_PIN_X, i)
+            } else {
+                (SYNTH_PIN_X, i - n_left)
+            };
+            let mut np = p.clone();
+            np.position = Vec2::new(x, top - row as f64 * PIN_PITCH);
+            np
+        })
+        .collect();
+    let body = (
+        Vec2::new(-SYNTH_BODY_X, top + PIN_PITCH),
+        Vec2::new(SYNTH_BODY_X, -top - PIN_PITCH),
+    );
+    (pins, body)
+}
+
 fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
     let lib_id = comp_lib_id(comp);
     e.line(2, &format!("(symbol {}", q(&lib_id)));
@@ -1115,7 +1221,7 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
     write_lib_property(e, "Datasheet", "", 3);
 
     // Body rectangle bounding the pins, plus the pins themselves.
-    let body = symbol_body(comp);
+    let (pins, body) = symbol_layout(comp);
     e.line(
         3,
         &format!(
@@ -1143,7 +1249,7 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
             q(&format!("{}_1_1", sanitize_lib_name(&comp.reference)))
         ),
     );
-    for pin in &comp.pins {
+    for pin in &pins {
         let angle = pin_angle(comp, pin.position, body);
         e.line(4, &format!("(pin {} line", pin_type_token(pin.pin_type)));
         e.line(
@@ -1321,6 +1427,21 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
     e.line(3, "(font");
     e.line(4, "(size 1.27 1.27)");
     e.line(3, ")");
+    e.line(2, ")");
+    e.line(2, &format!("(uuid {})", q(&uuid)));
+    e.line(1, ")");
+}
+
+fn write_wire(e: &mut Emitter, start: Vec2, end: Vec2) {
+    let uuid = e.uuid();
+    e.line(1, "(wire");
+    e.line(2, "(pts");
+    e.line(3, &format!("(xy {} {})", num(start.x), num(start.y)));
+    e.line(3, &format!("(xy {} {})", num(end.x), num(end.y)));
+    e.line(2, ")");
+    e.line(2, "(stroke");
+    e.line(3, "(width 0)");
+    e.line(3, "(type default)");
     e.line(2, ")");
     e.line(2, &format!("(uuid {})", q(&uuid)));
     e.line(1, ")");
@@ -1915,13 +2036,14 @@ mod tests {
         assert!(text.contains("(global_label \"VCC\""));
         assert!(text.contains("(global_label \"OUT\""));
         assert!(text.contains("(global_label \"GND\""));
-        // Stub anchors sit on placed pin ends, not the stored origin.
+        // Stub anchors sit on placed pin ends, not the stored origin: the
+        // generated wire starts at the pin and the label caps its far end.
         let u1_out = pin_world(
             &sheet.components[0],
             placements[0],
             sheet.components[0].pins[1].position,
         );
-        assert!(text.contains(&format!("(at {} {} ", num(u1_out.x), num(u1_out.y))));
+        assert!(text.contains(&format!("(xy {} {})", num(u1_out.x), num(u1_out.y))));
     }
 
     #[test]
@@ -1934,5 +2056,110 @@ mod tests {
         let text = write_kicad_sch(&sheet);
         assert!(text.contains("(at 100 50 0)"));
         assert!(text.contains("(at 120 50 90)"));
+    }
+
+    /// Sheet whose components carry no pin geometry at all — every pin at the
+    /// (0,0) default, which is what the MCP `create_schematic` `nets` flow
+    /// produces. Distinct from [`degenerate_sheet`], where the *component*
+    /// positions collapse but pins are real.
+    fn degenerate_pins_sheet() -> SchematicSheet {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let comp = |reference: &str, value: &str, footprint: &str, x: f64| SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: footprint.into(),
+            position: Vec2::new(x, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(0.0, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(0.0, 0.0),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "VCC".to_string(),
+            vec!["R1.1".to_string(), "C1.1".to_string()],
+        );
+        nets.insert(
+            "GND".to_string(),
+            vec!["R1.2".to_string(), "C1.2".to_string()],
+        );
+        SchematicSheet {
+            title: Some("nets flow".into()),
+            components: vec![
+                comp("R1", "10k", "Resistor_SMD:R_0805", 100.0),
+                comp("C1", "100nF", "Capacitor_SMD:C_0603", 130.0),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: Some(nets),
+        }
+    }
+
+    /// The MCP `create_schematic` `nets` flow: pins all at the (0,0) default,
+    /// connectivity declared only as data. The exporter must synthesize a
+    /// usable symbol layout and emit wires + global labels so the netlist
+    /// round-trips into KiCad instead of collapsing to a zero-area body.
+    #[test]
+    fn nets_flow_synthesizes_layout_and_connectivity() {
+        let sheet = degenerate_pins_sheet();
+        let text = write_kicad_sch(&sheet);
+
+        // Nonzero connectivity: one wire stub + one global label per pin ref.
+        assert_eq!(text.matches("(wire").count(), 4);
+        assert_eq!(text.matches("(global_label \"VCC\"").count(), 2);
+        assert_eq!(text.matches("(global_label \"GND\"").count(), 2);
+
+        // Nondegenerate synthesized body rectangle (2 pins → left/right at
+        // ±7.62, body x∈[-5.08, 5.08], y∈[-2.54, 2.54]).
+        assert!(text.contains("(start -5.08 2.54)"));
+        assert!(text.contains("(end 5.08 -2.54)"));
+        assert!(!text.contains("(start 0 0)"));
+
+        // Pins land on the synthesized positions, not stacked at the origin.
+        assert!(text.contains("(at -7.62 0 0)"));
+        assert!(text.contains("(at 7.62 0 180)"));
+
+        // Deterministic.
+        assert_eq!(text, write_kicad_sch(&sheet));
+    }
+
+    /// Each pin of a degenerate-pin component must get its *own* stub anchor:
+    /// the bug was every net of a component collapsing onto one point, which
+    /// shorts them together in KiCad.
+    #[test]
+    fn degenerate_pins_get_distinct_stub_anchors() {
+        let sheet = degenerate_pins_sheet();
+        let placements = sheet_placements(&sheet);
+        let (pins, _) = symbol_layout(&sheet.components[0]);
+        let a = pin_world(&sheet.components[0], placements[0], pins[0].position);
+        let b = pin_world(&sheet.components[0], placements[0], pins[1].position);
+        assert!(a != b, "R1 pin anchors collapsed to one point: {a:?}");
+    }
+
+    /// Non-degenerate pin positions must pass through untouched.
+    #[test]
+    fn real_pin_positions_are_preserved() {
+        let sheet = sample_sheet();
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(at -2.54 0 0)"));
+        assert!(text.contains("(at 2.54 0 180)"));
+        // sample_sheet declares no data nets — no synthesized stubs beyond the
+        // one drawn wire.
+        assert_eq!(text.matches("(wire").count(), 1);
     }
 }
