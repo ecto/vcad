@@ -1028,92 +1028,130 @@ function footerHtml(): string {
   </div>`;
 }
 
-/** Footer for the umbrella index — family-first, no chapter branding. */
-function familyFooterHtml(): string {
-  return `<div class="footer">
-    <div class="stack">
-      <b>${escape(family.brand)}</b> &middot; an evaluation family by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
-    </div>
-    <div>
-      graded by <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
-      &middot; <a href="${copy.repoUrl}">github</a>
-    </div>
-  </div>`;
-}
+/** The umbrella index at `/` — designed as the cover sheet of a drawing
+ *  set: masthead, serif epigraph, the scale ladder as Fig. 1 on a shared
+ *  log axis, booktabs contents + roster tables, and a numbered method
+ *  section. Chapter pages carry their own brand; this page carries the
+ *  family's. */
 
-/** The umbrella index at `/` — the scale ladder of eval chapters plus a
- *  roll-up of the live leaderboards. Chapter pages carry their own brand;
- *  this page carries the family's. */
-function familyIndexPage(models: ModelSummary[], taskCount: number, runCount: number, k: number): string {
-  const cards = domains
-    .map((d) => {
-      const stats = d.live
-        ? `<div class="fam-stats">${models.length} models · ${taskCount} tasks · ${runCount} runs</div>`
-        : `<div class="fam-stats fam-soon">coming soon · <span class="mono">${escape(d.comDomain)}</span> reserved</div>`;
-      const inner = `
-        <div class="fam-scale mono">${escape(d.scale)}</div>
-        <h2>${escape(d.name)}</h2>
-        <p>${escape(d.tagline)}</p>
-        ${stats}`;
-      return d.live
-        ? `<a class="fam-card" href="/${d.pathPrefix}/">${inner}</a>`
-        : `<div class="fam-card fam-card-soon">${inner}</div>`;
+/** IBM Plex (site identity) + Newsreader italic for the epigraph. Loaded
+ *  only on the family index so chapter pages stay lean. */
+const familyFontsHref =
+  "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&display=swap";
+
+/** Characteristic length band per chapter, as log10(meters). Presentation
+ *  data for Fig. 1 only. */
+const SCALE_BANDS: Record<string, [number, number]> = {
+  atom: [-10, -7],
+  sim: [-6, 0],
+  pcb: [-4, -1],
+  mech: [-3, 0],
+};
+
+function familyIndexPage(
+  models: ModelSummary[],
+  taskCount: number,
+  runCount: number,
+  k: number,
+): string {
+  const generatedAt = new Date().toISOString();
+  const live = domains.filter((d) => d.live);
+
+  // ── Fig. 1: the scale ladder ─────────────────────────────────────────
+  // Shared log axis, 1 Å → 1 m (log10 −10 … 0). Bands positioned in %.
+  const AXIS_MIN = -10;
+  const AXIS_SPAN = 10;
+  const pct = (v: number) => ((v - AXIS_MIN) / AXIS_SPAN) * 100;
+  const axisTicks = [
+    { at: -10, label: "1 Å" },
+    { at: -9, label: "1 nm", minor: true },
+    { at: -6, label: "1 µm" },
+    { at: -3, label: "1 mm" },
+    { at: 0, label: "1 m" },
+  ];
+  const minorTicks = Array.from({ length: 11 }, (_, i) => -10 + i);
+
+  const ladderRows = [...domains]
+    .sort((a, b) => (SCALE_BANDS[a.slug]?.[0] ?? 0) - (SCALE_BANDS[b.slug]?.[0] ?? 0))
+    .map((d, i) => {
+      const [lo, hi] = SCALE_BANDS[d.slug] ?? [-3, 0];
+      const left = pct(lo);
+      const width = pct(hi) - pct(lo);
+      const band = `<span class="band${d.live ? "" : " band-soon"}" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"></span>`;
+      const name = d.live
+        ? `<a href="/${d.pathPrefix}/">${escape(d.name)}</a>`
+        : `<span class="soon-name">${escape(d.name)}</span>`;
+      return `<div class="ladder-row rise" style="--d:${(i + 3) * 70}ms">
+        <div class="ladder-name mono">${name}${d.live ? "" : `<span class="soon-flag">soon</span>`}</div>
+        <div class="ladder-track">${band}</div>
+      </div>`;
+    })
+    .join("\n");
+
+  const axisLabels = axisTicks
+    .map(
+      (t) =>
+        `<span class="axis-label${t.minor ? " axis-label-minor" : ""} mono" style="left:${pct(t.at).toFixed(1)}%">${t.label}</span>`,
+    )
+    .join("");
+  const axisTickMarks = minorTicks
+    .map((v) => {
+      const major = axisTicks.some((t) => t.at === v);
+      return `<span class="axis-tick${major ? " major" : ""}" style="left:${pct(v).toFixed(1)}%"></span>`;
+    })
+    .join("");
+
+  // ── § 1 contents (booktabs) ──────────────────────────────────────────
+  const contentsRows = domains
+    .map((d, i) => {
+      const sheet = String(i + 1).padStart(2, "0");
+      const chapterCell = d.live
+        ? `<a class="ch-name" href="/${d.pathPrefix}/">${escape(d.name)}</a>`
+        : `<span class="ch-name ch-soon">${escape(d.name)}</span>`;
+      const status = d.live
+        ? `<span class="status-live">${models.length} models · ${taskCount} tasks · ${fmtCompact(runCount)} runs</span>`
+        : `<span class="status-soon">in preparation · <span class="mono">${escape(d.comDomain)}</span></span>`;
+      return `<tr${d.live ? "" : ` class="row-soon"`}>
+        <td class="mono cell-sheet">${sheet}</td>
+        <td>${chapterCell}<div class="ch-tagline">${escape(d.tagline)}</div></td>
+        <td class="mono cell-scale">${escape(d.scale)}</td>
+        <td class="cell-status">${status}</td>
+      </tr>`;
+    })
+    .join("\n");
+
+  // ── § 2 roster (booktabs) ────────────────────────────────────────────
+  const rosterRows = models
+    .map((m, i) => {
+      const id = modelIdentity(m.model_id);
+      const passk = m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
+      const mark = providerMark(id.provider);
+      return `<tr>
+        <td class="mono cell-sheet">${String(i + 1).padStart(2, "0")}</td>
+        <td><a class="roster-model" style="--c:${id.color}" href="/mech/model/${encodeURIComponent(m.model_id)}.html"><span class="roster-mark">${mark}</span>${escape(id.label)}</a></td>
+        <td class="mono cell-num">${fmtNum(m.mean_score)}</td>
+        <td class="mono cell-num">${passk}</td>
+        <td class="cell-chapters mono">mech</td>
+      </tr>`;
     })
     .join("\n");
 
   const roster =
-    models.length > 0
-      ? `<div class="card">
-      <h2>the roster</h2>
-      <p class="muted">Every model with official runs, across all live chapters. The cross-chapter index appears once a model has runs in two or more chapters.</p>
-      <table class="table">
-        <thead><tr><th>model</th><th>chapters</th><th>mean score</th><th>pass^${k}</th></tr></thead>
-        <tbody>
-        ${models
-          .map((m) => {
-            const passk = m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
-            return `<tr>
-              <td class="id"><a href="/mech/model/${encodeURIComponent(m.model_id)}.html">${escape(m.model_id)}</a></td>
-              <td>mech</td>
-              <td>${fmtNum(m.mean_score)}</td>
-              <td>${passk}</td>
-            </tr>`;
-          })
-          .join("\n")}
-        </tbody>
-      </table>
-    </div>`
-      : "";
-
-  const body = `
-    <div class="hero">
-      <div class="hero-copy">
-        <h1>${escape(family.brand)}</h1>
-        <p class="tagline">${escape(family.tagline)}</p>
-        <p class="muted">${escape(family.subtagline)}</p>
+    models.length === 0
+      ? ""
+      : `<section class="fam-section rise" style="--d:560ms">
+      <div class="section-head">
+        <span class="section-no mono">§ 2</span>
+        <h2>Roster</h2>
       </div>
-    </div>
-    <div class="fam-grid">
-      ${cards}
-    </div>
-    ${roster}
-    <div class="card">
-      <h2>how grading works</h2>
-      <p class="muted">One kernel grades all of it. Every check is a deterministic computation — mass properties, DRC, circuit simulation, physics rollouts — never an LLM judgment. Tasks run pass^${k}; villain baselines must fail; held-out splits rotate. Click any number to read the full forensic run blob.</p>
-    </div>
-    <style>
-      .fam-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s4, 16px); margin: var(--s6, 32px) 0; }
-      .fam-card { display: block; border: 1px solid var(--rule); border-radius: 8px; padding: var(--s5, 20px); background: var(--surface); color: inherit; text-decoration: none; }
-      a.fam-card:hover { background: var(--hover); }
-      .fam-card h2 { margin: 6px 0 8px; }
-      .fam-card p { color: var(--ink-soft, inherit); font-size: 14px; margin: 0 0 12px; }
-      .fam-scale { font-size: 12px; color: var(--inkFaint, #9aa1ad); letter-spacing: 0.04em; }
-      .fam-stats { font-size: 13px; }
-      .fam-soon { color: var(--inkFaint, #9aa1ad); }
-      .fam-card-soon { opacity: 0.75; }
-    </style>`;
+      <p class="section-note">Every model with official runs, ranked by mean check-pass rate. The cross-chapter index appears once a model holds runs in two or more chapters.</p>
+      <table class="booktabs">
+        <thead><tr><th class="cell-sheet"></th><th>model</th><th class="cell-num">score</th><th class="cell-num">pass<sup>${k}</sup></th><th>chapters</th></tr></thead>
+        <tbody>${rosterRows}</tbody>
+      </table>
+      <p class="fig-caption"><span class="mono">Table 1</span> — the family roster. Scores are per-chapter until the cross-chapter index opens.</p>
+    </section>`;
 
-  const generatedAt = new Date().toISOString();
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1123,15 +1161,183 @@ function familyIndexPage(models: ModelSummary[], taskCount: number, runCount: nu
 <meta name="theme-color" content="${theme.light.ground}" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="${theme.dark.ground}" media="(prefers-color-scheme: dark)">
 <title>${escape(family.brand)} — ${escape(family.tagline)}</title>
-${fontsHref ? `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="${fontsHref}">` : ""}
+<link rel="stylesheet" href="${familyFontsHref}">
 <style>${STYLES}</style>
+<style>
+  /* ── family cover sheet ─────────────────────────────────────────── */
+  .fam-sheet { max-width: 880px; }
+
+  /* Corner crop marks — registration for the "printed sheet". */
+  .crop { position: absolute; width: 18px; height: 18px; pointer-events: none; }
+  .crop::before, .crop::after { content: ""; position: absolute; background: var(--ink-faint); opacity: 0.55; }
+  .crop::before { width: 18px; height: 1px; }
+  .crop::after { width: 1px; height: 18px; }
+  .crop-tl { top: 26px; left: 0; }
+  .crop-tr { top: 26px; right: 0; }
+  .crop-bl { bottom: 26px; left: 0; }
+  .crop-br { bottom: 26px; right: 0; }
+  .crop-tr::before, .crop-br::before { right: 0; }
+  .crop-tr::after, .crop-br::after { right: 0; }
+  .crop-bl::before, .crop-br::before { bottom: 0; }
+  .crop-bl::after, .crop-br::after { bottom: 0; }
+
+  /* Masthead */
+  .masthead { margin: var(--s7) 0 var(--s8); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--ink-faint);
+    display: flex; align-items: baseline; gap: var(--s3);
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule-strong); align-self: center; }
+  .masthead h1 {
+    font-size: clamp(44px, 9vw, 76px); font-weight: 650; letter-spacing: -0.035em;
+    line-height: 1.02; margin: var(--s4) 0 var(--s5);
+  }
+  .epigraph {
+    font-family: "Newsreader", Georgia, serif; font-style: italic;
+    font-size: clamp(19px, 3vw, 24px); font-weight: 400; line-height: 1.45;
+    color: var(--ink-soft); margin: 0 0 var(--s3); max-width: 34em;
+  }
+  .subline { font-size: 15px; color: var(--ink-faint); max-width: 44em; margin: 0; }
+
+  /* Sections */
+  .fam-section { margin: var(--s9) 0 0; }
+  .section-head { display: flex; align-items: baseline; gap: var(--s3); border-top: 2px solid var(--ink); padding-top: var(--s3); }
+  .section-no { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.08em; }
+  .section-head h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin: 0; }
+  .section-note { font-size: 14px; color: var(--ink-soft); max-width: 46em; margin: var(--s3) 0 var(--s5); }
+
+  /* Fig. 1 — the scale ladder */
+  .ladder { margin: var(--s5) 0 var(--s2); }
+  .ladder-axis { position: relative; height: 26px; margin-left: var(--ladder-gutter, 172px); }
+  .axis-rule { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--ink-soft); }
+  .axis-tick { position: absolute; bottom: 0; width: 1px; height: 5px; background: var(--ink-soft); opacity: 0.5; }
+  .axis-tick.major { height: 9px; opacity: 1; }
+  .axis-label { position: absolute; bottom: 12px; transform: translateX(-50%); font-size: 11px; color: var(--ink-faint); white-space: nowrap; }
+  .ladder-row { display: grid; grid-template-columns: var(--ladder-gutter, 172px) 1fr; align-items: center; min-height: 44px; border-bottom: 1px solid var(--rule); }
+  .ladder-row:last-child { border-bottom: 1px solid var(--ink-soft); }
+  .ladder-name { font-size: 14px; letter-spacing: 0.01em; display: flex; align-items: baseline; gap: var(--s2); }
+  .ladder-name a { color: var(--ink); font-weight: 500; }
+  .ladder-name a:hover { color: var(--accent); }
+  .soon-name { color: var(--ink-faint); }
+  .soon-flag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); border: 1px solid var(--rule-strong); border-radius: 3px; padding: 1px 5px; }
+  .ladder-track { position: relative; height: 100%; min-height: 44px; }
+  .band { position: absolute; top: 50%; transform: translateY(-50%); height: 10px; background: var(--ink); border-radius: 1px; }
+  .band-soon {
+    background: repeating-linear-gradient(-45deg, var(--ink-faint) 0 1px, transparent 1px 5px);
+    border: 1px solid var(--rule-strong); opacity: 0.9;
+  }
+  .fig-caption { font-size: 12.5px; color: var(--ink-faint); margin: var(--s3) 0 0; }
+  .fig-caption .mono { color: var(--ink-soft); }
+
+  /* Booktabs tables: heavy head/foot rules, no vertical rules. */
+  .booktabs { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .booktabs thead th {
+    text-align: left; font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
+    border-bottom: 1px solid var(--ink-soft); padding: var(--s2) var(--s3) var(--s2) 0;
+  }
+  .booktabs tbody td { border-bottom: 1px solid var(--rule); padding: var(--s3) var(--s3) var(--s3) 0; vertical-align: baseline; }
+  .booktabs tbody tr:last-child td { border-bottom: 2px solid var(--ink); }
+  .booktabs tbody tr:not(.row-soon):hover td { background: var(--hover); }
+  .cell-sheet { width: 34px; color: var(--ink-faint); font-size: 12px; }
+  .cell-scale { white-space: nowrap; font-size: 12.5px; color: var(--ink-soft); }
+  .cell-num { text-align: right; width: 72px; font-size: 13px; }
+  .booktabs thead th.cell-num { text-align: right; }
+  .cell-status { font-size: 13px; }
+  .status-live { color: var(--pass); font-weight: 500; }
+  .status-soon { color: var(--ink-faint); }
+  .status-soon .mono { font-size: 12px; }
+  .ch-name { font-weight: 600; color: var(--ink); }
+  .ch-name:hover { color: var(--accent); }
+  .ch-soon { color: var(--ink-faint); font-weight: 600; }
+  .ch-tagline { font-size: 12.5px; color: var(--ink-faint); max-width: 34em; margin-top: 2px; }
+  .row-soon td { color: var(--ink-faint); }
+  .roster-model { color: var(--ink); font-weight: 500; display: inline-flex; align-items: center; gap: var(--s2); }
+  .roster-model:hover { color: var(--c, var(--accent)); }
+  .roster-mark { color: var(--c, var(--ink-soft)); display: inline-flex; }
+  .roster-mark .brand-mark { width: 13px; height: 13px; }
+  .cell-chapters { font-size: 12px; color: var(--ink-soft); }
+
+  /* Method */
+  .method { columns: 1; max-width: 46em; }
+  .method p { font-size: 14.5px; color: var(--ink-soft); margin: 0 0 var(--s4); }
+  .method p b { color: var(--ink); font-weight: 600; }
+
+  /* Reveal — one staggered pass on load, then done. */
+  .rise { animation: rise 0.55s var(--ease) both; animation-delay: var(--d, 0ms); }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
+
+  @media (max-width: 640px) {
+    .ladder-axis, .ladder-row { --ladder-gutter: 108px; }
+    .axis-label-minor { display: none; }
+    .cell-scale, .cell-chapters { display: none; }
+    .booktabs thead th.cell-scale { display: none; }
+    .masthead { margin-top: var(--s5); }
+  }
+</style>
 </head>
-<body><main class="sheet">
-${titleBlockHtml({ drawing: "vcad-evals", sheet: "0 of n", project: "family index" }, generatedAt)}
-${body}
-${familyFooterHtml()}
+<body><main class="sheet fam-sheet">
+<span class="crop crop-tl"></span><span class="crop crop-tr"></span><span class="crop crop-bl"></span><span class="crop crop-br"></span>
+
+<header class="masthead">
+  <div class="eyebrow rise" style="--d:0ms">${escape(family.canonicalHost)} · an evaluation family · sheet 0 of ${domains.length}</div>
+  <h1 class="rise" style="--d:60ms">${escape(family.brand)}</h1>
+  <p class="epigraph rise" style="--d:140ms">${escape(family.tagline)}</p>
+  <p class="subline rise" style="--d:200ms">${escape(family.subtagline)}</p>
+</header>
+
+<section class="fam-section rise" style="--d:260ms">
+  <div class="section-head">
+    <span class="section-no mono">Fig. 1</span>
+    <h2>The scale ladder</h2>
+  </div>
+  <p class="section-note">Four chapters, one kernel. Each chapter grades design at a characteristic length scale; together they span ten orders of magnitude.</p>
+  <div class="ladder">
+    <div class="ladder-axis">${axisTickMarks}${axisLabels}<span class="axis-rule"></span></div>
+    ${ladderRows}
+  </div>
+  <p class="fig-caption"><span class="mono">Fig. 1</span> — chapters of the evaluation family by characteristic length, 1 Å to 1 m (log scale). Hatched bands are in preparation.</p>
+</section>
+
+<section class="fam-section rise" style="--d:420ms">
+  <div class="section-head">
+    <span class="section-no mono">§ 1</span>
+    <h2>Contents</h2>
+  </div>
+  <table class="booktabs">
+    <thead><tr><th class="cell-sheet">no.</th><th>chapter</th><th class="cell-scale">scale</th><th>status</th></tr></thead>
+    <tbody>${contentsRows}</tbody>
+  </table>
+</section>
+
+${roster}
+
+<section class="fam-section rise" style="--d:640ms">
+  <div class="section-head">
+    <span class="section-no mono">§ 3</span>
+    <h2>Method</h2>
+  </div>
+  <div class="method">
+    <p><b>Deterministic oracles only.</b> Every check is a computation the vcad kernel performs exactly — mass properties, design-rule checks, circuit simulation, physics rollouts. No LLM judges, no similarity scores, no human graders.</p>
+    <p><b>pass<sup>${k}</sup>.</b> Each task runs ${k} times; a (model, task) pair scores only when every attempt passes every check. Villain baselines — trivial cheese solvers — are kept in CI and must fail.</p>
+    <p><b>Auditable to the bolt.</b> Every number on every leaderboard resolves to a forensic run blob: prompt seed, full tool trace, output geometry, per-check grader verdicts. Click through and read it.</p>
+    <p><b>Held-out splits.</b> Public tasks are fair game for tuning; scored runs include a private split, rotated on suspicion of contamination.</p>
+  </div>
+</section>
+
+<div class="footer rise" style="--d:700ms">
+  <div class="stack">
+    <b>${escape(family.brand)}</b> &middot; an evaluation family by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+  </div>
+  <div>
+    graded by <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
+    &middot; <a href="${copy.repoUrl}">github</a>
+  </div>
+</div>
 <p class="meta">generated ${generatedAt} · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
 </main></body></html>`;
 }
