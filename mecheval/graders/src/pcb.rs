@@ -41,9 +41,9 @@ fn extract_pcbs(doc: &Document) -> Vec<&Pcb> {
 
 /// Shared preamble: parsed document with at least one PCB, else the
 /// fail-closed outcome.
-fn require_pcbs<'a>(
-    snapshot: &'a EvalSnapshot,
-) -> Result<(&'a Document, Vec<&'a Pcb>), (CheckOutcome, Value)> {
+fn require_pcbs(
+    snapshot: &EvalSnapshot,
+) -> Result<(&Document, Vec<&Pcb>), (CheckOutcome, Value)> {
     let Some(doc) = snapshot.doc.as_ref() else {
         return Err((
             CheckOutcome::Fail,
