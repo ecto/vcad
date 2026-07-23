@@ -287,6 +287,21 @@ describe("footprint discovery", () => {
     expect(qfn.matches[0].family).toBe("QFN");
   });
 
+  it("search_footprints resolves crystal / USB micro / HTSSOP queries", async () => {
+    // The RP2040-board repro: "crystal 3225" used to return 0 matches.
+    const xtal = out(await searchFootprints({ query: "crystal 3225" }));
+    expect(xtal.count).toBeGreaterThan(0);
+    expect(xtal.matches[0].family).toBe("Crystal");
+    const bare = out(await searchFootprints({ query: "3225" }));
+    expect((bare.matches as Array<{ family: string }>).map((m) => m.family)).toContain("Crystal");
+    const micro = out(await searchFootprints({ query: "USB micro" }));
+    expect(micro.matches[0].family).toBe("USB-Micro-B");
+    const htssop = out(await searchFootprints({ query: "HTSSOP-16" }));
+    expect(htssop.matches[0].family).toBe("HTSSOP");
+    const powerpad = out(await searchFootprints({ query: "powerpad" }));
+    expect(powerpad.matches[0].family).toBe("HTSSOP");
+  });
+
   it("search_footprints errors on an empty query", async () => {
     const res = await searchFootprints({ query: "  " });
     expect((res as { isError?: boolean }).isError).toBe(true);
