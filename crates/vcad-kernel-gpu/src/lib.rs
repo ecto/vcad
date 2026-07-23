@@ -8,6 +8,7 @@
 #![warn(missing_docs)]
 
 mod context;
+pub mod cost_model;
 mod decimate;
 pub mod narrowphase;
 mod normals;
