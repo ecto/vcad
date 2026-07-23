@@ -79,6 +79,29 @@ pub fn build_class_raster(
     }
 }
 
+/// Geometry-only slice (no states): for history-deposit bookkeeping where
+/// only the grid mapping matters. Cheap — no copper sweep.
+pub fn class_geometry(pcb: &Pcb, half_width: f64, clearance: f64) -> ClassRasterSlice {
+    let layers: Vec<PcbLayer> = pcb
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper())
+        .collect();
+    let pitch = 2.0 * half_width + clearance;
+    let (nx, ny, origin) = class_grid_dims(&pcb.outline.vertices, pitch);
+    ClassRasterSlice {
+        nx,
+        ny,
+        layers,
+        pitch,
+        origin,
+        states: Vec::new(),
+        epoch: 0,
+    }
+}
+
 /// A word-aligned dirty rectangle in cell space with fresh states.
 pub struct ClassDelta {
     /// Inclusive min cell (x, y); `x` is 4-aligned.

@@ -17,7 +17,6 @@ use vcad_ecad_pcb::spatial::CopperGeom;
 use vcad_ir::ecad::{Pcb, PcbLayer, Trace};
 use vcad_ir::Vec2;
 
-
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
