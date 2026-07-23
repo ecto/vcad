@@ -1179,6 +1179,44 @@ fn route_batch(
         queue.push(((net, from, to), 0usize));
     }
     let cache_skips = unrouted.len();
+    // GPU search phase (charter M1, `--features gpu` + VCAD_GPU_BATCH=1):
+    // propose candidates for the whole queue in one batched dispatch; every
+    // proposal still passes validate_and_commit (the exact oracle), and any
+    // conn the GPU cannot serve falls through to the CPU search unchanged.
+    #[cfg(feature = "gpu")]
+    let mut gpu_proposals: std::collections::HashMap<ConnKey, Candidate> = Default::default();
+    #[cfg(feature = "gpu")]
+    if std::env::var("VCAD_GPU_BATCH").as_deref() == Ok("1") && !queue.is_empty() {
+        let conns_only: Vec<Conn> = queue.iter().map(|(c, _)| c.clone()).collect();
+        let clearance = pcb.rules.default_rules.clearance;
+        if let Some(paths) =
+            super::gpu_bridge::gpu_search_batch(session, pcb, &conns_only, width / 2.0, clearance)
+        {
+            let mut proposed = 0usize;
+            for ((net, from, to), path) in conns_only.iter().zip(paths) {
+                if let Some(p) = path {
+                    gpu_proposals.insert(
+                        conn_key(net, *from, *to),
+                        Candidate {
+                            net: net.clone(),
+                            from: *from,
+                            to: *to,
+                            width: session.width_for(net, width),
+                            segments: p.segments,
+                            vias: p.vias,
+                            thin_segments: vec![],
+                            thin_width: width,
+                        },
+                    );
+                    proposed += 1;
+                }
+            }
+            log::info!(
+                "gpu batch: proposed {proposed}/{} candidates in one dispatch stream",
+                conns_only.len()
+            );
+        }
+    }
     let mut batches = 0usize;
     let mut committed = 0usize;
     let mut conflicts = 0usize;
@@ -1191,6 +1229,10 @@ fn route_batch(
         let candidates: Vec<Option<Candidate>> = batch
             .par_iter()
             .map(|((net, from, to), _)| {
+                #[cfg(feature = "gpu")]
+                if let Some(c) = gpu_proposals.get(&conn_key(net, *from, *to)) {
+                    return Some(c.clone());
+                }
                 search_route(
                     session,
                     pcb,
@@ -1492,6 +1534,7 @@ fn try_route_escape(
 /// wants to place, valid against the session it was searched on. Committing
 /// re-validates against the *current* session, so candidates can be searched
 /// in parallel against a frozen snapshot and committed sequentially.
+#[derive(Clone)]
 pub(super) struct Candidate {
     pub(super) net: String,
     pub(super) from: Vec2,

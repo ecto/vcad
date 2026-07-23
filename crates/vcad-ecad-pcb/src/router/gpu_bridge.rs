@@ -178,6 +178,203 @@ fn cell_states_for_class_window(
     )
 }
 
+/// Batched GPU search over a set of connections of one rule class.
+///
+/// Builds the class raster once (the batch's frozen-session semantics match
+/// `route_batch`'s speculative phase exactly), maps each connection to seed
+/// and overlay node sets, runs the M1 kernel, and extracts downhill paths.
+/// Returns one optional candidate path per connection — `None` when the goal
+/// is unreached. Every returned path is a PROPOSAL: the caller must pass it
+/// through `validate_and_commit` (the exact oracle), per the charter.
+pub fn gpu_search_batch(
+    session: &RouteSession,
+    pcb: &Pcb,
+    conns: &[(String, Vec2, Vec2)],
+    half_width: f64,
+    clearance: f64,
+) -> Option<Vec<Option<GpuPath>>> {
+    use vcad_kernel_gpu::wavefront_batch::{
+        distance_fields_batch, BatchCosts, BatchSearch, UNREACHABLE,
+    };
+    let slice = build_class_raster(session, pcb, half_width, clearance);
+    if slice.nx == 0 || slice.ny == 0 || slice.layers.is_empty() {
+        return None;
+    }
+    let (nx, ny, nl) = (slice.nx, slice.ny, slice.layers.len());
+    let plane = nx * ny;
+    let cell_of = |p: Vec2| -> Option<usize> {
+        let cx = ((p.x - slice.origin[0]) / slice.pitch).round();
+        let cy = ((p.y - slice.origin[1]) / slice.pitch).round();
+        if cx < 0.0 || cy < 0.0 || cx as usize >= nx || cy as usize >= ny {
+            return None;
+        }
+        Some(cy as usize * nx + cx as usize)
+    };
+    let world_of = |node: usize| -> (Vec2, usize) {
+        let l = node / plane;
+        let rem = node % plane;
+        (
+            Vec2::new(
+                slice.origin[0] + (rem % nx) as f64 * slice.pitch,
+                slice.origin[1] + (rem / nx) as f64 * slice.pitch,
+            ),
+            l,
+        )
+    };
+
+    let mut searches = Vec::with_capacity(conns.len());
+    let mut goals: Vec<Vec<usize>> = Vec::with_capacity(conns.len());
+    for (net, from, to) in conns {
+        let Some(sc) = cell_of(*from) else {
+            searches.push(BatchSearch::default());
+            goals.push(vec![]);
+            continue;
+        };
+        let Some(gc) = cell_of(*to) else {
+            searches.push(BatchSearch::default());
+            goals.push(vec![]);
+            continue;
+        };
+        // Own-net copper: passable overlay on every layer it occupies, and
+        // the cells of the from-side component seed at 0 (multi-source).
+        let mut overlay: Vec<u32> = Vec::new();
+        session.for_each_of_net(net, |_g, emin, emax, layer| {
+            let Some(li) = slice.layers.iter().position(|&l| l == layer) else {
+                return;
+            };
+            let cx0 = (((emin[0] - slice.origin[0]) / slice.pitch).floor()).max(0.0) as usize;
+            let cy0 = (((emin[1] - slice.origin[1]) / slice.pitch).floor()).max(0.0) as usize;
+            let cx1 = ((((emax[0] - slice.origin[0]) / slice.pitch).ceil()) as usize)
+                .min(nx.saturating_sub(1));
+            let cy1 = ((((emax[1] - slice.origin[1]) / slice.pitch).ceil()) as usize)
+                .min(ny.saturating_sub(1));
+            for cy in cy0..=cy1 {
+                for cx in cx0..=cx1 {
+                    overlay.push((li * plane + cy * nx + cx) as u32);
+                }
+            }
+        });
+        // Seeds: the start cell on every layer (pad anchoring is refined by
+        // the validator; the M1 field only proposes).
+        let sources: Vec<u32> = (0..nl).map(|li| (li * plane + sc) as u32).collect();
+        let goal_nodes: Vec<usize> = (0..nl).map(|li| li * plane + gc).collect();
+        searches.push(BatchSearch { sources, overlay });
+        goals.push(goal_nodes);
+    }
+
+    let costs = BatchCosts {
+        step: 1000,
+        diag: 1414,
+        via: 4000,
+    };
+    let fields = distance_fields_batch((nx, ny, nl), &slice.states, &searches, &costs).ok()?;
+
+    // Downhill extraction per search (same neighbour semantics as the kernel).
+    let passable = |search: &vcad_kernel_gpu::wavefront_batch::BatchSearch, node: usize| -> bool {
+        if slice.states[node] != 0 {
+            return true;
+        }
+        search
+            .sources
+            .iter()
+            .chain(search.overlay.iter())
+            .any(|&n| n as usize == node)
+    };
+    let mut out = Vec::with_capacity(conns.len());
+    for (si, field) in fields.iter().enumerate() {
+        if field.is_empty() {
+            out.push(None);
+            continue;
+        }
+        let Some(&goal) = goals[si]
+            .iter()
+            .filter(|&&g| field[g] != UNREACHABLE)
+            .min_by_key(|&&g| field[g])
+        else {
+            out.push(None);
+            continue;
+        };
+        // Walk downhill to a zero-distance node.
+        let mut node = goal;
+        let mut nodes = vec![node];
+        let mut guard = 0usize;
+        while field[node] != 0 {
+            guard += 1;
+            if guard > nx * ny * nl {
+                break;
+            }
+            let l = node / plane;
+            let rem = node % plane;
+            let (x, y) = ((rem % nx) as i64, (rem / nx) as i64);
+            let mut best: Option<(u32, usize)> = None;
+            let mut consider = |cx: i64, cy: i64, cl: usize, cost: u32| {
+                if cx < 0 || cy < 0 || cx as usize >= nx || cy as usize >= ny {
+                    return;
+                }
+                let idx = cl * plane + cy as usize * nx + cx as usize;
+                if !passable(&searches[si], idx) || field[idx] == UNREACHABLE {
+                    return;
+                }
+                // Downhill: predecessor satisfies pred + cost == here (<= for
+                // ties from multi-source seeding).
+                if field[idx].saturating_add(cost) <= field[node]
+                    && best.map(|(d, _)| field[idx] < d).unwrap_or(true)
+                {
+                    best = Some((field[idx], idx));
+                }
+            };
+            for (dx, dy, c) in [
+                (-1i64, 0i64, costs.step),
+                (1, 0, costs.step),
+                (0, -1, costs.step),
+                (0, 1, costs.step),
+                (-1, -1, costs.diag),
+                (1, -1, costs.diag),
+                (-1, 1, costs.diag),
+                (1, 1, costs.diag),
+            ] {
+                consider(x + dx, y + dy, l, c);
+            }
+            if l > 0 {
+                consider(x, y, l - 1, costs.via);
+            }
+            if l + 1 < nl {
+                consider(x, y, l + 1, costs.via);
+            }
+            let Some((_, pred)) = best else { break };
+            node = pred;
+            nodes.push(node);
+        }
+        if field[node] != 0 {
+            out.push(None);
+            continue;
+        }
+        nodes.reverse();
+        // Convert the node walk into world segments + vias.
+        let mut segments = Vec::new();
+        let mut vias = Vec::new();
+        for w in nodes.windows(2) {
+            let (a, la) = world_of(w[0]);
+            let (b, lb) = world_of(w[1]);
+            if la == lb {
+                segments.push((a, b, slice.layers[la]));
+            } else {
+                vias.push((a, slice.layers[la], slice.layers[lb]));
+            }
+        }
+        out.push(Some(GpuPath { segments, vias }));
+    }
+    Some(out)
+}
+
+/// A GPU-proposed path in world coordinates.
+pub struct GpuPath {
+    /// Trace segments, each on one copper layer.
+    pub segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Layer transitions.
+    pub vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +481,38 @@ mod tests {
             patched, after_full.states,
             "delta-patched raster must equal a from-scratch rebuild"
         );
+    }
+
+    /// End-to-end M1 contract: the GPU batch proposes paths on a live board
+    /// and every proposal passes the exact oracle. Skips without an adapter.
+    #[test]
+    fn gpu_batch_proposals_validate() {
+        let pcb = board();
+        let session = RouteSession::from_pcb(&pcb);
+        let conns = vec![
+            ("N1".to_string(), Vec2::new(2.0, 2.0), Vec2::new(18.0, 8.0)),
+            ("N2".to_string(), Vec2::new(2.0, 8.0), Vec2::new(18.0, 2.0)),
+        ];
+        let Some(paths) = gpu_search_batch(&session, &pcb, &conns, 0.1, 0.2) else {
+            eprintln!("no GPU adapter — skipping");
+            return;
+        };
+        let mut ok = 0;
+        for (i, p) in paths.iter().enumerate() {
+            let Some(path) = p else { continue };
+            assert!(!path.segments.is_empty(), "conn {i}: empty path");
+            // Exact-oracle check of every proposed segment.
+            for &(a, b, l) in &path.segments {
+                let g = crate::spatial::CopperGeom::Segment { a, b, half_w: 0.1 };
+                assert!(
+                    session.probe(&g, l, &conns[i].0, 0.2).legal,
+                    "conn {i}: GPU proposal failed the oracle at ({:.2},{:.2})",
+                    a.x,
+                    a.y
+                );
+            }
+            ok += 1;
+        }
+        assert!(ok >= 1, "at least one GPU proposal must route");
     }
 }
