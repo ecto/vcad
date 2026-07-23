@@ -12575,6 +12575,592 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
   };
 }
 
+// ============================================================================
+// fix_drc — run DRC and auto-apply the mechanically-safe subset of fixes
+// ============================================================================
+//
+// The "loop is the product" tool for boards: one call that runs DRC, applies
+// only the fixes that are mechanically safe (no design intent required), and
+// returns a fail-closed receipt of what it fixed, what it skipped and why,
+// and the before/after violation counts. Every individual fix is verified
+// with a drc_delta capture and REVERTED if it would introduce any new
+// violation — a fix that can't be proven safe never lands. Never touched:
+// different-net shorts/clearance, courtyard overlaps, keepouts, fab-rule
+// scalars — anything whose resolution is a design decision.
+
+/** Distance from a point to a segment. */
+function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.x + t * dx;
+  const cy = a.y + t * dy;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
+/** Closest point on a segment to `p`. */
+function closestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/** Every boundary loop of the board: the outer outline plus each cutout —
+ *  edge clearance is measured to the nearest of any of them (kernel parity). */
+function boardBoundaryLoops(outline: BoardOutline): Vec2[][] {
+  const loops: Vec2[][] = [];
+  if (outline.vertices.length >= 3) loops.push(outline.vertices);
+  for (const c of outline.cutouts ?? []) if (c.length >= 3) loops.push(c);
+  return loops;
+}
+
+/** Min distance from `p` to any board boundary edge, and the closest boundary
+ *  point (for the inward-nudge direction). Null when the outline is degenerate. */
+function nearestBoundary(
+  p: Vec2,
+  outline: BoardOutline,
+): { dist: number; point: Vec2 } | null {
+  let best: { dist: number; point: Vec2 } | null = null;
+  for (const loop of boardBoundaryLoops(outline)) {
+    for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+      const d = distToSegment(p, loop[j]!, loop[i]!);
+      if (!best || d < best.dist) {
+        best = { dist: d, point: closestOnSegment(p, loop[j]!, loop[i]!) };
+      }
+    }
+  }
+  return best;
+}
+
+/** True when `p` is on the board: inside the outer outline and outside every
+ *  cutout. */
+function onBoard(p: Vec2, outline: BoardOutline): boolean {
+  if (!pointInPolygon(p, outline.vertices)) return false;
+  for (const c of outline.cutouts ?? []) {
+    if (c.length >= 3 && pointInPolygon(p, c)) return false;
+  }
+  return true;
+}
+
+/** Coincidence tolerance for matching copper endpoints/vias to a DRC
+ *  violation position (the kernel reports exact element coordinates). */
+const FIX_EPS = 1e-3;
+
+function samePoint(a: Vec2, b: Vec2, eps = FIX_EPS): boolean {
+  return Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps;
+}
+
+/** One applied (or planned) fix in the fix_drc receipt. */
+interface DrcFixAction {
+  rule: string;
+  action: string;
+  detail: string;
+  net?: string;
+  position?: Vec2;
+}
+
+/** One skipped violation (or violation group) in the fix_drc receipt. */
+interface DrcFixSkip {
+  rule: string;
+  reason: string;
+  count: number;
+  sample_message?: string;
+}
+
+/** Rules fix_drc will never touch, with the reason surfaced in the receipt. */
+const FIX_DRC_NEVER: Record<string, string> = {
+  Short:
+    "different-net short — resolving requires design intent (re-route both nets or add a net-tie); never auto-safe",
+  Clearance:
+    "different-net clearance — pushing copper risks new shorts; re-route the involved nets deliberately",
+  CourtyardOverlap: "placement decision — fix_drc never moves components (use set_placement)",
+  Keepout: "copper inside a keepout — deliberate design change required",
+  SilkscreenClearance: "silkscreen artwork — cosmetic, not auto-fixable",
+  MinTraceWidth:
+    "fab-rule break — widen the trace (or change design rules) deliberately",
+  MinDrill: "fab-rule break — enlarge the drill (or change design rules) deliberately",
+  AnnularRing:
+    "fab-rule break — enlarge the via diameter (or change design rules) deliberately",
+  AcidTrap: "acute copper junction — reshaping copper is a routing decision",
+  SameNetBypass:
+    "same-net bypass — whether the touch is intended is design intent, not auto-safe",
+};
+
+/** JSON Schema for fix_drc tool. */
+export const fixDrcSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    dry_run: {
+      type: "boolean" as const,
+      description:
+        "Plan the fixes without mutating the board. Planned actions come back " +
+        "in `planned` (NOT verified — only an applied fix is delta-verified).",
+    },
+    reroute_effort: {
+      type: "number" as const,
+      description:
+        "route_nets effort used when re-routing UnconnectedNet/NetIslands nets " +
+        "(default 4 — higher than a first-pass route).",
+    },
+    max_fixes: {
+      type: "number" as const,
+      description: "Cap on applied fixes in one call (default 50).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Outcome of one verified fix attempt. */
+type FixAttempt = { ok: true; delta: DrcDelta } | { ok: false; reason: string };
+
+/**
+ * Run DRC and automatically apply the mechanically-safe subset of fixes:
+ * stitching vias for UnstitchedPad, dedupe of overlapping same-net via drills
+ * (HoleToHole), inward nudges for EdgeClearance when a legal corridor exists,
+ * and per-net rip-up + re-route for UnconnectedNet/NetIslands. Each fix is
+ * individually verified with a DRC delta and reverted if it introduces any
+ * new violation. Fail-closed: refuses to run without the kernel DRC engine,
+ * and an unverifiable board is never reported as fixed.
+ */
+export async function fixDrc(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  // Fail closed: without the kernel every fix would be unverifiable guesswork.
+  if (!(await isEcadAvailable())) {
+    return ecadError(
+      "fix_drc requires the kernel DRC engine (ECAD WASM unavailable) — refusing to apply unverifiable fixes",
+    );
+  }
+
+  const dryRun = Boolean(args.dry_run);
+  const effort = Math.min(100, Math.max(0.1, Number(args.reroute_effort) || 4));
+  const maxFixes = Math.max(1, Math.round(Number(args.max_fixes as number) || 50));
+
+  const before = await drcPcb(pcb, "full", 20);
+  if (!before.success) return ecadUnverifiable("fix_drc", before);
+  const viols = before.details ?? [];
+
+  const fixed: DrcFixAction[] = [];
+  const planned: DrcFixAction[] = [];
+  const skipped: DrcFixSkip[] = [];
+  let budget = maxFixes;
+
+  const skip = (rule: string, reason: string, message?: string) => {
+    const existing = skipped.find((s) => s.rule === rule && s.reason === reason);
+    if (existing) existing.count++;
+    else skipped.push({ rule, reason, count: 1, ...(message ? { sample_message: message } : {}) });
+  };
+
+  /** Apply `mutate` under a drc_delta capture; revert (restore the saved
+   *  copper arrays) unless the delta proves no new violations. */
+  const applyVerified = async (
+    bounds: { min: Vec2; max: Vec2 } | "full",
+    mutate: () => void,
+  ): Promise<FixAttempt> => {
+    const savedTraces = pcb.traces;
+    const savedVias = pcb.vias;
+    const cap = await beginDrcDelta(pcb, bounds);
+    mutate();
+    const delta = await cap.finish();
+    if (delta.unverifiable) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      return { ok: false, reason: `verification failed: ${delta.unverifiable.reason}` };
+    }
+    if (delta.introduced > 0) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      const worst = delta.sample[0];
+      return {
+        ok: false,
+        reason:
+          `would introduce ${delta.introduced} new violation(s)` +
+          (worst ? ` (worst: ${worst.rule})` : ""),
+      };
+    }
+    return { ok: true, delta };
+  };
+
+  // -- 1) HoleToHole: dedupe overlapping same-net via drills ------------------
+  for (const v of viols.filter((x) => x.rule === "HoleToHole")) {
+    if (budget <= 0) break;
+    if (!(typeof v.actual === "number" && v.actual < 0)) {
+      skip(
+        "HoleToHole",
+        "holes are close but not overlapping — spacing needs a deliberate layout change",
+        v.message,
+      );
+      continue;
+    }
+    if (!v.position) {
+      skip("HoleToHole", "violation carries no position", v.message);
+      continue;
+    }
+    // The kernel reports the midpoint between the two holes; re-derive the
+    // pair from the live vias (nets are not in the message — recomputed here).
+    const pos = v.position;
+    let pair: [Via, Via] | null = null;
+    outer: for (let i = 0; i < pcb.vias.length; i++) {
+      for (let j = i + 1; j < pcb.vias.length; j++) {
+        const a = pcb.vias[i]!;
+        const b = pcb.vias[j]!;
+        const mid = { x: (a.position.x + b.position.x) / 2, y: (a.position.y + b.position.y) / 2 };
+        if (!samePoint(mid, pos, 0.05)) continue;
+        const edge =
+          Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y) -
+          a.drill / 2 -
+          b.drill / 2;
+        if (edge < 0) {
+          pair = [a, b];
+          break outer;
+        }
+      }
+    }
+    if (!pair) {
+      skip(
+        "HoleToHole",
+        "overlapping pair is not two vias (a pad drill is involved, or it was already resolved earlier this pass) — component moves are out of scope",
+        v.message,
+      );
+      continue;
+    }
+    const [a, b] = pair;
+    if (a.net !== b.net) {
+      skip("HoleToHole", "overlapping drills belong to different nets — not mechanically safe", v.message);
+      continue;
+    }
+    // Prefer deleting autorouted copper; hand-placed vias survive when possible.
+    const victim = b.source === "manual" && a.source !== "manual" ? a : b;
+    if (dryRun) {
+      planned.push({
+        rule: "HoleToHole",
+        action: "delete_via",
+        detail: `dedupe overlapping same-net via at (${victim.position.x}, ${victim.position.y})`,
+        net: victim.net,
+        position: victim.position,
+      });
+      budget--;
+      continue;
+    }
+    const boundsV = boundsOfPoints(
+      [a.position, b.position],
+      Math.max(a.diameter, b.diameter),
+    );
+    const res = await applyVerified(boundsV, () => {
+      pcb.vias = pcb.vias.filter((x) => x !== victim);
+    });
+    if (res.ok) {
+      fixed.push({
+        rule: "HoleToHole",
+        action: "delete_via",
+        detail: `removed duplicate same-net via (net '${victim.net}', ${res.delta.resolved} violation(s) resolved)`,
+        net: victim.net,
+        position: victim.position,
+      });
+      budget--;
+    } else {
+      skip("HoleToHole", `dedupe reverted — ${res.reason}`, v.message);
+    }
+  }
+
+  // -- 2) UnstitchedPad: drop a stitching via along the escape vector ---------
+  for (const v of viols.filter((x) => x.rule === "UnstitchedPad")) {
+    if (budget <= 0) break;
+    const [net] = parseNetPair(v.message);
+    if (!net || !v.position) {
+      skip("UnstitchedPad", "violation carries no net/position", v.message);
+      continue;
+    }
+    // Message format (drc.rs): "... escaping ~{mag}mm along ({ex}, {ey}) ..."
+    const m = /escaping ~(-?[\d.]+)mm along \((-?[\d.]+), (-?[\d.]+)\)/.exec(v.message);
+    const candidates: Vec2[] = [];
+    if (m) {
+      const mag = Number(m[1]);
+      const escaped = {
+        x: v.position.x + mag * Number(m[2]),
+        y: v.position.y + mag * Number(m[3]),
+      };
+      if (onBoard(escaped, pcb.outline)) candidates.push(escaped);
+    }
+    // At-pad fallback: a via in the pad is legal on many stackups; the delta
+    // check rejects it where it isn't.
+    candidates.push(v.position);
+    const diameter = pcb.rules.defaultRules.viaDiameter;
+    const drill = pcb.rules.defaultRules.viaDrill;
+    if (dryRun) {
+      planned.push({
+        rule: "UnstitchedPad",
+        action: "add_via",
+        detail: `stitching via for plane net '${net}' near (${round3(candidates[0]!.x)}, ${round3(candidates[0]!.y)})`,
+        net,
+        position: candidates[0],
+      });
+      budget--;
+      continue;
+    }
+    let done = false;
+    let lastReason = "";
+    for (const cand of candidates) {
+      const pos = { x: round3(cand.x), y: round3(cand.y) };
+      const res = await applyVerified(boundsOfPoints([pos], diameter / 2), () => {
+        // Tagged manual: a stitching via must survive route_nets rip-up.
+        pcb.vias = [
+          ...pcb.vias,
+          { position: pos, diameter, drill, startLayer: "FCu", endLayer: "BCu", net, source: "manual" } as Via,
+        ];
+      });
+      if (res.ok) {
+        fixed.push({
+          rule: "UnstitchedPad",
+          action: "add_via",
+          detail: `stitching via for plane net '${net}' (${res.delta.resolved} violation(s) resolved)`,
+          net,
+          position: pos,
+        });
+        budget--;
+        done = true;
+        break;
+      }
+      lastReason = res.reason;
+    }
+    if (!done) {
+      skip("UnstitchedPad", `no legal via site at the pad or along the escape vector — ${lastReason}`, v.message);
+    }
+  }
+
+  // -- 3) EdgeClearance: nudge copper inward when a legal corridor exists -----
+  const NUDGE_MARGIN = 0.05;
+  for (const v of viols.filter((x) => x.rule === "EdgeClearance")) {
+    if (budget <= 0) break;
+    const kindMatch = /^(Trace|Via) net '([^']+)'/.exec(v.message);
+    if (!kindMatch || !v.position) {
+      skip("EdgeClearance", "unrecognized edge-clearance subject", v.message);
+      continue;
+    }
+    const kind = kindMatch[1]!;
+    const net = kindMatch[2]!;
+    const required = typeof v.required === "number" ? v.required : pcb.rules.edgeClearance;
+    const deficit = required - (typeof v.actual === "number" ? v.actual : 0) + NUDGE_MARGIN;
+
+    // Points to move: a via center, or the too-close endpoint(s) of the trace
+    // whose midpoint the kernel reported.
+    let halfWidth = 0;
+    const movePoints: Vec2[] = [];
+    if (kind === "Via") {
+      const via = pcb.vias.find((x) => x.net === net && samePoint(x.position, v.position!));
+      if (!via) {
+        skip("EdgeClearance", "via no longer at the reported position (already fixed this pass?)", v.message);
+        continue;
+      }
+      halfWidth = via.diameter / 2;
+      movePoints.push(via.position);
+    } else {
+      const trace = pcb.traces.find(
+        (t) =>
+          t.net === net &&
+          samePoint({ x: (t.start.x + t.end.x) / 2, y: (t.start.y + t.end.y) / 2 }, v.position!),
+      );
+      if (!trace) {
+        skip("EdgeClearance", "trace no longer at the reported position (already fixed this pass?)", v.message);
+        continue;
+      }
+      halfWidth = trace.width / 2;
+      for (const pt of [trace.start, trace.end]) {
+        const nb = nearestBoundary(pt, pcb.outline);
+        if (nb && nb.dist - halfWidth < required) movePoints.push(pt);
+      }
+      if (movePoints.length === 0) {
+        skip("EdgeClearance", "could not localize the offending trace endpoint", v.message);
+        continue;
+      }
+    }
+
+    // Compute the inward nudge per point; bail if any point has no legal spot.
+    const moves: Array<{ from: Vec2; to: Vec2 }> = [];
+    let corridorFail: string | null = null;
+    for (const pt of movePoints) {
+      // A pad at this point means the copper lands on a component — moving it
+      // would disconnect the pad, and moving the component is out of scope.
+      const onPad = pcb.footprints.some((fp) =>
+        fp.pads.some((pad) => samePoint(padWorld(fp, pad), pt)),
+      );
+      if (onPad) {
+        corridorFail = "endpoint lands on a component pad — fixing requires moving the component";
+        break;
+      }
+      const nb = nearestBoundary(pt, pcb.outline);
+      if (!nb || nb.dist < 1e-9) {
+        corridorFail = "no inward direction from the board edge";
+        break;
+      }
+      const dir = { x: (pt.x - nb.point.x) / nb.dist, y: (pt.y - nb.point.y) / nb.dist };
+      const to = { x: round3(pt.x + dir.x * deficit), y: round3(pt.y + dir.y * deficit) };
+      const after = nearestBoundary(to, pcb.outline);
+      if (!onBoard(to, pcb.outline) || !after || after.dist - halfWidth < required) {
+        corridorFail = "no legal corridor inward (target point still violates edge clearance)";
+        break;
+      }
+      moves.push({ from: pt, to });
+    }
+    if (corridorFail) {
+      skip("EdgeClearance", corridorFail, v.message);
+      continue;
+    }
+    if (dryRun) {
+      planned.push({
+        rule: "EdgeClearance",
+        action: kind === "Via" ? "move_via" : "nudge_trace",
+        detail: `nudge ${moves.length} point(s) inward by ~${round3(deficit)}mm`,
+        net,
+        position: v.position,
+      });
+      budget--;
+      continue;
+    }
+    // Move every same-net copper endpoint coincident with each point together,
+    // so junctions (trace↔trace, trace↔via) stay connected.
+    const allPts = moves.flatMap((mv) => [mv.from, mv.to]);
+    const res = await applyVerified(
+      boundsOfPoints(allPts, halfWidth) as { min: Vec2; max: Vec2 } | "full",
+      () => {
+        const remap = (p: Vec2, elNet: string): Vec2 => {
+          if (elNet !== net) return p;
+          const mv = moves.find((x) => samePoint(x.from, p));
+          return mv ? mv.to : p;
+        };
+        pcb.traces = pcb.traces.map((t) => {
+          const ns = remap(t.start, t.net);
+          const ne = remap(t.end, t.net);
+          return ns === t.start && ne === t.end ? t : { ...t, start: ns, end: ne };
+        });
+        pcb.vias = pcb.vias.map((via) => {
+          const np = remap(via.position, via.net);
+          return np === via.position ? via : { ...via, position: np };
+        });
+      },
+    );
+    if (res.ok) {
+      fixed.push({
+        rule: "EdgeClearance",
+        action: kind === "Via" ? "move_via" : "nudge_trace",
+        detail: `nudged net '${net}' inward by ~${round3(deficit)}mm (${res.delta.resolved} violation(s) resolved)`,
+        net,
+        position: v.position,
+      });
+      budget--;
+    } else {
+      skip("EdgeClearance", `nudge reverted — ${res.reason}`, v.message);
+    }
+  }
+
+  // -- 4) UnconnectedNet / NetIslands: rip-up + re-route the net --------------
+  const rerouteNets: string[] = [];
+  for (const v of viols) {
+    if (v.rule !== "UnconnectedNet" && v.rule !== "NetIslands") continue;
+    const [net] = parseNetPair(v.message);
+    if (net && !rerouteNets.includes(net)) rerouteNets.push(net);
+  }
+  for (const net of rerouteNets) {
+    if (budget <= 0) break;
+    if (pcb.traces.some((t) => t.net === net && t.source === "manual")) {
+      skip(
+        "UnconnectedNet",
+        `net '${net}' carries hand-placed copper — route_nets preserves it wholesale; delete the manual copper first`,
+      );
+      continue;
+    }
+    if (dryRun) {
+      planned.push({
+        rule: "UnconnectedNet",
+        action: "reroute_net",
+        detail: `rip-up + re-route net '${net}' at effort ${effort}`,
+        net,
+      });
+      budget--;
+      continue;
+    }
+    const savedTraces = pcb.traces;
+    const savedVias = pcb.vias;
+    const cap = await beginDrcDelta(pcb, "full");
+    const routeArgs: Record<string, unknown> = ctx.documentId
+      ? { document_id: ctx.documentId, nets: [net], effort }
+      : { document: ctx.doc, nets: [net], effort };
+    const routeResult = (await routeNets(routeArgs)) as {
+      content: Array<{ text?: string }>;
+      isError?: boolean;
+    };
+    if (routeResult.isError) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      skip("UnconnectedNet", `re-route of net '${net}' failed — ${routeResult.content[0]?.text ?? "unknown error"}`);
+      continue;
+    }
+    const delta = await cap.finish();
+    if (delta.unverifiable || delta.introduced > 0 || delta.resolved === 0) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      const reason = delta.unverifiable
+        ? `verification failed: ${delta.unverifiable.reason}`
+        : delta.introduced > 0
+          ? `re-route would introduce ${delta.introduced} new violation(s)`
+          : "re-route did not resolve the connectivity fault";
+      skip("UnconnectedNet", `re-route of net '${net}' reverted — ${reason}`);
+      continue;
+    }
+    fixed.push({
+      rule: "UnconnectedNet",
+      action: "reroute_net",
+      detail: `re-routed net '${net}' at effort ${effort} (${delta.resolved} violation(s) resolved)`,
+      net,
+    });
+    budget--;
+  }
+
+  // -- 5) Everything else: never touched, with the reason on record -----------
+  for (const v of viols) {
+    const reason = FIX_DRC_NEVER[v.rule];
+    if (reason) skip(v.rule, reason, v.message);
+  }
+
+  // Final fail-closed accounting: the after snapshot is the receipt's anchor.
+  const after = dryRun ? before : await drcPcb(pcb, "full", 20);
+  const brief = (s: DrcSummary) => ({
+    violations: s.violations,
+    errors: s.errors,
+    warnings: s.warnings,
+    by_rule: s.byRule,
+    categories: s.categories,
+  });
+  const payload = {
+    success: true,
+    // Verified iff DRC ran before AND after — an unverifiable after-state
+    // means the fixes cannot be certified, regardless of per-fix deltas.
+    verified: after.success,
+    ...(dryRun ? { dry_run: true } : {}),
+    before: brief(before),
+    after: after.success ? brief(after) : null,
+    ...(after.success ? {} : { unverified_reason: (after as DrcUnverifiable).reason }),
+    fixed,
+    ...(dryRun ? { planned } : {}),
+    skipped,
+    fix_count: dryRun ? planned.length : fixed.length,
+    skip_count: skipped.reduce((n, s) => n + s.count, 0),
+    ...docResultPayload(ctx),
+  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+}
+
 /**
  * The ECAD tool surface as a single `ToolDef[]`, assembled by `server.ts` into
  * the ListTools response and the name→def dispatch Map. Descriptions are
@@ -13018,6 +13604,25 @@ export const toolDefs: ToolDef[] = [
     inputSchema: runDrcSchema,
     handler: (a) => runDrc(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({}),
+  },
+  {
+    name: "fix_drc",
+    pack: "ecad",
+    description:
+      "Run DRC and automatically apply the mechanically-safe subset of fixes: " +
+      "stitching vias for UnstitchedPad, dedupe of overlapping same-net via " +
+      "drills (HoleToHole), inward nudges for EdgeClearance when a legal " +
+      "corridor exists, and per-net rip-up + re-route (at higher effort) for " +
+      "UnconnectedNet/NetIslands. Every fix is individually verified with a " +
+      "DRC delta and REVERTED if it would introduce any new violation. Never " +
+      "touches design decisions: different-net shorts/clearance, courtyard " +
+      "overlaps, keepouts, or anything requiring a component move. Returns a " +
+      "fail-closed receipt: before/after violation counts, what was fixed, " +
+      "and what was skipped with the reason. `dry_run` plans without " +
+      "mutating. Mutates the session document (pass document_id).",
+    inputSchema: fixDrcSchema,
+    handler: (a) => fixDrc(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "search_electronic_parts",

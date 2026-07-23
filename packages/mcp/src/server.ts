@@ -513,6 +513,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "render_ratsnest",
   "render_stackup",
   "run_drc",
+  "fix_drc",
   "search_electronic_parts",
   "resolve_part",
   "find_alternatives",

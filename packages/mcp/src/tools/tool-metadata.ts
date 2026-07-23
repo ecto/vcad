@@ -298,6 +298,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   render_ratsnest: { title: "Render Ratsnest", annotations: RO },
   render_stackup: { title: "Render Stackup", annotations: RO },
   run_drc: { title: "Run DRC", annotations: RO },
+  fix_drc: { title: "Fix DRC", annotations: RW },
   search_electronic_parts: { title: "Search Electronic Parts", annotations: RO_NET },
   resolve_part: { title: "Resolve Part", annotations: RO_NET },
   find_alternatives: { title: "Find Alternatives", annotations: RO_NET },
