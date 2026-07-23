@@ -3187,9 +3187,13 @@ export async function routeNets(args: Record<string, unknown>) {
   } else {
     islandsBefore = await netIslandCounts(pcb, guardNets);
     if (islandsBefore) {
+      // Deep clone: Trace.start/.end and Via.position are nested Vec2 objects,
+      // so a shallow spread would leave the snapshot sharing them with live
+      // copper — a future in-place edit during routing would corrupt the
+      // rollback baseline. structuredClone makes the snapshot fully independent.
       copperBefore = {
-        traces: pcb.traces.map((t) => ({ ...t })),
-        vias: pcb.vias.map((v) => ({ ...v })),
+        traces: pcb.traces.map((t) => structuredClone(t)),
+        vias: pcb.vias.map((v) => structuredClone(v)),
       };
     } else {
       guardSkipped =
