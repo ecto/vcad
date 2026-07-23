@@ -18,7 +18,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
-import { commandRegistry } from "@vcad/core";
+import { commandRegistry, getPcbNodeIds } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import {
   documents,
@@ -1425,7 +1425,12 @@ export async function createServer(
           // placed board rendering as "no geometry to preview". `_meta` is
           // ignored by UI-less clients and never model-visible, so the only
           // cost of always attaching is transport bytes.
-          if (def.behavior.mount) {
+          // PCB-mutating tools (route_nets, add_zone, …) aren't mount tools,
+          // but the already-mounted widget's fetch path has the same
+          // dependability problem — without the inline GLB a board-only
+          // session renders "no geometry to preview" after every copper
+          // mutation. Attach for any geometry write on a PCB session too.
+          if (def.behavior.mount || sessionHasPcb(docId)) {
             await attachInlinePreview(result, docId, engine);
           }
         }
@@ -1594,6 +1599,25 @@ function attachPreviewHandle(
       type: "text",
       text: JSON.stringify({ document_id: docId }),
     });
+  }
+}
+
+/**
+ * Does this session document contain a PCB (a `PcbBoard` root or the legacy
+ * bare `doc.pcb`)? Gates the inline `_meta` preview attach for non-mount PCB
+ * mutators — board-only documents have no CAD part scene, so the widget's
+ * fetch fallback is the only alternative and it isn't dependable in every
+ * host.
+ */
+function sessionHasPcb(docId: string): boolean {
+  try {
+    const doc = getSession(docId);
+    return (
+      getPcbNodeIds(doc).length > 0 ||
+      Boolean((doc as { pcb?: unknown }).pcb)
+    );
+  } catch {
+    return false;
   }
 }
 

@@ -12837,7 +12837,7 @@ export const toolDefs: ToolDef[] = [
       "re-checked in one call without running run_drc.",
     inputSchema: setPlacementSchema,
     handler: (a) => setPlacement(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "set_board_outline",
@@ -12846,7 +12846,7 @@ export const toolDefs: ToolDef[] = [
       "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: setBoardOutlineSchema,
     handler: (a) => setBoardOutline(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "add_zone",
@@ -12858,7 +12858,7 @@ export const toolDefs: ToolDef[] = [
       "session document.",
     inputSchema: addZoneSchema,
     handler: (a) => addZone(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "delete_zone",
@@ -12910,7 +12910,7 @@ export const toolDefs: ToolDef[] = [
       "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: addNetTieSchema,
     handler: (a) => addNetTie(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "delete_net_tie",
@@ -12919,7 +12919,7 @@ export const toolDefs: ToolDef[] = [
       "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: deleteNetTieSchema,
     handler: (a) => deleteNetTie(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "undo",
@@ -12968,7 +12968,7 @@ export const toolDefs: ToolDef[] = [
       "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addViaArraySchema,
     handler: (a) => addViaArray(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "add_motor_winding",
@@ -13096,7 +13096,7 @@ export const toolDefs: ToolDef[] = [
       "clear channel); verify with run_drc / critique_route afterwards.",
     inputSchema: routeDiffPairSchema,
     handler: (a) => routeDiffPair(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "length_match_traces",
@@ -13111,7 +13111,7 @@ export const toolDefs: ToolDef[] = [
       "runs carry drc_delta.",
     inputSchema: lengthMatchTracesSchema,
     handler: (a) => lengthMatchTraces(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "critique_route",
