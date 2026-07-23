@@ -12,6 +12,7 @@ mod decimate;
 mod normals;
 pub mod router_state;
 pub mod wavefront;
+pub mod wavefront_batch;
 
 pub use context::{GpuContext, GpuError};
 pub use decimate::{decimate_mesh, DecimationResult};
