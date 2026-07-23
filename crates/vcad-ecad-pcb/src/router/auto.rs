@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use vcad_ir::ecad::{Pcb, PcbLayer};
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
 use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, RatsnestLine};
@@ -523,7 +523,7 @@ pub fn route_all_with_opts(
     let signal_unrouted = still_unrouted.len();
     let mut diagnostics: Vec<UnroutedDiagnostic> = still_unrouted
         .iter()
-        .map(|(net, from, to)| diagnose_unrouted(&session, net, *from, *to, width, &copper))
+        .map(|(net, from, to)| diagnose_unrouted(&session, pcb, net, *from, *to, width, &copper))
         .collect();
 
     let mut unrouted: BTreeSet<String> = still_unrouted.into_iter().map(|(n, _, _)| n).collect();
@@ -559,6 +559,7 @@ pub fn route_all_with_opts(
 /// Build a diagnostic for a signal connection the router could not close.
 fn diagnose_unrouted(
     session: &RouteSession,
+    pcb: &Pcb,
     net: &str,
     from: Vec2,
     to: Vec2,
@@ -567,6 +568,35 @@ fn diagnose_unrouted(
 ) -> UnroutedDiagnostic {
     let w = session.width_for(net, width);
     let clearance = session.clearance_for(net);
+
+    // Root-cause check before the congestion census: a class width wider than
+    // an endpoint's pad that ALSO has no legal necked approach can never land
+    // there — no amount of freeing corridors elsewhere will route it. Name
+    // the pad and the mismatch instead of reporting generic congestion.
+    for &pt in &[from, to] {
+        let Some((fp, pad)) = pad_at(pcb, pt) else {
+            continue;
+        };
+        let Some(pad_w) = pad_min_dim(pad) else {
+            continue;
+        };
+        if w > pad_w + 1e-9 && plan_neckdown(session, pcb, net, pt, w).is_none() {
+            return UnroutedDiagnostic {
+                net: net.to_string(),
+                from,
+                to,
+                blocking_nets: Vec::new(),
+                region_min: Vec2::new(pt.x - NECK_APPROACH_MM, pt.y - NECK_APPROACH_MM),
+                region_max: Vec2::new(pt.x + NECK_APPROACH_MM, pt.y + NECK_APPROACH_MM),
+                suggested_layer: None,
+                suggested_via: None,
+                reason: format!(
+                    "class width {w:.2}mm cannot land on {}.{} pad {pad_w:.2}mm and no clearance-legal neck-down approach exists — reduce the class width or free space around the pad",
+                    fp.reference, pad.number
+                ),
+            };
+        }
+    }
     // A corridor a few tracks wide around the direct path — the band a detour
     // would actually thread, so the blockers reported are the real obstruction.
     let chw = w / 2.0 + clearance + w * 3.0;
@@ -1361,6 +1391,18 @@ pub(super) fn search_route(
     let from_layers = pad_anchor_layers(pcb, from, &copper);
     let to_layers = pad_anchor_layers(pcb, to, &copper);
 
+    // Pad-entry neck-down: a class width wider than an endpoint's pad (a
+    // 1.0 mm power class into a 0.35 mm TSSOP pad) can never legally land —
+    // every search at `w` dies against the neighbouring pads and the net is
+    // reported unrouted with no explanation. When that's the case, plan a
+    // short approach stub at min(pad width, class width) out of the pad and
+    // search from the stub's landing point instead; the stub is carried as a
+    // thin segment so the class width holds everywhere but the final approach.
+    let neck_from = plan_neckdown(session, pcb, net, from, w);
+    let neck_to = plan_neckdown(session, pcb, net, to, w);
+    let sf = neck_from.as_ref().map(|p| p.landing).unwrap_or(from);
+    let st = neck_to.as_ref().map(|p| p.landing).unwrap_or(to);
+
     // Layer-aware maze A* first, biased away from contested regions by the
     // history field. The search prices vias (VIA_COST) so it stays on one
     // layer when it can and dives only when a detour would cost more.
@@ -1380,9 +1422,9 @@ pub(super) fn search_route(
             &pcb.outline.vertices,
             &copper,
             net,
-            from,
+            sf,
             &from_layers,
-            to,
+            st,
             &to_layers,
             w,
             via_d,
@@ -1448,13 +1490,13 @@ pub(super) fn search_route(
         // the DRC-clean invariant.
         let mut found = None;
         for (li, &layer) in copper.iter().enumerate() {
-            if let Some(segs) = try_push_shove(session, pcb, layer, net, from, to, w) {
+            if let Some(segs) = try_push_shove(session, pcb, layer, net, sf, st, w) {
                 let through = (
                     *copper.first().unwrap_or(&PcbLayer::FCu),
                     *copper.last().unwrap_or(&PcbLayer::BCu),
                 );
                 let vias = if li > 0 {
-                    vec![(from, through.0, through.1), (to, through.0, through.1)]
+                    vec![(sf, through.0, through.1), (st, through.0, through.1)]
                 } else {
                     Vec::new()
                 };
@@ -1467,9 +1509,26 @@ pub(super) fn search_route(
         return None;
     };
 
+    // The necked approach stubs (pad → landing) ride along as thin segments:
+    // probed and committed at the neck width, everything else at `w`.
+    let thin_segments: Vec<(Vec2, Vec2, PcbLayer)> = [&neck_from, &neck_to]
+        .into_iter()
+        .flatten()
+        .map(|p| p.stub)
+        .collect();
+    let thin_width = [&neck_from, &neck_to]
+        .into_iter()
+        .flatten()
+        .map(|p| p.width)
+        .fold(f64::INFINITY, f64::min);
+    let thin_width = if thin_width.is_finite() {
+        thin_width
+    } else {
+        width
+    };
     Some(Candidate {
-        thin_segments: vec![],
-        thin_width: width,
+        thin_segments,
+        thin_width,
         net: net.to_string(),
         from,
         to,
@@ -1705,6 +1764,136 @@ fn pad_anchor_layers(pcb: &Pcb, p: Vec2, copper: &[PcbLayer]) -> Vec<PcbLayer> {
         }
     }
     vec![*copper.first().unwrap_or(&PcbLayer::FCu)]
+}
+
+/// The footprint pad (if any) whose world position coincides with `p`.
+fn pad_at(pcb: &Pcb, p: Vec2) -> Option<(&Footprint, &Pad)> {
+    pcb.footprints.iter().find_map(|fp| {
+        fp.pads
+            .iter()
+            .find(|pad| dist(crate::geometry::pad_world_position(fp, pad), p) < 0.01)
+            .map(|pad| (fp, pad))
+    })
+}
+
+/// The narrowest copper dimension of a pad — the widest trace that can land
+/// on it without hanging past its edges. `None` for custom polygon pads.
+fn pad_min_dim(pad: &Pad) -> Option<f64> {
+    match &pad.shape {
+        PadShape::Circle { diameter } => Some(*diameter),
+        PadShape::Rect { width, height }
+        | PadShape::Oval { width, height }
+        | PadShape::RoundRect { width, height, .. } => Some(width.min(*height)),
+        PadShape::Custom { .. } => None,
+    }
+}
+
+/// A planned pad-entry neck-down: the final approach into a pad that the
+/// net's class width cannot legally land on.
+struct NeckPlan {
+    /// Where the full-width route begins/ends (the stub's outer end).
+    landing: Vec2,
+    /// The approach stub (pad → landing) on the pad's layer.
+    stub: (Vec2, Vec2, PcbLayer),
+    /// Stub width: `min(pad width, class width)`.
+    width: f64,
+}
+
+/// Length of the necked pad-entry approach (mm).
+const NECK_APPROACH_MM: f64 = 1.0;
+
+/// Plan a pad-entry neck-down for the endpoint `pad_pt` when the class width
+/// `w` cannot legally land on its pad (class wider than the pad's narrow
+/// dimension). Fans the approach directions outward-first (away from the
+/// footprint origin — out of the pin row on a QFP/TSSOP) and returns the
+/// first direction where the neck stub is clearance-legal AND the landing has
+/// room for the full class width to begin. `None` when the endpoint is not a
+/// pad, the class width lands fine, or no legal approach exists. Pure search
+/// against the session — commits nothing.
+fn plan_neckdown(
+    session: &RouteSession,
+    pcb: &Pcb,
+    net: &str,
+    pad_pt: Vec2,
+    w: f64,
+) -> Option<NeckPlan> {
+    let (fp, pad) = pad_at(pcb, pad_pt)?;
+    let pad_w = pad_min_dim(pad)?;
+    if w <= pad_w + 1e-9 {
+        return None;
+    }
+    let neck_w = pad_w.min(w);
+    let copper = copper_layers(pcb);
+    let layer = pad
+        .layers
+        .iter()
+        .copied()
+        .find(|l| copper.contains(l))
+        .unwrap_or(*copper.first().unwrap_or(&PcbLayer::FCu));
+    let clearance = session.clearance_for(net);
+    let bounded = pcb.outline.vertices.len() >= 3;
+    let out = Vec2::new(pad_pt.x - fp.position.x, pad_pt.y - fp.position.y);
+    let base = if out.x.abs() + out.y.abs() > 1e-9 {
+        out.y.atan2(out.x)
+    } else {
+        0.0
+    };
+    let mut dirs: Vec<f64> = (0..ESCAPE_DIRS)
+        .map(|k| std::f64::consts::TAU * k as f64 / ESCAPE_DIRS as f64)
+        .collect();
+    let ang_diff = |a: f64| {
+        let d = (a - base).rem_euclid(std::f64::consts::TAU);
+        d.min(std::f64::consts::TAU - d)
+    };
+    dirs.sort_by(|a, b| {
+        ang_diff(*a)
+            .partial_cmp(&ang_diff(*b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for ang in dirs {
+        let landing = Vec2::new(
+            pad_pt.x + NECK_APPROACH_MM * ang.cos(),
+            pad_pt.y + NECK_APPROACH_MM * ang.sin(),
+        );
+        if bounded && !point_in_polygon(landing, &pcb.outline.vertices) {
+            continue;
+        }
+        let stub_ok = session
+            .probe(
+                &CopperGeom::Segment {
+                    a: pad_pt,
+                    b: landing,
+                    half_w: neck_w / 2.0,
+                },
+                layer,
+                net,
+                clearance,
+            )
+            .legal;
+        if !stub_ok {
+            continue;
+        }
+        let land_ok = session
+            .probe(
+                &CopperGeom::Disc {
+                    center: landing,
+                    r: w / 2.0,
+                },
+                layer,
+                net,
+                clearance,
+            )
+            .legal;
+        if !land_ok {
+            continue;
+        }
+        return Some(NeckPlan {
+            landing,
+            stub: (pad_pt, landing, layer),
+            width: neck_w,
+        });
+    }
+    None
 }
 
 /// Push-and-shove fallback: route `net` on `layer` with the visibility-graph
@@ -3935,6 +4124,144 @@ mod tests {
                 .probe(&seg, PcbLayer::FCu, "A", session.clearance_for("A"))
                 .legal,
             "the victim's original copper must still be in the session"
+        );
+    }
+
+    fn pad_sized(num: &str, x: f64, y: f64, net: &str, w: f64, h: f64) -> Pad {
+        Pad {
+            shape: PadShape::Rect {
+                width: w,
+                height: h,
+            },
+            ..pad(num, x, y, net)
+        }
+    }
+
+    /// Assign `net` to a class routing at `width` mm.
+    fn with_class(pcb: &mut Pcb, net: &str, width: f64) {
+        pcb.rules.class_rules.push(NetClassRules {
+            name: "power".into(),
+            trace_width: width,
+            clearance: 0.2,
+            via_diameter: 0.8,
+            via_drill: 0.4,
+            diff_pair_gap: None,
+            diff_pair_width: None,
+        });
+        pcb.rules
+            .net_class_assignments
+            .insert("power".into(), vec![net.into()]);
+    }
+
+    /// A wide net class must neck down into a fine-pitch pad instead of being
+    /// silently unroutable (the RP2040/DRV8833 repro: a 1.0 mm power class
+    /// into 0.35 mm pads at 0.65 mm pitch reported UnconnectedNet with no
+    /// explanation).
+    #[test]
+    fn wide_class_necks_down_into_fine_pitch_pad() {
+        // U2: a TSSOP-like pin row at 0.65 mm pitch, 0.35 mm-wide pads; the
+        // middle pad carries the wide-class net "VM", its neighbours other nets.
+        let mut pcb = board(vec![
+            fp("U1", 10.0, 15.0, vec![pad("1", 0.0, 0.0, "VM")]),
+            fp(
+                "U2",
+                30.0,
+                15.0,
+                vec![
+                    pad_sized("11", -0.65, 0.0, "A", 0.35, 0.8),
+                    pad_sized("12", 0.0, 0.0, "VM", 0.35, 0.8),
+                    pad_sized("13", 0.65, 0.0, "B", 0.35, 0.8),
+                ],
+            ),
+        ]);
+        with_class(&mut pcb, "VM", 1.0);
+
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(
+            r.routed_nets.contains(&"VM".to_string())
+                && !r.unrouted_nets.contains(&"VM".to_string()),
+            "VM must route via pad-entry neck-down, got unrouted={:?} diagnostics={:?}",
+            r.unrouted_nets,
+            r.diagnostics.iter().map(|d| &d.reason).collect::<Vec<_>>()
+        );
+
+        // The class width holds on the run, and the pad approach is necked to
+        // the pad width — a short stub touching the pad at < class width.
+        let vm: Vec<_> = r.traces.iter().filter(|t| t.net == "VM").collect();
+        assert!(
+            vm.iter().any(|t| (t.width - 1.0).abs() < 1e-9),
+            "the run must stay at the 1.0mm class width"
+        );
+        let pad_pt = Vec2::new(30.0, 15.0);
+        let neck: Vec<_> = vm
+            .iter()
+            .filter(|t| dist(t.start, pad_pt) < 0.01 || dist(t.end, pad_pt) < 0.01)
+            .collect();
+        assert!(
+            !neck.is_empty(),
+            "a trace must actually land on the fine-pitch pad"
+        );
+        for t in &neck {
+            assert!(
+                t.width <= 0.35 + 1e-9,
+                "the pad approach must be necked to min(pad, class) = 0.35mm, got {}",
+                t.width
+            );
+            assert!(
+                dist(t.start, t.end) <= NECK_APPROACH_MM + 1e-9,
+                "the neck is only the final approach, got {:.2}mm",
+                dist(t.start, t.end)
+            );
+        }
+
+        // And the applied board is still short/clearance clean.
+        assert_eq!(bad_drc(&pcb, &r), 0, "necked board must be DRC-clean");
+    }
+
+    /// When even the neck-down cannot land (the pad is sealed in), the failure
+    /// must name the cause — class width vs pad width, with the pad's identity
+    /// — instead of reporting a bare unconnected net.
+    #[test]
+    fn unroutable_wide_class_names_pad_landing_cause() {
+        // Target pad boxed in by a solid ring of other-net pads: no stub
+        // direction is clearance-legal at any width.
+        let mut pads = vec![pad_sized("1", 0.0, 0.0, "VM", 0.3, 0.3)];
+        for k in 0..12 {
+            let ang = std::f64::consts::TAU * k as f64 / 12.0;
+            pads.push(pad_sized(
+                &format!("R{k}"),
+                0.7 * ang.cos(),
+                0.7 * ang.sin(),
+                "X",
+                0.5,
+                0.5,
+            ));
+        }
+        let mut pcb = board(vec![
+            fp("U1", 10.0, 15.0, vec![pad("1", 0.0, 0.0, "VM")]),
+            fp("U2", 30.0, 15.0, pads),
+        ]);
+        with_class(&mut pcb, "VM", 1.0);
+
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(
+            r.unrouted_nets.contains(&"VM".to_string()),
+            "the sealed pad must leave VM unrouted"
+        );
+        let d = r
+            .diagnostics
+            .iter()
+            .find(|d| d.net == "VM")
+            .expect("VM must carry a diagnostic");
+        assert!(
+            d.reason.contains("cannot land on U2.1 pad 0.30mm"),
+            "diagnostic must name the pad-landing cause, got: {}",
+            d.reason
+        );
+        assert!(
+            d.reason.contains("class width 1.00mm"),
+            "diagnostic must name the class width, got: {}",
+            d.reason
         );
     }
 }
