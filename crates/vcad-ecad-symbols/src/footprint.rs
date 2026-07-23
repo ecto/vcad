@@ -14,11 +14,13 @@
 //!
 //! Supported families: chip passives (0201–2512), SOT-23/-5/-6/-223 and
 //! SC-70/SOT-353/-363, SOIC/SO/SOP/SSOP/TSSOP/MSOP/VSSOP, QFP/LQFP/TQFP/PQFP,
-//! QFN/DFN/SON (with thermal pad), DPAK/D2PAK (TO-252/TO-263), SOD/DO-214
-//! (SMA/SMB/SMC) two-terminal SMD, DIP, pin headers/sockets, screw terminals,
-//! radial electrolytic caps, and wire-to-board / programming / USB connectors:
-//! JST PH/XH/EH (THT) and SH/GH (SMD), Molex Pico-Blade (SMD), Tag-Connect
-//! TC2030/TC2050 spring-pin pads, and a simplified USB-C receptacle. Anything
+//! QFN/DFN/SON (with thermal pad), HTSSOP/TSSOP-EP (PowerPad, with thermal
+//! pad), DPAK/D2PAK (TO-252/TO-263), SOD/DO-214 (SMA/SMB/SMC) two-terminal
+//! SMD, DIP, SMD crystals (2-pad 5032/6035/7050, 4-pad 3225/2520/2016/1612),
+//! pin headers/sockets, screw terminals, radial electrolytic caps, and
+//! wire-to-board / programming / USB connectors: JST PH/XH/EH (THT) and SH/GH
+//! (SMD), Molex Pico-Blade (SMD), Tag-Connect TC2030/TC2050 spring-pin pads,
+//! a USB micro-B receptacle, and a simplified USB-C receptacle. Anything
 //! else falls back to a *compact grid* of pads sized to stay on the board,
 //! flagged `matched: false`.
 
@@ -551,6 +553,53 @@ fn two_pad(name: String, span: f64, pad_w: f64, pad_h: f64) -> FootprintTemplate
 }
 
 // ============================================================================
+// SMD crystals (2-pad 5032/6035/7050, 4-pad 3225/2520/2016/1612)
+// ============================================================================
+
+/// Two-terminal SMD crystal (e.g. 5032 = 5.0 × 3.2 mm body): one pad at each
+/// end, sized off the body per IPC-7351 chip-like proportions with a small toe
+/// past the body edge.
+fn crystal_2pad(code: &str, body_w: f64, body_h: f64) -> FootprintTemplate {
+    let pad_w = body_w * 0.38;
+    let pad_h = body_h * 0.75;
+    let cx = body_w / 2.0 - pad_w / 2.0 + 0.45;
+    let mut graphics = silk_rect(-body_w / 2.0, -body_h / 2.0, body_w / 2.0, body_h / 2.0);
+    graphics.push(pin1_dot(-cx - pad_w / 2.0 - 0.4, 0.0));
+    graphics.push(courtyard(cx + pad_w / 2.0 + 0.25, pad_h / 2.0 + 0.25));
+    FootprintTemplate {
+        name: format!("Crystal_{code}"),
+        pads: vec![
+            rect_smd("1", -cx, 0.0, pad_w, pad_h),
+            rect_smd("2", cx, 0.0, pad_w, pad_h),
+        ],
+        graphics,
+    }
+}
+
+/// Four-terminal SMD crystal (e.g. 3225 = 3.2 × 2.5 mm body): one pad per
+/// corner, numbered CCW from pin 1 at the bottom-left (KiCad convention —
+/// pins 2 and 4 are usually the grounded case pads).
+fn crystal_4pad(code: &str, body_w: f64, body_h: f64) -> FootprintTemplate {
+    let pad_w = body_w * 0.44;
+    let pad_h = body_h * 0.46;
+    let cx = body_w / 2.0 - pad_w / 2.0 + 0.2;
+    let cy = body_h / 2.0 - pad_h / 2.0 + 0.2;
+    let mut graphics = silk_rect(-body_w / 2.0, -body_h / 2.0, body_w / 2.0, body_h / 2.0);
+    graphics.push(pin1_dot(-cx - pad_w / 2.0 - 0.4, cy + pad_h / 2.0 + 0.4));
+    graphics.push(courtyard(cx + pad_w / 2.0 + 0.25, cy + pad_h / 2.0 + 0.25));
+    FootprintTemplate {
+        name: format!("Crystal_{code}"),
+        pads: vec![
+            rect_smd("1", -cx, cy, pad_w, pad_h),
+            rect_smd("2", cx, cy, pad_w, pad_h),
+            rect_smd("3", cx, -cy, pad_w, pad_h),
+            rect_smd("4", -cx, -cy, pad_w, pad_h),
+        ],
+        graphics,
+    }
+}
+
+// ============================================================================
 // Connectors: pin headers / sockets, screw terminals, radial electrolytics
 // ============================================================================
 
@@ -720,6 +769,52 @@ fn tag_connect(pins: u32) -> FootprintTemplate {
     graphics.push(courtyard(half_w + 0.25, half_h + 0.25));
     FootprintTemplate {
         name: format!("TagConnect-{}", per_col * 2),
+        pads,
+        graphics,
+    }
+}
+
+// ============================================================================
+// USB micro-B receptacle: 5 SMD contacts + 4 THT shield/retention posts
+// ============================================================================
+
+/// USB micro-B receptacle: five 0.65 mm-pitch SMD signal contacts
+/// (VBUS/D−/D+/ID/GND, pins 1–5) plus four through-hole shield/retention
+/// posts numbered SH1–SH4 (mechanical — no declared pin, so they stay clear
+/// of the signal nets). Land dims follow the common Molex/Amphenol 5-pin SMD
+/// receptacle; use inline `pads` when an exact vendor drawing matters.
+fn usb_micro_b() -> FootprintTemplate {
+    let pitch = 0.65;
+    let span = 4.0 * pitch;
+    let row_y = -1.25;
+    let mut pads = Vec::new();
+    for i in 0..5u32 {
+        let x = -span / 2.0 + i as f64 * pitch;
+        pads.push(rect_smd(&(i + 1).to_string(), x, row_y, 0.4, 1.35));
+    }
+    // Shield / retention posts (through-hole), one per corner.
+    let drill = tht_drill(0.65);
+    let pad_dia = tht_pad(drill, 0.3);
+    let post_x = 2.9;
+    for (k, (sx, sy)) in [(-1.0, -1.55), (1.0, -1.55), (-1.0, 1.65), (1.0, 1.65)]
+        .iter()
+        .enumerate()
+    {
+        pads.push(circle_tht(
+            &format!("SH{}", k + 1),
+            sx * post_x,
+            *sy,
+            pad_dia,
+            drill,
+        ));
+    }
+    let half_w = post_x + 1.0;
+    let half_h = 2.6;
+    let mut graphics = silk_rect(-half_w, -half_h, half_w, half_h);
+    graphics.push(pin1_dot(-span / 2.0 - 0.5, row_y - 0.8));
+    graphics.push(courtyard(half_w + 0.25, half_h + 0.25));
+    FootprintTemplate {
+        name: "USB-Micro-B".to_string(),
         pads,
         graphics,
     }
@@ -1008,6 +1103,51 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
         }
     }
 
+    // --- SMD crystals -------------------------------------------------------
+    // Keyed on the `Crystal` token only (a bare `Xtal` in a vendor id stays in
+    // the generic fallback). 2- vs 4-pad decided by an explicit `-2Pin`/`-4Pin`
+    // marker, then the size code, then the declared pin count.
+    if base.contains("Crystal") {
+        // (code, body_w, body_h, four_pad_default)
+        let by_code = [
+            ("3225", 3.2, 2.5, true),
+            ("2520", 2.5, 2.0, true),
+            ("2016", 2.0, 1.6, true),
+            ("1612", 1.6, 1.2, true),
+            ("7050", 7.0, 5.0, false),
+            ("6035", 6.0, 3.5, false),
+            ("5032", 5.0, 3.2, false),
+        ]
+        .into_iter()
+        .find(|(code, ..)| base.contains(code));
+        let (code, mut body_w, mut body_h, four_default) = by_code.unwrap_or({
+            if pin_count == 4 {
+                ("3225", 3.2, 2.5, true)
+            } else {
+                ("5032", 5.0, 3.2, false)
+            }
+        });
+        if let Some((w, h)) = body_mm(base) {
+            body_w = w;
+            body_h = h;
+        }
+        let four = if base.contains("-2Pin") || base.contains("_2Pin") {
+            false
+        } else if base.contains("-4Pin") || base.contains("_4Pin") {
+            true
+        } else if pin_count == 2 || pin_count == 4 {
+            pin_count == 4
+        } else {
+            four_default
+        };
+        let fp = if four {
+            crystal_4pad(code, body_w, body_h)
+        } else {
+            crystal_2pad(code, body_w, body_h)
+        };
+        return Some((fp, "Crystal"));
+    }
+
     // --- Screw terminals / terminal blocks ---------------------------------
     if base.contains("TerminalBlock") || base.contains("Screw_Terminal") {
         let positions = rows_cols(base)
@@ -1037,6 +1177,19 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
         let pitch = float_after(base, "_P").unwrap_or(5.0);
         let body = float_after(base, "_D").unwrap_or(6.3);
         return Some((radial_electrolytic(pitch, body), "Electrolytic"));
+    }
+
+    // --- USB micro-B receptacle --------------------------------------------
+    // Matched before USB-C so "Micro" wins even if a vendor id also carries a
+    // generic USB token.
+    if base.contains("USB_Micro")
+        || base.contains("USB-Micro")
+        || base.contains("Micro-B")
+        || base.contains("Micro_B")
+        || base.contains("MicroUSB")
+        || base.contains("Micro_USB")
+    {
+        return Some((usb_micro_b(), "USB-Micro-B"));
     }
 
     // --- USB-C receptacle (simplified) -------------------------------------
@@ -1318,10 +1471,42 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
         }
     }
 
+    // --- HTSSOP / TSSOP-EP (PowerPad: exposed thermal pad) ------------------
+    // Must run before the plain SOIC/TSSOP loop, which would otherwise match
+    // the HTSSOP token and silently drop the exposed pad — the pad a motor
+    // driver like the DRV8833PWP dumps its heat into. The EP size is parsed
+    // from KiCad's `_EP<w>x<h>mm` token when present, else defaulted off the
+    // body. The board still owes the EP a thermal via field (board-level, not
+    // part of the land pattern).
+    let has_ep_marker = base.contains("-1EP") || base.contains("_EP");
+    if base.contains("HTSSOP")
+        || base.contains("PowerPAD")
+        || base.contains("PowerPad")
+        || (base.contains("TSSOP") && has_ep_marker)
+    {
+        let pins = family_pins(base, &["HTSSOP-", "TSSOP-"], pin_count).max(4);
+        let pins = if pins.is_multiple_of(2) {
+            pins
+        } else {
+            pins + 1
+        };
+        let pitch = float_after(base, "_P").unwrap_or(0.65);
+        let body_w = body_mm(base).map(|(w, _)| w).unwrap_or(4.4);
+        let mut fp = dual_lr(format!("HTSSOP-{pins}"), pins, pitch, body_w, 1.0, 0.3);
+        let (ep_w, ep_h) = base
+            .find("_EP")
+            .and_then(|i| body_mm(&base[i + 3..]))
+            .unwrap_or((
+                (body_w * 0.55).max(1.5),
+                (pins as f64 / 2.0 * pitch * 0.55).max(1.5),
+            ));
+        fp.pads.push(rect_smd("EP", 0.0, 0.0, ep_w, ep_h));
+        return Some((fp, "HTSSOP"));
+    }
+
     // --- SOIC / SO / SOP / SSOP / TSSOP / MSOP / VSSOP ----------------------
     // Longest markers first so TSSOP isn't shadowed by SOP/SO.
     for (marker, pitch, body_w, lead_len, lead_wid, label) in [
-        ("HTSSOP-", 0.65, 4.4, 1.0, 0.3, "TSSOP"),
         ("TSSOP-", 0.65, 4.4, 1.0, 0.3, "TSSOP"),
         ("VSSOP-", 0.5, 3.0, 0.9, 0.3, "VSSOP"),
         ("MSOP-", 0.65, 3.0, 0.9, 0.3, "MSOP"),
@@ -1450,8 +1635,9 @@ pub fn resolve_footprint(name: &str, pin_count: u32) -> FootprintResolution {
             family: None,
             note: format!(
                 "unrecognized footprint '{base}'; substituted a 0805 chip placeholder. \
-                 Pass a recognized KiCad footprint id (chip/SOIC/QFN/QFP/SOT/DPAK/JST/Molex/\
-                 USB-C/Tag-Connect/pin-header/screw-terminal) or inline `pads` geometry to fix."
+                 Pass a recognized KiCad footprint id (chip/SOIC/QFN/QFP/HTSSOP/SOT/DPAK/crystal/\
+                 JST/Molex/USB-Micro-B/USB-C/Tag-Connect/pin-header/screw-terminal) or \
+                 inline `pads` geometry to fix."
             ),
         },
         n => FootprintResolution {
@@ -1460,8 +1646,9 @@ pub fn resolve_footprint(name: &str, pin_count: u32) -> FootprintResolution {
             family: None,
             note: format!(
                 "unrecognized footprint '{base}'; substituted a compact {n}-pad grid placeholder. \
-                 Pass a recognized KiCad footprint id (chip/SOIC/QFN/QFP/SOT/DPAK/JST/Molex/\
-                 USB-C/Tag-Connect/pin-header/screw-terminal) or inline `pads` geometry to fix."
+                 Pass a recognized KiCad footprint id (chip/SOIC/QFN/QFP/HTSSOP/SOT/DPAK/crystal/\
+                 JST/Molex/USB-Micro-B/USB-C/Tag-Connect/pin-header/screw-terminal) or \
+                 inline `pads` geometry to fix."
             ),
         },
     }
@@ -2127,6 +2314,171 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Crystals, USB micro-B, HTSSOP (exposed pad)
+    // ------------------------------------------------------------------
+
+    /// The RP2040 repro: a 4-pad 3225 crystal used to fall back to an R_1206
+    /// stand-in. It must now resolve to a real 4-corner-pad land.
+    #[test]
+    fn crystal_3225_four_pads() {
+        for (id, n) in [
+            ("Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm", 4u32),
+            ("Crystal_SMD_2520-4Pin_2.5x2.0mm", 4),
+        ] {
+            let r = resolve_footprint(id, n);
+            assert!(r.matched, "{id} should match, got {:?}", r);
+            assert_eq!(r.family.as_deref(), Some("Crystal"), "{id}");
+            let fp = r.template.unwrap();
+            assert_eq!(fp.pads.len(), 4, "{id}: four corner pads");
+            assert_eq!(positions_unique(&fp), 4, "{id}");
+            assert!(fp.pads.iter().all(|p| p.pad_type == PadType::SMD));
+            // Pads occupy all four quadrants (corner layout, not a row).
+            let quads: std::collections::BTreeSet<(bool, bool)> = fp
+                .pads
+                .iter()
+                .map(|p| (p.position.x > 0.0, p.position.y > 0.0))
+                .collect();
+            assert_eq!(quads.len(), 4, "{id}: one pad per corner");
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, 3.0);
+        }
+    }
+
+    #[test]
+    fn crystal_2pad_variants() {
+        for (id, body_w) in [
+            ("Crystal:Crystal_SMD_5032-2Pin_5.0x3.2mm", 5.0),
+            ("Crystal_SMD_6035", 6.0),
+        ] {
+            let r = resolve_footprint(id, 2);
+            assert!(r.matched, "{id}");
+            assert_eq!(r.family.as_deref(), Some("Crystal"), "{id}");
+            let fp = r.template.unwrap();
+            assert_eq!(fp.pads.len(), 2, "{id}");
+            // End pads straddle the body along x.
+            let dx = (fp.pads[0].position.x - fp.pads[1].position.x).abs();
+            assert!(
+                dx > body_w * 0.5 && dx < body_w + 1.0,
+                "{id}: pad span {dx} vs body {body_w}"
+            );
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, body_w);
+        }
+    }
+
+    #[test]
+    fn crystal_pin_count_disambiguates_pad_style() {
+        // No size code, no -NPin marker: the declared pin count decides.
+        assert_eq!(
+            resolve_footprint("Crystal_SMD_Generic", 4)
+                .template
+                .unwrap()
+                .pads
+                .len(),
+            4
+        );
+        assert_eq!(
+            resolve_footprint("Crystal_SMD_Generic", 2)
+                .template
+                .unwrap()
+                .pads
+                .len(),
+            2
+        );
+        // A bare "Xtal" vendor id stays in the generic fallback (locked by
+        // standard_tht_parts_are_not_oversized's Mystery4PinXtal case too).
+        assert!(!resolve_footprint("Vendor:Mystery4PinXtal", 4).matched);
+    }
+
+    #[test]
+    fn usb_micro_b_contacts_plus_shield() {
+        for id in [
+            "Connector_USB:USB_Micro-B_Molex-105017-0001",
+            "USB_Micro-B_Amphenol_10103594-0001LF_Horizontal",
+        ] {
+            let r = resolve_footprint(id, 5);
+            assert!(r.matched, "{id}");
+            assert_eq!(r.family.as_deref(), Some("USB-Micro-B"), "{id}");
+            let fp = r.template.unwrap();
+            // Five SMD signal contacts numbered 1..=5 at 0.65mm pitch.
+            let mut xs: Vec<f64> = fp
+                .pads
+                .iter()
+                .filter(|p| p.number.parse::<u32>().is_ok())
+                .map(|p| p.position.x)
+                .collect();
+            assert_eq!(xs.len(), 5, "{id}: five signal contacts");
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            assert!((xs[1] - xs[0] - 0.65).abs() < 1e-6, "{id}: 0.65mm pitch");
+            // Four THT shield posts, mechanical numbering.
+            let shields: Vec<&Pad> = fp
+                .pads
+                .iter()
+                .filter(|p| p.number.starts_with("SH"))
+                .collect();
+            assert_eq!(shields.len(), 4, "{id}: four shield posts");
+            assert!(shields.iter().all(|p| p.pad_type == PadType::THT));
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, 5.0);
+            assert!(worst_hole_to_hole(&fp) >= 0.5 - 1e-9, "{id}: hole-to-hole");
+        }
+    }
+
+    /// The DRV8833PWP repro: HTSSOP must keep its exposed thermal pad instead
+    /// of degrading to a plain TSSOP land (which starves the motor driver of
+    /// its heat path).
+    #[test]
+    fn htssop_keeps_exposed_pad() {
+        for (id, pins) in [
+            ("Package_SO:HTSSOP-16-1EP_4.4x5mm_P0.65mm_EP3.4x5mm", 16u32),
+            ("HTSSOP-16", 16),
+            ("Package_SO:TSSOP-20-1EP_4.4x6.5mm_P0.65mm", 20),
+        ] {
+            let r = resolve_footprint(id, pins);
+            assert!(r.matched, "{id}");
+            assert_eq!(r.family.as_deref(), Some("HTSSOP"), "{id}");
+            let fp = r.template.unwrap();
+            assert_eq!(
+                fp.pads.len(),
+                pins as usize + 1,
+                "{id}: leads + exposed pad"
+            );
+            let ep = fp
+                .pads
+                .iter()
+                .find(|p| p.number == "EP")
+                .unwrap_or_else(|| panic!("{id}: EP pad missing"));
+            assert_eq!(ep.pad_type, PadType::SMD);
+            assert!(
+                (ep.position.x.abs() + ep.position.y.abs()) < 1e-9,
+                "{id}: EP centered"
+            );
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, 5.0);
+        }
+        // The KiCad `_EP<w>x<h>mm` token sizes the pad exactly.
+        let fp = resolve_footprint("Package_SO:HTSSOP-16-1EP_4.4x5mm_P0.65mm_EP3.4x5mm", 16)
+            .template
+            .unwrap();
+        let ep = fp.pads.iter().find(|p| p.number == "EP").unwrap();
+        match ep.shape {
+            PadShape::Rect { width, height } => {
+                assert!((width - 3.4).abs() < 1e-9 && (height - 5.0).abs() < 1e-9);
+            }
+            _ => panic!("EP must be rect"),
+        }
+    }
+
+    #[test]
+    fn plain_tssop_still_has_no_ep() {
+        let fp = resolve_footprint("Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm", 20)
+            .template
+            .unwrap();
+        assert!(fp.pads.iter().all(|p| p.number != "EP"));
+        assert_eq!(fp.pads.len(), 20);
     }
 
     /// Across every THT family the generator emits, drilled holes must clear the
