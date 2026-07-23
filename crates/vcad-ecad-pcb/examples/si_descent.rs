@@ -17,11 +17,6 @@ use vcad_ecad_pcb::spatial::CopperGeom;
 use vcad_ir::ecad::{Pcb, PcbLayer, Trace};
 use vcad_ir::Vec2;
 
-fn polyline_layer(pcb: &Pcb, net: &str) -> Option<PcbLayer> {
-    let mut layers = pcb.traces.iter().filter(|t| t.net == net).map(|t| t.layer);
-    let first = layers.next()?;
-    layers.all(|l| l == first).then_some(first)
-}
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -229,16 +224,6 @@ fn main() {
         let mut work = pcb.clone();
         work.traces.retain(|t| t.net != *pn && t.net != *nn);
         let vsession = RouteSession::from_pcb(&work);
-        let legal = |pts: &[Vec2], net: &str, layer: PcbLayer, w: f64| -> bool {
-            pts.windows(2).all(|seg| {
-                let g = CopperGeom::Segment {
-                    a: seg[0],
-                    b: seg[1],
-                    half_w: w / 2.0,
-                };
-                vsession.probe(&g, layer, net, clearance).legal
-            })
-        };
         let diag = |pts: &[Vec2], net: &str, layer: PcbLayer, w: f64| {
             for seg in pts.windows(2) {
                 let g = CopperGeom::Segment {
