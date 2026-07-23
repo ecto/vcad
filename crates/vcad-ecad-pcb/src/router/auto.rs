@@ -458,10 +458,11 @@ pub fn route_all_with_opts(
     // Maze rescue for pads the radial dog-bone couldn't escape (issue: a
     // fine-pitch pad boxed in by already-routed copper has no *straight*
     // stub out, but a bent path threads it). Route the pad to the nearest
-    // same-net stitched point — a stitching via or a pad sitting directly on
-    // its plane — with the full maze arsenal; any path it finds (including
-    // vias it drops itself) reaches the plane galvanically. Only pads that
-    // still fail here are reported as UnstitchedPad.
+    // same-net stitched point — a stitching via, a pad sitting directly on
+    // its plane, or a same-net trace already laid on a plane layer — with the
+    // full maze arsenal; any path it finds (including vias it drops itself)
+    // reaches the plane galvanically. Only pads that still fail here are
+    // reported as UnstitchedPad.
     let failed = std::mem::take(&mut stitch.failed_pads);
     for (net, pad_pt) in failed {
         let mut targets: Vec<Vec2> = stitch
@@ -480,7 +481,21 @@ pub fn route_all_with_opts(
                     }
                 }
             }
+            // Same-net copper already routed onto a plane layer is a galvanic
+            // target too — a signal route that dived to the plane layer floods
+            // into the pour, so a segment endpoint there reaches the plane.
+            for p in placed.iter().filter(|p| p.net == net) {
+                for &(a, b, l) in &p.segments {
+                    if layers.contains(&l) {
+                        targets.push(a);
+                        targets.push(b);
+                    }
+                }
+            }
         }
+        // Never route the pad to itself (a same-net pad coincident with it, or
+        // a zero-length target) — that is not a path to the plane.
+        targets.retain(|t| dist(*t, pad_pt) > 1e-6);
         targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
         let mut rescued = false;
         for t in targets.into_iter().take(3) {
