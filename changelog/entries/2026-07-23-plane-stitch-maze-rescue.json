@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-plane-stitch-maze-rescue",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "Plane stitching escapes boxed-in fine-pitch pads",
+  "summary": "route_nets now maze-routes a bent escape to the plane when a fine-pitch pad can't take an at-pad or straight dog-bone stitching via, instead of reporting UnstitchedPad.",
+  "features": ["pcb", "autorouter", "drc"],
+  "mcpTools": ["route_nets", "run_drc"]
+}
