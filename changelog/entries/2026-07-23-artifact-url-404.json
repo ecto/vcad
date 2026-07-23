@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-artifact-url-404",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "Artifact links no longer 404",
+  "summary": "mcp.vcad.io artifact URLs (render PNGs, fab bundles) now survive across serverless instances, and a local MCP server no longer mints absolute hosted URLs it cannot serve.",
+  "features": ["mcp", "artifacts"],
+  "mcpTools": ["render_pcb", "render_view", "export_gerber", "export_cad"]
+}
