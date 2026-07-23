@@ -7014,7 +7014,8 @@ const FOOTPRINT_FAMILIES: FootprintFamily[] = [
   { family: "QFP", label: "Quad flat package (LQFP/TQFP/PQFP)", aliases: ["QFP", "LQFP", "TQFP", "PQFP", "CQFP"], kind: "ic", pins: "multiple of 4, ≥8", pitch_mm: "0.4–0.8", example: "LQFP-48", example_pins: 48 },
   { family: "SOIC", label: "Small-outline IC (SO/SOP)", aliases: ["SOIC", "SO", "SOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "1.27", example: "SOIC-8", example_pins: 8 },
   { family: "SSOP", label: "Shrink small-outline (QSOP)", aliases: ["SSOP", "QSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.635–0.65", example: "SSOP-16", example_pins: 16 },
-  { family: "TSSOP", label: "Thin shrink small-outline", aliases: ["TSSOP", "HTSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "TSSOP-20", example_pins: 20 },
+  { family: "TSSOP", label: "Thin shrink small-outline", aliases: ["TSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "TSSOP-20", example_pins: 20 },
+  { family: "HTSSOP", label: "TSSOP with exposed thermal pad (PowerPad)", aliases: ["HTSSOP", "PowerPad", "PowerPAD", "TSSOP-EP", "HTSSOP-16", "PWP"], kind: "ic", pins: "even, ≥4 (+EP)", pitch_mm: "0.65", example: "HTSSOP-16-1EP_4.4x5mm_P0.65mm_EP3.4x5mm", example_pins: 16 },
   { family: "MSOP", label: "Mini small-outline", aliases: ["MSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "MSOP-8", example_pins: 8 },
   { family: "VSSOP", label: "Very-thin shrink small-outline", aliases: ["VSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.5", example: "VSSOP-8", example_pins: 8 },
   { family: "DIP", label: "Dual in-line (through-hole)", aliases: ["DIP", "PDIP"], kind: "ic", pins: "even, ≥4", pitch_mm: "2.54", example: "DIP-8", example_pins: 8 },
@@ -7031,7 +7032,9 @@ const FOOTPRINT_FAMILIES: FootprintFamily[] = [
   { family: "JST-GH", label: "JST GH wire-to-board (1.25mm SMD)", aliases: ["JST_GH", "JST-GH"], kind: "connector", pins: "2+", pitch_mm: "1.25", example: "JST_GH_4", example_pins: 4 },
   { family: "Molex-PicoBlade", label: "Molex Pico-Blade (1.25mm SMD)", aliases: ["PicoBlade", "Pico-Blade", "53048", "53261"], kind: "connector", pins: "2+", pitch_mm: "1.25", example: "Molex_PicoBlade_1x04_P1.25mm", example_pins: 4 },
   { family: "Tag-Connect", label: "Tag-Connect spring-pin programming pads", aliases: ["Tag-Connect", "TagConnect", "TC2030", "TC2050"], kind: "connector", pins: "6 (TC2030), 10 (TC2050)", pitch_mm: "1.27", example: "TC2030", example_pins: 6 },
-  { family: "USB-C", label: "USB-C receptacle (simplified)", aliases: ["USB_C", "USB-C", "Type-C", "TypeC"], kind: "connector", pins: "up to 24", pitch_mm: "0.5", example: "USB-C", example_pins: 24 },
+  { family: "USB-C", label: "USB-C receptacle (simplified; 16-pin USB 2.0 subset or full 24)", aliases: ["USB_C", "USB-C", "Type-C", "TypeC", "USB-C-16"], kind: "connector", pins: "up to 24 (+4 shield posts)", pitch_mm: "0.5–1.0", example: "USB-C", example_pins: 24 },
+  { family: "USB-Micro-B", label: "USB micro-B receptacle (5 contacts + shield posts)", aliases: ["USB_Micro-B", "USB-Micro", "USB Micro", "MicroUSB", "Micro_USB", "Micro-B"], kind: "connector", pins: "5 (+4 shield posts)", pitch_mm: "0.65", example: "USB_Micro-B_Molex-105017-0001", example_pins: 5 },
+  { family: "Crystal", label: "SMD crystal (2-pad 5032/6035/7050, 4-pad 3225/2520/2016/1612)", aliases: ["Crystal", "Crystal_SMD", "3225", "2520", "2016", "1612", "5032", "6035", "7050", "XTAL"], kind: "passive", pins: "2 or 4", pitch_mm: "n/a", example: "Crystal_SMD_3225-4Pin_3.2x2.5mm", example_pins: 4 },
 ];
 
 /** Relevance score of a family for a query (0..1) — exact alias, substring,
