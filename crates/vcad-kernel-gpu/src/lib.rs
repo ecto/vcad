@@ -9,6 +9,7 @@
 
 mod context;
 mod decimate;
+pub mod narrowphase;
 mod normals;
 pub mod router_state;
 pub mod wavefront;
