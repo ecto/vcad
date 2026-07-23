@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-crystal-usb-htssop-footprints",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "feat",
+  "title": "Crystal, USB micro-B, and HTSSOP PowerPad footprints",
+  "summary": "The parametric footprint engine now resolves SMD crystals (5032/6035 2-pad, 3225/2520 4-pad), USB micro-B receptacles, and HTSSOP/TSSOP-EP packages with their exposed thermal pad.",
+  "features": ["pcb", "footprints", "crystal", "usb", "htssop"],
+  "mcpTools": ["search_footprints", "list_footprints", "create_schematic", "place_components"]
+}

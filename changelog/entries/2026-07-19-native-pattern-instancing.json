@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-native-pattern-instancing",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "perf",
+  "title": "Native app renders patterns as shared-mesh instances",
+  "summary": "Linear/circular pattern parts in the macOS app now tessellate the seed once and render N transformed instances, instead of N unioned tessellations.",
+  "features": ["native-app", "patterns", "viewport"]
+}

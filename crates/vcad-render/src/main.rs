@@ -129,6 +129,16 @@ struct Cli {
     #[arg(long)]
     transparent: bool,
 
+    /// Force the top-down PCB board view (Studio Graphite) even when
+    /// auto-detection would pick the isometric projection. SVG only.
+    #[arg(long)]
+    pcb: bool,
+
+    /// Force the isometric mesh projection for documents that contain a
+    /// PCB (auto-detection normally selects the board view for those).
+    #[arg(long)]
+    no_pcb: bool,
+
     /// Multi-view drawing sheet (front/side/top/iso in third-angle
     /// arrangement at one shared scale, with a title block) instead of a
     /// single view. Uses `--size` as the sheet width; SVG and JPEG only.
@@ -367,6 +377,28 @@ fn render_sheet_one(
     std::fs::write(dest, bytes).map_err(|e| format!("write {}: {}", dest.display(), e))
 }
 
+/// Top-down PCB board render with the standard 2-layer + silk + edge
+/// layer set. Dark "Studio Graphite" theme; ratsnest on so unrouted
+/// boards show their crime.
+fn render_pcb_view(pcb: &vcad_ir::ecad::Pcb, cli: &Cli) -> String {
+    use vcad_ir::ecad::PcbLayer;
+    let layers = [
+        PcbLayer::BCu,
+        PcbLayer::FCu,
+        PcbLayer::FSilkS,
+        PcbLayer::EdgeCuts,
+    ];
+    vcad_render::pcb::render_pcb_svg_opts(
+        pcb,
+        &layers,
+        cli.scale,
+        &vcad_render::pcb::PcbRenderOpts {
+            transparent: cli.transparent,
+            ..Default::default()
+        },
+    )
+}
+
 /// Render one input to `dest` (`None` = SVG on stdout) in `format`. With
 /// `--sheet`, a multi-view drawing sheet replaces the single view.
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
@@ -383,6 +415,26 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
     }
     let bytes = match format {
         Format::Svg => {
+            // ECAD documents get the top-down board view (copper/silk, the
+            // view an EDA tool shows) instead of a flat green isometric
+            // slab. Auto-detected; --pcb forces it, --no-pcb suppresses it.
+            if !cli.no_pcb {
+                if let Some(pcb) = vcad_render::extract_pcb(&raw) {
+                    let svg = render_pcb_view(&pcb, cli);
+                    match dest {
+                        None => {
+                            println!("{}", svg);
+                            return Ok(());
+                        }
+                        Some(dest) => {
+                            return std::fs::write(dest, svg.into_bytes())
+                                .map_err(|e| format!("write {}: {}", dest.display(), e));
+                        }
+                    }
+                } else if cli.pcb {
+                    return Err("--pcb: document contains no PCB".to_string());
+                }
+            }
             let svg = render_svg_str_opts(
                 &raw,
                 cli.scale,

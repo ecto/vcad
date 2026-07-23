@@ -1,0 +1,1444 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "PCB Board",
+      "op": {
+        "type": "PcbBoard",
+        "board": {
+          "outline": {
+            "vertices": [
+              {
+                "x": 0,
+                "y": 0
+              },
+              {
+                "x": 50,
+                "y": 0
+              },
+              {
+                "x": 50,
+                "y": 40
+              },
+              {
+                "x": 0,
+                "y": 40
+              }
+            ],
+            "thickness": 1.6
+          },
+          "stackup": {
+            "layers": [
+              {
+                "layer": "FCu",
+                "copperThickness": 0.035,
+                "dielectricThickness": 1.53,
+                "dielectricEr": 4.5,
+                "material": "FR4"
+              },
+              {
+                "layer": "BCu",
+                "copperThickness": 0.035
+              }
+            ]
+          },
+          "nets": [
+            {
+              "id": "GATE_A_HI",
+              "name": "GATE_A_HI"
+            },
+            {
+              "id": "OUT_A",
+              "name": "OUT_A"
+            },
+            {
+              "id": "VMOT",
+              "name": "VMOT"
+            },
+            {
+              "id": "GATE_A_LO",
+              "name": "GATE_A_LO"
+            },
+            {
+              "id": "GND",
+              "name": "GND"
+            },
+            {
+              "id": "GATE_B_HI",
+              "name": "GATE_B_HI"
+            },
+            {
+              "id": "OUT_B",
+              "name": "OUT_B"
+            },
+            {
+              "id": "GATE_B_LO",
+              "name": "GATE_B_LO"
+            }
+          ],
+          "rules": {
+            "defaultRules": {
+              "name": "Default",
+              "traceWidth": 0.25,
+              "clearance": 0.2,
+              "viaDiameter": 0.8,
+              "viaDrill": 0.4
+            },
+            "edgeClearance": 2,
+            "holeToHole": 0.5,
+            "minAnnularRing": 0.15,
+            "minDrill": 0.2,
+            "classRules": [
+              {
+                "name": "power",
+                "traceWidth": 0.8,
+                "clearance": 0.3,
+                "viaDiameter": 0.8,
+                "viaDrill": 0.4
+              }
+            ],
+            "netClassAssignments": {
+              "power": [
+                "VMOT",
+                "GND",
+                "OUT_A",
+                "OUT_B"
+              ]
+            }
+          },
+          "footprints": [
+            {
+              "ref": "Q1",
+              "value": "NMOS",
+              "footprintName": "SOT-23",
+              "position": {
+                "x": 23,
+                "y": 17
+              },
+              "rotation": 0,
+              "front": true,
+              "pads": [
+                {
+                  "number": "1",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": -0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "GATE_A_HI"
+                },
+                {
+                  "number": "2",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "OUT_A"
+                },
+                {
+                  "number": "3",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "VMOT"
+                }
+              ],
+              "graphics": [
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Circle",
+                  "center": {
+                    "x": -1.5499999999999998,
+                    "y": -1.1500000000000001
+                  },
+                  "radius": 0.25,
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Rect",
+                  "start": {
+                    "x": -1.4,
+                    "y": -1
+                  },
+                  "end": {
+                    "x": 1.4,
+                    "y": 1
+                  },
+                  "width": 0.05,
+                  "layer": "FCrtYd"
+                }
+              ],
+              "properties": {
+                "padSource": "generated"
+              }
+            },
+            {
+              "ref": "Q2",
+              "value": "NMOS",
+              "footprintName": "SOT-23",
+              "position": {
+                "x": 23,
+                "y": 23
+              },
+              "rotation": 0,
+              "front": true,
+              "pads": [
+                {
+                  "number": "1",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": -0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "GATE_A_LO"
+                },
+                {
+                  "number": "2",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "GND"
+                },
+                {
+                  "number": "3",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "OUT_A"
+                }
+              ],
+              "graphics": [
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Circle",
+                  "center": {
+                    "x": -1.5499999999999998,
+                    "y": -1.1500000000000001
+                  },
+                  "radius": 0.25,
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Rect",
+                  "start": {
+                    "x": -1.4,
+                    "y": -1
+                  },
+                  "end": {
+                    "x": 1.4,
+                    "y": 1
+                  },
+                  "width": 0.05,
+                  "layer": "FCrtYd"
+                }
+              ],
+              "properties": {
+                "padSource": "generated"
+              }
+            },
+            {
+              "ref": "Q3",
+              "value": "NMOS",
+              "footprintName": "SOT-23",
+              "position": {
+                "x": 29,
+                "y": 17
+              },
+              "rotation": 0,
+              "front": true,
+              "pads": [
+                {
+                  "number": "1",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": -0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "GATE_B_HI"
+                },
+                {
+                  "number": "2",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "OUT_B"
+                },
+                {
+                  "number": "3",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "VMOT"
+                }
+              ],
+              "graphics": [
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Circle",
+                  "center": {
+                    "x": -1.5499999999999998,
+                    "y": -1.1500000000000001
+                  },
+                  "radius": 0.25,
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Rect",
+                  "start": {
+                    "x": -1.4,
+                    "y": -1
+                  },
+                  "end": {
+                    "x": 1.4,
+                    "y": 1
+                  },
+                  "width": 0.05,
+                  "layer": "FCrtYd"
+                }
+              ],
+              "properties": {
+                "padSource": "generated"
+              }
+            },
+            {
+              "ref": "Q4",
+              "value": "NMOS",
+              "footprintName": "SOT-23",
+              "position": {
+                "x": 29,
+                "y": 23
+              },
+              "rotation": 0,
+              "front": true,
+              "pads": [
+                {
+                  "number": "1",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": -0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "GATE_B_LO"
+                },
+                {
+                  "number": "2",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0.475,
+                    "y": 1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "GND"
+                },
+                {
+                  "number": "3",
+                  "padType": "SMD",
+                  "shape": {
+                    "type": "Rect",
+                    "width": 0.6,
+                    "height": 0.9
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -1.1
+                  },
+                  "rotation": 0,
+                  "layers": [
+                    "FCu",
+                    "FPaste",
+                    "FMask"
+                  ],
+                  "net": "OUT_B"
+                }
+              ],
+              "graphics": [
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "end": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.15,
+                    "y": 0.7500000000000001
+                  },
+                  "end": {
+                    "x": -1.15,
+                    "y": -0.7500000000000001
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Circle",
+                  "center": {
+                    "x": -1.5499999999999998,
+                    "y": -1.1500000000000001
+                  },
+                  "radius": 0.25,
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Rect",
+                  "start": {
+                    "x": -1.4,
+                    "y": -1
+                  },
+                  "end": {
+                    "x": 1.4,
+                    "y": 1
+                  },
+                  "width": 0.05,
+                  "layer": "FCrtYd"
+                }
+              ],
+              "properties": {
+                "padSource": "generated"
+              }
+            },
+            {
+              "ref": "J1",
+              "value": "MOTOR",
+              "footprintName": "PinHeader_1x02_P2.54mm_Vertical",
+              "position": {
+                "x": 18,
+                "y": 20
+              },
+              "rotation": 0,
+              "front": true,
+              "pads": [
+                {
+                  "number": "1",
+                  "padType": "THT",
+                  "shape": {
+                    "type": "Circle",
+                    "diameter": 1.7
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -1.27
+                  },
+                  "rotation": 0,
+                  "drill": {
+                    "diameter": 1,
+                    "oval": false
+                  },
+                  "layers": [
+                    "FCu",
+                    "BCu",
+                    "FMask",
+                    "BMask"
+                  ],
+                  "net": "OUT_A"
+                },
+                {
+                  "number": "2",
+                  "padType": "THT",
+                  "shape": {
+                    "type": "Circle",
+                    "diameter": 1.7
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 1.27
+                  },
+                  "rotation": 0,
+                  "drill": {
+                    "diameter": 1,
+                    "oval": false
+                  },
+                  "layers": [
+                    "FCu",
+                    "BCu",
+                    "FMask",
+                    "BMask"
+                  ],
+                  "net": "OUT_B"
+                }
+              ],
+              "graphics": [
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.27,
+                    "y": -2.27
+                  },
+                  "end": {
+                    "x": 1.27,
+                    "y": -2.27
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.27,
+                    "y": -2.27
+                  },
+                  "end": {
+                    "x": 1.27,
+                    "y": 2.27
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.27,
+                    "y": 2.27
+                  },
+                  "end": {
+                    "x": -1.27,
+                    "y": 2.27
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.27,
+                    "y": 2.27
+                  },
+                  "end": {
+                    "x": -1.27,
+                    "y": -2.27
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                }
+              ],
+              "properties": {
+                "padSource": "generated"
+              }
+            },
+            {
+              "ref": "J2",
+              "value": "POWER_LOGIC",
+              "footprintName": "PinHeader_1x03_P2.54mm_Vertical",
+              "position": {
+                "x": 34,
+                "y": 20
+              },
+              "rotation": 0,
+              "front": true,
+              "pads": [
+                {
+                  "number": "1",
+                  "padType": "THT",
+                  "shape": {
+                    "type": "Circle",
+                    "diameter": 1.7
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": -2.54
+                  },
+                  "rotation": 0,
+                  "drill": {
+                    "diameter": 1,
+                    "oval": false
+                  },
+                  "layers": [
+                    "FCu",
+                    "BCu",
+                    "FMask",
+                    "BMask"
+                  ],
+                  "net": "VMOT"
+                },
+                {
+                  "number": "2",
+                  "padType": "THT",
+                  "shape": {
+                    "type": "Circle",
+                    "diameter": 1.7
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "rotation": 0,
+                  "drill": {
+                    "diameter": 1,
+                    "oval": false
+                  },
+                  "layers": [
+                    "FCu",
+                    "BCu",
+                    "FMask",
+                    "BMask"
+                  ],
+                  "net": "GND"
+                },
+                {
+                  "number": "3",
+                  "padType": "THT",
+                  "shape": {
+                    "type": "Circle",
+                    "diameter": 1.7
+                  },
+                  "position": {
+                    "x": 0,
+                    "y": 2.54
+                  },
+                  "rotation": 0,
+                  "drill": {
+                    "diameter": 1,
+                    "oval": false
+                  },
+                  "layers": [
+                    "FCu",
+                    "BCu",
+                    "FMask",
+                    "BMask"
+                  ]
+                }
+              ],
+              "graphics": [
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.27,
+                    "y": -3.54
+                  },
+                  "end": {
+                    "x": 1.27,
+                    "y": -3.54
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.27,
+                    "y": -3.54
+                  },
+                  "end": {
+                    "x": 1.27,
+                    "y": 3.54
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": 1.27,
+                    "y": 3.54
+                  },
+                  "end": {
+                    "x": -1.27,
+                    "y": 3.54
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                },
+                {
+                  "type": "Line",
+                  "start": {
+                    "x": -1.27,
+                    "y": 3.54
+                  },
+                  "end": {
+                    "x": -1.27,
+                    "y": -3.54
+                  },
+                  "width": 0.12,
+                  "layer": "FSilkS"
+                }
+              ],
+              "properties": {
+                "padSource": "generated"
+              }
+            }
+          ],
+          "traces": [
+            {
+              "start": {
+                "x": 29,
+                "y": 15.9
+              },
+              "end": {
+                "x": 34,
+                "y": 17.46
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "VMOT",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 30.025,
+                "y": 23.550000000000004
+              },
+              "end": {
+                "x": 34,
+                "y": 20
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "GND",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 29,
+                "y": 21.9
+              },
+              "end": {
+                "x": 27.900000000000002,
+                "y": 20.799999999999997
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "OUT_B",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 27.900000000000002,
+                "y": 20.799999999999997
+              },
+              "end": {
+                "x": 18,
+                "y": 21.27
+              },
+              "width": 0.8,
+              "layer": "BCu",
+              "net": "OUT_B",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 30.025,
+                "y": 18.65
+              },
+              "end": {
+                "x": 28.375,
+                "y": 20.3
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "OUT_B",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 24.025,
+                "y": 24.65
+              },
+              "end": {
+                "x": 28.975,
+                "y": 25.75
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "GND",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 28.975,
+                "y": 25.75
+              },
+              "end": {
+                "x": 29.525000000000002,
+                "y": 25.2
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "GND",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 29.525000000000002,
+                "y": 25.2
+              },
+              "end": {
+                "x": 29.525000000000002,
+                "y": 24.65
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "GND",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 23,
+                "y": 15.9
+              },
+              "end": {
+                "x": 29,
+                "y": 15.9
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "VMOT",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 24.025,
+                "y": 18.65
+              },
+              "end": {
+                "x": 23.475,
+                "y": 21.400000000000002
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "OUT_A",
+              "source": "autoroute"
+            },
+            {
+              "start": {
+                "x": 22.375,
+                "y": 21.4
+              },
+              "end": {
+                "x": 19.075,
+                "y": 19.2
+              },
+              "width": 0.8,
+              "layer": "FCu",
+              "net": "OUT_A",
+              "source": "autoroute"
+            }
+          ],
+          "vias": [
+            {
+              "position": {
+                "x": 27.900000000000002,
+                "y": 20.799999999999997
+              },
+              "diameter": 0.8,
+              "drill": 0.4,
+              "startLayer": "FCu",
+              "endLayer": "BCu",
+              "net": "OUT_B",
+              "source": "autoroute"
+            }
+          ],
+          "zones": []
+        }
+      }
+    }
+  },
+  "materials": {
+    "__pcb_fr4__": {
+      "name": "__pcb_fr4__",
+      "color": [
+        0.05,
+        0.35,
+        0.15
+      ],
+      "roughness": 0.6,
+      "metallic": 0
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "__pcb_fr4__"
+    }
+  ],
+  "schematic": {
+    "title": "H-Bridge Motor Driver",
+    "components": [
+      {
+        "ref": "Q1",
+        "value": "NMOS",
+        "footprintId": "SOT-23",
+        "position": {
+          "x": 50,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "G",
+            "pin_type": "Input",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "S",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 10
+            }
+          },
+          {
+            "number": "3",
+            "name": "D",
+            "pin_type": "Passive",
+            "position": {
+              "x": 20,
+              "y": 5
+            }
+          }
+        ]
+      },
+      {
+        "ref": "Q2",
+        "value": "NMOS",
+        "footprintId": "SOT-23",
+        "position": {
+          "x": 50,
+          "y": 100
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "G",
+            "pin_type": "Input",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "S",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 10
+            }
+          },
+          {
+            "number": "3",
+            "name": "D",
+            "pin_type": "Passive",
+            "position": {
+              "x": 20,
+              "y": 5
+            }
+          }
+        ]
+      },
+      {
+        "ref": "Q3",
+        "value": "NMOS",
+        "footprintId": "SOT-23",
+        "position": {
+          "x": 150,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "G",
+            "pin_type": "Input",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "S",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 10
+            }
+          },
+          {
+            "number": "3",
+            "name": "D",
+            "pin_type": "Passive",
+            "position": {
+              "x": 20,
+              "y": 5
+            }
+          }
+        ]
+      },
+      {
+        "ref": "Q4",
+        "value": "NMOS",
+        "footprintId": "SOT-23",
+        "position": {
+          "x": 150,
+          "y": 100
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "G",
+            "pin_type": "Input",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "S",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 10
+            }
+          },
+          {
+            "number": "3",
+            "name": "D",
+            "pin_type": "Passive",
+            "position": {
+              "x": 20,
+              "y": 5
+            }
+          }
+        ]
+      },
+      {
+        "ref": "J1",
+        "value": "MOTOR",
+        "footprintId": "PinHeader_1x02_P2.54mm_Vertical",
+        "position": {
+          "x": 100,
+          "y": 150
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "OUT_A",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "OUT_B",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 10
+            }
+          }
+        ]
+      },
+      {
+        "ref": "J2",
+        "value": "POWER_LOGIC",
+        "footprintId": "PinHeader_1x03_P2.54mm_Vertical",
+        "position": {
+          "x": 10,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "VMOT",
+            "pin_type": "PowerInput",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "GND",
+            "pin_type": "PowerInput",
+            "position": {
+              "x": 0,
+              "y": 10
+            }
+          },
+          {
+            "number": "3",
+            "name": "LOGIC",
+            "pin_type": "Input",
+            "position": {
+              "x": 0,
+              "y": 20
+            }
+          }
+        ]
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "labels": [],
+    "nets": {
+      "VMOT": [
+        "J2.1",
+        "Q1.3",
+        "Q3.3"
+      ],
+      "GND": [
+        "J2.2",
+        "Q2.2",
+        "Q4.2"
+      ],
+      "OUT_A": [
+        "Q1.2",
+        "Q2.3",
+        "J1.1"
+      ],
+      "OUT_B": [
+        "Q3.2",
+        "Q4.3",
+        "J1.2"
+      ],
+      "GATE_A_HI": [
+        "Q1.1"
+      ],
+      "GATE_A_LO": [
+        "Q2.1"
+      ],
+      "GATE_B_HI": [
+        "Q3.1"
+      ],
+      "GATE_B_LO": [
+        "Q4.1"
+      ]
+    }
+  }
+}

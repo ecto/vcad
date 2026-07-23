@@ -40,6 +40,24 @@
 
 mod exact;
 pub mod pcb;
+
+/// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
+/// checked in node-id order, then the legacy top-level `pcb` field.
+/// Used by the CLI to auto-select the top-down board view for ECAD
+/// documents instead of the isometric mesh projection.
+pub fn extract_pcb(raw: &str) -> Option<vcad_ir::ecad::Pcb> {
+    let doc: vcad_ir::Document = serde_json::from_str(raw).ok()?;
+    let mut ids: Vec<_> = doc.nodes.keys().copied().collect();
+    ids.sort();
+    for id in ids {
+        if let Some(node) = doc.nodes.get(&id) {
+            if let vcad_ir::CsgOp::PcbBoard { board } = &node.op {
+                return Some((**board).clone());
+            }
+        }
+    }
+    doc.pcb
+}
 pub mod sheet;
 
 use std::collections::HashMap;

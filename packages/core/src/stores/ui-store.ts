@@ -96,6 +96,9 @@ export interface UiState {
   featureTreeOpen: boolean;
   theme: Theme;
   isDraggingGizmo: boolean;
+  /** True while the pointer is over a transform-gizmo handle. Gizmo handles
+   *  win over part hover, and a click on a handle must not deselect. */
+  isGizmoHovered: boolean;
   isOrbiting: boolean;
   /** True while ai-screenshot.ts is capturing an off-screen frame from the
    *  AI's camera. Overlays (selection highlights, participant attention
@@ -200,6 +203,7 @@ export interface UiState {
   togglePointSnap: () => void;
   setSnapIncrement: (value: number) => void;
   setDraggingGizmo: (dragging: boolean) => void;
+  setGizmoHovered: (hovered: boolean) => void;
   setOrbiting: (orbiting: boolean) => void;
   setCaptureMode: (on: boolean) => void;
   setClearanceIndicator: (indicator: ClearanceIndicator | null) => void;
@@ -313,6 +317,7 @@ export const useUiStore = create<UiState>((set) => ({
   featureTreeOpen: true,
   theme: "system",
   isDraggingGizmo: false,
+  isGizmoHovered: false,
   isOrbiting: false,
   captureMode: false,
   clearanceIndicator: null,
@@ -452,6 +457,7 @@ export const useUiStore = create<UiState>((set) => ({
     set({ snapIncrement: value, gridSnap: true }),
 
   setDraggingGizmo: (dragging) => set({ isDraggingGizmo: dragging }),
+  setGizmoHovered: (hovered) => set({ isGizmoHovered: hovered }),
 
   setOrbiting: (orbiting) => set({ isOrbiting: orbiting }),
 

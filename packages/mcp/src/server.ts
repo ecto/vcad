@@ -18,7 +18,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
-import { commandRegistry } from "@vcad/core";
+import { commandRegistry, getPcbNodeIds } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import {
   documents,
@@ -513,6 +513,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "render_ratsnest",
   "render_stackup",
   "run_drc",
+  "fix_drc",
   "search_electronic_parts",
   "resolve_part",
   "find_alternatives",
@@ -1416,10 +1417,21 @@ export async function createServer(
           // the content-addressed GLB cache for the poll loop. Best-effort
           // and size-capped; hosts that strip `_meta` (and oversized docs)
           // fall back to the fetch path unchanged.
-          if (
-            def.behavior.mount &&
-            (clientHasInlineUi() || context.assumeUiClient === true)
-          ) {
+          //
+          // NOT gated on the client's declared UI capability: Claude Code
+          // mounts the widget without ever declaring
+          // `extensions["io.modelcontextprotocol/ui"]` at initialize, and in
+          // that host the widget's fallback `get_preview_glb` round trip is
+          // not dependable — gating on the capability left the freshly
+          // placed board rendering as "no geometry to preview". `_meta` is
+          // ignored by UI-less clients and never model-visible, so the only
+          // cost of always attaching is transport bytes.
+          // PCB-mutating tools (route_nets, add_zone, …) aren't mount tools,
+          // but the already-mounted widget's fetch path has the same
+          // dependability problem — without the inline GLB a board-only
+          // session renders "no geometry to preview" after every copper
+          // mutation. Attach for any geometry write on a PCB session too.
+          if (def.behavior.mount || sessionHasPcb(docId)) {
             await attachInlinePreview(result, docId, engine);
           }
         }
@@ -1541,12 +1553,32 @@ export function slimPreviewForInlineUi(
   );
   if (!alwaysSlim && totalChars <= 8192) return;
 
+  // A verification receipt (route_nets `receipt:true`, and any future
+  // receipt-bearing mutator) is the deliverable, not preview bulk — slimming
+  // it away silently un-verifies the call (field report: route_nets
+  // receipt:true came back as bare {document_id} on a large board). Carry the
+  // receipt fields through the slim.
+  const verdict: Record<string, unknown> = {};
+  for (const c of result.content) {
+    if (c.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(c.text) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") {
+        if (parsed.receipt !== undefined) verdict.receipt = parsed.receipt;
+        if (parsed.receipt_error !== undefined) verdict.receipt_error = parsed.receipt_error;
+        if (verdict.receipt !== undefined || verdict.receipt_error !== undefined) break;
+      }
+    } catch {
+      // non-JSON content (VCode, prose) — nothing to preserve from it
+    }
+  }
+
   const summary =
     `CAD document ready (${docId}). Geometry is available in the inline 3D viewer. ` +
     "Use get_document for the full IR, inspect_cad for metrics, or export_cad to export.";
   result.content = [
     { type: "text", text: summary },
-    { type: "text", text: JSON.stringify({ document_id: docId }) },
+    { type: "text", text: JSON.stringify({ document_id: docId, ...verdict }) },
   ];
 }
 
@@ -1588,6 +1620,25 @@ function attachPreviewHandle(
       type: "text",
       text: JSON.stringify({ document_id: docId }),
     });
+  }
+}
+
+/**
+ * Does this session document contain a PCB (a `PcbBoard` root or the legacy
+ * bare `doc.pcb`)? Gates the inline `_meta` preview attach for non-mount PCB
+ * mutators — board-only documents have no CAD part scene, so the widget's
+ * fetch fallback is the only alternative and it isn't dependable in every
+ * host.
+ */
+function sessionHasPcb(docId: string): boolean {
+  try {
+    const doc = getSession(docId);
+    return (
+      getPcbNodeIds(doc).length > 0 ||
+      Boolean((doc as { pcb?: unknown }).pcb)
+    );
+  } catch {
+    return false;
   }
 }
 

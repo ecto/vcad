@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useMemo, useCallback, useState } from "react";
 import * as THREE from "three";
-import { Edges, Html } from "@react-three/drei";
+import { Edges, Html, Outlines } from "@react-three/drei";
 import { useThree } from "@react-three/fiber";
 import type { TriangleMesh, PartInfo, FaceInfo } from "@vcad/core";
 import { useUiStore, useDocumentStore, useSketchStore, isPcbBoardPart, isStitchPart, isEmbroideryPatternPart } from "@vcad/core";
@@ -19,7 +19,12 @@ import { inspectTriangleFromMesh as runInspectTriangle } from "./TriangleInspect
 import { pickSubFeature } from "@/lib/sub-feature-picking";
 import { useAnalyzeStore } from "@/stores/analyze-store";
 
-const HOVER_EMISSIVE = new THREE.Color(0xffb800); // neon amber
+// Selection reads as brand-orange feature-edge lines (same design as the
+// native app): every silhouette, hole rim, and rib edge lights up exactly on
+// the geometry, and the part material is never touched. Hover = thinner +
+// dimmer burnt orange.
+const SELECTION_EDGE_COLOR = new THREE.Color(1.0, 0.45, 0.1); // brand orange
+const HOVER_EDGE_COLOR = new THREE.Color(0.62, 0.32, 0.1); // dim hover
 const FACE_HIGHLIGHT_COLOR = new THREE.Color(0x00d4ff); // cyan for face selection
 
 const DEG2RAD = Math.PI / 180;
@@ -503,7 +508,6 @@ export const SceneMesh = memo(function SceneMesh({
   const select = useUiStore((s) => s.select);
   const toggleSelect = useUiStore((s) => s.toggleSelect);
   const selectItem = useUiStore((s) => s.selectItem);
-  const toggleItem = useUiStore((s) => s.toggleItem);
   const setHoveredItem = useUiStore((s) => s.setHoveredItem);
   const selectionFilter = useUiStore((s) => s.selectionFilter);
   const showWireframe = useUiStore((s) => s.showWireframe);
@@ -528,6 +532,10 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Disable raycasting during orbit for performance
   const isOrbiting = useUiStore((s) => s.isOrbiting);
+  // Gizmo handles win over part hover, and hover must never re-highlight
+  // mid-drag — matches the native app's picking semantics.
+  const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
+  const isGizmoHovered = useUiStore((s) => s.isGizmoHovered);
   // During AI screenshot capture, suppress emissive tint so user-selected
   // parts don't glow in the shot — the AI is verifying geometry/materials,
   // not watching the user's cursor.
@@ -536,7 +544,18 @@ export const SceneMesh = memo(function SceneMesh({
 
   // Use selectionId if provided, otherwise fall back to partInfo.id
   const effectiveSelectionId = selectionId ?? partInfo.id;
-  const isHovered = hoveredPartId === effectiveSelectionId;
+  // Part reads as hovered when the cursor is anywhere on it — including when
+  // the sub-feature picker is reporting a vertex/edge/face of this part (that
+  // path clears `hoveredPartId`, so check the hovered item's owner too).
+  const hoveredItem = useUiStore((s) => s.hoveredItem);
+  const isHovered =
+    hoveredPartId === effectiveSelectionId ||
+    (hoveredItem != null &&
+      hoveredItem.kind !== "segment" &&
+      hoveredItem.kind !== "constraint" &&
+      (hoveredItem.kind === "part"
+        ? hoveredItem.id === effectiveSelectionId
+        : hoveredItem.partId === partInfo.id));
   const isHoveredFace =
     faceSelectionMode && hoveredFace?.partId === partInfo.id;
 
@@ -643,36 +662,25 @@ export const SceneMesh = memo(function SceneMesh({
     return new THREE.Color(0.55, 0.55, 0.55);
   }, [materialDef]);
 
-  // Compute emissive state: selected > hovered > none (face highlight uses overlay)
-  const emissiveColor = useMemo(() => {
-    if (effectiveSelected) return materialColor.clone().multiplyScalar(0.3);
-    if (isHovered && !faceSelectionMode && !captureMode) return HOVER_EMISSIVE;
-    return undefined;
-  }, [effectiveSelected, isHovered, faceSelectionMode, captureMode, materialColor]);
+  // Selection/hover reads as edge highlighting, not a material tint — the
+  // part must still look like its material (see the edge overlay below).
+  const showSelectionEdges =
+    !ghosted &&
+    !captureMode &&
+    (effectiveSelected || (isHovered && !faceSelectionMode));
 
-  const emissiveIntensity = effectiveSelected
-    ? 0.2
-    : isHovered && !faceSelectionMode && !captureMode
-    ? 0.08
-    : 0;
-
-  // Update shader material uniforms for emissive state
-  useEffect(() => {
-    if (!shaderMaterial) return;
-    const uniforms = shaderMaterial.uniforms;
-    if (!uniforms["uEmissive"] || !uniforms["uEmissiveIntensity"]) return;
-
-    if (effectiveSelected) {
-      uniforms["uEmissive"].value = materialColor.clone().multiplyScalar(0.3);
-      uniforms["uEmissiveIntensity"].value = 0.2;
-    } else if (isHovered && !faceSelectionMode && !captureMode) {
-      uniforms["uEmissive"].value = HOVER_EMISSIVE;
-      uniforms["uEmissiveIntensity"].value = 0.08;
-    } else {
-      uniforms["uEmissive"].value = new THREE.Color(0, 0, 0);
-      uniforms["uEmissiveIntensity"].value = 0;
-    }
-  }, [shaderMaterial, effectiveSelected, isHovered, faceSelectionMode, captureMode, materialColor]);
+  // Smooth bodies (spheres, blends) have no dihedral > 15° — the edge
+  // highlight would draw nothing. Fall back to a screen-space silhouette
+  // outline for those. Recomputed only when the mesh changes.
+  const isSmoothBody = useMemo(() => {
+    if (!geoReady) return false;
+    const geo = geoRef.current;
+    if (!geo) return false;
+    const eg = new THREE.EdgesGeometry(geo, 15);
+    const segments = eg.attributes["position"]?.count ?? 0;
+    eg.dispose();
+    return segments === 0;
+  }, [geoReady, mesh]);
 
   useEffect(() => {
     setDraftName(partInfo.name);
@@ -809,6 +817,9 @@ export const SceneMesh = memo(function SceneMesh({
     (e: ThreeEvent<MouseEvent>) => {
       // Ignore the click that fires after a camera rotate/pan gesture.
       if (viewportWasDrag()) return;
+      // A click that lands on a transform-gizmo handle belongs to the gizmo,
+      // even when a part mesh sits behind it.
+      if (isDraggingGizmo || isGizmoHovered) return;
       e.stopPropagation();
 
       // Debug triangle inspector: when enabled, show triangle info.
@@ -833,6 +844,19 @@ export const SceneMesh = memo(function SceneMesh({
       // current selectionFilter. Falls through to body-only behavior when
       // the filter is "auto" and there's no candidate within threshold,
       // or when the filter is explicitly "body".
+      // ⌘-click (metaKey) toggles multi-select for boolean workflows —
+      // selection order is preserved (first selected = base), matching the
+      // native app. Shift-click keeps working as the historical alias.
+      const isToggle = e.nativeEvent.shiftKey || e.nativeEvent.metaKey;
+
+      // Toggle-clicks work at the part level (skip the sub-feature picker):
+      // boolean workflows consume ordered part selections, and this matches
+      // the native app's ⌘-click semantics.
+      if (isToggle) {
+        toggleSelect(effectiveSelectionId);
+        return;
+      }
+
       if (e.faceIndex != null) {
         const item = pickSubFeature({
           triIndex: e.faceIndex,
@@ -844,23 +868,18 @@ export const SceneMesh = memo(function SceneMesh({
           viewport: viewportSize,
         });
         if (item) {
-          if (e.nativeEvent.shiftKey) {
-            toggleItem(item);
-          } else {
-            selectItem(item);
-          }
+          selectItem(item);
           return;
         }
       }
 
       // Filter narrowed too far / fallback to part-level select.
-      if (e.nativeEvent.shiftKey) {
-        toggleSelect(partInfo.id);
-      } else {
-        select(partInfo.id);
-      }
+      select(effectiveSelectionId);
     },
     [
+      effectiveSelectionId,
+      isDraggingGizmo,
+      isGizmoHovered,
       faceSelectionMode,
       mesh,
       partInfo.id,
@@ -868,7 +887,6 @@ export const SceneMesh = memo(function SceneMesh({
       toggleSelect,
       select,
       selectItem,
-      toggleItem,
       selectionFilter,
       camera,
       viewportSize,
@@ -879,8 +897,8 @@ export const SceneMesh = memo(function SceneMesh({
 
   const handlePointerMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
-      // Skip during orbit for performance
-      if (isOrbiting) return;
+      // Skip during orbit for performance; gizmo interactions win over hover.
+      if (isOrbiting || isDraggingGizmo || isGizmoHovered) return;
       if (faceSelectionMode && e.faceIndex != null) {
         e.stopPropagation();
         const faceInfo = computeFaceInfo(mesh, e.faceIndex, partInfo.id);
@@ -910,6 +928,8 @@ export const SceneMesh = memo(function SceneMesh({
     },
     [
       isOrbiting,
+      isDraggingGizmo,
+      isGizmoHovered,
       faceSelectionMode,
       mesh,
       partInfo.id,
@@ -923,14 +943,14 @@ export const SceneMesh = memo(function SceneMesh({
 
   const handlePointerOver = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
-      // Skip during orbit for performance
-      if (isOrbiting) return;
+      // Skip during orbit for performance; gizmo interactions win over hover.
+      if (isOrbiting || isDraggingGizmo || isGizmoHovered) return;
       e.stopPropagation();
       if (!faceSelectionMode) {
         setHoveredPartId(partInfo.id);
       }
     },
-    [isOrbiting, faceSelectionMode, partInfo.id, setHoveredPartId],
+    [isOrbiting, isDraggingGizmo, isGizmoHovered, faceSelectionMode, partInfo.id, setHoveredPartId],
   );
 
   const handlePointerOut = useCallback(() => {
@@ -982,8 +1002,6 @@ export const SceneMesh = memo(function SceneMesh({
         <PbrMaterial
           color={mesh.colors || analyzeColors ? undefined : materialColor}
           vertexColors={!!mesh.colors || !!analyzeColors}
-          emissive={emissiveColor}
-          emissiveIntensity={emissiveIntensity}
           metalness={materialDef?.metallic ?? 0.0}
           roughness={materialDef?.roughness ?? 0.7}
           transmission={materialDef?.transmission}
@@ -999,6 +1017,25 @@ export const SceneMesh = memo(function SceneMesh({
         />
       )}
       {showWireframe && geoReady && <Edges threshold={15} color="#666" />}
+      {/* Selection/hover highlight: brand-orange feature-edge lines (ported
+          from the native app). Fat screen-space lines, so the width stays
+          visually constant at any zoom. */}
+      {showSelectionEdges && geoReady && !isSmoothBody && (
+        <Edges
+          threshold={15}
+          color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
+          lineWidth={effectiveSelected ? 3 : 2}
+          renderOrder={1}
+        />
+      )}
+      {showSelectionEdges && geoReady && isSmoothBody && (
+        <Outlines
+          color={effectiveSelected ? SELECTION_EDGE_COLOR : HOVER_EDGE_COLOR}
+          thickness={effectiveSelected ? 3 : 2}
+          angle={Math.PI}
+          renderOrder={1}
+        />
+      )}
       {/* Face highlight overlay for individual face selection */}
       {faceHighlightGeo && (
         <mesh geometry={faceHighlightGeo} renderOrder={1}>

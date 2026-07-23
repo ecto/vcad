@@ -193,6 +193,7 @@ export {
   tryExportFabFiles,
   parseKicadPcb,
   exportKicadPcb,
+  exportKicadProject,
   exportKicadSch,
   builtinSymbols,
   footprintForName,

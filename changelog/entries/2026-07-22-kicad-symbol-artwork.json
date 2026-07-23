@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-22-kicad-symbol-artwork",
+  "version": "0.9.4",
+  "date": "2026-07-22",
+  "category": "feat",
+  "title": "Exported schematics draw real symbol artwork",
+  "summary": "export_kicad now emits proper KiCad symbols for resistors, capacitors (incl. polarized), diodes, LEDs, inductors, and transistors instead of a generic rectangle for every part.",
+  "features": ["kicad", "schematic", "pcb"],
+  "mcpTools": ["export_kicad"]
+}

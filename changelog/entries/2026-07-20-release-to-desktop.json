@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-20-release-to-desktop",
+  "version": "0.9.4",
+  "date": "2026-07-20",
+  "category": "feat",
+  "title": "Release to Desktop mode in the macOS app",
+  "summary": "Parts float directly over the desktop with studio-parity floating tool windows: palette, object inspector, feature tree, click-to-select, zebra analysis.",
+  "features": ["native", "macos", "viewport"]
+}

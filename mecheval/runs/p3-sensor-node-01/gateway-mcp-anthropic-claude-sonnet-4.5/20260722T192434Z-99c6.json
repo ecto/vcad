@@ -1,0 +1,3532 @@
+{
+  "schema_version": 0,
+  "task_id": "p3-sensor-node-01",
+  "task_sha256": "de0b7e3a8aac236769924979543afda4469f7bd9618bf8bb6b378247355492c0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          45,
+          35
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 35,
+            "width_mm": 45
+          }
+        ],
+        "max_mm": [
+          45,
+          35
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 10
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 11,
+        "min": 10
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 7,
+        "sample": [
+          {
+            "actual": 10,
+            "message": "Unconnected net '3V3': pads split across 10 disjoint copper groups",
+            "position": [
+              11.25,
+              23.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 10,
+            "message": "Unconnected net 'GND': pads split across 10 disjoint copper groups",
+            "position": [
+              11.25,
+              23.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SCL': pads split across 3 disjoint copper groups",
+            "position": [
+              13.75,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SDA': pads split across 3 disjoint copper groups",
+            "position": [
+              13.25,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWCLK': pads split across 2 disjoint copper groups",
+            "position": [
+              14.75,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWDIO': pads split across 2 disjoint copper groups",
+            "position": [
+              14.25,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'VIN': pads split across 3 disjoint copper groups",
+            "position": [
+              6.7,
+              7.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          }
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "sample": [
+          {
+            "actual": 1.1999999999999993,
+            "message": "courtyards of U2 and C1 overlap",
+            "position": [
+              5.824999999999999,
+              6
+            ],
+            "required": 0,
+            "rule": "CourtyardOverlap",
+            "severity": "Error"
+          },
+          {
+            "actual": 10,
+            "message": "Unconnected net '3V3': pads split across 10 disjoint copper groups",
+            "position": [
+              11.25,
+              23.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 10,
+            "message": "Unconnected net 'GND': pads split across 10 disjoint copper groups",
+            "position": [
+              11.25,
+              23.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SCL': pads split across 3 disjoint copper groups",
+            "position": [
+              13.75,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SDA': pads split across 3 disjoint copper groups",
+            "position": [
+              13.25,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWCLK': pads split across 2 disjoint copper groups",
+            "position": [
+              14.75,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWDIO': pads split across 2 disjoint copper groups",
+            "position": [
+              14.25,
+              25.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'VIN': pads split across 3 disjoint copper groups",
+            "position": [
+              6.7,
+              7.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          }
+        ],
+        "violations": 8
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "fail",
+      "details": {
+        "findings": [
+          {
+            "distance_mm": 9.266336924588918,
+            "ic": "U1",
+            "nearest_cap": "C3",
+            "net": "3V3",
+            "ok": false,
+            "pad": "1"
+          },
+          {
+            "distance_mm": 5.9215707375661735,
+            "ic": "U1",
+            "nearest_cap": "C5",
+            "net": "3V3",
+            "ok": true,
+            "pad": "32"
+          },
+          {
+            "distance_mm": 12.820594759994561,
+            "ic": "U3",
+            "nearest_cap": "C4",
+            "net": "3V3",
+            "ok": false,
+            "pad": "1"
+          }
+        ],
+        "ic_power_pads": 3,
+        "max_mm": 6
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 5,
+    "score": 0.4,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T192434Z-99c6",
+  "model": {
+    "id": "gateway-mcp-anthropic-claude-sonnet-4.5",
+    "name": "AI Gateway (MCP, anthropic/claude-sonnet-4.5)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "anthropic/claude-sonnet-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p3-sensor-node-01",
+    "rendered": "Design a printed circuit board for a battery-powered I2C sensor node: a microcontroller in a quad flat package, a 3.3V LDO regulator, an I2C sensor in a SOIC-8 package, two I2C pull-up resistors, at least three decoupling/bulk capacitors, and a 4-pin power/programming header — at least ten footprints total. Board outline at most 45mm × 35mm, two copper layers. Declare nets VIN, 3V3, GND, SDA, SCL, and the two programming signals; the sensor and MCU share the I2C bus with pull-ups to 3V3, and every IC power pin gets a decoupling capacitor placed within 6mm (pad-to-pad) of the pin it serves. Place all components and route every net so its copper is fully connected. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.269917000000021
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "PA0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PA1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PA2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "PA3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "PA4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "PA5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "SDA",
+                  "type": "BiDi"
+                },
+                {
+                  "number": "10",
+                  "name": "SCL",
+                  "type": "BiDi"
+                },
+                {
+                  "number": "11",
+                  "name": "SWDIO",
+                  "type": "BiDi"
+                },
+                {
+                  "number": "12",
+                  "name": "SWCLK",
+                  "type": "Input"
+                },
+                {
+                  "number": "13",
+                  "name": "PA6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "PA7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "PB0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "PB1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "PB2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "PB3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "PB4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "PB5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "PB6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "PB7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "PC0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "PC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "PC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "PC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "PC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "PC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "PC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "PC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NRST",
+                  "type": "Input"
+                },
+                {
+                  "number": "32",
+                  "name": "VDDA",
+                  "type": "PowerInput"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-223",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "IN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "OUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "Sensor",
+              "footprint": "SOIC-8",
+              "x": 80,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "SDA",
+                  "type": "BiDi"
+                },
+                {
+                  "number": "3",
+                  "name": "SCL",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "ADDR",
+                  "type": "Input"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 65,
+              "y": 35
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 70,
+              "y": 35
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 15,
+              "y": 40
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 25,
+              "y": 40
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 45,
+              "y": 40
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 85,
+              "y": 40
+            },
+            {
+              "ref": "C5",
+              "value": "1uF",
+              "footprint": "C_0603",
+              "x": 55,
+              "y": 40
+            },
+            {
+              "ref": "J1",
+              "value": "HEADER",
+              "footprint": "PinHeader_1x04",
+              "x": 10,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SWDIO",
+                  "type": "BiDi"
+                },
+                {
+                  "number": "4",
+                  "name": "SWCLK",
+                  "type": "Output"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.3",
+              "C2.1",
+              "C3.1",
+              "C5.1",
+              "U1.1",
+              "U1.32",
+              "R1.1",
+              "R2.1",
+              "U3.1",
+              "C4.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C5.2",
+              "U1.2",
+              "U3.4",
+              "U3.8",
+              "C4.2"
+            ],
+            "SDA": [
+              "U1.9",
+              "U3.2",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.10",
+              "U3.3",
+              "R2.2"
+            ],
+            "SWDIO": [
+              "J1.3",
+              "U1.11"
+            ],
+            "SWCLK": [
+              "J1.4",
+              "U1.12"
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.110458999999537
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "PA0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PA1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PA2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "PA3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "PA4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "PA5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "SDA",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "10",
+                  "name": "SCL",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "11",
+                  "name": "SWDIO",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "12",
+                  "name": "SWCLK",
+                  "type": "Input"
+                },
+                {
+                  "number": "13",
+                  "name": "PA6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "PA7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "PB0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "PB1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "PB2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "PB3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "PB4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "PB5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "PB6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "PB7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "PC0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "PC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "PC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "PC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "PC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "PC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "PC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "PC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NRST",
+                  "type": "Input"
+                },
+                {
+                  "number": "32",
+                  "name": "VDDA",
+                  "type": "PowerInput"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-223",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "IN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "OUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "Sensor",
+              "footprint": "SOIC-8",
+              "x": 80,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "SDA",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "3",
+                  "name": "SCL",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "ADDR",
+                  "type": "Input"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 65,
+              "y": 35
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 70,
+              "y": 35
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 15,
+              "y": 40
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 25,
+              "y": 40
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 45,
+              "y": 40
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 85,
+              "y": 40
+            },
+            {
+              "ref": "C5",
+              "value": "1uF",
+              "footprint": "C_0603",
+              "x": 55,
+              "y": 40
+            },
+            {
+              "ref": "J1",
+              "value": "HEADER",
+              "footprint": "PinHeader_1x04",
+              "x": 10,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SWDIO",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "4",
+                  "name": "SWCLK",
+                  "type": "Output"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.3",
+              "C2.1",
+              "C3.1",
+              "C5.1",
+              "U1.1",
+              "U1.32",
+              "R1.1",
+              "R2.1",
+              "U3.1",
+              "C4.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C5.2",
+              "U1.2",
+              "U3.4",
+              "U3.8",
+              "C4.2"
+            ],
+            "SDA": [
+              "U1.9",
+              "U3.2",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.10",
+              "U3.3",
+              "R2.2"
+            ],
+            "SWDIO": [
+              "J1.3",
+              "U1.11"
+            ],
+            "SWCLK": [
+              "J1.4",
+              "U1.12"
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.7092499999998836
+      },
+      {
+        "n": 3,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "QFP-32",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "VSS",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "PA0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "4",
+                  "name": "PA1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "5",
+                  "name": "PA2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "PA3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "PA4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "PA5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "9",
+                  "name": "SDA",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "10",
+                  "name": "SCL",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "11",
+                  "name": "SWDIO",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "12",
+                  "name": "SWCLK",
+                  "type": "Input"
+                },
+                {
+                  "number": "13",
+                  "name": "PA6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "14",
+                  "name": "PA7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "15",
+                  "name": "PB0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "16",
+                  "name": "PB1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "17",
+                  "name": "PB2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "18",
+                  "name": "PB3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "19",
+                  "name": "PB4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "20",
+                  "name": "PB5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "21",
+                  "name": "PB6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "22",
+                  "name": "PB7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "23",
+                  "name": "PC0",
+                  "type": "Passive"
+                },
+                {
+                  "number": "24",
+                  "name": "PC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "25",
+                  "name": "PC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "26",
+                  "name": "PC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "27",
+                  "name": "PC4",
+                  "type": "Passive"
+                },
+                {
+                  "number": "28",
+                  "name": "PC5",
+                  "type": "Passive"
+                },
+                {
+                  "number": "29",
+                  "name": "PC6",
+                  "type": "Passive"
+                },
+                {
+                  "number": "30",
+                  "name": "PC7",
+                  "type": "Passive"
+                },
+                {
+                  "number": "31",
+                  "name": "NRST",
+                  "type": "Input"
+                },
+                {
+                  "number": "32",
+                  "name": "VDDA",
+                  "type": "PowerInput"
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LDO_3V3",
+              "footprint": "SOT-223",
+              "x": 20,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "IN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "OUT",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "Sensor",
+              "footprint": "SOIC-8",
+              "x": 80,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "SDA",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "3",
+                  "name": "SCL",
+                  "type": "Input"
+                },
+                {
+                  "number": "4",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "5",
+                  "name": "NC1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "6",
+                  "name": "NC2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "7",
+                  "name": "NC3",
+                  "type": "Passive"
+                },
+                {
+                  "number": "8",
+                  "name": "ADDR",
+                  "type": "Input"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 65,
+              "y": 35,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 70,
+              "y": 35,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 15,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 25,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 45,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 85,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "C5",
+              "value": "1uF",
+              "footprint": "C_0603",
+              "x": 55,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "HEADER",
+              "footprint": "PinHeader_1x04",
+              "x": 10,
+              "y": 60,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput"
+                },
+                {
+                  "number": "3",
+                  "name": "SWDIO",
+                  "type": "Bidirectional"
+                },
+                {
+                  "number": "4",
+                  "name": "SWCLK",
+                  "type": "Output"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.3",
+              "C2.1",
+              "C3.1",
+              "C5.1",
+              "U1.1",
+              "U1.32",
+              "R1.1",
+              "R2.1",
+              "U3.1",
+              "C4.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C5.2",
+              "U1.2",
+              "U3.4",
+              "U3.8",
+              "C4.2"
+            ],
+            "SDA": [
+              "U1.9",
+              "U3.2",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.10",
+              "U3.3",
+              "R2.2"
+            ],
+            "SWDIO": [
+              "J1.3",
+              "U1.11"
+            ],
+            "SWCLK": [
+              "J1.4",
+              "U1.12"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0046670000010636
+      },
+      {
+        "n": 4,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "board_width": 45,
+          "board_height": 35,
+          "strategy": "force_directed"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14.502332999996725
+      },
+      {
+        "n": 5,
+        "tool": "get_pad_positions",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.088208000001032
+      },
+      {
+        "n": 6,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 10,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 32,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 36,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 6,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 14,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7670000000071013
+      },
+      {
+        "n": 7,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 33,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 10,
+              "y": 17,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 13,
+              "y": 17,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 36,
+              "y": 17,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 13,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.660334000000148
+      },
+      {
+        "n": 8,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 34,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 10,
+              "y": 16.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 13.5,
+              "y": 16.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 37,
+              "y": 16.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 13.5,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.152165999999852
+      },
+      {
+        "n": 9,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 34,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 10,
+              "y": 16.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 13.5,
+              "y": 16.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 37,
+              "y": 16.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 13.5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7237089999980526
+      },
+      {
+        "n": 10,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 34,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 10,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 14,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 37.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 13.5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.594666999997571
+      },
+      {
+        "n": 11,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 34,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 10,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 14.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 38,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 14,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3322080000070855
+      },
+      {
+        "n": 12,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 34,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 15,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 38.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 14.5,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6799160000227857
+      },
+      {
+        "n": 13,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 35,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 15.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 39,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 15,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3174999999755528
+      },
+      {
+        "n": 14,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 35,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 16,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 39.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 15.5,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2184999999881256
+      },
+      {
+        "n": 15,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 36,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 16.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 40,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 16,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3534590000053868
+      },
+      {
+        "n": 16,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 36,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 17,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 40.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 16.5,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3393750000104774
+      },
+      {
+        "n": 17,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6.5,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 36.5,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 17.5,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 41,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 17,
+              "y": 6.5,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4590000000025611
+      },
+      {
+        "n": 18,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 37,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 18,
+              "y": 15.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 41.5,
+              "y": 15.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 17.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3818750000209548
+      },
+      {
+        "n": 19,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 37.5,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 18.5,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 42,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3047499999811407
+      },
+      {
+        "n": 20,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 31,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.291458000021521
+      },
+      {
+        "n": 21,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 33,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 28,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3699579999956768
+      },
+      {
+        "n": 22,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 35,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 31,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2934580000001006
+      },
+      {
+        "n": 23,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 36,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 11.5,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 31.5,
+              "y": 11.5,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.184041000000434
+      },
+      {
+        "n": 24,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 36.5,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 11,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 32,
+              "y": 11,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 5,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2895410000055563
+      },
+      {
+        "n": 25,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 37,
+              "y": 15,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 10.5,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 32.5,
+              "y": 10.5,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 4,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3529170000110753
+      },
+      {
+        "n": 26,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 37.5,
+              "y": 14.5,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 33,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 4,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1972919999971054
+      },
+      {
+        "n": 27,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 38,
+              "y": 14,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 9.5,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 33.5,
+              "y": 9.5,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 4,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2229579999984708
+      },
+      {
+        "n": 28,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 38.5,
+              "y": 13.5,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 34,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 4,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1902079999854323
+      },
+      {
+        "n": 29,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 39,
+              "y": 13,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 8.5,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 34.5,
+              "y": 8.5,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 4,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.229166000004625
+      },
+      {
+        "n": 30,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 15,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 9,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 38,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 9,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 19,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 39.5,
+              "y": 12.5,
+              "rotation": 90
+            },
+            {
+              "ref": "C1",
+              "x": 5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 18.5,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 28,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 35,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 4,
+              "y": 28,
+              "rotation": 90
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4993330000143033
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_ZB83SRwHx_mR"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0678750000079162
+      }
+    ],
+    "tokens": {
+      "input": 2752278,
+      "output": 15804,
+      "total": 2768082,
+      "cache_creation_input": 99503,
+      "cache_read_input": 2576532
+    },
+    "wallclock_sec": 236.00384737500002
+  },
+  "output": {
+    "vcad_path": "20260722T192434Z-99c6.vcad",
+    "vcad_sha256": "d83ecce512b6f2189deab9ef9db2220bed2b4ea35be23144ba769588646a99ed",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T19:24:34.443Z",
+    "ended_at": "2026-07-22T19:28:30.523Z"
+  },
+  "signature": null
+}

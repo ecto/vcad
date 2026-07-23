@@ -19,7 +19,7 @@ enum Motion {
     static let pop = Animation.spring(response: 0.32, dampingFraction: 0.7)
 }
 
-private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/great-bohr-4c355d"
+private let kSamplesDir = "/Users/cam/Developer/vcad"
 
 enum GeometrySource: Hashable, Identifiable {
     case sandbox
@@ -250,6 +250,12 @@ final class EditorModel {
     var pickDirty = false
     var displayScale: Float = 0.02
     var displayCenter: SIMD3<Float> = .zero
+    /// Native RealityKit picking: the live `centering` entity (weak) provides
+    /// the scene for collision raycasts and world↔kernel conversion.
+    @ObservationIgnored weak var centeringEntity: Entity?
+    /// Per-entity collider build tokens — an async static-mesh collider only
+    /// lands if it is still the newest request for that entity name.
+    @ObservationIgnored var colliderTokens: [String: Int] = [:]
 
     var geometryDirty = true
     var parameterDirty = false
@@ -280,6 +286,14 @@ final class EditorModel {
     /// Part under the cursor (documents) — drives a subtle hover highlight.
     var hoveredPartIndex: Int?
     var hoverDirty = false
+    /// Zebra surface analysis: striped environment reflected off chromed parts,
+    /// so stripe continuity reveals curvature/tangency defects.
+    var zebraMode = false { didSet { if zebraMode != oldValue { zebraDirty = true } } }
+    var zebraDirty = false
+    /// Release-to-desktop: the window goes transparent + chromeless and the
+    /// parts float over the desktop (environment kept for lighting only).
+    var releaseMode = false { didSet { if releaseMode != oldValue { releaseDirty = true } } }
+    var releaseDirty = false
     /// Per-part kernel-space triangle meshes (+ AABB), index-aligned with the
     /// rendered parts — the basis for precise ray-triangle hover/pick. The AABB
     /// is a broadphase cull before the triangle test.
@@ -293,12 +307,117 @@ final class EditorModel {
     /// Feature-edge segments per part (index-aligned with docPartMeshes),
     /// refreshed on every evaluate/re-evaluate for the CAD edge overlay.
     @ObservationIgnored var docPartEdges: [[SIMD3<Float>]] = []
+    /// Per-part instancing (index-aligned with docPartMeshes): non-nil when the
+    /// part is a pattern root rendered as one shared mesh + N instance entities.
+    /// The in-place re-eval path reads this to sync instance entities without a
+    /// full rebuild; pick/edge data is pre-aggregated so everything downstream
+    /// (hover, pick, gizmo, auto-fit) is instancing-agnostic.
+    @ObservationIgnored var docPartInstancing: [PatternInstancing?] = []
     /// Crease threshold for the edge overlay: creases sharper than this many
     /// degrees draw; cylinder facets (~6°) stay invisible.
     static let edgeAngleDeg: Float = 25.0
     /// Largest scene dimension currently displayed (mm) — sizes the edge
     /// overlay ribbon width during in-place scrub swaps.
     var displayedSceneSize: Float { max(sizeMM.x, max(sizeMM.y, sizeMM.z)) }
+
+    // MARK: kinematic joint playback (assemblies)
+    // Assembly documents carry joints + (optionally) a timeline of time-major
+    // joint keyframes. The evaluated scene handle stays resident so each
+    // playback frame is one kernel FK solve (`vcad_scene_solve_fk`) — the
+    // exact solver the web evaluator runs, so native motion matches it by
+    // construction. Entities keep their part-def-local meshes; only their
+    // transforms move.
+
+    /// The resident evaluated assembly scene (owns instance meshes + the
+    /// parsed doc the FK solver re-poses). Freed on rebuild / source change.
+    nonisolated(unsafe) private var residentAssemblyScene: OpaquePointer?
+    /// FFI instance count of the resident scene (0 = not an assembly).
+    var assemblyInstanceCount = 0
+    /// Per-instance kernel-frame world transforms at the current playback
+    /// time, FFI-index order. Applied to "inst<i>" entities when
+    /// `playbackDirty` is set.
+    @ObservationIgnored var instanceTransforms: [float4x4] = []
+    var playbackDirty = false
+    var isPlaying = false
+    /// Current playback time in seconds (drives the scrubber).
+    var playbackTime: Double = 0
+    nonisolated(unsafe) private var playbackTimer: Timer?
+
+    var timeline: DocTimeline? { documentGraph?.timeline }
+    /// Transport UI shows only when there is something to play.
+    var hasPlayback: Bool { assemblyInstanceCount > 0 && timeline != nil }
+
+    func togglePlayback() { isPlaying ? pausePlayback() : startPlayback() }
+
+    func startPlayback() {
+        guard hasPlayback else { return }
+        isPlaying = true
+        playbackTimer?.invalidate()
+        let dt = 1.0 / 60.0
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: dt, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let tl = self.timeline else { return }
+                var t = self.playbackTime + dt
+                if t > tl.durationS { t = 0 }              // loop
+                self.playbackTime = t
+                self.applyPlaybackPose()
+            }
+        }
+    }
+
+    func pausePlayback() {
+        isPlaying = false
+        playbackTimer?.invalidate()
+        playbackTimer = nil
+    }
+
+    /// Scrub: jump to `t` (clamped to the timeline) and re-pose.
+    func setPlaybackTime(_ t: Double) {
+        let dur = timeline?.durationS ?? 0
+        playbackTime = min(max(t, 0), dur)
+        applyPlaybackPose()
+    }
+
+    /// Sample the joint tracks at the current time and run the kernel FK
+    /// solver for fresh instance transforms.
+    private func applyPlaybackPose() {
+        guard let scene = residentAssemblyScene, let tl = timeline,
+              assemblyInstanceCount > 0 else { return }
+        let values = tl.jointValues(at: playbackTime)
+        guard !values.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: values) else { return }
+        var out = [Double](repeating: 0, count: assemblyInstanceCount * 16)
+        let n = data.withUnsafeBytes { raw in
+            vcad_scene_solve_fk(scene, raw.bindMemory(to: UInt8.self).baseAddress,
+                                data.count, &out, out.count)
+        }
+        guard n == assemblyInstanceCount else { return }
+        instanceTransforms = (0..<n).map { Self.mat4(out, at: $0 * 16) }
+        playbackDirty = true
+    }
+
+    /// Column-major 16-double slice → float4x4 (the FFI transform layout).
+    static func mat4(_ d: [Double], at o: Int = 0) -> float4x4 {
+        func col(_ c: Int) -> SIMD4<Float> {
+            SIMD4<Float>(Float(d[o + c * 4]), Float(d[o + c * 4 + 1]),
+                         Float(d[o + c * 4 + 2]), Float(d[o + c * 4 + 3]))
+        }
+        return float4x4(columns: (col(0), col(1), col(2), col(3)))
+    }
+
+    /// Drop the resident assembly scene + playback state (source change or a
+    /// rebuild about to adopt a fresh scene).
+    private func clearAssembly() {
+        pausePlayback()
+        if let s = residentAssemblyScene {
+            vcad_scene_free(s)
+            residentAssemblyScene = nil
+        }
+        assemblyInstanceCount = 0
+        instanceTransforms = []
+        playbackTime = 0
+        playbackDirty = false
+    }
 
     // MARK: ray-traced still mode (pixel-perfect: rays vs analytic BRep)
 
@@ -549,67 +668,8 @@ final class EditorModel {
     /// never repaint a part's material; it only adds a subtle emissive lift.
     static let brandOrange = NSColor(srgbRed: 1.0, green: 0.45, blue: 0.10, alpha: 1.0)
 
-    /// Ray-pick a document part by its actual triangles (kernel coords) — the
-    /// nearest surface hit wins. An AABB test culls parts the ray misses, and
-    /// skips parts whose box is already farther than the best surface hit.
-    func pickDocumentPart(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Int? {
-        var best: (i: Int, t: Float)?
-        for (i, pm) in docPartMeshes.enumerated() where isPartVisible(i) {
-            guard let tBox = Self.rayAABB(o: o, d: d, lo: pm.lo, hi: pm.hi) else { continue }
-            if let b = best, tBox > b.t { continue }      // whole box is behind a closer hit
-            var localBest: Float?
-            let pos = pm.positions, ind = pm.indices
-            var k = 0
-            while k + 2 < ind.count {
-                let a = pos[Int(ind[k])], b2 = pos[Int(ind[k + 1])], c = pos[Int(ind[k + 2])]
-                if let t = Self.rayTriangle(o: o, d: d, a: a, b: b2, c: c),
-                   localBest == nil || t < localBest! { localBest = t }
-                k += 3
-            }
-            if let lt = localBest, best == nil || lt < best!.t { best = (i, lt) }
-        }
-        return best?.i
-    }
-
-    /// Möller–Trumbore ray-triangle intersection → hit distance, or nil.
-    private static func rayTriangle(o: SIMD3<Float>, d: SIMD3<Float>,
-                                    a: SIMD3<Float>, b: SIMD3<Float>, c: SIMD3<Float>) -> Float? {
-        let e1 = b - a, e2 = c - a
-        let p = cross(d, e2)
-        let det = simd_dot(e1, p)
-        if abs(det) < 1e-7 { return nil }
-        let inv = 1 / det
-        let tv = o - a
-        let u = simd_dot(tv, p) * inv
-        if u < -1e-5 || u > 1 + 1e-5 { return nil }
-        let q = cross(tv, e1)
-        let v = simd_dot(d, q) * inv
-        if v < -1e-5 || u + v > 1 + 1e-5 { return nil }
-        let t = simd_dot(e2, q) * inv
-        return t > 1e-5 ? t : nil
-    }
-
-    /// Slab test → entry distance along the ray, or nil if it misses.
-    private static func rayAABB(o: SIMD3<Float>, d: SIMD3<Float>,
-                                lo: SIMD3<Float>, hi: SIMD3<Float>) -> Float? {
-        var tmin: Float = -.greatestFiniteMagnitude
-        var tmax: Float = .greatestFiniteMagnitude
-        for a in 0..<3 {
-            let di = d[a]
-            if abs(di) < 1e-9 {
-                if o[a] < lo[a] || o[a] > hi[a] { return nil }
-            } else {
-                let inv = 1 / di
-                var t1 = (lo[a] - o[a]) * inv
-                var t2 = (hi[a] - o[a]) * inv
-                if t1 > t2 { swap(&t1, &t2) }
-                tmin = max(tmin, t1)
-                tmax = min(tmax, t2)
-                if tmin > tmax { return nil }
-            }
-        }
-        return tmax < 0 ? nil : max(tmin, 0)
-    }
+    // Part picking is native RealityKit now: part entities carry generated
+    // static-mesh colliders and scene raycasts do the hit testing (Shell.swift).
 
     // MARK: document editing
     // The kernel is a pure JSON→meshes evaluator, so editing = mutate the live
@@ -952,41 +1012,8 @@ final class EditorModel {
         gizmoDirty = true
     }
 
-    /// Nearest gizmo handle the ray hits, or nil — drives hover + tap-protection.
-    func hitGizmoHandle(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> String? {
-        guard showsGizmo, let c = gizmoCenterKernel() else { return nil }
-        let len = gizmoArmLength()
-        let pad = max(0.6, len * 0.045)
-        var best: (name: String, t: Float)?
-        func consider(_ name: String, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>) {
-            if let t = Self.rayAABB(o: o, d: d, lo: lo, hi: hi), best == nil || t < best!.t { best = (name, t) }
-        }
-        for a in Self.gizmoAxisDefs {
-            consider(a.name, simd_min(c, c + a.dir * len) - SIMD3(repeating: pad),
-                     simd_max(c, c + a.dir * len) + SIMD3(repeating: pad))
-        }
-        let off = gizmoPlaneOffset, hs = gizmoPlaneSize / 2 + pad
-        for p in Self.gizmoPlaneDefs {
-            let pc = c + (p.a + p.b) * off
-            consider(p.name, pc - SIMD3(repeating: hs), pc + SIMD3(repeating: hs))
-        }
-        // Rotate rings: ray ∩ ring plane, then distance ≈ ring radius.
-        let ringR = gizmoRingRadius, ringPad = max(0.8, len * 0.06)
-        for rd in Self.gizmoRotDefs {
-            let denom = simd_dot(d, rd.axis)
-            if abs(denom) < 1e-6 { continue }
-            let t = simd_dot(c - o, rd.axis) / denom
-            if t <= 0 { continue }
-            if abs(simd_length((o + d * t) - c) - ringR) < ringPad, best == nil || t < best!.t {
-                best = (rd.name, t)
-            }
-        }
-        return best?.name
-    }
-    /// Whether a ray hits the gizmo (so a tap on it doesn't deselect).
-    func rayHitsGizmo(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Bool {
-        hitGizmoHandle(originKernel: o, dirKernel: d) != nil
-    }
+    // Gizmo hover/tap hit testing is native now: the gizmo's invisible grab
+    // proxies carry CollisionComponents, so scene raycasts find them directly.
 
     /// Param `t` along the axis line (center + t·axis) closest to the ray — the
     /// standard closest-point-between-two-lines solution (axis is a unit vector).
@@ -1147,7 +1174,9 @@ final class EditorModel {
     /// fixed so the part doesn't jump mid-edit; updates the live readouts +
     /// pick bounds. Returns nil if the edit produced no geometry.
     func reevalDocumentMeshes() -> [MeshResource]? {
-        guard let json = documentJSON, let data = DocEdit.serialize(json) else { return nil }
+        guard documentJSON != nil else { return nil }
+        let plan = documentInstancingPlan()
+        guard let data = evalData(applying: plan) else { return nil }
         let start = Date()
         let scene: OpaquePointer? = data.withUnsafeBytes {
             vcad_scene_from_json($0.bindMemory(to: UInt8.self).baseAddress, data.count)
@@ -1156,6 +1185,7 @@ final class EditorModel {
         defer { vcad_scene_free(scene) }
         let count = vcad_scene_part_count(scene)
         var meshes: [MeshResource] = []
+        var instancing: [PatternInstancing?] = []
         var picks: [PickMesh] = []
         var edges: [[SIMD3<Float>]] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
@@ -1164,21 +1194,33 @@ final class EditorModel {
         for i in 0..<count {
             let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
             if km.isEmpty { continue }
-            lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
-            tris += km.triangleCount
-            meshes.append(km.resource(name: "part\(i)"))
-            picks.append(PickMesh(positions: km.positions, indices: km.indices,
-                                  lo: km.minBound, hi: km.maxBound))
+            var segs: [SIMD3<Float>] = []
             if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
-                edges.append(EdgeOverlay.segments(fromView: vcad_edges_view(eh)))
+                segs = EdgeOverlay.segments(fromView: vcad_edges_view(eh))
                 vcad_edges_free(eh)
+            }
+            meshes.append(km.resource(name: "part\(i)"))
+            if let inst = plan[i] {
+                let agg = Self.aggregateInstances(km, edgeSegments: segs,
+                                                  transforms: inst.transforms)
+                lo = simd_min(lo, agg.lo); hi = simd_max(hi, agg.hi)
+                tris += km.triangleCount * inst.transforms.count
+                instancing.append(inst)
+                picks.append(agg.pick)
+                edges.append(agg.edges)
             } else {
-                edges.append([])
+                lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
+                tris += km.triangleCount
+                instancing.append(nil)
+                picks.append(PickMesh(positions: km.positions, indices: km.indices,
+                                      lo: km.minBound, hi: km.maxBound))
+                edges.append(segs)
             }
         }
         guard !meshes.isEmpty else { return nil }
         docPartMeshes = picks
         docPartEdges = edges
+        docPartInstancing = instancing
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
         partCount = meshes.count
@@ -1252,12 +1294,36 @@ final class EditorModel {
         return (try? data.write(to: url)) != nil
     }
 
+    /// Export the current scene as USDZ — one prim per part, mirroring the
+    /// viewport's resolved materials, at physical (millimeter) scale.
+    @discardableResult
+    func exportUSDZ(to url: URL) -> Bool {
+        let meshes = currentKernelMeshes()
+        guard !meshes.isEmpty else { return false }
+        let parts = meshes.enumerated().map { i, km -> UsdzExport.Part in
+            if usesDocumentTree {
+                let m = resolvedMaterial(forPart: i)
+                let name = i < featureNodes.count ? featureNodes[i].name : "part\(i)"
+                return UsdzExport.Part(mesh: km, name: sanitizePrimName(name),
+                                       color: m.color, metallic: m.metallic, roughness: m.roughness)
+            }
+            let color = source.isSandbox ? Self.heroColor : Self.partColors[i % Self.partColors.count]
+            return UsdzExport.Part(mesh: km, name: "part\(i)", color: color)
+        }
+        return UsdzExport.write(parts: parts, to: url)
+    }
+
+    /// USD prim names must be identifiers — replace anything else with `_`.
+    private func sanitizePrimName(_ s: String) -> String {
+        let cleaned = String(s.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
+        let first = cleaned.first
+        return (first?.isNumber == true || cleaned.isEmpty) ? "_" + cleaned : cleaned
+    }
+
     // Hover affordance for the draggable handles (cursor + a subtle scale pop).
-    // The handles' live world positions are projected to screen to hit-test the
-    // pointer; `hoveredHandle` drives the highlight + cursor.
+    // Scene raycasts against the handles' colliders hit-test the pointer;
+    // `hoveredHandle` drives the highlight + cursor.
     var hoveredHandle: String?
-    @ObservationIgnored var connectorHandleWorld: SIMD3<Float> = .zero
-    @ObservationIgnored var filletHandleWorld: SIMD3<Float> = .zero
 
     /// Frame the geometry at a clean 3/4 view. Parts auto-fit to a constant
     /// display size, so fixed camera params frame any part well.
@@ -1390,6 +1456,8 @@ final class EditorModel {
 
     deinit {
         if let d = gripperDoc { vcad_doc_free(d) }
+        if let s = residentAssemblyScene { vcad_scene_free(s) }
+        playbackTimer?.invalidate()
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
         spinTimer?.invalidate()
@@ -1792,11 +1860,11 @@ final class EditorModel {
 
     private var modifierApplies: Bool { selectedFeatureID != "base" && modifier != .none && modifierValue > 0.05 }
 
-    /// Build the sandbox solid (primitive + modifier) and tessellate it.
-    private func sandboxKernelMesh() -> KernelMesh? {
+    /// Build the sandbox solid (primitive + modifier), tessellate it, and hand
+    /// the kernel mesh handle to `body`; every FFI handle is freed on return.
+    private func withSandboxMesh<T>(_ body: (OpaquePointer) -> T?) -> T? {
         guard let base = makeBase() else { return nil }
         defer { vcad_solid_free(base) }
-        let start = Date()
         var target = base
         var owned: OpaquePointer?
         if modifierApplies {
@@ -1809,78 +1877,139 @@ final class EditorModel {
         defer { if let o = owned { vcad_solid_free(o) } }
         guard let mesh = vcad_solid_to_mesh(target, 64) else { return nil }
         defer { vcad_mesh_free(mesh) }
-        let km = KernelMesh.fromView(vcad_mesh_view(mesh))
-        if let eh = vcad_mesh_edges(mesh, Self.edgeAngleDeg) {
-            docPartEdges = [EdgeOverlay.segments(fromView: vcad_edges_view(eh))]
-            vcad_edges_free(eh)
-        } else {
-            docPartEdges = []
+        return body(mesh)
+    }
+
+    /// CPU-side copy of the sandbox mesh — export path (STL needs the arrays).
+    private func sandboxKernelMesh() -> KernelMesh? {
+        withSandboxMesh { KernelMesh.fromView(vcad_mesh_view($0)) }
+    }
+
+    /// Re-solve the sandbox and stream the FFI tessellation buffers directly
+    /// into the LowLevelMesh — no CPU-side array copy on the scrub hot path.
+    private func solveSandboxStream() -> (recreated: Bool, stats: StreamingMesh.StreamStats)? {
+        let start = Date()
+        let result: (recreated: Bool, stats: StreamingMesh.StreamStats)? = withSandboxMesh { mesh in
+            guard let r = streaming.update(fromView: vcad_mesh_view(mesh)) else { return nil }
+            if let eh = vcad_mesh_edges(mesh, Self.edgeAngleDeg) {
+                docPartEdges = [EdgeOverlay.segments(fromView: vcad_edges_view(eh))]
+                vcad_edges_free(eh)
+            } else {
+                docPartEdges = []
+            }
+            return r
         }
+        guard let (_, stats) = result else { return nil }
+        docPartInstancing = []
         solveMillis = Date().timeIntervalSince(start) * 1000
-        triangleCount = km.triangleCount
+        triangleCount = stats.triangleCount
         partCount = 1
-        sizeMM = km.maxBound - km.minBound
-        return km
+        sizeMM = stats.maxBound - stats.minBound
+        return result
     }
 
     private func sandboxScene() -> RenderScene {
-        guard let km = sandboxKernelMesh() else { return .empty }
-        streaming.update(from: km)
-        guard let res = streaming.resource else { return .empty }
-        let center = (km.minBound + km.maxBound) / 2
-        let size = Self.extent(km.minBound, km.maxBound)
+        clearAssembly()
+        guard let r = solveSandboxStream(), let res = streaming.resource else { return .empty }
+        let center = (r.stats.minBound + r.stats.maxBound) / 2
+        let size = Self.extent(r.stats.minBound, r.stats.maxBound)
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
         return RenderScene(meshes: [(res, Self.heroColor)], center: center, size: size,
-                           triangleCount: km.triangleCount, partCount: 1, edges: docPartEdges)
+                           triangleCount: r.stats.triangleCount, partCount: 1, edges: docPartEdges)
     }
 
     /// Hot path: re-solve the sandbox and stream into the GPU buffers in place.
+    /// Returns true when the LowLevelMesh was recreated (capacity growth) and
+    /// the caller must reassign `streaming.resource` onto its entity.
     func streamSandbox() -> Bool {
-        guard let km = sandboxKernelMesh() else { return false }
-        return streaming.update(from: km)
+        solveSandboxStream()?.recreated ?? false
     }
 
     struct PickHit { var point: SIMD3<Float>; var normal: SIMD3<Float> }
 
-    /// Cast a ray (kernel coords) against the current sandbox solid.
-    func raycastSandbox(originKernel: SIMD3<Float>, dirKernel: SIMD3<Float>) -> PickHit? {
-        guard source.isSandbox, let base = makeBase() else { return nil }
-        defer { vcad_solid_free(base) }
-        var target = base
-        var owned: OpaquePointer?
-        if modifierApplies {
-            switch modifier {
-            case .fillet: if let f = vcad_solid_fillet(base, modifierValue) { target = f; owned = f }
-            case .chamfer: if let c = vcad_solid_chamfer(base, modifierValue) { target = c; owned = c }
-            case .none: break
+    // MARK: pattern instancing (shared seed mesh + N transformed entities)
+
+    /// Kernel part index → instancing plan, for visible roots whose node is a
+    /// Linear/CircularPattern. Only the editable-JSON path instances (legacy
+    /// docs the parser couldn't load fall back to baked kernel meshes).
+    private func documentInstancingPlan() -> [Int: PatternInstancing] {
+        guard let json = documentJSON, let g = documentGraph else { return [:] }
+        var plan: [Int: PatternInstancing] = [:]
+        for (i, root) in g.visibleRoots.enumerated() {
+            if let inst = DocEdit.patternInstancing(json, rootNodeId: root.nodeId),
+               inst.transforms.count > 1 {
+                plan[i] = inst
             }
         }
-        defer { if let o = owned { vcad_solid_free(o) } }
-        let o: [Double] = [Double(originKernel.x), Double(originKernel.y), Double(originKernel.z)]
-        let d: [Double] = [Double(dirKernel.x), Double(dirKernel.y), Double(dirKernel.z)]
-        let hit = vcad_solid_raycast(target, o, d)
-        guard hit.hit != 0 else { return nil }
-        return PickHit(
-            point: SIMD3(Float(hit.point.0), Float(hit.point.1), Float(hit.point.2)),
-            normal: SIMD3(Float(hit.normal.0), Float(hit.normal.1), Float(hit.normal.2))
-        )
+        return plan
+    }
+
+    /// Serialize the live doc for kernel eval with each instanced pattern root
+    /// re-pointed at its seed child — the kernel then tessellates the seed ONCE
+    /// (no N-way boolean union); the viewport places the N copies.
+    private func evalData(applying plan: [Int: PatternInstancing]) -> Data? {
+        guard var json = documentJSON else { return nil }
+        if !plan.isEmpty, var roots = json["roots"] as? [[String: Any]] {
+            var vis = 0
+            for idx in roots.indices where (roots[idx]["visible"] as? Bool) ?? true {
+                if let inst = plan[vis] { roots[idx]["root"] = inst.seedNodeId }
+                vis += 1
+            }
+            json["roots"] = roots
+        }
+        return DocEdit.serialize(json)
+    }
+
+    /// Aggregate a seed mesh + edge segments over instance transforms into one
+    /// kernel-space pick mesh / edge list, so ray pick, hover, the gizmo, and
+    /// the edge overlay see exactly the geometry the instanced entities show.
+    private static func aggregateInstances(
+        _ km: KernelMesh, edgeSegments: [SIMD3<Float>], transforms: [simd_float4x4]
+    ) -> (pick: PickMesh, edges: [SIMD3<Float>], lo: SIMD3<Float>, hi: SIMD3<Float>) {
+        var positions: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        var segs: [SIMD3<Float>] = []
+        positions.reserveCapacity(km.positions.count * transforms.count)
+        indices.reserveCapacity(km.indices.count * transforms.count)
+        segs.reserveCapacity(edgeSegments.count * transforms.count)
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        for t in transforms {
+            let base = UInt32(positions.count)
+            for p in km.positions {
+                let w = t * SIMD4(p, 1)
+                let v = SIMD3(w.x, w.y, w.z)
+                positions.append(v)
+                lo = simd_min(lo, v); hi = simd_max(hi, v)
+            }
+            for idx in km.indices { indices.append(base + idx) }
+            for s in edgeSegments {
+                let w = t * SIMD4(s, 1)
+                segs.append(SIMD3(w.x, w.y, w.z))
+            }
+        }
+        return (PickMesh(positions: positions, indices: indices, lo: lo, hi: hi), segs, lo, hi)
     }
 
     private func documentScene(path: String) -> RenderScene {
         let start = Date()
         // Prefer the live (possibly edited) doc; fall back to the file on disk
         // for formats the JSON parser couldn't load (legacy terse `.vcad`).
+        let plan = documentInstancingPlan()
         let data: Data?
-        if let json = documentJSON { data = DocEdit.serialize(json) }
+        if documentJSON != nil { data = evalData(applying: plan) }
         else { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
         guard let data, !data.isEmpty else { return .empty }
         let scene: OpaquePointer? = data.withUnsafeBytes { raw in
             vcad_scene_from_json(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
         guard let scene else { return .empty }
+        if vcad_scene_instance_count(scene) > 0 {
+            return assemblyScene(adopting: scene, start: start)
+        }
         defer { vcad_scene_free(scene) }
-        return sceneFromHandle(scene, start: start)
+        return sceneFromHandle(scene, start: start, plan: plan)
     }
 
     /// Render the AI-generated loon program. Same evaluator + part-gather as a
@@ -1894,16 +2023,112 @@ final class EditorModel {
             vcad_scene_from_loon(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
         guard let scene else { return .empty }
+        if vcad_scene_instance_count(scene) > 0 {
+            return assemblyScene(adopting: scene, start: start)
+        }
         defer { vcad_scene_free(scene) }
         return sceneFromHandle(scene, start: start)
+    }
+
+    /// Gather an ASSEMBLY scene: one entity per instance, mesh in part-def
+    /// local coordinates + a world transform, rendered instead of the root
+    /// parts (mirrors the web viewport). Takes ownership of `scene` and keeps
+    /// it resident so playback can re-solve FK per frame without re-parsing.
+    private func assemblyScene(adopting scene: OpaquePointer, start: Date) -> RenderScene {
+        clearAssembly()
+        residentAssemblyScene = scene
+        let count = vcad_scene_instance_count(scene)
+
+        func instString(_ f: (OpaquePointer?, Int, UnsafeMutablePointer<Int>?) -> UnsafePointer<UInt8>?,
+                        _ i: Int) -> String {
+            var len = 0
+            guard let p = f(scene, i, &len), len > 0 else { return "" }
+            return String(decoding: UnsafeBufferPointer(start: p, count: len), as: UTF8.self)
+        }
+
+        var instances: [RenderInstance] = []
+        var transforms: [float4x4] = []
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var tris = 0
+        for i in 0..<count {
+            var m16 = [Double](repeating: 0, count: 16)
+            _ = vcad_scene_instance_transform(scene, i, &m16)
+            let world = Self.mat4(m16)
+            transforms.append(world)
+
+            let km = KernelMesh.fromView(vcad_scene_instance_mesh(scene, i))
+            guard !km.isEmpty else { continue }
+            tris += km.triangleCount
+            // World bounds: transform the local AABB's 8 corners.
+            for cx in [km.minBound.x, km.maxBound.x] {
+                for cy in [km.minBound.y, km.maxBound.y] {
+                    for cz in [km.minBound.z, km.maxBound.z] {
+                        let w = world * SIMD4<Float>(cx, cy, cz, 1)
+                        let p = SIMD3<Float>(w.x, w.y, w.z)
+                        lo = simd_min(lo, p); hi = simd_max(hi, p)
+                    }
+                }
+            }
+            let matKey = instString(vcad_scene_instance_material, i)
+            instances.append(RenderInstance(
+                index: i,
+                id: instString(vcad_scene_instance_id, i),
+                mesh: km.resource(name: "inst\(i)"),
+                material: resolvedMaterial(named: matKey, fallbackIndex: i),
+                transform: world))
+        }
+        guard !instances.isEmpty else {
+            clearAssembly()
+            return .empty
+        }
+        assemblyInstanceCount = count
+        instanceTransforms = transforms
+        // Instance picking isn't wired yet — clear the part pick meshes so a
+        // stale root-part hit can't select the wrong thing.
+        docPartMeshes = []
+        docPartEdges = []
+
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        triangleCount = tris
+        partCount = instances.count
+        sizeMM = hi - lo
+        let center = (lo + hi) / 2
+        let size = Self.extent(lo, hi)
+        displayCenter = center
+        displayScale = 0.6 / max(size, 0.0001)
+        // Land on the authored pose at t=0 when a timeline exists.
+        if timeline != nil { applyPlaybackPose() }
+        return RenderScene(meshes: [], center: center, size: size,
+                           triangleCount: tris, partCount: instances.count,
+                           instances: instances)
+    }
+
+    /// Resolve a material KEY (as carried by an instance) the same way the
+    /// per-part path does: document materials → presets → index palette.
+    func resolvedMaterial(named key: String, fallbackIndex: Int) -> ResolvedMaterial {
+        if let d = documentGraph?.materials[key] {
+            return ResolvedMaterial(
+                color: NSColor(srgbRed: d.color.0, green: d.color.1, blue: d.color.2, alpha: 1),
+                metallic: d.metallic, roughness: d.roughness, transmission: d.transmission)
+        }
+        if let p = MaterialPreset.byKey(key) {
+            return ResolvedMaterial(color: p.nsColor, metallic: p.metallic,
+                                    roughness: p.roughness, transmission: p.transmission)
+        }
+        return ResolvedMaterial(color: documentBaseColor(fallbackIndex),
+                                metallic: 0.55, roughness: 0.34, transmission: 0)
     }
 
     /// Gather every part mesh out of an evaluated scene handle into a centered,
     /// auto-fit `RenderScene`, updating the live readouts. Shared by the
     /// document and AI-generated paths.
-    private func sceneFromHandle(_ scene: OpaquePointer, start: Date) -> RenderScene {
+    private func sceneFromHandle(_ scene: OpaquePointer, start: Date,
+                                 plan: [Int: PatternInstancing] = [:]) -> RenderScene {
+        clearAssembly()                      // part-mode scene: drop any resident assembly
         let count = vcad_scene_part_count(scene)
         var meshes: [(MeshResource, NSColor)] = []
+        var instancing: [PatternInstancing?] = []
         var picks: [PickMesh] = []
         var edges: [[SIMD3<Float>]] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
@@ -1912,24 +2137,38 @@ final class EditorModel {
         for i in 0..<count {
             let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
             if km.isEmpty { continue }
-            lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
-            tris += km.triangleCount
-            meshes.append((km.resource(name: "part\(i)"), Self.partColors[i % Self.partColors.count]))
-            // Index-aligned with `meshes` (and thus the rendered part entities),
-            // so a viewport ray maps back to the right feature-tree row.
-            picks.append(PickMesh(positions: km.positions, indices: km.indices,
-                                  lo: km.minBound, hi: km.maxBound))
             // Feature edges for the CAD edge overlay (same index alignment).
+            var segs: [SIMD3<Float>] = []
             if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
-                edges.append(EdgeOverlay.segments(fromView: vcad_edges_view(eh)))
+                segs = EdgeOverlay.segments(fromView: vcad_edges_view(eh))
                 vcad_edges_free(eh)
+            }
+            meshes.append((km.resource(name: "part\(i)"), Self.partColors[i % Self.partColors.count]))
+            if let inst = plan[i] {
+                // Pattern root: the kernel returned the SEED (the eval doc was
+                // re-pointed) — aggregate picks/edges/bounds over the instances.
+                let agg = Self.aggregateInstances(km, edgeSegments: segs,
+                                                  transforms: inst.transforms)
+                lo = simd_min(lo, agg.lo); hi = simd_max(hi, agg.hi)
+                tris += km.triangleCount * inst.transforms.count
+                instancing.append(inst)
+                picks.append(agg.pick)
+                edges.append(agg.edges)
             } else {
-                edges.append([])
+                lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
+                tris += km.triangleCount
+                instancing.append(nil)
+                // Index-aligned with `meshes` (and thus the rendered part
+                // entities), so a viewport ray maps back to the right tree row.
+                picks.append(PickMesh(positions: km.positions, indices: km.indices,
+                                      lo: km.minBound, hi: km.maxBound))
+                edges.append(segs)
             }
         }
         guard !meshes.isEmpty else { return .empty }
         docPartMeshes = picks
         docPartEdges = edges
+        docPartInstancing = instancing
 
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
@@ -1940,7 +2179,8 @@ final class EditorModel {
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
         return RenderScene(meshes: meshes, center: center, size: size,
-                           triangleCount: tris, partCount: meshes.count, edges: edges)
+                           triangleCount: tris, partCount: meshes.count, edges: edges,
+                           instancing: instancing)
     }
 
     static func extent(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>) -> Float {

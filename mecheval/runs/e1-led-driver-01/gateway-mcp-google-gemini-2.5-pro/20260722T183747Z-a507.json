@@ -1,0 +1,212 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-led-driver-01",
+  "task_sha256": "cd80c25d470b71491491a205b829b76267f84ac53e9bcc96e1e6a4f2ccd285a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "fail",
+      "details": {
+        "candidate": {
+          "components": 3,
+          "nets": 3
+        },
+        "golden": {
+          "components": 3,
+          "nets": 3
+        },
+        "isomorphic": false
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 1,
+    "checks_total": 2,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T183747Z-a507",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-pro",
+    "name": "AI Gateway (MCP, google/gemini-2.5-pro)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-pro",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-led-driver-01",
+    "rendered": "Capture a schematic for a battery-powered LED: a 2-pin battery, a current-limiting resistor, and an LED in series, returning to the battery's other terminal. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-led-driver-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.44829100000004
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "components": [
+            {
+              "ref": "J1",
+              "part": "Conn_01x02",
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+              "y": 50,
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "number": "1",
+                  "name": "V+"
+                },
+                {
+                  "type": "PowerInput",
+                  "number": "2",
+                  "name": "GND"
+                }
+              ],
+              "x": 50
+            },
+            {
+              "value": "330",
+              "ref": "R1",
+              "x": 80,
+              "pins": [
+                {
+                  "name": "~",
+                  "number": "1",
+                  "type": "Passive"
+                },
+                {
+                  "name": "~",
+                  "number": "2",
+                  "type": "Passive"
+                }
+              ],
+              "y": 50,
+              "footprint": "Resistor_SMD:R_0805_2012Metric"
+            },
+            {
+              "ref": "D1",
+              "part": "LED",
+              "x": 110,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "K",
+                  "type": "Passive"
+                }
+              ],
+              "y": 50,
+              "footprint": "LED_SMD:LED_0805_2012Metric"
+            }
+          ],
+          "title": "Battery-Powered LED",
+          "nets": {
+            "V+": [
+              "J1.1",
+              "R1.1"
+            ],
+            "LED_A": [
+              "R1.2",
+              "D1.1"
+            ],
+            "GND": [
+              "D1.2",
+              "J1.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7437919999993028
+      },
+      {
+        "n": 2,
+        "tool": "run_erc",
+        "args": {
+          "document_id": "doc_2__sHTQgBpHJdi"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.772292000001471
+      },
+      {
+        "n": 3,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2__sHTQgBpHJdi"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9070830000018759
+      }
+    ],
+    "tokens": {
+      "input": 139027,
+      "output": 1509,
+      "total": 140536,
+      "cache_creation_input": 0,
+      "cache_read_input": 73177
+    },
+    "wallclock_sec": 24.405273667000003
+  },
+  "output": {
+    "vcad_path": "20260722T183747Z-a507.vcad",
+    "vcad_sha256": "9bfb23b8b2b4d0124e4d36ce75d4ed50bfa44ea6ebe243a102111268c80eb0e3",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:37:47.100Z",
+    "ended_at": "2026-07-22T18:38:11.518Z"
+  },
+  "signature": null
+}

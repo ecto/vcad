@@ -50,6 +50,7 @@ import {
   exportFabFiles,
   pcbPreviewMeshes,
   exportKicadPcb,
+  exportKicadProject,
   exportKicadSch,
   tryExportFabFiles,
   tryRunDrc,
@@ -1115,11 +1116,14 @@ export const exportKicadSchema = {
     filename: {
       type: "string" as const,
       description:
-        "Output filename ending in .kicad_pcb (board) or .kicad_sch (schematic). " +
-        "The extension selects what is exported: .kicad_pcb writes the session's " +
-        "board (footprints, pads, nets, traces, vias, zones, layers, outline) as a " +
-        "native, editable KiCad 9 file a human can open and finish routing; " +
-        ".kicad_sch writes the session's schematic. Defaults to board.kicad_pcb.",
+        "Output filename ending in .kicad_pcb (board), .kicad_sch (schematic), or " +
+        ".kicad_pro (linked project bundle). The extension selects what is exported: " +
+        ".kicad_pcb writes the session's board (footprints, pads, nets, traces, vias, " +
+        "zones, layers, outline) as a native, editable KiCad 9 file a human can open " +
+        "and finish routing; .kicad_sch writes the session's schematic; .kicad_pro " +
+        "(or a bare name with no extension) writes all three files with board " +
+        "footprints linked to their schematic symbols so KiCad can cross-probe " +
+        "(click a symbol → highlight its footprint). Defaults to board.kicad_pcb.",
     },
     output_dir: {
       type: "string" as const,
@@ -1738,6 +1742,39 @@ function validatePinType(raw: unknown, where: string): SchematicPin["pin_type"] 
   );
 }
 
+/** Imperial chip-size codes for two-terminal passives. */
+const CHIP_SIZE_CODES = new Set([
+  "0201",
+  "0402",
+  "0603",
+  "0805",
+  "1206",
+  "1210",
+  "2010",
+  "2512",
+]);
+
+/**
+ * True when a footprint id names a two-terminal passive package — the chip
+ * families (`R_0603`, `C_0805_2012Metric`, `L_...`, `D_SOD-123`) or a bare
+ * chip-size code (`0603`). Such components get pins 1/2 (type Passive)
+ * synthesized when the caller provides neither `part` nor `pins`.
+ */
+export function isTwoPinPassiveFootprint(footprint: unknown): boolean {
+  if (typeof footprint !== "string") return false;
+  const fp = footprint.trim();
+  if (/^[RCLD]_/i.test(fp)) return true;
+  return CHIP_SIZE_CODES.has(fp);
+}
+
+/** The two synthesized pins of a chip passive, in schematic-symbol layout. */
+function synthesizedPassivePins(): SchematicPin[] {
+  return [
+    { number: "1", name: "1", pin_type: "Passive", position: { x: 0, y: 0 } },
+    { number: "2", name: "2", pin_type: "Passive", position: { x: 5.08, y: 0 } },
+  ];
+}
+
 export async function createSchematic(args: Record<string, unknown>) {
   const title = (args.title as string) || undefined;
   const componentsInput = (args.components as Array<Record<string, unknown>>) || [];
@@ -1831,7 +1868,9 @@ export async function createSchematic(args: Record<string, unknown>) {
               pin_type: p.pin_type as SchematicPin["pin_type"],
               position: { x: p.x, y: p.y },
             }))
-          : [];
+          : !c.part && isTwoPinPassiveFootprint(c.footprint)
+            ? synthesizedPassivePins()
+            : [];
 
     // Carry the resolved part identity + datasheet for traceability.
     const properties: Record<string, string> = {};
@@ -3039,6 +3078,28 @@ function detectStaleNets(pcb: Pcb): Set<string> {
   return stale;
 }
 
+/** Per-net disjoint copper-group (galvanic island) counts via the kernel.
+ *  Returns null when the kernel is unavailable — the connectivity guard is
+ *  then OFF (and reported as such), never silently "clean". */
+async function netIslandCounts(
+  pcb: Pcb,
+  nets: Iterable<string>,
+): Promise<Map<string, number> | null> {
+  const counts = new Map<string, number>();
+  for (const net of nets) {
+    const c = await kernelNetContinuity(pcb, net);
+    if (!c) return null;
+    counts.set(net, c.islands);
+  }
+  return counts;
+}
+
+/** Nets the connectivity guard watches: every routable (>=2 pad) net. A
+ *  regression can land on a net the caller never named (stale rip-up,
+ *  negotiated rip-up side effects), so the watch set is board-wide. Capped
+ *  because each kernel continuity query serializes the whole board. */
+const CONNECTIVITY_GUARD_MAX_NETS = 300;
+
 /** Heuristic power/ground net names, for the `power_first` routing strategy. */
 const POWER_NET_RE =
   /(^|[_\-/])(A?D?GND|VCC|VDD[A]?|VBAT|VBUS|VIN|VOUT|VSYS|VREF|PWR|POWER|\d+V\d*)(\d*)([_\-/]|$)/i;
@@ -3132,6 +3193,48 @@ export async function routeNets(args: Record<string, unknown>) {
     if (t.source === "manual" && targetNets.has(t.net)) manualNets.add(t.net);
   }
   for (const n of manualNets) targetNets.delete(n);
+
+  // Connectivity guard: snapshot per-net disjoint copper-group counts before
+  // any rip-up so the result can report every net this call left WORSE
+  // connected (field report: a scoped re-route took GND from 4 galvanic
+  // groups to 14 and the result said nothing). Also snapshot the copper
+  // itself so an unrepairable regression can be rolled back net-by-net.
+  const guardNets = [...netConnections.entries()]
+    .filter(([, conns]) => conns.length >= 2)
+    .map(([n]) => n);
+  let guardSkipped: string | null = null;
+  let islandsBefore: Map<string, number> | null = null;
+  let copperBefore: { traces: typeof pcb.traces; vias: typeof pcb.vias } | null = null;
+  // Each continuity query serializes the whole board into the kernel, so the
+  // guard is also budgeted by copper-element count, not just net count.
+  const guardElements =
+    pcb.traces.length +
+    pcb.vias.length +
+    pcb.zones.length +
+    pcb.footprints.reduce((n, fp) => n + fp.pads.length, 0);
+  const maxGuardElements = Number(
+    process.env.VCAD_ROUTE_GUARD_MAX_ELEMENTS ?? 50_000,
+  );
+  if (guardNets.length > CONNECTIVITY_GUARD_MAX_NETS) {
+    guardSkipped = `connectivity-regression guard skipped: ${guardNets.length} nets exceeds the ${CONNECTIVITY_GUARD_MAX_NETS}-net budget — verify with run_drc (NetIslands)`;
+  } else if (guardElements > maxGuardElements) {
+    guardSkipped = `connectivity-regression guard skipped: ${guardElements} copper elements exceeds the ${maxGuardElements} budget (VCAD_ROUTE_GUARD_MAX_ELEMENTS) — verify with run_drc (NetIslands)`;
+  } else {
+    islandsBefore = await netIslandCounts(pcb, guardNets);
+    if (islandsBefore) {
+      // Deep clone: Trace.start/.end and Via.position are nested Vec2 objects,
+      // so a shallow spread would leave the snapshot sharing them with live
+      // copper — a future in-place edit during routing would corrupt the
+      // rollback baseline. structuredClone makes the snapshot fully independent.
+      copperBefore = {
+        traces: pcb.traces.map((t) => structuredClone(t)),
+        vias: pcb.vias.map((v) => structuredClone(v)),
+      };
+    } else {
+      guardSkipped =
+        "connectivity-regression guard unavailable (kernel WASM not loaded) — verify with run_drc";
+    }
+  }
 
   let tracesRemoved = 0;
   let viasRemoved = 0;
@@ -3303,6 +3406,69 @@ export async function routeNets(args: Record<string, unknown>) {
     }
   }
 
+  // Connectivity-regression guard, part 2: any net whose copper now forms
+  // MORE disjoint groups than before this call regressed — the router (or a
+  // stale rip-up side effect) broke connectivity it was supposed to preserve.
+  // Retry the regressed nets once against the otherwise-final board; a net
+  // still worse after the retry gets its pre-call copper restored (rollback),
+  // so a route_nets call can never silently degrade a net's connectivity.
+  const connectivityRegressions: Record<
+    string,
+    { groups_before: number; groups_after: number; action: "repaired-by-retry" | "rolled_back" }
+  > = {};
+  if (islandsBefore && copperBefore) {
+    const before = islandsBefore;
+    const worseNets = async (nets: Iterable<string>): Promise<Map<string, number> | null> => {
+      const counts = await netIslandCounts(pcb, nets);
+      if (!counts) return null;
+      const worse = new Map<string, number>();
+      for (const [n, after] of counts) {
+        const b = before.get(n) ?? 0;
+        if (b > 0 && after > b) worse.set(n, after);
+      }
+      return worse;
+    };
+    let worse = await worseNets(guardNets);
+    if (worse && worse.size > 0) {
+      // Retry: rip the regressed nets' autorouted copper and route just them
+      // again — the rest of the board (this pass's other copper included) is
+      // now a fixed obstacle field, which often resolves the negotiated
+      // rip-up collateral that caused the regression.
+      const retrySet = new Set(
+        [...worse.keys()].filter((n) => !preservedNets.has(n)),
+      );
+      if (retrySet.size > 0) {
+        pcb.traces = pcb.traces.filter((t) => !retrySet.has(t.net) || t.source === "manual");
+        pcb.vias = pcb.vias.filter((v) => !retrySet.has(v.net) || v.source === "manual");
+        const retried = await routeAll(pcb, width, [...retrySet], effort);
+        applyRoute(retried);
+      }
+      const stillWorse = (await worseNets(worse.keys())) ?? worse;
+      for (const [n, afterRoute] of worse) {
+        if (!stillWorse.has(n)) {
+          connectivityRegressions[n] = {
+            groups_before: before.get(n)!,
+            groups_after: afterRoute,
+            action: "repaired-by-retry",
+          };
+          continue;
+        }
+        // Rollback: restore the net's pre-call copper verbatim. The restored
+        // copper is checked against the final board by the caller's next DRC
+        // (and by the `receipt` after-snapshot below when requested).
+        pcb.traces = pcb.traces.filter((t) => t.net !== n);
+        pcb.vias = pcb.vias.filter((v) => v.net !== n);
+        for (const t of copperBefore.traces) if (t.net === n) pcb.traces.push(t);
+        for (const v of copperBefore.vias) if (v.net === n) pcb.vias.push(v);
+        connectivityRegressions[n] = {
+          groups_before: before.get(n)!,
+          groups_after: stillWorse.get(n)!,
+          action: "rolled_back",
+        };
+      }
+    }
+  }
+
   const planeStitched = [...routedNets].filter((n) => planeNets.has(n)).sort();
 
   // Overall routability in [0, 1]: how close the board is to fully routed. A
@@ -3358,14 +3524,35 @@ export async function routeNets(args: Record<string, unknown>) {
     );
   }
 
+  if (guardSkipped) warnings.push(guardSkipped);
+  const regressedNets = Object.keys(connectivityRegressions).sort();
+  if (regressedNets.length > 0) {
+    const rolled = regressedNets.filter(
+      (n) => connectivityRegressions[n]!.action === "rolled_back",
+    );
+    warnings.push(
+      `connectivity regression on ${regressedNets.length} net(s) — this call left their copper in more disjoint groups than before (${regressedNets
+        .map((n) => `${n}: ${connectivityRegressions[n]!.groups_before}→${connectivityRegressions[n]!.groups_after}`)
+        .join(", ")}). Regressed nets were re-routed once${
+        rolled.length > 0
+          ? `; ${rolled.join(", ")} stayed worse and had their pre-call copper restored (rolled back) — the restored copper may now conflict with newly routed nets, run run_drc`
+          : " and repaired"
+      }`,
+    );
+  }
+
   const receiptField: Record<string, unknown> = {};
   // Only build a receipt when both snapshots actually verified — a receipt
   // diffed against an unverifiable (kernel-rejected) board would be meaningless.
+  // But a requested receipt is never SILENTLY dropped: an unverifiable
+  // snapshot yields `receipt_error` with the reason instead of nothing.
   if (wantReceipt && beforeSnap && beforeSnap.success) {
     const after = await drcPcb(pcb, "full", 500);
     // Only build a receipt when the after-snapshot also verified — an
     // unverifiable (kernel-rejected) board has no byNetPair to diff against.
-    if (after.success) {
+    if (!after.success) {
+      receiptField.receipt_error = `receipt requested but the after-route DRC snapshot could not verify the board: ${after.reason}`;
+    } else {
       const entry = buildEntry(
         { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
         0,
@@ -3376,6 +3563,10 @@ export async function routeNets(args: Record<string, unknown>) {
       }
       receiptField.receipt = {
         ...agentView(entry, ctx.documentId ?? ""),
+        // Total violation counts of the two snapshots — `errors` (from
+        // agentView) is only the error-severity slice; agents diff the board
+        // on the full count.
+        violations: { before: entry.before.violations, after: entry.after.violations },
         nets_routed: [...routedNets].sort(),
         nets_unrouted: [...unroutedNets].sort(),
         traces_added: tracesAdded,
@@ -3386,6 +3577,8 @@ export async function routeNets(args: Record<string, unknown>) {
         short_pairs: shortPairs,
       };
     }
+  } else if (wantReceipt && beforeSnap && !beforeSnap.success) {
+    receiptField.receipt_error = `receipt requested but the before-route DRC snapshot could not verify the board: ${beforeSnap.reason}`;
   }
 
   return {
@@ -3415,6 +3608,9 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
           ...(dedupedDiagnostics.length > 0 ? { unrouted_diagnostics: dedupedDiagnostics } : {}),
           ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
+          ...(regressedNets.length > 0
+            ? { connectivity_regressions: connectivityRegressions }
+            : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
           ...receiptField,
           ...docResultPayload(ctx),
@@ -4804,6 +5000,87 @@ function deliverFabFiles(files: FabFile[], diskFailReason?: string) {
 }
 
 /**
+ * Return a linked KiCad project bundle to the caller. When output_dir is
+ * writable the three files land on disk; otherwise they ride inline under the
+ * cap, or offload to the artifact store above it (same mechanism as Gerbers).
+ */
+async function deliverKicadProject(
+  files: FabFile[],
+  name: string,
+  outputDir: string | undefined,
+  documentId: string | undefined,
+) {
+  const total = bundleBytes(files);
+  const docField = documentId ? { document_id: documentId } : {};
+
+  if (outputDir) {
+    try {
+      const fs = await import("node:fs/promises");
+      const { resolveWithinRoot } = await import("./safe-path.js");
+      const dir = resolveWithinRoot(outputDir);
+      await fs.mkdir(dir, { recursive: true });
+      const paths: string[] = [];
+      for (const f of files) {
+        const path = resolveWithinRoot(f.name, dir);
+        await fs.writeFile(path, f.content, "utf8");
+        paths.push(path);
+      }
+      const payload = {
+        success: true,
+        format: "kicad_project" as const,
+        name,
+        bytes: total,
+        paths,
+        note: `Linked KiCad project written; open ${name}.kicad_pro in KiCad 9 to cross-probe schematic and board.`,
+        ...docField,
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        structuredContent: { export_kicad: payload },
+      };
+    } catch {
+      // Sandboxed/hosted host — fall through to inline/artifact delivery.
+    }
+  }
+
+  const cap = maxInlineArtifactBytes();
+  if (total <= cap) {
+    const payload = {
+      success: true,
+      format: "kicad_project" as const,
+      name,
+      bytes: total,
+      files,
+      ...docField,
+    };
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+      structuredContent: { export_kicad: payload },
+    };
+  }
+
+  const handle = storeArtifact(files);
+  const payload = {
+    success: true,
+    format: "kicad_project" as const,
+    name,
+    bytes: total,
+    artifact_id: handle.artifact_id,
+    artifact_url: handle.artifact_url,
+    manifest: handle.manifest,
+    expires_at: handle.expires_at,
+    note:
+      "Project files are at artifact_url (the manifest lists each file with bytes + sha256; " +
+      "download one at <artifact_url>/<file>).",
+    ...docField,
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: { export_kicad: payload },
+  };
+}
+
+/**
  * Export the session's board or schematic as a native, editable KiCad 9 file.
  *
  * `.kicad_pcb` serializes the board (the inverse of import_pcb); `.kicad_sch`
@@ -4820,7 +5097,41 @@ export async function exportKicad(args: Record<string, unknown>) {
       : "board.kicad_pcb";
   const outputDir = args.output_dir as string | undefined;
 
-  const ext = filename.toLowerCase().split(".").pop();
+  const ext = filename.includes(".")
+    ? filename.toLowerCase().split(".").pop()
+    : undefined;
+
+  // Linked project bundle: .kicad_pro (or a bare name) exports all three
+  // files — <name>.kicad_pro / .kicad_sch / .kicad_pcb — with board
+  // footprints carrying (path …) references to their schematic symbol uuids
+  // so KiCad can cross-probe.
+  if (ext === "kicad_pro" || ext === undefined) {
+    const name = ext === undefined ? filename : filename.slice(0, -".kicad_pro".length);
+    if (!name) {
+      return ecadError("Project filename must have a basename, e.g. 'board.kicad_pro'.");
+    }
+    const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+    if (!sheet) {
+      return ecadError(
+        "A KiCad project bundle needs a schematic; this document has none. " +
+          "Create one with create_schematic, or export the board alone as .kicad_pcb.",
+      );
+    }
+    const pcb = getDocPcb(doc);
+    if (!pcb) {
+      return ecadError(
+        "A KiCad project bundle needs a board; this document has none. " +
+          "Export the schematic alone as .kicad_sch.",
+      );
+    }
+    const bundle = await exportKicadProject(sheet, pcb, name);
+    if (!bundle) {
+      return ecadError("KiCad project export unavailable (kernel WASM not loaded or outdated)");
+    }
+    const files = bundle.map(([n, c]) => ({ name: n, content: c }));
+    return deliverKicadProject(files, name, outputDir, documentId);
+  }
+
   let content: string | null;
   let format: "kicad_pcb" | "kicad_sch";
 
@@ -6895,7 +7206,8 @@ const FOOTPRINT_FAMILIES: FootprintFamily[] = [
   { family: "QFP", label: "Quad flat package (LQFP/TQFP/PQFP)", aliases: ["QFP", "LQFP", "TQFP", "PQFP", "CQFP"], kind: "ic", pins: "multiple of 4, ≥8", pitch_mm: "0.4–0.8", example: "LQFP-48", example_pins: 48 },
   { family: "SOIC", label: "Small-outline IC (SO/SOP)", aliases: ["SOIC", "SO", "SOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "1.27", example: "SOIC-8", example_pins: 8 },
   { family: "SSOP", label: "Shrink small-outline (QSOP)", aliases: ["SSOP", "QSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.635–0.65", example: "SSOP-16", example_pins: 16 },
-  { family: "TSSOP", label: "Thin shrink small-outline", aliases: ["TSSOP", "HTSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "TSSOP-20", example_pins: 20 },
+  { family: "TSSOP", label: "Thin shrink small-outline", aliases: ["TSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "TSSOP-20", example_pins: 20 },
+  { family: "HTSSOP", label: "TSSOP with exposed thermal pad (PowerPad)", aliases: ["HTSSOP", "PowerPad", "PowerPAD", "TSSOP-EP", "HTSSOP-16", "PWP"], kind: "ic", pins: "even, ≥4 (+EP)", pitch_mm: "0.65", example: "HTSSOP-16-1EP_4.4x5mm_P0.65mm_EP3.4x5mm", example_pins: 16 },
   { family: "MSOP", label: "Mini small-outline", aliases: ["MSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "MSOP-8", example_pins: 8 },
   { family: "VSSOP", label: "Very-thin shrink small-outline", aliases: ["VSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.5", example: "VSSOP-8", example_pins: 8 },
   { family: "DIP", label: "Dual in-line (through-hole)", aliases: ["DIP", "PDIP"], kind: "ic", pins: "even, ≥4", pitch_mm: "2.54", example: "DIP-8", example_pins: 8 },
@@ -6912,7 +7224,9 @@ const FOOTPRINT_FAMILIES: FootprintFamily[] = [
   { family: "JST-GH", label: "JST GH wire-to-board (1.25mm SMD)", aliases: ["JST_GH", "JST-GH"], kind: "connector", pins: "2+", pitch_mm: "1.25", example: "JST_GH_4", example_pins: 4 },
   { family: "Molex-PicoBlade", label: "Molex Pico-Blade (1.25mm SMD)", aliases: ["PicoBlade", "Pico-Blade", "53048", "53261"], kind: "connector", pins: "2+", pitch_mm: "1.25", example: "Molex_PicoBlade_1x04_P1.25mm", example_pins: 4 },
   { family: "Tag-Connect", label: "Tag-Connect spring-pin programming pads", aliases: ["Tag-Connect", "TagConnect", "TC2030", "TC2050"], kind: "connector", pins: "6 (TC2030), 10 (TC2050)", pitch_mm: "1.27", example: "TC2030", example_pins: 6 },
-  { family: "USB-C", label: "USB-C receptacle (simplified)", aliases: ["USB_C", "USB-C", "Type-C", "TypeC"], kind: "connector", pins: "up to 24", pitch_mm: "0.5", example: "USB-C", example_pins: 24 },
+  { family: "USB-C", label: "USB-C receptacle (simplified; 16-pin USB 2.0 subset or full 24)", aliases: ["USB_C", "USB-C", "Type-C", "TypeC", "USB-C-16"], kind: "connector", pins: "up to 24 (+4 shield posts)", pitch_mm: "0.5–1.0", example: "USB-C", example_pins: 24 },
+  { family: "USB-Micro-B", label: "USB micro-B receptacle (5 contacts + shield posts)", aliases: ["USB_Micro-B", "USB-Micro", "USB Micro", "MicroUSB", "Micro_USB", "Micro-B"], kind: "connector", pins: "5 (+4 shield posts)", pitch_mm: "0.65", example: "USB_Micro-B_Molex-105017-0001", example_pins: 5 },
+  { family: "Crystal", label: "SMD crystal (2-pad 5032/6035/7050, 4-pad 3225/2520/2016/1612)", aliases: ["Crystal", "Crystal_SMD", "3225", "2520", "2016", "1612", "5032", "6035", "7050", "XTAL"], kind: "passive", pins: "2 or 4", pitch_mm: "n/a", example: "Crystal_SMD_3225-4Pin_3.2x2.5mm", example_pins: 4 },
 ];
 
 /** Relevance score of a family for a query (0..1) — exact alias, substring,
@@ -12456,6 +12770,592 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
   };
 }
 
+// ============================================================================
+// fix_drc — run DRC and auto-apply the mechanically-safe subset of fixes
+// ============================================================================
+//
+// The "loop is the product" tool for boards: one call that runs DRC, applies
+// only the fixes that are mechanically safe (no design intent required), and
+// returns a fail-closed receipt of what it fixed, what it skipped and why,
+// and the before/after violation counts. Every individual fix is verified
+// with a drc_delta capture and REVERTED if it would introduce any new
+// violation — a fix that can't be proven safe never lands. Never touched:
+// different-net shorts/clearance, courtyard overlaps, keepouts, fab-rule
+// scalars — anything whose resolution is a design decision.
+
+/** Distance from a point to a segment. */
+function distToSegment(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.x + t * dx;
+  const cy = a.y + t * dy;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
+/** Closest point on a segment to `p`. */
+function closestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/** Every boundary loop of the board: the outer outline plus each cutout —
+ *  edge clearance is measured to the nearest of any of them (kernel parity). */
+function boardBoundaryLoops(outline: BoardOutline): Vec2[][] {
+  const loops: Vec2[][] = [];
+  if (outline.vertices.length >= 3) loops.push(outline.vertices);
+  for (const c of outline.cutouts ?? []) if (c.length >= 3) loops.push(c);
+  return loops;
+}
+
+/** Min distance from `p` to any board boundary edge, and the closest boundary
+ *  point (for the inward-nudge direction). Null when the outline is degenerate. */
+function nearestBoundary(
+  p: Vec2,
+  outline: BoardOutline,
+): { dist: number; point: Vec2 } | null {
+  let best: { dist: number; point: Vec2 } | null = null;
+  for (const loop of boardBoundaryLoops(outline)) {
+    for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+      const d = distToSegment(p, loop[j]!, loop[i]!);
+      if (!best || d < best.dist) {
+        best = { dist: d, point: closestOnSegment(p, loop[j]!, loop[i]!) };
+      }
+    }
+  }
+  return best;
+}
+
+/** True when `p` is on the board: inside the outer outline and outside every
+ *  cutout. */
+function onBoard(p: Vec2, outline: BoardOutline): boolean {
+  if (!pointInPolygon(p, outline.vertices)) return false;
+  for (const c of outline.cutouts ?? []) {
+    if (c.length >= 3 && pointInPolygon(p, c)) return false;
+  }
+  return true;
+}
+
+/** Coincidence tolerance for matching copper endpoints/vias to a DRC
+ *  violation position (the kernel reports exact element coordinates). */
+const FIX_EPS = 1e-3;
+
+function samePoint(a: Vec2, b: Vec2, eps = FIX_EPS): boolean {
+  return Math.abs(a.x - b.x) <= eps && Math.abs(a.y - b.y) <= eps;
+}
+
+/** One applied (or planned) fix in the fix_drc receipt. */
+interface DrcFixAction {
+  rule: string;
+  action: string;
+  detail: string;
+  net?: string;
+  position?: Vec2;
+}
+
+/** One skipped violation (or violation group) in the fix_drc receipt. */
+interface DrcFixSkip {
+  rule: string;
+  reason: string;
+  count: number;
+  sample_message?: string;
+}
+
+/** Rules fix_drc will never touch, with the reason surfaced in the receipt. */
+const FIX_DRC_NEVER: Record<string, string> = {
+  Short:
+    "different-net short — resolving requires design intent (re-route both nets or add a net-tie); never auto-safe",
+  Clearance:
+    "different-net clearance — pushing copper risks new shorts; re-route the involved nets deliberately",
+  CourtyardOverlap: "placement decision — fix_drc never moves components (use set_placement)",
+  Keepout: "copper inside a keepout — deliberate design change required",
+  SilkscreenClearance: "silkscreen artwork — cosmetic, not auto-fixable",
+  MinTraceWidth:
+    "fab-rule break — widen the trace (or change design rules) deliberately",
+  MinDrill: "fab-rule break — enlarge the drill (or change design rules) deliberately",
+  AnnularRing:
+    "fab-rule break — enlarge the via diameter (or change design rules) deliberately",
+  AcidTrap: "acute copper junction — reshaping copper is a routing decision",
+  SameNetBypass:
+    "same-net bypass — whether the touch is intended is design intent, not auto-safe",
+};
+
+/** JSON Schema for fix_drc tool. */
+export const fixDrcSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    dry_run: {
+      type: "boolean" as const,
+      description:
+        "Plan the fixes without mutating the board. Planned actions come back " +
+        "in `planned` (NOT verified — only an applied fix is delta-verified).",
+    },
+    reroute_effort: {
+      type: "number" as const,
+      description:
+        "route_nets effort used when re-routing UnconnectedNet/NetIslands nets " +
+        "(default 4 — higher than a first-pass route).",
+    },
+    max_fixes: {
+      type: "number" as const,
+      description: "Cap on applied fixes in one call (default 50).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Outcome of one verified fix attempt. */
+type FixAttempt = { ok: true; delta: DrcDelta } | { ok: false; reason: string };
+
+/**
+ * Run DRC and automatically apply the mechanically-safe subset of fixes:
+ * stitching vias for UnstitchedPad, dedupe of overlapping same-net via drills
+ * (HoleToHole), inward nudges for EdgeClearance when a legal corridor exists,
+ * and per-net rip-up + re-route for UnconnectedNet/NetIslands. Each fix is
+ * individually verified with a DRC delta and reverted if it introduces any
+ * new violation. Fail-closed: refuses to run without the kernel DRC engine,
+ * and an unverifiable board is never reported as fixed.
+ */
+export async function fixDrc(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  // Fail closed: without the kernel every fix would be unverifiable guesswork.
+  if (!(await isEcadAvailable())) {
+    return ecadError(
+      "fix_drc requires the kernel DRC engine (ECAD WASM unavailable) — refusing to apply unverifiable fixes",
+    );
+  }
+
+  const dryRun = Boolean(args.dry_run);
+  const effort = Math.min(100, Math.max(0.1, Number(args.reroute_effort) || 4));
+  const maxFixes = Math.max(1, Math.round(Number(args.max_fixes as number) || 50));
+
+  const before = await drcPcb(pcb, "full", 20);
+  if (!before.success) return ecadUnverifiable("fix_drc", before);
+  const viols = before.details ?? [];
+
+  const fixed: DrcFixAction[] = [];
+  const planned: DrcFixAction[] = [];
+  const skipped: DrcFixSkip[] = [];
+  let budget = maxFixes;
+
+  const skip = (rule: string, reason: string, message?: string) => {
+    const existing = skipped.find((s) => s.rule === rule && s.reason === reason);
+    if (existing) existing.count++;
+    else skipped.push({ rule, reason, count: 1, ...(message ? { sample_message: message } : {}) });
+  };
+
+  /** Apply `mutate` under a drc_delta capture; revert (restore the saved
+   *  copper arrays) unless the delta proves no new violations. */
+  const applyVerified = async (
+    bounds: { min: Vec2; max: Vec2 } | "full",
+    mutate: () => void,
+  ): Promise<FixAttempt> => {
+    const savedTraces = pcb.traces;
+    const savedVias = pcb.vias;
+    const cap = await beginDrcDelta(pcb, bounds);
+    mutate();
+    const delta = await cap.finish();
+    if (delta.unverifiable) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      return { ok: false, reason: `verification failed: ${delta.unverifiable.reason}` };
+    }
+    if (delta.introduced > 0) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      const worst = delta.sample[0];
+      return {
+        ok: false,
+        reason:
+          `would introduce ${delta.introduced} new violation(s)` +
+          (worst ? ` (worst: ${worst.rule})` : ""),
+      };
+    }
+    return { ok: true, delta };
+  };
+
+  // -- 1) HoleToHole: dedupe overlapping same-net via drills ------------------
+  for (const v of viols.filter((x) => x.rule === "HoleToHole")) {
+    if (budget <= 0) break;
+    if (!(typeof v.actual === "number" && v.actual < 0)) {
+      skip(
+        "HoleToHole",
+        "holes are close but not overlapping — spacing needs a deliberate layout change",
+        v.message,
+      );
+      continue;
+    }
+    if (!v.position) {
+      skip("HoleToHole", "violation carries no position", v.message);
+      continue;
+    }
+    // The kernel reports the midpoint between the two holes; re-derive the
+    // pair from the live vias (nets are not in the message — recomputed here).
+    const pos = v.position;
+    let pair: [Via, Via] | null = null;
+    outer: for (let i = 0; i < pcb.vias.length; i++) {
+      for (let j = i + 1; j < pcb.vias.length; j++) {
+        const a = pcb.vias[i]!;
+        const b = pcb.vias[j]!;
+        const mid = { x: (a.position.x + b.position.x) / 2, y: (a.position.y + b.position.y) / 2 };
+        if (!samePoint(mid, pos, 0.05)) continue;
+        const edge =
+          Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y) -
+          a.drill / 2 -
+          b.drill / 2;
+        if (edge < 0) {
+          pair = [a, b];
+          break outer;
+        }
+      }
+    }
+    if (!pair) {
+      skip(
+        "HoleToHole",
+        "overlapping pair is not two vias (a pad drill is involved, or it was already resolved earlier this pass) — component moves are out of scope",
+        v.message,
+      );
+      continue;
+    }
+    const [a, b] = pair;
+    if (a.net !== b.net) {
+      skip("HoleToHole", "overlapping drills belong to different nets — not mechanically safe", v.message);
+      continue;
+    }
+    // Prefer deleting autorouted copper; hand-placed vias survive when possible.
+    const victim = b.source === "manual" && a.source !== "manual" ? a : b;
+    if (dryRun) {
+      planned.push({
+        rule: "HoleToHole",
+        action: "delete_via",
+        detail: `dedupe overlapping same-net via at (${victim.position.x}, ${victim.position.y})`,
+        net: victim.net,
+        position: victim.position,
+      });
+      budget--;
+      continue;
+    }
+    const boundsV = boundsOfPoints(
+      [a.position, b.position],
+      Math.max(a.diameter, b.diameter),
+    );
+    const res = await applyVerified(boundsV, () => {
+      pcb.vias = pcb.vias.filter((x) => x !== victim);
+    });
+    if (res.ok) {
+      fixed.push({
+        rule: "HoleToHole",
+        action: "delete_via",
+        detail: `removed duplicate same-net via (net '${victim.net}', ${res.delta.resolved} violation(s) resolved)`,
+        net: victim.net,
+        position: victim.position,
+      });
+      budget--;
+    } else {
+      skip("HoleToHole", `dedupe reverted — ${res.reason}`, v.message);
+    }
+  }
+
+  // -- 2) UnstitchedPad: drop a stitching via along the escape vector ---------
+  for (const v of viols.filter((x) => x.rule === "UnstitchedPad")) {
+    if (budget <= 0) break;
+    const [net] = parseNetPair(v.message);
+    if (!net || !v.position) {
+      skip("UnstitchedPad", "violation carries no net/position", v.message);
+      continue;
+    }
+    // Message format (drc.rs): "... escaping ~{mag}mm along ({ex}, {ey}) ..."
+    const m = /escaping ~(-?[\d.]+)mm along \((-?[\d.]+), (-?[\d.]+)\)/.exec(v.message);
+    const candidates: Vec2[] = [];
+    if (m) {
+      const mag = Number(m[1]);
+      const escaped = {
+        x: v.position.x + mag * Number(m[2]),
+        y: v.position.y + mag * Number(m[3]),
+      };
+      if (onBoard(escaped, pcb.outline)) candidates.push(escaped);
+    }
+    // At-pad fallback: a via in the pad is legal on many stackups; the delta
+    // check rejects it where it isn't.
+    candidates.push(v.position);
+    const diameter = pcb.rules.defaultRules.viaDiameter;
+    const drill = pcb.rules.defaultRules.viaDrill;
+    if (dryRun) {
+      planned.push({
+        rule: "UnstitchedPad",
+        action: "add_via",
+        detail: `stitching via for plane net '${net}' near (${round3(candidates[0]!.x)}, ${round3(candidates[0]!.y)})`,
+        net,
+        position: candidates[0],
+      });
+      budget--;
+      continue;
+    }
+    let done = false;
+    let lastReason = "";
+    for (const cand of candidates) {
+      const pos = { x: round3(cand.x), y: round3(cand.y) };
+      const res = await applyVerified(boundsOfPoints([pos], diameter / 2), () => {
+        // Tagged manual: a stitching via must survive route_nets rip-up.
+        pcb.vias = [
+          ...pcb.vias,
+          { position: pos, diameter, drill, startLayer: "FCu", endLayer: "BCu", net, source: "manual" } as Via,
+        ];
+      });
+      if (res.ok) {
+        fixed.push({
+          rule: "UnstitchedPad",
+          action: "add_via",
+          detail: `stitching via for plane net '${net}' (${res.delta.resolved} violation(s) resolved)`,
+          net,
+          position: pos,
+        });
+        budget--;
+        done = true;
+        break;
+      }
+      lastReason = res.reason;
+    }
+    if (!done) {
+      skip("UnstitchedPad", `no legal via site at the pad or along the escape vector — ${lastReason}`, v.message);
+    }
+  }
+
+  // -- 3) EdgeClearance: nudge copper inward when a legal corridor exists -----
+  const NUDGE_MARGIN = 0.05;
+  for (const v of viols.filter((x) => x.rule === "EdgeClearance")) {
+    if (budget <= 0) break;
+    const kindMatch = /^(Trace|Via) net '([^']+)'/.exec(v.message);
+    if (!kindMatch || !v.position) {
+      skip("EdgeClearance", "unrecognized edge-clearance subject", v.message);
+      continue;
+    }
+    const kind = kindMatch[1]!;
+    const net = kindMatch[2]!;
+    const required = typeof v.required === "number" ? v.required : pcb.rules.edgeClearance;
+    const deficit = required - (typeof v.actual === "number" ? v.actual : 0) + NUDGE_MARGIN;
+
+    // Points to move: a via center, or the too-close endpoint(s) of the trace
+    // whose midpoint the kernel reported.
+    let halfWidth = 0;
+    const movePoints: Vec2[] = [];
+    if (kind === "Via") {
+      const via = pcb.vias.find((x) => x.net === net && samePoint(x.position, v.position!));
+      if (!via) {
+        skip("EdgeClearance", "via no longer at the reported position (already fixed this pass?)", v.message);
+        continue;
+      }
+      halfWidth = via.diameter / 2;
+      movePoints.push(via.position);
+    } else {
+      const trace = pcb.traces.find(
+        (t) =>
+          t.net === net &&
+          samePoint({ x: (t.start.x + t.end.x) / 2, y: (t.start.y + t.end.y) / 2 }, v.position!),
+      );
+      if (!trace) {
+        skip("EdgeClearance", "trace no longer at the reported position (already fixed this pass?)", v.message);
+        continue;
+      }
+      halfWidth = trace.width / 2;
+      for (const pt of [trace.start, trace.end]) {
+        const nb = nearestBoundary(pt, pcb.outline);
+        if (nb && nb.dist - halfWidth < required) movePoints.push(pt);
+      }
+      if (movePoints.length === 0) {
+        skip("EdgeClearance", "could not localize the offending trace endpoint", v.message);
+        continue;
+      }
+    }
+
+    // Compute the inward nudge per point; bail if any point has no legal spot.
+    const moves: Array<{ from: Vec2; to: Vec2 }> = [];
+    let corridorFail: string | null = null;
+    for (const pt of movePoints) {
+      // A pad at this point means the copper lands on a component — moving it
+      // would disconnect the pad, and moving the component is out of scope.
+      const onPad = pcb.footprints.some((fp) =>
+        fp.pads.some((pad) => samePoint(padWorld(fp, pad), pt)),
+      );
+      if (onPad) {
+        corridorFail = "endpoint lands on a component pad — fixing requires moving the component";
+        break;
+      }
+      const nb = nearestBoundary(pt, pcb.outline);
+      if (!nb || nb.dist < 1e-9) {
+        corridorFail = "no inward direction from the board edge";
+        break;
+      }
+      const dir = { x: (pt.x - nb.point.x) / nb.dist, y: (pt.y - nb.point.y) / nb.dist };
+      const to = { x: round3(pt.x + dir.x * deficit), y: round3(pt.y + dir.y * deficit) };
+      const after = nearestBoundary(to, pcb.outline);
+      if (!onBoard(to, pcb.outline) || !after || after.dist - halfWidth < required) {
+        corridorFail = "no legal corridor inward (target point still violates edge clearance)";
+        break;
+      }
+      moves.push({ from: pt, to });
+    }
+    if (corridorFail) {
+      skip("EdgeClearance", corridorFail, v.message);
+      continue;
+    }
+    if (dryRun) {
+      planned.push({
+        rule: "EdgeClearance",
+        action: kind === "Via" ? "move_via" : "nudge_trace",
+        detail: `nudge ${moves.length} point(s) inward by ~${round3(deficit)}mm`,
+        net,
+        position: v.position,
+      });
+      budget--;
+      continue;
+    }
+    // Move every same-net copper endpoint coincident with each point together,
+    // so junctions (trace↔trace, trace↔via) stay connected.
+    const allPts = moves.flatMap((mv) => [mv.from, mv.to]);
+    const res = await applyVerified(
+      boundsOfPoints(allPts, halfWidth) as { min: Vec2; max: Vec2 } | "full",
+      () => {
+        const remap = (p: Vec2, elNet: string): Vec2 => {
+          if (elNet !== net) return p;
+          const mv = moves.find((x) => samePoint(x.from, p));
+          return mv ? mv.to : p;
+        };
+        pcb.traces = pcb.traces.map((t) => {
+          const ns = remap(t.start, t.net);
+          const ne = remap(t.end, t.net);
+          return ns === t.start && ne === t.end ? t : { ...t, start: ns, end: ne };
+        });
+        pcb.vias = pcb.vias.map((via) => {
+          const np = remap(via.position, via.net);
+          return np === via.position ? via : { ...via, position: np };
+        });
+      },
+    );
+    if (res.ok) {
+      fixed.push({
+        rule: "EdgeClearance",
+        action: kind === "Via" ? "move_via" : "nudge_trace",
+        detail: `nudged net '${net}' inward by ~${round3(deficit)}mm (${res.delta.resolved} violation(s) resolved)`,
+        net,
+        position: v.position,
+      });
+      budget--;
+    } else {
+      skip("EdgeClearance", `nudge reverted — ${res.reason}`, v.message);
+    }
+  }
+
+  // -- 4) UnconnectedNet / NetIslands: rip-up + re-route the net --------------
+  const rerouteNets: string[] = [];
+  for (const v of viols) {
+    if (v.rule !== "UnconnectedNet" && v.rule !== "NetIslands") continue;
+    const [net] = parseNetPair(v.message);
+    if (net && !rerouteNets.includes(net)) rerouteNets.push(net);
+  }
+  for (const net of rerouteNets) {
+    if (budget <= 0) break;
+    if (pcb.traces.some((t) => t.net === net && t.source === "manual")) {
+      skip(
+        "UnconnectedNet",
+        `net '${net}' carries hand-placed copper — route_nets preserves it wholesale; delete the manual copper first`,
+      );
+      continue;
+    }
+    if (dryRun) {
+      planned.push({
+        rule: "UnconnectedNet",
+        action: "reroute_net",
+        detail: `rip-up + re-route net '${net}' at effort ${effort}`,
+        net,
+      });
+      budget--;
+      continue;
+    }
+    const savedTraces = pcb.traces;
+    const savedVias = pcb.vias;
+    const cap = await beginDrcDelta(pcb, "full");
+    const routeArgs: Record<string, unknown> = ctx.documentId
+      ? { document_id: ctx.documentId, nets: [net], effort }
+      : { document: ctx.doc, nets: [net], effort };
+    const routeResult = (await routeNets(routeArgs)) as {
+      content: Array<{ text?: string }>;
+      isError?: boolean;
+    };
+    if (routeResult.isError) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      skip("UnconnectedNet", `re-route of net '${net}' failed — ${routeResult.content[0]?.text ?? "unknown error"}`);
+      continue;
+    }
+    const delta = await cap.finish();
+    if (delta.unverifiable || delta.introduced > 0 || delta.resolved === 0) {
+      pcb.traces = savedTraces;
+      pcb.vias = savedVias;
+      const reason = delta.unverifiable
+        ? `verification failed: ${delta.unverifiable.reason}`
+        : delta.introduced > 0
+          ? `re-route would introduce ${delta.introduced} new violation(s)`
+          : "re-route did not resolve the connectivity fault";
+      skip("UnconnectedNet", `re-route of net '${net}' reverted — ${reason}`);
+      continue;
+    }
+    fixed.push({
+      rule: "UnconnectedNet",
+      action: "reroute_net",
+      detail: `re-routed net '${net}' at effort ${effort} (${delta.resolved} violation(s) resolved)`,
+      net,
+    });
+    budget--;
+  }
+
+  // -- 5) Everything else: never touched, with the reason on record -----------
+  for (const v of viols) {
+    const reason = FIX_DRC_NEVER[v.rule];
+    if (reason) skip(v.rule, reason, v.message);
+  }
+
+  // Final fail-closed accounting: the after snapshot is the receipt's anchor.
+  const after = dryRun ? before : await drcPcb(pcb, "full", 20);
+  const brief = (s: DrcSummary) => ({
+    violations: s.violations,
+    errors: s.errors,
+    warnings: s.warnings,
+    by_rule: s.byRule,
+    categories: s.categories,
+  });
+  const payload = {
+    success: true,
+    // Verified iff DRC ran before AND after — an unverifiable after-state
+    // means the fixes cannot be certified, regardless of per-fix deltas.
+    verified: after.success,
+    ...(dryRun ? { dry_run: true } : {}),
+    before: brief(before),
+    after: after.success ? brief(after) : null,
+    ...(after.success ? {} : { unverified_reason: (after as DrcUnverifiable).reason }),
+    fixed,
+    ...(dryRun ? { planned } : {}),
+    skipped,
+    fix_count: dryRun ? planned.length : fixed.length,
+    skip_count: skipped.reduce((n, s) => n + s.count, 0),
+    ...docResultPayload(ctx),
+  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+}
+
 /**
  * The ECAD tool surface as a single `ToolDef[]`, assembled by `server.ts` into
  * the ListTools response and the name→def dispatch Map. Descriptions are
@@ -12718,7 +13618,7 @@ export const toolDefs: ToolDef[] = [
       "re-checked in one call without running run_drc.",
     inputSchema: setPlacementSchema,
     handler: (a) => setPlacement(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "set_board_outline",
@@ -12727,7 +13627,7 @@ export const toolDefs: ToolDef[] = [
       "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: setBoardOutlineSchema,
     handler: (a) => setBoardOutline(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "add_zone",
@@ -12739,7 +13639,7 @@ export const toolDefs: ToolDef[] = [
       "session document.",
     inputSchema: addZoneSchema,
     handler: (a) => addZone(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "delete_zone",
@@ -12791,7 +13691,7 @@ export const toolDefs: ToolDef[] = [
       "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: addNetTieSchema,
     handler: (a) => addNetTie(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "delete_net_tie",
@@ -12800,7 +13700,7 @@ export const toolDefs: ToolDef[] = [
       "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: deleteNetTieSchema,
     handler: (a) => deleteNetTie(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "undo",
@@ -12849,7 +13749,7 @@ export const toolDefs: ToolDef[] = [
       "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addViaArraySchema,
     handler: (a) => addViaArray(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "add_motor_winding",
@@ -12899,6 +13799,25 @@ export const toolDefs: ToolDef[] = [
     inputSchema: runDrcSchema,
     handler: (a) => runDrc(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({}),
+  },
+  {
+    name: "fix_drc",
+    pack: "ecad",
+    description:
+      "Run DRC and automatically apply the mechanically-safe subset of fixes: " +
+      "stitching vias for UnstitchedPad, dedupe of overlapping same-net via " +
+      "drills (HoleToHole), inward nudges for EdgeClearance when a legal " +
+      "corridor exists, and per-net rip-up + re-route (at higher effort) for " +
+      "UnconnectedNet/NetIslands. Every fix is individually verified with a " +
+      "DRC delta and REVERTED if it would introduce any new violation. Never " +
+      "touches design decisions: different-net shorts/clearance, courtyard " +
+      "overlaps, keepouts, or anything requiring a component move. Returns a " +
+      "fail-closed receipt: before/after violation counts, what was fixed, " +
+      "and what was skipped with the reason. `dry_run` plans without " +
+      "mutating. Mutates the session document (pass document_id).",
+    inputSchema: fixDrcSchema,
+    handler: (a) => fixDrc(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "search_electronic_parts",
@@ -12977,7 +13896,7 @@ export const toolDefs: ToolDef[] = [
       "clear channel); verify with run_drc / critique_route afterwards.",
     inputSchema: routeDiffPairSchema,
     handler: (a) => routeDiffPair(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "length_match_traces",
@@ -12992,7 +13911,7 @@ export const toolDefs: ToolDef[] = [
       "runs carry drc_delta.",
     inputSchema: lengthMatchTracesSchema,
     handler: (a) => lengthMatchTraces(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "critique_route",
@@ -13034,7 +13953,10 @@ export const toolDefs: ToolDef[] = [
     description:
       "Export the session as a native, editable KiCad 9 file. " +
       "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
-      "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
+      "traces, vias, zones, layers, outline); .kicad_sch writes the schematic; " +
+      ".kicad_pro (or a bare name) writes a linked project bundle (.kicad_pro + " +
+      ".kicad_sch + .kicad_pcb) with footprints tied to their schematic symbols " +
+      "for cross-probing. " +
       "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
       "it in KiCad to finish routing nets the autorouter couldn't close, then " +
       "re-import. Large files respect the inline byte cap (use output_dir for those).",

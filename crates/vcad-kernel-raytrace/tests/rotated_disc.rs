@@ -95,3 +95,64 @@ fn gpu_scene_packs_wall_v_range() {
         );
     }
 }
+
+#[test]
+fn cpu_cap_faces_hit_and_bounded() {
+    // Caps lie in the y=0 and y=-8 planes after the 90° X rotation.
+    let bvh = Bvh::build(&rotated_disc());
+
+    // Straight down the axis, inside the radius — must hit the near cap
+    // (y = 0) at t = 100.
+    let at_cap = Ray::new(Point3::new(10.0, 100.0, 10.0), Vec3::new(0.0, -1.0, 0.0));
+    let hit = bvh.trace_closest(&at_cap).expect("must hit the cap face");
+    assert!(
+        (hit.t - 100.0).abs() < 1e-9,
+        "near cap at y=0 → t=100, got {}",
+        hit.t
+    );
+
+    // Inside the cap plane's AABB square but outside the r=40 circle
+    // (corner region) — must miss.
+    let corner = Ray::new(Point3::new(35.0, 100.0, 35.0), Vec3::new(0.0, -1.0, 0.0));
+    assert!(
+        bvh.trace_closest(&corner).is_none(),
+        "cap must be a disc, not its AABB square"
+    );
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_scene_packs_cap_circle_polygon() {
+    use vcad_kernel_raytrace::gpu::GpuScene;
+    // Cap faces (planes bounded by a single full-circle edge) must upload a
+    // real sampled circle polygon, not a degenerate 1-vertex loop the
+    // shader rejects.
+    let scene = GpuScene::from_brep(&rotated_disc()).expect("scene builds");
+
+    let cap_faces: Vec<_> = scene
+        .faces
+        .iter()
+        .filter(|f| scene.surfaces[f.surface_idx as usize].surface_type == 0)
+        .collect();
+    assert_eq!(cap_faces.len(), 2, "disc has two planar cap faces");
+
+    for face in cap_faces {
+        assert!(
+            face.trim_count >= 3,
+            "cap trim loop must be a polygon, got {} verts",
+            face.trim_count
+        );
+        // Every vertex must sit on the r=40 circle in the plane's UV space.
+        let verts = &scene.trim_verts
+            [face.trim_start as usize..(face.trim_start + face.trim_count) as usize];
+        let cx = verts.iter().map(|v| v.x).sum::<f32>() / face.trim_count as f32;
+        let cy = verts.iter().map(|v| v.y).sum::<f32>() / face.trim_count as f32;
+        for v in verts {
+            let r = ((v.x - cx).powi(2) + (v.y - cy).powi(2)).sqrt();
+            assert!(
+                (r - 40.0).abs() < 1e-3,
+                "cap trim vertex must lie on the r=40 circle, got r={r}"
+            );
+        }
+    }
+}

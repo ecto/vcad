@@ -18,6 +18,9 @@ vcad-kernel-geom = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-physics = { workspace = true }
 vcad-kernel-dfm = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
+vcad-ecad-schematic = { workspace = true }
+vcad-ecad-export = { workspace = true }
 phyz = { path = "../../../phyz/crates/phyz", version = "0.3" }
 
 [[bin]]

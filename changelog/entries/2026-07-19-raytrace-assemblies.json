@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-raytrace-assemblies",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Ray-traced mode poses assemblies and keeps per-part materials",
+  "summary": "Assembly instances are now FK-posed in ray-traced rendering (they piled up unposed at the origin) and each part keeps its own material instead of the whole scene inheriting the first part's.",
+  "features": ["raytracing", "assemblies", "materials"]
+}

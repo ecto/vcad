@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-route-nets-connectivity-guard",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "route_nets connectivity guard + receipt no longer dropped",
+  "summary": "route_nets now detects, retries/rolls back, and reports nets its re-route left in more disjoint copper groups; receipt:true survives large-board result slimming.",
+  "features": ["pcb", "autorouter", "receipts"],
+  "mcpTools": ["route_nets"]
+}

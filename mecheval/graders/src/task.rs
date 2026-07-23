@@ -52,6 +52,12 @@ pub enum Suite {
     C,
     /// Fit — accessory designed against a host (F1–F4).
     F,
+    /// pcbeval: schematic authoring (E1–E…). Graded by ERC and netlist
+    /// structure — the ECAD authoring tier.
+    E,
+    /// pcbeval: board layout (P1–P5). Graded by DRC, connectivity, and
+    /// the fab gate.
+    P,
     /// Visual — shape-similarity grading on its own non-deterministic
     /// leaderboard. Deliberate philosophy shift from the deterministic
     /// suites: the candidate is graded by how close its mesh comes to

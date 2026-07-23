@@ -373,7 +373,13 @@ export function computeIntegrity(
     warnings,
   };
 
-  const axes = circularPatternAxes(doc);
+  // The CoM-on-axis certificate is only meaningful when the pattern IS the
+  // part: with multiple bodies (or posed assembly instances) the aggregate
+  // CoM has no reason to sit on one sub-feature's node-local axis, and the
+  // warning below fired spuriously on every assembly containing e.g. a
+  // flywheel bolt circle.
+  const singleBody = meshes.length === 1;
+  const axes = singleBody ? circularPatternAxes(doc) : [];
   if (axes.length > 0 && com) {
     report.com_axis_distance_mm = axes.map((axis) => {
       const d = [

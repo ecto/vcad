@@ -1,0 +1,181 @@
+{
+  "schema_version": 0,
+  "task_id": "p2-h-bridge-01",
+  "task_sha256": "9974c80665b923f741696805fad0e73eaf3db1dd7fe4d28e595814d6fe7105f1",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          40
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 20,
+            "width_mm": 30
+          }
+        ],
+        "max_mm": [
+          50,
+          40
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 6
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 6,
+        "min": 6
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 2,
+        "sample": [
+          {
+            "actual": 4,
+            "message": "Unconnected net 'SIG': pads split across 4 disjoint copper groups",
+            "position": [
+              15,
+              5
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 4,
+            "message": "Unconnected net 'VCC': pads split across 4 disjoint copper groups",
+            "position": [
+              4,
+              5
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          }
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "sample": [
+          {
+            "actual": 4,
+            "message": "Unconnected net 'SIG': pads split across 4 disjoint copper groups",
+            "position": [
+              15,
+              5
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 4,
+            "message": "Unconnected net 'VCC': pads split across 4 disjoint copper groups",
+            "position": [
+              4,
+              5
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          }
+        ],
+        "violations": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T022136Z-2f0c",
+  "model": {
+    "id": "flood-zone",
+    "name": "FLOOD_ZONE (pcbeval baseline villain)",
+    "provider": "stub",
+    "params": {
+      "crime": "one giant GND zone, zero clearance, zero traces"
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p2-h-bridge-01",
+    "rendered": "Design a printed circuit board for a discrete H-bridge motor driver: four MOSFETs in SOT-23 or larger packages, a 2-pin motor output header, and a 3-pin logic/power input header — at least six footprints. Board outline at most 50mm × 40mm, two copper layers. Declare nets VMOT, GND, OUT_A, OUT_B, and the two gate-drive signals; place components and route every net so its copper is fully connected. Motor current paths (VMOT, OUT_A, OUT_B, GND) should use wide traces. The board must pass a design-rule check clean: no clearance violations, no split nets, no shorts between the half-bridges. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "flood_zone_stub",
+        "args": {
+          "stub": "FLOOD_ZONE"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.0008750000000006253
+      }
+    ],
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wallclock_sec": 8.750000000006253e-7
+  },
+  "output": {
+    "vcad_path": "20260722T022136Z-2f0c.vcad",
+    "vcad_sha256": "27b14f559064a09de1e491765367c0ce64aa6b0ae7ebfa6029d2f732e45ba447",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T02:21:36.981Z",
+    "ended_at": "2026-07-22T02:21:37.027Z"
+  },
+  "signature": null
+}

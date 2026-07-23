@@ -55,6 +55,7 @@ const TermsGate = lazyWithRetry(() => import("@/components/TermsGate").then(m =>
 // UsernamePickerModal is lazy-loaded inside ShareDialog, not here.
 const CommandPalette = lazyWithRetry(() => import("@/components/CommandPalette").then(m => ({ default: m.CommandPalette })), "CommandPalette");
 const DrawingToolbar = lazyWithRetry(() => import("@/components/DrawingToolbar").then(m => ({ default: m.DrawingToolbar })), "DrawingToolbar");
+const AnimationTimeline = lazyWithRetry(() => import("@/components/AnimationTimeline").then(m => ({ default: m.AnimationTimeline })), "AnimationTimeline");
 const FaceSelectionOverlay = lazyWithRetry(() => import("@/components/FaceSelectionOverlay").then(m => ({ default: m.FaceSelectionOverlay })), "FaceSelectionOverlay");
 const QuotePanel = lazyWithRetry(() => import("@/components/QuotePanel").then(m => ({ default: m.QuotePanel })), "QuotePanel");
 const LogViewer = lazyWithRetry(() => import("@/components/LogViewer").then(m => ({ default: m.LogViewer })), "LogViewer");
@@ -1068,6 +1069,11 @@ export function App() {
       <Suspense fallback={null}>
         <DrawingToolbar />
         <FaceSelectionOverlay />
+      </Suspense>
+
+      {/* Animation transport — summoned when the document has a timeline */}
+      <Suspense fallback={null}>
+        <AnimationTimeline />
       </Suspense>
 
       {/* Onboarding overlays */}

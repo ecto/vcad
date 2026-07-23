@@ -233,6 +233,9 @@ export function Viewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const clearSelection = useUiStore((s) => s.clearSelection);
   const clearDfmSelection = useDfmStore((s) => s.selectIssue);
+  const hoveredItem = useUiStore((s) => s.hoveredItem);
+  const isGizmoHovered = useUiStore((s) => s.isGizmoHovered);
+  const isDraggingGizmo = useUiStore((s) => s.isDraggingGizmo);
   const renderMode = useUiStore((s) => s.renderMode);
   const raytraceAvailable = useUiStore((s) => s.raytraceAvailable);
   const { isDark } = useTheme();
@@ -345,6 +348,15 @@ export function Viewport() {
     };
   }, []);
 
+  // Pointer cursor over a pickable part, matching the native app. Gizmo
+  // hover/drag suppresses it — the gizmo shows its own affordance.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.style.cursor =
+      hoveredItem && !isGizmoHovered && !isDraggingGizmo ? "pointer" : "";
+  }, [hoveredItem, isGizmoHovered, isDraggingGizmo]);
+
   // Render 2D Drawing View
   if (viewMode === "2d") {
     return (
@@ -371,14 +383,22 @@ export function Viewport() {
         key={glEpoch}
         frameloop={xrPresenting ? "always" : "demand"}
         camera={{ position: [50, 50, 50], fov: 50, near: 0.1, far: 10000 }}
-        onPointerMissed={() => {
+        onPointerMissed={(e) => {
           // Ignore the click that follows a drag/rotate gesture.
           if (viewportWasDrag()) return;
+          // A tap on a transform-gizmo handle must never deselect — the
+          // gizmo's pickers sit outside the R3F event graph, so a handle
+          // click looks like a miss here.
+          const ui = useUiStore.getState();
+          if (ui.isDraggingGizmo || ui.isGizmoHovered) return;
+          // Only a plain click deselects; ⌘/shift-clicks are multi-select
+          // gestures and shouldn't nuke the selection on a narrow miss.
+          if (e.metaKey || e.shiftKey) return;
           if (!electronicsActive) clearSelection();
           clearDfmSelection(null);
         }}
         onCreated={handleGlCreated}
-        shadows
+        shadows="soft"
         gl={{
           alpha: true,
           antialias: true,

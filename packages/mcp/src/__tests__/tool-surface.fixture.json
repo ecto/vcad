@@ -1287,6 +1287,10 @@
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Existing session (from open_document) to write the evaluated document into, so the open → author workflow stays on one session. Omitted: a fresh session is minted."
+        },
         "source": {
           "type": "string",
           "description": "Loon source code defining CAD geometry"
@@ -6210,22 +6214,23 @@
   {
     "name": "open_in_browser",
     "title": "Open in Browser",
-    "description": "Generate a shareable URL to open a CAD document in vcad.io. Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. Documents are compressed (gzip + base64url) for URL embedding. Note: Very large documents may exceed URL length limits (~2KB).",
+    "description": "Generate a shareable URL to open a CAD document in vcad.io. Pass a live session's `document_id` (the usual ship path), or an inline IR `document` (JSON or VCode format). Documents are compressed (gzip + base64url) for URL embedding. Note: Very large documents may exceed URL length limits (~2KB).",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Live session id (from open_document / create_cad_loon) to share — the session-first path. Either this or `document` is required."
+        },
         "document": {
           "type": "string",
-          "description": "IR document (JSON or VCode format)"
+          "description": "Inline IR document (JSON or VCode format) — the stateless alternative to document_id."
         },
         "name": {
           "type": "string",
           "description": "Optional document name"
         }
-      },
-      "required": [
-        "document"
-      ]
+      }
     },
     "annotations": {
       "readOnlyHint": false
@@ -6641,7 +6646,7 @@
           "items": {
             "type": "number"
           },
-          "description": "Constant action vector applied every step (length = action_dim from create_robot_env). Mutually exclusive with `actions`."
+          "description": "Constant action vector applied every step (length = action_dim from create_robot_env; entry i drives actuated_joint_ids[i] — Fixed joints take no action). Mutually exclusive with `actions`."
         },
         "actions": {
           "type": "array",
@@ -9219,6 +9224,42 @@
     }
   },
   {
+    "name": "fix_drc",
+    "title": "Fix DRC",
+    "description": "Run DRC and automatically apply the mechanically-safe subset of fixes: stitching vias for UnstitchedPad, dedupe of overlapping same-net via drills (HoleToHole), inward nudges for EdgeClearance when a legal corridor exists, and per-net rip-up + re-route (at higher effort) for UnconnectedNet/NetIslands. Every fix is individually verified with a DRC delta and REVERTED if it would introduce any new violation. Never touches design decisions: different-net shorts/clearance, courtyard overlaps, keepouts, or anything requiring a component move. Returns a fail-closed receipt: before/after violation counts, what was fixed, and what was skipped with the reason. `dry_run` plans without mutating. Mutates the session document (pass document_id).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline vcad IR Document (legacy stateless flow). Prefer document_id."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Plan the fixes without mutating the board. Planned actions come back in `planned` (NOT verified — only an applied fix is delta-verified)."
+        },
+        "reroute_effort": {
+          "type": "number",
+          "description": "route_nets effort used when re-routing UnconnectedNet/NetIslands nets (default 4 — higher than a first-pass route)."
+        },
+        "max_fixes": {
+          "type": "number",
+          "description": "Cap on applied fixes in one call (default 50)."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "search_electronic_parts",
     "title": "Search Electronic Parts",
     "description": "Spec-search the generative parts catalog (offline). A query like '10k 0603 1%' parses to value+package+tolerance and returns the best match plus E-series neighbours, each with a generated footprint, symbol, and 3D body. A part is family+value+package, not a scraped row.",
@@ -9572,7 +9613,7 @@
   {
     "name": "export_kicad",
     "title": "Export KiCad",
-    "description": "Export the session as a native, editable KiCad 9 file. filename ending in .kicad_pcb writes the board (footprints, pads, nets, traces, vias, zones, layers, outline); .kicad_sch writes the schematic. Unlike export_gerber (fab-only output), this round-trips: a human can open it in KiCad to finish routing nets the autorouter couldn't close, then re-import. Large files respect the inline byte cap (use output_dir for those).",
+    "description": "Export the session as a native, editable KiCad 9 file. filename ending in .kicad_pcb writes the board (footprints, pads, nets, traces, vias, zones, layers, outline); .kicad_sch writes the schematic; .kicad_pro (or a bare name) writes a linked project bundle (.kicad_pro + .kicad_sch + .kicad_pcb) with footprints tied to their schematic symbols for cross-probing. Unlike export_gerber (fab-only output), this round-trips: a human can open it in KiCad to finish routing nets the autorouter couldn't close, then re-import. Large files respect the inline byte cap (use output_dir for those).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9586,7 +9627,7 @@
         },
         "filename": {
           "type": "string",
-          "description": "Output filename ending in .kicad_pcb (board) or .kicad_sch (schematic). The extension selects what is exported: .kicad_pcb writes the session's board (footprints, pads, nets, traces, vias, zones, layers, outline) as a native, editable KiCad 9 file a human can open and finish routing; .kicad_sch writes the session's schematic. Defaults to board.kicad_pcb."
+          "description": "Output filename ending in .kicad_pcb (board), .kicad_sch (schematic), or .kicad_pro (linked project bundle). The extension selects what is exported: .kicad_pcb writes the session's board (footprints, pads, nets, traces, vias, zones, layers, outline) as a native, editable KiCad 9 file a human can open and finish routing; .kicad_sch writes the session's schematic; .kicad_pro (or a bare name with no extension) writes all three files with board footprints linked to their schematic symbols so KiCad can cross-probe (click a symbol → highlight its footprint). Defaults to board.kicad_pcb."
         },
         "output_dir": {
           "type": "string",

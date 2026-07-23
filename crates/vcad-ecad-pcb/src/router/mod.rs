@@ -47,6 +47,7 @@ pub mod diff_pair;
 pub(crate) mod escape;
 pub mod global;
 pub mod grid;
+pub(crate) mod legalize;
 pub mod length_match;
 pub mod length_tune;
 pub mod maze;

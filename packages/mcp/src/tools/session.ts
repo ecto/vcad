@@ -340,6 +340,14 @@ export async function saveDocument(
 }> {
   const id = String(args.document_id ?? "");
   const name = String(args.name ?? "");
+  // The schema marks `name` required, but schema `required` isn't enforced
+  // at dispatch — without this guard an omitted name silently saved a
+  // literal `.vcad` (empty slug) into the state root.
+  if (!name.trim()) {
+    throw new Error(
+      "Pass `name` — the save key load_document reopens the document with.",
+    );
+  }
   const doc = getSession(id);
 
   // Local/stdio: file-backed, exactly as before. resolveWithinRoot sanitizes

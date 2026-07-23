@@ -1,0 +1,100 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-voltage-divider-01",
+  "task_sha256": "27b3a9beb4e09c4d6661bc4d746a2510d1905f7d51399d1b6eac169b52d4d26a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no schematic in document (fail-closed: erc_clean requires document.schematic)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no schematic in document (fail-closed)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 2,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T160044Z-fe78",
+  "model": {
+    "id": "flood-zone",
+    "name": "FLOOD_ZONE (pcbeval baseline villain)",
+    "provider": "stub",
+    "params": {
+      "crime": "one giant GND zone, zero clearance, zero traces"
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-voltage-divider-01",
+    "rendered": "Capture a schematic for a resistive voltage divider: a 1-pin input terminal VIN, two resistors in series, a 1-pin output terminal VOUT tapped between them, and a 1-pin ground terminal GND at the bottom of the chain. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-voltage-divider-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "flood_zone_stub",
+        "args": {
+          "stub": "FLOOD_ZONE"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.0009170000000011669
+      }
+    ],
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wallclock_sec": 9.170000000011669e-7
+  },
+  "output": {
+    "vcad_path": "20260722T160044Z-fe78.vcad",
+    "vcad_sha256": "27b14f559064a09de1e491765367c0ce64aa6b0ae7ebfa6029d2f732e45ba447",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T16:00:44.452Z",
+    "ended_at": "2026-07-22T16:00:44.484Z"
+  },
+  "signature": null
+}

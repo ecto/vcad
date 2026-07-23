@@ -6,6 +6,7 @@ import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
+import { documents, getSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -13,6 +14,13 @@ import type { ToolResult } from "./tool-result.js";
 export const createCadLoonSchema = {
   type: "object" as const,
   properties: {
+    document_id: {
+      type: "string" as const,
+      description:
+        "Existing session (from open_document) to write the evaluated " +
+        "document into, so the open → author workflow stays on one session. " +
+        "Omitted: a fresh session is minted.",
+    },
     source: {
       type: "string" as const,
       description: "Loon source code defining CAD geometry",
@@ -53,6 +61,7 @@ export const createCadLoonSchema = {
 };
 
 interface CreateLoonInput {
+  document_id?: string;
   source: string;
   use_loons?: string[];
   loons?: InlineLoon[];
@@ -122,12 +131,20 @@ export const toolDefs: ToolDef[] = [
         await hydrateMacros(ctx.user, useLoons).catch(() => {});
       }
       const result = createCadLoon(args, ctx.engine) as ToolResult;
+      // Session-targeted authoring: write the evaluated document into the
+      // caller's open session instead of minting a fresh one, so
+      // open_document → create_cad_loon stays on one document_id. Validated
+      // via getSession so an unknown id fails loudly, not silently forks.
+      const targetId =
+        typeof args.document_id === "string" ? args.document_id : null;
+      if (targetId) getSession(targetId); // unknown id fails loudly
       // Attach the integrity certificate to the largest mutation of all:
       // authoring a whole document. The loon evaluation is cheap relative to
       // the mesh evaluation computeIntegrity runs anyway.
       try {
         const doc = ctx.engine.evalVcadSource(composeLoonProgram(args));
         if (doc) {
+          if (targetId) documents.set(targetId, doc);
           const integrity = computeIntegrity(doc, ctx.engine);
           if (integrity) appendIntegrity(result, integrity);
         }

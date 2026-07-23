@@ -99,6 +99,24 @@ describe("computeIntegrity", () => {
       report!.warnings.filter((w) => w.includes("off the circular-pattern axis")),
     ).toEqual([]);
   });
+
+  it("suppresses the CoM-vs-axis certificate for multi-body documents", () => {
+    // A patterned flywheel next to an off-axis base plate: the aggregate CoM
+    // legitimately sits off the pattern axis. The certificate (and its
+    // corruption warning) only applies when the pattern IS the part.
+    const report = computeIntegrity(
+      docFromLoon(
+        "#[[root [circular-pattern 0 0 0  0 0 1  8 360 [translate 30 0 0 [cube 2 2 2]]] \"steel\"] " +
+          "[root [translate 100 0 0 [cube 40 40 5]] \"steel\"]]",
+      ),
+      engine,
+    );
+    expect(report).not.toBeNull();
+    expect(report!.com_axis_distance_mm).toBeUndefined();
+    expect(
+      report!.warnings.filter((w) => w.includes("off the circular-pattern axis")),
+    ).toEqual([]);
+  });
 });
 
 describe("isoperimetricViolation", () => {

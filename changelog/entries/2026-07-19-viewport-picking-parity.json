@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-19-viewport-picking-parity",
+  "version": "0.9.4",
+  "date": "2026-07-19",
+  "category": "fix",
+  "title": "Viewport picking parity with the native app",
+  "summary": "Brand-orange hover/selection accents, ⌘-click part multi-select, gizmo-protected clicks, pointer cursor, and correct picking when parts are hidden.",
+  "features": ["viewport", "selection", "picking"]
+}

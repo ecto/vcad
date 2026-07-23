@@ -135,6 +135,101 @@ final class StreamingMesh {
         return recreated
     }
 
+    /// Bounds + counts computed while streaming, so callers don't need a
+    /// CPU-side copy of the mesh just to know its extent.
+    struct StreamStats {
+        var minBound: SIMD3<Float>
+        var maxBound: SIMD3<Float>
+        var triangleCount: Int
+        var vertexCount: Int
+    }
+
+    /// Direct FFI path: write the kernel's tessellation buffers straight into
+    /// the GPU vertex/index buffers — no intermediate Swift arrays. Normals are
+    /// synthesized in-buffer (area-weighted) when the kernel view doesn't carry
+    /// a matching-length normal buffer. Falls back to the MeshDescriptor path
+    /// (via KernelMesh) if LowLevelMesh creation fails.
+    func update(fromView v: VcadMeshView) -> (recreated: Bool, stats: StreamStats)? {
+        let vcount = v.vertices_len / 3
+        let icount = v.indices_len
+        guard vcount > 0, icount >= 3, let vp = v.vertices, let ip = v.indices else { return nil }
+
+        var recreated = false
+        if mesh == nil || vcount > vertexCapacity || icount > indexCapacity {
+            vertexCapacity = vcount + vcount / 2 + 64        // 1.5x headroom
+            indexCapacity = icount + icount / 2 + 192
+            mesh = try? Self.makeMesh(vCap: vertexCapacity, iCap: indexCapacity)
+            recreated = true
+        }
+        guard let mesh else {
+            // MeshDescriptor fallback — still renders, just not streamable.
+            let km = KernelMesh.fromView(v)
+            resource = km.resource(name: "fallback")
+            return (true, StreamStats(minBound: km.minBound, maxBound: km.maxBound,
+                                      triangleCount: km.triangleCount,
+                                      vertexCount: km.positions.count))
+        }
+
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        let hasNormals = v.normals_len == v.vertices_len && v.normals != nil
+        let np = v.normals
+
+        mesh.replaceUnsafeMutableBytes(bufferIndex: 0) { raw in
+            let f = raw.bindMemory(to: Float.self)
+            for i in 0..<vcount {
+                let s = i * 3, o = i * 6
+                let x = vp[s], y = vp[s + 1], z = vp[s + 2]
+                f[o] = x; f[o + 1] = y; f[o + 2] = z
+                lo = simd_min(lo, SIMD3<Float>(x, y, z))
+                hi = simd_max(hi, SIMD3<Float>(x, y, z))
+                if hasNormals, let np {
+                    f[o + 3] = np[s]; f[o + 4] = np[s + 1]; f[o + 5] = np[s + 2]
+                } else {
+                    f[o + 3] = 0; f[o + 4] = 0; f[o + 5] = 0
+                }
+            }
+            if !hasNormals {
+                // Area-weighted normals synthesized in the GPU buffer itself:
+                // accumulate face normals into the normal slots, then normalize.
+                var t = 0
+                while t + 2 < icount {
+                    let a = Int(ip[t]), b = Int(ip[t + 1]), c = Int(ip[t + 2])
+                    t += 3
+                    guard a < vcount, b < vcount, c < vcount else { continue }
+                    let pa = SIMD3<Float>(f[a * 6], f[a * 6 + 1], f[a * 6 + 2])
+                    let pb = SIMD3<Float>(f[b * 6], f[b * 6 + 1], f[b * 6 + 2])
+                    let pc = SIMD3<Float>(f[c * 6], f[c * 6 + 1], f[c * 6 + 2])
+                    let fn = cross(pb - pa, pc - pa)
+                    for j in [a, b, c] {
+                        f[j * 6 + 3] += fn.x; f[j * 6 + 4] += fn.y; f[j * 6 + 5] += fn.z
+                    }
+                }
+                for i in 0..<vcount {
+                    let o = i * 6
+                    var n = SIMD3<Float>(f[o + 3], f[o + 4], f[o + 5])
+                    let len = length(n)
+                    n = len > 1e-6 ? n / len : SIMD3<Float>(0, 0, 1)
+                    f[o + 3] = n.x; f[o + 4] = n.y; f[o + 5] = n.z
+                }
+            }
+        }
+        mesh.replaceUnsafeMutableIndices { raw in
+            let idx = raw.bindMemory(to: UInt32.self)
+            for i in 0..<icount { idx[i] = ip[i] }
+        }
+        mesh.parts.replaceAll([
+            LowLevelMesh.Part(indexCount: icount, topology: .triangle,
+                              bounds: BoundingBox(min: lo, max: hi))
+        ])
+
+        if recreated || resource == nil {
+            resource = try? MeshResource(from: mesh)
+        }
+        return (recreated, StreamStats(minBound: lo, maxBound: hi,
+                                       triangleCount: icount / 3, vertexCount: vcount))
+    }
+
     private static func makeMesh(vCap: Int, iCap: Int) throws -> LowLevelMesh {
         let desc = LowLevelMesh.Descriptor(
             vertexCapacity: vCap,
@@ -161,8 +256,27 @@ struct RenderScene {
     var triangleCount: Int
     var partCount: Int
     var edges: [[SIMD3<Float>]] = []
+    /// Assembly instances (rendered INSTEAD of `meshes` when non-empty,
+    /// mirroring the web viewport). Each carries its part-def-local mesh and
+    /// its kernel-frame world transform, so playback can re-pose the entity
+    /// per frame without touching the mesh.
+    var instances: [RenderInstance] = []
+    /// Index-aligned with `meshes`: non-nil when part i is a pattern rendered
+    /// as one shared MeshResource + N per-instance transforms (else one entity).
+    var instancing: [PatternInstancing?] = []
 
     static let empty = RenderScene(meshes: [], center: .zero, size: 1, triangleCount: 0, partCount: 0)
+}
+
+/// One assembly instance ready to render. `index` is the FFI instance index —
+/// entity names ("inst<i>") and playback transform order both key off it.
+struct RenderInstance {
+    var index: Int
+    var id: String
+    var mesh: MeshResource
+    var material: ResolvedMaterial
+    /// World placement in kernel coordinates (Z-up, mm), column-major.
+    var transform: float4x4
 }
 
 /// Feature-edge overlay support: converts a kernel `VcadEdgesView` into

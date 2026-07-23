@@ -1,0 +1,302 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-voltage-divider-01",
+  "task_sha256": "27b3a9beb4e09c4d6661bc4d746a2510d1905f7d51399d1b6eac169b52d4d26a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "pass",
+      "details": {
+        "candidate": {
+          "components": 5,
+          "nets": 3
+        },
+        "golden": {
+          "components": 5,
+          "nets": 3
+        },
+        "isomorphic": true
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 2,
+    "checks_total": 2,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T183918Z-92a1",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-pro",
+    "name": "AI Gateway (MCP, google/gemini-2.5-pro)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-pro",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-voltage-divider-01",
+    "rendered": "Capture a schematic for a resistive voltage divider: a 1-pin input terminal VIN, two resistors in series, a 1-pin output terminal VOUT tapped between them, and a 1-pin ground terminal GND at the bottom of the chain. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-voltage-divider-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.9552080000000274
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "components": [
+            {
+              "ref": "J1",
+              "part": "Conn_01x01",
+              "value": "VIN",
+              "x": 30,
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "y": 10
+            },
+            {
+              "ref": "R1",
+              "part": "R",
+              "value": "10k",
+              "y": 30,
+              "x": 30,
+              "footprint": "Resistor_SMD:R_0805_2012Metric"
+            },
+            {
+              "footprint": "Resistor_SMD:R_0805_2012Metric",
+              "x": 30,
+              "y": 50,
+              "value": "10k",
+              "part": "R",
+              "ref": "R2"
+            },
+            {
+              "value": "VOUT",
+              "ref": "J2",
+              "part": "Conn_01x01",
+              "y": 40,
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "x": 50
+            },
+            {
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "x": 30,
+              "y": 70,
+              "value": "GND",
+              "ref": "J3",
+              "part": "Conn_01x01"
+            }
+          ],
+          "title": "Resistive Voltage Divider",
+          "nets": {
+            "GND": [
+              "R2.2",
+              "J3.1"
+            ],
+            "VIN": [
+              "J1.1",
+              "R1.1"
+            ],
+            "VOUT": [
+              "R1.2",
+              "R2.1",
+              "J2.1"
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.6899999999986903
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "title": "Resistive Voltage Divider",
+          "nets": {
+            "GND": [
+              "R2.2",
+              "J3.1"
+            ],
+            "VOUT": [
+              "R1.2",
+              "R2.1",
+              "J2.1"
+            ],
+            "VIN": [
+              "J1.1",
+              "R1.1"
+            ]
+          },
+          "components": [
+            {
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "ref": "J1",
+              "x": 30,
+              "value": "VIN",
+              "y": 10,
+              "pins": [
+                {
+                  "name": "P1",
+                  "number": "1",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "x": 30,
+              "value": "10k",
+              "y": 30,
+              "pins": [
+                {
+                  "type": "Passive",
+                  "number": "1",
+                  "name": "1"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ],
+              "footprint": "Resistor_SMD:R_0805_2012Metric"
+            },
+            {
+              "y": 50,
+              "pins": [
+                {
+                  "type": "Passive",
+                  "number": "1",
+                  "name": "1"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ],
+              "value": "10k",
+              "x": 30,
+              "ref": "R2",
+              "footprint": "Resistor_SMD:R_0805_2012Metric"
+            },
+            {
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "value": "VOUT",
+              "x": 50,
+              "ref": "J2",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "P1",
+                  "type": "Passive"
+                }
+              ],
+              "y": 40
+            },
+            {
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "x": 30,
+              "value": "GND",
+              "ref": "J3",
+              "pins": [
+                {
+                  "name": "P1",
+                  "number": "1",
+                  "type": "Passive"
+                }
+              ],
+              "y": 70
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.128208000001905
+      },
+      {
+        "n": 3,
+        "tool": "run_erc",
+        "args": {
+          "document_id": "doc_2_kJyxJNn4Lr8A"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4623330000031274
+      },
+      {
+        "n": 4,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_kJyxJNn4Lr8A"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9358340000035241
+      }
+    ],
+    "tokens": {
+      "input": 190447,
+      "output": 3179,
+      "total": 193626,
+      "cache_creation_input": 0,
+      "cache_read_input": 133386
+    },
+    "wallclock_sec": 45.306122708000004
+  },
+  "output": {
+    "vcad_path": "20260722T183918Z-92a1.vcad",
+    "vcad_sha256": "3cd5049f97fdf191a9011a2253922fa326f21db89d0836d7f3dc770f3c478a26",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:39:18.852Z",
+    "ended_at": "2026-07-22T18:40:04.170Z"
+  },
+  "signature": null
+}

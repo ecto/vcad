@@ -1,0 +1,18 @@
+{
+  "id": "p1-led-resistor-01",
+  "suite": "P",
+  "tier": "P1",
+  "title": "LED indicator board",
+  "prompt": "Design a small printed circuit board: a 2-pin power header feeding an LED through a current-limiting resistor. Board outline at most 30mm × 20mm, 1.6mm FR4, two copper layers. Place at least three components (header, resistor, LED footprints), declare the nets (VCC from header pin 1 through the resistor to the LED anode; LED cathode back to header pin 2 as GND), and route every net so its copper is fully connected. The finished board must pass a design-rule check clean: no clearance violations, no unconnected or split nets, no shorts. Output a .vcad document containing the board as a PcbBoard node.",
+  "inputs": [],
+  "checks": [
+    { "type": "board_envelope", "max_mm": [30.0, 20.0] },
+    { "type": "component_count", "min": 3 },
+    { "type": "nets_fully_connected" },
+    { "type": "drc_clean" }
+  ],
+  "anti_cheese": {},
+  "limits": {},
+  "pass_k": 5,
+  "tags": ["pcbeval", "layout", "routing", "drc"]
+}

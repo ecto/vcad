@@ -23,9 +23,12 @@ export const theme = {
     ruleStrong: "#dcdfe4",
     soft: "#eef0f3",
     hover: "#f5f6f8",
-    accent: "#2563eb",
-    accentDeep: "#1d4ed8",
-    accentSoft: "#eaf0fe",
+    // Light keeps its academic restraint but takes the family accent:
+    // hazard orange (the board-edge colour) for interactive, so the two
+    // themes read as day/night of one instrument.
+    accent: "#E85D10",
+    accentDeep: "#C24A08",
+    accentSoft: "#FDEDE2",
     pass: "#1a7f4b",
     fail: "#d23f3f",
     pending: "#9aa1ad",
@@ -34,27 +37,31 @@ export const theme = {
     shadow: "none",
     shadowLift: "0 8px 28px rgba(16,24,40,0.07)",
   },
+  // Dark theme: "NERV neon" — lifted from the PCB renderer's palette so
+  // the site and the boards it frames are one instrument. Phosphor-black
+  // ground, acid-lime interactive, EVA-violet secondary, hazard-orange
+  // edge accents in the renders, hot-magenta failure.
   dark: {
-    ground: "#0b0c0e",
-    surface: "#141619",
-    sunken: "#0f1113",
-    ink: "#e9eaec",
-    inkSoft: "#9aa1ad",
-    inkFaint: "#5f6672",
-    rule: "#23262b",
-    ruleStrong: "#30343b",
-    soft: "#1c1f23",
-    hover: "#1a1d21",
-    accent: "#5b8bff",
-    accentDeep: "#84a6ff",
-    accentSoft: "#15233f",
-    pass: "#43c182",
-    fail: "#ff6b6b",
-    pending: "#6b7280",
+    ground: "#06080A",
+    surface: "#0C1210",
+    sunken: "#080C0A",
+    ink: "#E8FFF2",
+    inkSoft: "#7FA890",
+    inkFaint: "#567A6C",
+    rule: "#14241C",
+    ruleStrong: "#1F3A2C",
+    soft: "#0E1712",
+    hover: "#101A14",
+    accent: "#9DFF34",
+    accentDeep: "#C6FF5C",
+    accentSoft: "#12240C",
+    pass: "#1FE06A",
+    fail: "#FF3DAE",
+    pending: "#5F7A72",
     mat: "#f4f3f1",
     matRule: "#d8d6d1",
     shadow: "none",
-    shadowLift: "0 10px 32px rgba(0,0,0,0.5)",
+    shadowLift: "0 10px 32px rgba(0,0,0,0.6)",
   },
 } as const;
 
@@ -89,6 +96,72 @@ export const fonts = {
 /** IBM Plex Sans + IBM Plex Mono via Google Fonts. */
 export const fontsHref =
   "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
+
+/** The umbrella brand: eval.vcad.io. Chapters (mecheval, pcbeval, …)
+ *  live under their own path prefix; the branded .com domains 301 here. */
+export const family = {
+  brand: "vcad evals",
+  tagline: "Evals for atoms, not tokens. Graded by kernels, not vibes.",
+  subtagline:
+    "AI models graded by a real CAD kernel, real DRC, and real physics — every check deterministic, every number auditable.",
+  canonicalHost: "eval.vcad.io",
+} as const;
+
+/** One entry per eval chapter, in scale-ladder order (atoms → machines).
+ *  `pathPrefix` is where the chapter's pages are emitted inside dist/;
+ *  `comDomain` 301s to that prefix. Only `live` chapters get built. */
+export interface DomainSpec {
+  slug: string;
+  pathPrefix: string;
+  name: string;
+  scale: string;
+  tagline: string;
+  comDomain: string;
+  live: boolean;
+}
+
+export const domains: readonly DomainSpec[] = [
+  {
+    slug: "atom",
+    pathPrefix: "atom",
+    name: "atomeval",
+    scale: "atoms → materials",
+    tagline:
+      "Matter design graded by molecular dynamics, energy minimization, and atoms-to-continuum homogenization.",
+    comDomain: "atomeval.com",
+    live: false,
+  },
+  {
+    slug: "mech",
+    pathPrefix: "mech",
+    name: "mecheval",
+    scale: "parts → machines",
+    tagline:
+      "The mechanical, physical, and CAD evaluation suite. The AI designs the robot and drives it.",
+    comDomain: "mecheval.com",
+    live: true,
+  },
+  {
+    slug: "pcb",
+    pathPrefix: "pcb",
+    name: "pcbeval",
+    scale: "boards → circuits",
+    tagline:
+      "Schematic and layout graded by real DRC, ERC, and circuit simulation. Passing boards are orderable.",
+    comDomain: "pcbeval.com",
+    live: true,
+  },
+  {
+    slug: "sim",
+    pathPrefix: "sim",
+    name: "simeval",
+    scale: "fields → systems",
+    tagline:
+      "Devices graded by field behavior: thermal, EM, photonics, antennas, acoustics.",
+    comDomain: "simeval.com",
+    live: false,
+  },
+] as const;
 
 export const copy = {
   brand: "mecheval",

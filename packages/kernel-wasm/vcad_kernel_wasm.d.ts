@@ -75,10 +75,16 @@ export class PhysicsSim {
      */
     actionDim(): number;
     /**
+     * Actuated joint ids in action order (document order, Fixed joints
+     * excluded). Action vector entry `i` drives `actuatedJointIds()[i]`.
+     */
+    actuatedJointIds(): string[];
+    /**
      * Joint ids in observation order (document `joints` order).
      *
      * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`, as do action vector entries.
+     * correspond to `jointIds()[i]`. Action vector entries index
+     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
      */
     jointIds(): string[];
     /**
@@ -316,6 +322,12 @@ export class RayTracer {
      * in a single ray-trace pass.
      */
     uploadSolid(solid: Solid): void;
+    /**
+     * Upload a solid with its own material. Each uploaded solid's faces
+     * keep a distinct material slot (`GpuScene::merge` offsets material
+     * indices), so assemblies render per-part materials in one pass.
+     */
+    uploadSolidWithMaterial(solid: Solid, r: number, g: number, b: number, metallic: number, roughness: number): void;
 }
 
 /**
@@ -2094,6 +2106,22 @@ export function evaluateVCode(vcode: string): Solid;
 export function exportKicadPcb(pcb_json: string): string;
 
 /**
+ * Export a linked KiCad 9 project bundle: `<name>.kicad_pro`,
+ * `<name>.kicad_sch`, and `<name>.kicad_pcb`, with board footprints
+ * carrying `(path …)` references to their schematic symbol uuids so
+ * KiCad can cross-probe between the two editors.
+ *
+ * # Arguments
+ * * `sheet_json` - JSON-serialized `SchematicSheet` struct
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `name` - Project basename (no extension)
+ *
+ * # Returns
+ * Array of `[filename, contents]` string pairs as JsValue.
+ */
+export function exportKicadProject(sheet_json: string, pcb_json: string, name: string): any;
+
+/**
  * Export a `SchematicSheet` to a native, editable KiCad 9 `.kicad_sch`
  * schematic file.
  *
@@ -2982,8 +3010,10 @@ export interface InitOutput {
     readonly particleSimulate: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly photonicsSimulate: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly physicssim_actionDim: (a: number) => number;
+    readonly physicssim_actuatedJointIds: (a: number) => [number, number];
     readonly physicssim_jointIds: (a: number) => [number, number];
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly physicssim_numJoints: (a: number) => number;
     readonly physicssim_observationDim: (a: number) => number;
     readonly physicssim_observe: (a: number) => any;
     readonly physicssim_reset: (a: number) => any;
@@ -3014,6 +3044,7 @@ export interface InitOutput {
     readonly raytracer_setRefineSamples: (a: number, b: number) => void;
     readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
+    readonly raytracer_uploadSolidWithMaterial: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly renderBomTable: (a: number, b: number) => any;
     readonly renderTitleBlock: (a: number, b: number) => any;
@@ -3082,7 +3113,6 @@ export interface InitOutput {
     readonly wasmannotationlayer_isEmpty: (a: number) => number;
     readonly wasmannotationlayer_new: () => number;
     readonly wasmannotationlayer_renderAll: (a: number, b: number, c: number) => any;
-    readonly physicssim_numJoints: (a: number) => number;
     readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly solid_chamfer: (a: number, b: number) => number;
     readonly solid_fillet: (a: number, b: number) => number;
@@ -3091,6 +3121,95 @@ export interface InitOutput {
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly getCompiledModule: () => any;
+    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
+    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
+    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_cancelPending: (a: number) => void;
+    readonly wasmsketchsession_clear: (a: number) => void;
+    readonly wasmsketchsession_clearSelection: (a: number) => void;
+    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
+    readonly wasmsketchsession_onClick: (a: number) => [number, number];
+    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
+    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
+    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
+    readonly wasmsketchsession_redo: (a: number) => number;
+    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
+    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
+    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
+    readonly wasmsketchsession_solve: (a: number) => number;
+    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
+    readonly wasmsketchsession_undo: (a: number) => number;
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly circuitAcResponse: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly circuitDcOperatingPoint: (a: number, b: number) => [number, number, number];
+    readonly circuitFromSchematic: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitSensitivities: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly circuitTransient: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitTune: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
+    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
+    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
+    readonly wasmkeybindings_new: () => number;
+    readonly wasmkeybindings_resetAll: (a: number) => void;
+    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
+    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
     readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_can_redo: (a: number) => number;
@@ -3164,98 +3283,10 @@ export interface InitOutput {
     readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
+    readonly exportKicadProject: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
     readonly isEcadAvailable: () => number;
     readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly circuitAcResponse: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly circuitDcOperatingPoint: (a: number, b: number) => [number, number, number];
-    readonly circuitFromSchematic: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitSensitivities: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly circuitTransient: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitTune: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitsim_dt: (a: number) => number;
-    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
-    readonly circuitsim_observe: (a: number) => [number, number, number];
-    readonly circuitsim_reset: (a: number) => void;
-    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
-    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
-    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
-    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
-    readonly wasmkeybindings_new: () => number;
-    readonly wasmkeybindings_resetAll: (a: number) => void;
-    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
-    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
-    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
-    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_cancelPending: (a: number) => void;
-    readonly wasmsketchsession_clear: (a: number) => void;
-    readonly wasmsketchsession_clearSelection: (a: number) => void;
-    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
-    readonly wasmsketchsession_onClick: (a: number) => [number, number];
-    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
-    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
-    readonly wasmsketchsession_redo: (a: number) => number;
-    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
-    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
-    readonly wasmsketchsession_solve: (a: number) => number;
-    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
-    readonly wasmsketchsession_undo: (a: number) => number;
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;

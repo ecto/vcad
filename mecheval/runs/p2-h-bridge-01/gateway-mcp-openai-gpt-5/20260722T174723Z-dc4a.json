@@ -1,0 +1,480 @@
+{
+  "schema_version": 0,
+  "task_id": "p2-h-bridge-01",
+  "task_sha256": "9974c80665b923f741696805fad0e73eaf3db1dd7fe4d28e595814d6fe7105f1",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          40
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 35,
+            "width_mm": 50
+          }
+        ],
+        "max_mm": [
+          50,
+          40
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 6
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 7,
+        "min": 6
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "sample": [],
+        "violations": 0
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T174723Z-dc4a",
+  "model": {
+    "id": "gateway-mcp-openai-gpt-5",
+    "name": "AI Gateway (MCP, openai/gpt-5)",
+    "provider": "openai",
+    "params": {
+      "mode": "mcp",
+      "model": "openai/gpt-5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p2-h-bridge-01",
+    "rendered": "Design a printed circuit board for a discrete H-bridge motor driver: four MOSFETs in SOT-23 or larger packages, a 2-pin motor output header, and a 3-pin logic/power input header — at least six footprints. Board outline at most 50mm × 40mm, two copper layers. Declare nets VMOT, GND, OUT_A, OUT_B, and the two gate-drive signals; place components and route every net so its copper is fully connected. Motor current paths (VMOT, OUT_A, OUT_B, GND) should use wide traces. The board must pass a design-rule check clean: no clearance violations, no split nets, no shorts between the half-bridges. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.7101669999999842
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "Discrete H-Bridge Driver",
+          "components": [
+            {
+              "ref": "Q1",
+              "value": "P-MOSFET SOT-23",
+              "footprint": "SOT-23",
+              "x": 10,
+              "y": 10,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input"
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "Q2",
+              "value": "N-MOSFET SOT-23",
+              "footprint": "SOT-23",
+              "x": 10,
+              "y": 25,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input"
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "Q3",
+              "value": "P-MOSFET SOT-23",
+              "footprint": "SOT-23",
+              "x": 40,
+              "y": 10,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input"
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "Q4",
+              "value": "N-MOSFET SOT-23",
+              "footprint": "SOT-23",
+              "x": 40,
+              "y": 25,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input"
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "Logic/Power 1x3",
+              "footprint": "PinHeader_1x03_P2.54mm",
+              "x": 5,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "PIN1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "PIN2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "PIN3",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "J2",
+              "value": "Motor 1x2",
+              "footprint": "PinHeader_1x02_P2.54mm",
+              "x": 45,
+              "y": 40,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "PIN1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "PIN2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "TP1",
+              "value": "Gate B TestPad",
+              "footprint": "PinHeader_1x01_P2.54mm",
+              "x": 25,
+              "y": 5,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "PIN1",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VMOT": [
+              "J1.1",
+              "Q1.2",
+              "Q3.2"
+            ],
+            "GND": [
+              "J1.2",
+              "Q2.2",
+              "Q4.2"
+            ],
+            "OUT_A": [
+              "J2.1",
+              "Q1.3",
+              "Q2.3"
+            ],
+            "OUT_B": [
+              "J2.2",
+              "Q3.3",
+              "Q4.3"
+            ],
+            "GATE_A": [
+              "J1.3",
+              "Q1.1",
+              "Q2.1"
+            ],
+            "GATE_B": [
+              "TP1.1",
+              "Q3.1",
+              "Q4.1"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8383329999996931
+      },
+      {
+        "n": 2,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_x9hVN6ytJ",
+          "board_width": 50,
+          "board_height": 30,
+          "strategy": "grid",
+          "edge_margin": 2
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.8470420000085142
+      },
+      {
+        "n": 3,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_x9hVN1vn6ytJ",
+          "clearance": 0.2,
+          "track_width": 0.25,
+          "via_diameter": 0.8,
+          "via_drill": 0.4,
+          "edge_clearance": 0.3,
+          "classes": [
+            {
+              "name": "power",
+              "nets": [
+                "VMOT",
+                "OUT_A",
+                "OUT_B",
+                "GND"
+              ],
+              "clearance": 0.3,
+              "track_width": 1.2,
+              "via_diameter": 1.2,
+              "via_drill": 0.6
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1653749999968568
+      },
+      {
+        "n": 4,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_x9hVN1vn6ytJ",
+          "board_width": 50,
+          "board_height": 35,
+          "strategy": "force_directed",
+          "edge_margin": 2
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.266792000009445
+      },
+      {
+        "n": 5,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_x9hVN1vn6ytJ",
+          "placements": [
+            {
+              "ref": "J1",
+              "x": 6,
+              "y": 6,
+              "rotation": 90,
+              "side": "top"
+            },
+            {
+              "ref": "J2",
+              "x": 46,
+              "y": 20,
+              "rotation": 270,
+              "side": "top"
+            },
+            {
+              "ref": "TP1",
+              "x": 15,
+              "y": 30,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "Q1",
+              "x": 20,
+              "y": 26,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "Q2",
+              "x": 20,
+              "y": 14,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "Q3",
+              "x": 32,
+              "y": 26,
+              "rotation": 0,
+              "side": "top"
+            },
+            {
+              "ref": "Q4",
+              "x": 32,
+              "y": 14,
+              "rotation": 0,
+              "side": "top"
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7810420000023441
+      },
+      {
+        "n": 6,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_x9hVN1vn6ytJ",
+          "strategy": "power_first",
+          "effort": 1.5
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 15.70183299999917
+      },
+      {
+        "n": 7,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_x9hVN1vn6ytJ",
+          "detail": "summary",
+          "sample_size": 20
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5047499999927823
+      },
+      {
+        "n": 8,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_x9hVN1vn6ytJ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5427919999929145
+      }
+    ],
+    "tokens": {
+      "input": 393926,
+      "output": 9134,
+      "total": 403060,
+      "cache_creation_input": 0,
+      "cache_read_input": 390912
+    },
+    "wallclock_sec": 135.22072262500004
+  },
+  "output": {
+    "vcad_path": "20260722T174723Z-dc4a.vcad",
+    "vcad_sha256": "bd0c0d57db24cbe8d01e30f4b40cccb5ad2b366f946485f7f03f66aee7094c8f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T17:47:23.252Z",
+    "ended_at": "2026-07-22T17:49:38.531Z"
+  },
+  "signature": null
+}

@@ -62,6 +62,7 @@ import { useWebGLContextLost } from "@/hooks/useWebGLContextLost";
 import { useTheme } from "@/hooks/useTheme";
 import { useInputDeviceDetection } from "@/hooks/useInputDeviceDetection";
 import { usePhysicsSimulation } from "@/hooks/usePhysicsSimulation";
+import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
 import { useCanvasRecorder } from "@/hooks/useCanvasRecorder";
 import {
   useCameraSettingsStore,
@@ -75,6 +76,7 @@ import {
 } from "@/lib/camera-controls";
 import type { EvaluatedInstance } from "@vcad/engine";
 import type {
+  Transform3D,
   SceneSettings,
   EnvironmentPreset,
   Light as IrLight,
@@ -301,6 +303,67 @@ function DebugTriangleInspector() {
   return <InspectedTriangleMarker />;
 }
 
+
+/**
+ * Directional light whose shadow camera is fitted to the scene bounds.
+ *
+ * The old fixed ±100mm shadow box silently clipped shadows for any model
+ * taller or wider than 100mm (the Stirling engine plate is 160mm) and
+ * wasted shadow-map resolution on tiny parts. Bounds arrive in Three
+ * space as a bounding sphere (center + radius).
+ */
+function FittedShadowLight({
+  direction,
+  color,
+  intensity,
+  bounds,
+}: {
+  direction: { x: number; y: number; z: number };
+  color: Color;
+  intensity: number;
+  bounds: { center: [number, number, number]; radius: number };
+}) {
+  const lightRef = useRef<import("three").DirectionalLight>(null);
+  const { center, radius } = bounds;
+  const r = Math.max(radius, 10);
+
+  useEffect(() => {
+    const light = lightRef.current;
+    if (!light) return;
+    const dir = new Vector3(direction.x, direction.y, direction.z).normalize();
+    // Light sits opposite its direction, beyond the scene.
+    light.position.set(
+      center[0] - dir.x * r * 2.5,
+      center[1] - dir.y * r * 2.5,
+      center[2] - dir.z * r * 2.5,
+    );
+    light.target.position.set(center[0], center[1], center[2]);
+    light.target.updateMatrixWorld();
+    const cam = light.shadow.camera;
+    cam.left = -r * 1.3;
+    cam.right = r * 1.3;
+    cam.top = r * 1.3;
+    cam.bottom = -r * 1.3;
+    cam.near = 0.1;
+    cam.far = r * 6;
+    cam.updateProjectionMatrix();
+    light.shadow.needsUpdate = true;
+  }, [direction.x, direction.y, direction.z, center, r]);
+
+  return (
+    <directionalLight
+      ref={lightRef}
+      intensity={intensity}
+      color={color}
+      castShadow
+      shadow-mapSize-width={2048}
+      shadow-mapSize-height={2048}
+      shadow-bias={-0.0001}
+      shadow-normalBias={0.02}
+    />
+  );
+}
+
 export function ViewportContent({
   mode = "3d",
   pcbEditFocus = false,
@@ -313,6 +376,7 @@ export function ViewportContent({
   useCameraControls();
   useInputDeviceDetection();
   usePhysicsSimulation();
+  useTimelinePlayback();
   useCanvasRecorder();
 
   const isPcbMode = mode === "pcb";
@@ -437,6 +501,19 @@ export function ViewportContent({
     return mapping;
   }, [docInstances, docPartDefs, docRoots]);
 
+  // Scene evaluation filters out hidden roots (`visible === false`), so
+  // `scene.parts[idx]` indexes *visible* roots while `parts`/`docRoots` index
+  // all of them. Map each scene index back to its original root index so a
+  // click on a part still selects the right feature-tree row when an earlier
+  // part is hidden.
+  const visibleRootIndices = useMemo(
+    () =>
+      docRoots
+        .map((entry, idx) => (entry.visible !== false ? idx : -1))
+        .filter((idx) => idx >= 0),
+    [docRoots],
+  );
+
   // Check if a part at given index is selected (handles both part IDs and instance IDs)
   const isPartSelected = useCallback(
     (partId: string, partIndex: number): boolean => {
@@ -461,6 +538,54 @@ export function ViewportContent({
   //                big sphere doesn't dive into a 1mm close-up that loses
   //                all context. The highlight + property panel are the
   //                primary feedback there; the camera just centers it.
+  // Whole-scene bounding sphere in Three (Y-up) space, for shadow-camera
+  // fitting. Sampled every 16th vertex — shadow bounds don't need exact
+  // hulls, and this keeps the walk cheap on heavy scenes.
+  const sceneShadowBounds = useMemo(() => {
+    const fallback = { center: [0, 30, 0] as [number, number, number], radius: 120 };
+    if (!scene) return fallback;
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    const addPoint = (x: number, y: number, z: number) => {
+      // Kernel Z-up → Three Y-up (the scene group applies -90° about X).
+      const tx = x, ty = z, tz = -y;
+      if (tx < minX) minX = tx;
+      if (ty < minY) minY = ty;
+      if (tz < minZ) minZ = tz;
+      if (tx > maxX) maxX = tx;
+      if (ty > maxY) maxY = ty;
+      if (tz > maxZ) maxZ = tz;
+    };
+    const addMesh = (positions: ArrayLike<number>, t?: Transform3D | null) => {
+      const stride = 3 * 16;
+      for (let i = 0; i + 2 < positions.length; i += stride) {
+        const x = positions[i]!, y = positions[i + 1]!, z = positions[i + 2]!;
+        if (t) {
+          addPoint(
+            x * t.scale.x + t.translation.x,
+            y * t.scale.y + t.translation.y,
+            z * t.scale.z + t.translation.z,
+          );
+        } else {
+          addPoint(x, y, z);
+        }
+      }
+    };
+    for (const p of scene.parts ?? []) addMesh(p.mesh.positions);
+    for (const inst of scene.instances ?? []) {
+      addMesh(inst.mesh.positions, inst.transform ?? null);
+    }
+    if (!Number.isFinite(minX)) return fallback;
+    const center: [number, number, number] = [
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+    ];
+    const radius =
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2 || 60;
+    return { center, radius };
+  }, [scene]);
+
   const selectionInfo = useMemo(() => {
     if (selection.length === 0 || !scene) return null;
 
@@ -476,7 +601,11 @@ export function ViewportContent({
     const meshFor = (partId: string) => {
       const idx = parts.findIndex((p) => p.id === partId);
       if (idx < 0) return null;
-      return scene.parts[idx]?.mesh ?? null;
+      // scene.parts indexes visible roots only — translate the full-roots
+      // index before looking up the evaluated mesh.
+      const sceneIdx = visibleRootIndices.indexOf(idx);
+      if (sceneIdx < 0) return null;
+      return scene.parts[sceneIdx]?.mesh ?? null;
     };
 
     for (const item of selection) {
@@ -507,10 +636,12 @@ export function ViewportContent({
           // Legacy path: full part mesh. Also covers instances exposed as
           // parts via isPartSelected — keep the existing index-based walk
           // so the same id can match either path.
-          parts.forEach((part, index) => {
-            if (!isPartSelected(part.id, index)) return;
+          visibleRootIndices.forEach((rootIdx, sceneIdx) => {
+            const part = parts[rootIdx];
+            if (!part) return;
+            if (!isPartSelected(part.id, rootIdx)) return;
             if (part.id !== item.id) return;
-            const evalPart = scene.parts[index];
+            const evalPart = scene.parts[sceneIdx];
             if (!evalPart) return;
             const positions = evalPart.mesh.positions;
             for (let i = 0; i < positions.length; i += 3) {
@@ -576,7 +707,7 @@ export function ViewportContent({
     const center = new Vector3(kernelCenter.x, kernelCenter.z, -kernelCenter.y);
     const mode: "fit" | "pan-only" = hasSubFeature ? "pan-only" : "fit";
     return { center, radius, mode };
-  }, [selection, scene, parts, isPartSelected]);
+  }, [selection, scene, parts, isPartSelected, visibleRootIndices]);
 
   // Animate orbit target to selection center. For part selections we also
   // tighten distance to fit the bounding sphere; for sub-features we keep
@@ -1567,20 +1698,14 @@ export function ViewportContent({
         if (light.kind.type === "Directional") {
           const position = lightDirectionToPosition(light.kind.direction);
           return light.castShadow ? (
-            <directionalLight
+            <FittedShadowLight
               key={light.id}
-              position={position}
-              intensity={light.intensity}
+              direction={
+                light.kind.direction ?? { x: 0.5, y: -0.8, z: 0.4 }
+              }
               color={color}
-              castShadow
-              shadow-mapSize-width={2048}
-              shadow-mapSize-height={2048}
-              shadow-camera-far={200}
-              shadow-camera-left={-100}
-              shadow-camera-right={100}
-              shadow-camera-top={100}
-              shadow-camera-bottom={-100}
-              shadow-bias={-0.0001}
+              intensity={light.intensity}
+              bounds={sceneShadowBounds}
             />
           ) : (
             <directionalLight
@@ -1888,7 +2013,11 @@ export function ViewportContent({
               {(!scene?.instances || scene.instances.length === 0) &&
                 parts.length > 0 &&
                 scene?.parts.map((evalPart, idx) => {
-                  const partInfo = parts[idx];
+                  // scene.parts indexes visible roots only — map back to the
+                  // full-roots index so partInfo/selection stay aligned when
+                  // some parts are hidden.
+                  const rootIdx = visibleRootIndices[idx] ?? idx;
+                  const partInfo = parts[rootIdx];
                   if (!partInfo) return null;
                   // The focused board renders via PcbScene's unified kernel
                   // meshes instead of its merged solid.
@@ -1899,7 +2028,7 @@ export function ViewportContent({
                       partInfo={partInfo}
                       mesh={evalPart.mesh}
                       materialKey={evalPart.material}
-                      selected={isPartSelected(partInfo.id, idx)}
+                      selected={isPartSelected(partInfo.id, rootIdx)}
                       ghosted={pcbEditFocus && !isPcbBoardPart(partInfo)}
                     />
                   );
