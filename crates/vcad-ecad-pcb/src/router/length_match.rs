@@ -98,7 +98,7 @@ pub fn net_routed_length(pcb: &Pcb, net: &str) -> f64 {
 /// Requirements: at least one straight trace, all on one layer, no arcs on the
 /// net, every endpoint shared by at most two segments (no branches), and the
 /// segments form a single connected open chain.
-fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> {
+pub fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> {
     let segs: Vec<&Trace> = pcb.traces.iter().filter(|t| t.net == net).collect();
     if segs.is_empty() {
         return Err("net has no routed traces".into());
