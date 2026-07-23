@@ -612,7 +612,7 @@ mod tests {
 /// return the longest one as ordered points. `None` when the layer branches
 /// (T-junction) or holds no open chain — the conservative refusal inherited
 /// from [`net_polyline`], scoped to one layer instead of the whole net.
-fn longest_chain(segs: &[&Trace]) -> Option<Vec<Vec2>> {
+pub fn longest_chain(segs: &[&Trace]) -> Option<Vec<Vec2>> {
     if segs.is_empty() {
         return None;
     }

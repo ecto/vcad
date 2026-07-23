@@ -90,6 +90,28 @@ pub fn descend_pair(
     weights: &DescentWeights,
     iters: usize,
 ) -> Option<DescentResult> {
+    descend_pair_runs(
+        p_pts, n_pts, 0.0, 0.0, true, gap_centre, obstacles, weights, iters,
+    )
+}
+
+/// Multi-run variant (charter M6): optimize one single-layer RUN per leg
+/// while the rest of each net's length rides along as a constant, so the
+/// skew term still measures the WHOLE net. `extra_p`/`extra_n` are the
+/// untouched copper lengths; `springs` couples the runs toward the gap only
+/// when they share a layer.
+#[allow(clippy::too_many_arguments)]
+pub fn descend_pair_runs(
+    p_pts: &[Vec2],
+    n_pts: &[Vec2],
+    extra_p: f64,
+    extra_n: f64,
+    springs: bool,
+    gap_centre: f64,
+    obstacles: &[DescentObstacle],
+    weights: &DescentWeights,
+    iters: usize,
+) -> Option<DescentResult> {
     if p_pts.len() < 3 || n_pts.len() < 3 {
         return None;
     }
@@ -150,8 +172,12 @@ pub fn descend_pair(
         total
     };
 
-    let len_p = leg_len(&mut g, &pe, eps);
-    let len_n = leg_len(&mut g, &ne, eps);
+    let run_p = leg_len(&mut g, &pe, eps);
+    let run_n = leg_len(&mut g, &ne, eps);
+    let extra_p_lit = g.lit(extra_p);
+    let extra_n_lit = g.lit(extra_n);
+    let len_p = g.add(run_p, extra_p_lit);
+    let len_n = g.add(run_n, extra_n_lit);
 
     // Wirelength.
     let w_len = g.lit(weights.len);
@@ -170,7 +196,7 @@ pub fn descend_pair(
     // pairing keeps the term smooth and cheap).
     let w_gap = g.lit(weights.gap);
     let gap_lit = g.lit(gap_centre);
-    let n_springs = pe.len().min(ne.len());
+    let n_springs = if springs { pe.len().min(ne.len()) } else { 0 };
     for k in 1..n_springs.saturating_sub(1) {
         let pi = pe[k * (pe.len() - 1) / (n_springs - 1)];
         let ni = ne[k * (ne.len() - 1) / (n_springs - 1)];
