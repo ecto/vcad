@@ -6997,6 +6997,7 @@ dependencies = [
  "rstar",
  "serde",
  "serde_json",
+ "tang-expr",
  "thiserror 2.0.18",
  "toml 0.8.23",
  "vcad-ecad-package",

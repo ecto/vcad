@@ -790,6 +790,7 @@ impl Raster {
 
 /// Grid dimensions the GPU bridge uses for a full-board class raster:
 /// bounding box of the outline, given pitch, cell (0,0) at the box min.
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
 pub(crate) fn class_grid_dims(outline: &[Vec2], pitch: f64) -> (usize, usize, [f64; 2]) {
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
     for v in outline {
@@ -810,6 +811,7 @@ pub(crate) fn class_grid_dims(outline: &[Vec2], pitch: f64) -> (usize, usize, [f
 /// GPU bridge's content producer. Same math as [`Raster::build`], with an
 /// empty net name so *every* copper element blocks at the class reach.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
 pub(crate) fn cell_states_for_class(
     session: &RouteSession,
     outline: &[Vec2],
@@ -838,6 +840,7 @@ pub(crate) fn cell_states_for_class(
 /// (layer-major, `layers * h * w` bytes). Used for both the full build and
 /// dirty-delta recomputation, so incremental == from-scratch by construction.
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
 pub(crate) fn cell_states_for_class_window(
     session: &RouteSession,
     outline: &[Vec2],

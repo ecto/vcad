@@ -97,7 +97,7 @@ pub fn descend_pair(
 
     // Variables: interior points of both legs. Var index = position in θ.
     let mut theta0: Vec<f64> = Vec::new();
-    let mut var = |g: &mut ExprGraph, v: f64, theta0: &mut Vec<f64>| -> ExprId {
+    let var = |g: &mut ExprGraph, v: f64, theta0: &mut Vec<f64>| -> ExprId {
         let id = g.var(theta0.len() as u16);
         theta0.push(v);
         id

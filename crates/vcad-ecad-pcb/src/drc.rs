@@ -8,8 +8,10 @@ use std::collections::HashMap;
 use vcad_ir::ecad::{Footprint, FootprintGraphic, Pad, PadShape, PadType, Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
+#[cfg(feature = "gpu")]
+use crate::spatial::CopperElement;
 use crate::spatial::{
-    pad_geom, point_in_polygon, segment_polygon_intersects, CopperElement, CopperGeom, SpatialIndex,
+    pad_geom, point_in_polygon, segment_polygon_intersects, CopperGeom, SpatialIndex,
 };
 
 /// DRC rule type.
