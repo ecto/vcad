@@ -9,7 +9,7 @@ use vcad_ir::ecad::{Footprint, FootprintGraphic, Pad, PadShape, PadType, Pcb, Pc
 use vcad_ir::Vec2;
 
 use crate::spatial::{
-    pad_geom, point_in_polygon, segment_polygon_intersects, CopperGeom, SpatialIndex,
+    pad_geom, point_in_polygon, segment_polygon_intersects, CopperElement, CopperGeom, SpatialIndex,
 };
 
 /// DRC rule type.
@@ -469,13 +469,105 @@ fn check_clearance(
     region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
+    // GPU narrowphase prefilter (charter M2, `--features gpu`): evaluate all
+    // broadphase pairs in one dispatch; pairs that provably clear (with an
+    // f32-drift margin) skip the exact narrowphase below. Verdicts other
+    // than "clears" always fall through to the exact oracle, so the filter
+    // can only reduce work. Rect pads are not encoded — they take the exact
+    // path unconditionally.
+    #[cfg(feature = "gpu")]
+    let gpu_skip: std::collections::HashSet<(usize, usize)> = {
+        use vcad_kernel_gpu::narrowphase::{clears_batch, NarrowGeom, NarrowPair, DEFAULT_MARGIN};
+        let net_clearance = build_net_clearance_map(pcb);
+        let default_clearance = pcb.rules.default_rules.clearance;
+        let mut keys: Vec<(usize, usize)> = Vec::new();
+        let mut pairs: Vec<NarrowPair> = Vec::new();
+        let encode = |g: &CopperGeom| -> Option<NarrowGeom> {
+            match g {
+                CopperGeom::Segment { a, b, half_w } => Some(NarrowGeom::Capsule {
+                    a: [a.x as f32, a.y as f32],
+                    b: [b.x as f32, b.y as f32],
+                    r: *half_w as f32,
+                }),
+                CopperGeom::Disc { center, r } => Some(NarrowGeom::Disc {
+                    c: [center.x as f32, center.y as f32],
+                    r: *r as f32,
+                }),
+                _ => None,
+            }
+        };
+        for (ti, trace) in pcb.traces.iter().enumerate() {
+            let clearance = net_clearance
+                .get(&trace.net)
+                .copied()
+                .unwrap_or(default_clearance);
+            let half_w = trace.width / 2.0;
+            let search_margin = clearance + half_w + 1.0;
+            let nearby = index.query_region(
+                [
+                    trace.start.x.min(trace.end.x) - search_margin,
+                    trace.start.y.min(trace.end.y) - search_margin,
+                ],
+                [
+                    trace.start.x.max(trace.end.x) + search_margin,
+                    trace.start.y.max(trace.end.y) + search_margin,
+                ],
+            );
+            let tg = CopperGeom::Segment {
+                a: trace.start,
+                b: trace.end,
+                half_w,
+            };
+            for elem in nearby {
+                if elem.layer != trace.layer || elem.net == trace.net {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (encode(&tg), encode(&elem.geom)) else {
+                    continue;
+                };
+                let required = pair_aware_clearance_w(
+                    dp_map,
+                    &trace.net,
+                    &elem.net,
+                    Some(trace.width),
+                    match &elem.geom {
+                        CopperGeom::Segment { half_w, .. } => Some(2.0 * half_w),
+                        _ => None,
+                    },
+                    clearance.max(
+                        net_clearance
+                            .get(&elem.net)
+                            .copied()
+                            .unwrap_or(default_clearance),
+                    ),
+                );
+                keys.push((ti, elem as *const CopperElement as usize));
+                pairs.push(NarrowPair {
+                    a,
+                    b,
+                    required: required as f32,
+                });
+            }
+        }
+        match clears_batch(&pairs, DEFAULT_MARGIN) {
+            Ok(flags) => keys
+                .into_iter()
+                .zip(flags)
+                .filter_map(|(k, clear)| clear.then_some(k))
+                .collect(),
+            Err(_) => Default::default(),
+        }
+    };
+
     let default_clearance = pcb.rules.default_rules.clearance;
 
     // Build net class clearance lookup
     let net_clearance = build_net_clearance_map(pcb);
 
     // Check each trace against nearby elements on the same layer
-    for trace in &pcb.traces {
+    for (trace_index, trace) in pcb.traces.iter().enumerate() {
+        #[cfg(not(feature = "gpu"))]
+        let _ = trace_index;
         if !in_scope(region, |r| {
             r.hits_segment(trace.start, trace.end, trace.width / 2.0)
         }) {
@@ -511,6 +603,11 @@ fn check_clearance(
                 continue;
             }
 
+            // GPU-cleared pairs skip the exact narrowphase (prefilter).
+            #[cfg(feature = "gpu")]
+            if gpu_skip.contains(&(trace_index, elem as *const CopperElement as usize)) {
+                continue;
+            }
             // True copper-to-copper distance (narrowphase). The R-tree query
             // above is only a broadphase candidate filter.
             let dist = trace_geom.distance_to(&elem.geom);
