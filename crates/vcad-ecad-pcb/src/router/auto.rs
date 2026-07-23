@@ -516,6 +516,21 @@ pub fn route_all_with_opts(
         routed.insert(n.clone());
     }
 
+    // Post-route legalization: merge duplicate/overlapping same-net vias,
+    // prune same-net bypass noodles, and fail-closed demote any net whose new
+    // copper is still hole-to-hole illegal. Enforces the invariant that an
+    // autoroute pass never returns HoleToHole or SameNetBypass violations of
+    // its own making.
+    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias);
+    if legal.merged_vias > 0 || legal.pruned_traces > 0 || !legal.demoted.is_empty() {
+        log::info!(
+            "post-route legalization: merged {} vias, pruned {} traces, demoted {} nets",
+            legal.merged_vias,
+            legal.pruned_traces,
+            legal.demoted.len(),
+        );
+    }
+
     // Diagnose every signal connection the router could not close: which nets
     // block it, where, and which layer/via might help. Computed against the
     // final settled session so the blocker set reflects the real obstruction.
@@ -532,6 +547,27 @@ pub fn route_all_with_opts(
     for (net, pad_pt) in &stitch.failed_pads {
         unrouted.insert(net.clone());
         diagnostics.push(diagnose_stitch_failure(net, *pad_pt));
+    }
+    // A net demoted by legalization had all its new copper stripped: report it
+    // unrouted with the offending position rather than return illegal copper.
+    for (net, at) in &legal.demoted {
+        unrouted.insert(net.clone());
+        diagnostics.push(UnroutedDiagnostic {
+            net: net.clone(),
+            from: *at,
+            to: *at,
+            blocking_nets: Vec::new(),
+            region_min: *at,
+            region_max: *at,
+            suggested_layer: None,
+            suggested_via: None,
+            reason: format!(
+                "post-route legalization removed net '{net}': a routed via near \
+                 ({:.2}, {:.2}) stayed hole-to-hole illegal against existing board \
+                 holes after via merging",
+                at.x, at.y
+            ),
+        });
     }
     // A net both routed and (partially) failed is still incompletely connected —
     // keep it flagged so the caller knows to inspect it.
@@ -3288,6 +3324,68 @@ mod tests {
         }
     }
 
+    /// The legalization invariant: an autoroute pass on a clean placement must
+    /// never introduce HoleToHole or SameNetBypass violations of its own
+    /// making. Routes a board that exercises every via emitter (crossing
+    /// signal nets + plane stitching), applies the result, and judges it with
+    /// the full DRC.
+    #[test]
+    fn autoroute_never_introduces_hole_or_bypass_violations() {
+        let pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    5.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    45.0,
+                    25.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, -2.0, "C")],
+                ),
+                fp(
+                    "U3",
+                    45.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "B"), pad("2", 0.0, 2.0, "C")],
+                ),
+                fp("U4", 8.0, 25.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U5", 25.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U6", 42.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+        // The placement itself is clean: no holes, no copper.
+        assert!(
+            check_drc(&pcb0).iter().all(|v| !matches!(
+                v.rule,
+                crate::drc::DrcRuleType::HoleToHole | crate::drc::DrcRuleType::SameNetBypass
+            )),
+            "fixture placement must be clean"
+        );
+
+        let r = route_all(&pcb0, 0.25, &[]);
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let viols = check_drc(&pcb);
+        let introduced: Vec<_> = viols
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::HoleToHole | crate::drc::DrcRuleType::SameNetBypass
+                )
+            })
+            .collect();
+        assert!(
+            introduced.is_empty(),
+            "autoroute introduced illegal copper: {:?}",
+            introduced.iter().map(|v| &v.message).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn stitches_power_pads_to_inner_planes() {
         // GND plane on In1Cu, V3V3 plane on In2Cu; SMD power pads on FCu. Without
@@ -3389,12 +3487,22 @@ mod tests {
         let r = route_all(&pcb0, 0.25, &[]);
 
         let vias: Vec<_> = r.vias.iter().filter(|v| v.net == "VCC").collect();
-        assert_eq!(
-            vias.len(),
-            3,
-            "one stitch via per fine-pitch VCC pad, got {:?}",
-            vias.iter().map(|v| v.position).collect::<Vec<_>>()
+        // At 0.5 mm pitch the three per-pad stitch vias land closer than the
+        // 0.5 mm hole-to-hole rule allows, so post-route legalization merges
+        // them: at least one via survives, and every surviving pair is legal.
+        assert!(
+            !vias.is_empty(),
+            "fine-pitch VCC pads must be stitched to the plane"
         );
+        for (i, a) in vias.iter().enumerate() {
+            for b in vias.iter().skip(i + 1) {
+                let edge = dist(a.position, b.position) - 0.4;
+                assert!(
+                    edge >= 0.5 - 1e-6,
+                    "surviving stitch vias must be hole-to-hole legal, got edge {edge:.3}mm"
+                );
+            }
+        }
         // Each stitch via must sit OFF every pad — the escape-in-fanout, not on-pad.
         let pads = [
             Vec2::new(24.5, 15.0),

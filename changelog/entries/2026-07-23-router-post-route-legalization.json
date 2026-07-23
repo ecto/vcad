@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-router-post-route-legalization",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "Autorouter no longer emits duplicate vias or self-shorts",
+  "summary": "route_nets now legalizes its own output before returning: overlapping same-net vias are merged, redundant same-net bypass copper is pruned, and hole-to-hole legality is enforced fail-closed.",
+  "features": ["pcb", "autorouter", "drc"],
+  "mcpTools": ["route_nets", "run_drc"]
+}
