@@ -87,6 +87,19 @@ pub async fn distance_fields_batch_async(
     }
     let ctx = GpuContext::init().await?;
 
+    // Refuse allocations beyond device limits up front: an oversized buffer
+    // poisons the device and every subsequent dispatch on the shared context
+    // (observed as "Command encoder is invalid" for the rest of the run).
+    let limits = ctx.device.limits();
+    let dist_bytes = (n * total * 4) as u64;
+    let max_binding = limits.max_storage_buffer_binding_size as u64;
+    if dist_bytes > limits.max_buffer_size || dist_bytes > max_binding {
+        return Err(GpuError::InvalidInput(format!(
+            "batch needs {dist_bytes}B dist buffers (n={n} x {total} nodes)              beyond device limits (max_buffer {} / max_binding {max_binding}) — chunk the batch",
+            limits.max_buffer_size
+        )));
+    }
+
     // Shared raster, u8 packed in u32 words.
     let occ_words = pack_u8_words(states);
     let occ_buf = ctx
