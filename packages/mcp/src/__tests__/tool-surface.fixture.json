@@ -9224,6 +9224,42 @@
     }
   },
   {
+    "name": "fix_drc",
+    "title": "Fix DRC",
+    "description": "Run DRC and automatically apply the mechanically-safe subset of fixes: stitching vias for UnstitchedPad, dedupe of overlapping same-net via drills (HoleToHole), inward nudges for EdgeClearance when a legal corridor exists, and per-net rip-up + re-route (at higher effort) for UnconnectedNet/NetIslands. Every fix is individually verified with a DRC delta and REVERTED if it would introduce any new violation. Never touches design decisions: different-net shorts/clearance, courtyard overlaps, keepouts, or anything requiring a component move. Returns a fail-closed receipt: before/after violation counts, what was fixed, and what was skipped with the reason. `dry_run` plans without mutating. Mutates the session document (pass document_id).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline vcad IR Document (legacy stateless flow). Prefer document_id."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Plan the fixes without mutating the board. Planned actions come back in `planned` (NOT verified — only an applied fix is delta-verified)."
+        },
+        "reroute_effort": {
+          "type": "number",
+          "description": "route_nets effort used when re-routing UnconnectedNet/NetIslands nets (default 4 — higher than a first-pass route)."
+        },
+        "max_fixes": {
+          "type": "number",
+          "description": "Cap on applied fixes in one call (default 50)."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "search_electronic_parts",
     "title": "Search Electronic Parts",
     "description": "Spec-search the generative parts catalog (offline). A query like '10k 0603 1%' parses to value+package+tolerance and returns the best match plus E-series neighbours, each with a generated footprint, symbol, and 3D body. A part is family+value+package, not a scraped row.",
