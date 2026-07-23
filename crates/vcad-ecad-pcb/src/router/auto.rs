@@ -453,7 +453,75 @@ pub fn route_all_with_opts(
     // Stitch the planed nets' pads down to their planes (issue #289 part 2).
     // Runs after signal routing so each stitching via avoids the routed copper
     // and is probed on every copper layer it spans before being committed.
-    let stitch = stitch_planes(&mut session, pcb, &planes, nets_filter, &placed, width);
+    let mut stitch = stitch_planes(&mut session, pcb, &planes, nets_filter, &placed, width);
+
+    // Maze rescue for pads the radial dog-bone couldn't escape (issue: a
+    // fine-pitch pad boxed in by already-routed copper has no *straight*
+    // stub out, but a bent path threads it). Route the pad to the nearest
+    // same-net stitched point — a stitching via, a pad sitting directly on
+    // its plane, or a same-net trace already laid on a plane layer — with the
+    // full maze arsenal; any path it finds (including vias it drops itself)
+    // reaches the plane galvanically. Only pads that still fail here are
+    // reported as UnstitchedPad.
+    let failed = std::mem::take(&mut stitch.failed_pads);
+    for (net, pad_pt) in failed {
+        let mut targets: Vec<Vec2> = stitch
+            .vias
+            .iter()
+            .filter(|(_, n)| n == &net)
+            .map(|(p, _)| *p)
+            .collect();
+        if let Some(layers) = planes.get(&net) {
+            for fp in &pcb.footprints {
+                for pad in &fp.pads {
+                    if pad.net.as_deref() == Some(net.as_str())
+                        && pad.layers.iter().any(|l| layers.contains(l))
+                    {
+                        targets.push(crate::geometry::pad_world_position(fp, pad));
+                    }
+                }
+            }
+            // Same-net copper already routed onto a plane layer is a galvanic
+            // target too — a signal route that dived to the plane layer floods
+            // into the pour, so a segment endpoint there reaches the plane.
+            for p in placed.iter().filter(|p| p.net == net) {
+                for &(a, b, l) in &p.segments {
+                    if layers.contains(&l) {
+                        targets.push(a);
+                        targets.push(b);
+                    }
+                }
+            }
+        }
+        // Never route the pad to itself (a same-net pad coincident with it, or
+        // a zero-length target) — that is not a path to the plane.
+        targets.retain(|t| dist(*t, pad_pt) > 1e-6);
+        targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
+        let mut rescued = false;
+        for t in targets.into_iter().take(3) {
+            if let Some(p) = try_route(
+                &mut session,
+                pcb,
+                width,
+                &net,
+                pad_pt,
+                t,
+                &mut placed,
+                &cong,
+                opts.use_push_shove,
+                opts.effective_expansions(),
+                true,
+            ) {
+                placed.push(p);
+                stitch.nets.insert(net.clone());
+                rescued = true;
+                break;
+            }
+        }
+        if !rescued {
+            stitch.failed_pads.push((net, pad_pt));
+        }
+    }
 
     // Flatten the placed connections into the result.
     let mut traces = Vec::new();
@@ -2112,7 +2180,7 @@ struct Escape {
 /// the pad cannot be escaped.
 ///
 /// `force_fanout` skips the at-pad via entirely and goes straight to the
-/// dog-bone ring search. Set it for sub-0.65 mm-pitch pads: a 0.6 mm via can't
+/// dog-bone ring search. Set it for 0.65 mm-pitch-and-finer pads: a 0.6 mm via can't
 /// physically land between 0.5 mm-pitch QFP/QFN pins, so the stitch must escape
 /// into the fan-out even when an at-pad via *would* probe clearance-legal (e.g.
 /// a fine-pitch pad whose neighbours share its net).
@@ -2397,7 +2465,7 @@ fn stitch_planes(
                 .filter(|o| !std::ptr::eq(*o, pad))
                 .map(|o| dist(pad.position, o.position))
                 .fold(f64::INFINITY, f64::min);
-            let fine_pitch = pitch < FINE_PITCH_MM;
+            let fine_pitch = pitch <= FINE_PITCH_MM;
             let clearance = session.clearance_for(net);
             let w = session.width_for(net, width);
             // Reuse a coincident same-net stitch via dropped for an earlier pad.
@@ -3627,6 +3695,103 @@ mod tests {
             })
             .count();
         assert_eq!(unstitched, 0, "every fine-pitch VCC pad must be stitched");
+    }
+
+    /// A 0.65 mm-pitch TSSOP-style pad (0.4 x 1.4, long axis in Y).
+    fn tssop_pad(num: &str, x: f64, y: f64, net: &str) -> Pad {
+        Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 0.4,
+                height: 1.4,
+            },
+            position: Vec2::new(x, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        }
+    }
+
+    #[test]
+    fn stitches_tssop_plane_pads_via_escape_fanout() {
+        // The RP2040 motor-board regression: a DRV8833-style TSSOP at exactly
+        // 0.65 mm pitch with GND / AISEN-sense pads on a bottom GND plane. An
+        // at-pad via cannot fit between 0.65 mm-pitch pins, so the stitcher must
+        // execute the escape itself (stub + dog-bone via) rather than emit an
+        // UnstitchedPad violation. Neighbouring pads carry signal nets that are
+        // also routed, so the fan-out region is realistically contested.
+        let mut top: Vec<Pad> = Vec::new();
+        let mut bot: Vec<Pad> = Vec::new();
+        // Two rows of 8 pins, 0.65 pitch, rows 5.0 apart (body between them).
+        // GND on pins 3 and 4 of the top row (adjacent same-net, the
+        // AISEN/BISEN case) and pin 2 of the bottom row.
+        let nets_top = ["A1", "A2", "GND", "GND", "A3", "A4", "A5", "A6"];
+        let nets_bot = ["B1", "GND", "B2", "B3", "B4", "B5", "B6", "B7"];
+        for (i, n) in nets_top.iter().enumerate() {
+            top.push(tssop_pad(&format!("{}", i + 1), i as f64 * 0.65, 2.5, n));
+        }
+        for (i, n) in nets_bot.iter().enumerate() {
+            bot.push(tssop_pad(&format!("{}", i + 9), i as f64 * 0.65, -2.5, n));
+        }
+        let mut pads = top;
+        pads.extend(bot);
+        let mut fps = vec![fp("U2", 20.0, 15.0, pads)];
+        // Far-side partners so the signal nets actually route through the area.
+        for (i, n) in ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4"]
+            .iter()
+            .enumerate()
+        {
+            fps.push(fp(
+                &format!("R{}", i + 1),
+                38.0,
+                4.0 + i as f64 * 3.0,
+                vec![pad("1", 0.0, 0.0, n)],
+            ));
+        }
+        let mut pcb0 = board(fps);
+        pcb0.zones = vec![plane("GND", PcbLayer::BCu)];
+
+        let r = route_all(&pcb0, 0.25, &[]);
+
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let viols = check_drc(&pcb);
+        let unstitched: Vec<_> = viols
+            .iter()
+            .filter(|v| v.rule == crate::drc::DrcRuleType::UnstitchedPad)
+            .map(|v| v.message.clone())
+            .collect();
+        assert!(
+            unstitched.is_empty(),
+            "fine-pitch plane pads must be stitched by the router, got: {unstitched:?}"
+        );
+        let bad = viols
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Short | crate::drc::DrcRuleType::Clearance
+                )
+            })
+            .count();
+        assert_eq!(bad, 0, "stitched board must be short/clearance clean");
+        // And no stitch via may sit on a fine-pitch pad (physically impossible).
+        for v in r.vias.iter().filter(|v| v.net == "GND") {
+            for f in &pcb0.footprints {
+                if f.reference != "U2" {
+                    continue;
+                }
+                for p in &f.pads {
+                    let pt = crate::geometry::pad_world_position(f, p);
+                    assert!(
+                        dist(v.position, pt) > 0.1,
+                        "stitch via must dog-bone off the 0.65mm-pitch pad at {pt:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// A square board of the given side (mm), 2-layer, default rules.
