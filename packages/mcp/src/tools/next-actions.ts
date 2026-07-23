@@ -313,6 +313,47 @@ export function happyPathNext(toolName: string, docId?: string): NextAction[] {
 }
 
 /**
+ * When a placement tool succeeded but its `placement_drc` is NOT clean, the
+ * first next_action must be "fix the placement before routing" — not the
+ * happy-path "set design rules / route". Reads the verdict from the parsed
+ * result body (place_components and set_placement both carry `placement_drc`).
+ */
+function placementFixNext(
+  toolName: string,
+  parsedBody: Record<string, unknown> | undefined,
+  docId?: string,
+): NextAction[] {
+  if (toolName !== "place_components" && toolName !== "set_placement") return [];
+  const drc = parsedBody?.placement_drc as
+    | {
+        clean?: boolean;
+        shorts?: unknown[];
+        clearance_violations?: number;
+        courtyard_overlaps?: number;
+        off_board?: unknown[];
+        unverifiable?: { reason?: string };
+      }
+    | undefined;
+  if (!drc || drc.clean !== false) return [];
+  const parts: string[] = [];
+  if (drc.unverifiable) parts.push("board unverifiable by DRC");
+  if (drc.shorts?.length) parts.push(`${drc.shorts.length} short(s)`);
+  if (drc.clearance_violations) parts.push(`${drc.clearance_violations} clearance`);
+  if (drc.courtyard_overlaps) parts.push(`${drc.courtyard_overlaps} courtyard overlap(s)`);
+  if (drc.off_board?.length) parts.push(`${drc.off_board.length} off-board`);
+  const found = parts.length ? ` (${parts.join(", ")})` : "";
+  return [
+    {
+      action:
+        `Placement DRC is NOT clean${found} — fix the placement with set_placement ` +
+        `(see placement_drc for the offending refs) BEFORE routing.`,
+      tool: "set_placement",
+      ...(docId ? { args: { document_id: docId } } : {}),
+    },
+  ];
+}
+
+/**
  * Attach happy-path `next_actions` to a SUCCEEDING tool result (the mirror of
  * enrichErrorResult). No-op unless the tool is on the canonical PCB flow and the
  * result doesn't already carry next_actions (a buffered set_design_rules ships
@@ -328,22 +369,31 @@ export function enrichSuccessResult(
   if (result.isError) return;
   if (result.structuredContent && "next_actions" in result.structuredContent) return;
 
-  const block = result.content.find((b) => b.type === "text");
+  // First JSON-object text block wins — a slimmed preview result leads with a
+  // plain-prose summary block and carries its JSON stub second.
+  let block: MutableResult["content"][number] | undefined;
   let docId = docIdOf(args);
   let parsedBody: Record<string, unknown> | undefined;
-  if (block) {
+  for (const b of result.content) {
+    if (b.type !== "text") continue;
+    block ??= b;
     try {
-      const parsed = JSON.parse(block.text) as Record<string, unknown>;
+      const parsed = JSON.parse(b.text) as Record<string, unknown>;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        block = b;
         parsedBody = parsed;
         if (typeof parsed.document_id === "string") docId = parsed.document_id;
+        break;
       }
     } catch {
-      // not a JSON body — append a parseable tail instead
+      // not a JSON body — keep looking; fall back to appending a tail
     }
   }
 
-  const next = happyPathNext(toolName, docId);
+  const next = [
+    ...placementFixNext(toolName, parsedBody, docId),
+    ...happyPathNext(toolName, docId),
+  ];
   if (!next.length) return;
 
   if (parsedBody && block) {

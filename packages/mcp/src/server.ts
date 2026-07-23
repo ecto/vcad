@@ -1547,14 +1547,44 @@ export function slimPreviewForInlineUi(
   );
   if (!alwaysSlim && totalChars <= 8192) return;
 
+  // Verification verdicts must survive slimming — dropping placement_drc from
+  // a big place_components body let callers route on a floorplan with 7
+  // courtyard overlaps and never see them. Carry the fault-reporting fields
+  // through to the slim stub; everything else stays behind get_document.
+  const keep: Record<string, unknown> = {};
+  for (const block of result.content) {
+    if (block.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(block.text) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      for (const field of SLIM_PRESERVED_FIELDS) {
+        if (parsed[field] !== undefined && keep[field] === undefined) {
+          keep[field] = parsed[field];
+        }
+      }
+    } catch {
+      // non-JSON block — nothing to preserve
+    }
+  }
+
   const summary =
     `CAD document ready (${docId}). Geometry is available in the inline 3D viewer. ` +
     "Use get_document for the full IR, inspect_cad for metrics, or export_cad to export.";
   result.content = [
     { type: "text", text: summary },
-    { type: "text", text: JSON.stringify({ document_id: docId }) },
+    { type: "text", text: JSON.stringify({ document_id: docId, ...keep }) },
   ];
 }
+
+/** Fields that must never be slimmed away: success/fault verdicts the caller
+ *  branches on (placement DRC, unresolved shorts, lint, warnings). */
+const SLIM_PRESERVED_FIELDS = [
+  "success",
+  "placement_drc",
+  "placement_conflicts",
+  "fallback_footprints",
+  "warnings",
+] as const;
 
 /**
  * Attach the preview document id to a tool result: in structuredContent
