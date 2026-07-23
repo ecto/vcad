@@ -30,6 +30,22 @@ historic full pipelines ran 8–24 h. The 40-net hard subset routes at
 **1.000 routability in 3.2 s** GPU-batched (history: 588 s → 8.1 s → 1.2 s
 @0.976 → 3.2 s @1.000).
 
+## Run 2 — M4 negotiation wired in (same day)
+
+| stage    | wall     | result |
+|----------|----------|--------|
+| route    | 65 min   | 0.925 — GPU negotiation rounds REPLACED the ratchet stage entirely (history pricing resolves the tail the CPU arsenal used to grind) |
+| ladder   | 22 s     | 24 routed + 11 certificates; 1 connection persisted unknown (window budget) |
+| tune     | 50 s     | fail-closed |
+| descent  | 41 s     | 3 pairs → ≈0.006 mm |
+| **total**| **67 min** | 2.55× over run 1; accounting 99.8% (the 1 unknown) |
+
+Chain trajectory: 8–24 h (historic CPU pipelines) → 2 h 51 m (run 1) →
+**67 min** (run 2). Remaining distance to 30 min lives inside the route
+stage's greedy phase — the sequential rescue arsenal that fires per-batch —
+and is the next named integration (negotiation-first ordering, arsenal only
+for negotiation's leftovers).
+
 ## What is proven
 
 - **Full accounting**: every connection ends routed or carries a named
