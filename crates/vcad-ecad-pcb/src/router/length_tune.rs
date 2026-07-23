@@ -188,13 +188,22 @@ fn check_clearances(
     obstacles: &[(Vec2, Vec2, f64)],
     min_clearance: f64,
 ) -> bool {
+    // True segment-to-segment distance over each meander EDGE — vertex-only
+    // sampling let a meander cross an obstacle cleanly between samples
+    // (si8 retune: DDR meanders overlapping neighbouring lanes at 0.000mm).
+    let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+        point_to_segment_distance(a1, a2, b2)
+            .min(point_to_segment_distance(b1, a2, b2))
+            .min(point_to_segment_distance(a2, a1, b1))
+            .min(point_to_segment_distance(b2, a1, b1))
+    };
     for seg in segments {
-        for pt in &seg.points {
+        for w in seg.points.windows(2) {
             for &(obs_start, obs_end, extra) in obstacles {
                 // Per-obstacle requirement: a diff-pair twin demands its GAP
                 // (carried in `extra`); everything else the base clearance.
                 let req = min_clearance.max(extra);
-                if point_to_segment_distance(*pt, obs_start, obs_end) < req {
+                if seg_seg(w[0], w[1], obs_start, obs_end) < req {
                     return false;
                 }
             }
