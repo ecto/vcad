@@ -308,6 +308,81 @@ describe("catalog parts (create_schematic resolves added FC parts)", () => {
     expect(names).toContain("CANH");
     expect(names).toContain("CANL");
   });
+
+  it("resolves DRV8833 pins by part name (jellybean IC)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [{ ref: "U1", part: "DRV8833", footprint: "TSSOP-16", x: 0, y: 0 }],
+        nets: { VM: ["U1.13"], GND: ["U1.12"], AIN1: ["U1.16"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const comp = getSession(created.document_id).schematic!.components[0]!;
+    expect(comp.pins.length).toBe(16);
+    expect(comp.pins.find((p) => p.number === "16")!.name).toBe("AIN1");
+    expect(comp.pins.find((p) => p.number === "13")!.name).toBe("VM");
+  });
+
+  it("resolves RP2040 including the EP ground pad", async () => {
+    const created = out(
+      await createSchematic({
+        components: [{ ref: "U1", part: "RP2040", footprint: "QFN-56", x: 0, y: 0 }],
+        nets: { GND: ["U1.EP"], XIN: ["U1.20"], USB_DP: ["U1.47"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const comp = getSession(created.document_id).schematic!.components[0]!;
+    expect(comp.pins.length).toBe(57);
+    expect(comp.pins.find((p) => p.number === "EP")!.name).toBe("GND");
+  });
+});
+
+describe("two-terminal passive pin synthesis (create_schematic)", () => {
+  it("synthesizes pins 1/2 for a value-only chip passive", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          { ref: "C1", value: "100nF", footprint: "C_0603", x: 0, y: 0 },
+          { ref: "R1", value: "10k", footprint: "R_0402", x: 20, y: 0 },
+          { ref: "L1", value: "10uH", footprint: "L_0805", x: 40, y: 0 },
+          { ref: "D1", value: "1N4148", footprint: "D_SOD-123", x: 60, y: 0 },
+        ],
+        nets: { GND: ["C1.1", "R1.1"], SIG: ["C1.2", "R1.2", "L1.1", "D1.1"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    for (const comp of getSession(created.document_id).schematic!.components) {
+      expect(comp.pins.length, comp.ref).toBe(2);
+      expect(comp.pins.map((p) => p.number)).toEqual(["1", "2"]);
+      expect(comp.pins.every((p) => p.pin_type === "Passive")).toBe(true);
+    }
+    // No "has no pins" warnings for synthesized passives.
+    expect(
+      (created.warnings ?? []).filter((w: string) => w.includes("has no pins")),
+    ).toEqual([]);
+  });
+
+  it("explicit pins and non-passive footprints are untouched", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "C1",
+            value: "100nF",
+            footprint: "C_0603",
+            x: 0,
+            y: 0,
+            pins: [{ number: "A", name: "A", type: "Passive", x: 0, y: 0 }],
+          },
+          // Unknown IC footprint, no part: still warns instead of guessing pins.
+          { ref: "U1", value: "mystery", footprint: "SOIC-8", x: 20, y: 0 },
+        ],
+      }),
+    );
+    const comps = getSession(created.document_id).schematic!.components;
+    expect(comps[0]!.pins.map((p) => p.number)).toEqual(["A"]);
+    expect(comps[1]!.pins.length).toBe(0);
+  });
 });
 
 describe("import_kicad / import_eagle", () => {

@@ -1742,6 +1742,39 @@ function validatePinType(raw: unknown, where: string): SchematicPin["pin_type"] 
   );
 }
 
+/** Imperial chip-size codes for two-terminal passives. */
+const CHIP_SIZE_CODES = new Set([
+  "0201",
+  "0402",
+  "0603",
+  "0805",
+  "1206",
+  "1210",
+  "2010",
+  "2512",
+]);
+
+/**
+ * True when a footprint id names a two-terminal passive package — the chip
+ * families (`R_0603`, `C_0805_2012Metric`, `L_...`, `D_SOD-123`) or a bare
+ * chip-size code (`0603`). Such components get pins 1/2 (type Passive)
+ * synthesized when the caller provides neither `part` nor `pins`.
+ */
+export function isTwoPinPassiveFootprint(footprint: unknown): boolean {
+  if (typeof footprint !== "string") return false;
+  const fp = footprint.trim();
+  if (/^[RCLD]_/i.test(fp)) return true;
+  return CHIP_SIZE_CODES.has(fp);
+}
+
+/** The two synthesized pins of a chip passive, in schematic-symbol layout. */
+function synthesizedPassivePins(): SchematicPin[] {
+  return [
+    { number: "1", name: "1", pin_type: "Passive", position: { x: 0, y: 0 } },
+    { number: "2", name: "2", pin_type: "Passive", position: { x: 5.08, y: 0 } },
+  ];
+}
+
 export async function createSchematic(args: Record<string, unknown>) {
   const title = (args.title as string) || undefined;
   const componentsInput = (args.components as Array<Record<string, unknown>>) || [];
@@ -1835,7 +1868,9 @@ export async function createSchematic(args: Record<string, unknown>) {
               pin_type: p.pin_type as SchematicPin["pin_type"],
               position: { x: p.x, y: p.y },
             }))
-          : [];
+          : !c.part && isTwoPinPassiveFootprint(c.footprint)
+            ? synthesizedPassivePins()
+            : [];
 
     // Carry the resolved part identity + datasheet for traceability.
     const properties: Record<string, string> = {};
