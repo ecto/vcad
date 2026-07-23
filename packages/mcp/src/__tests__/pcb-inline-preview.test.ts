@@ -88,6 +88,27 @@ describe("place_components inline preview (no-UI-capability client)", () => {
     expect(typeof inline?.glb).toBe("string");
     expect((inline!.glb as string).length).toBeGreaterThan(1000);
 
+    // Non-mount PCB mutators must ride the inline GLB too: the mounted
+    // widget's fetch fallback isn't dependable in Claude Code, and a
+    // board-only document has no CAD part scene to fall back on — without
+    // this, route_nets / add_zone results rendered "no geometry to preview".
+    for (const call of [
+      { name: "route_nets", arguments: { document_id: documentId } },
+      {
+        name: "add_zone",
+        arguments: { document_id: documentId, net: "MID", layer: "FCu", fill_board: true },
+      },
+    ]) {
+      const mutated = (await client.callTool(call)) as {
+        _meta?: Record<string, unknown>;
+      };
+      const meta = mutated._meta?.["vcad.io/preview"] as
+        | { document_id?: string; glb?: string }
+        | undefined;
+      expect(meta?.document_id, `${call.name} inline preview`).toBe(documentId);
+      expect((meta?.glb ?? "").length, `${call.name} glb size`).toBeGreaterThan(1000);
+    }
+
     // The widget's fetch path serves the same board.
     const glb = parse(
       await client.callTool({
