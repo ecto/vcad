@@ -16,7 +16,12 @@ import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
-import { getSession, resolveDocInput, getLastChanged } from "./session.js";
+import {
+  getSession,
+  resolveDocInput,
+  getLastChanged,
+  getLastTriangles,
+} from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -128,6 +133,21 @@ const DEFAULT_WIDTH_PX = 800;
 const MAX_NODES = 10_000;
 const MAX_PATTERN_INSTANCES = 50_000;
 
+/** Triangle budget for the drafting renderer. It emits one SVG element per
+ *  visible triangle, so triangles ≈ SVG bytes ≈ rasterizer memory: a ~190k-
+ *  triangle document serializes to a >100 MB SVG that resvg refuses ("nodes
+ *  limit reached"), and ~380k triangles OOM-kill the process outright (the
+ *  agent sees only a 502). The mutation-integrity pass counts triangles for
+ *  free, so a known-oversized document is refused with an actionable error
+ *  instead of crashing the instance. */
+const MAX_RENDER_TRIANGLES = 120_000;
+
+/** SVG beyond this many bytes is never handed to the rasterizer — resvg
+ *  builds a node per element, and feeding it a giant SVG is an OOM, not an
+ *  error return. Backstop for documents whose triangle count wasn't known
+ *  pre-render (inline docs, cold sessions). */
+const MAX_RASTER_SVG_BYTES = 64 * 1024 * 1024;
+
 /** Raw SVG beyond this many bytes is withheld from the fallback text
  *  block — a complex document can otherwise inject megabytes into the
  *  model context in a single tool result. */
@@ -167,6 +187,15 @@ export async function rasterize(
   widthPx: number,
   background = "white",
 ): Promise<RasterOutcome> {
+  const svgBytes = Buffer.byteLength(svg, "utf8");
+  if (svgBytes > MAX_RASTER_SVG_BYTES) {
+    return {
+      png: null,
+      reason:
+        `rasterization refused: SVG is ${svgBytes} bytes ` +
+        `(cap ${MAX_RASTER_SVG_BYTES}) — the document is too dense to raster safely`,
+    };
+  }
   let ResvgCtor: typeof import("@resvg/resvg-js").Resvg;
   try {
     ({ Resvg: ResvgCtor } = await import("@resvg/resvg-js"));
@@ -206,6 +235,28 @@ export async function renderView(
     2048,
     Math.max(64, Number.isFinite(widthRaw) ? Math.round(widthRaw) : DEFAULT_WIDTH_PX),
   );
+
+  const knownTriangles = documentId ? getLastTriangles(documentId) : null;
+  if (knownTriangles !== null && knownTriangles > MAX_RENDER_TRIANGLES) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error:
+              `render refused: document tessellates to ${knownTriangles} triangles ` +
+              `(render limit ${MAX_RENDER_TRIANGLES})`,
+            document_id: documentId,
+            hint:
+              "The renderer emits per-triangle SVG, so documents this dense exhaust memory. " +
+              "Reduce pattern counts / sphere counts, render a subset via `focus`, or " +
+              "inspect numerically via inspect_cad / measure. For full geometry use export_cad.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
 
   const tooComplex = complexityGuard(doc);
   if (tooComplex) {
@@ -589,13 +640,36 @@ export async function renderView(
     }, [asset]);
   }
 
+  const svgBytes = Buffer.byteLength(svg, "utf8");
+  // A rasterization failure on an SVG too big to inline leaves nothing
+  // usable to return — fail loudly with a way forward instead of shipping
+  // an empty "svg_omitted" shrug the agent can't act on.
+  if (raster.reason !== "module-missing" && svgBytes > MAX_INLINE_SVG_BYTES) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `render failed: ${raster.reason}`,
+            document_id: documentId,
+            view: viewLabel,
+            svg_bytes: svgBytes,
+            hint:
+              "The document is too dense for the per-triangle SVG renderer. Reduce " +
+              "pattern counts, render a subset via `focus`, or inspect numerically " +
+              "via inspect_cad / measure. For full geometry use export_cad.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
   // Rasterizer unavailable or failed — degrade to raw SVG text (size
   // capped) rather than failing, with an honest note about why.
   const note =
     raster.reason === "module-missing"
       ? "Install @resvg/resvg-js for PNG output; returning raw SVG."
       : `PNG ${raster.reason}; returning raw SVG.`;
-  const svgBytes = Buffer.byteLength(svg, "utf8");
   return {
     content: [
       {

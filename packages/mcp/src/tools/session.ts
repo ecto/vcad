@@ -45,6 +45,8 @@ export {
   clearHistory,
   recordLastChanged,
   getLastChanged,
+  recordTriangles,
+  getLastTriangles,
   type DocInputCtx,
 } from "./session-core.js";
 

@@ -23,7 +23,12 @@
  */
 
 import type { Document } from "@vcad/ir";
-import { documents, getSession, recordLastChanged } from "./session.js";
+import {
+  documents,
+  getSession,
+  recordLastChanged,
+  recordTriangles,
+} from "./session.js";
 import {
   runMutation,
   snapshotParts,
@@ -305,7 +310,10 @@ export function applyEdits(
     ]);
     if (engine) {
       const integrity = computeIntegrity(working, engine);
-      if (integrity) appendIntegrity(result, integrity);
+      if (integrity) {
+        appendIntegrity(result, integrity);
+        recordTriangles(documentId, integrity.triangles);
+      }
     }
   }
   return result;

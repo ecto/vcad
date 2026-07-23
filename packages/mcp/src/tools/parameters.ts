@@ -22,7 +22,11 @@ import { behavior, type ToolDef } from "./tool-def.js";
 import { resolveParameters, solveDesignConstraints } from "@vcad/engine";
 import type { Document, Expr, Parameter } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
-import { getSession, resolveDocInput } from "./session-core.js";
+import {
+  getSession,
+  resolveDocInput,
+  recordTriangles,
+} from "./session-core.js";
 
 /** MCP result shape used across these tools. */
 type ToolResult = {
@@ -189,7 +193,10 @@ export async function setParameters(input: unknown, engine: Engine): Promise<Too
   // Geometry changed under the new parameter values — carry an integrity
   // certificate like every other mutation.
   const integrity = computeIntegrity(doc, engine);
-  if (integrity) appendIntegrity(result, integrity);
+  if (integrity) {
+    appendIntegrity(result, integrity);
+    recordTriangles(documentId, integrity.triangles);
+  }
 
   return result;
 }
