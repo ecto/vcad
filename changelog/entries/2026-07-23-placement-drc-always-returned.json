@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-placement-drc-always-returned",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "place_components never drops its placement_drc verdict",
+  "summary": "Slimmed inline-UI results now preserve placement_drc, warnings, and conflicts, and a dirty floorplan's next_actions say to fix placement before routing.",
+  "features": ["pcb", "ecad"],
+  "mcpTools": ["place_components", "set_placement"]
+}
