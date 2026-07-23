@@ -29,6 +29,9 @@ pub struct BatchCosts {
     /// Optional pre-compiled `(layers x 10)` move table; when set it wins
     /// over the three scalars.
     pub table: Option<Vec<u32>>,
+    /// Optional per-node congestion history added to every arrival
+    /// (PathFinder pricing, charter M4). Length must equal the node count.
+    pub history: Option<Vec<u32>>,
 }
 
 /// One search of a batch.
@@ -186,6 +189,23 @@ pub async fn distance_fields_batch_async(
             contents: bytemuck::cast_slice(&table),
             usage: wgpu::BufferUsages::STORAGE,
         });
+    let history: std::borrow::Cow<'_, [u32]> = match &costs.history {
+        Some(h) if h.len() == total => std::borrow::Cow::Borrowed(h.as_slice()),
+        Some(h) => {
+            return Err(GpuError::InvalidInput(format!(
+                "history length {} != nodes {total}",
+                h.len()
+            )))
+        }
+        None => std::borrow::Cow::Owned(vec![0u32; total]),
+    };
+    let history_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("batch-history"),
+            contents: bytemuck::cast_slice(&history),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
     let params_buf = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -243,6 +263,10 @@ pub async fn distance_fields_batch_async(
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: table_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: history_buf.as_entire_binding(),
                 },
             ],
         })
@@ -413,6 +437,7 @@ mod tests {
             diag: 1414,
             via: 4000,
             table: None,
+            history: None,
         };
         let gpu = match distance_fields_batch(dims, &states, &searches, &costs) {
             Ok(g) => g,

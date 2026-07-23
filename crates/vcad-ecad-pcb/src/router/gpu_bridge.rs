@@ -193,6 +193,17 @@ pub fn gpu_search_batch(
     half_width: f64,
     clearance: f64,
 ) -> Option<Vec<Option<GpuPath>>> {
+    gpu_search_batch_inner(session, pcb, conns, half_width, clearance, None)
+}
+
+fn gpu_search_batch_inner(
+    session: &RouteSession,
+    pcb: &Pcb,
+    conns: &[(String, Vec2, Vec2)],
+    half_width: f64,
+    clearance: f64,
+    history: Option<&[u32]>,
+) -> Option<Vec<Option<GpuPath>>> {
     use vcad_kernel_gpu::wavefront_batch::{
         distance_fields_batch, BatchCosts, BatchSearch, UNREACHABLE,
     };
@@ -269,8 +280,24 @@ pub fn gpu_search_batch(
         diag: 1414,
         via: 4000,
         table: Some(vcad_kernel_gpu::cost_model::CostModel::default_model().to_table(nl, 1000.0)),
+        history: history.map(|h| h.to_vec()),
     };
-    let fields = distance_fields_batch((nx, ny, nl), &slice.states, &searches, &costs).ok()?;
+    // Memory-budgeted chunking: dist ping-pong dominates (2 x chunk x nodes
+    // x 4B); keep each chunk near 256MB so the shared device never sees an
+    // over-limit buffer (which poisons the context for the whole run).
+    let total_nodes = nx * ny * nl;
+    let budget_bytes: usize = 256 << 20;
+    let chunk = (budget_bytes / (8 * total_nodes)).max(1);
+    let mut fields: Vec<Vec<u32>> = Vec::with_capacity(searches.len());
+    for group in searches.chunks(chunk) {
+        match distance_fields_batch((nx, ny, nl), &slice.states, group, &costs) {
+            Ok(mut f) => fields.append(&mut f),
+            Err(e) => {
+                log::warn!("gpu batch chunk failed ({e}) — falling back to CPU for the batch");
+                return None;
+            }
+        }
+    }
 
     // Downhill extraction per search (same neighbour semantics as the kernel).
     let passable = |search: &vcad_kernel_gpu::wavefront_batch::BatchSearch, node: usize| -> bool {
@@ -373,6 +400,62 @@ pub fn gpu_search_batch(
         out.push(Some(GpuPath { segments, vias }));
     }
     Some(out)
+}
+
+/// One GPU negotiation round (charter M4): propose paths for ALL pending
+/// connections at once under history pricing, hand them back in field-cost
+/// order for the caller to validate/commit greedily, and return the history
+/// deposits for the paths of connections the caller rejects.
+///
+/// The bridge is stateless: the caller owns the history buffer between
+/// rounds (node-indexed, same grid as [`build_class_raster`]) and the
+/// commit/keep-best semantics — hard legality never moves to the GPU.
+pub fn gpu_negotiation_round(
+    session: &RouteSession,
+    pcb: &Pcb,
+    conns: &[(String, Vec2, Vec2)],
+    half_width: f64,
+    clearance: f64,
+    history: &[u32],
+) -> Option<Vec<Option<GpuPath>>> {
+    gpu_search_batch_inner(session, pcb, conns, half_width, clearance, Some(history))
+}
+
+/// Deposit PathFinder history along a proposed path's cells (the caller's
+/// per-round penalty for contested copper). `step` is in cost units.
+pub fn deposit_history(
+    history: &mut [u32],
+    slice_geom: &ClassRasterSlice,
+    path: &GpuPath,
+    step: u32,
+) {
+    let (nx, ny) = (slice_geom.nx, slice_geom.ny);
+    let plane = nx * ny;
+    let mut mark = |p: Vec2, layer: vcad_ir::ecad::PcbLayer| {
+        let Some(li) = slice_geom.layers.iter().position(|&l| l == layer) else {
+            return;
+        };
+        let cx = ((p.x - slice_geom.origin[0]) / slice_geom.pitch).round();
+        let cy = ((p.y - slice_geom.origin[1]) / slice_geom.pitch).round();
+        if cx < 0.0 || cy < 0.0 || cx as usize >= nx || cy as usize >= ny {
+            return;
+        }
+        let idx = li * plane + cy as usize * nx + cx as usize;
+        history[idx] = history[idx].saturating_add(step);
+    };
+    for &(a, b, l) in &path.segments {
+        // Sample along the segment at grid pitch.
+        let len = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+        let steps = (len / slice_geom.pitch).ceil().max(1.0) as usize;
+        for i in 0..=steps {
+            let t = i as f64 / steps as f64;
+            mark(Vec2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t), l);
+        }
+    }
+    for &(p, la, lb) in &path.vias {
+        mark(p, la);
+        mark(p, lb);
+    }
 }
 
 /// A GPU-proposed path in world coordinates.
@@ -522,5 +605,91 @@ mod tests {
             ok += 1;
         }
         assert!(ok >= 1, "at least one GPU proposal must route");
+    }
+
+    /// M4 contract: two nets forced through one narrow corridor. Round 1
+    /// proposes overlapping paths (both want the corridor); after the loser
+    /// deposits history, round 2 proposes a detour for it. The negotiation
+    /// primitive works end-to-end with the caller owning commits.
+    #[test]
+    fn negotiation_history_separates_contenders() {
+        let mut pcb = board();
+        // Walls leaving two channels: y in [4.4, 5.6] (narrow, shared) and
+        // y in [8.4, 9.6] (detour).
+        for (y0, y1) in [(0.0, 4.0), (6.0, 8.0)] {
+            pcb.traces.push(Trace {
+                start: Vec2::new(10.0, y0),
+                end: Vec2::new(10.0, y1),
+                width: 0.4,
+                layer: PcbLayer::FCu,
+                net: "WALL".into(),
+                source: None,
+            });
+            // Mirror on BCu so the corridor is genuinely contested.
+            pcb.traces.push(Trace {
+                start: Vec2::new(10.0, y0),
+                end: Vec2::new(10.0, y1),
+                width: 0.4,
+                layer: PcbLayer::BCu,
+                net: "WALL".into(),
+                source: None,
+            });
+        }
+        let session = RouteSession::from_pcb(&pcb);
+        let conns = vec![
+            ("A".to_string(), Vec2::new(2.0, 5.0), Vec2::new(18.0, 5.0)),
+            ("B".to_string(), Vec2::new(2.0, 5.2), Vec2::new(18.0, 5.2)),
+        ];
+        let slice = build_class_raster(&session, &pcb, 0.1, 0.2);
+        let mut history = vec![0u32; slice.states.len()];
+        let Some(r1) = gpu_negotiation_round(&session, &pcb, &conns, 0.1, 0.2, &history) else {
+            eprintln!("no GPU adapter — skipping");
+            return;
+        };
+        let (Some(pa), Some(pb)) = (&r1[0], &r1[1]) else {
+            panic!("both proposals must exist in round 1");
+        };
+        // Caller commits A, rejects B: deposit history along BOTH paths'
+        // corridor (present-sharing) and re-run for B.
+        deposit_history(&mut history, &slice, pa, 2000);
+        deposit_history(&mut history, &slice, pb, 2000);
+        let Some(r2) = gpu_negotiation_round(&session, &pcb, &conns[1..], 0.1, 0.2, &history)
+        else {
+            eprintln!("no GPU adapter — skipping");
+            return;
+        };
+        let Some(pb2) = &r2[0] else {
+            panic!("B must still route in round 2");
+        };
+        // The negotiation contract: B's round-2 path avoids the PRICED cells
+        // (A's committed nodes) — PathFinder separates contenders onto
+        // disjoint resources, whether by detour, layer, or a parallel row.
+        let cells_of = |p: &GpuPath| -> std::collections::BTreeSet<(i64, i64, usize)> {
+            let mut set = std::collections::BTreeSet::new();
+            for &(a, b, l) in &p.segments {
+                let li = slice.layers.iter().position(|&x| x == l).unwrap();
+                let len = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+                let steps = (len / slice.pitch).ceil().max(1.0) as usize;
+                for i in 0..=steps {
+                    let t = i as f64 / steps as f64;
+                    let x = a.x + (b.x - a.x) * t;
+                    let y = a.y + (b.y - a.y) * t;
+                    set.insert((
+                        ((x - slice.origin[0]) / slice.pitch).round() as i64,
+                        ((y - slice.origin[1]) / slice.pitch).round() as i64,
+                        li,
+                    ));
+                }
+            }
+            set
+        };
+        let a_cells = cells_of(pa);
+        let b2_cells = cells_of(pb2);
+        let shared: Vec<_> = a_cells.intersection(&b2_cells).collect();
+        assert!(
+            shared.is_empty(),
+            "history pricing must separate B from A's cells (still sharing {} cells)",
+            shared.len()
+        );
     }
 }

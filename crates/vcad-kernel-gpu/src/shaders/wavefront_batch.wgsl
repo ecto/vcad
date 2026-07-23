@@ -31,6 +31,9 @@ const INF: u32 = 0xffffffffu;
 // (layer x 10-move) cost table compiled from the tang-expr cost model:
 // moves [E, W, N, S, NE, NW, SE, SW, via_up, via_down].
 @group(0) @binding(6) var<storage, read> move_costs: array<u32>;
+// Per-node negotiated-congestion history (PathFinder pricing, charter M4):
+// added to every arrival at the node, shared by all searches of the batch.
+@group(0) @binding(7) var<storage, read> history: array<u32>;
 
 fn move_cost(l: u32, mv: u32) -> u32 {
     return move_costs[l * 10u + mv];
@@ -70,7 +73,7 @@ fn candidate(search: u32, base: u32, x: i32, y: i32, l: u32, cost: u32) -> u32 {
     if d == INF {
         return INF;
     }
-    let sum = d + cost;
+    let sum = d + cost + history[idx];
     if sum < d {
         return INF;
     }
