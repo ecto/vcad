@@ -279,6 +279,46 @@ describe("get_document body survives inline-UI slimming", () => {
       document_id: "doc_pcb",
     });
   });
+
+  it("slimming a route_nets result preserves its receipt (field report: receipt:true came back as bare {document_id})", () => {
+    const receipt = {
+      tool: "route_nets",
+      verdict: "improved",
+      violations: { before: 12, after: 3 },
+      deltaByRule: { Clearance: -9 },
+      padding: "y".repeat(9000), // push past the 8192-char slim threshold
+    };
+    const result = {
+      content: [
+        { type: "text", text: JSON.stringify({ success: true, receipt, document_id: "doc_pcb" }) },
+      ],
+    };
+    slimPreviewForInlineUi(result, "doc_pcb", "route_nets", true);
+    expect(result.content).toHaveLength(2);
+    const parsed = JSON.parse(result.content[1].text);
+    expect(parsed.document_id).toBe("doc_pcb");
+    expect(parsed.receipt).toBeDefined();
+    expect(parsed.receipt.verdict).toBe("improved");
+    expect(parsed.receipt.violations).toEqual({ before: 12, after: 3 });
+  });
+
+  it("slimming preserves receipt_error when the receipt could not be built", () => {
+    const result = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            receipt_error: "receipt requested but the after-route DRC snapshot could not verify the board: too large",
+            filler: "z".repeat(9000),
+          }),
+        },
+      ],
+    };
+    slimPreviewForInlineUi(result, "doc_pcb", "route_nets", true);
+    const parsed = JSON.parse(result.content[1].text);
+    expect(parsed.receipt_error).toContain("could not verify");
+  });
 });
 
 describe("session persistence (save_document / load_document)", () => {
