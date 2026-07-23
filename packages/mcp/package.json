@@ -24,7 +24,9 @@
     "build:mech-catalog": "node scripts/gen-mech-catalog.mjs",
     "build": "npm run build:viewer && npm run build:live && npm run build:mech-catalog && tsc --noCheck",
     "typecheck": "npm run build:viewer && npm run build:live && npm run build:mech-catalog && tsc --noEmit",
-    "test": "npm run build:mech-catalog && vitest run"
+    "test": "npm run build:mech-catalog && vitest run",
+    "serve": "node scripts/serve.mjs",
+    "build:npm": "node scripts/build-npm.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
