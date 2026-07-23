@@ -10,6 +10,7 @@
 mod context;
 mod decimate;
 mod normals;
+pub mod router_state;
 pub mod wavefront;
 
 pub use context::{GpuContext, GpuError};
