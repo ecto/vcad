@@ -60,6 +60,30 @@ describe("artifact-store", () => {
     expect(file!.buf.toString("utf8")).toBe("G04 top*");
   });
 
+  it("mints relative URLs when memory-only, absolute mcp.vcad.io when durable", () => {
+    // Memory-only (no VCAD_MCP_PUBLIC_URL, no Supabase env): an absolute
+    // mcp.vcad.io link would be a guaranteed 404 — that host never saw the
+    // bytes. The handle stays relative, which trust-boundary accepts.
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const local = storeArtifact([{ name: "x.gbr", content: "hi" }]);
+    expect(local.artifact_url).toBe(`/artifacts/${local.artifact_id}`);
+    expect(parseArtifactId(local.artifact_url)).toBe(local.artifact_id);
+
+    // Durable store: the persisted row IS readable from the hosted origin.
+    process.env.SUPABASE_URL = "https://fake.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-test-key";
+    try {
+      const hosted = storeArtifact([{ name: "y.gbr", content: "hi" }]);
+      expect(hosted.artifact_url).toBe(
+        `https://mcp.vcad.io/artifacts/${hosted.artifact_id}`,
+      );
+    } finally {
+      delete process.env.SUPABASE_URL;
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    }
+  });
+
   it("resolves a handle by raw id and by artifact_url", () => {
     process.env.VCAD_MCP_PUBLIC_URL = "https://mcp.example.com";
     const handle = storeArtifact([{ name: "x.gbr", content: "hi" }]);

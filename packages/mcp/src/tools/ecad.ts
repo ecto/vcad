@@ -1742,6 +1742,39 @@ function validatePinType(raw: unknown, where: string): SchematicPin["pin_type"] 
   );
 }
 
+/** Imperial chip-size codes for two-terminal passives. */
+const CHIP_SIZE_CODES = new Set([
+  "0201",
+  "0402",
+  "0603",
+  "0805",
+  "1206",
+  "1210",
+  "2010",
+  "2512",
+]);
+
+/**
+ * True when a footprint id names a two-terminal passive package — the chip
+ * families (`R_0603`, `C_0805_2012Metric`, `L_...`, `D_SOD-123`) or a bare
+ * chip-size code (`0603`). Such components get pins 1/2 (type Passive)
+ * synthesized when the caller provides neither `part` nor `pins`.
+ */
+export function isTwoPinPassiveFootprint(footprint: unknown): boolean {
+  if (typeof footprint !== "string") return false;
+  const fp = footprint.trim();
+  if (/^[RCLD]_/i.test(fp)) return true;
+  return CHIP_SIZE_CODES.has(fp);
+}
+
+/** The two synthesized pins of a chip passive, in schematic-symbol layout. */
+function synthesizedPassivePins(): SchematicPin[] {
+  return [
+    { number: "1", name: "1", pin_type: "Passive", position: { x: 0, y: 0 } },
+    { number: "2", name: "2", pin_type: "Passive", position: { x: 5.08, y: 0 } },
+  ];
+}
+
 export async function createSchematic(args: Record<string, unknown>) {
   const title = (args.title as string) || undefined;
   const componentsInput = (args.components as Array<Record<string, unknown>>) || [];
@@ -1835,7 +1868,9 @@ export async function createSchematic(args: Record<string, unknown>) {
               pin_type: p.pin_type as SchematicPin["pin_type"],
               position: { x: p.x, y: p.y },
             }))
-          : [];
+          : !c.part && isTwoPinPassiveFootprint(c.footprint)
+            ? synthesizedPassivePins()
+            : [];
 
     // Carry the resolved part identity + datasheet for traceability.
     const properties: Record<string, string> = {};
@@ -3049,6 +3084,28 @@ function detectStaleNets(pcb: Pcb): Set<string> {
   return stale;
 }
 
+/** Per-net disjoint copper-group (galvanic island) counts via the kernel.
+ *  Returns null when the kernel is unavailable — the connectivity guard is
+ *  then OFF (and reported as such), never silently "clean". */
+async function netIslandCounts(
+  pcb: Pcb,
+  nets: Iterable<string>,
+): Promise<Map<string, number> | null> {
+  const counts = new Map<string, number>();
+  for (const net of nets) {
+    const c = await kernelNetContinuity(pcb, net);
+    if (!c) return null;
+    counts.set(net, c.islands);
+  }
+  return counts;
+}
+
+/** Nets the connectivity guard watches: every routable (>=2 pad) net. A
+ *  regression can land on a net the caller never named (stale rip-up,
+ *  negotiated rip-up side effects), so the watch set is board-wide. Capped
+ *  because each kernel continuity query serializes the whole board. */
+const CONNECTIVITY_GUARD_MAX_NETS = 300;
+
 /** Heuristic power/ground net names, for the `power_first` routing strategy. */
 const POWER_NET_RE =
   /(^|[_\-/])(A?D?GND|VCC|VDD[A]?|VBAT|VBUS|VIN|VOUT|VSYS|VREF|PWR|POWER|\d+V\d*)(\d*)([_\-/]|$)/i;
@@ -3142,6 +3199,48 @@ export async function routeNets(args: Record<string, unknown>) {
     if (t.source === "manual" && targetNets.has(t.net)) manualNets.add(t.net);
   }
   for (const n of manualNets) targetNets.delete(n);
+
+  // Connectivity guard: snapshot per-net disjoint copper-group counts before
+  // any rip-up so the result can report every net this call left WORSE
+  // connected (field report: a scoped re-route took GND from 4 galvanic
+  // groups to 14 and the result said nothing). Also snapshot the copper
+  // itself so an unrepairable regression can be rolled back net-by-net.
+  const guardNets = [...netConnections.entries()]
+    .filter(([, conns]) => conns.length >= 2)
+    .map(([n]) => n);
+  let guardSkipped: string | null = null;
+  let islandsBefore: Map<string, number> | null = null;
+  let copperBefore: { traces: typeof pcb.traces; vias: typeof pcb.vias } | null = null;
+  // Each continuity query serializes the whole board into the kernel, so the
+  // guard is also budgeted by copper-element count, not just net count.
+  const guardElements =
+    pcb.traces.length +
+    pcb.vias.length +
+    pcb.zones.length +
+    pcb.footprints.reduce((n, fp) => n + fp.pads.length, 0);
+  const maxGuardElements = Number(
+    process.env.VCAD_ROUTE_GUARD_MAX_ELEMENTS ?? 50_000,
+  );
+  if (guardNets.length > CONNECTIVITY_GUARD_MAX_NETS) {
+    guardSkipped = `connectivity-regression guard skipped: ${guardNets.length} nets exceeds the ${CONNECTIVITY_GUARD_MAX_NETS}-net budget — verify with run_drc (NetIslands)`;
+  } else if (guardElements > maxGuardElements) {
+    guardSkipped = `connectivity-regression guard skipped: ${guardElements} copper elements exceeds the ${maxGuardElements} budget (VCAD_ROUTE_GUARD_MAX_ELEMENTS) — verify with run_drc (NetIslands)`;
+  } else {
+    islandsBefore = await netIslandCounts(pcb, guardNets);
+    if (islandsBefore) {
+      // Deep clone: Trace.start/.end and Via.position are nested Vec2 objects,
+      // so a shallow spread would leave the snapshot sharing them with live
+      // copper — a future in-place edit during routing would corrupt the
+      // rollback baseline. structuredClone makes the snapshot fully independent.
+      copperBefore = {
+        traces: pcb.traces.map((t) => structuredClone(t)),
+        vias: pcb.vias.map((v) => structuredClone(v)),
+      };
+    } else {
+      guardSkipped =
+        "connectivity-regression guard unavailable (kernel WASM not loaded) — verify with run_drc";
+    }
+  }
 
   let tracesRemoved = 0;
   let viasRemoved = 0;
@@ -3313,6 +3412,69 @@ export async function routeNets(args: Record<string, unknown>) {
     }
   }
 
+  // Connectivity-regression guard, part 2: any net whose copper now forms
+  // MORE disjoint groups than before this call regressed — the router (or a
+  // stale rip-up side effect) broke connectivity it was supposed to preserve.
+  // Retry the regressed nets once against the otherwise-final board; a net
+  // still worse after the retry gets its pre-call copper restored (rollback),
+  // so a route_nets call can never silently degrade a net's connectivity.
+  const connectivityRegressions: Record<
+    string,
+    { groups_before: number; groups_after: number; action: "repaired-by-retry" | "rolled_back" }
+  > = {};
+  if (islandsBefore && copperBefore) {
+    const before = islandsBefore;
+    const worseNets = async (nets: Iterable<string>): Promise<Map<string, number> | null> => {
+      const counts = await netIslandCounts(pcb, nets);
+      if (!counts) return null;
+      const worse = new Map<string, number>();
+      for (const [n, after] of counts) {
+        const b = before.get(n) ?? 0;
+        if (b > 0 && after > b) worse.set(n, after);
+      }
+      return worse;
+    };
+    let worse = await worseNets(guardNets);
+    if (worse && worse.size > 0) {
+      // Retry: rip the regressed nets' autorouted copper and route just them
+      // again — the rest of the board (this pass's other copper included) is
+      // now a fixed obstacle field, which often resolves the negotiated
+      // rip-up collateral that caused the regression.
+      const retrySet = new Set(
+        [...worse.keys()].filter((n) => !preservedNets.has(n)),
+      );
+      if (retrySet.size > 0) {
+        pcb.traces = pcb.traces.filter((t) => !retrySet.has(t.net) || t.source === "manual");
+        pcb.vias = pcb.vias.filter((v) => !retrySet.has(v.net) || v.source === "manual");
+        const retried = await routeAll(pcb, width, [...retrySet], effort);
+        applyRoute(retried);
+      }
+      const stillWorse = (await worseNets(worse.keys())) ?? worse;
+      for (const [n, afterRoute] of worse) {
+        if (!stillWorse.has(n)) {
+          connectivityRegressions[n] = {
+            groups_before: before.get(n)!,
+            groups_after: afterRoute,
+            action: "repaired-by-retry",
+          };
+          continue;
+        }
+        // Rollback: restore the net's pre-call copper verbatim. The restored
+        // copper is checked against the final board by the caller's next DRC
+        // (and by the `receipt` after-snapshot below when requested).
+        pcb.traces = pcb.traces.filter((t) => t.net !== n);
+        pcb.vias = pcb.vias.filter((v) => v.net !== n);
+        for (const t of copperBefore.traces) if (t.net === n) pcb.traces.push(t);
+        for (const v of copperBefore.vias) if (v.net === n) pcb.vias.push(v);
+        connectivityRegressions[n] = {
+          groups_before: before.get(n)!,
+          groups_after: stillWorse.get(n)!,
+          action: "rolled_back",
+        };
+      }
+    }
+  }
+
   const planeStitched = [...routedNets].filter((n) => planeNets.has(n)).sort();
 
   // Overall routability in [0, 1]: how close the board is to fully routed. A
@@ -3368,14 +3530,35 @@ export async function routeNets(args: Record<string, unknown>) {
     );
   }
 
+  if (guardSkipped) warnings.push(guardSkipped);
+  const regressedNets = Object.keys(connectivityRegressions).sort();
+  if (regressedNets.length > 0) {
+    const rolled = regressedNets.filter(
+      (n) => connectivityRegressions[n]!.action === "rolled_back",
+    );
+    warnings.push(
+      `connectivity regression on ${regressedNets.length} net(s) — this call left their copper in more disjoint groups than before (${regressedNets
+        .map((n) => `${n}: ${connectivityRegressions[n]!.groups_before}→${connectivityRegressions[n]!.groups_after}`)
+        .join(", ")}). Regressed nets were re-routed once${
+        rolled.length > 0
+          ? `; ${rolled.join(", ")} stayed worse and had their pre-call copper restored (rolled back) — the restored copper may now conflict with newly routed nets, run run_drc`
+          : " and repaired"
+      }`,
+    );
+  }
+
   const receiptField: Record<string, unknown> = {};
   // Only build a receipt when both snapshots actually verified — a receipt
   // diffed against an unverifiable (kernel-rejected) board would be meaningless.
+  // But a requested receipt is never SILENTLY dropped: an unverifiable
+  // snapshot yields `receipt_error` with the reason instead of nothing.
   if (wantReceipt && beforeSnap && beforeSnap.success) {
     const after = await drcPcb(pcb, "full", 500);
     // Only build a receipt when the after-snapshot also verified — an
     // unverifiable (kernel-rejected) board has no byNetPair to diff against.
-    if (after.success) {
+    if (!after.success) {
+      receiptField.receipt_error = `receipt requested but the after-route DRC snapshot could not verify the board: ${after.reason}`;
+    } else {
       const entry = buildEntry(
         { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
         0,
@@ -3386,6 +3569,10 @@ export async function routeNets(args: Record<string, unknown>) {
       }
       receiptField.receipt = {
         ...agentView(entry, ctx.documentId ?? ""),
+        // Total violation counts of the two snapshots — `errors` (from
+        // agentView) is only the error-severity slice; agents diff the board
+        // on the full count.
+        violations: { before: entry.before.violations, after: entry.after.violations },
         nets_routed: [...routedNets].sort(),
         nets_unrouted: [...unroutedNets].sort(),
         traces_added: tracesAdded,
@@ -3396,6 +3583,8 @@ export async function routeNets(args: Record<string, unknown>) {
         short_pairs: shortPairs,
       };
     }
+  } else if (wantReceipt && beforeSnap && !beforeSnap.success) {
+    receiptField.receipt_error = `receipt requested but the before-route DRC snapshot could not verify the board: ${beforeSnap.reason}`;
   }
 
   return {
@@ -3425,6 +3614,9 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
           ...(dedupedDiagnostics.length > 0 ? { unrouted_diagnostics: dedupedDiagnostics } : {}),
           ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
+          ...(regressedNets.length > 0
+            ? { connectivity_regressions: connectivityRegressions }
+            : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
           ...receiptField,
           ...docResultPayload(ctx),
@@ -13078,7 +13270,7 @@ export const toolDefs: ToolDef[] = [
       "re-checked in one call without running run_drc.",
     inputSchema: setPlacementSchema,
     handler: (a) => setPlacement(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "set_board_outline",
@@ -13087,7 +13279,7 @@ export const toolDefs: ToolDef[] = [
       "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: setBoardOutlineSchema,
     handler: (a) => setBoardOutline(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "add_zone",
@@ -13099,7 +13291,7 @@ export const toolDefs: ToolDef[] = [
       "session document.",
     inputSchema: addZoneSchema,
     handler: (a) => addZone(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "delete_zone",
@@ -13151,7 +13343,7 @@ export const toolDefs: ToolDef[] = [
       "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: addNetTieSchema,
     handler: (a) => addNetTie(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "delete_net_tie",
@@ -13160,7 +13352,7 @@ export const toolDefs: ToolDef[] = [
       "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: deleteNetTieSchema,
     handler: (a) => deleteNetTie(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "undo",
@@ -13209,7 +13401,7 @@ export const toolDefs: ToolDef[] = [
       "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addViaArraySchema,
     handler: (a) => addViaArray(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "add_motor_winding",
@@ -13337,7 +13529,7 @@ export const toolDefs: ToolDef[] = [
       "clear channel); verify with run_drc / critique_route afterwards.",
     inputSchema: routeDiffPairSchema,
     handler: (a) => routeDiffPair(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "length_match_traces",
@@ -13352,7 +13544,7 @@ export const toolDefs: ToolDef[] = [
       "runs carry drc_delta.",
     inputSchema: lengthMatchTracesSchema,
     handler: (a) => lengthMatchTraces(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({ writesDoc: true }),
+    behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
     name: "critique_route",

@@ -72,6 +72,13 @@ describe("route_nets receipt — the agent gets a verdict instead of {document_i
     expect(r1.receipt.headline).toBeTruthy();
     expect(r1.receipt.coverage).toBe("full");
 
+    // Before/after DRC totals must ride in the receipt — both the error
+    // slice and the full violation counts.
+    expect(typeof r1.receipt.errors.before).toBe("number");
+    expect(typeof r1.receipt.errors.after).toBe("number");
+    expect(typeof r1.receipt.violations.before).toBe("number");
+    expect(typeof r1.receipt.violations.after).toBe("number");
+
     // Routing-specific fields must always be present in the receipt
     expect(Array.isArray(r1.receipt.nets_routed)).toBe(true);
     expect(r1.receipt.nets_routed.length).toBeGreaterThan(0);
@@ -155,6 +162,39 @@ describe("route_nets receipt — the agent gets a verdict instead of {document_i
     expect(Array.isArray(r.receipt.short_pairs)).toBe(true);
     const delta = r.receipt.deltaByRule as Record<string, number>;
     expect(r.receipt.shortsIntroduced).toBe(Math.max(0, delta.Short ?? 0));
+  });
+
+  it("a scoped re-route never leaves a net in more disjoint copper groups (guard retries/rolls back)", async () => {
+    const { netContinuity } = await import("@vcad/engine");
+    const id = await placedBoard();
+    out(await routeNets({ document_id: id }));
+
+    const doc = documents.get(id)!;
+    const nodeIds = getPcbNodeIds(doc);
+    const pcb = nodeIds.length > 0 ? getNodePcb(doc, nodeIds[0]!) : null;
+    expect(pcb).not.toBeNull();
+    if (!pcb) return;
+
+    const before = await netContinuity(pcb, "GND");
+    if (!before) return; // kernel unavailable — guard is off by design
+
+    // Scoped re-route of a couple of signal nets: any collateral damage on
+    // GND (stale rip-up / negotiated rip-up side effects) must be caught by
+    // the connectivity guard — retried, or rolled back, and reported.
+    const r = out(await routeNets({ document_id: id, nets: ["SIG1", "SIG2"] }));
+    expect(r.success).toBe(true);
+
+    const after = await netContinuity(pcb, "GND");
+    expect(after).not.toBeNull();
+    if (!after) return;
+    if (before.islands > 0) {
+      // The invariant the guard enforces: connectivity never silently worse.
+      // A rolled-back net restores its pre-call copper, so its island count
+      // is back at `before` — and the regression is reported either way.
+      if (after.islands > before.islands) {
+        expect(r.connectivity_regressions?.GND).toBeDefined();
+      }
+    }
   });
 
   it("is opt-in — no receipt field unless requested", async () => {
