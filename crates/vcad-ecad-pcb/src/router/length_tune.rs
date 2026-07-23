@@ -200,9 +200,11 @@ fn check_clearances(
     for seg in segments {
         for w in seg.points.windows(2) {
             for &(obs_start, obs_end, extra) in obstacles {
-                // Per-obstacle requirement: a diff-pair twin demands its GAP
-                // (carried in `extra`); everything else the base clearance.
-                let req = min_clearance.max(extra);
+                // Centerline requirement = the tuned trace's half-width
+                // (in `min_clearance`) plus the obstacle's own half-width +
+                // clearance-or-gap (in `extra`) — exact per-obstacle widths,
+                // not an equal-width assumption.
+                let req = min_clearance + extra;
                 if seg_seg(w[0], w[1], obs_start, obs_end) < req {
                     return false;
                 }

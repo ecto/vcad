@@ -157,11 +157,12 @@ fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> {
     Ok((points, segs.len()))
 }
 
-/// Centerline segments of every trace NOT on `net`, each carrying its own
-/// extra clearance requirement: the net's diff-pair TWIN demands the pair
-/// gap (a meander hugging the twin is exactly the pinch the DRC flags);
-/// everything else uses the caller's base clearance (0.0 extra).
-fn other_net_obstacles(pcb: &Pcb, net: &str) -> Vec<(Vec2, Vec2, f64)> {
+/// Centerline segments of every trace NOT on `net`, each carrying the
+/// obstacle-side centerline requirement: its own half-width plus its rule —
+/// the pair GAP for the net's diff-pair twin (a meander hugging the twin is
+/// exactly the pinch the DRC flags), the base clearance otherwise. Add the
+/// tuned trace's half-width on the caller side for the full requirement.
+fn other_net_obstacles(pcb: &Pcb, net: &str, base_clearance: f64) -> Vec<(Vec2, Vec2, f64)> {
     let twin_gap: Option<(String, f64)> = crate::drc::diff_pairs(pcb).into_iter().find_map(|dp| {
         if dp.net_p == net {
             Some((dp.net_n, dp.gap))
@@ -175,11 +176,11 @@ fn other_net_obstacles(pcb: &Pcb, net: &str) -> Vec<(Vec2, Vec2, f64)> {
         .iter()
         .filter(|t| t.net != net)
         .map(|t| {
-            let extra = match &twin_gap {
-                Some((twin, gap)) if &t.net == twin => *gap - 0.005,
-                _ => 0.0,
+            let rule = match &twin_gap {
+                Some((twin, gap)) if &t.net == twin => (*gap - 0.005).max(base_clearance),
+                _ => base_clearance,
             };
-            (t.start, t.end, extra)
+            (t.start, t.end, t.width / 2.0 + rule)
         })
         .collect()
 }
@@ -279,10 +280,10 @@ pub fn match_lengths(pcb: &Pcb, nets: &[String], opts: &LengthMatchOptions) -> L
             spacing: opts.spacing,
             style: opts.style,
         };
-        // Waypoints are trace centerline points; hold the required copper
-        // clearance plus both half-widths from other-net centerlines.
-        let min_clearance = session.clearance_for(net) + template.width;
-        let obstacles = other_net_obstacles(pcb, net);
+        // Waypoints are trace centerline points: the caller side contributes
+        // its half-width; each obstacle carries its own half-width + rule.
+        let min_clearance = template.width / 2.0;
+        let obstacles = other_net_obstacles(pcb, net, session.clearance_for(net));
 
         match generate_meanders_checked(&points, &params, min_clearance, &obstacles) {
             Some(meanders) if !meanders.is_empty() => {
@@ -762,7 +763,8 @@ pub fn match_lengths_runs(
             spacing: opts.spacing,
             style: opts.style,
         };
-        let min_clearance = session.clearance_for(net) + template.width;
+        let min_clearance = template.width / 2.0;
+        let clearance = session.clearance_for(net);
         let twin_gap: Option<(String, f64)> =
             crate::drc::diff_pairs(pcb).into_iter().find_map(|dp| {
                 if &dp.net_p == net {
@@ -778,11 +780,11 @@ pub fn match_lengths_runs(
             .iter()
             .filter(|t| t.net != *net && t.layer == layer)
             .map(|t| {
-                let extra = match &twin_gap {
-                    Some((twin, gap)) if &t.net == twin => *gap - 0.005,
-                    _ => 0.0,
+                let rule = match &twin_gap {
+                    Some((twin, gap)) if &t.net == twin => (*gap - 0.005).max(clearance),
+                    _ => clearance,
                 };
-                (t.start, t.end, extra)
+                (t.start, t.end, t.width / 2.0 + rule)
             })
             .collect();
 
