@@ -1469,4 +1469,103 @@ mod tests {
         let (mine, theirs) = r.expect("pair must route the L across the wall");
         assert_twin_clear(&mine, &theirs, 0.15);
     }
+
+    /// Probe-level contract: with a declared pair class, leg-width copper of
+    /// one twin at less than the gap from the other twin's leg-width copper
+    /// must probe ILLEGAL — the rule the DRC enforces, enforced at the
+    /// source. (The si8 boards carried 0.127mm leg pinches the probe let
+    /// through; this test pins the contract.)
+    #[test]
+    fn probe_enforces_intra_pair_gap() {
+        let pcb = pair_board();
+        let mut session = RouteSession::from_pcb(&pcb);
+        // Commit a P leg.
+        session.commit(crate::spatial::CopperElement {
+            min: [10.0 - 0.2, 20.0 - 0.2],
+            max: [30.0 + 0.2, 20.0 + 0.2],
+            net: "/ETH.2_P".into(),
+            layer: PcbLayer::FCu,
+            geom: CopperGeom::Segment {
+                a: Vec2::new(10.0, 20.0),
+                b: Vec2::new(30.0, 20.0),
+                half_w: 0.1,
+            },
+        });
+        // N leg-width copper 0.13mm edge-to-edge away: legal at base
+        // clearance (0.15... test board clearance 0.15 — use 0.33 center =
+        // 0.13 edge) but ILLEGAL under the 0.25 gap.
+        let n_leg = CopperGeom::Segment {
+            a: Vec2::new(10.0, 20.33),
+            b: Vec2::new(30.0, 20.33),
+            half_w: 0.1,
+        };
+        // Edge distance = 0.33 - 0.2 = 0.13 < 0.245.
+        let pr = session.probe(&n_leg, PcbLayer::FCu, "/ETH.2_N", 0.15);
+        assert!(
+            !pr.legal,
+            "leg-width twin copper at 0.13mm must be illegal (gap rule), min_clearance={:.3}",
+            pr.min_clearance
+        );
+        // Thin (neck) copper at the same distance stays legal vs base 0.08.
+        let n_neck = CopperGeom::Segment {
+            a: Vec2::new(10.0, 20.33),
+            b: Vec2::new(30.0, 20.33),
+            half_w: 0.04,
+        };
+        let pr2 = session.probe(&n_neck, PcbLayer::FCu, "/ETH.2_N", 0.08);
+        assert!(pr2.legal, "neck copper at base clearance stays legal");
+    }
+
+    /// End-to-end: routing the twins as independent SINGLES through the
+    /// ordinary maze must still respect the pair gap — the session probe is
+    /// the enforcement point every stage shares. (si8 carried parallel
+    /// leg-width singles at 0.33mm separation = fallback-geometry spacing;
+    /// this pins the e2e contract the probe test alone cannot.)
+    #[test]
+    fn singles_of_a_pair_keep_the_gap() {
+        use super::super::auto::{route_all_with_opts, RouteOptions};
+        let pcb = pair_board();
+        let r = route_all_with_opts(&pcb, 0.25, &[], &RouteOptions::default());
+        assert_eq!(r.unrouted_nets.len(), 0, "both legs must route");
+        // Min distance between P and N copper (leg width only).
+        let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+            let pt = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+                let ab = b - a;
+                let l2 = ab.x * ab.x + ab.y * ab.y;
+                if l2 < 1e-18 {
+                    return dist(p, a);
+                }
+                let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+                dist(p, a + ab.scale(t))
+            };
+            pt(a1, a2, b2)
+                .min(pt(b1, a2, b2))
+                .min(pt(a2, a1, b1))
+                .min(pt(b2, a1, b1))
+        };
+        let mut worst = f64::INFINITY;
+        for t1 in r
+            .traces
+            .iter()
+            .filter(|t| t.net == "/ETH.2_P" && t.width >= 0.19)
+        {
+            for t2 in r
+                .traces
+                .iter()
+                .filter(|t| t.net == "/ETH.2_N" && t.width >= 0.19)
+            {
+                if t1.layer == t2.layer {
+                    worst = worst.min(
+                        seg_seg(t1.start, t1.end, t2.start, t2.end)
+                            - t1.width / 2.0
+                            - t2.width / 2.0,
+                    );
+                }
+            }
+        }
+        assert!(
+            worst >= 0.245 - 1e-9,
+            "leg-width singles of a pair must keep the gap: worst={worst:.3}"
+        );
+    }
 }
