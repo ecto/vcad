@@ -107,10 +107,10 @@ pub fn class_deltas(
     let mut out = Vec::new();
     for &(lo, hi) in world_rects {
         // Cell range covering the expanded world rect, x word-aligned.
-        let cx0 = (((lo[0] - reach - slice_geom.origin[0]) / slice_geom.pitch).floor()).max(0.0)
-            as usize;
-        let cy0 = (((lo[1] - reach - slice_geom.origin[1]) / slice_geom.pitch).floor()).max(0.0)
-            as usize;
+        let cx0 =
+            (((lo[0] - reach - slice_geom.origin[0]) / slice_geom.pitch).floor()).max(0.0) as usize;
+        let cy0 =
+            (((lo[1] - reach - slice_geom.origin[1]) / slice_geom.pitch).floor()).max(0.0) as usize;
         let cx1 = ((((hi[0] + reach - slice_geom.origin[0]) / slice_geom.pitch).ceil()) as usize)
             .min(slice_geom.nx.saturating_sub(1));
         let cy1 = ((((hi[1] + reach - slice_geom.origin[1]) / slice_geom.pitch).ceil()) as usize)

@@ -788,6 +788,138 @@ impl Raster {
     }
 }
 
+/// Grid dimensions the GPU bridge uses for a full-board class raster:
+/// bounding box of the outline, given pitch, cell (0,0) at the box min.
+pub(crate) fn class_grid_dims(outline: &[Vec2], pitch: f64) -> (usize, usize, [f64; 2]) {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for v in outline {
+        lo[0] = lo[0].min(v.x);
+        lo[1] = lo[1].min(v.y);
+        hi[0] = hi[0].max(v.x);
+        hi[1] = hi[1].max(v.y);
+    }
+    if !lo[0].is_finite() {
+        return (0, 0, [0.0, 0.0]);
+    }
+    let nx = (((hi[0] - lo[0]) / pitch).ceil() as usize + 1).max(1);
+    let ny = (((hi[1] - lo[1]) / pitch).ceil() as usize + 1).max(1);
+    (nx, ny, lo)
+}
+
+/// Full-board, net-agnostic class raster (layer-major CELL_* bytes) — the
+/// GPU bridge's content producer. Same math as [`Raster::build`], with an
+/// empty net name so *every* copper element blocks at the class reach.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn cell_states_for_class(
+    session: &RouteSession,
+    outline: &[Vec2],
+    layers: &[PcbLayer],
+    half_w: f64,
+    clearance: f64,
+    nx: usize,
+    ny: usize,
+    origin: [f64; 2],
+    pitch: f64,
+) -> Vec<u8> {
+    cell_states_for_class_window(
+        session,
+        outline,
+        layers,
+        half_w,
+        clearance,
+        origin,
+        pitch,
+        (0, 0),
+        (nx, ny),
+    )
+}
+
+/// Window variant: states for the cell rect `min_cell .. min_cell + dims`
+/// (layer-major, `layers * h * w` bytes). Used for both the full build and
+/// dirty-delta recomputation, so incremental == from-scratch by construction.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn cell_states_for_class_window(
+    session: &RouteSession,
+    outline: &[Vec2],
+    layers: &[PcbLayer],
+    half_w: f64,
+    clearance: f64,
+    origin: [f64; 2],
+    pitch: f64,
+    min_cell: (usize, usize),
+    dims: (usize, usize),
+) -> Vec<u8> {
+    let (w, h) = dims;
+    let nl = layers.len();
+    let mut states = vec![CELL_WIDE; nl * w * h];
+    let world = |cx: usize, cy: usize| -> Vec2 {
+        Vec2::new(origin[0] + cx as f64 * pitch, origin[1] + cy as f64 * pitch)
+    };
+    let bounded = outline.len() >= 3;
+    if bounded {
+        for ry in 0..h {
+            for rx in 0..w {
+                if !point_in_polygon(world(min_cell.0 + rx, min_cell.1 + ry), outline) {
+                    for li in 0..nl {
+                        states[(li * h + ry) * w + rx] = CELL_BLOCKED;
+                    }
+                }
+            }
+        }
+    }
+    let wide_margin = pitch * std::f64::consts::FRAC_1_SQRT_2;
+    let reach_block = half_w + clearance;
+    let reach = reach_block + wide_margin;
+    let win_lo = [
+        origin[0] + min_cell.0 as f64 * pitch - reach,
+        origin[1] + min_cell.1 as f64 * pitch - reach,
+    ];
+    let win_hi = [
+        origin[0] + (min_cell.0 + w - 1) as f64 * pitch + reach,
+        origin[1] + (min_cell.1 + h - 1) as f64 * pitch + reach,
+    ];
+    for (li, &layer) in layers.iter().enumerate() {
+        session.for_each_blocking(layer, "", win_lo, win_hi, |geom, emin, emax, req| {
+            // Net-agnostic raster uses the CLASS clearance, not the
+            // blocker's own requirement, so every search of the class reads
+            // the same conservative field; `req` from wider-clearance nets
+            // still widens the block, matching the probe's max() rule.
+            let reach_block = half_w + clearance.max(req);
+            let reach = reach_block + wide_margin;
+            let cx0 = (((emin[0] - reach - origin[0]) / pitch).floor()).max(0.0) as usize;
+            let cy0 = (((emin[1] - reach - origin[1]) / pitch).floor()).max(0.0) as usize;
+            let cx1 = (((emax[0] + reach - origin[0]) / pitch).ceil()) as usize;
+            let cy1 = (((emax[1] + reach - origin[1]) / pitch).ceil()) as usize;
+            for cy in cy0..=cy1 {
+                if cy < min_cell.1 || cy >= min_cell.1 + h {
+                    continue;
+                }
+                for cx in cx0..=cx1 {
+                    if cx < min_cell.0 || cx >= min_cell.0 + w {
+                        continue;
+                    }
+                    let idx = (li * h + (cy - min_cell.1)) * w + (cx - min_cell.0);
+                    let s = &mut states[idx];
+                    if *s == CELL_BLOCKED {
+                        continue;
+                    }
+                    let probe_pt = CopperGeom::Disc {
+                        center: world(cx, cy),
+                        r: 0.0,
+                    };
+                    let d = geom.distance_to(&probe_pt);
+                    if d < reach_block {
+                        *s = CELL_BLOCKED;
+                    } else if d < reach && *s == CELL_WIDE {
+                        *s = CELL_TIGHT;
+                    }
+                }
+            }
+        });
+    }
+    states
+}
+
 /// Mark every (cell, layer) whose centre lies ON one of `elems` (overlap
 /// within `half_w`, the strict electrical-contact certificate) — used for
 /// both route-to-tree goals and multi-source seeds.

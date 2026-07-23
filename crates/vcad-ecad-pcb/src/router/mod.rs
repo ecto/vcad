@@ -12,6 +12,8 @@
 
 pub mod auto;
 pub mod classes;
+#[cfg(feature = "gpu")]
+pub mod gpu_bridge;
 pub mod si_claims;
 
 /// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
