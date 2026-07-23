@@ -1552,12 +1552,32 @@ export function slimPreviewForInlineUi(
   );
   if (!alwaysSlim && totalChars <= 8192) return;
 
+  // A verification receipt (route_nets `receipt:true`, and any future
+  // receipt-bearing mutator) is the deliverable, not preview bulk — slimming
+  // it away silently un-verifies the call (field report: route_nets
+  // receipt:true came back as bare {document_id} on a large board). Carry the
+  // receipt fields through the slim.
+  const verdict: Record<string, unknown> = {};
+  for (const c of result.content) {
+    if (c.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(c.text) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") {
+        if (parsed.receipt !== undefined) verdict.receipt = parsed.receipt;
+        if (parsed.receipt_error !== undefined) verdict.receipt_error = parsed.receipt_error;
+        if (verdict.receipt !== undefined || verdict.receipt_error !== undefined) break;
+      }
+    } catch {
+      // non-JSON content (VCode, prose) — nothing to preserve from it
+    }
+  }
+
   const summary =
     `CAD document ready (${docId}). Geometry is available in the inline 3D viewer. ` +
     "Use get_document for the full IR, inspect_cad for metrics, or export_cad to export.";
   result.content = [
     { type: "text", text: summary },
-    { type: "text", text: JSON.stringify({ document_id: docId }) },
+    { type: "text", text: JSON.stringify({ document_id: docId, ...verdict }) },
   ];
 }
 
