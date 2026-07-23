@@ -185,13 +185,16 @@ pub fn point_to_segment_distance(point: Vec2, seg_start: Vec2, seg_end: Vec2) ->
 /// Check whether all waypoints maintain minimum clearance from obstacles.
 fn check_clearances(
     segments: &[MeanderSegment],
-    obstacles: &[(Vec2, Vec2)],
+    obstacles: &[(Vec2, Vec2, f64)],
     min_clearance: f64,
 ) -> bool {
     for seg in segments {
         for pt in &seg.points {
-            for &(obs_start, obs_end) in obstacles {
-                if point_to_segment_distance(*pt, obs_start, obs_end) < min_clearance {
+            for &(obs_start, obs_end, extra) in obstacles {
+                // Per-obstacle requirement: a diff-pair twin demands its GAP
+                // (carried in `extra`); everything else the base clearance.
+                let req = min_clearance.max(extra);
+                if point_to_segment_distance(*pt, obs_start, obs_end) < req {
                     return false;
                 }
             }
@@ -210,7 +213,7 @@ pub fn generate_meanders_checked(
     existing_points: &[Vec2],
     params: &LengthTuneParams,
     min_clearance: f64,
-    obstacles: &[(Vec2, Vec2)],
+    obstacles: &[(Vec2, Vec2, f64)],
 ) -> Option<Vec<MeanderSegment>> {
     let mut amplitude_cap = params.max_amplitude;
 
@@ -514,7 +517,7 @@ mod tests {
             style: MeanderStyle::Trombone,
         };
         let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
-        let obstacles = vec![(Vec2::new(-5.0, 2.6), Vec2::new(55.0, 2.6))];
+        let obstacles = vec![(Vec2::new(-5.0, 2.6), Vec2::new(55.0, 2.6), 0.0)];
 
         // Full amplitude should violate.
         let full = generate_meanders(&points, &params).unwrap();
@@ -543,7 +546,7 @@ mod tests {
         };
         let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
         // Obstacle on the trace itself — 1mm clearance is impossible.
-        let obstacles = vec![(Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0))];
+        let obstacles = vec![(Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0), 0.0)];
 
         assert!(generate_meanders_checked(&points, &params, 1.0, &obstacles).is_none());
     }

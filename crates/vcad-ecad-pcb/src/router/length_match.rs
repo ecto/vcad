@@ -157,12 +157,30 @@ fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> {
     Ok((points, segs.len()))
 }
 
-/// Centerline segments of every trace NOT on `net`, for clearance checking.
-fn other_net_obstacles(pcb: &Pcb, net: &str) -> Vec<(Vec2, Vec2)> {
+/// Centerline segments of every trace NOT on `net`, each carrying its own
+/// extra clearance requirement: the net's diff-pair TWIN demands the pair
+/// gap (a meander hugging the twin is exactly the pinch the DRC flags);
+/// everything else uses the caller's base clearance (0.0 extra).
+fn other_net_obstacles(pcb: &Pcb, net: &str) -> Vec<(Vec2, Vec2, f64)> {
+    let twin_gap: Option<(String, f64)> = crate::drc::diff_pairs(pcb).into_iter().find_map(|dp| {
+        if dp.net_p == net {
+            Some((dp.net_n, dp.gap))
+        } else if dp.net_n == net {
+            Some((dp.net_p, dp.gap))
+        } else {
+            None
+        }
+    });
     pcb.traces
         .iter()
         .filter(|t| t.net != net)
-        .map(|t| (t.start, t.end))
+        .map(|t| {
+            let extra = match &twin_gap {
+                Some((twin, gap)) if &t.net == twin => *gap - 0.005,
+                _ => 0.0,
+            };
+            (t.start, t.end, extra)
+        })
         .collect()
 }
 
@@ -745,11 +763,27 @@ pub fn match_lengths_runs(
             style: opts.style,
         };
         let min_clearance = session.clearance_for(net) + template.width;
-        let obstacles: Vec<(Vec2, Vec2)> = pcb
+        let twin_gap: Option<(String, f64)> =
+            crate::drc::diff_pairs(pcb).into_iter().find_map(|dp| {
+                if &dp.net_p == net {
+                    Some((dp.net_n, dp.gap))
+                } else if &dp.net_n == net {
+                    Some((dp.net_p, dp.gap))
+                } else {
+                    None
+                }
+            });
+        let obstacles: Vec<(Vec2, Vec2, f64)> = pcb
             .traces
             .iter()
             .filter(|t| t.net != *net && t.layer == layer)
-            .map(|t| (t.start, t.end))
+            .map(|t| {
+                let extra = match &twin_gap {
+                    Some((twin, gap)) if &t.net == twin => *gap - 0.005,
+                    _ => 0.0,
+                };
+                (t.start, t.end, extra)
+            })
             .collect();
 
         match generate_meanders_checked(&points, &params, min_clearance, &obstacles) {
