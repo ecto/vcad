@@ -9,6 +9,8 @@
 
 #[cfg(feature = "ecad")]
 pub mod circuit_sim;
+#[cfg(feature = "ecad")]
+pub mod design_constraints;
 pub mod document_diff;
 pub mod document_engine;
 pub mod keybindings;

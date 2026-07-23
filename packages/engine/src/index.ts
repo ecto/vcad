@@ -218,7 +218,10 @@ export {
   verifySubstitution,
   buildReceipt,
   verifyReceipt,
+  solveDesignConstraints,
+  checkDesignConstraints,
 } from "./ecad.js";
+export type { DesignSolveReport, ConstraintGroupReport } from "./ecad.js";
 export type {
   EcadProbe,
   DrcViolationResult,

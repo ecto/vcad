@@ -368,3 +368,4 @@ export type {
   ChangelogEntry,
   ChangelogCategory,
 } from "./changelog/index.js";
+export { sketchConstraintToDesign, mergeSketchConstraints, referencesSketchNode } from "./sketch-constraint-persist.js";

@@ -356,6 +356,13 @@ pub enum FeatureInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         studies: Option<String>,
     },
+    /// Persisted document-level design constraints (singleton, like scene
+    /// settings): JSON-serialized `Vec<DesignConstraint>`.
+    DesignConstraints {
+        /// Constraints data (JSON-serialized `Vec<DesignConstraint>`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        constraints: Option<String>,
+    },
     /// Document animation timeline (singleton, like scene settings):
     /// JSON-serialized `Timeline`.
     Timeline {
@@ -397,6 +404,7 @@ impl FeatureInput {
             Self::Schematic { .. } => "schematic",
             Self::Molecule { .. } => "molecule",
             Self::AnalysisStudies { .. } => "analysis-studies",
+            Self::DesignConstraints { .. } => "design-constraints",
             Self::Timeline { .. } => "timeline",
         }
     }
@@ -731,6 +739,11 @@ impl FeatureInput {
                     p.insert("studies".into(), Value::String(v.clone()));
                 }
             }
+            Self::DesignConstraints { constraints } => {
+                if let Some(v) = constraints {
+                    p.insert("constraints".into(), Value::String(v.clone()));
+                }
+            }
             Self::Timeline { timeline } => {
                 if let Some(v) = timeline {
                     p.insert("timeline".into(), Value::String(v.clone()));
@@ -900,6 +913,9 @@ impl FeatureInput {
             },
             "analysis-studies" => Self::AnalysisStudies {
                 studies: get_str(params, "studies"),
+            },
+            "design-constraints" => Self::DesignConstraints {
+                constraints: get_str(params, "constraints"),
             },
             "timeline" => Self::Timeline {
                 timeline: get_str(params, "timeline"),

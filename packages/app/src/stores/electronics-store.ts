@@ -21,7 +21,20 @@ import type { PcbBoardPartInfo, ReceiptEntry } from "@vcad/core";
 
 /** The electronics workspace shows one view at a time; the toolbar toggles. */
 export type ElectronicsLayout = "schematic" | "board";
-export type PcbTool = "select" | "move" | "route" | "length-tune" | "delete";
+export type PcbTool = "select" | "move" | "route" | "length-tune" | "delete" | "constrain";
+
+/** A target picked by the constrain tool. */
+export type ConstraintTarget =
+  | { kind: "footprint"; ref: string }
+  | { kind: "outlineVertex"; idx: number };
+
+/** Constraint sub-tools offered by the toolbar. */
+export type PcbConstraintType =
+  | "coincident"
+  | "horizontal"
+  | "vertical"
+  | "distance"
+  | "fixed";
 export type SchTool = "select" | "move" | "place" | "wire" | "label" | "delete";
 
 export type ElectronicsSelection =
@@ -167,6 +180,14 @@ export interface ElectronicsState {
 
   // PCB drag state
   pcbDragging: { fpIdx: number; startPos: Vec2 } | null;
+  /** Active constraint sub-tool. */
+  pcbConstraintType: PcbConstraintType;
+  /** Targets picked so far by the constrain tool (max 2). */
+  pcbConstraintTargets: ConstraintTarget[];
+  /** Dimensional constraint awaiting a value before commit. */
+  pcbConstraintPending: { type: PcbConstraintType; targets: ConstraintTarget[] } | null;
+  /** Last design-constraint solve outcome (status chip). */
+  pcbSolveStatus: { converged: boolean; dof: number; overConstrained: boolean } | null;
 
   // Real-time validation
   drcViolations: DrcViolationResult[];
@@ -215,6 +236,11 @@ export interface ElectronicsState {
   select: (sel: ElectronicsSelection) => void;
   setHoveredNet: (netId: string | null) => void;
   setPcbTool: (t: PcbTool) => void;
+  setPcbConstraintType: (t: PcbConstraintType) => void;
+  pushConstraintTarget: (t: ConstraintTarget) => void;
+  clearConstraintPicks: () => void;
+  setPcbConstraintPending: (p: { type: PcbConstraintType; targets: ConstraintTarget[] } | null) => void;
+  setPcbSolveStatus: (s: { converged: boolean; dof: number; overConstrained: boolean } | null) => void;
   setSchTool: (t: SchTool) => void;
   setPcbActiveLayer: (l: PcbLayer) => void;
   inferLayerFromPad: (layers: PcbLayer[]) => void;
@@ -332,6 +358,10 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
   schRefCounters: {},
 
   pcbDragging: null,
+  pcbConstraintType: "distance" as PcbConstraintType,
+  pcbConstraintTargets: [],
+  pcbConstraintPending: null,
+  pcbSolveStatus: null,
 
   drcViolations: [],
   ercViolations: [],
@@ -415,7 +445,27 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
       routeActive: pcbTool === "route" ? undefined : false,
       routeStartPad: pcbTool === "route" ? undefined : null,
       routePreview: pcbTool === "route" ? undefined : [],
+      pcbConstraintTargets: [],
+      pcbConstraintPending: null,
     }),
+  setPcbConstraintType: (pcbConstraintType) =>
+    set({ pcbConstraintType, pcbConstraintTargets: [], pcbConstraintPending: null }),
+  pushConstraintTarget: (t) =>
+    set((state) => {
+      const targets = [...state.pcbConstraintTargets, t];
+      const needed = state.pcbConstraintType === "fixed" ? 1 : 2;
+      if (targets.length < needed) return { pcbConstraintTargets: targets };
+      // Enough targets: dimensional types wait for a value, the rest are
+      // committed by the toolbar effect watching pcbConstraintPending.
+      return {
+        pcbConstraintTargets: [],
+        pcbConstraintPending: { type: state.pcbConstraintType, targets },
+      };
+    }),
+  clearConstraintPicks: () =>
+    set({ pcbConstraintTargets: [], pcbConstraintPending: null }),
+  setPcbConstraintPending: (pcbConstraintPending) => set({ pcbConstraintPending }),
+  setPcbSolveStatus: (pcbSolveStatus) => set({ pcbSolveStatus }),
   setSchTool: (schTool) => set({ schTool }),
 
   // Principle 5: layer follows intent

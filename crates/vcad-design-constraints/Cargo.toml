@@ -1,0 +1,17 @@
+[package]
+name = "vcad-design-constraints"
+description = "Document-level design constraint solver: sketches, PCB layout, and cross-domain part anchors through one LM solve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-kernel-constraints = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]

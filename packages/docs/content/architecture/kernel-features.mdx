@@ -94,6 +94,10 @@ A circular pattern turns one hole into a bolt circle in a single operation:
 
 `vcad-kernel-sketch` models 2D profiles (lines, arcs) on arbitrary planes, and `vcad-kernel-constraints` solves geometric constraints — coincident, horizontal/vertical, parallel, perpendicular, tangent, distance, length, radius, angle, equal-length, fixed — with a Levenberg-Marquardt solver using adaptive damping. Sketches feed every profile-based operation below.
 
+### Design Constraints (Document-Level)
+
+`vcad-design-constraints` generalizes the sketch solver to the whole document: one constraint set spans PCB layout (footprint positions/rotations, board-outline vertices and edges), sketch geometry, and mechanical part edges addressed through the topological naming system. Dimensional constraints are expression-valued (`"board_width - 2*edge_margin"`) over named document parameters, so changing a parameter re-solves the layout; `driven: true` makes a reference dimension that is measured and back-annotated instead of enforced. Cross-domain constraints treat part geometry as authoritative — a connector can be held coincident with an enclosure cutout edge, with fail-closed anchor resolution (an ambiguous or lost edge name skips the constraint with an error, never a silent rebind). Every constraint doubles as a `constraint.*` receipt claim, re-verified as Holds / Stale / Violated by `verify_receipt`. Exposed via the `add_constraint` / `list_constraints` / `solve_constraints` MCP tools and the board editor's Constrain tool.
+
 ### Extrude, Revolve, Sweep, Loft
 
 `vcad-kernel-sweep` turns closed sketch profiles into solids. Revolve spins a profile around an axis:

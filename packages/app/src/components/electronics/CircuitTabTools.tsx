@@ -11,7 +11,7 @@
  * (handleTabClick + autoSwitchTab); this component just renders tools.
  */
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Cursor } from "@phosphor-icons/react/dist/ssr/Cursor";
 import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
 import { Plugs } from "@phosphor-icons/react/dist/ssr/Plugs";
@@ -21,6 +21,7 @@ import { PencilSimple } from "@phosphor-icons/react/dist/ssr/PencilSimple";
 import { Tag } from "@phosphor-icons/react/dist/ssr/Tag";
 import { Path } from "@phosphor-icons/react/dist/ssr/Path";
 import { MagnetStraight } from "@phosphor-icons/react/dist/ssr/MagnetStraight";
+import { Angle } from "@phosphor-icons/react/dist/ssr/Angle";
 import { Cube } from "@phosphor-icons/react/dist/ssr/Cube";
 import { Ruler } from "@phosphor-icons/react/dist/ssr/Ruler";
 import { ArrowSquareDown } from "@phosphor-icons/react/dist/ssr/ArrowSquareDown";
@@ -237,6 +238,15 @@ export function CircuitTabTools() {
         <Ruler size={20} />
       </ToolbarButton>
       <ToolbarButton
+        tooltip="Constrain"
+        active={pcbTool === "constrain"}
+        onClick={() => setPcbTool("constrain")}
+        iconColor={ELECTRONICS_TAB_COLORS.pcb}
+      >
+        <Angle size={20} />
+      </ToolbarButton>
+      {pcbTool === "constrain" && <PcbConstrainControls />}
+      <ToolbarButton
         tooltip="Delete (D)"
         active={pcbTool === "delete"}
         onClick={() => setPcbTool("delete")}
@@ -343,3 +353,140 @@ export function CircuitTabTools() {
 }
 
 export default CircuitTabTools;
+
+
+// ---------------------------------------------------------------------------
+// Constrain tool inline controls
+// ---------------------------------------------------------------------------
+
+const CONSTRAINT_TYPES = [
+  { id: "coincident", label: "Coinc" },
+  { id: "horizontal", label: "H" },
+  { id: "vertical", label: "V" },
+  { id: "distance", label: "Dist" },
+  { id: "fixed", label: "Fix" },
+] as const;
+
+function PcbConstrainControls() {
+  const pcbConstraintType = useElectronicsStore((s) => s.pcbConstraintType);
+  const setPcbConstraintType = useElectronicsStore((s) => s.setPcbConstraintType);
+  const pending = useElectronicsStore((s) => s.pcbConstraintPending);
+  const setPending = useElectronicsStore((s) => s.setPcbConstraintPending);
+  const setPcbSolveStatus = useElectronicsStore((s) => s.setPcbSolveStatus);
+  const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
+  const addDesignConstraint = useDocumentStore((s) => s.addDesignConstraint);
+  const documentState = useDocumentStore.getState();
+  const [value, setValue] = useState("");
+
+  const commit = useCallback(
+    (type: string, targets: { kind: string; ref?: string; idx?: number }[], val?: number | string) => {
+      if (activeBoardNodeId == null) return;
+      const node = Number(activeBoardNodeId);
+      // Anchor per picked target. Footprints reference by ref (survives
+      // reorder); outline vertices by index (documented fragility).
+      const anchor = (t: { kind: string; ref?: string; idx?: number }) =>
+        t.kind === "footprint"
+          ? { kind: "pcbFootprint" as const, node, ref: t.ref! }
+          : { kind: "pcbOutlineVertex" as const, node, index: t.idx! };
+      let kind: Record<string, unknown> | null = null;
+      if (type === "fixed" && targets[0]) kind = { type: "fixed", a: anchor(targets[0]) };
+      else if (targets.length === 2) {
+        const [a, b] = [anchor(targets[0]!), anchor(targets[1]!)];
+        if (type === "coincident") kind = { type: "coincident", a, b };
+        else if (type === "horizontal") kind = { type: "horizontal", a, b };
+        else if (type === "vertical") kind = { type: "vertical", a, b };
+        else if (type === "distance") kind = { type: "distance", a, b, value: val ?? 0 };
+      }
+      if (!kind) return;
+      const report = addDesignConstraint({
+        kind: kind as never,
+        driven: false,
+      });
+      if (report) {
+        const dof = report.groups.reduce((acc, g) => acc + g.dof, 0);
+        setPcbSolveStatus({
+          converged: report.converged,
+          dof,
+          overConstrained: report.groups.some((g) => g.dof < 0),
+        });
+      }
+    },
+    [activeBoardNodeId, addDesignConstraint, setPcbSolveStatus],
+  );
+
+  // Non-dimensional constraints commit as soon as targets are picked;
+  // dimensional ones wait for the value input below.
+  useEffect(() => {
+    if (!pending) return;
+    if (pending.type !== "distance") {
+      commit(pending.type, pending.targets);
+      setPending(null);
+    } else {
+      // Prefill with the current measured distance between the targets.
+      const doc = documentState.document;
+      const nodeId = activeBoardNodeId != null ? Number(activeBoardNodeId) : null;
+      if (nodeId != null && pending.targets.length === 2) {
+        const pcb = doc.nodes[String(nodeId)]?.op as
+          | { type: string; board?: { footprints: { ref: string; position: { x: number; y: number } }[]; outline: { vertices: { x: number; y: number }[] } } }
+          | undefined;
+        const board = pcb?.board;
+        if (board) {
+          const pos = (t: { kind: string; ref?: string; idx?: number }) =>
+            t.kind === "footprint"
+              ? board.footprints.find((f) => f.ref === t.ref)?.position
+              : board.outline.vertices[t.idx ?? -1];
+          const [pa, pb] = [pos(pending.targets[0]!), pos(pending.targets[1]!)];
+          if (pa && pb) setValue(Math.hypot(pa.x - pb.x, pa.y - pb.y).toFixed(2));
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
+
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      {CONSTRAINT_TYPES.map((t) => (
+        <button
+          key={t.id}
+          className={`rounded px-1.5 py-0.5 text-[10px] font-mono border ${
+            pcbConstraintType === t.id
+              ? "border-orange-500 text-orange-500"
+              : "border-border text-muted-foreground hover:text-foreground"
+          }`}
+          onClick={() => setPcbConstraintType(t.id)}
+          title={t.id}
+        >
+          {t.label}
+        </button>
+      ))}
+      {pending?.type === "distance" && (
+        <>
+          <input
+            className="w-20 rounded border border-border bg-transparent px-1 py-0.5 text-[10px] font-mono"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="mm or =expr"
+            title="Distance in mm, or a formula over document parameters"
+          />
+          <button
+            className="rounded border border-orange-500 px-1.5 py-0.5 text-[10px] font-mono text-orange-500"
+            onClick={() => {
+              const raw = value.trim();
+              const num = Number(raw);
+              const val = raw.startsWith("=")
+                ? raw.slice(1)
+                : Number.isFinite(num) && raw !== ""
+                  ? num
+                  : raw;
+              commit("distance", pending.targets, val);
+              setPending(null);
+              setValue("");
+            }}
+          >
+            Apply
+          </button>
+        </>
+      )}
+    </div>
+  );
+}

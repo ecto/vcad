@@ -210,6 +210,8 @@ export function ElectronicsPanelHeader() {
   const pcbActiveLayer = useElectronicsStore((s) => s.pcbActiveLayer);
   const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
   const drcViolations = useElectronicsStore((s) => s.drcViolations);
+  const pcbSolveStatus = useElectronicsStore((s) => s.pcbSolveStatus);
+  const constraintCount = useDocumentStore((s) => s.document.constraints?.length ?? 0);
   const ercViolations = useElectronicsStore((s) => s.ercViolations);
   const receiptCount = useElectronicsStore((s) => s.receiptEntries.length);
   const showReceiptPanel = useElectronicsStore((s) => s.showReceiptPanel);
@@ -236,6 +238,24 @@ export function ElectronicsPanelHeader() {
           {pcb && <BoardSizeControl pcb={pcb} />}
         </span>
         <div className="flex items-center gap-2 shrink-0">
+          {constraintCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1"
+              title="Design constraints: solve status / degrees of freedom"
+            >
+              {pcbSolveStatus == null ? (
+                <span className="text-text-muted">{constraintCount} constraints</span>
+              ) : pcbSolveStatus.overConstrained || !pcbSolveStatus.converged ? (
+                <span className="text-danger font-medium">
+                  {pcbSolveStatus.overConstrained ? "Over-constrained" : "Not converged"}
+                </span>
+              ) : pcbSolveStatus.dof === 0 ? (
+                <span className="text-success font-medium">Solved</span>
+              ) : (
+                <span className="text-text-muted">{pcbSolveStatus.dof} DOF</span>
+              )}
+            </span>
+          )}
           <span className="inline-flex items-center gap-1" title="DRC errors / warnings">
             <span className="text-text-muted">DRC</span>
             <span className={drcErrors > 0 ? "text-danger font-medium" : "text-text-muted"}>

@@ -498,6 +498,9 @@ export function SketchPropertyPanel() {
           });
           if (partId) {
             select(partId);
+            // Constraints outlive the session: persist them on the document
+            // anchored at the new sketch node (reload/receipts/parameters).
+            useDocumentStore.getState().persistSketchConstraints(partId, constraints);
             analytics.extrudeApplied();
             analytics.sketchCompleted(constraints.length);
             addToast("Created Extrude", "success");
@@ -513,6 +516,7 @@ export function SketchPropertyPanel() {
           const partId = addRevolve(plane, origin, segments, origin, axisDir, pendingOperation.angleDeg);
           if (partId) {
             select(partId);
+            useDocumentStore.getState().persistSketchConstraints(partId, constraints);
             analytics.sketchCompleted(constraints.length);
             addToast("Created Revolve", "success");
           } else {

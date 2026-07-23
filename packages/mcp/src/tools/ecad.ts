@@ -43,6 +43,13 @@ import {
   hasClearanceClaims,
   verifyClearanceClaims,
 } from "./clearance.js";
+import {
+  constraintReceiptClaims,
+  constraintStaleWarning,
+  hasConstraintClaims,
+  pruneOutlineConstraints,
+  verifyConstraintClaims,
+} from "./constraint-claims.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
@@ -7382,12 +7389,24 @@ export async function setBoardOutline(args: Record<string, unknown>) {
   const width = round3(Math.max(...xs) - Math.min(...xs));
   const height = round3(Math.max(...ys) - Math.min(...ys));
 
+  // A rewritten outline invalidates vertex indices — drop constraints whose
+  // indices are now out of range (reported), and warn about the rest.
+  const droppedConstraints = pruneOutlineConstraints(ctx.doc, (node) => {
+    const p = getNodePcb(ctx.doc, node);
+    return p ? (p.outline.vertices?.length ?? 0) : undefined;
+  });
+  const constraintWarning = constraintStaleWarning(ctx.doc);
+
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          ...(droppedConstraints.length > 0
+            ? { dropped_constraints: droppedConstraints }
+            : {}),
+          ...(constraintWarning ? { constraint_warning: constraintWarning } : {}),
           outline: {
             width,
             height,
@@ -8675,6 +8694,12 @@ export async function setPlacement(args: Record<string, unknown>) {
       `no footprints updated${unknownRefs.length ? ` — all refs unknown: ${unknownRefs.join(", ")}` : ""}`,
     );
   }
+
+  // Explicit placements deliberately do NOT auto-solve constraints — that
+  // would silently undo the caller's just-requested positions when they
+  // conflict. Warn instead so agency stays with the caller.
+  const staleWarning = constraintStaleWarning(ctx.doc);
+  if (staleWarning) warnings.push(staleWarning);
 
   // Re-check the floorplan after the move so the caller can branch on the
   // result in one call — the move→re-check loop never has to reach run_drc.
@@ -12752,22 +12777,26 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   const pcb = getDocPcb(ctx.doc);
   const clearanceSpecs = ctx.doc.clearance_specs ?? [];
   if (!pcb) {
-    if (clearanceSpecs.length === 0) {
+    if (clearanceSpecs.length === 0 && (ctx.doc.constraints ?? []).length === 0) {
       return {
         content: [
           {
             type: "text" as const,
-            text: "Error: Document has no PCB and no clearance specs — nothing to certify. (Persist mechanical assertions with check_clearance + label first.)",
+            text: "Error: Document has no PCB, no clearance specs, and no design constraints — nothing to certify. (Persist assertions with check_clearance + label or add_constraint first.)",
           },
         ],
         isError: true,
       };
     }
-    // Mechanical-only receipt: re-measure every persisted clearance spec.
+    // Mechanical-only receipt: re-measure every persisted clearance spec
+    // and design constraint.
     const unified: DesignReceipt = {
       schema: RECEIPT_SCHEMA,
       ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
-      claims: clearanceReceiptClaims(ctx.doc, engine),
+      claims: [
+        ...clearanceReceiptClaims(ctx.doc, engine),
+        ...(await constraintReceiptClaims(ctx.doc)),
+      ],
     };
     return {
       content: [
@@ -12838,6 +12867,10 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   // board+mechanics document certifies both domains in one receipt.
   if (clearanceSpecs.length > 0) {
     unified.claims.push(...clearanceReceiptClaims(ctx.doc, engine));
+  }
+  // Design constraints certify as constraint.* claims in the same ledger.
+  if ((ctx.doc.constraints ?? []).length > 0) {
+    unified.claims.push(...(await constraintReceiptClaims(ctx.doc)));
   }
 
   // The receipt rides in structuredContent so the inline viewer renders it
@@ -12937,13 +12970,14 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     }
   }
   const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
+  const constraintReceipt = unified && hasConstraintClaims(unified) ? unified : undefined;
 
-  if (!legacy && !clearanceReceipt) {
+  if (!legacy && !clearanceReceipt && !constraintReceipt) {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance claims, as produced by build_receipt.",
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance or constraint.* claims, as produced by build_receipt.",
         },
       ],
       isError: true,
@@ -12993,10 +13027,17 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     statuses.push(clearance.status);
   }
 
+  let constraintChecks: Awaited<ReturnType<typeof verifyConstraintClaims>> | undefined;
+  if (constraintReceipt) {
+    constraintChecks = await verifyConstraintClaims(ctx.doc, constraintReceipt);
+    statuses.push(constraintChecks.status);
+  }
+
   const payload = {
     status: worstStatus(statuses),
     ...(boardHash ? { board_hash: boardHash } : {}),
     ...(clearance ? { clearance } : {}),
+    ...(constraintChecks ? { constraints: constraintChecks } : {}),
   };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],

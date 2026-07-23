@@ -138,6 +138,17 @@ pub fn compute_constraint_residuals(
             vec![c1x - c2x, c1y - c2y]
         }
 
+        Constraint::OffsetCoincident {
+            point_a,
+            point_b,
+            dx,
+            dy,
+        } => {
+            let (ax, ay) = get_point_coords(*point_a, params, entities);
+            let (bx, by) = get_point_coords(*point_b, params, entities);
+            vec![bx - ax - dx, by - ay - dy]
+        }
+
         Constraint::Fixed { point, x, y } => {
             let (px, py) = get_point_coords(*point, params, entities);
             vec![px - x, py - y]
