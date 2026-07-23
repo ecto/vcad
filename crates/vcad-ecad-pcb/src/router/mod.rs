@@ -12,6 +12,7 @@
 
 pub mod auto;
 pub mod classes;
+pub mod descent;
 #[cfg(feature = "gpu")]
 pub mod gpu_bridge;
 pub mod si_claims;

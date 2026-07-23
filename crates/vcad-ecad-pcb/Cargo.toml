@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 vcad-kernel-gpu = { workspace = true, optional = true }
+tang-expr = { workspace = true }
 vcad-receipt = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-ecad-package = { workspace = true }
