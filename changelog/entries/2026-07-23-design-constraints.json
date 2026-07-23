@@ -1,0 +1,21 @@
+{
+  "id": "2026-07-23-design-constraints",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "feat",
+  "title": "Design constraints: solver-enforced geometry, everywhere",
+  "summary": "Document-level geometric constraints across PCB layout, sketches, and part edges — formula dimensions, driven measurements, receipt-verified, with a Constrain tool in the board editor.",
+  "features": [
+    "constraints",
+    "pcb",
+    "sketch",
+    "parametric",
+    "receipts"
+  ],
+  "mcpTools": [
+    "add_constraint",
+    "delete_constraint",
+    "list_constraints",
+    "solve_constraints"
+  ]
+}

@@ -20,6 +20,7 @@ import { PcbComponentBodies3D } from "./PcbComponentBodies3D";
 import { PcbRatsnest3D } from "./PcbRatsnest3D";
 import { PcbRoutePreview3D } from "./PcbRoutePreview3D";
 import { PcbDrcMarkers3D } from "./PcbDrcMarkers3D";
+import { PcbConstraints3D } from "./PcbConstraints3D";
 
 export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const { invalidate } = useThree();
@@ -52,6 +53,11 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const updateRoutePreview = useElectronicsStore((s) => s.updateRoutePreview);
   const startPcbDrag = useElectronicsStore((s) => s.startPcbDrag);
   const cancelPcbDrag = useElectronicsStore((s) => s.cancelPcbDrag);
+  const pcbConstraintTargets = useElectronicsStore((s) => s.pcbConstraintTargets);
+  const pushConstraintTarget = useElectronicsStore((s) => s.pushConstraintTarget);
+  const setPcbSolveStatus = useElectronicsStore((s) => s.setPcbSolveStatus);
+  const solveDesignConstraints = useDocumentStore((s) => s.solveDesignConstraints);
+  const documentConstraints = useDocumentStore((s) => s.document.constraints);
   const moveFootprint = useDocumentStore((s) => s.moveFootprint);
   const removeTrace = useDocumentStore((s) => s.removeTrace);
   const removeVia = useDocumentStore((s) => s.removeVia);
@@ -102,6 +108,31 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
             return;
           }
         }
+      }
+
+      // Constrain tool: pick footprints (or outline vertices on a miss)
+      if (pcbTool === "constrain") {
+        for (let i = pcb.footprints.length - 1; i >= 0; i--) {
+          const fp = pcb.footprints[i]!;
+          const halfW = 5, halfH = 5;
+          if (
+            pcbPos.x >= fp.position.x - halfW &&
+            pcbPos.x <= fp.position.x + halfW &&
+            pcbPos.y >= fp.position.y - halfH &&
+            pcbPos.y <= fp.position.y + halfH
+          ) {
+            pushConstraintTarget({ kind: "footprint", ref: fp.ref });
+            return;
+          }
+        }
+        for (let i = 0; i < pcb.outline.vertices.length; i++) {
+          const v = pcb.outline.vertices[i]!;
+          if (Math.hypot(pcbPos.x - v.x, pcbPos.y - v.y) < 1.5) {
+            pushConstraintTarget({ kind: "outlineVertex", idx: i });
+            return;
+          }
+        }
+        return;
       }
 
       // Select tool: hit-test elements
@@ -239,9 +270,32 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
 
   const onPlanePointerUp = useCallback(() => {
     if (pcbDragging) {
+      // Drag-end re-solve: the dragged footprint anchors the solve (a
+      // temporary Fixed pin — never persisted), so constraints pull the
+      // rest of the board into consistency around the user's gesture.
+      if (
+        activeBoardNodeId != null &&
+        (documentConstraints?.length ?? 0) > 0 &&
+        pcb
+      ) {
+        const fp = pcb.footprints[pcbDragging.fpIdx];
+        if (fp) {
+          const report = solveDesignConstraints({
+            extraFixed: [{ node: Number(activeBoardNodeId), ref: fp.ref }],
+          });
+          if (report) {
+            const dof = report.groups.reduce((a, g) => a + g.dof, 0);
+            setPcbSolveStatus({
+              converged: report.converged,
+              dof,
+              overConstrained: report.groups.some((g) => g.dof < 0),
+            });
+          }
+        }
+      }
       cancelPcbDrag();
     }
-  }, [pcbDragging, cancelPcbDrag]);
+  }, [pcbDragging, cancelPcbDrag, activeBoardNodeId, documentConstraints, pcb, solveDesignConstraints, setPcbSolveStatus]);
 
   if (!pcb) return null;
 
@@ -341,6 +395,18 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
           routePreview={routePreview}
           boardThickness={boardThickness}
           activeLayer={pcbActiveLayer}
+          explosion={stackupExplosion}
+        />
+      )}
+
+      {/* Design-constraint glyphs + dimension leaders */}
+      {activeBoardNodeId != null && (
+        <PcbConstraints3D
+          pcb={pcb}
+          nodeId={Number(activeBoardNodeId)}
+          constraints={documentConstraints ?? []}
+          pickedTargets={pcbConstraintTargets}
+          boardThickness={boardThickness}
           explosion={stackupExplosion}
         />
       )}

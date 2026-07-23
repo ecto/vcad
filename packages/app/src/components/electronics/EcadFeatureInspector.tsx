@@ -266,6 +266,7 @@ function ComponentFootprintPanel({ compRef }: { compRef: string }) {
             <Row label="Pads" value={String(fp.pads.length)} />
           </>
         )}
+        {fp && <FootprintConstraints compRef={compRef} />}
         {nets.size > 0 && (
           <div className="pt-1 border-t border-border mt-1">
             <div className="text-[10px] text-text-muted mb-0.5">Nets:</div>
@@ -313,6 +314,78 @@ export function Row({
       <span className={danger ? "text-danger font-medium" : "text-text"}>
         {value}
       </span>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Design constraints on the selected footprint
+// ---------------------------------------------------------------------------
+
+function FootprintConstraints({ compRef }: { compRef: string }) {
+  const constraints = useDocumentStore((s) => s.document.constraints);
+  const removeDesignConstraint = useDocumentStore((s) => s.removeDesignConstraint);
+  const updateDesignConstraint = useDocumentStore((s) => s.updateDesignConstraint);
+
+  const mine = (constraints ?? []).filter((c) =>
+    Object.values(c.kind as unknown as Record<string, unknown>).some(
+      (v) =>
+        v != null &&
+        typeof v === "object" &&
+        (v as { kind?: string; ref?: string }).kind === "pcbFootprint" &&
+        (v as { ref?: string }).ref === compRef,
+    ) || (c.kind as { ref?: string }).ref === compRef,
+  );
+  if (mine.length === 0) return null;
+
+  return (
+    <div className="pt-1 border-t border-border mt-1">
+      <div className="text-[10px] text-text-muted mb-0.5">Constraints:</div>
+      {mine.map((c) => {
+        const type = (c.kind as { type: string }).type;
+        const value = (c.kind as { value?: number | string }).value;
+        return (
+          <div key={c.id} className="flex items-center justify-between gap-1 text-[10px]">
+            <span className="font-mono text-text-muted">
+              {type}
+              {c.driven ? " (ref)" : ""}
+            </span>
+            <span className="flex items-center gap-1">
+              {value !== undefined && (
+                <input
+                  className="w-16 text-[10px] text-text bg-transparent border border-border rounded px-1 py-0.5 text-right"
+                  defaultValue={String(value)}
+                  onBlur={(e) => {
+                    const raw = e.target.value.trim();
+                    const num = Number(raw);
+                    updateDesignConstraint(c.id, {
+                      value: Number.isFinite(num) && raw !== "" ? num : raw,
+                    });
+                  }}
+                  title="Value (mm/deg) or formula over document parameters"
+                />
+              )}
+              {value !== undefined && (
+                <button
+                  className={`rounded border px-1 ${c.driven ? "border-orange-500 text-orange-500" : "border-border text-text-muted"}`}
+                  title="Toggle driven (reference) dimension"
+                  onClick={() => updateDesignConstraint(c.id, { driven: !c.driven })}
+                >
+                  ref
+                </button>
+              )}
+              <button
+                className="rounded border border-border px-1 text-text-muted hover:text-danger"
+                title="Delete constraint"
+                onClick={() => removeDesignConstraint(c.id)}
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

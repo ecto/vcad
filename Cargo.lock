@@ -6907,6 +6907,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-design-constraints"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-ecad-pcb",
+ "vcad-ir",
+ "vcad-kernel-constraints",
+]
+
+[[package]]
 name = "vcad-desktop"
 version = "0.9.4"
 dependencies = [
@@ -7652,6 +7663,7 @@ dependencies = [
  "vcad-app",
  "vcad-chat",
  "vcad-crdt",
+ "vcad-design-constraints",
  "vcad-diff",
  "vcad-ecad-export",
  "vcad-ecad-parts",

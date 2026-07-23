@@ -86,6 +86,13 @@ import {
   deriveParts,
   computeNextIds,
 } from "@vcad/core";
+
+// Dev-only debug handle: lets browser tooling and automated verification
+// reach the live stores without going through the UI.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __vcadDocumentStore?: unknown }).__vcadDocumentStore =
+    useDocumentStore;
+}
 import type { Document } from "@vcad/ir";
 import { useEngine } from "@/hooks/useEngine";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";

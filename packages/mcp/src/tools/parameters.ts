@@ -19,7 +19,7 @@
 
 import type { Engine, PartParameterGradient } from "@vcad/engine";
 import { behavior, type ToolDef } from "./tool-def.js";
-import { resolveParameters } from "@vcad/engine";
+import { resolveParameters, solveDesignConstraints } from "@vcad/engine";
 import type { Document, Expr, Parameter } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { getSession, resolveDocInput } from "./session-core.js";
@@ -123,7 +123,7 @@ interface ParameterDelta {
   value: number;
 }
 
-export function setParameters(input: unknown, engine: Engine): ToolResult {
+export async function setParameters(input: unknown, engine: Engine): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   const documentId = String(args.document_id ?? "");
   if (!documentId) {
@@ -163,10 +163,26 @@ export function setParameters(input: unknown, engine: Engine): ToolResult {
     param.value = value as number;
   }
 
+  // Parameters drive constraint dimensions ("board_width - 2*margin") —
+  // re-solve the document's design constraints so a parameter change
+  // relayouts everything bound to it in the same call.
+  let constraintSolve: Record<string, unknown> | undefined;
+  if ((doc.constraints ?? []).length > 0) {
+    const outcome = await solveDesignConstraints(doc);
+    if (outcome.status === "ok") {
+      doc.nodes = outcome.value.document.nodes;
+      doc.constraints = outcome.value.document.constraints;
+      constraintSolve = outcome.value.report as unknown as Record<string, unknown>;
+    } else {
+      constraintSolve = { unavailable: outcome.reason };
+    }
+  }
+
   const result: ToolResult = jsonResult({
     document_id: documentId,
     updated: changed.length,
     changed,
+    ...(constraintSolve ? { constraint_solve: constraintSolve } : {}),
   });
   result.structuredContent = { changed };
 
@@ -249,7 +265,7 @@ export const toolDefs: ToolDef[] = [
     name: "set_parameters",
     pack: null,
     description:
-      "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
+      "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. When the document has design constraints, they re-solve automatically (constraint_solve in the result) — a parameter change relayouts everything bound to it. Undoable and persisted.",
     inputSchema: setParametersSchema,
     // Batch-updates named parameters → geometry changes, so it must
     // snapshot (undo) and persist like any other document mutator.

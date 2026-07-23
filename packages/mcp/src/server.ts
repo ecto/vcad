@@ -124,6 +124,7 @@ import { toolDefs as exportToolDefs } from "./tools/export.js";
 import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
 import { toolDefs as measureToolDefs } from "./tools/measure.js";
 import { toolDefs as parametersToolDefs } from "./tools/parameters.js";
+import { toolDefs as designConstraintsToolDefs } from "./tools/design-constraints.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
 import { toolDefs as renderToolDefs } from "./tools/render.js";
 import { toolDefs as verifyToolDefs } from "./tools/verify.js";
@@ -311,6 +312,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...inspectToolDefs,
   ...measureToolDefs,
   ...parametersToolDefs,
+  ...designConstraintsToolDefs,
   ...printCheckToolDefs,
   ...renderToolDefs,
   ...verifyToolDefs,
@@ -404,6 +406,11 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "list_parameters",
   "set_parameters",
   "parameter_gradient",
+  // ── Design constraints (document-level geometric solver) ───
+  "add_constraint",
+  "delete_constraint",
+  "list_constraints",
+  "solve_constraints",
   // ── Topology optimization ──────────────────────────────────
   "topology_optimize",
   // ── Charged-particle optics (fusor / IEC / trap family) ────

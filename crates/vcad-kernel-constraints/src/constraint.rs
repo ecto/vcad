@@ -145,6 +145,21 @@ pub enum Constraint {
         y: f64,
     },
 
+    /// Two points hold a fixed offset: `point_b = point_a + (dx, dy)`.
+    ///
+    /// A rigid link between two free points — e.g. a pad center riding a
+    /// footprint origin. Error: `[b.x - a.x - dx, b.y - a.y - dy]`
+    OffsetCoincident {
+        /// Base point reference.
+        point_a: EntityRef,
+        /// Offset point reference.
+        point_b: EntityRef,
+        /// Offset along X.
+        dx: f64,
+        /// Offset along Y.
+        dy: f64,
+    },
+
     /// A point lies on an arc or circle.
     ///
     /// Error: `|p - center| - radius`
@@ -285,6 +300,7 @@ impl Constraint {
     pub fn num_residuals(&self) -> usize {
         match self {
             Constraint::Coincident { .. } => 2,
+            Constraint::OffsetCoincident { .. } => 2,
             Constraint::Fixed { .. } => 2,
             Constraint::Concentric { .. } => 2,
             Constraint::Midpoint { .. } => 2,
