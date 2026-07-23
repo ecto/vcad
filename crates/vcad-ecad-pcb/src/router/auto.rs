@@ -2721,7 +2721,15 @@ fn joint_window_repair(
             still.len(),
             sw.ms() / 1000.0,
         );
+        // A round that converted nothing proves the knots need MORE than a
+        // bigger window (they need different copper elsewhere) — escalating
+        // the margin re-proves the same stuck set at 2-4x the cost. Stop.
+        let converted = pending.len().saturating_sub(still.len());
         pending = still;
+        if converted == 0 {
+            log::info!("joint repair: round converted nothing — stopping escalation");
+            break;
+        }
         // Fresh failure cache per escalation: the windows change shape.
         fail_cache = FailCache::new();
     }
