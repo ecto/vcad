@@ -103,14 +103,22 @@ function evict(now: number): void {
 }
 
 /** Public base URL of this deployment, for building shareable artifact links.
- *  Mirrors the live-share link builder. */
+ *  Mirrors the live-share link builder. Empty string → links stay relative
+ *  (`/artifacts/<id>`), which trust-boundary and parseArtifactId both accept. */
 function publicBaseUrl(): string {
-  const raw = process.env.VCAD_MCP_PUBLIC_URL || "https://mcp.vcad.io";
-  try {
-    return new URL(raw).origin;
-  } catch {
-    return "https://mcp.vcad.io";
+  const raw = process.env.VCAD_MCP_PUBLIC_URL;
+  if (raw) {
+    try {
+      return new URL(raw).origin;
+    } catch {
+      // fall through to the durability-gated default
+    }
   }
+  // Only a durable store may claim the hosted origin by default: the persisted
+  // row is readable from mcp.vcad.io. A memory-only instance (stdio/local dev)
+  // minting an absolute mcp.vcad.io link hands out a guaranteed 404 — its
+  // bytes exist nowhere that host can see.
+  return isArtifactStoreDurable() ? "https://mcp.vcad.io" : "";
 }
 
 /** The capability URL for an artifact id (possession of the id is the grant). */
