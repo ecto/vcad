@@ -18,10 +18,6 @@ struct Params {
     ny: u32,
     nl: u32,
     n_searches: u32,
-    step_cost: u32,
-    diag_cost: u32,
-    via_cost: u32,
-    _pad: u32,
 }
 
 const INF: u32 = 0xffffffffu;
@@ -32,6 +28,13 @@ const INF: u32 = 0xffffffffu;
 @group(0) @binding(3) var<storage, read_write> dist_out: array<u32>;
 @group(0) @binding(4) var<storage, read_write> changed: array<atomic<u32>>;
 @group(0) @binding(5) var<uniform> params: Params;
+// (layer x 10-move) cost table compiled from the tang-expr cost model:
+// moves [E, W, N, S, NE, NW, SE, SW, via_up, via_down].
+@group(0) @binding(6) var<storage, read> move_costs: array<u32>;
+
+fn move_cost(l: u32, mv: u32) -> u32 {
+    return move_costs[l * 10u + mv];
+}
 
 fn total_nodes() -> u32 {
     return params.nx * params.ny * params.nl;
@@ -94,21 +97,23 @@ fn relax_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
         let y = i32(rem / params.nx);
         let x = i32(rem - u32(y) * params.nx);
 
-        // 8-way in-plane.
-        best = min(best, candidate(search, base, x - 1, y, l, params.step_cost));
-        best = min(best, candidate(search, base, x + 1, y, l, params.step_cost));
-        best = min(best, candidate(search, base, x, y - 1, l, params.step_cost));
-        best = min(best, candidate(search, base, x, y + 1, l, params.step_cost));
-        best = min(best, candidate(search, base, x - 1, y - 1, l, params.diag_cost));
-        best = min(best, candidate(search, base, x + 1, y - 1, l, params.diag_cost));
-        best = min(best, candidate(search, base, x - 1, y + 1, l, params.diag_cost));
-        best = min(best, candidate(search, base, x + 1, y + 1, l, params.diag_cost));
+        // 8-way in-plane; the arrival cost is the NEIGHBOUR's move toward
+        // this node (E-from-west etc.), so index by the reverse move on the
+        // same layer table.
+        best = min(best, candidate(search, base, x - 1, y, l, move_cost(l, 0u)));
+        best = min(best, candidate(search, base, x + 1, y, l, move_cost(l, 1u)));
+        best = min(best, candidate(search, base, x, y - 1, l, move_cost(l, 3u)));
+        best = min(best, candidate(search, base, x, y + 1, l, move_cost(l, 2u)));
+        best = min(best, candidate(search, base, x - 1, y - 1, l, move_cost(l, 6u)));
+        best = min(best, candidate(search, base, x + 1, y - 1, l, move_cost(l, 7u)));
+        best = min(best, candidate(search, base, x - 1, y + 1, l, move_cost(l, 4u)));
+        best = min(best, candidate(search, base, x + 1, y + 1, l, move_cost(l, 5u)));
         // Vias to adjacent layers.
         if l > 0u {
-            best = min(best, candidate(search, base, x, y, l - 1u, params.via_cost));
+            best = min(best, candidate(search, base, x, y, l - 1u, move_cost(l - 1u, 8u)));
         }
         if l + 1u < params.nl {
-            best = min(best, candidate(search, base, x, y, l + 1u, params.via_cost));
+            best = min(best, candidate(search, base, x, y, l + 1u, move_cost(l + 1u, 9u)));
         }
     }
 

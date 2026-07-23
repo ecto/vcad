@@ -262,10 +262,13 @@ pub fn gpu_search_batch(
         goals.push(goal_nodes);
     }
 
+    // Expression-defined cost model (charter M3): the tang-expr graph is
+    // the source of truth, compiled into the per-layer move table.
     let costs = BatchCosts {
         step: 1000,
         diag: 1414,
         via: 4000,
+        table: Some(vcad_kernel_gpu::cost_model::CostModel::default_model().to_table(nl, 1000.0)),
     };
     let fields = distance_fields_batch((nx, ny, nl), &slice.states, &searches, &costs).ok()?;
 
@@ -323,23 +326,28 @@ pub fn gpu_search_batch(
                     best = Some((field[idx], idx));
                 }
             };
-            for (dx, dy, c) in [
-                (-1i64, 0i64, costs.step),
-                (1, 0, costs.step),
-                (0, -1, costs.step),
-                (0, 1, costs.step),
-                (-1, -1, costs.diag),
-                (1, -1, costs.diag),
-                (-1, 1, costs.diag),
-                (1, 1, costs.diag),
+            // The move cost is the cost of stepping FROM the predecessor TO
+            // this node — the same table entry the kernel used (arrival
+            // move on this node's layer; vias priced on the ARRIVAL layer).
+            let table = costs.table.as_deref().expect("bridge always sets a table");
+            let mc = |layer: usize, mv: usize| table[layer * 10 + mv];
+            for (dx, dy, mv) in [
+                (-1i64, 0i64, 0usize),
+                (1, 0, 1),
+                (0, -1, 3),
+                (0, 1, 2),
+                (-1, -1, 6),
+                (1, -1, 7),
+                (-1, 1, 4),
+                (1, 1, 5),
             ] {
-                consider(x + dx, y + dy, l, c);
+                consider(x + dx, y + dy, l, mc(l, mv));
             }
             if l > 0 {
-                consider(x, y, l - 1, costs.via);
+                consider(x, y, l - 1, mc(l - 1, 8));
             }
             if l + 1 < nl {
-                consider(x, y, l + 1, costs.via);
+                consider(x, y, l + 1, mc(l + 1, 9));
             }
             let Some((_, pred)) = best else { break };
             node = pred;

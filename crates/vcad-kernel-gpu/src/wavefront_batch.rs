@@ -15,8 +15,10 @@ use wgpu::util::DeviceExt;
 /// Distance value for unreached nodes.
 pub const UNREACHABLE: u32 = u32::MAX;
 
-/// Integer step costs (scaled, e.g. x1000).
-#[derive(Debug, Clone, Copy)]
+/// Integer step costs (scaled, e.g. x1000). Expanded into a uniform
+/// per-layer move table; prefer [`BatchCosts::table`] built from a
+/// [`crate::cost_model::CostModel`] for expression-defined costs.
+#[derive(Debug, Clone)]
 pub struct BatchCosts {
     /// Orthogonal in-plane step.
     pub step: u32,
@@ -24,6 +26,9 @@ pub struct BatchCosts {
     pub diag: u32,
     /// Via to an adjacent layer.
     pub via: u32,
+    /// Optional pre-compiled `(layers x 10)` move table; when set it wins
+    /// over the three scalars.
+    pub table: Option<Vec<u32>>,
 }
 
 /// One search of a batch.
@@ -44,10 +49,6 @@ struct BatchParams {
     ny: u32,
     nl: u32,
     n_searches: u32,
-    step_cost: u32,
-    diag_cost: u32,
-    via_cost: u32,
-    _pad: u32,
 }
 
 /// Sweeps between changed-flag readbacks.
@@ -164,11 +165,27 @@ pub async fn distance_fields_batch_async(
         ny: ny as u32,
         nl: nl as u32,
         n_searches: n as u32,
-        step_cost: costs.step,
-        diag_cost: costs.diag,
-        via_cost: costs.via,
-        _pad: 0,
     };
+    // Move-cost table: expression-compiled when provided, else uniform from
+    // the three scalars (moves [E,W,N,S,NE,NW,SE,SW,via_up,via_down]).
+    let table: Vec<u32> = match &costs.table {
+        Some(t) if t.len() == nl * 10 => t.clone(),
+        _ => (0..nl)
+            .flat_map(|_| {
+                [
+                    costs.step, costs.step, costs.step, costs.step, costs.diag, costs.diag,
+                    costs.diag, costs.diag, costs.via, costs.via,
+                ]
+            })
+            .collect(),
+    };
+    let table_buf = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("batch-move-costs"),
+            contents: bytemuck::cast_slice(&table),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
     let params_buf = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -222,6 +239,10 @@ pub async fn distance_fields_batch_async(
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: table_buf.as_entire_binding(),
                 },
             ],
         })
@@ -391,6 +412,7 @@ mod tests {
             step: 1000,
             diag: 1414,
             via: 4000,
+            table: None,
         };
         let gpu = match distance_fields_batch(dims, &states, &searches, &costs) {
             Ok(g) => g,
