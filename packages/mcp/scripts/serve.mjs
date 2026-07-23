@@ -69,12 +69,18 @@ const fingerprint = sourceFingerprint();
 const entry = join(mcpDir, "dist", "index.js");
 
 if (readStamp() !== fingerprint || !existsSync(entry)) {
-  log("dist is stale (or unstamped) — rebuilding workspace from source…");
-  execSync("npm run build --workspaces --if-present", {
-    cwd: repo,
-    stdio: ["ignore", process.stderr, process.stderr], // keep stdout clean for MCP
-    env: { ...process.env, VCAD_WASM_SKIP: "1" },
-  });
+  log("dist is stale (or unstamped) — rebuilding server packages from source…");
+  // Explicit dependency order — `npm run build --workspaces` does NOT
+  // topologically sort (proven by the first mcp-publish CI run, where
+  // @vcad/app built before its deps and failed). Same set + order as
+  // services/mcp/build.sh.
+  for (const pkg of ["@vcad/ir", "@vcad/engine", "@vcad/core", "@vcad/mcp"]) {
+    execSync(`npm run build -w ${pkg}`, {
+      cwd: repo,
+      stdio: ["ignore", process.stderr, process.stderr], // keep stdout clean for MCP
+      env: { ...process.env, VCAD_WASM_SKIP: "1" },
+    });
+  }
   writeFileSync(
     stampPath,
     JSON.stringify({ fingerprint, builtAt: new Date().toISOString() }, null, 2),

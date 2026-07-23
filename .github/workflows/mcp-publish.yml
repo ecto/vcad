@@ -42,8 +42,16 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - name: Install
         run: npm ci
-      - name: Build workspace (checked-in kernel WASM)
-        run: VCAD_WASM_SKIP=1 npm run build --workspaces --if-present
+      - name: Build server packages (checked-in kernel WASM)
+        # Explicit dependency order — `npm run build --workspaces` does NOT
+        # topologically sort, so @vcad/app can build before its deps and fail
+        # the step. Same package set + order as services/mcp/build.sh; the
+        # rest of the workspace (app, docs, leaderboard) is irrelevant here.
+        run: |
+          npm run build -w @vcad/ir
+          npm run build -w @vcad/engine
+          npm run build -w @vcad/core
+          npm run build -w @vcad/mcp
       - name: Stage npm bundle
         run: |
           BASE=$(node -p "require('./packages/mcp/package.json').version")
