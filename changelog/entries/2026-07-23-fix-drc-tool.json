@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-fix-drc-tool",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "feat",
+  "title": "fix_drc: auto-apply the safe subset of DRC fixes",
+  "summary": "One call runs DRC and applies only mechanically-safe fixes (stitching vias, via dedupe, edge nudges, per-net reroute), each delta-verified and reverted if it introduces anything new.",
+  "features": ["pcb", "drc", "verification"],
+  "mcpTools": ["fix_drc"]
+}
