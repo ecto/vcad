@@ -15,7 +15,7 @@ import {
   applyToolOutcome,
   listPartsFromDocument,
 } from "@vcad/core";
-import { getSession, recordLastChanged } from "./session.js";
+import { getSession, recordLastChanged, recordTriangles } from "./session.js";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import {
   describeSceneResult,
@@ -422,7 +422,10 @@ export function dispatchRegistryTool(
     // out-of-band inspect_cad (torr session-3 field report).
     if (engine) {
       const integrity = computeIntegrity(doc, engine);
-      if (integrity) appendIntegrity(result, integrity);
+      if (integrity) {
+        appendIntegrity(result, integrity);
+        recordTriangles(documentId, integrity.triangles);
+      }
     }
   }
   return result;
