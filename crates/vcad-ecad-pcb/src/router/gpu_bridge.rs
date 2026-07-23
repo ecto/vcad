@@ -124,7 +124,7 @@ pub fn class_deltas(
         // A row whose end is not the grid edge must still be word-aligned;
         // when nx itself is not a multiple of 4 the final word is padded on
         // the GPU side, so clamp to the last full word boundary if needed.
-        let ax1 = if (ax1 + 1) % 4 == 0 {
+        let ax1 = if (ax1 + 1).is_multiple_of(4) {
             ax1
         } else {
             // nx not divisible by 4 and rect touches the edge: shrink to the
