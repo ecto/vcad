@@ -6,5 +6,5 @@
   "title": "Inline board preview after every PCB mutation",
   "summary": "route_nets, add_zone, and other copper mutations now attach the layered board GLB, so the inline widget no longer shows 'no geometry to preview' on board-only sessions.",
   "features": ["pcb", "mcp-apps", "preview"],
-  "mcpTools": ["route_nets", "add_zone", "set_placement", "set_board_outline"]
+  "mcpTools": ["route_nets", "add_zone", "set_placement", "set_board_outline", "add_net_tie", "delete_net_tie", "add_via_array", "route_diff_pair", "length_match_traces"]
 }
