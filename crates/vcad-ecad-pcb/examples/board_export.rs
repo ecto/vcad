@@ -12,8 +12,12 @@ use vcad_ir::ecad::Pcb;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let input = args.next().expect("usage: board_export <board.pcb.json> <out_dir>");
-    let out = args.next().expect("usage: board_export <board.pcb.json> <out_dir>");
+    let input = args
+        .next()
+        .expect("usage: board_export <board.pcb.json> <out_dir>");
+    let out = args
+        .next()
+        .expect("usage: board_export <board.pcb.json> <out_dir>");
     let out = Path::new(&out);
     fs::create_dir_all(out).expect("create out dir");
 
@@ -30,8 +34,11 @@ fn main() {
     vcad_ecad_export::excellon::write_excellon(&mut drill, &pcb).expect("excellon");
     fs::write(out.join("drill.drl"), &drill).expect("write drill");
 
-    fs::write(out.join("board.kicad_pcb"), vcad_ecad_symbols::write_kicad_pcb(&pcb))
-        .expect("write kicad");
+    fs::write(
+        out.join("board.kicad_pcb"),
+        vcad_ecad_symbols::write_kicad_pcb(&pcb),
+    )
+    .expect("write kicad");
 
     let mut bom = Vec::new();
     vcad_ecad_export::bom::write_bom(&mut bom, &pcb).expect("bom");
