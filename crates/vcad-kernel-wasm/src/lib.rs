@@ -14,6 +14,7 @@ pub mod circuit_sim;
 pub mod design_constraints;
 pub mod document_diff;
 pub mod document_engine;
+pub mod expressions;
 pub mod keybindings;
 pub mod sheet_metal;
 pub mod sketch_session;
