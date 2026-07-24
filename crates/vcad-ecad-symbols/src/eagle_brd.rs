@@ -48,6 +48,15 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
     if !used.contains(&16) {
         used.push(16);
     }
+    // Fail closed on boards deeper than the IR's copper vocabulary
+    // (FCu + In1..In8 + BCu = 10): silently merging extra inner layers
+    // would fabricate connectivity.
+    if used.len() > 10 {
+        return Err(format!(
+            "board uses {} copper layers; importer supports at most 10 (FCu + In1..In8 + BCu)",
+            used.len()
+        ));
+    }
     let n_inner = used.len().saturating_sub(2);
     let map_layer = |e: u8| -> Option<PcbLayer> {
         let idx = used.iter().position(|&u| u == e)?;
@@ -62,7 +71,8 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
                 5 => PcbLayer::In5Cu,
                 6 => PcbLayer::In6Cu,
                 7 => PcbLayer::In7Cu,
-                _ => PcbLayer::In8Cu,
+                8 => PcbLayer::In8Cu,
+                _ => return None,
             },
         })
     };
