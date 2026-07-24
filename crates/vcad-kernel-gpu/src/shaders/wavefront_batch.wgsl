@@ -81,9 +81,15 @@ fn candidate(search: u32, base: u32, x: i32, y: i32, l: u32, cost: u32) -> u32 {
 }
 
 @compute @workgroup_size(256)
-fn relax_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn relax_batch(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+) {
     let total = total_nodes();
-    let flat = gid.x;
+    // 2D dispatch grid: hosts split workgroups over (x, y) because a single
+    // dispatch dimension is capped at 65535 — a full-board batch needs ~2x
+    // that. Flatten back to the linear node index.
+    let flat = gid.y * (nwg.x * 256u) + gid.x;
     if flat >= total * params.n_searches {
         return;
     }

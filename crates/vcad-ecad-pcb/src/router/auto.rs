@@ -1086,6 +1086,12 @@ fn route_pass(
         if pending.is_empty() {
             break;
         }
+        // Keep-best: a rip-up round can end with FEWER placed connections
+        // than it started (it rips victims it then fails to restore — the
+        // CM5 logs show 504 -> 489 over a 46-minute round). The negotiation
+        // loop above snapshots and discards regressing rounds; this loop
+        // must too, or one bad round permanently costs the board copper.
+        let snapshot = (session.clone(), placed.clone(), pending.clone());
         let placed_before = placed.len();
         let sw_rip = Stopwatch::start();
         pending = ripup_pass(
@@ -1109,7 +1115,12 @@ fn route_pass(
             pending.len(),
             sw_rip.ms() / 1000.0,
         );
-        if placed.len() <= placed_before {
+        if placed.len() < placed_before {
+            log::info!("ripup round regressed — restoring pre-round snapshot");
+            (session, placed, pending) = snapshot;
+            break;
+        }
+        if placed.len() == placed_before {
             break;
         }
     }

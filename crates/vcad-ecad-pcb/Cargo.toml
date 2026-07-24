@@ -25,6 +25,7 @@ log = "0.4"
 
 [dev-dependencies]
 vcad-ecad-sim = { path = "../vcad-ecad-sim" }
+vcad-ecad-export = { path = "../vcad-ecad-export" }
 vcad-ecad-symbols = { workspace = true }
 env_logger = "0.11"
 
