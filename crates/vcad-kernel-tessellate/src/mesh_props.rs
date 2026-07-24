@@ -60,7 +60,7 @@ pub fn compute_mesh_properties(positions: &[f32], indices: &[u32]) -> MeshProper
         ])
     };
 
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let (Some(p1), Some(p2), Some(p3)) = (vertex(tri[0]), vertex(tri[1]), vertex(tri[2]))
         else {
             continue;
