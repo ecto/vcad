@@ -663,6 +663,8 @@ export interface KernelModule {
   photonicsSimulate?: (specJson: string, optionsJson: string) => unknown;
   /** Monte Carlo neutron shielding run (ShieldSpec/params JSON). */
   neutronicsSimulate?: (specJson: string, paramsJson: string) => unknown;
+  /** Lattice gauge theory Monte Carlo run (SimSpec JSON). */
+  latticeGaugeSimulate?: (specJson: string) => unknown;
   /** Static structural analysis of a box solid. */
   analyzeStaticsBox?: (
     specJson: string,
@@ -1061,6 +1063,7 @@ export class Engine {
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
       photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
       neutronicsSimulate: (wasmModule as Record<string, unknown>).neutronicsSimulate as KernelModule["neutronicsSimulate"],
+      latticeGaugeSimulate: (wasmModule as Record<string, unknown>).latticeGaugeSimulate as KernelModule["latticeGaugeSimulate"],
       analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
       analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
@@ -1553,6 +1556,22 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson);
+  }
+
+  /**
+   * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson
+   * action): plaquette, Wilson loops, string tension, Polyakov order
+   * parameter, flux-tube profile, field snapshots — jackknife errors
+   * throughout; see `vcad-kernel-qcd`.
+   */
+  latticeGaugeSimulate(specJson: string): unknown {
+    const fn = this.kernel.latticeGaugeSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "latticeGaugeSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson);
   }
 
   topologyOptimizeBox(
