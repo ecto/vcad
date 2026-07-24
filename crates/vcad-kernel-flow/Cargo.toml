@@ -10,6 +10,13 @@ repository.workspace = true
 serde = { workspace = true }
 vcad-receipt = { workspace = true }
 vcad-kernel-thermal = { workspace = true }
+vcad-kernel-gpu = { workspace = true, optional = true }
+wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+
+[features]
+gpu = ["dep:vcad-kernel-gpu", "dep:wgpu", "dep:bytemuck", "dep:pollster"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

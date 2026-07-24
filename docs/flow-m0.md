@@ -100,32 +100,59 @@ receipt built from predictions **rolls up Provisional, never Pass**.
 fail-closed verdicts — Unmeasured never silently passes. The printed
 measurement pack that closes the loop is M2.
 
-## Milestone ladder
+## Milestone ladder (all landed on this branch)
 
-- **M0 (this)** — isothermal laminar internal flow; Poiseuille, Shah–
+- **M0 (done)** — isothermal laminar internal flow; Poiseuille, Shah–
   London, Ghia; `vcad.flow-claims/1`; splitter-manifold flagship.
 - **M0.5 (done)** — WASM bindings + `simulate_flow` MCP tool (spec JSON in,
   claim set out), kernel-features catalog entry, changelog.
-- **M1** — thermal transport in the fluid (advection–diffusion on the
-  LBM field, fixed wall temperatures); Nu-correlation oracles join the
-  cross-route check; `outlet_temp_c`, `heat_transfer_w` claims.
-- **M2** — the conjugate seam to `solve_thermal`: segregated exchange —
-  flow hands per-boundary-voxel film h and T_fluid into thermal's
-  `Boundary::Convection`, thermal hands wall temperatures back; iterate
-  to interface heat-flux convergence, fail-closed on the iteration
-  budget. Fan-cooled enclosure flagship ("does this stay under 60 °C"),
-  plus the measurement pack (thermistor + printed orifice) that flips
-  Provisional → Pass.
-- **M3** — natural convection (Boussinesq forcing, Ra-gated laminar
-  envelope, de Vahl Davis cavity benchmark): the fanless-enclosure
-  answer.
-- **M4** — discrete adjoint of the steady state (checkpointed reverse
-  mode, FD-validated) → flow-channel topology optimization: grown
-  manifolds and heatsinks with receipts on both ΔP and temperature.
-- **GPU track (parallel, any time after M0)** — LBM streaming/collision
-  as WGSL compute on `vcad-kernel-gpu`; CPU↔GPU parity tests gate
-  claim-grade use; until then GPU output is preview-only ("preview
-  lattice") — the live smoke-in-viewport demo rides here.
+- **M1 (done)** — thermal transport in the fluid as a **second D3Q19
+  distribution** carrying θ = T − T_inlet (bounce-back = adiabatic,
+  anti-bounce-back = Dirichlet, copy-own = outflow). The plan left the
+  scheme choice to in-branch testing; the FV donor-cell route was tried
+  and **rejected** — its discrete divergence differs from the lattice's
+  and it violated the maximum principle near the inlet. New claims:
+  `outlet_temp_c`, `heat_pickup_w`, and a two-route
+  `thermal_energy_residual` (field route: outlet enthalpy flux from the
+  velocity/temperature fields; link route: the θ the scalar lattice
+  actually exchanged at its Dirichlet boundaries — < 5% at 7 voxels
+  across).
+- **M2 (done)** — the conjugate seam (`conjugate::solve_conjugate`):
+  segregated loop — flow prices a film h from the wall heat its lattice
+  actually moved (correlation-seeded on the bootstrap iteration) plus a
+  bulk temperature into thermal's `Boundary::Convection`; thermal hands
+  its surface temperature field back into `FlowModel::solid_temp_c`;
+  iterate to a wall-temperature fixed point, fail-closed on budget.
+  **Film-averaged** (thermal's `exposed` slot is single) — the per-voxel
+  direction is wall temperatures only; noted where the plan had hoped
+  for per-voxel h. Validation: heated-block-under-duct closes the
+  energy loop (fluid pickup = source power within 10%). The thermistor
+  measurement pack rides `receipt::compare` as designed.
+- **M3 (done)** — natural convection: Boussinesq per-cell forcing,
+  buoyancy counts as drive, fail-closed Ra ≤ 10⁸ envelope, per-voxel
+  `solid_temp_c` painting for differential heating. Validation: de Vahl
+  Davis Ra = 10³ cavity, mean hot-wall Nu = 1.118 within 0.08 on 33²
+  (release rung).
+- **M4 (done)** — discrete adjoint via the **reverse fixed point** of
+  one lattice step (`λ ← CᵀSᵀλ + ∂J/∂f` — a steady state needs no
+  checkpointing, improving on the plan's checkpointed sketch), Brinkman
+  drag parameterization, closed-form collision transpose. Gates: ε = 0
+  agrees with the plain solver to 1e-6; adjoint vs central FD < 1%.
+  Found and fixed en route: freezing the pressure-outlet's quadratic
+  velocity term destabilizes the transpose — the u-coupling damps the
+  anti-bounce-back −1 self-link, so the transpose carries it.
+  `optimize_channel` (projected gradient, bisected volume multiplier)
+  beats a uniform 40%-solid start by > 10% ΔP at equal solid fraction.
+- **M5 (done, GPU + viewport plumbing)** — `gpu` feature: the same
+  D3Q19 step as WGSL compute (`gpu::preview_blocking/preview_async`) on
+  `vcad-kernel-gpu`'s shared context, browser-capable. Explicitly the
+  **preview lattice**: f32, fixed steps, no steadiness detection, every
+  result carries a not-claim-grade note; the CPU↔GPU parity test pins
+  the preview to the claim-grade solver at steady state (< 2e-3
+  relative, skips cleanly on adapterless machines). App: `FieldKind`
+  gains `velocity`/`pressure` for the existing per-vertex overlay path.
+  The volumetric smoke/streamline renderer is deliberately its own app
+  PR (new render machinery, the demo-video deliverable).
 
 ## Non-goals
 

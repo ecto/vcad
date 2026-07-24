@@ -7400,10 +7400,14 @@ dependencies = [
 name = "vcad-kernel-flow"
 version = "0.9.4"
 dependencies = [
+ "bytemuck",
+ "pollster",
  "serde",
  "serde_json",
+ "vcad-kernel-gpu",
  "vcad-kernel-thermal",
  "vcad-receipt",
+ "wgpu",
 ]
 
 [[package]]

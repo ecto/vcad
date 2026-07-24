@@ -42,6 +42,8 @@
 
 pub mod adjoint;
 pub mod conjugate;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod lattice;
 pub mod lumped;
 pub mod model;
