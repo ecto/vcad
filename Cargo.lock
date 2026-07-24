@@ -7189,6 +7189,7 @@ dependencies = [
  "vcad-kernel-cost",
  "vcad-kernel-dfm",
  "vcad-kernel-em",
+ "vcad-kernel-enclosure",
  "vcad-kernel-fea",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
@@ -7353,6 +7354,14 @@ dependencies = [
  "serde_json",
  "vcad-kernel-particle",
  "vcad-receipt",
+]
+
+[[package]]
+name = "vcad-kernel-enclosure"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

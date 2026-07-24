@@ -1,0 +1,11 @@
+[package]
+name = "vcad-kernel-enclosure"
+description = "Enclosure feature extraction (generalized-winding-number voxel occupancy: cavity, standoffs, wall openings) and cross-domain PCB-to-enclosure fit verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

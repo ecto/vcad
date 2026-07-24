@@ -330,7 +330,8 @@ export type {
   MaterialCard,
 } from "./atoms.js";
 
-// Cross-domain PCB ↔ enclosure verification (pure; no kernel dependency)
+// Cross-domain PCB ↔ enclosure verification (backed by vcad-kernel-enclosure
+// via WASM — callers must initialize the kernel first)
 export {
   checkEnclosureFit,
   deriveBoardFromCavity,
