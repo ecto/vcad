@@ -1227,6 +1227,15 @@ export function atoms_write_xyz(molecule_json: string): string;
 export function buildCalibrationReportJson(prediction_json: string, measurements_json: string, options_json: string): string;
 
 /**
+ * Build binary GLB bytes from a JSON `GlbSpec` plus shared flat data
+ * buffers. Geometry (positions/normals/animation keyframes) lives in
+ * `f32_data`, indices in `u32_data`; the spec references `[offset, len]`
+ * spans into them. Single source of truth for GLB serialization — the
+ * `@vcad/mcp` and `@vcad/core` exporters are thin wrappers over this.
+ */
+export function buildGlbBytes(spec_json: string, f32_data: Float32Array, u32_data: Uint32Array): Uint8Array;
+
+/**
  * Build a built-in part's sub-document given its path and params JSON.
  *
  * `path` is either a bare id (`"fastener.bolt.socket-head"`) or prefixed
@@ -1235,6 +1244,12 @@ export function buildCalibrationReportJson(prediction_json: string, measurements
  * can splice into the parent document.
  */
 export function buildPart(path: string, params_json: string): string;
+
+/**
+ * Build binary STL bytes from a JSON `StlSpec` plus shared flat data
+ * buffers (see [`build_glb_bytes`] for the buffer convention).
+ */
+export function buildStlBytes(spec_json: string, f32_data: Float32Array, u32_data: Uint32Array): Uint8Array;
 
 /**
  * Build the system prompt sent with every `/api/chat` request.
@@ -2077,6 +2092,12 @@ export function estimatePrintCost(volume_mm3: number, infill_density: number, wa
  * Material names match the catalog in `vcad_kernel::vcad_kernel_cost::Material`.
  */
 export function estimate_cost_for_process(process: string, material_name: string, part_volume_mm3: number, stock_volume_mm3: number, qty: number, feature_count: number): any;
+
+/**
+ * Convert a Transform3D Euler rotation in degrees (extrinsic XYZ, the
+ * kernel's `R = Rz·Ry·Rx` convention) to a glTF quaternion `[x, y, z, w]`.
+ */
+export function eulerXyzDegToQuat(x_deg: number, y_deg: number, z_deg: number): Float64Array;
 
 /**
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
@@ -3072,7 +3093,9 @@ export interface InitOutput {
     readonly analyzeStaticsBox: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly analyzeStaticsMesh: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly antennaAnalyze: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly buildGlbBytes: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly buildPart: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly buildStlBytes: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly build_chat_system_prompt: (a: number, b: number, c: number, d: number) => [number, number];
     readonly computeCreasedNormalsGpu: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly computeMeshProperties: (a: number, b: number, c: number, d: number) => [number, number, number];
@@ -3086,6 +3109,7 @@ export interface InitOutput {
     readonly drawingSheetToPdf: (a: number, b: number) => [number, number, number, number];
     readonly emSimulate: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly estimate_cost_for_process: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly eulerXyzDegToQuat: (a: number, b: number, c: number) => [number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly evaluateVCode: (a: number, b: number) => [number, number, number];
@@ -3387,6 +3411,9 @@ export interface InitOutput {
     readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
     readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
+    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -3458,9 +3485,6 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
-    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];

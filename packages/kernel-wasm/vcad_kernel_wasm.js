@@ -3133,6 +3133,33 @@ export function buildCalibrationReportJson(prediction_json, measurements_json, o
 }
 
 /**
+ * Build binary GLB bytes from a JSON `GlbSpec` plus shared flat data
+ * buffers. Geometry (positions/normals/animation keyframes) lives in
+ * `f32_data`, indices in `u32_data`; the spec references `[offset, len]`
+ * spans into them. Single source of truth for GLB serialization — the
+ * `@vcad/mcp` and `@vcad/core` exporters are thin wrappers over this.
+ * @param {string} spec_json
+ * @param {Float32Array} f32_data
+ * @param {Uint32Array} u32_data
+ * @returns {Uint8Array}
+ */
+export function buildGlbBytes(spec_json, f32_data, u32_data) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(f32_data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(u32_data, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.buildGlbBytes(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
  * Build a built-in part's sub-document given its path and params JSON.
  *
  * `path` is either a bare id (`"fastener.bolt.socket-head"`) or prefixed
@@ -3164,6 +3191,30 @@ export function buildPart(path, params_json) {
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
+}
+
+/**
+ * Build binary STL bytes from a JSON `StlSpec` plus shared flat data
+ * buffers (see [`build_glb_bytes`] for the buffer convention).
+ * @param {string} spec_json
+ * @param {Float32Array} f32_data
+ * @param {Uint32Array} u32_data
+ * @returns {Uint8Array}
+ */
+export function buildStlBytes(spec_json, f32_data, u32_data) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(f32_data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(u32_data, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.buildStlBytes(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
 }
 
 /**
@@ -5227,6 +5278,21 @@ export function estimate_cost_for_process(process, material_name, part_volume_mm
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Convert a Transform3D Euler rotation in degrees (extrinsic XYZ, the
+ * kernel's `R = Rz·Ry·Rx` convention) to a glTF quaternion `[x, y, z, w]`.
+ * @param {number} x_deg
+ * @param {number} y_deg
+ * @param {number} z_deg
+ * @returns {Float64Array}
+ */
+export function eulerXyzDegToQuat(x_deg, y_deg, z_deg) {
+    const ret = wasm.eulerXyzDegToQuat(x_deg, y_deg, z_deg);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
 }
 
 /**
@@ -9677,12 +9743,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3634, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3635, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3663, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3664, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3659, function: Function { arguments: [Externref], shim_idx: 3660, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3688, function: Function { arguments: [Externref], shim_idx: 3689, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
