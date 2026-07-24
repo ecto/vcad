@@ -19,6 +19,7 @@ use std::path::Path;
 
 pub use vcad_kernel_antenna;
 pub use vcad_kernel_booleans;
+pub use vcad_kernel_calibration;
 pub use vcad_kernel_cam;
 pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;

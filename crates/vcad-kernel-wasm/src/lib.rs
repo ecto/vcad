@@ -8,6 +8,7 @@
 //! for all serializable types. Run `cargo test --features ts-rs` to generate types.
 
 #[cfg(feature = "ecad")]
+pub mod calibration;
 pub mod circuit_sim;
 #[cfg(feature = "ecad")]
 pub mod design_constraints;

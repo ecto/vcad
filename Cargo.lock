@@ -7172,6 +7172,7 @@ dependencies = [
  "serde_json",
  "vcad-kernel-antenna",
  "vcad-kernel-booleans",
+ "vcad-kernel-calibration",
  "vcad-kernel-cam",
  "vcad-kernel-constraints",
  "vcad-kernel-cost",
@@ -7242,6 +7243,15 @@ dependencies = [
  "vcad-kernel-sketch",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
+]
+
+[[package]]
+name = "vcad-kernel-calibration"
+version = "0.9.4"
+dependencies = [
+ "ryu",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7679,6 +7689,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-atoms",
+ "vcad-kernel-calibration",
  "vcad-kernel-cam",
  "vcad-kernel-drafting",
  "vcad-kernel-geom",
