@@ -30,6 +30,10 @@ pub type Point2 = tang::Point2<f64>;
 pub type Vec2 = tang::Vec2<f64>;
 
 /// A 4x4 affine transformation matrix.
+///
+/// Intentionally distinct from `tang::Transform` (rigid-only): vcad needs
+/// full affine — non-uniform scale (`CsgOp::Scale`) and reflection (mirror
+/// ops) — which a rotation+translation pair cannot represent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Transform {
     /// The underlying 4x4 matrix.
