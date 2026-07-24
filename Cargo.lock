@@ -4019,6 +4019,7 @@ dependencies = [
 name = "phyz"
 version = "0.3.0"
 dependencies = [
+ "phyz-math",
  "tang",
 ]
 
@@ -5693,6 +5694,7 @@ name = "tang"
 version = "0.2.0"
 dependencies = [
  "paste",
+ "robust",
 ]
 
 [[package]]
@@ -7420,7 +7422,6 @@ dependencies = [
 name = "vcad-kernel-math"
 version = "0.9.4"
 dependencies = [
- "robust",
  "tang",
 ]
 
