@@ -17,6 +17,7 @@ use vcad_kernel_topo::{FaceId, Orientation, Topology};
 pub mod clearance;
 mod creased_normals;
 pub mod frozen;
+pub mod placement;
 mod render_bake;
 
 pub use clearance::{mesh_clearance, ClearanceResult};

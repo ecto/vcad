@@ -49,7 +49,25 @@ interface KernelModule {
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
   /** Resolve a stdlib part → sub-document JSON. */
   buildPart?: (path: string, paramsJson: string) => string;
+  /** Kernel-side embroidery ribbon meshing (newer WASM builds). */
+  embroideryDesignToMesh?: (designJson: string) => {
+    positions: number[];
+    indices: number[];
+    colors: number[];
+  };
+  /** Kernel-side mesh placement (newer WASM builds). */
+  transformMeshBuffers?: (
+    positions: Float32Array,
+    normals: Float32Array | undefined,
+    transformJson: string,
+  ) => { positions: number[]; normals?: number[] };
 }
+
+/** The subset of {@link KernelModule} the mesh helpers feature-detect. */
+export type MeshKernel = Pick<
+  KernelModule,
+  "embroideryDesignToMesh" | "transformMeshBuffers"
+>;
 
 /** Shape of the WASM evaluator result */
 interface WasmEvaluatedScene {
@@ -133,8 +151,8 @@ export function evaluateDocument(
         if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
           const emb = findEmbroideryPattern(visibleRoots[i].root, doc.nodes);
           if (emb) {
-            const baseMesh = embroideryPatternToMesh(emb.pattern);
-            const mesh = transformMesh(baseMesh, emb.transform);
+            const baseMesh = embroideryPatternToMeshWithKernel(emb.pattern, kernel);
+            const mesh = transformMeshWithKernel(baseMesh, emb.transform, kernel);
             return { mesh, material: p.material };
           }
           // Sheet-metal: the regular evaluator returns empty for these ops
@@ -238,42 +256,16 @@ function convertSketchToProfile(op: Sketch2DOp) {
   };
 }
 
-/** Extract a TriangleMesh from a Solid. */
+/** Extract a TriangleMesh from a Solid.
+ *
+ * Index validity is the kernel's contract: `getMesh` drops any triangle
+ * referencing an out-of-bounds vertex before returning (and logs the
+ * occurrence), so no re-validation happens here. */
 function solidToMesh(solid: Solid): TriangleMesh {
   const meshData = solid.getMesh();
-  const positions = new Float32Array(meshData.positions);
-  const indices = new Uint32Array(meshData.indices);
-
-  // Validate indices - check for out-of-bounds references
-  const numVertices = positions.length / 3;
-  let hasInvalidIndices = false;
-  for (let i = 0; i < indices.length; i++) {
-    if (indices[i] >= numVertices) {
-      hasInvalidIndices = true;
-      break;
-    }
-  }
-
-  if (hasInvalidIndices) {
-    const validIndices: number[] = [];
-    for (let i = 0; i < indices.length; i += 3) {
-      const i0 = indices[i];
-      const i1 = indices[i + 1];
-      const i2 = indices[i + 2];
-      if (i0 < numVertices && i1 < numVertices && i2 < numVertices) {
-        validIndices.push(i0, i1, i2);
-      }
-    }
-    return {
-      positions,
-      indices: new Uint32Array(validIndices),
-      normals: meshData.normals ? new Float32Array(meshData.normals) : undefined,
-    };
-  }
-
   return {
-    positions,
-    indices,
+    positions: new Float32Array(meshData.positions),
+    indices: new Uint32Array(meshData.indices),
     normals: meshData.normals ? new Float32Array(meshData.normals) : undefined,
   };
 }
@@ -334,7 +326,7 @@ export function resolveSheetMetalPart(
   return {
     mesh: isIdentityTransform(sm.transform)
       ? mesh
-      : transformMesh(mesh, sm.transform),
+      : transformMeshWithKernel(mesh, sm.transform, kernel as MeshKernel),
     sheetMetal,
   };
 }
@@ -394,6 +386,69 @@ export function embroideryPatternToMesh(op: EmbroideryPatternOp): TriangleMesh {
     indices: new Uint32Array(allIndices),
     colors: new Float32Array(allColors),
   };
+}
+
+/**
+ * Kernel-preferred embroidery meshing: use the WASM `embroideryDesignToMesh`
+ * binding when the loaded kernel has it, otherwise fall back to the TS
+ * {@link embroideryPatternToMesh}. Both implement the same ribbon-quad
+ * generation; the kernel (crates/vcad-embroidery `render.rs`) is the source
+ * of truth, the TS port survives for older WASM builds.
+ */
+export function embroideryPatternToMeshWithKernel(
+  op: EmbroideryPatternOp,
+  kernel: MeshKernel | undefined,
+): TriangleMesh {
+  if (kernel?.embroideryDesignToMesh) {
+    try {
+      const m = kernel.embroideryDesignToMesh(JSON.stringify(op.design));
+      return {
+        positions: new Float32Array(m.positions),
+        indices: new Uint32Array(m.indices),
+        colors: new Float32Array(m.colors),
+      };
+    } catch (e) {
+      console.warn(
+        "[ENGINE] kernel embroideryDesignToMesh failed, falling back to TS:",
+        e,
+      );
+    }
+  }
+  return embroideryPatternToMesh(op);
+}
+
+/**
+ * Kernel-preferred mesh placement: use the WASM `transformMeshBuffers`
+ * binding when the loaded kernel has it, otherwise fall back to the TS
+ * {@link transformMesh}. Same convention either way: scale → rotate
+ * (Rz·Ry·Rx, degrees) → translate on positions, rotation only on normals.
+ */
+export function transformMeshWithKernel(
+  mesh: TriangleMesh,
+  transform: TransformInfo,
+  kernel: MeshKernel | undefined,
+): TriangleMesh {
+  if (kernel?.transformMeshBuffers) {
+    try {
+      const r = kernel.transformMeshBuffers(
+        mesh.positions,
+        mesh.normals,
+        JSON.stringify(transform),
+      );
+      return {
+        positions: new Float32Array(r.positions),
+        indices: mesh.indices,
+        normals: r.normals ? new Float32Array(r.normals) : undefined,
+        colors: mesh.colors,
+      };
+    } catch (e) {
+      console.warn(
+        "[ENGINE] kernel transformMeshBuffers failed, falling back to TS:",
+        e,
+      );
+    }
+  }
+  return transformMesh(mesh, transform);
 }
 
 /**
@@ -481,8 +536,8 @@ export function evaluateDocumentTS(
     // Check if this is an EmbroideryPattern
     const embPattern = findEmbroideryPattern(entry.root, doc.nodes);
     if (embPattern) {
-      const baseMesh = embroideryPatternToMesh(embPattern.pattern);
-      const mesh = transformMesh(baseMesh, embPattern.transform);
+      const baseMesh = embroideryPatternToMeshWithKernel(embPattern.pattern, kernel);
+      const mesh = transformMeshWithKernel(baseMesh, embPattern.transform, kernel);
       solids.push(Solid.empty());
       return { mesh, material: entry.material };
     }
@@ -495,7 +550,7 @@ export function evaluateDocumentTS(
         indices: new Uint32Array(imported.mesh.indices),
         normals: imported.mesh.normals ? new Float32Array(imported.mesh.normals) : undefined,
       };
-      const mesh = transformMesh(baseMesh, imported.transform);
+      const mesh = transformMeshWithKernel(baseMesh, imported.transform, kernel);
       solids.push(Solid.empty());
       return { mesh, material: entry.material };
     }

@@ -534,6 +534,57 @@ pub struct WasmMesh {
     pub face_kinds: Option<Vec<u8>>,
 }
 
+/// A rigid placement: the translate/rotate/scale triple the IR's
+/// `Translate`/`Rotate`/`Scale` wrapper chain describes.
+#[derive(Serialize, Deserialize)]
+struct WasmPlacement {
+    translate: WasmVec3,
+    rotate: WasmVec3,
+    scale: WasmVec3,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WasmVec3 {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+/// Transformed mesh buffers returned by [`transform_mesh_buffers`].
+#[derive(Serialize)]
+struct WasmTransformedMesh {
+    positions: Vec<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normals: Option<Vec<f32>>,
+}
+
+/// Apply a placement (`scale → rotate → translate`, rotation Rz·Ry·Rx in
+/// degrees — the engine `transformMesh` convention) to flat mesh buffers.
+///
+/// `transform_json` is `{ translate: {x,y,z}, rotate: {x,y,z}, scale: {x,y,z} }`.
+/// Positions get the full placement; normals (optional) get the rotation
+/// only. Returns `{ positions, normals? }`.
+#[wasm_bindgen(js_name = transformMeshBuffers)]
+pub fn transform_mesh_buffers(
+    positions: Vec<f32>,
+    normals: Option<Vec<f32>>,
+    transform_json: &str,
+) -> Result<JsValue, JsError> {
+    let t: WasmPlacement =
+        serde_json::from_str(transform_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let mut positions = positions;
+    let mut normals = normals;
+    vcad_kernel_tessellate::placement::apply_placement(
+        &mut positions,
+        normals.as_deref_mut(),
+        [t.translate.x, t.translate.y, t.translate.z],
+        [t.rotate.x, t.rotate.y, t.rotate.z],
+        [t.scale.x, t.scale.y, t.scale.z],
+    );
+    serde_wasm_bindgen::to_value(&WasmTransformedMesh { positions, normals })
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Mesh-to-mesh clearance result: minimum separation (or penetration
 /// depth if negative) between two solids/meshes.
 #[derive(Serialize, Deserialize)]
@@ -1666,6 +1717,21 @@ impl Solid {
                 )
                 .into(),
             );
+            // Guarantee valid indices to consumers: drop any triangle that
+            // references an out-of-bounds vertex. The engine's `solidToMesh`
+            // used to re-validate every mesh in TS; this filter is the
+            // contract that lets it trust the buffer as-is.
+            mesh.indices = mesh
+                .indices
+                .chunks_exact(3)
+                .filter(|t| t.iter().all(|&i| (i as usize) < num_verts))
+                .flatten()
+                .copied()
+                .collect();
+            if !mesh.face_kinds.is_empty() {
+                // face_kinds is per-triangle; keep it aligned or drop it.
+                mesh.face_kinds.clear();
+            }
         }
 
         let normals = if mesh.normals.len() == mesh.vertices.len() {
@@ -7080,6 +7146,52 @@ mod embroidery_wasm {
         let pattern: EmbPattern =
             serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?;
         vcad_embroidery_dst::write_dst(&pattern).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Ribbon-quad mesh with per-vertex colors, from an IR embroidery design.
+    #[derive(serde::Serialize)]
+    struct WasmRibbonMesh {
+        positions: Vec<f32>,
+        indices: Vec<u32>,
+        colors: Vec<f32>,
+    }
+
+    /// Tessellate an IR `EmbroideryDesign` (JSON) into a flat ribbon-quad
+    /// mesh at Z=0 with per-vertex thread colors — the kernel-side
+    /// equivalent of the engine's `embroideryPatternToMesh`.
+    ///
+    /// Returns `{ positions, indices, colors }`.
+    #[wasm_bindgen(js_name = embroideryDesignToMesh)]
+    pub fn embroidery_design_to_mesh(design_json: &str) -> Result<JsValue, JsError> {
+        let design: vcad_ir::EmbroideryDesign =
+            serde_json::from_str(design_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let groups: Vec<vcad_embroidery::RibbonGroup> = design
+            .stitch_groups
+            .iter()
+            .map(|g| vcad_embroidery::RibbonGroup {
+                // Default to mid-gray when the thread index is unresolved,
+                // matching the TS implementation.
+                color: design
+                    .threads
+                    .get(g.thread_index)
+                    .map(|t| {
+                        [
+                            t.color[0] as f32 / 255.0,
+                            t.color[1] as f32 / 255.0,
+                            t.color[2] as f32 / 255.0,
+                        ]
+                    })
+                    .unwrap_or([0.5, 0.5, 0.5]),
+                stitches: g.stitches.clone(),
+            })
+            .collect();
+        let mesh = vcad_embroidery::ribbon_mesh(&groups);
+        serde_wasm_bindgen::to_value(&WasmRibbonMesh {
+            positions: mesh.positions,
+            indices: mesh.indices,
+            colors: mesh.colors,
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Options for text digitization.
