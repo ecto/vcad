@@ -33,6 +33,7 @@ members = [
     "crates/vcad-kernel-em",
     "crates/vcad-kernel-enclosure",
     "crates/vcad-kernel-orbit",
+    "crates/vcad-kernel-qcd",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -128,6 +129,7 @@ default-members = [
     "crates/vcad-kernel-em",
     "crates/vcad-kernel-enclosure",
     "crates/vcad-kernel-orbit",
+    "crates/vcad-kernel-qcd",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -239,6 +241,7 @@ vcad-kernel-acoustics = { path = "crates/vcad-kernel-acoustics", version = "0.9.
 vcad-kernel-em = { path = "crates/vcad-kernel-em", version = "0.9.4" }
 vcad-kernel-enclosure = { path = "crates/vcad-kernel-enclosure", version = "0.9.4" }
 vcad-kernel-orbit = { path = "crates/vcad-kernel-orbit", version = "0.9.4" }
+vcad-kernel-qcd = { path = "crates/vcad-kernel-qcd", version = "0.9.4" }
 vcad-kernel-drafting = { path = "crates/vcad-kernel-drafting", version = "0.9.4" }
 vcad-kernel-gpu = { path = "crates/vcad-kernel-gpu", version = "0.9.4" }
 vcad-kernel-raytrace = { path = "crates/vcad-kernel-raytrace", version = "0.9.4" }

@@ -7524,6 +7524,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-qcd"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-raytrace"
 version = "0.9.4"
 dependencies = [
