@@ -67,6 +67,12 @@ pub enum SolveError {
         /// Step at which non-finite values appeared.
         step: usize,
     },
+    /// The scalar relaxation time τ_g = 3·α·dt/dx² + ½ falls outside
+    /// the validated lattice window at this scaling.
+    ThermalUnstable {
+        /// α·dt/dx² of the run.
+        alpha_lat: f64,
+    },
 }
 
 impl std::fmt::Display for SolveError {
@@ -90,6 +96,12 @@ impl std::fmt::Display for SolveError {
             SolveError::Diverged { step } => {
                 write!(f, "lattice diverged (non-finite field) at step {step}")
             }
+            SolveError::ThermalUnstable { alpha_lat } => write!(
+                f,
+                "scalar relaxation time tau_g = {:.4} (alpha_lat = {alpha_lat:.4}) is \
+                 outside the validated lattice window; refine the grid or adjust u_ref",
+                3.0 * alpha_lat + 0.5
+            ),
         }
     }
 }
@@ -137,6 +149,19 @@ pub struct Solution {
     pub pressure_drop_pa: f64,
     /// Largest fluid speed, m/s.
     pub max_speed_m_s: f64,
+    /// Fluid temperature per voxel, °C (thermal runs only; non-fluid
+    /// voxels hold the initial temperature).
+    pub temperature_c: Option<Vec<f64>>,
+    /// Flux-weighted mean outlet temperature, °C (thermal + ports).
+    pub outlet_temp_c: Option<f64>,
+    /// Heat picked up by the fluid between inlet and outlet, W:
+    /// `ρ·c_p·(Σ_out u_n·A·T − Q_in·T_in)`.
+    pub heat_pickup_w: Option<f64>,
+    /// Heat entering the fluid through Dirichlet boundaries, W
+    /// (isothermal walls plus conduction through the inlet ghost).
+    /// Steady state closes `wall_heat_w ≈ heat_pickup_w` for ported
+    /// runs — the thermal energy audit.
+    pub wall_heat_w: Option<f64>,
 }
 
 /// Run the lattice to steady state.
@@ -176,6 +201,80 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
         scaling.accel_to_lattice(model.body_force_n_m3[2] / model.fluid.density_kg_m3),
     ];
 
+    // Thermal transport setup (M1/M3).
+    let thermal = model.thermal;
+    let (buoy_lat_per_k, t_ref_buoy, t_scale) = if let Some(t) = &thermal {
+        let alpha_lat = t.diffusivity_m2_s * scaling.dt_s / (scaling.dx_m * scaling.dx_m);
+        // Scalar relaxation time must sit in the same validated window
+        // as the flow lattice.
+        let tau_g = 3.0 * alpha_lat + 0.5;
+        if !(crate::lattice::TAU_MIN..=crate::lattice::TAU_MAX).contains(&tau_g) {
+            return Err(SolveError::ThermalUnstable { alpha_lat });
+        }
+        // Buoyant acceleration per kelvin: a = −g·β·(T − T_ref).
+        let (bl, tref) = match t.buoyancy {
+            Some(b) => (
+                [
+                    scaling.accel_to_lattice(-b.gravity_m_s2[0] * b.beta_per_k),
+                    scaling.accel_to_lattice(-b.gravity_m_s2[1] * b.beta_per_k),
+                    scaling.accel_to_lattice(-b.gravity_m_s2[2] * b.beta_per_k),
+                ],
+                b.t_ref_c,
+            ),
+            None => ([0.0; 3], 0.0),
+        };
+        let mut spread = (t.inlet_temp_c - t.initial_temp_c).abs();
+        if let Some(w) = t.wall_temp_c {
+            spread = spread
+                .max((w - t.initial_temp_c).abs())
+                .max((w - t.inlet_temp_c).abs());
+        }
+        if let Some(st) = &model.solid_temp_c {
+            for v in st.iter().filter(|v| v.is_finite()) {
+                spread = spread
+                    .max((v - t.initial_temp_c).abs())
+                    .max((v - t.inlet_temp_c).abs());
+            }
+        }
+        (bl, tref, spread.max(1e-9))
+    } else {
+        ([0.0; 3], 0.0, 1.0)
+    };
+    let has_buoyancy = buoy_lat_per_k.iter().any(|b| *b != 0.0);
+    let mut temp: Vec<f64> = match &thermal {
+        Some(t) => vec![t.initial_temp_c; n],
+        None => Vec::new(),
+    };
+    let mut temp_prev = temp.clone();
+    // Second distribution for the temperature scalar (the FV route was
+    // tried and rejected: cell-centered upwind advection on the LBM
+    // velocity field violates the maximum principle near the inlet
+    // because its discrete divergence differs from the lattice's; the
+    // double-distribution scalar inherits the lattice's continuity).
+    // g carries θ = T − T_inlet so boundary fluxes are baseline-free.
+    let omega_g = thermal.map(|t| {
+        1.0 / (3.0 * t.diffusivity_m2_s * scaling.dt_s / (scaling.dx_m * scaling.dx_m) + 0.5)
+    });
+    let mut g: Vec<f64> = match &thermal {
+        Some(t) => {
+            let theta0 = t.initial_temp_c - t.inlet_temp_c;
+            let mut g = vec![0.0; n * Q];
+            for x in 0..n {
+                for q in 0..Q {
+                    g[x * Q + q] = W[q] * theta0;
+                }
+            }
+            g
+        }
+        None => Vec::new(),
+    };
+    let mut g_new = g.clone();
+    // Boundary θ-exchange accumulators (per step, lattice units):
+    // Dirichlet walls, inlet, outlet — the audit's second route.
+    let mut q_wall_lat = 0.0f64;
+    let mut q_inlet_lat = 0.0f64;
+    let mut q_outlet_lat = 0.0f64;
+
     let cells = &model.cells;
     let mut f: Vec<f64> = vec![0.0; n * Q];
     let feq0 = equilibrium(1.0, [0.0; 3]);
@@ -208,6 +307,13 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
             if cells[x] != Cell::Fluid {
                 continue;
             }
+            // Scalar moment first: θ from g, so buoyancy sees this
+            // step's temperature.
+            if let (Some(t), Some(_)) = (&thermal, omega_g) {
+                let gx = &g[x * Q..(x + 1) * Q];
+                let theta: f64 = gx.iter().sum();
+                temp[x] = theta + t.inlet_temp_c;
+            }
             let fx = &mut f[x * Q..(x + 1) * Q];
             let mut r = 0.0;
             let mut m = [0.0f64; 3];
@@ -217,22 +323,44 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
                 m[1] += fi * C[i][1] as f64;
                 m[2] += fi * C[i][2] as f64;
             }
+            // Per-cell acceleration: global body force plus Boussinesq
+            // buoyancy when a temperature field is coupled in.
+            let a_cell = if has_buoyancy {
+                let dtc = temp[x] - t_ref_buoy;
+                [
+                    a_lat[0] + buoy_lat_per_k[0] * dtc,
+                    a_lat[1] + buoy_lat_per_k[1] * dtc,
+                    a_lat[2] + buoy_lat_per_k[2] * dtc,
+                ]
+            } else {
+                a_lat
+            };
             let u = [
-                (m[0] + 0.5 * a_lat[0] * r) / r,
-                (m[1] + 0.5 * a_lat[1] * r) / r,
-                (m[2] + 0.5 * a_lat[2] * r) / r,
+                (m[0] + 0.5 * a_cell[0] * r) / r,
+                (m[1] + 0.5 * a_cell[1] * r) / r,
+                (m[2] + 0.5 * a_cell[2] * r) / r,
             ];
             rho[x] = r;
             vel[x] = u;
             let feq = equilibrium(r, u);
             for i in 0..Q {
                 let cu = C[i][0] as f64 * u[0] + C[i][1] as f64 * u[1] + C[i][2] as f64 * u[2];
-                let ca = C[i][0] as f64 * a_lat[0]
-                    + C[i][1] as f64 * a_lat[1]
-                    + C[i][2] as f64 * a_lat[2];
-                let ua = u[0] * a_lat[0] + u[1] * a_lat[1] + u[2] * a_lat[2];
+                let ca = C[i][0] as f64 * a_cell[0]
+                    + C[i][1] as f64 * a_cell[1]
+                    + C[i][2] as f64 * a_cell[2];
+                let ua = u[0] * a_cell[0] + u[1] * a_cell[1] + u[2] * a_cell[2];
                 let guo = force_prefactor * W[i] * r * (3.0 * (ca - ua) + 9.0 * cu * ca);
                 fx[i] += -omega * (fx[i] - feq[i]) + guo;
+            }
+            // Scalar BGK collision toward w_i·θ·(1 + 3c·u).
+            if let (Some(t), Some(og)) = (&thermal, omega_g) {
+                let gx = &mut g[x * Q..(x + 1) * Q];
+                let theta = temp[x] - t.inlet_temp_c;
+                for (i, gi) in gx.iter_mut().enumerate() {
+                    let cu = C[i][0] as f64 * u[0] + C[i][1] as f64 * u[1] + C[i][2] as f64 * u[2];
+                    let geq = W[i] * theta * (1.0 + 3.0 * cu);
+                    *gi += -og * (*gi - geq);
+                }
             }
         }
 
@@ -292,10 +420,106 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
             }
         }
         std::mem::swap(&mut f, &mut f_new);
+
+        // Thermal scalar streaming (M1): pull the g distribution with
+        // boundary rules mirroring the flow lattice — bounce-back =
+        // adiabatic wall, anti-bounce-back = Dirichlet surface (inlet
+        // theta = 0, isothermal walls theta_w), copy-own = zero-gradient
+        // outlet. Per-step boundary theta-exchange is accumulated as the
+        // audit's link-level route.
+        if let Some(t) = &thermal {
+            q_wall_lat = 0.0;
+            q_inlet_lat = 0.0;
+            q_outlet_lat = 0.0;
+            for k in 0..nz {
+                for j in 0..ny {
+                    for i in 0..nx {
+                        let x = idx(i, j, k);
+                        if cells[x] != Cell::Fluid {
+                            continue;
+                        }
+                        for q in 0..Q {
+                            let (mut si, mut sj, mut sk) = (
+                                i - C[q][0] as isize,
+                                j - C[q][1] as isize,
+                                k - C[q][2] as isize,
+                            );
+                            let mut outside = false;
+                            for (axis, s, nmax) in
+                                [(0usize, &mut si, nx), (1, &mut sj, ny), (2, &mut sk, nz)]
+                            {
+                                if *s < 0 || *s >= nmax {
+                                    if model.periodic[axis] {
+                                        *s = (*s + nmax) % nmax;
+                                    } else {
+                                        outside = true;
+                                    }
+                                }
+                            }
+                            let g_out = g[x * Q + OPP[q]];
+                            let src_kind = if outside {
+                                Cell::Solid
+                            } else {
+                                cells[idx(si, sj, sk)]
+                            };
+                            let val = match src_kind {
+                                Cell::Fluid => g[idx(si, sj, sk) * Q + q],
+                                Cell::Solid => {
+                                    let wall_theta = if outside {
+                                        t.wall_temp_c.map(|w| w - t.inlet_temp_c)
+                                    } else {
+                                        let sx = idx(si, sj, sk);
+                                        model
+                                            .solid_temp_c
+                                            .as_ref()
+                                            .map(|st| st[sx])
+                                            .filter(|v| v.is_finite())
+                                            .or(t.wall_temp_c)
+                                            .map(|w| w - t.inlet_temp_c)
+                                    };
+                                    match wall_theta {
+                                        // Dirichlet: anti-bounce-back.
+                                        Some(tw) => {
+                                            let v = -g_out + 2.0 * W[q] * tw;
+                                            q_wall_lat += v - g_out;
+                                            v
+                                        }
+                                        // Adiabatic: bounce-back (link
+                                        // nets exactly zero).
+                                        None => g_out,
+                                    }
+                                }
+                                Cell::Inlet => {
+                                    // Dirichlet theta = 0 at the inlet
+                                    // surface, moving at the (ramped)
+                                    // inlet velocity.
+                                    let cu = C[q][0] as f64 * u_in_now[0]
+                                        + C[q][1] as f64 * u_in_now[1]
+                                        + C[q][2] as f64 * u_in_now[2];
+                                    let v = -g_out + 2.0 * W[q] * 0.0 * (1.0 + 3.0 * cu);
+                                    q_inlet_lat += v - g_out;
+                                    v
+                                }
+                                Cell::Outlet => {
+                                    // Zero-gradient: copy own
+                                    // post-collision value.
+                                    let v = g[x * Q + q];
+                                    q_outlet_lat += g_out - v;
+                                    v
+                                }
+                            };
+                            g_new[x * Q + q] = val;
+                        }
+                    }
+                }
+            }
+            std::mem::swap(&mut g, &mut g_new);
+        }
         steps += 1;
 
         if steps.is_multiple_of(opts.check_every) && steps >= opts.ramp_steps {
             let mut max_delta = 0.0f64;
+            let mut max_tdelta = 0.0f64;
             let mut finite = true;
             for x in 0..n {
                 if cells[x] != Cell::Fluid {
@@ -308,14 +532,33 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
                     }
                     max_delta = max_delta.max((u[a] - p[a]).abs());
                 }
+                if thermal.is_some() {
+                    if !temp[x].is_finite() {
+                        finite = false;
+                    }
+                    max_tdelta = max_tdelta.max((temp[x] - temp_prev[x]).abs());
+                }
             }
             if !finite {
                 return Err(SolveError::Diverged { step: steps });
             }
-            residual = max_delta / u_floor;
+            residual = (max_delta / u_floor).max(max_tdelta / t_scale);
             vel_prev.copy_from_slice(&vel);
+            if thermal.is_some() {
+                temp_prev.copy_from_slice(&temp);
+            }
             if residual < opts.steady_tol {
-                return Ok(finish(model, &scaling, steps, residual, &vel, &rho, dx_m));
+                return Ok(finish(
+                    model,
+                    &scaling,
+                    steps,
+                    residual,
+                    &vel,
+                    &rho,
+                    &temp,
+                    (q_wall_lat, q_inlet_lat, q_outlet_lat),
+                    dx_m,
+                ));
             }
         }
     }
@@ -328,6 +571,7 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
 }
 
 /// Assemble the SI solution from the converged lattice fields.
+#[allow(clippy::too_many_arguments)]
 fn finish(
     model: &FlowModel,
     scaling: &Scaling,
@@ -335,6 +579,8 @@ fn finish(
     residual: f64,
     vel: &[[f64; 3]],
     rho: &[f64],
+    temp: &[f64],
+    q_boundary_lat: (f64, f64, f64),
     dx_m: f64,
 ) -> Solution {
     let (nx, ny, nz) = (
@@ -414,6 +660,8 @@ fn finish(
     // Port bookkeeping: exposed port faces are (port cell -> fluid
     // neighbor) pairs; the face normal points into the fluid.
     let face_area = dx_m * dx_m;
+    let mut outlet_heat_flux = 0.0f64;
+    let mut inlet_adv_flux = 0.0f64;
     let mut outlet_flow = 0.0f64;
     let mut inlet_p = (0.0f64, 0usize);
     let mut outlet_p = (0.0f64, 0usize);
@@ -448,6 +696,14 @@ fn finish(
                         Cell::Inlet => {
                             inlet_p.0 += gauge_pressure_pa[fx];
                             inlet_p.1 += 1;
+                            if model.thermal.is_some() {
+                                // Advective enthalpy influx as the
+                                // scalar scheme sees it: cell-center
+                                // velocity, inlet ghost temperature.
+                                let u = velocity_m_s[fx];
+                                let un = u[0] * nrm[0] + u[1] * nrm[1] + u[2] * nrm[2];
+                                inlet_adv_flux += un * face_area;
+                            }
                         }
                         Cell::Outlet => {
                             // Flow leaving the fluid through this face:
@@ -457,6 +713,9 @@ fn finish(
                             outlet_flow += un * face_area;
                             outlet_p.0 += gauge_pressure_pa[fx];
                             outlet_p.1 += 1;
+                            if model.thermal.is_some() {
+                                outlet_heat_flux += un * face_area * temp[fx];
+                            }
                         }
                         _ => unreachable!(),
                     }
@@ -475,6 +734,35 @@ fn finish(
         0.0
     };
 
+    // Thermal outputs (M1).
+    let (temperature_c, outlet_temp_c, heat_pickup_w, wall_heat_w) = match &model.thermal {
+        None => (None, None, None, None),
+        Some(t) => {
+            let rho_cp = model.fluid.density_kg_m3 * t.heat_capacity_j_kg_k;
+            let outlet_temp = if outlet_flow.abs() > f64::MIN_POSITIVE {
+                Some(outlet_heat_flux / outlet_flow)
+            } else {
+                None
+            };
+            let heat_pickup = if outlet_flow.abs() > f64::MIN_POSITIVE {
+                Some(rho_cp * (outlet_heat_flux - inlet_adv_flux * t.inlet_temp_c))
+            } else {
+                None
+            };
+            // Boundary heat, link route: the per-step θ-exchange the
+            // scalar lattice actually performed through its Dirichlet
+            // boundaries (isothermal walls + inlet exchange beyond the
+            // advected baseline), converted to watts. The field-route
+            // `heat_pickup_w` above is measured independently from the
+            // outlet velocity/temperature fields — the thermal audit is
+            // the gap between the two.
+            let (qw, qi, _qo) = q_boundary_lat;
+            let scale_w = rho_cp * dx_m * dx_m * dx_m / scaling.dt_s;
+            let wall_heat = Some((qw + qi) * scale_w);
+            (Some(temp.to_vec()), outlet_temp, heat_pickup, wall_heat)
+        }
+    };
+
     Solution {
         scaling: *scaling,
         steps,
@@ -486,6 +774,10 @@ fn finish(
         mass_balance_residual,
         pressure_drop_pa,
         max_speed_m_s: max_speed,
+        temperature_c,
+        outlet_temp_c,
+        heat_pickup_w,
+        wall_heat_w,
     }
 }
 
@@ -711,6 +1003,194 @@ mod tests {
         assert!(
             max_err < 0.05 && rms < 0.03,
             "cavity vs Ghia: max err {max_err:.4}, rms {rms:.4} (33^2 grid)"
+        );
+    }
+
+    fn thermal_duct(nx: usize, w: usize, u: f64) -> FlowModel {
+        let mut m = FlowModel::new([0.0; 3], [nx as f64, w as f64, w as f64], [nx, w, w]);
+        for k in 0..w {
+            for j in 0..w {
+                for i in 0..nx {
+                    let x = m.index(i, j, k);
+                    m.cells[x] = if i == 0 {
+                        Cell::Inlet
+                    } else if i == nx - 1 {
+                        Cell::Outlet
+                    } else {
+                        Cell::Fluid
+                    };
+                }
+            }
+        }
+        m.fluid = Fluid::AIR_20C;
+        m.inlet_velocity_m_s = [u, 0.0, 0.0];
+        m.thermal = Some(crate::model::ThermalTransport::AIR_20C);
+        m
+    }
+
+    /// M1: adiabatic duct conserves enthalpy — outlet temperature equals
+    /// inlet temperature to solver tolerance.
+    #[test]
+    fn adiabatic_duct_conserves_temperature() {
+        let mut m = thermal_duct(30, 7, 0.08);
+        let t = m.thermal.as_mut().unwrap();
+        t.inlet_temp_c = 47.0;
+        t.initial_temp_c = 20.0;
+        t.wall_temp_c = None;
+        let sol = solve_steady(&m, &SolveOptions::default()).expect("adiabatic duct");
+        let t_out = sol.outlet_temp_c.unwrap();
+        assert!(
+            (t_out - 47.0).abs() < 0.2,
+            "adiabatic outlet temp {t_out:.3} C, expected 47"
+        );
+    }
+
+    /// M1: isothermal-wall duct — the thermal audit closes (heat picked
+    /// up by the fluid equals heat in through the walls) and the outlet
+    /// temperature sits strictly between inlet and wall.
+    #[test]
+    fn heated_wall_duct_energy_audit_closes() {
+        let mut m = thermal_duct(40, 7, 0.06);
+        let t = m.thermal.as_mut().unwrap();
+        t.inlet_temp_c = 20.0;
+        t.initial_temp_c = 20.0;
+        t.wall_temp_c = Some(60.0);
+        let opts = SolveOptions {
+            steady_tol: 1e-7,
+            ..Default::default()
+        };
+        let sol = solve_steady(&m, &opts).expect("heated duct");
+        let t_out = sol.outlet_temp_c.unwrap();
+        assert!(
+            t_out > 21.0 && t_out < 60.0,
+            "outlet temp {t_out:.2} C out of (20, 60)"
+        );
+        let q = sol.heat_pickup_w.unwrap();
+        let w = sol.wall_heat_w.unwrap();
+        assert!(q > 0.0 && w > 0.0);
+        // The two routes discretize differently (cell-center fields at
+        // the outlet vs lattice link exchange at the boundaries); at
+        // 7x7 across they agree to ~4%. This is a cross-route
+        // consistency check, not an energy-conservation check — the
+        // scalar lattice conserves theta exactly by construction.
+        let resid = (q - w).abs() / q.abs().max(w.abs());
+        assert!(
+            resid < 0.05,
+            "thermal audit: pickup {q:.4e} W vs wall {w:.4e} W ({:.1}% off)",
+            resid * 100.0
+        );
+    }
+
+    /// M1: slower flow spends longer against hot walls and leaves
+    /// hotter — the qualitative Graetz trend.
+    #[test]
+    fn slower_flow_leaves_hotter() {
+        let mut temps = Vec::new();
+        for u in [0.03f64, 0.09] {
+            let mut m = thermal_duct(40, 7, u);
+            let t = m.thermal.as_mut().unwrap();
+            t.wall_temp_c = Some(60.0);
+            let sol = solve_steady(&m, &SolveOptions::default()).expect("duct");
+            temps.push(sol.outlet_temp_c.unwrap());
+        }
+        assert!(
+            temps[0] > temps[1] + 1.0,
+            "expected slower flow hotter: {temps:?}"
+        );
+    }
+
+    /// M1: refusal when the explicit scalar scheme would be unstable.
+    #[test]
+    fn thermal_instability_is_refused() {
+        let mut m = thermal_duct(30, 7, 0.05);
+        m.thermal.as_mut().unwrap().diffusivity_m2_s = 1.0;
+        assert!(matches!(
+            solve_steady(&m, &SolveOptions::default()),
+            Err(SolveError::ThermalUnstable { .. })
+        ));
+    }
+
+    /// M3: differentially heated square cavity, Ra = 10³, Pr = 0.71 vs
+    /// de Vahl Davis: mean hot-wall Nusselt = 1.118. Release-ladder
+    /// rung: `cargo test --release -p vcad-kernel-flow -- --ignored`.
+    #[test]
+    #[ignore = "release-ladder rung: ~seconds in release, minutes in debug"]
+    fn heated_cavity_ra1e3_matches_de_vahl_davis() {
+        let n = 33usize;
+        // Fluid cavity n x n with one solid column on each side (hot
+        // left, cold right); top/bottom out-of-domain walls (adiabatic).
+        let (nx, ny, nz) = (n + 2, 1usize, n);
+        let mut m = FlowModel::new([0.0; 3], [nx as f64, ny as f64, nz as f64], [nx, ny, nz]);
+        for k in 0..nz {
+            for i in 0..nx {
+                let x = m.index(i, 0, k);
+                m.cells[x] = if i == 0 || i == nx - 1 {
+                    Cell::Solid
+                } else {
+                    Cell::Fluid
+                };
+            }
+        }
+        m.periodic = [false, true, false];
+
+        let (t_hot, t_cold) = (30.0, 20.0);
+        let dt = t_hot - t_cold;
+        let l = n as f64 / 1000.0;
+        let pr = 0.71;
+        let ra = 1.0e3;
+        // Pick nu, derive alpha from Pr and beta*g from Ra.
+        let nu = 1.5e-5;
+        let alpha = nu / pr;
+        let g_beta = ra * nu * alpha / (dt * l * l * l);
+        m.fluid = Fluid {
+            density_kg_m3: 1.0,
+            viscosity_pa_s: nu,
+        };
+        m.thermal = Some(crate::model::ThermalTransport {
+            inlet_temp_c: 0.5 * (t_hot + t_cold),
+            initial_temp_c: 0.5 * (t_hot + t_cold),
+            wall_temp_c: None,
+            diffusivity_m2_s: alpha,
+            heat_capacity_j_kg_k: 1000.0,
+            buoyancy: Some(crate::model::Boussinesq {
+                beta_per_k: g_beta / 9.81,
+                t_ref_c: 0.5 * (t_hot + t_cold),
+                gravity_m_s2: [0.0, 0.0, -9.81],
+            }),
+        });
+        let mut st = vec![f64::NAN; nx * ny * nz];
+        for k in 0..nz {
+            st[m.index(0, 0, k)] = t_hot;
+            st[m.index(nx - 1, 0, k)] = t_cold;
+        }
+        m.solid_temp_c = Some(st);
+
+        // Characteristic buoyancy velocity for the scaling.
+        let u_ref = (g_beta * dt * l).sqrt();
+        let opts = SolveOptions {
+            u_ref_m_s: Some(u_ref),
+            steady_tol: 1e-7,
+            max_steps: 2_000_000,
+            ..Default::default()
+        };
+        let sol = solve_steady(&m, &opts).expect("cavity solve");
+        let temp = sol.temperature_c.as_ref().unwrap();
+
+        // Mean hot-wall Nusselt from the half-cell fluxes:
+        // Nu = 2·Σ(T_hot − T_adjacent) / ΔT · (1/n) · n_width-normalized
+        // — conduction-only linear profile gives exactly 1.
+        let mut sum = 0.0;
+        for k in 0..nz {
+            sum += t_hot - temp[m.index(1, 0, k)];
+        }
+        // Reference: conduction flux ΔT/n per face; actual half-cell
+        // flux 2(Th−T_adj) per face; both share alpha and face count.
+        // Sanity: a linear conduction profile (T_adj = Th − 0.5·ΔT/n)
+        // gives exactly Nu = 1.
+        let nu_avg = 2.0 * sum * n as f64 / (nz as f64 * dt);
+        assert!(
+            (nu_avg - 1.118).abs() < 0.08,
+            "cavity Nu = {nu_avg:.4}, de Vahl Davis 1.118"
         );
     }
 

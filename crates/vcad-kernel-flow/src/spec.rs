@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Cell, FlowModel, Fluid};
+use crate::model::{Cell, FlowModel, Fluid, ThermalTransport};
 
 /// Fail-closed spec errors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -222,6 +222,23 @@ pub struct FlowSpec {
     /// validated laminar limit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub re_envelope: Option<f64>,
+    /// Thermal transport in the fluid (M1/M3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal: Option<ThermalTransport>,
+    /// Solid regions held at a temperature (painted after `regions`;
+    /// each entry paints its shape's solid voxels with a wall
+    /// temperature — the M3 differential-heating mechanism).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hot_walls: Vec<HotWallSpec>,
+}
+
+/// A solid region held at a fixed surface temperature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HotWallSpec {
+    /// Region shape (must cover solid voxels).
+    pub shape: ShapeSpec,
+    /// Surface temperature, °C.
+    pub temp_c: f64,
 }
 
 impl FlowSpec {
@@ -242,6 +259,15 @@ impl FlowSpec {
         if let Some(env) = self.re_envelope {
             model.re_envelope = env;
         }
+        model.thermal = self.thermal;
+        for hw in &self.hot_walls {
+            hw.shape.check()?;
+            if !hw.temp_c.is_finite() {
+                return Err(SpecError::BadShape(
+                    "hot wall temperature non-finite".into(),
+                ));
+            }
+        }
         let background = self.background.cell();
         let (nx, ny, nz) = (self.divisions[0], self.divisions[1], self.divisions[2]);
         for k in 0..nz {
@@ -258,6 +284,26 @@ impl FlowSpec {
                     model.cells[x] = cell;
                 }
             }
+        }
+        if !self.hot_walls.is_empty() {
+            let mut st = vec![f64::NAN; model.cells.len()];
+            for k in 0..nz {
+                for j in 0..ny {
+                    for i in 0..nx {
+                        let x = model.index(i, j, k);
+                        if model.cells[x] != Cell::Solid {
+                            continue;
+                        }
+                        let p = model.voxel_center_mm(i, j, k);
+                        for hw in &self.hot_walls {
+                            if hw.shape.contains(p) {
+                                st[x] = hw.temp_c;
+                            }
+                        }
+                    }
+                }
+            }
+            model.solid_temp_c = Some(st);
         }
         model.validate().map_err(SpecError::Model)?;
         Ok(model)
@@ -306,6 +352,8 @@ mod tests {
             body_force_n_m3: [0.0; 3],
             periodic: [false; 3],
             re_envelope: None,
+            thermal: None,
+            hot_walls: vec![],
         }
     }
 

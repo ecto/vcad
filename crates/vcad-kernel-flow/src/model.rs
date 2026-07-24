@@ -48,6 +48,54 @@ impl Fluid {
     }
 }
 
+/// Boussinesq buoyancy coupling (M3): the fluid acceleration gains
+/// `g·β·(T − T_ref)` per cell. Valid for small density variations
+/// (β·ΔT ≪ 1) — the incompressible-LBM regime.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Boussinesq {
+    /// Volumetric thermal expansion coefficient β, 1/K.
+    pub beta_per_k: f64,
+    /// Reference temperature (zero-buoyancy datum), °C.
+    pub t_ref_c: f64,
+    /// Gravity vector, m/s² (Z-up house convention: `[0, 0, -9.81]`).
+    pub gravity_m_s2: [f64; 3],
+}
+
+/// Thermal transport in the fluid (M1): a passive temperature scalar
+/// advected by the lattice velocity and diffused at the fluid's thermal
+/// diffusivity, co-evolved with the LBM steps (explicit upwind
+/// advection + central diffusion). With [`Boussinesq`] set, the scalar
+/// feeds back into the momentum equation (M3) and is no longer passive.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ThermalTransport {
+    /// Temperature of fluid entering at inlets, °C.
+    pub inlet_temp_c: f64,
+    /// Initial fluid temperature, °C.
+    pub initial_temp_c: f64,
+    /// Wall temperature, °C. `Some(T)` = isothermal walls (half-cell
+    /// Dirichlet flux); `None` = adiabatic walls.
+    pub wall_temp_c: Option<f64>,
+    /// Thermal diffusivity α = k/(ρ·c_p), m²/s.
+    pub diffusivity_m2_s: f64,
+    /// Specific heat c_p, J/(kg·K) — prices heat pickup in watts.
+    pub heat_capacity_j_kg_k: f64,
+    /// Buoyancy coupling (M3). `None` = forced convection only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buoyancy: Option<Boussinesq>,
+}
+
+impl ThermalTransport {
+    /// Air at 20 °C: α = 2.12e-5 m²/s, c_p = 1006 J/(kg·K).
+    pub const AIR_20C: ThermalTransport = ThermalTransport {
+        inlet_temp_c: 20.0,
+        initial_temp_c: 20.0,
+        wall_temp_c: None,
+        diffusivity_m2_s: 2.12e-5,
+        heat_capacity_j_kg_k: 1006.0,
+        buoyancy: None,
+    };
+}
+
 /// The flow problem on a uniform cubic voxel grid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlowModel {
@@ -72,6 +120,17 @@ pub struct FlowModel {
     /// Per-axis periodicity. A non-periodic domain face is a stationary
     /// wall half a voxel outside the last cell layer.
     pub periodic: [bool; 3],
+    /// Thermal transport in the fluid (M1/M3). `None` = isothermal M0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal: Option<ThermalTransport>,
+    /// Per-voxel solid surface temperature, °C — overrides
+    /// [`ThermalTransport::wall_temp_c`] where finite. Non-finite (NaN)
+    /// entries fall back to the global wall BC. This is both the M3
+    /// differential-heating mechanism (paint hot/cold wall voxels) and
+    /// the M2 conjugate seam (the thermal solver hands back its wall
+    /// temperature field here). Length must be `nx·ny·nz` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solid_temp_c: Option<Vec<f64>>,
     /// Laminar envelope: the highest Reynolds number this model may be
     /// solved at. Defaults to [`FlowModel::RE_LAMINAR_ENVELOPE`]; may be
     /// lowered, never raised past it (validation refuses).
@@ -125,6 +184,20 @@ pub enum ModelError {
         /// Hydraulic diameter used, mm.
         hydraulic_diameter_mm: f64,
     },
+    /// Thermal transport parameters are non-finite or non-positive.
+    BadThermal,
+    /// `solid_temp_c` present with the wrong length, or present without
+    /// thermal transport enabled.
+    BadSolidTemps,
+    /// Buoyancy-driven Rayleigh number exceeds the validated laminar
+    /// envelope — same honesty as the Re gate: no turbulent natural
+    /// convection model exists here, so none is pretended.
+    RayleighAboveEnvelope {
+        /// Computed Ra = g·β·ΔT·L³/(ν·α).
+        ra: f64,
+        /// The envelope it exceeds.
+        envelope: f64,
+    },
     /// `re_envelope` was raised above the validated laminar limit.
     EnvelopeAboveValidated {
         /// Requested envelope.
@@ -148,6 +221,20 @@ impl std::fmt::Display for ModelError {
             ),
             ModelError::BadDomain => write!(f, "domain size/divisions non-finite or non-positive"),
             ModelError::BadFluid => write!(f, "fluid density/viscosity non-finite or non-positive"),
+            ModelError::BadThermal => write!(
+                f,
+                "thermal transport diffusivity/heat-capacity/buoyancy non-finite or non-positive"
+            ),
+            ModelError::BadSolidTemps => write!(
+                f,
+                "solid_temp_c must have one entry per voxel and requires thermal transport"
+            ),
+            ModelError::RayleighAboveEnvelope { ra, envelope } => write!(
+                f,
+                "Ra = {ra:.2e} exceeds the validated laminar natural-convection envelope \
+                 {envelope:.0e}; M3 refuses turbulent buoyant flow rather than guessing — \
+                 reduce the temperature difference or the cavity size"
+            ),
             ModelError::NoFluid => write!(f, "no fluid cells in the grid"),
             ModelError::NoDrive => write!(
                 f,
@@ -187,6 +274,10 @@ impl FlowModel {
     /// transition). `re_envelope` may be set lower but never higher.
     pub const RE_LAMINAR_ENVELOPE: f64 = 2300.0;
 
+    /// The validated laminar envelope for buoyancy-driven flow (cavity
+    /// natural convection stays laminar to Ra ~ 10⁸).
+    pub const RA_LAMINAR_ENVELOPE: f64 = 1.0e8;
+
     /// A model with all-solid cells to be painted, air, and no drive.
     pub fn new(origin_mm: [f64; 3], size_mm: [f64; 3], divisions: [usize; 3]) -> Self {
         let n = divisions[0] * divisions[1] * divisions[2];
@@ -200,6 +291,8 @@ impl FlowModel {
             outlet_gauge_pa: 0.0,
             body_force_n_m3: [0.0; 3],
             periodic: [false; 3],
+            thermal: None,
+            solid_temp_c: None,
             re_envelope: Self::RE_LAMINAR_ENVELOPE,
         }
     }
@@ -420,6 +513,23 @@ impl FlowModel {
         if self.count(Cell::Fluid) == 0 {
             return Err(ModelError::NoFluid);
         }
+        if let Some(t) = &self.thermal {
+            let finite = t.inlet_temp_c.is_finite()
+                && t.initial_temp_c.is_finite()
+                && t.diffusivity_m2_s.is_finite()
+                && t.heat_capacity_j_kg_k.is_finite()
+                && t.wall_temp_c.map(|w| w.is_finite()).unwrap_or(true);
+            let positive = t.diffusivity_m2_s > 0.0 && t.heat_capacity_j_kg_k > 0.0;
+            let buoy_ok = t.buoyancy.is_none_or(|b| {
+                b.beta_per_k.is_finite()
+                    && b.beta_per_k >= 0.0
+                    && b.t_ref_c.is_finite()
+                    && b.gravity_m_s2.iter().all(|g| g.is_finite())
+            });
+            if !(finite && positive && buoy_ok) {
+                return Err(ModelError::BadThermal);
+            }
+        }
         let inlets = self.count(Cell::Inlet);
         let outlets = self.count(Cell::Outlet);
         let inlet_speed = norm(self.inlet_velocity_m_s);
@@ -435,9 +545,56 @@ impl FlowModel {
         if (net_flux.abs() > 1e-15 && outlets == 0) || (outlets > 0 && inlets == 0) {
             return Err(ModelError::UnbalancedPorts { inlets, outlets });
         }
+        let driven_by_buoyancy = self
+            .thermal
+            .as_ref()
+            .and_then(|t| t.buoyancy)
+            .map(|b| b.beta_per_k > 0.0 && norm(b.gravity_m_s2) > 0.0)
+            .unwrap_or(false);
         let driven_by_inlet = inlets > 0 && inlet_speed > 0.0;
-        if !driven_by_inlet && force == 0.0 {
+        if !driven_by_inlet && force == 0.0 && !driven_by_buoyancy {
             return Err(ModelError::NoDrive);
+        }
+        if let Some(st) = &self.solid_temp_c {
+            if st.len() != expected || self.thermal.is_none() {
+                return Err(ModelError::BadSolidTemps);
+            }
+        }
+        // Rayleigh gate for buoyancy-driven flow: Ra = g·β·ΔT·L³/(ν·α)
+        // with L the largest domain dimension and ΔT the spread of the
+        // thermal boundary temperatures.
+        if driven_by_buoyancy {
+            let t = self.thermal.as_ref().expect("buoyancy implies thermal");
+            let b = t.buoyancy.expect("checked above");
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            let mut push = |v: f64| {
+                if v.is_finite() {
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            };
+            push(t.inlet_temp_c);
+            push(t.initial_temp_c);
+            if let Some(w) = t.wall_temp_c {
+                push(w);
+            }
+            if let Some(st) = &self.solid_temp_c {
+                for v in st {
+                    push(*v);
+                }
+            }
+            let dt = (hi - lo).max(0.0);
+            let l = self.size_mm.iter().cloned().fold(0.0, f64::max) / 1000.0;
+            let nu = self.fluid.kinematic_viscosity_m2_s();
+            let ra =
+                norm(b.gravity_m_s2) * b.beta_per_k * dt * l * l * l / (nu * t.diffusivity_m2_s);
+            if ra > Self::RA_LAMINAR_ENVELOPE {
+                return Err(ModelError::RayleighAboveEnvelope {
+                    ra,
+                    envelope: Self::RA_LAMINAR_ENVELOPE,
+                });
+            }
         }
         if self.re_envelope > Self::RE_LAMINAR_ENVELOPE {
             return Err(ModelError::EnvelopeAboveValidated {

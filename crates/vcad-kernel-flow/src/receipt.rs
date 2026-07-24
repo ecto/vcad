@@ -151,6 +151,35 @@ pub fn predicted_claims(
                 .into(),
         ));
     }
+    if let Some(t_out) = solution.outlet_temp_c {
+        claims.push(claim(
+            "outlet_temp_c",
+            t_out,
+            "C",
+            format!("flux-weighted mean fluid temperature at the outlet; {caveat}"),
+        ));
+    }
+    if let Some(q) = solution.heat_pickup_w {
+        claims.push(claim(
+            "heat_pickup_w",
+            q,
+            "W",
+            format!("rho*c_p*(outlet enthalpy flux - inlet enthalpy flux); {caveat}"),
+        ));
+    }
+    if let (Some(q), Some(w)) = (solution.heat_pickup_w, solution.wall_heat_w) {
+        let denom = q.abs().max(w.abs());
+        if denom > f64::MIN_POSITIVE {
+            claims.push(claim(
+                "thermal_energy_residual",
+                (q - w).abs() / denom,
+                "1",
+                "|heat picked up by fluid - heat in through isothermal walls| / max; the \
+                 thermal audit — closes at steady state or the scalar transport is wrong"
+                    .into(),
+            ));
+        }
+    }
     claims.push(claim(
         "max_speed_m_s",
         solution.max_speed_m_s,

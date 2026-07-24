@@ -51,6 +51,8 @@ fn main() {
         body_force_n_m3: [0.0; 3],
         periodic: [false; 3],
         re_envelope: None,
+        thermal: None,
+        hot_walls: vec![],
     };
 
     let model = spec.resolve().expect("spec resolves");
