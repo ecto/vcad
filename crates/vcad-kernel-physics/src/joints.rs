@@ -66,7 +66,7 @@ impl MotorTarget {
 /// Create a phyz joint from a vcad joint definition.
 ///
 /// Returns the phyz Joint and the parent-to-joint spatial transform.
-pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> {
+pub(crate) fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> {
     // Convert parent anchor from mm to meters — this becomes the translation
     // in the parent-to-joint transform.
     let anchor = Vec3::new(
@@ -128,7 +128,7 @@ pub fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> 
 /// so child geometry and inertia must be expressed in this frame: for a
 /// point `p` in the child part's local mm coordinates,
 /// `p_body = R^T * (p - child_anchor)`.
-pub fn joint_frame_rotation(kind: &JointKind) -> Mat3 {
+pub(crate) fn joint_frame_rotation(kind: &JointKind) -> Mat3 {
     match kind {
         JointKind::Revolute { axis, .. } | JointKind::Cylindrical { axis } => {
             rotation_aligning_z_to(Vec3::new(axis.x, axis.y, axis.z).normalize())

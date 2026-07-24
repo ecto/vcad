@@ -40,9 +40,8 @@ use phyz::math::{DVec, Mat3, SpatialTransform, Vec3};
 use phyz::{Joint, JointType, Model, ModelBuilder};
 use vcad_kernel_diff::{ParamSeeding, SurfaceSeed};
 use vcad_kernel_geom::CylinderSurface;
-use vcad_kernel_physics::{
-    contact_rollout_gradient, AdjointRolloutSpec, BodyMassProps, ContactConfig, DiffBody,
-};
+use vcad_kernel_physics::diff::interop::AdjointRolloutSpec;
+use vcad_kernel_physics::{contact_rollout_gradient, BodyMassProps, ContactConfig, DiffBody};
 use vcad_kernel_primitives::{make_cylinder, BRepSolid};
 use vcad_kernel_tessellate::TessellationParams;
 

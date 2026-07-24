@@ -25,9 +25,10 @@ use phyz::math::{DVec, SpatialTransform, Vec3};
 use phyz::{Joint, JointType, Model, ModelBuilder};
 use vcad_kernel_diff::{ParamSeeding, SurfaceSeed};
 use vcad_kernel_geom::CylinderSurface;
+use vcad_kernel_physics::diff::interop::AdjointRolloutSpec;
 use vcad_kernel_physics::{
-    nominal_mass_props, rollout_gradient, rollout_gradient_adjoint, AdjointRolloutSpec,
-    BodyMassProps, DiffBody, MassPropFdSteps,
+    nominal_mass_props, rollout_gradient, rollout_gradient_adjoint, BodyMassProps, DiffBody,
+    MassPropFdSteps,
 };
 use vcad_kernel_primitives::{make_cylinder, BRepSolid};
 use vcad_kernel_tessellate::TessellationParams;
