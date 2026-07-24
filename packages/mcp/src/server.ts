@@ -140,6 +140,7 @@ import { toolDefs as emToolDefs } from "./tools/em.js";
 import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
 import { toolDefs as photonicsToolDefs } from "./tools/photonics.js";
 import { toolDefs as neutronicsToolDefs } from "./tools/neutronics.js";
+import { toolDefs as qcdToolDefs } from "./tools/qcd.js";
 import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
@@ -328,6 +329,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...antennaToolDefs,
   ...photonicsToolDefs,
   ...neutronicsToolDefs,
+  ...qcdToolDefs,
   ...physicsToolDefs,
   ...loonMacroToolDefs,
   ...dfmToolDefs,
@@ -423,6 +425,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "solve_thermal",
   "analyze_structure",
   "simulate_neutron_shield",
+  "simulate_lattice_gauge",
   "analyze_tolerance_stackup",
   "simulate_circuit",
   "tune_circuit",

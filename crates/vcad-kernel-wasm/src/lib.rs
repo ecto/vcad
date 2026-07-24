@@ -9684,3 +9684,81 @@ pub fn build_stl_bytes(
 pub fn euler_xyz_deg_to_quat_wasm(x_deg: f64, y_deg: f64, z_deg: f64) -> Vec<f64> {
     vcad_kernel_export::euler_xyz_deg_to_quat(x_deg, y_deg, z_deg).to_vec()
 }
+
+// ---------------------------------------------------------------------------
+// Lattice gauge theory (vcad-kernel-qcd)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct WasmLatticeGaugeOut {
+    result: vcad_kernel::vcad_kernel_qcd::spec::SimResult,
+    /// Derived physics (empty when the constituent loops are unresolved).
+    creutz_ratios: Vec<vcad_kernel::vcad_kernel_qcd::analysis::CreutzRatio>,
+    static_potential: Vec<vcad_kernel::vcad_kernel_qcd::analysis::PotentialPoint>,
+    cornell_fit: Option<vcad_kernel::vcad_kernel_qcd::analysis::CornellFit>,
+    /// `vcad.qcd-claims/1` — present only when the run's statistics
+    /// clear the fail-closed bar; otherwise `claim_error` says why.
+    claims: Option<vcad_kernel::vcad_kernel_qcd::receipt::ClaimSet>,
+    claim_error: Option<String>,
+}
+
+/// Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson action):
+/// plaquette, Wilson loops, string tension (Creutz ratios + static
+/// potential + Cornell fit), Polyakov deconfinement order parameter,
+/// flux-tube profile, and rendering field snapshots — every observable a
+/// binned-jackknife mean ± error, deterministic per seed.
+///
+/// `spec_json` is a `vcad_kernel_qcd::spec::SimSpec`.
+#[wasm_bindgen(js_name = latticeGaugeSimulate)]
+pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_qcd as qcd;
+    let spec: qcd::spec::SimSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    // Cost gate for the MCP tier: link-updates dominate; SU(3)
+    // Cabibbo–Marinari costs ~6x an SU(2) heatbath per link, and the
+    // flux-tube accumulator adds V_spatial^2 work per measured sweep.
+    let volume: usize = spec.dims.iter().product();
+    let links = volume * 4;
+    let total_sweeps =
+        (spec.thermalization_sweeps + spec.measurement_sweeps) * (1 + spec.overrelax_per_heatbath);
+    let group_factor = match spec.gauge {
+        qcd::spec::Gauge::Su2 => 1usize,
+        qcd::spec::Gauge::Su3 => 6,
+    };
+    let update_cost = links
+        .saturating_mul(total_sweeps)
+        .saturating_mul(group_factor);
+    let vs = spec.dims[0] * spec.dims[1] * spec.dims[2];
+    let flux_cost = if spec.flux_tube.is_some() {
+        vs.saturating_mul(vs).saturating_mul(spec.measurement_sweeps)
+    } else {
+        0
+    };
+    const COST_CAP: usize = 400_000_000;
+    let cost = update_cost.saturating_add(flux_cost);
+    if cost > COST_CAP {
+        return Err(JsError::new(&format!(
+            "run too large for the MCP tier: cost {cost} (cap {COST_CAP}). Shrink the lattice, \
+             the sweep counts, or the flux-tube request — error bars scale as 1/sqrt(sweeps), \
+             so a smaller honest run beats a truncated big one."
+        )));
+    }
+    let result = qcd::spec::run(&spec).map_err(|e| JsError::new(&e.to_string()))?;
+    let creutz_ratios = qcd::analysis::creutz_ratios(&result.wilson_loops);
+    let static_potential = qcd::analysis::static_potential(&result.temporal_loops);
+    let cornell_fit = qcd::analysis::fit_cornell(&static_potential);
+    let (claims, claim_error) = match qcd::receipt::build_claims(&result) {
+        Ok(cs) => (Some(cs), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+    let out = WasmLatticeGaugeOut {
+        result,
+        creutz_ratios,
+        static_potential,
+        cornell_fit,
+        claims,
+        claim_error,
+    };
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}

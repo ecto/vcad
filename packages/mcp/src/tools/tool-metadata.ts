@@ -266,6 +266,10 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     title: "Simulate Neutron Shield",
     annotations: RO,
   },
+  simulate_lattice_gauge: {
+    title: "Simulate Lattice Gauge Theory",
+    annotations: RO,
+  },
   analyze_tolerance_stackup: {
     title: "Analyze Tolerance Stackup",
     annotations: RO,

@@ -33,6 +33,7 @@ pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
 pub use vcad_kernel_neutronics;
 pub use vcad_kernel_particle;
+pub use vcad_kernel_qcd;
 pub use vcad_kernel_photonics;
 pub use vcad_kernel_primitives;
 pub use vcad_kernel_sheet;
