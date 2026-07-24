@@ -9508,3 +9508,41 @@ pub fn neutronics_simulate(spec_json: &str, params_json: &str) -> Result<JsValue
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
 }
+
+// =============================================================================
+// GLB / STL export (vcad-kernel-export)
+// =============================================================================
+
+/// Build binary GLB bytes from a JSON `GlbSpec` plus shared flat data
+/// buffers. Geometry (positions/normals/animation keyframes) lives in
+/// `f32_data`, indices in `u32_data`; the spec references `[offset, len]`
+/// spans into them. Single source of truth for GLB serialization — the
+/// `@vcad/mcp` and `@vcad/core` exporters are thin wrappers over this.
+#[wasm_bindgen(js_name = buildGlbBytes)]
+pub fn build_glb_bytes(
+    spec_json: &str,
+    f32_data: &[f32],
+    u32_data: &[u32],
+) -> Result<Vec<u8>, JsError> {
+    vcad_kernel_export::build_glb_json(spec_json, f32_data, u32_data)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Build binary STL bytes from a JSON `StlSpec` plus shared flat data
+/// buffers (see [`build_glb_bytes`] for the buffer convention).
+#[wasm_bindgen(js_name = buildStlBytes)]
+pub fn build_stl_bytes(
+    spec_json: &str,
+    f32_data: &[f32],
+    u32_data: &[u32],
+) -> Result<Vec<u8>, JsError> {
+    vcad_kernel_export::build_stl_json(spec_json, f32_data, u32_data)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Convert a Transform3D Euler rotation in degrees (extrinsic XYZ, the
+/// kernel's `R = Rz·Ry·Rx` convention) to a glTF quaternion `[x, y, z, w]`.
+#[wasm_bindgen(js_name = eulerXyzDegToQuat)]
+pub fn euler_xyz_deg_to_quat_wasm(x_deg: f64, y_deg: f64, z_deg: f64) -> Vec<f64> {
+    vcad_kernel_export::euler_xyz_deg_to_quat(x_deg, y_deg, z_deg).to_vec()
+}

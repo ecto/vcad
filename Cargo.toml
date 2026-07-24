@@ -20,6 +20,7 @@ members = [
     "crates/vcad-kernel-shell",
     "crates/vcad-kernel-sheet",
     "crates/vcad-kernel-step",
+    "crates/vcad-kernel-export",
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
     "crates/vcad-design-constraints",
@@ -112,6 +113,7 @@ default-members = [
     "crates/vcad-kernel-shell",
     "crates/vcad-kernel-sheet",
     "crates/vcad-kernel-step",
+    "crates/vcad-kernel-export",
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
     "crates/vcad-design-constraints",
@@ -221,6 +223,7 @@ vcad-kernel-sweep = { path = "crates/vcad-kernel-sweep", version = "0.9.4" }
 vcad-kernel-shell = { path = "crates/vcad-kernel-shell", version = "0.9.4" }
 vcad-kernel-sheet = { path = "crates/vcad-kernel-sheet", version = "0.9.4" }
 vcad-kernel-step = { path = "crates/vcad-kernel-step", version = "0.9.4" }
+vcad-kernel-export = { path = "crates/vcad-kernel-export", version = "0.9.4" }
 vcad-kernel-constraints = { path = "crates/vcad-kernel-constraints", version = "0.9.4" }
 vcad-design-constraints = { path = "crates/vcad-design-constraints", version = "0.9.4" }
 vcad-kernel-diff = { path = "crates/vcad-kernel-diff", version = "0.9.4" }

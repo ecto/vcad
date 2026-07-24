@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import {
   isRemoteDeployment,
   maxInlineExportBytes,
@@ -7,7 +7,7 @@ import {
 import { importStep } from "../tools/import.js";
 import { exportCad } from "../tools/export.js";
 import { clearArtifacts } from "../tools/artifact-store.js";
-import type { Engine } from "@vcad/engine";
+import { getKernelWasm, type Engine } from "@vcad/engine";
 import { createDocument } from "@vcad/ir";
 
 afterEach(() => {
@@ -38,9 +38,13 @@ describe("isRemoteDeployment / maxInlineExportBytes", () => {
 });
 
 describe("export_cad remote mode", () => {
-  // A minimal one-cube document via the loon-free IR builder would require
-  // the kernel; instead exercise the delivery branch through a tiny fake
-  // engine that returns a single-part scene with a trivial mesh.
+  // Exercise the delivery branch through a tiny fake engine that returns a
+  // single-part scene with a trivial mesh. The GLB/STL byte writers live in
+  // kernel WASM, so the module still has to be initialized.
+  beforeAll(async () => {
+    await getKernelWasm();
+  });
+
   const fakeEngine = {
     evaluate: () => ({
       parts: [

@@ -146,6 +146,8 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 `vcad-kernel-tessellate` converts BReps to watertight triangle meshes with curvature-adaptive sampling and trim-loop-aware triangulation. This feeds the viewport, STL/GLB export, physics collision shapes, and the images on this page.
 
+`vcad-kernel-export` owns the GLB (binary glTF 2.0, PBR materials + KHR extensions + keyframe animation) and binary STL byte writers. It is the single serialization implementation behind the CLI, the MCP server, and the web app's browser-side export (via WASM).
+
 ### Direct BRep Ray Tracing
 
 `vcad-kernel-raytrace` renders BReps pixel-perfectly *without* tessellation: analytic ray intersection against every surface type, SAH-built BVH acceleration, and trimmed-surface handling, running as a WebGPU compute pipeline in the app's ray-traced view mode. The same engine runs on the CPU for headless output: `vcad-render part.vcad --raytrace --png out.png` produces an exact-silhouette raster in any of the standard views.

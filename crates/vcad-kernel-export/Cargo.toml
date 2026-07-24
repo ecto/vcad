@@ -1,0 +1,11 @@
+[package]
+name = "vcad-kernel-export"
+description = "Mesh-level GLB (binary glTF 2.0) and binary STL writers for vcad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = "1"

@@ -6825,6 +6825,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-drafting",
+ "vcad-kernel-export",
 ]
 
 [[package]]
@@ -7335,6 +7336,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-export"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-fea"
 version = "0.9.4"
 dependencies = [
@@ -7681,6 +7690,7 @@ dependencies = [
  "vcad-kernel-atoms",
  "vcad-kernel-cam",
  "vcad-kernel-drafting",
+ "vcad-kernel-export",
  "vcad-kernel-geom",
  "vcad-kernel-gpu",
  "vcad-kernel-math",

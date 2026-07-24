@@ -1,92 +1,60 @@
 import type { EvaluatedScene } from "@vcad/engine";
+import { getKernelWasmSync } from "@vcad/engine";
 
 /**
  * Export an evaluated scene as a binary STL ArrayBuffer.
- * Binary STL format:
- *   80 bytes header
- *   4 bytes (uint32) triangle count
- *   Per triangle (50 bytes):
- *     12 bytes normal (float32 x3)
- *     36 bytes vertices (float32 x3 x3)
- *     2 bytes attribute byte count (0)
+ *
+ * Thin wrapper over the kernel WASM writer (`vcad-kernel-export` via
+ * `buildStlBytes`) — the single source of truth for STL serialization.
+ * All parts are merged into one triangle soup. Requires the kernel WASM
+ * module to be initialized (always true once a scene has been evaluated).
  */
 export function exportStlBuffer(scene: EvaluatedScene): ArrayBuffer {
-  // Count total triangles across all parts
-  let totalTriangles = 0;
+  const mod = getKernelWasmSync();
+  if (!mod) {
+    throw new Error(
+      "kernel WASM not initialized — await getKernelWasm() before exporting",
+    );
+  }
+  const wasm = mod as unknown as {
+    buildStlBytes(
+      specJson: string,
+      f32Data: Float32Array,
+      u32Data: Uint32Array,
+    ): Uint8Array;
+  };
+
+  let f32Len = 0;
+  let u32Len = 0;
   for (const part of scene.parts) {
-    totalTriangles += part.mesh.indices.length / 3;
+    f32Len += part.mesh.positions.length;
+    u32Len += part.mesh.indices.length;
   }
+  const f32Data = new Float32Array(f32Len);
+  const u32Data = new Uint32Array(u32Len);
+  let f32Off = 0;
+  let u32Off = 0;
+  const meshes = scene.parts.map((part) => {
+    f32Data.set(part.mesh.positions, f32Off);
+    u32Data.set(part.mesh.indices, u32Off);
+    const spec = {
+      positions: [f32Off, part.mesh.positions.length],
+      indices: [u32Off, part.mesh.indices.length],
+    };
+    f32Off += part.mesh.positions.length;
+    u32Off += part.mesh.indices.length;
+    return spec;
+  });
 
-  const bufferSize = 80 + 4 + totalTriangles * 50;
-  const buffer = new ArrayBuffer(bufferSize);
-  const view = new DataView(buffer);
-
-  // Header: 80 bytes (zeros is fine, or write a label)
-  const headerStr = "vcad binary STL export";
-  for (let i = 0; i < headerStr.length && i < 80; i++) {
-    view.setUint8(i, headerStr.charCodeAt(i));
-  }
-
-  // Triangle count
-  view.setUint32(80, totalTriangles, true);
-
-  let offset = 84;
-
-  for (const part of scene.parts) {
-    const { positions, indices } = part.mesh;
-    const numTris = indices.length / 3;
-
-    for (let t = 0; t < numTris; t++) {
-      const i0 = indices[t * 3]!;
-      const i1 = indices[t * 3 + 1]!;
-      const i2 = indices[t * 3 + 2]!;
-
-      // Vertices
-      const ax = positions[i0 * 3]!;
-      const ay = positions[i0 * 3 + 1]!;
-      const az = positions[i0 * 3 + 2]!;
-      const bx = positions[i1 * 3]!;
-      const by = positions[i1 * 3 + 1]!;
-      const bz = positions[i1 * 3 + 2]!;
-      const cx = positions[i2 * 3]!;
-      const cy = positions[i2 * 3 + 1]!;
-      const cz = positions[i2 * 3 + 2]!;
-
-      // Compute face normal
-      const ux = bx - ax, uy = by - ay, uz = bz - az;
-      const vx = cx - ax, vy = cy - ay, vz = cz - az;
-      let nx = uy * vz - uz * vy;
-      let ny = uz * vx - ux * vz;
-      let nz = ux * vy - uy * vx;
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      if (len > 0) { nx /= len; ny /= len; nz /= len; }
-
-      // Normal
-      view.setFloat32(offset, nx, true); offset += 4;
-      view.setFloat32(offset, ny, true); offset += 4;
-      view.setFloat32(offset, nz, true); offset += 4;
-
-      // Vertex 1
-      view.setFloat32(offset, ax, true); offset += 4;
-      view.setFloat32(offset, ay, true); offset += 4;
-      view.setFloat32(offset, az, true); offset += 4;
-
-      // Vertex 2
-      view.setFloat32(offset, bx, true); offset += 4;
-      view.setFloat32(offset, by, true); offset += 4;
-      view.setFloat32(offset, bz, true); offset += 4;
-
-      // Vertex 3
-      view.setFloat32(offset, cx, true); offset += 4;
-      view.setFloat32(offset, cy, true); offset += 4;
-      view.setFloat32(offset, cz, true); offset += 4;
-
-      // Attribute byte count
-      view.setUint16(offset, 0, true); offset += 2;
-    }
-  }
-
-  return buffer;
+  const stl = wasm.buildStlBytes(
+    JSON.stringify({ name: "vcad binary STL export", meshes }),
+    f32Data,
+    u32Data,
+  );
+  return stl.buffer.slice(
+    stl.byteOffset,
+    stl.byteOffset + stl.byteLength,
+  ) as ArrayBuffer;
 }
 
 /**
