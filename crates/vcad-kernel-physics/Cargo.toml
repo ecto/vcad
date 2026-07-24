@@ -13,7 +13,7 @@ vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-diff = { workspace = true }
 vcad-kernel-primitives = { workspace = true }
 vcad-kernel-math = { workspace = true }
-phyz = { path = "../../../phyz/crates/phyz", version = "0.3" }
+phyz = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 stl_io = "0.8"
