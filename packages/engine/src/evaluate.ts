@@ -92,8 +92,13 @@ function wasmMeshToTriangleMesh(m: WasmMesh): TriangleMesh {
  * Loft, Text2D, ImportedMesh, assembly with forward kinematics, and clash
  * detection.
  *
- * Falls back to the TypeScript evaluator when the WASM evaluator is not
- * available (e.g., older WASM builds).
+ * A kernel without the `evaluateDocument` binding is unsupported (every
+ * supported deployment ships a current checked-in WASM bundle, refreshed by
+ * wasm-refresh.yml) and throws a clear error. The TS evaluator below is NOT
+ * an old-bundle shim — see its doc comment — but it does still serve as the
+ * recovery path when the WASM evaluator throws at runtime on a specific
+ * document (the TS pass can often still mesh it, and its per-node dispatch
+ * localizes the failure).
  */
 export function evaluateDocument(
   doc: Document,
@@ -113,8 +118,14 @@ export function evaluateDocument(
   // see concrete f64s for any parameter-bound fields in their params map.
   doc = expandPartInstances(doc, kernel);
 
-  // Try the Rust WASM evaluator first
-  if (kernel.evaluateDocument) {
+  if (!kernel.evaluateDocument) {
+    throw new Error(
+      "kernel WASM bundle is missing the evaluateDocument binding — rebuild @vcad/kernel-wasm (stale bundle); old bundles are unsupported",
+    );
+  }
+
+  // Rust WASM evaluator first; TS evaluator only as runtime-error recovery.
+  {
     try {
       const docJson = JSON.stringify(doc);
       const result = kernel.evaluateDocument(
@@ -196,7 +207,7 @@ export function evaluateDocument(
     }
   }
 
-  // Fallback: TypeScript evaluator
+  // Recovery: TypeScript evaluator (per-node dispatch localizes the failure)
   return evaluateDocumentTS(doc, kernel, options);
 }
 
@@ -456,10 +467,22 @@ export function transformMesh(
 }
 
 /**
- * TypeScript fallback evaluator.
+ * TypeScript evaluator — deliberately kept, NOT an old-WASM-bundle shim.
  *
- * Used when the WASM `evaluateDocument` is not available. Produces `Solid`
- * objects alongside meshes (needed for STEP export and BRep ray tracing).
+ * Of the three TS mirrors of kernel functionality (this, the diff fallback,
+ * the loon serializer fallback), this is the one that's genuinely
+ * load-bearing, for reasons unrelated to bundle age:
+ *
+ * 1. It's the only evaluator that keeps live BRep `Solid` handles attached
+ *    to each part — the WASM `evaluateDocument` returns meshes only.
+ *    `Engine.evaluateWithSolids` (STEP export, BRep ray tracing) and
+ *    `runDfm` (routes DFM through `Solid.runDfm` without re-serializing the
+ *    BRep) depend on this.
+ * 2. It's the runtime-error recovery path when the WASM evaluator throws on
+ *    a specific document, and the worker's explicit `evaluatorMode: "ts"`.
+ *
+ * It still uses the WASM `Solid` class for all geometry — it duplicates the
+ * dispatch/orchestration layer, not the kernel.
  */
 export function evaluateDocumentTS(
   doc: Document,

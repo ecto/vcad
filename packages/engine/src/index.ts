@@ -93,7 +93,6 @@ export type { GpuGeometryResult } from "./gpu.js";
 // Caching and incremental evaluation
 export {
   semanticDiff,
-  semanticDiffFallback,
   threeWayMerge,
   mergeAvailable,
   type DocumentDiff,

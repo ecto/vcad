@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Document } from "@vcad/ir";
-import { semanticDiffFallback } from "../diff.js";
+import { semanticDiff } from "../diff.js";
+import type { KernelModule } from "../index.js";
+import { getKernelWasm } from "../wasm-singleton.js";
+
+let kernel: KernelModule;
+
+beforeAll(async () => {
+  kernel = (await getKernelWasm()) as unknown as KernelModule;
+});
 
 function cubeDoc(size: number): Document {
   return {
@@ -18,13 +26,19 @@ function cubeDoc(size: number): Document {
   } as unknown as Document;
 }
 
-describe("semanticDiffFallback", () => {
+describe("semanticDiff (kernel documentDiff)", () => {
+  it("throws a clear error without the kernel binding", () => {
+    expect(() => semanticDiff(cubeDoc(10), cubeDoc(10), null)).toThrow(
+      /documentDiff binding/,
+    );
+  });
+
   it("returns an empty diff for identical documents", () => {
-    expect(semanticDiffFallback(cubeDoc(10), cubeDoc(10)).changes).toEqual([]);
+    expect(semanticDiff(cubeDoc(10), cubeDoc(10), kernel).changes).toEqual([]);
   });
 
   it("reports field-level old→new changes on modified entities", () => {
-    const diff = semanticDiffFallback(cubeDoc(10), cubeDoc(25));
+    const diff = semanticDiff(cubeDoc(10), cubeDoc(25), kernel);
     expect(diff.changes).toHaveLength(1);
     const change = diff.changes[0]!;
     expect(change.kind).toBe("node");
@@ -49,11 +63,11 @@ describe("semanticDiffFallback", () => {
     };
     b.roots.push({ root: 2, material: "steel" } as (typeof b.roots)[number]);
 
-    const forward = semanticDiffFallback(a, b);
+    const forward = semanticDiff(a, b, kernel);
     expect(forward.changes).toHaveLength(2); // node 2 + root 2
     expect(forward.changes.every((c) => c.type === "added")).toBe(true);
 
-    const reverse = semanticDiffFallback(b, a);
+    const reverse = semanticDiff(b, a, kernel);
     expect(reverse.changes.every((c) => c.type === "removed")).toBe(true);
   });
 
@@ -66,6 +80,6 @@ describe("semanticDiffFallback", () => {
     a.roots.push({ root: 2, material: "steel" } as (typeof a.roots)[number]);
     const b = JSON.parse(JSON.stringify(a)) as Document;
     b.roots.reverse();
-    expect(semanticDiffFallback(a, b).changes).toEqual([]);
+    expect(semanticDiff(a, b, kernel).changes).toEqual([]);
   });
 });
