@@ -1,11 +1,44 @@
 /**
  * GLB (binary glTF) export for visualization.
  *
- * Ported from crates/vcad/src/export/gltf.rs
+ * Thin wrapper over the kernel WASM writer (`vcad-kernel-export` via
+ * `buildGlbBytes`) — the single source of truth for GLB serialization.
+ * This module only packs mesh/animation data into the flat buffers the
+ * kernel expects; all byte layout, material dedup, KHR extensions, and
+ * animation encoding happen in Rust.
+ *
+ * Requires the kernel WASM module to be initialized (`getKernelWasm()`)
+ * before any build call — the MCP server does this at startup.
  */
 
-import type { EvaluatedScene, TriangleMesh } from "@vcad/engine";
+import { getKernelWasmSync } from "@vcad/engine";
+import type { EvaluatedScene } from "@vcad/engine";
 import type { Document, Vec3 } from "@vcad/ir";
+
+interface ExportWasm {
+  buildGlbBytes(
+    specJson: string,
+    f32Data: Float32Array,
+    u32Data: Uint32Array,
+  ): Uint8Array;
+  buildStlBytes(
+    specJson: string,
+    f32Data: Float32Array,
+    u32Data: Uint32Array,
+  ): Uint8Array;
+  eulerXyzDegToQuat(xDeg: number, yDeg: number, zDeg: number): Float64Array;
+}
+
+/** The initialized kernel WASM module, or throw with a actionable message. */
+export function exportKernel(): ExportWasm {
+  const mod = getKernelWasmSync();
+  if (!mod) {
+    throw new Error(
+      "kernel WASM not initialized — await getKernelWasm() before exporting",
+    );
+  }
+  return mod as unknown as ExportWasm;
+}
 
 /**
  * Build `"<part_id>:<name>"` labels for every visible root, index-aligned
@@ -83,8 +116,7 @@ export interface GlbMesh {
  */
 export interface GlbAnimationChannel {
   /** Target node name — must match a {@link GlbMesh} node name (or the
-   *  animation's `rootNodeName`) exactly. Unknown names are skipped with a
-   *  console.warn. */
+   *  animation's `rootNodeName`) exactly. Unknown names are skipped. */
   nodeName: string;
   path: "translation" | "rotation" | "scale";
   /** Keyframe times in seconds, ascending. */
@@ -110,512 +142,105 @@ export interface GlbAnimationOptions {
   extraNodes?: string[];
 }
 
-/** A PBR material resolved from a {@link GlbMesh}, deduped across meshes. */
-interface GlbMaterial {
-  name: string;
-  color: [number, number, number];
-  metallic: number;
-  roughness: number;
-  emissive: [number, number, number];
-  emissiveStrength: number;
-  clearcoat: number;
-  clearcoatRoughness: number;
-  alpha: number;
-}
-
-const isEmissive = (e: [number, number, number]): boolean =>
-  e[0] > 0 || e[1] > 0 || e[2] > 0;
-
-const f32 = (a: Float32Array | number[]): Float32Array =>
-  a instanceof Float32Array ? a : new Float32Array(a);
-
 /**
  * Convert a `Transform3D` Euler rotation in degrees (`rotation: Vec3`, Euler
  * XYZ deg) to the glTF node quaternion `[x, y, z, w]`.
  *
- * Composition AUTHORITY: the kernel applies Transform3D rotations as
- * `R = Rz·Ry·Rx` on column vectors — rotate about world X first, then world
- * Y, then world Z (extrinsic XYZ). See crates/vcad-eval/src/kinematics.rs
- * `euler_to_matrix` ("// Rz * Ry * Rx"), the identical matrix in
- * packages/engine/src/evaluate.ts `transformMesh`, and evaluate.rs's
- * `rx.then(ry).then(rz)`. In three.js Euler-order terms this is "ZYX"
- * (three's "XYZ" is the intrinsic Rx·Ry·Rz — the OPPOSITE order), so the
- * quaternion below is q = qz ⊗ qy ⊗ qx.
+ * Composition AUTHORITY is the kernel (`R = Rz·Ry·Rx`, extrinsic XYZ) —
+ * this delegates to the Rust implementation in `vcad-kernel-export`.
  */
 export function eulerXyzDegToQuat(
   rotation: Vec3,
 ): [number, number, number, number] {
-  const rad = Math.PI / 180;
-  const hx = (rotation.x * rad) / 2;
-  const hy = (rotation.y * rad) / 2;
-  const hz = (rotation.z * rad) / 2;
-  const c1 = Math.cos(hx);
-  const s1 = Math.sin(hx);
-  const c2 = Math.cos(hy);
-  const s2 = Math.sin(hy);
-  const c3 = Math.cos(hz);
-  const s3 = Math.sin(hz);
-  // q = qz ⊗ qy ⊗ qx (X applied first) — the "ZYX" quaternion.
-  return [
-    s1 * c2 * c3 - c1 * s2 * s3,
-    c1 * s2 * c3 + s1 * c2 * s3,
-    c1 * c2 * s3 - s1 * s2 * c3,
-    c1 * c2 * c3 + s1 * s2 * s3,
-  ];
+  const q = exportKernel().eulerXyzDegToQuat(rotation.x, rotation.y, rotation.z);
+  return [q[0], q[1], q[2], q[3]];
 }
+
+/** A span `[offset, len]` into one of the packed flat buffers. */
+type Span = [number, number];
 
 /** Build binary GLB bytes from an explicit list of meshes + PBR materials.
  *
- * Writes POSITION, NORMAL (when present), and u32 indices per mesh, and
- * de-dupes materials by `(color, metallic, roughness)` so a layered board
- * (board / copper / components / silk) stays at a handful of materials. */
+ * Packs geometry and keyframe data into two flat buffers and hands them to
+ * the kernel WASM writer, which owns all serialization behavior (POSITION /
+ * NORMAL / u32 indices, material + geometry dedup, KHR extensions, node
+ * TRS, animations). */
 export function buildGlb(
   inputMeshes: GlbMesh[],
   name: string,
   animation?: GlbAnimationOptions,
 ): Uint8Array {
-  // Collect unique materials keyed by their full PBR values.
-  const materialMap = new Map<string, number>();
-  const materials: GlbMaterial[] = [];
+  // Size the flat buffers.
+  let f32Len = 0;
+  let u32Len = 0;
+  for (const m of inputMeshes) {
+    f32Len += m.positions.length;
+    u32Len += m.indices.length;
+    if (m.normals && m.normals.length === m.positions.length) {
+      f32Len += m.normals.length;
+    }
+  }
+  for (const ch of animation?.channels ?? []) {
+    f32Len += ch.times.length + ch.values.length;
+  }
 
-  const materialIndexFor = (m: GlbMesh): number => {
-    const emissive = m.emissive ?? [0, 0, 0];
-    const emissiveStrength = m.emissiveStrength ?? 1;
-    const clearcoat = m.clearcoat ?? 0;
-    const clearcoatRoughness = m.clearcoatRoughness ?? 0;
-    const alpha = m.alpha ?? 1;
-    const key = `${m.color[0]},${m.color[1]},${m.color[2]},${m.metallic},${m.roughness},${emissive[0]},${emissive[1]},${emissive[2]},${emissiveStrength},${clearcoat},${clearcoatRoughness},${alpha}`;
-    const existing = materialMap.get(key);
-    if (existing !== undefined) return existing;
-    const idx = materials.length;
-    materialMap.set(key, idx);
-    materials.push({
-      name: m.name.includes(":") ? m.name.split(":")[0] : m.name,
-      color: m.color,
-      metallic: m.metallic,
-      roughness: m.roughness,
-      emissive,
-      emissiveStrength,
-      clearcoat,
-      clearcoatRoughness,
-      alpha,
-    });
-    return idx;
+  const f32Data = new Float32Array(f32Len);
+  const u32Data = new Uint32Array(u32Len);
+  let f32Off = 0;
+  let u32Off = 0;
+  const pushF32 = (data: Float32Array | number[]): Span => {
+    f32Data.set(data, f32Off);
+    const span: Span = [f32Off, data.length];
+    f32Off += data.length;
+    return span;
+  };
+  const pushU32 = (data: Uint32Array | number[]): Span => {
+    u32Data.set(data, u32Off);
+    const span: Span = [u32Off, data.length];
+    u32Off += data.length;
+    return span;
   };
 
-  if (inputMeshes.length === 0) {
-    materials.push({
-      ...DEFAULT_MATERIAL,
-      emissive: [0, 0, 0],
-      emissiveStrength: 1,
-      clearcoat: 0,
-      clearcoatRoughness: 0,
-      alpha: 1,
-    });
-  }
+  const meshes = inputMeshes.map((m) => ({
+    name: m.name,
+    positions: pushF32(m.positions),
+    indices: pushU32(m.indices),
+    normals:
+      m.normals && m.normals.length === m.positions.length
+        ? pushF32(m.normals)
+        : undefined,
+    color: m.color,
+    metallic: m.metallic,
+    roughness: m.roughness,
+    emissive: m.emissive,
+    emissiveStrength: m.emissiveStrength,
+    clearcoat: m.clearcoat,
+    clearcoatRoughness: m.clearcoatRoughness,
+    alpha: m.alpha,
+    transform: m.transform,
+    meshKey: m.meshKey,
+  }));
 
-  // Build binary buffer for all meshes
-  const bufferChunks: Uint8Array[] = [];
-  const bufferViews: BufferView[] = [];
-  const accessors: Accessor[] = [];
-  const meshes: Mesh[] = [];
-  const nodes: GltfNode[] = [];
-
-  let bufferOffset = 0;
-
-  // Geometry dedup: inputs sharing a `meshKey` (assembly instances of one
-  // partDef) emit one glTF mesh, referenced by one node per input.
-  const meshKeyToIdx = new Map<string, number>();
-
-  for (let inputIdx = 0; inputIdx < inputMeshes.length; inputIdx++) {
-    const input = inputMeshes[inputIdx];
-
-    const dedupIdx =
-      input.meshKey !== undefined ? meshKeyToIdx.get(input.meshKey) : undefined;
-    if (dedupIdx !== undefined) {
-      nodes.push(makeNode(input, dedupIdx));
-      continue;
-    }
-
-    const positions = f32(input.positions);
-    const normals =
-      input.normals && input.normals.length === positions.length
-        ? f32(input.normals)
-        : undefined;
-
-    const vertexCount = positions.length / 3;
-    const indexCount = input.indices.length;
-
-    // Calculate bounds
-    let minX = Infinity,
-      minY = Infinity,
-      minZ = Infinity;
-    let maxX = -Infinity,
-      maxY = -Infinity,
-      maxZ = -Infinity;
-
-    for (let i = 0; i < vertexCount; i++) {
-      const x = positions[i * 3];
-      const y = positions[i * 3 + 1];
-      const z = positions[i * 3 + 2];
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      minZ = Math.min(minZ, z);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      maxZ = Math.max(maxZ, z);
-    }
-
-    // Write indices as u32
-    const indicesBytes = new Uint8Array(indexCount * 4);
-    const indicesView = new DataView(indicesBytes.buffer);
-    for (let i = 0; i < indexCount; i++) {
-      indicesView.setUint32(i * 4, input.indices[i], true);
-    }
-
-    // Pad to 4-byte alignment
-    const indicesPadded = padTo4(indicesBytes);
-    bufferChunks.push(indicesPadded);
-
-    // Index buffer view
-    const indicesBvIdx = bufferViews.length;
-    bufferViews.push({
-      buffer: 0,
-      byteOffset: bufferOffset,
-      byteLength: indexCount * 4,
-      target: 34963, // ELEMENT_ARRAY_BUFFER
-    });
-    bufferOffset += indicesPadded.length;
-
-    // Index accessor
-    const indicesAccIdx = accessors.length;
-    accessors.push({
-      bufferView: indicesBvIdx,
-      componentType: 5125, // UNSIGNED_INT
-      count: indexCount,
-      type: "SCALAR",
-    });
-
-    // Write positions as f32 (copy into a fresh, tightly-packed buffer so a
-    // subarray view of a larger backing buffer doesn't leak extra bytes).
-    const positionsBytes = new Uint8Array(
-      positions.buffer.slice(
-        positions.byteOffset,
-        positions.byteOffset + vertexCount * 12,
-      ),
-    );
-    const positionsPadded = padTo4(positionsBytes);
-    bufferChunks.push(positionsPadded);
-
-    // Position buffer view
-    const positionsBvIdx = bufferViews.length;
-    bufferViews.push({
-      buffer: 0,
-      byteOffset: bufferOffset,
-      byteLength: vertexCount * 12,
-      target: 34962, // ARRAY_BUFFER
-    });
-    bufferOffset += positionsPadded.length;
-
-    // Position accessor
-    const positionsAccIdx = accessors.length;
-    accessors.push({
-      bufferView: positionsBvIdx,
-      componentType: 5126, // FLOAT
-      count: vertexCount,
-      type: "VEC3",
-      min: [minX, minY, minZ],
-      max: [maxX, maxY, maxZ],
-    });
-
-    const attributes: { POSITION: number; NORMAL?: number } = {
-      POSITION: positionsAccIdx,
-    };
-
-    // Normals (optional) — gives the viewer proper smooth/flat shading.
-    if (normals) {
-      const normalsBytes = new Uint8Array(
-        normals.buffer.slice(
-          normals.byteOffset,
-          normals.byteOffset + vertexCount * 12,
-        ),
-      );
-      const normalsPadded = padTo4(normalsBytes);
-      bufferChunks.push(normalsPadded);
-
-      const normalsBvIdx = bufferViews.length;
-      bufferViews.push({
-        buffer: 0,
-        byteOffset: bufferOffset,
-        byteLength: vertexCount * 12,
-        target: 34962, // ARRAY_BUFFER
-      });
-      bufferOffset += normalsPadded.length;
-
-      const normalsAccIdx = accessors.length;
-      accessors.push({
-        bufferView: normalsBvIdx,
-        componentType: 5126, // FLOAT
-        count: vertexCount,
-        type: "VEC3",
-      });
-      attributes.NORMAL = normalsAccIdx;
-    }
-
-    // Mesh
-    const meshIdx = meshes.length;
-    meshes.push({
-      name: `mesh_${meshIdx}`,
-      primitives: [
-        {
-          attributes,
-          indices: indicesAccIdx,
-          material: materialIndexFor(input),
-        },
-      ],
-    });
-    if (input.meshKey !== undefined) meshKeyToIdx.set(input.meshKey, meshIdx);
-
-    // Node — named with part identity when the caller provides it.
-    nodes.push(makeNode(input, meshIdx));
-  }
-
-  // Scene roots: default = every mesh node; with an animation rootNodeName,
-  // a new parent node wraps them all and becomes the sole scene root.
-  let sceneNodeIndices = nodes.map((_, i) => i);
-  if (animation?.rootNodeName !== undefined) {
-    const rootIdx = nodes.length;
-    nodes.push({
-      name: animation.rootNodeName,
-      children: sceneNodeIndices,
-    });
-    sceneNodeIndices = [rootIdx];
-  }
-  for (const extra of animation?.extraNodes ?? []) {
-    const idx = nodes.length;
-    nodes.push({ name: extra });
-    sceneNodeIndices = [...sceneNodeIndices, idx];
-  }
-
-  // Animations: write sampler input/output data into the same BIN chunk.
-  // Animation bufferViews must NOT carry a `target` (not vertex attributes).
-  let animationsJson:
-    | Array<{
-        name: string;
-        samplers: Array<{
-          input: number;
-          output: number;
-          interpolation: string;
-        }>;
-        channels: Array<{
-          sampler: number;
-          target: { node: number; path: string };
-        }>;
-      }>
-    | undefined;
-  if (animation && animation.channels.length > 0) {
-    const nodeIndexByName = new Map<string, number>();
-    for (let i = 0; i < nodes.length; i++) {
-      nodeIndexByName.set(nodes[i].name, i);
-    }
-
-    const writeF32Accessor = (
-      data: number[],
-      type: "SCALAR" | "VEC3" | "VEC4",
-      withMinMax: boolean,
-    ): number => {
-      const arr = new Float32Array(data);
-      const bytes = new Uint8Array(arr.buffer.slice(0));
-      const padded = padTo4(bytes);
-      bufferChunks.push(padded);
-      const bvIdx = bufferViews.length;
-      bufferViews.push({
-        buffer: 0,
-        byteOffset: bufferOffset,
-        byteLength: bytes.length,
-      });
-      bufferOffset += padded.length;
-      const components = type === "SCALAR" ? 1 : type === "VEC3" ? 3 : 4;
-      const accIdx = accessors.length;
-      const acc: Accessor = {
-        bufferView: bvIdx,
-        componentType: 5126, // FLOAT
-        count: data.length / components,
-        type,
-      };
-      if (withMinMax) {
-        // Spec requires min/max on animation sampler input accessors.
-        acc.min = [Math.min(...data)];
-        acc.max = [Math.max(...data)];
-      }
-      accessors.push(acc);
-      return accIdx;
-    };
-
-    const samplers: Array<{
-      input: number;
-      output: number;
-      interpolation: string;
-    }> = [];
-    const channels: Array<{
-      sampler: number;
-      target: { node: number; path: string };
-    }> = [];
-
-    for (const ch of animation.channels) {
-      const nodeIdx = nodeIndexByName.get(ch.nodeName);
-      if (nodeIdx === undefined) {
-        console.warn(
-          `buildGlb: animation channel targets unknown node "${ch.nodeName}" — skipped`,
-        );
-        continue;
-      }
-      const inputAcc = writeF32Accessor(ch.times, "SCALAR", true);
-      const outputAcc = writeF32Accessor(
-        ch.values,
-        ch.path === "rotation" ? "VEC4" : "VEC3",
-        false,
-      );
-      const samplerIdx = samplers.length;
-      samplers.push({
-        input: inputAcc,
-        output: outputAcc,
-        interpolation: ch.interpolation ?? "LINEAR",
-      });
-      channels.push({
-        sampler: samplerIdx,
-        target: { node: nodeIdx, path: ch.path },
-      });
-    }
-
-    if (channels.length > 0) {
-      animationsJson = [
-        { name: animation.name ?? "timeline", samplers, channels },
-      ];
-    }
-  }
-
-  // Build JSON. Materials may carry KHR extensions (clearcoat for glossy
-  // soldermask, emissive_strength for LEDs that glow past white). GLTFLoader
-  // applies both automatically onto a MeshPhysicalMaterial.
-  let usesClearcoat = false;
-  let usesEmissiveStrength = false;
-  const materialJson = materials.map((m) => {
-    const mat: Record<string, unknown> = {
-      name: m.name,
-      pbrMetallicRoughness: {
-        baseColorFactor: [...m.color, m.alpha],
-        metallicFactor: m.metallic,
-        roughnessFactor: m.roughness,
-      },
-    };
-    if (m.alpha < 1) {
-      // Translucent (soldermask shell): alpha-blended and double-sided so
-      // the underside of the shell doesn't vanish at grazing angles.
-      mat.alphaMode = "BLEND";
-      mat.doubleSided = true;
-    }
-    if (isEmissive(m.emissive)) {
-      mat.emissiveFactor = m.emissive;
-    }
-    const extensions: Record<string, unknown> = {};
-    if (m.clearcoat > 0) {
-      usesClearcoat = true;
-      extensions.KHR_materials_clearcoat = {
-        clearcoatFactor: m.clearcoat,
-        clearcoatRoughnessFactor: m.clearcoatRoughness,
-      };
-    }
-    if (isEmissive(m.emissive) && m.emissiveStrength !== 1) {
-      usesEmissiveStrength = true;
-      extensions.KHR_materials_emissive_strength = {
-        emissiveStrength: m.emissiveStrength,
-      };
-    }
-    if (Object.keys(extensions).length > 0) mat.extensions = extensions;
-    return mat;
-  });
-
-  const extensionsUsed: string[] = [];
-  if (usesClearcoat) extensionsUsed.push("KHR_materials_clearcoat");
-  if (usesEmissiveStrength)
-    extensionsUsed.push("KHR_materials_emissive_strength");
-
-  const json: Record<string, unknown> = {
-    asset: { version: "2.0", generator: "vcad-mcp" },
-    scene: 0,
-    scenes: [{ name, nodes: sceneNodeIndices }],
-    nodes,
+  const spec = {
+    name,
     meshes,
-    materials: materialJson,
-    accessors,
-    bufferViews,
-    buffers: [{ byteLength: bufferOffset }],
+    animation: animation
+      ? {
+          name: animation.name,
+          channels: animation.channels.map((ch) => ({
+            nodeName: ch.nodeName,
+            path: ch.path,
+            times: pushF32(ch.times),
+            values: pushF32(ch.values),
+            interpolation: ch.interpolation,
+          })),
+          rootNodeName: animation.rootNodeName,
+          extraNodes: animation.extraNodes,
+        }
+      : undefined,
   };
-  if (extensionsUsed.length > 0) json.extensionsUsed = extensionsUsed;
-  if (animationsJson) json.animations = animationsJson;
 
-  const jsonStr = JSON.stringify(json);
-  const jsonBytes = new TextEncoder().encode(jsonStr);
-  const jsonPadded = padTo4(jsonBytes, 0x20); // Pad with spaces
-
-  // Merge buffer chunks
-  const binBuffer = new Uint8Array(bufferOffset);
-  let binOffset = 0;
-  for (const chunk of bufferChunks) {
-    binBuffer.set(chunk, binOffset);
-    binOffset += chunk.length;
-  }
-
-  // Build GLB
-  const totalLength = 12 + 8 + jsonPadded.length + 8 + binBuffer.length;
-  const glb = new Uint8Array(totalLength);
-  const glbView = new DataView(glb.buffer);
-
-  let offset = 0;
-
-  // GLB header
-  glb.set(new TextEncoder().encode("glTF"), offset);
-  offset += 4;
-  glbView.setUint32(offset, 2, true); // version
-  offset += 4;
-  glbView.setUint32(offset, totalLength, true); // length
-  offset += 4;
-
-  // JSON chunk
-  glbView.setUint32(offset, jsonPadded.length, true); // chunk length
-  offset += 4;
-  glbView.setUint32(offset, 0x4e4f534a, true); // "JSON"
-  offset += 4;
-  glb.set(jsonPadded, offset);
-  offset += jsonPadded.length;
-
-  // BIN chunk
-  glbView.setUint32(offset, binBuffer.length, true); // chunk length
-  offset += 4;
-  glbView.setUint32(offset, 0x004e4942, true); // "BIN\0"
-  offset += 4;
-  glb.set(binBuffer, offset);
-
-  return glb;
-}
-
-/**
- * Build a glTF node for one input mesh: `{mesh, name}` plus TRS fields when a
- * transform is present. Identity components are omitted (glTF defaults), so
- * an identity transform emits byte-identical JSON to no transform at all.
- */
-function makeNode(input: GlbMesh, meshIdx: number): GltfNode {
-  const node: GltfNode = { mesh: meshIdx, name: input.name };
-  const t = input.transform;
-  if (!t) return node;
-  const [tx, ty, tz] = t.translation;
-  if (tx !== 0 || ty !== 0 || tz !== 0) node.translation = t.translation;
-  const [qx, qy, qz, qw] = t.rotationQuat;
-  if (qx !== 0 || qy !== 0 || qz !== 0 || qw !== 1) node.rotation = t.rotationQuat;
-  const [sx, sy, sz] = t.scale;
-  if (sx !== 1 || sy !== 1 || sz !== 1) node.scale = t.scale;
-  return node;
+  return exportKernel().buildGlbBytes(JSON.stringify(spec), f32Data, u32Data);
 }
 
 /** Convert an evaluated scene to binary GLB bytes.
@@ -642,57 +267,4 @@ export function toGlbBytes(
     roughness: DEFAULT_MATERIAL.roughness,
   }));
   return buildGlb(meshes, name);
-}
-
-/** Pad bytes to 4-byte alignment. */
-function padTo4(bytes: Uint8Array, padByte = 0): Uint8Array {
-  const paddedLength = (bytes.length + 3) & ~3;
-  if (paddedLength === bytes.length) return bytes;
-
-  const padded = new Uint8Array(paddedLength);
-  padded.set(bytes);
-  for (let i = bytes.length; i < paddedLength; i++) {
-    padded[i] = padByte;
-  }
-  return padded;
-}
-
-interface BufferView {
-  buffer: number;
-  byteOffset: number;
-  byteLength: number;
-  /** GL target — set for vertex/index views only; animation data views omit it. */
-  target?: number;
-}
-
-interface Accessor {
-  bufferView: number;
-  componentType: number;
-  count: number;
-  type: string;
-  min?: number[];
-  max?: number[];
-}
-
-interface Mesh {
-  name: string;
-  primitives: Array<{
-    attributes: { POSITION: number; NORMAL?: number };
-    indices: number;
-    material: number;
-  }>;
-}
-
-interface GltfNode {
-  /** Mesh index — absent on the synthetic animation root node. */
-  mesh?: number;
-  name: string;
-  /** Child node indices — present only on the synthetic animation root. */
-  children?: number[];
-  /** Node translation (mm), omitted at identity. */
-  translation?: [number, number, number];
-  /** Node rotation quaternion [x, y, z, w], omitted at identity. */
-  rotation?: [number, number, number, number];
-  /** Node per-axis scale, omitted at identity. */
-  scale?: [number, number, number];
 }

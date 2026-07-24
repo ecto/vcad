@@ -1,7 +1,8 @@
 /**
  * Tests for glTF animation support in the hand-rolled GLB writer.
  */
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { getKernelWasm } from "@vcad/engine";
 import {
   buildGlb,
   type GlbAnimationOptions,
@@ -56,6 +57,11 @@ const turntableChannel = {
   values: [0, 0, 0, 1, 0, 0, 1, 0],
   interpolation: "LINEAR" as const,
 };
+
+// The GLB writer lives in kernel WASM now — initialize it once.
+beforeAll(async () => {
+  await getKernelWasm();
+});
 
 describe("buildGlb animation", () => {
   const meshes = [triMesh("1:base"), triMesh("2:lid")];

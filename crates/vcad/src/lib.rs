@@ -45,6 +45,9 @@ pub enum CadError {
     /// The geometry is empty (no vertices or triangles).
     #[error("Empty geometry")]
     EmptyGeometry,
+    /// Serialization to an export format failed.
+    #[error("Export error: {0}")]
+    ExportError(String),
 }
 
 /// Global atomic counter for unique IR node IDs.

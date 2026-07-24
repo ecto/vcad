@@ -17,6 +17,7 @@ vcad-receipt = { workspace = true }
 vcad-kernel-drafting = { workspace = true }
 vcad-kernel-sheet = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
+vcad-kernel-export = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-crdt = { workspace = true }
 vcad-diff = { path = "../vcad-diff" }
