@@ -1,103 +1,53 @@
-//! Monte Carlo link updates for the SU(2) Wilson action.
+//! Monte Carlo link updates, generic over the gauge group.
 //!
-//! [`heatbath_sweep`] draws each link fresh from its exact local
-//! conditional distribution using the Kennedy–Pendleton algorithm
-//! (Kennedy & Pendleton 1985; the SU(2) heatbath goes back to
-//! Creutz 1980). [`overrelax_sweep`] performs the microcanonical
-//! reflection `U → Ā† U† Ā†`, which preserves the local action exactly
-//! while moving maximally far in the group — interleaving
+//! [`heatbath_sweep`] draws each link from its local conditional
+//! distribution — exactly for SU(2) (Kennedy–Pendleton), via one
+//! Cabibbo–Marinari subgroup cycle for SU(3). [`overrelax_sweep`]
+//! performs the microcanonical action-preserving reflection, which
+//! moves maximally far in the group at zero action cost — interleaving
 //! overrelaxation with heatbath decorrelates configurations much
-//! faster per unit work.
+//! faster per unit work. [`cool_sweep`] locally maximizes the action
+//! (cooling), the classic noise filter for topological observables.
 //!
-//! The local weight for a link with staple sum `A = k·Ā` (with
-//! `Ā ∈ SU(2)`, `k = |A|`) is `exp((β/2)Re Tr(U A))`; writing
-//! `W = U Ā` this is `exp(βk·w₀)` over the Haar measure
-//! `√(1−w₀²) dw₀ dΩ`, which Kennedy–Pendleton samples by rejection.
+//! The group-specific kernels live on [`GaugeGroup`]; this module owns
+//! only the sweep order (lexicographic sites, then μ).
 
+use crate::group::GaugeGroup;
 use crate::lattice::{Lattice, ND};
 use crate::rng::Rng;
-use crate::su2::Su2;
-
-/// Sample `w₀ ∈ [−1,1]` from `P(w₀) ∝ √(1−w₀²)·exp(α·w₀)` (α > 0),
-/// Kennedy–Pendleton rejection. Returns the accepted `w₀`.
-fn sample_w0(alpha: f64, rng: &mut Rng) -> f64 {
-    loop {
-        let r1 = rng.uniform();
-        let r2 = rng.uniform();
-        let r3 = rng.uniform();
-        let c = (2.0 * std::f64::consts::PI * r2).cos();
-        let lambda2 = -(r1.ln() + c * c * r3.ln()) / (2.0 * alpha);
-        if lambda2 > 1.0 {
-            continue;
-        }
-        let r4 = rng.uniform();
-        if r4 * r4 <= 1.0 - lambda2 {
-            return 1.0 - 2.0 * lambda2;
-        }
-    }
-}
-
-/// Uniform point on the 2-sphere scaled to radius `r` (Marsaglia).
-fn sphere(r: f64, rng: &mut Rng) -> (f64, f64, f64) {
-    loop {
-        let u = rng.symmetric();
-        let v = rng.symmetric();
-        let s = u * u + v * v;
-        if s < 1.0 {
-            let f = 2.0 * (1.0 - s).sqrt();
-            return (r * u * f, r * v * f, r * (1.0 - 2.0 * s));
-        }
-    }
-}
-
-/// One heatbath update of a single link given inverse coupling `beta`.
-fn heatbath_link(lat: &mut Lattice, site: usize, mu: usize, beta: f64, rng: &mut Rng) {
-    let a = lat.staple(site, mu);
-    let k = a.norm();
-    if k < 1e-300 {
-        // Degenerate staple: the conditional is Haar-uniform.
-        lat.set_link(site, mu, Su2::random(rng));
-        return;
-    }
-    let a_bar = a.normalized();
-    let w0 = sample_w0(beta * k, rng);
-    let r = (1.0 - w0 * w0).max(0.0).sqrt();
-    let (w1, w2, w3) = sphere(r, rng);
-    let w = Su2 {
-        a0: w0,
-        a1: w1,
-        a2: w2,
-        a3: w3,
-    };
-    lat.set_link(site, mu, w.mul(&a_bar.dagger()));
-}
 
 /// One full heatbath sweep over every link.
-pub fn heatbath_sweep(lat: &mut Lattice, beta: f64, rng: &mut Rng) {
-    for site in 0..lat.volume() {
-        for mu in 0..ND {
-            heatbath_link(lat, site, mu, beta, rng);
-        }
-    }
-}
-
-/// One microcanonical overrelaxation sweep: `U → Ā† U† Ā†`, which
-/// leaves `Re Tr(U A)` (hence the action) exactly invariant.
-pub fn overrelax_sweep(lat: &mut Lattice, rng: &mut Rng) {
+pub fn heatbath_sweep<G: GaugeGroup>(lat: &mut Lattice<G>, beta: f64, rng: &mut Rng) {
     for site in 0..lat.volume() {
         for mu in 0..ND {
             let a = lat.staple(site, mu);
-            if a.norm() < 1e-300 {
-                lat.set_link(site, mu, Su2::random(rng));
-                continue;
-            }
-            let a_bar = a.normalized();
             let u = lat.link(site, mu);
-            lat.set_link(
-                site,
-                mu,
-                a_bar.dagger().mul(&u.dagger()).mul(&a_bar.dagger()),
-            );
+            lat.set_link(site, mu, G::heatbath(&u, &a, beta, rng));
+        }
+    }
+}
+
+/// One microcanonical overrelaxation sweep.
+pub fn overrelax_sweep<G: GaugeGroup>(lat: &mut Lattice<G>, rng: &mut Rng) {
+    for site in 0..lat.volume() {
+        for mu in 0..ND {
+            let a = lat.staple(site, mu);
+            let u = lat.link(site, mu);
+            lat.set_link(site, mu, G::overrelax(&u, &a, rng));
+        }
+    }
+}
+
+/// One cooling sweep: every link moved to its local action maximum.
+/// Repeated cooling drives the configuration toward a classical
+/// solution (plaquette → 1 in the trivial sector), exposing
+/// topological content.
+pub fn cool_sweep<G: GaugeGroup>(lat: &mut Lattice<G>) {
+    for site in 0..lat.volume() {
+        for mu in 0..ND {
+            let a = lat.staple(site, mu);
+            let u = lat.link(site, mu);
+            lat.set_link(site, mu, G::cool(&u, &a));
         }
     }
 }
@@ -105,26 +55,37 @@ pub fn overrelax_sweep(lat: &mut Lattice, rng: &mut Rng) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::su2::{sample_w0, Su2};
 
     #[test]
     fn overrelax_preserves_action() {
         let mut rng = Rng::seeded(21);
-        let mut lat = Lattice::hot([3, 3, 3, 3], &mut rng);
-        // A single overrelaxation of one link preserves its local action;
-        // check via the global plaquette sum for one-link updates.
+        let mut lat: Lattice<Su2> = Lattice::hot([3, 3, 3, 3], &mut rng);
         let site = 5;
         let mu = 2;
         let a = lat.staple(site, mu);
         let before = lat.link(site, mu).mul(&a).re_trace();
-        let a_bar = a.normalized();
         let u = lat.link(site, mu);
-        lat.set_link(
-            site,
-            mu,
-            a_bar.dagger().mul(&u.dagger()).mul(&a_bar.dagger()),
-        );
+        lat.set_link(site, mu, Su2::overrelax(&u, &a, &mut rng));
         let after = lat.link(site, mu).mul(&a).re_trace();
         assert!((before - after).abs() < 1e-10, "{before} vs {after}");
+    }
+
+    #[test]
+    fn cooling_increases_plaquette_monotonically() {
+        let mut rng = Rng::seeded(24);
+        let mut lat: Lattice<Su2> = Lattice::hot([3, 3, 3, 3], &mut rng);
+        let mut last = lat.average_plaquette();
+        for _ in 0..20 {
+            cool_sweep(&mut lat);
+            let p = lat.average_plaquette();
+            assert!(
+                p >= last - 1e-12,
+                "cooling decreased plaquette {last} -> {p}"
+            );
+            last = p;
+        }
+        assert!(last > 0.9, "20 coolings should approach classical: {last}");
     }
 
     #[test]
@@ -134,13 +95,13 @@ mod tests {
         let beta = 2.0;
         let dims = [4, 4, 4, 4];
         let mut rng = Rng::seeded(22);
-        let mut hot = Lattice::hot(dims, &mut rng);
-        let mut cold = Lattice::cold(dims);
+        let mut hot: Lattice<Su2> = Lattice::hot(dims, &mut rng);
+        let mut cold: Lattice<Su2> = Lattice::cold(dims);
         for _ in 0..60 {
             heatbath_sweep(&mut hot, beta, &mut rng);
             heatbath_sweep(&mut cold, beta, &mut rng);
         }
-        let avg = |lat: &mut Lattice, rng: &mut Rng| {
+        let avg = |lat: &mut Lattice<Su2>, rng: &mut Rng| {
             let mut s = 0.0;
             for _ in 0..30 {
                 heatbath_sweep(lat, beta, rng);

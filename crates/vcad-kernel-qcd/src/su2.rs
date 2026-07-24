@@ -7,7 +7,56 @@
 //! (sums of SU(2) elements are proportional to SU(2) elements — the
 //! property the heatbath algorithm is built on).
 
+use crate::group::GaugeGroup;
 use crate::rng::Rng;
+
+/// Sample `w₀ ∈ [−1,1]` from `P(w₀) ∝ √(1−w₀²)·exp(α·w₀)` (α > 0),
+/// Kennedy–Pendleton rejection (Kennedy & Pendleton 1985). Shared by
+/// the SU(2) heatbath and each SU(3) Cabibbo–Marinari subgroup draw.
+pub(crate) fn sample_w0(alpha: f64, rng: &mut Rng) -> f64 {
+    loop {
+        let r1 = rng.uniform();
+        let r2 = rng.uniform();
+        let r3 = rng.uniform();
+        let c = (2.0 * std::f64::consts::PI * r2).cos();
+        let lambda2 = -(r1.ln() + c * c * r3.ln()) / (2.0 * alpha);
+        if lambda2 > 1.0 {
+            continue;
+        }
+        let r4 = rng.uniform();
+        if r4 * r4 <= 1.0 - lambda2 {
+            return 1.0 - 2.0 * lambda2;
+        }
+    }
+}
+
+/// Uniform point on the 2-sphere scaled to radius `r` (Marsaglia).
+pub(crate) fn sphere(r: f64, rng: &mut Rng) -> (f64, f64, f64) {
+    loop {
+        let u = rng.symmetric();
+        let v = rng.symmetric();
+        let s = u * u + v * v;
+        if s < 1.0 {
+            let f = 2.0 * (1.0 - s).sqrt();
+            return (r * u * f, r * v * f, r * (1.0 - 2.0 * s));
+        }
+    }
+}
+
+/// Draw `W ∈ SU(2)` with weight `exp(alpha·Tr W / 2)·dW` — i.e.
+/// scalar part from [`sample_w0`], vector part uniform on the sphere.
+/// The workhorse for both the SU(2) heatbath and CM subgroup draws.
+pub(crate) fn sample_su2(alpha: f64, rng: &mut Rng) -> Su2 {
+    let w0 = sample_w0(alpha, rng);
+    let r = (1.0 - w0 * w0).max(0.0).sqrt();
+    let (w1, w2, w3) = sphere(r, rng);
+    Su2 {
+        a0: w0,
+        a1: w1,
+        a2: w2,
+        a3: w3,
+    }
+}
 
 /// A real quaternion `a₀ + i a·σ`. Unit norm ⇔ SU(2).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -118,6 +167,81 @@ impl Su2 {
             a3: g3,
         }
         .normalized()
+    }
+}
+
+impl GaugeGroup for Su2 {
+    const NC: usize = 2;
+
+    fn identity() -> Self {
+        Su2::IDENTITY
+    }
+
+    fn zero() -> Self {
+        Su2::ZERO
+    }
+
+    fn mul(&self, o: &Self) -> Self {
+        Su2::mul(self, o)
+    }
+
+    fn dagger(&self) -> Self {
+        Su2::dagger(self)
+    }
+
+    fn add(&self, o: &Self) -> Self {
+        Su2::add(self, o)
+    }
+
+    fn scale(&self, s: f64) -> Self {
+        Su2 {
+            a0: self.a0 * s,
+            a1: self.a1 * s,
+            a2: self.a2 * s,
+            a3: self.a3 * s,
+        }
+    }
+
+    fn re_trace(&self) -> f64 {
+        Su2::re_trace(self)
+    }
+
+    fn reunitarize(&self) -> Self {
+        self.normalized()
+    }
+
+    fn random(rng: &mut Rng) -> Self {
+        Su2::random(rng)
+    }
+
+    /// Exact Kennedy–Pendleton draw. The weight `exp((β/2)Re Tr(U·A))`
+    /// with `A = k·Ā` becomes `exp(βk·w₀)` for `W = U·Ā`, sampled
+    /// directly; the current link is not needed.
+    fn heatbath(_u: &Self, a: &Self, beta: f64, rng: &mut Rng) -> Self {
+        let k = a.norm();
+        if k < 1e-300 {
+            return Su2::random(rng);
+        }
+        let a_bar = a.normalized();
+        // sample_su2 weight exp(alpha·Tr W/2) = exp(alpha·w0): alpha = βk.
+        sample_su2(beta * k, rng).mul(&a_bar.dagger())
+    }
+
+    /// Microcanonical reflection `U → Ā†U†Ā†` (preserves `Re Tr(U·A)`).
+    fn overrelax(u: &Self, a: &Self, rng: &mut Rng) -> Self {
+        if a.norm() < 1e-300 {
+            return Su2::random(rng);
+        }
+        let ab = a.normalized().dagger();
+        ab.mul(&u.dagger()).mul(&ab)
+    }
+
+    /// `Ā†` maximizes `Re Tr(U·A)` exactly.
+    fn cool(_u: &Self, a: &Self) -> Self {
+        if a.norm() < 1e-300 {
+            return Su2::IDENTITY;
+        }
+        a.normalized().dagger()
     }
 }
 

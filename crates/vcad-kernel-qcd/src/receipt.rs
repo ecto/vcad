@@ -22,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::spec::{SimResult, WilsonLoop};
+use crate::spec::{Gauge, SimResult};
 
 /// Schema tag for this claim family.
 pub const CLAIM_SCHEMA: &str = "vcad.qcd-claims/1";
@@ -30,13 +30,20 @@ pub const CLAIM_SCHEMA: &str = "vcad.qcd-claims/1";
 /// Minimum jackknife bins to mint any claim.
 pub const MIN_BINS: usize = 5;
 
-/// Minimum |mean|/err for a Wilson loop to enter a Creutz ratio.
-pub const MIN_SIGNIFICANCE: f64 = 3.0;
+/// Minimum |mean|/err for a Wilson loop to enter a Creutz ratio
+/// (enforced in [`crate::analysis`]).
+pub const MIN_SIGNIFICANCE: f64 = crate::analysis::MIN_SIGNIFICANCE;
 
-/// Caveats attached to every claim in this family (M0).
-pub fn caveats() -> Vec<String> {
+/// Caveats attached to every claim in this family.
+pub fn caveats(gauge: Gauge) -> Vec<String> {
+    let group = match gauge {
+        Gauge::Su2 => {
+            "quenched SU(2) pure gauge — no dynamical fermions, SU(2) is not physical QCD's SU(3)"
+        }
+        Gauge::Su3 => "quenched SU(3) pure gauge — no dynamical fermions (no sea quarks)",
+    };
     [
-        "quenched SU(2) pure gauge — no dynamical fermions, not SU(3)",
+        group,
         "lattice units at fixed coupling — no continuum extrapolation, no scale setting",
         "finite volume — no infinite-volume extrapolation",
         "statistical errors are binned jackknife; autocorrelation beyond the bin size is not corrected",
@@ -105,16 +112,6 @@ impl std::fmt::Display for ClaimError {
 
 impl std::error::Error for ClaimError {}
 
-fn find(loops: &[WilsonLoop], r: usize, t: usize) -> Option<&WilsonLoop> {
-    // Loops are stored with r <= t (plane-averaged symmetry).
-    let (r, t) = if r <= t { (r, t) } else { (t, r) };
-    loops.iter().find(|w| w.r == r && w.t == t)
-}
-
-fn significant(w: &WilsonLoop) -> bool {
-    w.value.err > 0.0 && w.value.mean > 0.0 && w.value.mean / w.value.err >= MIN_SIGNIFICANCE
-}
-
 /// Build the claim set for a run, fail-closed.
 pub fn build_claims(result: &SimResult) -> Result<ClaimSet, ClaimError> {
     if result.plaquette.n_bins < MIN_BINS {
@@ -148,36 +145,56 @@ pub fn build_claims(result: &SimResult) -> Result<ClaimSet, ClaimError> {
         claims.push(c);
     }
 
-    // Creutz ratios chi(r,t) = -ln( W(r,t) W(r-1,t-1) / (W(r,t-1) W(r-1,t)) ):
-    // the lattice string-tension estimator. Emitted only when all four
-    // loops are individually resolved from zero.
-    let max_e = result.wilson_loops.iter().map(|w| w.t).max().unwrap_or(0);
-    for r in 2..=max_e {
-        let (a, b, c1, d) = (
-            find(&result.wilson_loops, r, r),
-            find(&result.wilson_loops, r - 1, r - 1),
-            find(&result.wilson_loops, r, r - 1),
-            find(&result.wilson_loops, r - 1, r),
+    // Creutz ratios (the lattice string-tension estimator), via the
+    // analysis module — only ratios whose four loops are all resolved
+    // ≥ 3σ from zero are emitted.
+    let chis = crate::analysis::creutz_ratios(&result.wilson_loops);
+    for chi in &chis {
+        let mut cl = check(
+            &format!("creutz_ratio_{}x{}", chi.r, chi.r),
+            chi.chi,
+            chi.err,
+        )?;
+        cl.description = format!(
+            "Creutz ratio chi({},{}) — lattice string-tension estimator sigma*a^2",
+            chi.r, chi.r
         );
-        if let (Some(a), Some(b), Some(c1), Some(d)) = (a, b, c1, d) {
-            if r >= 2 && [a, b, c1, d].iter().all(|w| significant(w)) {
-                let chi = -((a.value.mean * b.value.mean) / (c1.value.mean * d.value.mean)).ln();
-                // First-order error propagation on the log.
-                let rel = |w: &WilsonLoop| (w.value.err / w.value.mean).powi(2);
-                let err = (rel(a) + rel(b) + rel(c1) + rel(d)).sqrt();
-                let mut cl = check(&format!("creutz_ratio_{r}x{r}"), chi, err)?;
-                cl.description = format!(
-                    "Creutz ratio chi({r},{r}) — lattice string-tension estimator sigma*a^2"
-                );
-                claims.push(cl);
-            }
-        }
+        claims.push(cl);
+    }
+    // The headline string tension: the largest resolvable ratio (least
+    // contaminated by the Coulomb term).
+    if let Some(chi) = chis.last() {
+        let mut cl = check("string_tension", chi.chi, chi.err)?;
+        cl.description = format!(
+            "string tension sigma*a^2 from chi({},{}) (lattice units)",
+            chi.r, chi.r
+        );
+        claims.push(cl);
+    }
+
+    // Static potential points from temporal loops (M1).
+    for p in crate::analysis::static_potential(&result.temporal_loops) {
+        let mut cl = check(&format!("static_potential_r{}", p.r), p.v, p.err)?;
+        cl.description = format!(
+            "static quark potential V({})·a from W({},t) at t={}",
+            p.r, p.r, p.t
+        );
+        claims.push(cl);
+    }
+
+    // Polyakov-loop magnitude (deconfinement order parameter, M3).
+    if let Some(l) = &result.polyakov_abs {
+        let mut cl = check("polyakov_abs", l.mean, l.err)?;
+        cl.description =
+            "volume-averaged Polyakov loop magnitude <|L|> (deconfinement order parameter)"
+                .to_string();
+        claims.push(cl);
     }
 
     Ok(ClaimSet {
         schema: CLAIM_SCHEMA.to_string(),
         claims,
-        caveats: caveats(),
+        caveats: caveats(result.provenance.spec.gauge),
         provenance: result.provenance.clone(),
     })
 }
@@ -189,16 +206,23 @@ mod tests {
 
     fn spec() -> SimSpec {
         SimSpec {
-            dims: [4, 4, 4, 4],
             beta: 2.2,
             thermalization_sweeps: 30,
             measurement_sweeps: 60,
-            overrelax_per_heatbath: 1,
             bin_size: 6,
-            max_wilson_extent: 2,
             seed: 5,
-            hot_start: false,
+            measure_polyakov: true,
+            ..crate::spec::tests::base_spec()
         }
+    }
+
+    #[test]
+    fn mints_polyakov_and_string_tension_claims() {
+        let cs = build_claims(&run(&spec()).unwrap()).unwrap();
+        assert!(cs.claims.iter().any(|c| c.name == "polyakov_abs"));
+        // string_tension present iff a creutz ratio resolved; at β=2.2
+        // on 4⁴ with 60 sweeps the 2x2 quad resolves.
+        assert!(cs.claims.iter().any(|c| c.name == "string_tension"));
     }
 
     #[test]

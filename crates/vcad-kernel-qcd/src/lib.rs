@@ -47,10 +47,16 @@
 //! scaling, gradient flow, flux-tube visualization seam) is
 //! `docs/qcd-m0.md`.
 
+pub mod analysis;
+pub mod fields;
+pub mod group;
 pub mod lattice;
 pub mod receipt;
 pub mod rng;
+pub mod smear;
 pub mod spec;
 pub mod stats;
 pub mod su2;
+pub mod su3;
+pub mod topology;
 pub mod update;

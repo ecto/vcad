@@ -1,4 +1,4 @@
-# Lattice gauge theory M0: SU(2) pure-gauge Monte Carlo
+# Lattice gauge theory M0–M3: pure-gauge Monte Carlo, SU(2) and SU(3)
 
 `vcad-kernel-qcd` brings the vcad solver zoo to the strong interaction: a
 laptop-scale lattice gauge theory kernel that computes **confinement from
@@ -65,9 +65,15 @@ debug.
 
 ## Honesty bounds (M0, stated on every claim)
 
-- Quenched SU(2) pure gauge — no dynamical fermions, not SU(3). Nothing
+- Quenched pure gauge (SU(2) or SU(3)) — no dynamical fermions. Nothing
   here is a number about physical QCD; the claims are about the lattice
   model and say so.
+- The clover topological charge is the naive operator: near-integer
+  after cooling, UV-noise-dominated raw; SU(2) only.
+- The flux-tube 3D excess profile needs ensembles beyond CI scale for
+  pointwise significance; CI asserts the pair-correlator decay, and the
+  profile ships with per-displacement jackknife errors so consumers see
+  exactly what is and is not resolved.
 - Lattice units at fixed coupling: no continuum extrapolation, no scale
   setting.
 - Finite volume, no infinite-volume extrapolation.
@@ -75,28 +81,51 @@ debug.
 
 ## The ladder
 
-- **M0 (this)** — SU(2) heatbath+OR, plaquette + Wilson loops, jackknife,
+- **M0** — SU(2) heatbath+OR, plaquette + Wilson loops, jackknife,
   claims. ✅
-- **M1** — string tension: Creutz-ratio scaling study vs β against the
-  literature (Creutz 1980 SU(2) numbers), smearing for signal, static
-  quark potential V(r) fit (Cornell form). Claim: σa²(β).
-- **M2** — the visualization seam: action-density and Polyakov-loop
-  fields exported per configuration (time-sliced 3D scalar fields), the
-  flux-tube-between-static-charges demo, gradient flow / cooling for
-  topological charge. This is the viewport flagship.
-- **M3** — SU(3) links (the real gauge group; heatbath via Cabibbo–
-  Marinari SU(2) subgroups), deconfinement transition via Polyakov-loop
-  susceptibility at finite temperature.
+- **M1** — string tension. ✅ APE spatial smearing (`smear`),
+  spatial×temporal Wilson loops (`measure_temporal_loops`), Creutz
+  ratios and the effective static potential in `analysis`
+  (`creutz_ratios`, `static_potential`, `fit_cornell` — Cornell form
+  V = c − a/r + σr), `string_tension` and `static_potential_r*`
+  claims. Oracles: strong-coupling χ(2,2) and V(1) against the exact
+  σa² = −ln(β/4) limit at β = 1.2; smearing lifts W(2,2) on the same
+  ensemble without moving V(1).
+- **M2** — the visualization seam. ✅ `fields::FieldSnapshot`
+  (action-density per site + complex Polyakov field per spatial site,
+  row-major serde vectors ready for the viewport), cooling sweeps,
+  naive clover topological charge (SU(2); near-integer after cooling,
+  honesty-bounded as a viz/instanton tool, not a susceptibility
+  measurement), and `FluxTubeAccumulator` — the static-pair
+  (Polyakov-pair ⊗ action-density) connected 3D profile behind the
+  "drag the quarks apart" demo. Oracle: the pair correlator ⟨ℓℓ̄⟩(R)
+  decays with separation in the confined phase (the free energy
+  rises), asserted at R = 1 vs 2 on 6³×4 at β = 2.2.
+- **M3** — SU(3) + deconfinement. ✅ `Su3` (3×3 complex, quaternion-
+  free API parity via the `GaugeGroup` trait), Cabibbo–Marinari
+  heatbath/overrelaxation/cooling through the three SU(2) subgroups,
+  Gram–Schmidt reunitarization with det = +1 exactly. `Gauge::Su3` in
+  the spec dispatches the same pipeline. Oracles: SU(3) strong
+  (⟨P⟩ = β/18) and weak (⟨P⟩ = 1 − 2/β) coupling expansions; the
+  deconfinement transition bracketed in both groups via ⟨|L|⟩ at
+  N_t = 2 (SU(2): β = 1.3 vs 2.5 around β_c ≈ 1.88; SU(3): β = 4.0 vs
+  6.5 around β_c ≈ 5.1).
 - **M4+** (stretch, unpromised) — GPU sweeps via `vcad-kernel-gpu`
   (checkerboard update parallelism), glueball 0⁺⁺ correlators, Wilson
-  fermions on tiny lattices. Dynamical QCD at physical parameters is
-  permanently out of scope — that is supercomputer territory and the
-  docs say so rather than pretend otherwise.
+  fermions on tiny lattices, β_c scans as measured physics. Dynamical
+  QCD at physical parameters is permanently out of scope — that is
+  supercomputer territory and the docs say so rather than pretend
+  otherwise.
 
 ## References
 
 - M. Creutz, *Monte Carlo study of quantized SU(2) gauge theory*,
   Phys. Rev. D 21, 2308 (1980).
+- N. Cabibbo, E. Marinari, *A new method for updating SU(N) matrices in
+  computer simulations of gauge theories*, Phys. Lett. B 119, 387
+  (1982).
+- M. Albanese et al. (APE Collaboration), *Glueball masses and string
+  tension in lattice QCD*, Phys. Lett. B 192, 163 (1987).
 - A. D. Kennedy, B. J. Pendleton, *Improved heatbath method for Monte
   Carlo calculations in lattice gauge theories*, Phys. Lett. B 156, 393
   (1985).

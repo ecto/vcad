@@ -8,10 +8,11 @@
 //! generous multiple of the Monte Carlo error, so these tests are
 //! deterministic (fixed seed) and stable.
 
-use vcad_kernel_qcd::spec::{run, SimSpec};
+use vcad_kernel_qcd::spec::{run, Gauge, SimSpec};
 
 fn spec(beta: f64, seed: u64) -> SimSpec {
     SimSpec {
+        gauge: Gauge::Su2,
         dims: [6, 6, 6, 6],
         beta,
         thermalization_sweeps: 50,
@@ -21,6 +22,11 @@ fn spec(beta: f64, seed: u64) -> SimSpec {
         max_wilson_extent: 0,
         seed,
         hot_start: false,
+        smear: None,
+        measure_temporal_loops: false,
+        measure_polyakov: false,
+        flux_tube: None,
+        snapshot_cooling: None,
     }
 }
 
