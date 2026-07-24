@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
+import { getKernelWasm } from "../../wasm-singleton.js";
 import {
   buildCalibrationReport,
   defaultTolerance,
@@ -31,6 +32,11 @@ function prediction(): PrintPrediction {
 }
 
 describe("buildCalibrationReport", () => {
+  // The wrapper delegates to vcad-kernel-calibration via kernel-wasm.
+  beforeAll(async () => {
+    await getKernelWasm();
+  });
+
   it("joins measurements to measurables and computes signed deltas", () => {
     const report = buildCalibrationReport(prediction(), {
       bbox_x: 79.82,
