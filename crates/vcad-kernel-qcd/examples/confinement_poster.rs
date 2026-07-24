@@ -55,10 +55,7 @@ fn main() {
     // 2. SU(3) deconfinement scan, N_t = 2 (β_c ≈ 5.1).
     eprintln!("[2/5] SU(3) deconfinement scan…");
     let mut scan3 = Vec::new();
-    for (i, beta) in [4.0, 4.5, 4.8, 5.0, 5.2, 5.4, 5.8, 6.5]
-        .iter()
-        .enumerate()
-    {
+    for (i, beta) in [4.0, 4.5, 4.8, 5.0, 5.2, 5.4, 5.8, 6.5].iter().enumerate() {
         let mut s = base(Gauge::Su3, [6, 6, 6, 2], *beta, 950 + i as u64);
         s.thermalization_sweeps = 60;
         s.measurement_sweeps = 120;

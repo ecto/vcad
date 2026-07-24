@@ -35,5 +35,8 @@ fn main() {
             "separation": sep, "correlator": c.mean, "err": c.err,
         }));
     }
-    println!("{}", serde_json::json!({ "beta": 2.2, "nt": 4, "rows": rows }));
+    println!(
+        "{}",
+        serde_json::json!({ "beta": 2.2, "nt": 4, "rows": rows })
+    );
 }

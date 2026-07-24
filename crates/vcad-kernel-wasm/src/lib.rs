@@ -9730,7 +9730,8 @@ pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
         .saturating_mul(group_factor);
     let vs = spec.dims[0] * spec.dims[1] * spec.dims[2];
     let flux_cost = if spec.flux_tube.is_some() {
-        vs.saturating_mul(vs).saturating_mul(spec.measurement_sweeps)
+        vs.saturating_mul(vs)
+            .saturating_mul(spec.measurement_sweeps)
     } else {
         0
     };
