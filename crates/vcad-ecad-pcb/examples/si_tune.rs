@@ -17,14 +17,59 @@ fn tune_group(pcb: &mut Pcb, label: &str, nets: &[String], tolerance: f64) {
     };
     let r = match_lengths_runs(pcb, nets, &opts);
     let (mut tuned, mut skipped) = (0usize, 0usize);
+    let mut reverted = 0usize;
     for n in &r.nets {
         if n.tuned {
-            tuned += 1;
+            // Fail-closed: the tuner's fast internal check is a heuristic;
+            // the REGION DRC is the oracle. Apply the tuned copper, re-check
+            // the net's bounding region, and revert the net if the tuning
+            // increased hard violations.
+            let (mut lo, mut hi) = (
+                vcad_ir::Vec2::new(f64::INFINITY, f64::INFINITY),
+                vcad_ir::Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+            );
+            for t in n.new_traces.iter() {
+                for p in [t.start, t.end] {
+                    lo.x = lo.x.min(p.x - 1.0);
+                    lo.y = lo.y.min(p.y - 1.0);
+                    hi.x = hi.x.max(p.x + 1.0);
+                    hi.y = hi.y.max(p.y + 1.0);
+                }
+            }
+            let hard = |pcb: &Pcb| {
+                vcad_ecad_pcb::drc::check_drc_in_region(pcb, lo, hi)
+                    .into_iter()
+                    .filter(|v| {
+                        matches!(
+                            v.rule,
+                            vcad_ecad_pcb::drc::DrcRuleType::Short
+                                | vcad_ecad_pcb::drc::DrcRuleType::Clearance
+                        )
+                    })
+                    .count()
+            };
+            let before = hard(pcb);
+            let original: Vec<_> = pcb
+                .traces
+                .iter()
+                .filter(|t| t.net == n.net)
+                .cloned()
+                .collect();
             pcb.traces.retain(|t| t.net != n.net);
             pcb.traces.extend(n.new_traces.iter().cloned());
+            if hard(pcb) > before {
+                pcb.traces.retain(|t| t.net != n.net);
+                pcb.traces.extend(original);
+                reverted += 1;
+                continue;
+            }
+            tuned += 1;
         } else if n.skip_reason.is_some() {
             skipped += 1;
         }
+    }
+    if reverted > 0 {
+        println!("tune {label}: reverted {reverted} nets (region DRC regression)");
     }
     println!(
         "tune {label}: target {:.2} mm, tuned {tuned}, skipped {skipped}, all_matched={}",

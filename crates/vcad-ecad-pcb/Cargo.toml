@@ -8,6 +8,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+vcad-kernel-gpu = { workspace = true, optional = true }
+tang-expr = { workspace = true }
 vcad-receipt = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-ecad-package = { workspace = true }
@@ -25,3 +27,6 @@ log = "0.4"
 vcad-ecad-sim = { path = "../vcad-ecad-sim" }
 vcad-ecad-symbols = { workspace = true }
 env_logger = "0.11"
+
+[features]
+gpu = ["dep:vcad-kernel-gpu"]

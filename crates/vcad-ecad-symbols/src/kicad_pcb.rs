@@ -180,10 +180,12 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
     // 5. Parse design rules
     let rules = parse_design_rules(root);
 
-    // 6. Parse footprints
+    // 6. Parse footprints. Legacy boards (KiCad 4/5, e.g. the VESC 4.12)
+    // call them `module`; the inner shape (pads, at, layer) is compatible.
     let footprints: Vec<Footprint> = root
         .find_all("footprint")
         .iter()
+        .chain(root.find_all("module").iter())
         .filter_map(|n| parse_footprint(n, &net_map))
         .collect();
 

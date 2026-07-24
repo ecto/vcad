@@ -185,13 +185,27 @@ pub fn point_to_segment_distance(point: Vec2, seg_start: Vec2, seg_end: Vec2) ->
 /// Check whether all waypoints maintain minimum clearance from obstacles.
 fn check_clearances(
     segments: &[MeanderSegment],
-    obstacles: &[(Vec2, Vec2)],
+    obstacles: &[(Vec2, Vec2, f64)],
     min_clearance: f64,
 ) -> bool {
+    // True segment-to-segment distance over each meander EDGE — vertex-only
+    // sampling let a meander cross an obstacle cleanly between samples
+    // (si8 retune: DDR meanders overlapping neighbouring lanes at 0.000mm).
+    let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+        point_to_segment_distance(a1, a2, b2)
+            .min(point_to_segment_distance(b1, a2, b2))
+            .min(point_to_segment_distance(a2, a1, b1))
+            .min(point_to_segment_distance(b2, a1, b1))
+    };
     for seg in segments {
-        for pt in &seg.points {
-            for &(obs_start, obs_end) in obstacles {
-                if point_to_segment_distance(*pt, obs_start, obs_end) < min_clearance {
+        for w in seg.points.windows(2) {
+            for &(obs_start, obs_end, extra) in obstacles {
+                // Centerline requirement = the tuned trace's half-width
+                // (in `min_clearance`) plus the obstacle's own half-width +
+                // clearance-or-gap (in `extra`) — exact per-obstacle widths,
+                // not an equal-width assumption.
+                let req = min_clearance + extra;
+                if seg_seg(w[0], w[1], obs_start, obs_end) < req {
                     return false;
                 }
             }
@@ -210,7 +224,7 @@ pub fn generate_meanders_checked(
     existing_points: &[Vec2],
     params: &LengthTuneParams,
     min_clearance: f64,
-    obstacles: &[(Vec2, Vec2)],
+    obstacles: &[(Vec2, Vec2, f64)],
 ) -> Option<Vec<MeanderSegment>> {
     let mut amplitude_cap = params.max_amplitude;
 
@@ -514,7 +528,7 @@ mod tests {
             style: MeanderStyle::Trombone,
         };
         let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
-        let obstacles = vec![(Vec2::new(-5.0, 2.6), Vec2::new(55.0, 2.6))];
+        let obstacles = vec![(Vec2::new(-5.0, 2.6), Vec2::new(55.0, 2.6), 0.0)];
 
         // Full amplitude should violate.
         let full = generate_meanders(&points, &params).unwrap();
@@ -543,7 +557,7 @@ mod tests {
         };
         let points = vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)];
         // Obstacle on the trace itself — 1mm clearance is impossible.
-        let obstacles = vec![(Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0))];
+        let obstacles = vec![(Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0), 0.0)];
 
         assert!(generate_meanders_checked(&points, &params, 1.0, &obstacles).is_none());
     }
