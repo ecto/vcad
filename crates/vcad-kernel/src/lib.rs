@@ -44,6 +44,7 @@ pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
 pub use vcad_kernel_thermal;
+pub use vcad_kernel_flow;
 pub use vcad_kernel_tolerance;
 pub use vcad_kernel_topo;
 pub use vcad_kernel_topopt;
