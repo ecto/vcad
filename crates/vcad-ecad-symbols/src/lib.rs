@@ -30,6 +30,7 @@
 pub mod builtin;
 pub mod footprint;
 pub mod kicad_mod;
+pub mod eagle_brd;
 pub mod kicad_pcb;
 pub mod kicad_sch;
 pub mod kicad_sym;
@@ -41,6 +42,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export public API
 pub use kicad_mod::{parse_footprint_lib, FootprintDef, FootprintLib, GraphicDef, PadDef};
+pub use eagle_brd::parse_eagle_brd;
 pub use kicad_pcb::parse_kicad_pcb;
 pub use kicad_sch::parse_kicad_sch;
 pub use kicad_sym::{parse_symbol_lib, Symbol, SymbolGraphic, SymbolLib, SymbolPin};

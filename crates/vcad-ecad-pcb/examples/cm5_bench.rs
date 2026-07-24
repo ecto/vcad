@@ -58,6 +58,8 @@ fn main() {
     let resume = path.ends_with(".json");
     let mut pcb = if resume {
         serde_json::from_str(&text).expect("parse pcb json")
+    } else if path.ends_with(".brd") {
+        vcad_ecad_symbols::parse_eagle_brd(&text).expect("parse eagle brd")
     } else {
         parse_kicad_pcb(&text).expect("parse kicad_pcb")
     };
