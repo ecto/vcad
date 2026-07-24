@@ -257,6 +257,16 @@ mod tests {
         let json = serde_json::to_string(&cs).unwrap();
         assert!(json.contains(CLAIM_SCHEMA));
         let back: ClaimSet = serde_json::from_str(&json).unwrap();
-        assert_eq!(cs, back);
+        // serde_json's float parse is not ulp-exact under all feature
+        // unifications — compare structurally with tolerance, not eq.
+        assert_eq!(back.schema, cs.schema);
+        assert_eq!(back.caveats, cs.caveats);
+        assert_eq!(back.claims.len(), cs.claims.len());
+        for (a, b) in cs.claims.iter().zip(&back.claims) {
+            assert_eq!(a.name, b.name);
+            assert!((a.value - b.value).abs() <= 1e-12 * a.value.abs().max(1.0));
+            assert!((a.err - b.err).abs() <= 1e-12 * a.err.abs().max(1.0));
+        }
+        assert_eq!(back.provenance.spec, cs.provenance.spec);
     }
 }

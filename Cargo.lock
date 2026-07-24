@@ -4019,6 +4019,7 @@ dependencies = [
 name = "phyz"
 version = "0.3.0"
 dependencies = [
+ "phyz-math",
  "tang",
 ]
 
