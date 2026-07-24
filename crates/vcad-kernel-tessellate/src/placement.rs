@@ -37,7 +37,7 @@ pub fn apply_placement(
     let m21 = sx * cy;
     let m22 = cx * cy;
 
-    for p in positions.chunks_exact_mut(3) {
+    for p in positions.as_chunks_mut::<3>().0 {
         let x = p[0] as f64 * scale[0];
         let y = p[1] as f64 * scale[1];
         let z = p[2] as f64 * scale[2];
@@ -48,7 +48,7 @@ pub fn apply_placement(
     }
 
     if let Some(normals) = normals {
-        for n in normals.chunks_exact_mut(3) {
+        for n in normals.as_chunks_mut::<3>().0 {
             let nx = n[0] as f64;
             let ny = n[1] as f64;
             let nz = n[2] as f64;

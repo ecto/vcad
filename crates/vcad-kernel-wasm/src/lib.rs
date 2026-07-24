@@ -1751,7 +1751,9 @@ impl Solid {
             // contract that lets it trust the buffer as-is.
             mesh.indices = mesh
                 .indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .filter(|t| t.iter().all(|&i| (i as usize) < num_verts))
                 .flatten()
                 .copied()
