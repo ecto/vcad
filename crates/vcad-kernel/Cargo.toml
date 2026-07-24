@@ -36,6 +36,7 @@ vcad-kernel-neutronics = { workspace = true }
 vcad-kernel-qcd = { workspace = true }
 vcad-kernel-photonics = { workspace = true }
 vcad-kernel-thermal = { workspace = true }
+vcad-kernel-flow = { workspace = true }
 vcad-kernel-fea = { workspace = true }
 vcad-kernel-tolerance = { workspace = true }
 vcad-kernel-calibration = { workspace = true }

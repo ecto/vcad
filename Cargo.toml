@@ -55,6 +55,7 @@ members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-thermal",
+    "crates/vcad-kernel-flow",
     "crates/vcad-kernel-fea",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
@@ -150,6 +151,7 @@ default-members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-thermal",
+    "crates/vcad-kernel-flow",
     "crates/vcad-kernel-fea",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
@@ -262,6 +264,7 @@ vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim", version = "0.9.4"
 vcad-kernel-topopt = { path = "crates/vcad-kernel-topopt", version = "0.9.4" }
 vcad-kernel-photonics = { path = "crates/vcad-kernel-photonics", version = "0.9.4" }
 vcad-kernel-thermal = { path = "crates/vcad-kernel-thermal", version = "0.9.4" }
+vcad-kernel-flow = { path = "crates/vcad-kernel-flow", version = "0.9.4" }
 vcad-kernel-fea = { path = "crates/vcad-kernel-fea", version = "0.9.4" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text", version = "0.9.4" }
 vcad-crdt = { path = "crates/vcad-crdt", version = "0.9.4" }

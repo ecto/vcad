@@ -605,6 +605,12 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Steady laminar LBM flow solve (FlowSpec/options JSON + fields flag). */
+  simulateFlow?: (
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ) => unknown;
   /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
   documentDiff?: (oldJson: string, newJson: string) => unknown;
   /** Apply a `DocumentDiff` to a document, returning the patched document. */
@@ -1049,6 +1055,7 @@ export class Engine {
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
       thermalSolveTransient: (wasmModule as Record<string, unknown>).thermalSolveTransient as KernelModule["thermalSolveTransient"],
+      simulateFlow: (wasmModule as Record<string, unknown>).simulateFlow as KernelModule["simulateFlow"],
       documentDiff: (wasmModule as Record<string, unknown>).documentDiff as KernelModule["documentDiff"],
       documentDiffApply: (wasmModule as Record<string, unknown>).documentDiffApply as KernelModule["documentDiffApply"],
       documentMerge: (wasmModule as Record<string, unknown>).documentMerge as KernelModule["documentMerge"],
@@ -1407,6 +1414,27 @@ export class Engine {
       );
     }
     return fn(specJson, transientJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure
+   * drop, flow rates, mass audit, optional thermal pickup, and predicted
+   * receipt claims. Per-voxel fields are only returned when
+   * `includeFields` is true. Inputs are JSON strings (FlowSpec, options);
+   * see `vcad-kernel-flow`.
+   */
+  simulateFlow(
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ): unknown {
+    const fn = this.kernel.simulateFlow;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "simulateFlow is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, optionsJson, includeFields);
   }
 
   private circuitFn<K extends keyof KernelModule>(name: K): NonNullable<KernelModule[K]> {

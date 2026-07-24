@@ -29,6 +29,7 @@ pub use vcad_kernel_em;
 pub use vcad_kernel_enclosure;
 pub use vcad_kernel_fea;
 pub use vcad_kernel_fillet;
+pub use vcad_kernel_flow;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
 pub use vcad_kernel_neutronics;
