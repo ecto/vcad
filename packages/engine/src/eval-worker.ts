@@ -15,9 +15,9 @@
 
 import {
   evaluateDocument as evaluateDocumentTS,
-  embroideryPatternToMesh,
+  embroideryPatternToMeshWithKernel,
   findEmbroideryPattern,
-  transformMesh,
+  transformMeshWithKernel,
   resolveSheetMetalPart,
 } from "./evaluate.js";
 import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
@@ -119,8 +119,8 @@ function postProcessEmbroidery(scene: EvaluatedScene, doc: Document): EvaluatedS
       const emb = findEmbroideryPattern(visibleRoots[i].root, doc.nodes);
       if (emb) {
         changed = true;
-        const baseMesh = embroideryPatternToMesh(emb.pattern);
-        const mesh = transformMesh(baseMesh, emb.transform);
+        const baseMesh = embroideryPatternToMeshWithKernel(emb.pattern, kernelModule);
+        const mesh = transformMeshWithKernel(baseMesh, emb.transform, kernelModule);
         return { mesh, material: p.material };
       }
     }
@@ -205,6 +205,10 @@ self.onmessage = async (e: MessageEvent) => {
         evaluateDocument: (wasm as Record<string, unknown>).evaluateDocument,
         evaluateSheetMetalChain: (wasm as Record<string, unknown>)
           .evaluateSheetMetalChain,
+        embroideryDesignToMesh: (wasm as Record<string, unknown>)
+          .embroideryDesignToMesh,
+        transformMeshBuffers: (wasm as Record<string, unknown>)
+          .transformMeshBuffers,
       };
 
       // Check if native WASM evaluator is available
