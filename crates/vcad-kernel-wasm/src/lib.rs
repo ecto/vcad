@@ -6958,38 +6958,30 @@ pub fn derive_parts(doc_json: &str) -> Result<JsValue, JsError> {
 /// Returns volume in mm³ (same units as positions).
 #[wasm_bindgen(js_name = computeMeshVolume)]
 pub fn compute_mesh_volume(positions: &[f32], indices: &[u32]) -> f64 {
-    let mut vol = 0.0_f64;
-    for tri in indices.chunks(3) {
-        if tri.len() < 3 {
-            break;
-        }
-        let (i0, i1, i2) = (
-            tri[0] as usize * 3,
-            tri[1] as usize * 3,
-            tri[2] as usize * 3,
-        );
-        if i2 + 2 >= positions.len() {
-            continue;
-        }
-        let v0 = [
-            positions[i0] as f64,
-            positions[i0 + 1] as f64,
-            positions[i0 + 2] as f64,
-        ];
-        let v1 = [
-            positions[i1] as f64,
-            positions[i1 + 1] as f64,
-            positions[i1 + 2] as f64,
-        ];
-        let v2 = [
-            positions[i2] as f64,
-            positions[i2 + 1] as f64,
-            positions[i2 + 2] as f64,
-        ];
-        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2]) - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
-            + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
-    }
-    (vol / 6.0).abs()
+    vcad_kernel::compute_mesh_properties(positions, indices).volume
+}
+
+/// Compute aggregate mass properties of a triangle mesh: divergence-theorem
+/// volume, surface area, axis-aligned bounding box, volume-weighted center
+/// of mass (with an area-weighted surface-centroid fallback for open or
+/// inconsistently wound meshes), and triangle count.
+///
+/// Positions are `[x, y, z, ...]` (flat f32), indices are `[i0, i1, i2, ...]`.
+/// Returns `{ volume, area, bbox: { min: {x,y,z}, max: {x,y,z} },
+/// centerOfMass: {x,y,z}, triangles }` in the same units as positions (mm).
+#[wasm_bindgen(js_name = computeMeshProperties)]
+pub fn compute_mesh_properties_js(positions: &[f32], indices: &[u32]) -> Result<JsValue, JsError> {
+    let p = vcad_kernel::compute_mesh_properties(positions, indices);
+    let xyz = |v: [f64; 3]| serde_json::json!({ "x": v[0], "y": v[1], "z": v[2] });
+    let out = serde_json::json!({
+        "volume": p.volume,
+        "area": p.area,
+        "bbox": { "min": xyz(p.bbox.min), "max": xyz(p.bbox.max) },
+        "centerOfMass": xyz(p.center_of_mass),
+        "triangles": p.triangles,
+    });
+    out.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Differentiate a document's mass-property + bounding-box QoIs with respect
