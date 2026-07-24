@@ -1038,7 +1038,6 @@ fn route_pass(
     // winners, losers' paths deposit history, repeat. Leftovers fall through
     // to the CPU rip-up loop below unchanged.
     #[cfg(feature = "gpu")]
-    #[cfg(feature = "gpu")]
     if std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1") && !pending.is_empty() {
         let clearance = pcb.rules.default_rules.clearance;
         let geom = super::gpu_bridge::class_geometry(pcb, width / 2.0, clearance);
