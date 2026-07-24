@@ -355,7 +355,7 @@ pub fn build_glb(
         // Bounds
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
-        for v in positions.chunks_exact(3) {
+        for v in positions.as_chunks::<3>().0 {
             for a in 0..3 {
                 min[a] = min[a].min(v[a]);
                 max[a] = max[a].max(v[a]);
@@ -655,7 +655,7 @@ pub fn build_stl(
     for m in &spec.meshes {
         let positions = slice_f32(f32_data, &m.positions, "positions")?;
         let indices = slice_u32(u32_data, &m.indices, "indices")?;
-        for tri in indices.chunks_exact(3) {
+        for tri in indices.as_chunks::<3>().0 {
             let mut v = [[0f32; 3]; 3];
             for (k, &idx) in tri.iter().enumerate() {
                 let base = idx as usize * 3;
@@ -848,9 +848,9 @@ mod tests {
         let times_off = f32d.len();
         f32d.extend_from_slice(&[0.0, 1.0, 2.0]);
         let values_off = f32d.len();
-        f32d.extend_from_slice(&[
-            0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.7071, 0.7071, 0.0, 0.0, 1.0, 0.0,
-        ]);
+        // Three quaternion keyframes: identity, 90° about Z, 180° about Z.
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        f32d.extend_from_slice(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, h, h, 0.0, 0.0, 1.0, 0.0]);
         let spec = GlbSpec {
             name: "s".into(),
             meshes: vec![tri_mesh("1:a", 0, 0), tri_mesh("2:lid", 0, 0)],
