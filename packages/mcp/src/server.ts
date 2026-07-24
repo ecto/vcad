@@ -134,6 +134,7 @@ import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
 import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as flowToolDefs } from "./tools/flow.js";
 import { toolDefs as circuitToolDefs } from "./tools/circuit.js";
 import { toolDefs as structureToolDefs } from "./tools/structure.js";
 import { toolDefs as emToolDefs } from "./tools/em.js";
@@ -322,6 +323,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...particleToolDefs,
   ...toleranceToolDefs,
   ...thermalToolDefs,
+  ...flowToolDefs,
   ...circuitToolDefs,
   ...structureToolDefs,
   ...emToolDefs,
@@ -421,6 +423,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "simulate_photonics",
   "analyze_antenna",
   "solve_thermal",
+  "simulate_flow",
   "analyze_structure",
   "simulate_neutron_shield",
   "analyze_tolerance_stackup",
