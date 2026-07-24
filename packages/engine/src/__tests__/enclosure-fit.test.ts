@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import type { BoardOutline, Pcb } from "@vcad/ir";
+import { getKernelWasm } from "../wasm-singleton.js";
 import {
   checkEnclosureFit,
   deriveBoardFromCavity,
@@ -12,6 +13,12 @@ import {
   type ComponentExtent,
 } from "../enclosure-fit.js";
 import { extractEnclosureFeatures } from "../enclosure-mesh.js";
+
+// The verification core lives in Rust (crates/vcad-kernel-enclosure); these
+// tests exercise it through the WASM bridge, so the module must be up first.
+beforeAll(async () => {
+  await getKernelWasm();
+});
 
 // ---------------------------------------------------------------------------
 // Synthetic mesh helpers — union of disjoint axis-aligned boxes (coincident
