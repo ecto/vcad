@@ -59,6 +59,7 @@ use vcad_kernel_step::StepError;
 use vcad_kernel_tessellate::{mesh_clearance, tessellate_brep, TriangleMesh};
 
 pub use vcad_kernel_tessellate::ClearanceResult;
+pub use vcad_kernel_tessellate::{compute_mesh_properties, MeshBBox, MeshProperties};
 
 /// Error returned when STEP export fails.
 #[derive(Debug)]

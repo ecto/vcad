@@ -29,6 +29,17 @@ use vcad_ir::Vec2;
 use crate::drc::{build_net_clearance_map, build_net_trace_width_map, NetTieGroups};
 use crate::spatial::{copper_elements, CopperElement, CopperGeom};
 
+/// Reserved net name for keepout boundary obstacles. Contains a control
+/// character so no schematic net can collide with it (probes exempt same-net
+/// copper — a colliding real net would route through keepouts freely).
+const KEEPOUT_NET: &str = "\u{1}keepout";
+
+/// Reserved net name for board-outline (and cutout) edge obstacles. Indexed
+/// with a per-net clearance equal to the rules' `edge_clearance`, so every
+/// probe-based path — maze raster, push-shove validation, via commits,
+/// legalization shortcuts — enforces DRC's `EdgeClearance` by construction.
+const EDGE_NET: &str = "\u{1}board-edge";
+
 /// Stable handle to a committed copper span in a [`RouteSession`].
 ///
 /// Remains valid across compaction — removing other spans never renumbers it.
@@ -167,7 +178,64 @@ pub struct RouteSession {
 impl RouteSession {
     /// Build a session seeded with every copper element on `pcb`.
     pub fn from_pcb(pcb: &Pcb) -> Self {
-        let elems = copper_elements(pcb);
+        let mut elems = copper_elements(pcb);
+        // No-tracks keepouts become session obstacles so the router's oracle
+        // matches DRC's `check_keepout`: their boundary edges are indexed as
+        // zero-width capsules under a reserved net name no real net can carry
+        // (so they block every candidate; probes only exempt same-net copper).
+        // Boundary-only is sufficient — any route entering the region must
+        // cross an edge — and, unlike copper_elements, this stays session-local
+        // so DRC's clearance pass never sees the phantom segments.
+        for keepout in &pcb.keepouts {
+            if !keepout.no_tracks || keepout.outline.len() < 3 {
+                continue;
+            }
+            for layer in keepout.layers.iter().filter(|l| l.is_copper()) {
+                for i in 0..keepout.outline.len() {
+                    let a = keepout.outline[i];
+                    let b = keepout.outline[(i + 1) % keepout.outline.len()];
+                    elems.push(CopperElement {
+                        min: [a.x.min(b.x), a.y.min(b.y)],
+                        max: [a.x.max(b.x), a.y.max(b.y)],
+                        net: KEEPOUT_NET.into(),
+                        layer: *layer,
+                        geom: CopperGeom::Segment { a, b, half_w: 0.0 },
+                    });
+                }
+            }
+        }
+        // Board outline and cutout edges, on every copper layer, under the
+        // reserved edge net (clearance = rules.edge_clearance, wired below).
+        let stackup_copper: Vec<PcbLayer> = pcb
+            .stackup
+            .layers
+            .iter()
+            .map(|l| l.layer)
+            .filter(|l| l.is_copper())
+            .collect();
+        let mut edge_ring = |poly: &[vcad_ir::Vec2]| {
+            if poly.len() < 3 {
+                return;
+            }
+            for layer in &stackup_copper {
+                for i in 0..poly.len() {
+                    let a = poly[i];
+                    let b = poly[(i + 1) % poly.len()];
+                    elems.push(CopperElement {
+                        min: [a.x.min(b.x), a.y.min(b.y)],
+                        max: [a.x.max(b.x), a.y.max(b.y)],
+                        net: EDGE_NET.into(),
+                        layer: *layer,
+                        geom: CopperGeom::Segment { a, b, half_w: 0.0 },
+                    });
+                }
+            }
+        };
+        edge_ring(&pcb.outline.vertices);
+        for cutout in &pcb.outline.cutouts {
+            edge_ring(cutout);
+        }
+        let elems = elems;
         let live = vec![true; elems.len()];
         let bounds: Vec<[f64; 4]> = elems
             .iter()
@@ -198,7 +266,8 @@ impl RouteSession {
             .map(|(id, elem)| SessionElement { id, elem })
             .collect();
         let default_clearance = pcb.rules.default_rules.clearance;
-        let net_clearance = build_net_clearance_map(pcb);
+        let mut net_clearance = build_net_clearance_map(pcb);
+        net_clearance.insert(EDGE_NET.into(), pcb.rules.edge_clearance);
         let max_clearance = net_clearance
             .values()
             .copied()
@@ -671,6 +740,76 @@ mod tests {
     }
 
     #[test]
+    fn probe_blocks_no_tracks_keepout() {
+        // A no-tracks keepout square straddling the candidate path must make
+        // the probe illegal — the oracle mirrors DRC's check_keepout, so the
+        // router can never emit copper through a keepout.
+        let mut pcb = empty_pcb();
+        pcb.keepouts.push(Keepout {
+            outline: vec![
+                Vec2::new(45.0, 45.0),
+                Vec2::new(55.0, 45.0),
+                Vec2::new(55.0, 55.0),
+                Vec2::new(45.0, 55.0),
+            ],
+            layers: vec![PcbLayer::FCu],
+            no_tracks: true,
+            no_vias: false,
+            no_pour: false,
+            no_components: false,
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        // Crosses the keepout boundary: illegal.
+        let r = session.probe(&seg(50.0, 0.125), PcbLayer::FCu, "SIG", 0.2);
+        assert!(
+            !r.legal,
+            "trace through a no-tracks keepout must be blocked"
+        );
+        // Well clear of the keepout: legal.
+        let r = session.probe(&seg(20.0, 0.125), PcbLayer::FCu, "SIG", 0.2);
+        assert!(r.legal);
+    }
+
+    #[test]
+    fn keepout_without_no_tracks_does_not_block() {
+        // A components-only keepout is not a routing obstacle.
+        let mut pcb = empty_pcb();
+        pcb.keepouts.push(Keepout {
+            outline: vec![
+                Vec2::new(45.0, 45.0),
+                Vec2::new(55.0, 45.0),
+                Vec2::new(55.0, 55.0),
+                Vec2::new(45.0, 55.0),
+            ],
+            layers: vec![PcbLayer::FCu],
+            no_tracks: false,
+            no_vias: false,
+            no_pour: false,
+            no_components: true,
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        let r = session.probe(&seg(50.0, 0.125), PcbLayer::FCu, "SIG", 0.2);
+        assert!(r.legal, "no-components keepout must not block traces");
+    }
+
+    #[test]
+    fn probe_enforces_board_edge_clearance() {
+        // rules().edge_clearance is 0.5: a trace whose copper comes within
+        // 0.5mm of the outline must probe illegal, matching DRC EdgeClearance.
+        let session = RouteSession::from_pcb(&empty_pcb());
+        // Centerline 0.4mm from the y=0 edge, half width 0.125 → copper edge
+        // at 0.275mm from the outline: violation.
+        let r = session.probe(&seg(0.4, 0.125), PcbLayer::FCu, "SIG", 0.2);
+        assert!(
+            !r.legal,
+            "copper 0.275mm from the board edge must be blocked"
+        );
+        // Centerline 0.7mm from the edge → copper edge at 0.575mm: legal.
+        let r = session.probe(&seg(0.7, 0.125), PcbLayer::FCu, "SIG", 0.2);
+        assert!(r.legal, "copper 0.575mm from the board edge is legal");
+    }
+
+    #[test]
     fn net_tie_exempts_blocker() {
         let mut pcb = empty_pcb();
         pcb.traces.push(h_trace(50.0, "GND"));
@@ -688,6 +827,8 @@ mod tests {
     #[test]
     fn ids_stay_stable_across_compaction() {
         let mut session = RouteSession::from_pcb(&empty_pcb());
+        // Board-edge obstacle elements are part of the base count.
+        let base = session.len();
         // Commit a row of well-separated spans.
         let ids: Vec<SpanId> = (0..20)
             .map(|i| {
@@ -713,6 +854,6 @@ mod tests {
             !r.legal,
             "surviving span must still be probed after compaction"
         );
-        assert_eq!(session.len(), 5);
+        assert_eq!(session.len(), base + 5);
     }
 }
