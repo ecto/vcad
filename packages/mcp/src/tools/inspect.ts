@@ -8,7 +8,12 @@
  * all three reuse the tessellation-bound mesh math exported from here.
  */
 
-import { transformMesh, type Engine, type TriangleMesh } from "@vcad/engine";
+import {
+  getKernelWasmSync,
+  transformMesh,
+  type Engine,
+  type TriangleMesh,
+} from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { isoperimetricViolation } from "./integrity.js";
 import { resolveDocInput } from "./session-core.js";
@@ -62,53 +67,14 @@ export interface InspectResult {
   warnings?: string[];
 }
 
-/** Calculate signed volume of a triangle with origin. */
-function signedVolumeOfTriangle(
-  p1: [number, number, number],
-  p2: [number, number, number],
-  p3: [number, number, number],
-): number {
-  return (
-    (p1[0] * (p2[1] * p3[2] - p3[1] * p2[2]) -
-      p2[0] * (p1[1] * p3[2] - p3[1] * p1[2]) +
-      p3[0] * (p1[1] * p2[2] - p2[1] * p1[2])) /
-    6.0
-  );
-}
-
-/** Calculate area of a triangle. */
-function triangleArea(
-  p1: [number, number, number],
-  p2: [number, number, number],
-  p3: [number, number, number],
-): number {
-  // Cross product of edges
-  const ax = p2[0] - p1[0];
-  const ay = p2[1] - p1[1];
-  const az = p2[2] - p1[2];
-  const bx = p3[0] - p1[0];
-  const by = p3[1] - p1[1];
-  const bz = p3[2] - p1[2];
-
-  const cx = ay * bz - az * by;
-  const cy = az * bx - ax * bz;
-  const cz = ax * by - ay * bx;
-
-  return Math.sqrt(cx * cx + cy * cy + cz * cz) / 2.0;
-}
-
-/** Get vertex position from mesh. */
-function getVertex(
-  mesh: TriangleMesh,
-  index: number,
-): [number, number, number] {
-  const i = index * 3;
-  return [mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]];
-}
-
-/** Compute properties for a single mesh. Exported so `measure` and the
- *  per-part `inspect_part` / `describe_scene` tools share one implementation
- *  of the tessellation-bound volume/area/bbox/centroid math. */
+/** Compute properties for a single mesh. Exported so `measure`, the
+ *  per-part `inspect_part` / `describe_scene` tools, and the fabricate cost
+ *  models share one implementation of the tessellation-bound
+ *  volume/area/bbox/centroid math — the kernel's `compute_mesh_properties`
+ *  (crates/vcad-kernel-tessellate/src/mesh_props.rs), reached through the
+ *  WASM binding. There is deliberately no TS reimplementation: the kernel
+ *  is the single source of truth, and the WASM module is always initialized
+ *  before any tool can evaluate a document. */
 export function computeMeshProperties(mesh: TriangleMesh): {
   volume: number;
   area: number;
@@ -116,103 +82,40 @@ export function computeMeshProperties(mesh: TriangleMesh): {
   centroid: { x: number; y: number; z: number };
   triangles: number;
 } {
-  const numTriangles = mesh.indices.length / 3;
-
-  let volume = 0;
-  let area = 0;
-  let cx = 0,
-    cy = 0,
-    cz = 0;
-  // Area-weighted surface centroid — fallback when the signed-volume
-  // integral is unreliable (open or inconsistently wound meshes, e.g.
-  // thin sheet-metal bodies). Always lands inside the bounding box.
-  let acx = 0,
-    acy = 0,
-    acz = 0;
-
-  const bbox: BoundingBox = {
-    min: { x: Infinity, y: Infinity, z: Infinity },
-    max: { x: -Infinity, y: -Infinity, z: -Infinity },
-  };
-
-  for (let t = 0; t < numTriangles; t++) {
-    const i0 = mesh.indices[t * 3];
-    const i1 = mesh.indices[t * 3 + 1];
-    const i2 = mesh.indices[t * 3 + 2];
-
-    const p1 = getVertex(mesh, i0);
-    const p2 = getVertex(mesh, i1);
-    const p3 = getVertex(mesh, i2);
-
-    // Volume via divergence theorem
-    const v = signedVolumeOfTriangle(p1, p2, p3);
-    volume += v;
-
-    // Surface area
-    const a = triangleArea(p1, p2, p3);
-    area += a;
-
-    // Centroid contribution (weighted by signed volume)
-    cx += v * (p1[0] + p2[0] + p3[0]) / 4;
-    cy += v * (p1[1] + p2[1] + p3[1]) / 4;
-    cz += v * (p1[2] + p2[2] + p3[2]) / 4;
-
-    // Area-weighted centroid contribution
-    acx += (a * (p1[0] + p2[0] + p3[0])) / 3;
-    acy += (a * (p1[1] + p2[1] + p3[1])) / 3;
-    acz += (a * (p1[2] + p2[2] + p3[2])) / 3;
-
-    // Bounding box
-    for (const p of [p1, p2, p3]) {
-      bbox.min.x = Math.min(bbox.min.x, p[0]);
-      bbox.min.y = Math.min(bbox.min.y, p[1]);
-      bbox.min.z = Math.min(bbox.min.z, p[2]);
-      bbox.max.x = Math.max(bbox.max.x, p[0]);
-      bbox.max.y = Math.max(bbox.max.y, p[1]);
-      bbox.max.z = Math.max(bbox.max.z, p[2]);
-    }
+  const wasm = getKernelWasmSync() as {
+    computeMeshProperties?: (
+      positions: Float32Array,
+      indices: Uint32Array,
+    ) => {
+      volume: number;
+      area: number;
+      bbox: BoundingBox;
+      centerOfMass: { x: number; y: number; z: number };
+      triangles: number;
+    };
+  } | null;
+  if (!wasm) {
+    throw new Error("kernel WASM is not initialized — call Engine.init first");
   }
-
-  // Normalize centroid by volume. The volume-weighted centroid is only
-  // valid for a closed, consistently wound mesh — on open meshes the
-  // signed-tet contributions partially cancel and the division can throw
-  // the centroid anywhere, including outside the bounding box (which is
-  // geometrically impossible for a real COM). Validate against the bbox
-  // and fall back to the area-weighted surface centroid when it fails.
-  const absVolume = Math.abs(volume);
-  let centroid: { x: number; y: number; z: number } | null = null;
-  if (absVolume > 1e-10) {
-    centroid = { x: cx / volume, y: cy / volume, z: cz / volume };
-    const eps =
-      1e-9 *
-      Math.max(
-        bbox.max.x - bbox.min.x,
-        bbox.max.y - bbox.min.y,
-        bbox.max.z - bbox.min.z,
-        1,
-      );
-    const inBbox =
-      centroid.x >= bbox.min.x - eps &&
-      centroid.x <= bbox.max.x + eps &&
-      centroid.y >= bbox.min.y - eps &&
-      centroid.y <= bbox.max.y + eps &&
-      centroid.z >= bbox.min.z - eps &&
-      centroid.z <= bbox.max.z + eps;
-    if (!inBbox) centroid = null;
+  if (typeof wasm.computeMeshProperties !== "function") {
+    throw new Error(
+      "computeMeshProperties is not in this kernel build — rebuild vcad-kernel-wasm",
+    );
   }
-  if (centroid === null) {
-    centroid =
-      area > 0
-        ? { x: acx / area, y: acy / area, z: acz / area }
-        : { x: 0, y: 0, z: 0 };
-  }
-
+  const props = wasm.computeMeshProperties(
+    mesh.positions instanceof Float32Array
+      ? mesh.positions
+      : new Float32Array(mesh.positions),
+    mesh.indices instanceof Uint32Array
+      ? mesh.indices
+      : new Uint32Array(mesh.indices),
+  );
   return {
-    volume: absVolume,
-    area,
-    bbox,
-    centroid,
-    triangles: numTriangles,
+    volume: props.volume,
+    area: props.area,
+    bbox: props.bbox,
+    centroid: props.centerOfMass,
+    triangles: props.triangles,
   };
 }
 
