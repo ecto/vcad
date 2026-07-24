@@ -386,6 +386,28 @@ min: Vec3,
 max: Vec3, };
 
 /**
+ * A per-frame camera pose in orbit coordinates, compiled from the
+ * timeline's declarative [`CameraShot`]s by [`Timeline::sample_sequence`].
+ */
+export type CameraPose = { 
+/**
+ * Azimuth around the scene, degrees.
+ */
+azimuthDeg: number, 
+/**
+ * Elevation above the horizon, degrees.
+ */
+elevationDeg: number, 
+/**
+ * Distance factor (1 = default framing, 0.5 = half distance).
+ */
+dolly: number, 
+/**
+ * Optional part/instance id the camera is framing.
+ */
+target?: string, };
+
+/**
  * A saved camera position/orientation.
  */
 export type CameraPreset = { 
@@ -3269,6 +3291,44 @@ start: Vec2,
  * Wire end point.
  */
 end: Vec2, };
+
+/**
+ * Sampled state for a single frame of the timeline.
+ */
+export type SequenceFrame = { 
+/**
+ * Frame index (0-based).
+ */
+index: number, 
+/**
+ * Time in seconds.
+ */
+t: number, 
+/**
+ * Animated parameter name → value at `t`.
+ */
+params: Record<string, number>, 
+/**
+ * Joint id → state at `t`.
+ */
+joints: Record<string, number>, 
+/**
+ * Instance id → visible (track value > 0.5).
+ */
+visibility: Record<string, boolean>, 
+/**
+ * Global exploded-view factor (0 = assembled).
+ */
+explode: number, 
+/**
+ * Camera pose compiled from the timeline's shots.
+ */
+camera: CameraPose, 
+/**
+ * True iff params differ from the previous frame (frame 0: true if
+ * any parameter track exists).
+ */
+geometryDirty: boolean, };
 
 /**
  * Direction tag for sheet-metal flanges. Wire-compatible with
