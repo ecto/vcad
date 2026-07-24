@@ -330,11 +330,19 @@ pub fn route_all_with_opts(
     // region is unchanged — re-proving known failures was pure waste.
     let mut round_cache = FailCache::new();
 
+    // Set when convergence is detected before the scheduled last round: the
+    // next round is a final fine-retry polish of the best pass, then we stop.
+    // Without this, the early-stop skipped the fine-pitch retry that only the
+    // last round enables — a multi-round run could then end *below* the
+    // single-round baseline, whose round 0 IS the last round and gets the
+    // retry (observed on the corridor benchmark: 4 rounds routed 16/24 where
+    // 1 round routed 18/24).
+    let mut polish = false;
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
         // history field are enhancement layers applied from round 1 onward.
         let use_push_shove = opts.use_push_shove && round > 0;
-        let last_round_flag = round + 1 == rounds;
+        let last_round_flag = polish || round + 1 == rounds;
         let (session, placed, pending) = if round == 0 {
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
@@ -356,7 +364,12 @@ pub fn route_all_with_opts(
                 use_push_shove,
                 opts.effective_ripup_rounds(),
                 opts.effective_expansions(),
-                last_round_flag,
+                // Always run round 0 with the rescue/fine-retry arsenal: it
+                // must reproduce the single-round baseline EXACTLY, or
+                // keep-best's no-regression guarantee is vacuous (a 4-round
+                // run once routed fewer nets than a 1-round run because only
+                // the last round armed the rescue pass).
+                true,
                 &opts.priority_nets,
             )
         } else {
@@ -387,7 +400,7 @@ pub fn route_all_with_opts(
             placed.len(),
             pending.len(),
         );
-        let last_round = round + 1 == rounds;
+        let last_round = last_round_flag;
         if !last_round && !pending.is_empty() {
             // Raise each still-unrouted net's priority for next round.
             for (net, _, _) in &pending {
@@ -408,9 +421,22 @@ pub fn route_all_with_opts(
             .unwrap_or(true);
         if is_better {
             best = Some((session, placed, pending));
+            if last_round {
+                break;
+            }
         } else if round > 0 {
-            log::info!("negotiation converged after round {} — stopping", round + 1);
-            break;
+            if last_round {
+                log::info!("negotiation converged after round {} — stopping", round + 1);
+                break;
+            }
+            // Converged below the scheduled last round: spend one more round
+            // as a fine-retry polish of the best pass before stopping, so the
+            // early stop never forfeits the last-round-only retry.
+            log::info!(
+                "negotiation converged after round {} — final fine-retry round",
+                round + 1
+            );
+            polish = true;
         }
 
         let fully_routed = best.as_ref().map(|(_, _, p)| p.is_empty()).unwrap_or(false);
@@ -421,6 +447,14 @@ pub fn route_all_with_opts(
 
     let (mut session, mut placed, pending) =
         best.expect("negotiation always runs at least one pass");
+
+    // The rescue stages below solve *legality* knots, not corridor contention:
+    // run them on a flat history field. Inheriting the negotiation deposits
+    // inflated their searches (history cost widens A*'s frontier until the
+    // expansion budget dies) — observed as joint repair recovering 2 nets on a
+    // flat field but 0 on the polluted one, a multi-round run thereby ending
+    // below the single-round baseline.
+    let cong = Congestion::new(&pcb.outline.vertices);
 
     // Fan-out rescue (issue #289 part 1): connections rip-up still couldn't
     // place — most often a net into a fine-pitch pad that can't be escaped on
@@ -1203,12 +1237,15 @@ fn incremental_round(
         cong,
         use_push_shove,
         max_expansions,
-        false,
+        // Speculative rounds stay search-only (no rescue arsenal), but the
+        // final polish round — the only one flagged fine_retry — gets the
+        // same rescue + fine-pitch retry the single-round baseline's last
+        // round enjoys, so keep-best genuinely never regresses below it.
+        fine_retry,
         Some(budget_ms),
         fail_cache,
         &HashMap::new(),
     );
-    let _ = fine_retry;
     log::info!(
         "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s",
         placed.len(),
