@@ -59,7 +59,7 @@ physics = ["dep:vcad-kernel-physics"]
 atoms = ["dep:vcad-kernel-atoms", "vcad-kernel-atoms/wasm"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode", "dep:vcad-slicer-bambu"]
 cam = ["dep:vcad-kernel-cam"]
-ecad = ["dep:vcad-ecad-pcb", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]
+ecad = ["dep:vcad-design-constraints", "dep:vcad-ecad-pcb", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]
 embroidery = ["dep:vcad-embroidery", "dep:vcad-embroidery-pes", "dep:vcad-embroidery-dst"]
 ts-rs = ["dep:ts-rs"]
 
@@ -110,6 +110,10 @@ optional = true
 
 [dependencies.vcad-kernel-cam]
 path = "../vcad-kernel-cam"
+optional = true
+
+[dependencies.vcad-design-constraints]
+path = "../vcad-design-constraints"
 optional = true
 
 [dependencies.vcad-ecad-pcb]

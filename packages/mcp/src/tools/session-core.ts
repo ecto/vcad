@@ -215,6 +215,7 @@ export function undoLastSnapshot(documentId: string): Document | null {
 export function clearHistory(documentId: string): void {
   sessionHistory.delete(documentId);
   lastChangedParts.delete(documentId);
+  lastTriangleCount.delete(documentId);
 }
 
 // ─── Last mutation diff (per session) ─────────────────────────────────────────
@@ -239,4 +240,29 @@ export function recordLastChanged(documentId: string, partIds: string[]): void {
  *  mutation has been recorded on this instance. */
 export function getLastChanged(documentId: string): string[] | null {
   return lastChangedParts.get(documentId) ?? null;
+}
+
+// ─── Last known tessellation size (per session) ──────────────────────────────
+//
+// The drafting renderer emits one SVG element per visible triangle, so a
+// document's triangle count is a direct proxy for render memory: a ~380k-
+// triangle document serializes to a >100 MB SVG string that OOMs the process
+// before the rasterizer ever reports an error. Every mutation already pays
+// for a full integrity evaluation (which counts triangles); remembering that
+// number lets render_view refuse an un-renderable document up front instead
+// of crashing the instance.
+
+/** document_id → triangle count from the most recent integrity evaluation. */
+const lastTriangleCount = new Map<string, number>();
+
+/** Record the document's triangle count from a mutation's integrity pass. */
+export function recordTriangles(documentId: string, triangles: number): void {
+  if (!documentId) return;
+  lastTriangleCount.set(documentId, triangles);
+}
+
+/** Triangle count from the session's most recent integrity evaluation, or
+ *  null when no mutation has been recorded on this instance. */
+export function getLastTriangles(documentId: string): number | null {
+  return lastTriangleCount.get(documentId) ?? null;
 }

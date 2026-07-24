@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-render-view-triangle-guard",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "render_view refuses over-dense documents instead of crashing",
+  "summary": "Documents tessellating past 120k triangles (e.g. large sphere patterns) now get an actionable error from render_view instead of OOM-killing the server with a >100 MB per-triangle SVG.",
+  "features": ["render"],
+  "mcpTools": ["render_view"]
+}

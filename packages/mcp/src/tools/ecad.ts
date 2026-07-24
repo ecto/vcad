@@ -43,6 +43,13 @@ import {
   hasClearanceClaims,
   verifyClearanceClaims,
 } from "./clearance.js";
+import {
+  constraintReceiptClaims,
+  constraintStaleWarning,
+  hasConstraintClaims,
+  pruneOutlineConstraints,
+  verifyConstraintClaims,
+} from "./constraint-claims.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
@@ -2742,6 +2749,12 @@ export async function placeComponents(args: Record<string, unknown>) {
       `placement DRC found ${parts.join(", ")} — see placement_drc; fix with set_placement before routing`,
     );
   }
+  if (placementDrc.layout_lint && placementDrc.layout_lint.length > 0) {
+    warnings.push(
+      `${placementDrc.layout_lint.length} EE layout lint warning(s) — see placement_drc.layout_lint ` +
+        `(crystal/decoupling/connector/separation heuristics)`,
+    );
+  }
 
   // A cross-net pad overlap is a hard short — never report success with one.
   if (placementConflicts.length > 0) {
@@ -4457,6 +4470,231 @@ export interface PlacementDrc {
    *  layer name). `clean` is forced `false` — an unverifiable floorplan is NOT a
    *  clean one. */
   unverifiable?: { reason: string; offending_field?: string };
+  /** Heuristic EE layout lint (crystal placement, decoupling distance,
+   *  connector edge access, high-current vs. sensitive separation). Advisory —
+   *  never affects `clean`. Present only when at least one warning fired. */
+  layout_lint?: LayoutLintWarning[];
+}
+
+/** One heuristic EE-layout warning. Advisory: names the offending refs and the
+ *  measured vs. threshold distance so the caller can fix with set_placement. */
+export interface LayoutLintWarning {
+  kind:
+    | "crystal_far_from_ic"
+    | "decoupling_cap_far_from_pin"
+    | "connector_not_on_edge"
+    | "high_current_near_sensitive";
+  /** Reference designators involved (offender first). */
+  refs: string[];
+  /** Measured distance in mm (meaning depends on `kind`). */
+  distance_mm: number;
+  /** The heuristic threshold that was crossed, in mm. */
+  threshold_mm: number;
+  /** Human-readable explanation naming refs, pads/nets, and distances. */
+  message: string;
+}
+
+// Lint thresholds (mm). Heuristics, not physics — chosen from common EE
+// layout guidance: crystals want <5mm loop to the oscillator pins, decouplers
+// want <3mm to the pin they decouple, connectors belong at the board edge,
+// and high-current copper wants standoff from USB/analog signals.
+const LINT_CRYSTAL_MAX_MM = 5;
+const LINT_DECAP_MAX_MM = 3;
+const LINT_CONNECTOR_EDGE_MAX_MM = 5;
+const LINT_HIGH_CURRENT_SEP_MIN_MM = 2;
+
+const LINT_GROUND_NET_RE = /gnd|vss|0v\b/i;
+const LINT_SUPPLY_NET_RE = /^(v|\+)|vcc|vdd|vbat|vbus|pwr|3v3|5v/i;
+const SENSITIVE_NET_RE = /usb|(^|_)d[+-]$|(^|_)dp$|(^|_)dm$|adc|analog|(^|_)ain|vref/i;
+const HIGH_CURRENT_CLASS_RE = /pwr|power|high[-_ ]?current|motor|\bhv\b|hi[-_ ]?amp/i;
+
+const refPrefix = (ref: string): string => /^[A-Za-z]+/.exec(ref)?.[0]?.toUpperCase() ?? "";
+const dist2d = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * Heuristic EE layout lint over a placed (possibly unrouted) board. Pure
+ * geometry + net names — no kernel round-trip — so it runs on every
+ * place_components / set_placement result. Four checks:
+ *  - a crystal (ref Y or X) whose oscillator nets reach an IC (U*) pin more than
+ *    5mm away (the RP2040-crystal-11mm-from-XIN failure mode);
+ *  - a two-pad decoupling cap (C*, one pad ground-ish, one power-ish) more
+ *    than 3mm from the nearest IC pin on the same supply net;
+ *  - a connector (ref J, P, CN, or USB) whose pads all sit >5mm from the board edge;
+ *  - a pad on a high-current net class closer than 2mm to a USB/analog pad.
+ */
+export function layoutLint(pcb: Pcb): LayoutLintWarning[] {
+  const warnings: LayoutLintWarning[] = [];
+  const fps = pcb.footprints;
+
+  // World-space pads, grouped by net.
+  interface WPad {
+    ref: string;
+    prefix: string;
+    pad: Pad;
+    pos: Vec2;
+  }
+  const allPads: WPad[] = [];
+  const byNet = new Map<string, WPad[]>();
+  for (const fp of fps) {
+    const prefix = refPrefix(fp.ref);
+    for (const pad of fp.pads) {
+      const w: WPad = { ref: fp.ref, prefix, pad, pos: padWorld(fp, pad) };
+      allPads.push(w);
+      if (pad.net) {
+        const arr = byNet.get(pad.net) ?? [];
+        arr.push(w);
+        byNet.set(pad.net, arr);
+      }
+    }
+  }
+
+  // ── Crystal → IC oscillator-pin distance ─────────────────────────────────
+  for (const fp of fps) {
+    const prefix = refPrefix(fp.ref);
+    if (prefix !== "Y" && prefix !== "X" && prefix !== "XTAL") continue;
+    // Worst oscillator net: for each non-power crystal net, the nearest IC pad
+    // sharing it; report the farthest of those (both XIN and XOUT must be close).
+    let worst: { dist: number; icRef: string; icPad: string; net: string } | null = null;
+    for (const pad of fp.pads) {
+      const net = pad.net;
+      if (!net || LINT_GROUND_NET_RE.test(net) || LINT_SUPPLY_NET_RE.test(net)) continue;
+      const from = padWorld(fp, pad);
+      let nearest: { dist: number; icRef: string; icPad: string } | null = null;
+      for (const other of byNet.get(net) ?? []) {
+        if (other.ref === fp.ref || other.prefix !== "U") continue;
+        const d = dist2d(from, other.pos);
+        if (!nearest || d < nearest.dist) {
+          nearest = { dist: d, icRef: other.ref, icPad: other.pad.number };
+        }
+      }
+      if (nearest && (!worst || nearest.dist > worst.dist)) worst = { ...nearest, net };
+    }
+    if (worst && worst.dist > LINT_CRYSTAL_MAX_MM) {
+      warnings.push({
+        kind: "crystal_far_from_ic",
+        refs: [fp.ref, worst.icRef],
+        distance_mm: round2(worst.dist),
+        threshold_mm: LINT_CRYSTAL_MAX_MM,
+        message:
+          `Crystal ${fp.ref} is ${round2(worst.dist)}mm from ${worst.icRef} pad ` +
+          `${worst.icPad} (net '${worst.net}') — oscillator loops want <` +
+          `${LINT_CRYSTAL_MAX_MM}mm; move ${fp.ref} next to its XIN/XOUT pins.`,
+      });
+    }
+  }
+
+  // ── Decoupling cap → supply-pin distance ─────────────────────────────────
+  for (const fp of fps) {
+    if (refPrefix(fp.ref) !== "C" || fp.pads.length !== 2) continue;
+    const nets = fp.pads.map((p) => p.net ?? "");
+    const gndIdx = nets.findIndex((n) => LINT_GROUND_NET_RE.test(n));
+    const pwrIdx = nets.findIndex((n) => n && LINT_SUPPLY_NET_RE.test(n) && !LINT_GROUND_NET_RE.test(n));
+    if (gndIdx < 0 || pwrIdx < 0) continue; // not a decoupler
+    const pwrPad = fp.pads[pwrIdx]!;
+    const from = padWorld(fp, pwrPad);
+    let nearest: { dist: number; icRef: string; icPad: string } | null = null;
+    for (const other of byNet.get(pwrPad.net!) ?? []) {
+      if (other.ref === fp.ref || other.prefix !== "U") continue;
+      const d = dist2d(from, other.pos);
+      if (!nearest || d < nearest.dist) {
+        nearest = { dist: d, icRef: other.ref, icPad: other.pad.number };
+      }
+    }
+    if (nearest && nearest.dist > LINT_DECAP_MAX_MM) {
+      warnings.push({
+        kind: "decoupling_cap_far_from_pin",
+        refs: [fp.ref, nearest.icRef],
+        distance_mm: round2(nearest.dist),
+        threshold_mm: LINT_DECAP_MAX_MM,
+        message:
+          `Decoupling cap ${fp.ref} is ${round2(nearest.dist)}mm from ${nearest.icRef} ` +
+          `pad ${nearest.icPad} (net '${pwrPad.net}') — decouplers want <` +
+          `${LINT_DECAP_MAX_MM}mm to the pin they decouple.`,
+      });
+    }
+  }
+
+  // ── Connectors at the board edge ─────────────────────────────────────────
+  const outline = pcb.outline.vertices ?? [];
+  if (outline.length >= 3) {
+    const edgeDist = (p: Vec2): number => {
+      let min = Infinity;
+      for (let i = 0; i < outline.length; i++) {
+        const a = outline[i]!;
+        const b = outline[(i + 1) % outline.length]!;
+        min = Math.min(min, pointSegDist(p, a, b));
+      }
+      return min;
+    };
+    for (const fp of fps) {
+      const prefix = refPrefix(fp.ref);
+      if (prefix !== "J" && prefix !== "P" && prefix !== "CN" && prefix !== "USB") continue;
+      const pts = fp.pads.length > 0 ? fp.pads.map((p) => padWorld(fp, p)) : [fp.position];
+      const d = Math.min(...pts.map(edgeDist));
+      if (d > LINT_CONNECTOR_EDGE_MAX_MM) {
+        warnings.push({
+          kind: "connector_not_on_edge",
+          refs: [fp.ref],
+          distance_mm: round2(d),
+          threshold_mm: LINT_CONNECTOR_EDGE_MAX_MM,
+          message:
+            `Connector ${fp.ref} sits ${round2(d)}mm from the board edge — connectors ` +
+            `want edge access (<${LINT_CONNECTOR_EDGE_MAX_MM}mm); move it to the outline.`,
+        });
+      }
+    }
+  }
+
+  // ── High-current net class vs. USB/analog separation ─────────────────────
+  const highCurrentNets = new Set<string>();
+  const rules = pcb.rules;
+  if (rules) {
+    const defaultW = rules.defaultRules.traceWidth;
+    const assignments = rules.netClassAssignments ?? {};
+    for (const cls of rules.classRules ?? []) {
+      const heavy =
+        HIGH_CURRENT_CLASS_RE.test(cls.name) || cls.traceWidth >= Math.max(1, 2 * defaultW);
+      if (!heavy) continue;
+      for (const net of assignments[cls.name] ?? []) highCurrentNets.add(net);
+    }
+  }
+  if (highCurrentNets.size > 0) {
+    // One warning per (high-current net, sensitive net) pair at its closest
+    // approach — not one per pad pair, which would flood dense boards.
+    const closest = new Map<
+      string,
+      { dist: number; hi: WPad; lo: WPad; hiNet: string; loNet: string }
+    >();
+    const sensitive = allPads.filter((p) => p.pad.net && SENSITIVE_NET_RE.test(p.pad.net));
+    for (const hi of allPads) {
+      const hiNet = hi.pad.net;
+      if (!hiNet || !highCurrentNets.has(hiNet)) continue;
+      for (const lo of sensitive) {
+        const loNet = lo.pad.net!;
+        if (loNet === hiNet || lo.ref === hi.ref) continue;
+        const d = dist2d(hi.pos, lo.pos);
+        if (d >= LINT_HIGH_CURRENT_SEP_MIN_MM) continue;
+        const key = `${hiNet}\x00${loNet}`;
+        const cur = closest.get(key);
+        if (!cur || d < cur.dist) closest.set(key, { dist: d, hi, lo, hiNet, loNet });
+      }
+    }
+    for (const c of closest.values()) {
+      warnings.push({
+        kind: "high_current_near_sensitive",
+        refs: [c.hi.ref, c.lo.ref],
+        distance_mm: round2(c.dist),
+        threshold_mm: LINT_HIGH_CURRENT_SEP_MIN_MM,
+        message:
+          `High-current net '${c.hiNet}' (${c.hi.ref} pad ${c.hi.pad.number}) is ` +
+          `${round2(c.dist)}mm from '${c.loNet}' (${c.lo.ref} pad ${c.lo.pad.number}) — ` +
+          `keep ≥${LINT_HIGH_CURRENT_SEP_MIN_MM}mm between high-current and USB/analog pads.`,
+      });
+    }
+  }
+
+  return warnings;
 }
 
 /** Pull the two refs and two nets out of a pad↔pad clearance message:
@@ -4481,12 +4719,18 @@ function netPairKey(a: string, b: string): string {
  *  `place_components` and `set_placement` so the move→re-check loop never has
  *  to fall through to a full route→DRC pass. */
 export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
+  // Heuristic EE lint is pure geometry — runs even when the kernel DRC can't.
+  const lint = layoutLint(pcb);
+  const withLint = (drcPart: Omit<PlacementDrc, "layout_lint">): PlacementDrc => ({
+    ...drcPart,
+    ...(lint.length > 0 ? { layout_lint: lint } : {}),
+  });
   // `full` so we get every violation, not a capped sample.
   const drc = await drcPcb(pcb, "full");
   // The kernel couldn't parse the board — report it as unverifiable (NOT clean)
   // instead of letting an empty `.details` masquerade as a clean floorplan.
   if (!drc.success) {
-    return {
+    return withLint({
       clean: false,
       shorts: [],
       clearance_violations: 0,
@@ -4496,7 +4740,7 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
         reason: drc.reason,
         ...(drc.offending_field ? { offending_field: drc.offending_field } : {}),
       },
-    };
+    });
   }
   const viols = drc.details ?? [];
 
@@ -4558,7 +4802,7 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
     }
   }
 
-  return {
+  return withLint({
     clean:
       shorts.length === 0 &&
       clearanceViolations === 0 &&
@@ -4568,7 +4812,7 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
     clearance_violations: clearanceViolations,
     courtyard_overlaps: courtyardOverlaps,
     off_board: offBoard,
-  };
+  });
 }
 
 // ============================================================================
@@ -7145,12 +7389,24 @@ export async function setBoardOutline(args: Record<string, unknown>) {
   const width = round3(Math.max(...xs) - Math.min(...xs));
   const height = round3(Math.max(...ys) - Math.min(...ys));
 
+  // A rewritten outline invalidates vertex indices — drop constraints whose
+  // indices are now out of range (reported), and warn about the rest.
+  const droppedConstraints = pruneOutlineConstraints(ctx.doc, (node) => {
+    const p = getNodePcb(ctx.doc, node);
+    return p ? (p.outline.vertices?.length ?? 0) : undefined;
+  });
+  const constraintWarning = constraintStaleWarning(ctx.doc);
+
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          ...(droppedConstraints.length > 0
+            ? { dropped_constraints: droppedConstraints }
+            : {}),
+          ...(constraintWarning ? { constraint_warning: constraintWarning } : {}),
           outline: {
             width,
             height,
@@ -8438,6 +8694,12 @@ export async function setPlacement(args: Record<string, unknown>) {
       `no footprints updated${unknownRefs.length ? ` — all refs unknown: ${unknownRefs.join(", ")}` : ""}`,
     );
   }
+
+  // Explicit placements deliberately do NOT auto-solve constraints — that
+  // would silently undo the caller's just-requested positions when they
+  // conflict. Warn instead so agency stays with the caller.
+  const staleWarning = constraintStaleWarning(ctx.doc);
+  if (staleWarning) warnings.push(staleWarning);
 
   // Re-check the floorplan after the move so the caller can branch on the
   // result in one call — the move→re-check loop never has to reach run_drc.
@@ -12515,22 +12777,26 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   const pcb = getDocPcb(ctx.doc);
   const clearanceSpecs = ctx.doc.clearance_specs ?? [];
   if (!pcb) {
-    if (clearanceSpecs.length === 0) {
+    if (clearanceSpecs.length === 0 && (ctx.doc.constraints ?? []).length === 0) {
       return {
         content: [
           {
             type: "text" as const,
-            text: "Error: Document has no PCB and no clearance specs — nothing to certify. (Persist mechanical assertions with check_clearance + label first.)",
+            text: "Error: Document has no PCB, no clearance specs, and no design constraints — nothing to certify. (Persist assertions with check_clearance + label or add_constraint first.)",
           },
         ],
         isError: true,
       };
     }
-    // Mechanical-only receipt: re-measure every persisted clearance spec.
+    // Mechanical-only receipt: re-measure every persisted clearance spec
+    // and design constraint.
     const unified: DesignReceipt = {
       schema: RECEIPT_SCHEMA,
       ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
-      claims: clearanceReceiptClaims(ctx.doc, engine),
+      claims: [
+        ...clearanceReceiptClaims(ctx.doc, engine),
+        ...(await constraintReceiptClaims(ctx.doc)),
+      ],
     };
     return {
       content: [
@@ -12601,6 +12867,10 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   // board+mechanics document certifies both domains in one receipt.
   if (clearanceSpecs.length > 0) {
     unified.claims.push(...clearanceReceiptClaims(ctx.doc, engine));
+  }
+  // Design constraints certify as constraint.* claims in the same ledger.
+  if ((ctx.doc.constraints ?? []).length > 0) {
+    unified.claims.push(...(await constraintReceiptClaims(ctx.doc)));
   }
 
   // The receipt rides in structuredContent so the inline viewer renders it
@@ -12700,13 +12970,14 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     }
   }
   const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
+  const constraintReceipt = unified && hasConstraintClaims(unified) ? unified : undefined;
 
-  if (!legacy && !clearanceReceipt) {
+  if (!legacy && !clearanceReceipt && !constraintReceipt) {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance claims, as produced by build_receipt.",
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance or constraint.* claims, as produced by build_receipt.",
         },
       ],
       isError: true,
@@ -12756,10 +13027,17 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     statuses.push(clearance.status);
   }
 
+  let constraintChecks: Awaited<ReturnType<typeof verifyConstraintClaims>> | undefined;
+  if (constraintReceipt) {
+    constraintChecks = await verifyConstraintClaims(ctx.doc, constraintReceipt);
+    statuses.push(constraintChecks.status);
+  }
+
   const payload = {
     status: worstStatus(statuses),
     ...(boardHash ? { board_hash: boardHash } : {}),
     ...(clearance ? { clearance } : {}),
+    ...(constraintChecks ? { constraints: constraintChecks } : {}),
   };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
@@ -13389,7 +13667,11 @@ export const toolDefs: ToolDef[] = [
       "annular boards. Returns `placement_drc` — the pre-routing DRC subset " +
       "(shorts, pad clearance, courtyard overlaps, off-board parts); when " +
       "`placement_drc.clean` is false, fix the floorplan with set_placement " +
-      "before route_nets instead of routing on top of the fault. Also " +
+      "before route_nets instead of routing on top of the fault. " +
+      "`placement_drc.layout_lint` adds heuristic EE warnings (crystal far " +
+      "from its oscillator pins, decoupling cap far from its supply pin, " +
+      "connector off the board edge, high-current pads crowding USB/analog) " +
+      "with refs and distances. Also " +
       "returns a `utilization` report (board vs occupied area, % used, " +
       "component bounding box, and an advisory suggested_outline) so you can " +
       "right-size an over-large board in one step.",

@@ -25,6 +25,14 @@ jobs:
       matrix:
         toolchain: [stable, nightly]
     steps:
+      # The full workspace build now overflows the stock runner disk
+      # ("No space left on device" during linking) — drop the big
+      # preinstalled toolchains we never use before building.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@v6
       - name: Clone sibling repos
         run: |

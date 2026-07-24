@@ -1,12 +1,16 @@
 import { create } from "zustand";
+import { getKernelWasmSync } from "../wasm-singleton.js";
+import { mergeSketchConstraints } from "../sketch-constraint-persist.js";
 import type {
   Bindings,
+  DesignConstraint,
   Document,
   Expr,
   NodeId,
   Parameter,
   Vec3,
   SketchSegment2D,
+  SketchConstraint,
   PathCurve,
   Transform3D,
   SweepOp,
@@ -483,6 +487,37 @@ export interface DocumentState {
   setBoardOutline: (outline: BoardOutline) => void;
   /** Resize the board to a W×H rectangle (origin corner at [0,0]), preserving thickness + cutouts. */
   resizeBoard: (width: number, height: number) => void;
+
+  // Design constraints (document-level geometric solver)
+  /** Persist a committed sketch's session constraints onto the document,
+   *  anchored at its sketch node (replaces prior constraints for that node). */
+  persistSketchConstraints: (partId: string, session: SketchConstraint[]) => void;
+  /** Append a design constraint (id auto-assigned) and re-solve. */
+  addDesignConstraint: (constraint: Omit<DesignConstraint, "id">) => DesignConstraintSolveReport | null;
+  /** Remove a design constraint by id. Geometry stays where it is. */
+  removeDesignConstraint: (id: string) => void;
+  /** Patch a dimensional constraint's value / driven flag, then re-solve. */
+  updateDesignConstraint: (
+    id: string,
+    patch: { value?: number | string; driven?: boolean },
+  ) => DesignConstraintSolveReport | null;
+  /** Re-solve the document's design constraints via the kernel WASM solver.
+   *  `extraFixed` pins footprints for this solve only (drag anchoring). */
+  solveDesignConstraints: (opts?: {
+    extraFixed?: Array<{ node: number; ref: string }>;
+  }) => DesignConstraintSolveReport | null;
+}
+
+/** Subset of the kernel's design-constraint solve report the app consumes. */
+export interface DesignConstraintSolveReport {
+  converged: boolean;
+  groups: Array<{ node: number; status: string; converged: boolean; dof: number }>;
+  movedFootprints: string[];
+  movedVertices: string[];
+  drivenValues: Array<{ id: string; value: number }>;
+  residuals: Array<{ id: string; residual: number; driven: boolean }>;
+  errors: string[];
+  warnings: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -782,6 +817,44 @@ function getOrCreateDrawingFeature(state: DocumentState): string {
     return result.createdFeatureId;
   }
   return "";
+}
+
+let _constraintsFeatureId: string | null = null;
+
+/** The singleton design-constraints CRDT feature (created on demand). */
+function getOrCreateConstraintsFeature(state: DocumentState): string {
+  const engine = state._crdtEngine!;
+  if (_constraintsFeatureId) return _constraintsFeatureId;
+
+  const featuresJson = engine.get_ordered_features_json();
+  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
+  const existing = features.find((f) => f.kind === "design-constraints");
+  if (existing) {
+    _constraintsFeatureId = existing.id;
+    return existing.id;
+  }
+
+  const result = engine.create_feature("design-constraints", "{}");
+  if (result.createdFeatureId) {
+    _constraintsFeatureId = result.createdFeatureId;
+    return result.createdFeatureId;
+  }
+  return "";
+}
+
+/** Write the design-constraint set back to its CRDT feature. */
+function setCrdtConstraints(
+  state: DocumentState,
+  constraints: DesignConstraint[],
+): Partial<DocumentState> {
+  const fid = getOrCreateConstraintsFeature(state);
+  if (!fid) return {};
+  const result = state._crdtEngine!.set_param(
+    fid,
+    "constraints",
+    JSON.stringify(crdtStr(JSON.stringify(constraints))),
+  );
+  return applyLegacyResult(result);
 }
 
 function getOrCreateSchematicFeature(state: DocumentState): string {
@@ -2416,5 +2489,106 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ],
     };
     set({ ...setCrdtPcb(state, pcb), isDirty: true });
+  },
+
+  persistSketchConstraints: (partId, session) => {
+    const state = get();
+    const part = state.partIndex.get(partId) as { sketchNodeId?: NodeId } | undefined;
+    const sketchNode = part?.sketchNodeId;
+    if (sketchNode == null) return;
+    const next = mergeSketchConstraints(
+      state.document.constraints ?? [],
+      sketchNode,
+      session,
+    );
+    if (next.length === 0 && (state.document.constraints ?? []).length === 0) return;
+    set({ ...setCrdtConstraints(state, next), isDirty: true });
+  },
+
+  addDesignConstraint: (constraint) => {
+    const state = get();
+    const existing = state.document.constraints ?? [];
+    let max = 0;
+    for (const c of existing) {
+      const m = /^c(\d+)$/.exec(c.id);
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+    const next = [...existing, { ...constraint, id: `c${max + 1}` } as DesignConstraint];
+    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    return get().solveDesignConstraints();
+  },
+
+  removeDesignConstraint: (id) => {
+    const state = get();
+    const existing = state.document.constraints ?? [];
+    const next = existing.filter((c) => c.id !== id);
+    if (next.length === existing.length) return;
+    // Deleting only frees degrees of freedom — no re-solve needed.
+    set({ ...setCrdtConstraints(state, next), isDirty: true });
+  },
+
+  updateDesignConstraint: (id, patch) => {
+    const state = get();
+    const existing = state.document.constraints ?? [];
+    const next = existing.map((c) => {
+      if (c.id !== id) return c;
+      const kind = { ...c.kind } as Record<string, unknown>;
+      if (patch.value !== undefined && "value" in kind) kind.value = patch.value;
+      return {
+        ...c,
+        kind: kind as DesignConstraint["kind"],
+        ...(patch.driven !== undefined ? { driven: patch.driven } : {}),
+      };
+    });
+    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    return get().solveDesignConstraints();
+  },
+
+  solveDesignConstraints: (opts) => {
+    const state = get();
+    if ((state.document.constraints ?? []).length === 0) return null;
+    // Same guard pattern as sketch solving: WASM may not be hydrated in
+    // tests — degrade to a no-op rather than crash.
+    const wasm = getKernelWasmSync() as unknown as {
+      solveDesignConstraints?: (doc: string, opts: string) => string;
+    } | null;
+    if (!wasm || typeof wasm.solveDesignConstraints !== "function") return null;
+    try {
+      const resultJson = wasm.solveDesignConstraints(
+        JSON.stringify(state.document),
+        JSON.stringify(opts?.extraFixed ? { extraFixed: opts.extraFixed } : {}),
+      );
+      const result = JSON.parse(resultJson) as {
+        document: Document;
+        report: DesignConstraintSolveReport;
+      };
+      const { report } = result;
+      // Apply the solved board back through the CRDT (single-board app
+      // model, like setCrdtPcb's other callers). Sketch groups re-solve on
+      // the MCP/kernel path; the app UI scope is the PCB editor.
+      let patch: Partial<DocumentState> = {};
+      const movedBoard = report.groups.find(
+        (g) => g.converged && getNodePcb(result.document, g.node),
+      );
+      if (
+        movedBoard &&
+        (report.movedFootprints.length > 0 || report.movedVertices.length > 0)
+      ) {
+        const pcb = getNodePcb(result.document, movedBoard.node);
+        if (pcb) patch = setCrdtPcb(get(), structuredClone(pcb));
+      }
+      // Back-annotated driven dimensions ride the constraints feature.
+      if (report.drivenValues.length > 0) {
+        patch = {
+          ...patch,
+          ...setCrdtConstraints(get(), result.document.constraints ?? []),
+        };
+      }
+      set({ ...patch, isDirty: true });
+      return report;
+    } catch (e) {
+      console.warn("[document-store] solveDesignConstraints failed:", e);
+      return null;
+    }
   },
 }));

@@ -124,6 +124,7 @@ import { toolDefs as exportToolDefs } from "./tools/export.js";
 import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
 import { toolDefs as measureToolDefs } from "./tools/measure.js";
 import { toolDefs as parametersToolDefs } from "./tools/parameters.js";
+import { toolDefs as designConstraintsToolDefs } from "./tools/design-constraints.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
 import { toolDefs as renderToolDefs } from "./tools/render.js";
 import { toolDefs as verifyToolDefs } from "./tools/verify.js";
@@ -311,6 +312,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...inspectToolDefs,
   ...measureToolDefs,
   ...parametersToolDefs,
+  ...designConstraintsToolDefs,
   ...printCheckToolDefs,
   ...renderToolDefs,
   ...verifyToolDefs,
@@ -404,6 +406,11 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "list_parameters",
   "set_parameters",
   "parameter_gradient",
+  // ── Design constraints (document-level geometric solver) ───
+  "add_constraint",
+  "delete_constraint",
+  "list_constraints",
+  "solve_constraints",
   // ── Topology optimization ──────────────────────────────────
   "topology_optimize",
   // ── Charged-particle optics (fusor / IEC / trap family) ────
@@ -1553,23 +1560,24 @@ export function slimPreviewForInlineUi(
   );
   if (!alwaysSlim && totalChars <= 8192) return;
 
-  // A verification receipt (route_nets `receipt:true`, and any future
-  // receipt-bearing mutator) is the deliverable, not preview bulk — slimming
-  // it away silently un-verifies the call (field report: route_nets
-  // receipt:true came back as bare {document_id} on a large board). Carry the
-  // receipt fields through the slim.
-  const verdict: Record<string, unknown> = {};
-  for (const c of result.content) {
-    if (c.type !== "text") continue;
+  // Verification verdicts must survive slimming — dropping placement_drc from
+  // a big place_components body let callers route on a floorplan with 7
+  // courtyard overlaps and never see them, and a slimmed-away route_nets
+  // `receipt:true` silently un-verifies the call. Carry the fault/verdict
+  // fields through to the slim stub; everything else stays behind get_document.
+  const keep: Record<string, unknown> = {};
+  for (const block of result.content) {
+    if (block.type !== "text") continue;
     try {
-      const parsed = JSON.parse(c.text) as Record<string, unknown>;
-      if (parsed && typeof parsed === "object") {
-        if (parsed.receipt !== undefined) verdict.receipt = parsed.receipt;
-        if (parsed.receipt_error !== undefined) verdict.receipt_error = parsed.receipt_error;
-        if (verdict.receipt !== undefined || verdict.receipt_error !== undefined) break;
+      const parsed = JSON.parse(block.text) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      for (const field of SLIM_PRESERVED_FIELDS) {
+        if (parsed[field] !== undefined && keep[field] === undefined) {
+          keep[field] = parsed[field];
+        }
       }
     } catch {
-      // non-JSON content (VCode, prose) — nothing to preserve from it
+      // non-JSON block — nothing to preserve
     }
   }
 
@@ -1578,9 +1586,23 @@ export function slimPreviewForInlineUi(
     "Use get_document for the full IR, inspect_cad for metrics, or export_cad to export.";
   result.content = [
     { type: "text", text: summary },
-    { type: "text", text: JSON.stringify({ document_id: docId, ...verdict }) },
+    { type: "text", text: JSON.stringify({ document_id: docId, ...keep }) },
   ];
 }
+
+/** Fields that must never be slimmed away: success/fault verdicts the caller
+ *  branches on (placement DRC, unresolved shorts, lint, warnings) and the
+ *  verification receipt (route_nets `receipt:true` and any receipt-bearing
+ *  mutator) — the receipt IS the deliverable, not preview bulk. */
+const SLIM_PRESERVED_FIELDS = [
+  "success",
+  "placement_drc",
+  "placement_conflicts",
+  "fallback_footprints",
+  "warnings",
+  "receipt",
+  "receipt_error",
+] as const;
 
 /**
  * Attach the preview document id to a tool result: in structuredContent

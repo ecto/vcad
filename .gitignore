@@ -56,3 +56,4 @@ tasks/
 typst/vcad/vcad.wasm
 typst/vcad/examples/*.pdf
 typst/vcad/examples/*.png
+npm-dist/

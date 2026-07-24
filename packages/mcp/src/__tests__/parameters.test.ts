@@ -73,10 +73,10 @@ describe("parameter tools (handlers)", () => {
     expect(params[0].resolved).toBeCloseTo(10, 9);
   });
 
-  it("set_parameters batch-updates with a changed diff", () => {
+  it("set_parameters batch-updates with a changed diff", async () => {
     documents.set("doc_test", cylinderDoc(10));
     const out = json(
-      setParameters({ document_id: "doc_test", parameters: { r: 15 } }, engine),
+      await setParameters({ document_id: "doc_test", parameters: { r: 15 } }, engine),
     );
     expect(out.updated).toBe(1);
     const changed = out.changed as Array<Record<string, unknown>>;
@@ -86,14 +86,14 @@ describe("parameter tools (handlers)", () => {
     expect(doc.parameters?.r.value).toBe(15);
   });
 
-  it("set_parameters rejects unknown parameters without partial application", () => {
+  it("set_parameters rejects unknown parameters without partial application", async () => {
     documents.set("doc_test", cylinderDoc(10));
-    expect(() =>
+    await expect(
       setParameters(
         { document_id: "doc_test", parameters: { r: 12, nope: 3 } },
         engine,
       ),
-    ).toThrow(/Unknown parameter/);
+    ).rejects.toThrow(/Unknown parameter/);
     // r must be untouched — the batch validated before applying anything.
     const doc = documents.get("doc_test") as Document;
     expect(doc.parameters?.r.value).toBe(10);

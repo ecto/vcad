@@ -151,6 +151,12 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   },
   parameter_gradient: { title: "Parameter Gradient", annotations: RO },
 
+  // ── Design constraints (document-level geometric solver) ───────────────
+  add_constraint: { title: "Add Constraint", annotations: RW },
+  delete_constraint: { title: "Delete Constraint", annotations: RW },
+  list_constraints: { title: "List Constraints", annotations: RO },
+  solve_constraints: { title: "Solve Constraints", annotations: RW },
+
   // ── Print-then-measure calibration loop ────────────────────────────────
   predict_print: { title: "Predict Print", annotations: RO },
   record_measurement: { title: "Record Measurement", annotations: RW },

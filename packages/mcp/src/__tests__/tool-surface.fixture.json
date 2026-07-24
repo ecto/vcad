@@ -1604,7 +1604,7 @@
   {
     "name": "set_parameters",
     "title": "Set Parameters",
-    "description": "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
+    "description": "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. When the document has design constraints, they re-solve automatically (constraint_solve in the result) — a parameter change relayouts everything bound to it. Undoable and persisted.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1671,6 +1671,103 @@
     },
     "annotations": {
       "readOnlyHint": true
+    }
+  },
+  {
+    "name": "add_constraint",
+    "title": "Add Constraint",
+    "description": "Add solver-enforced geometric constraints to the document and solve immediately — KiCad-v11-class constraints generalized to the whole design: PCB footprints and board outline, sketch points, and named mechanical part edges (cross-domain: 'USB connector coincident with the enclosure cutout'). Dimensional values accept formulas over document parameters; set_parameters re-solves. `driven: true` makes a reference dimension (measured, back-annotated, never enforced). Constraints persist and re-verify via build_receipt / verify_receipt as constraint.* claims (Holds/Stale/Violated). The solver moves footprints, outline vertices, and sketch points — never copper or part geometry; re-run route_nets when moved footprints were routed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id."
+        },
+        "constraints": {
+          "type": "array",
+          "description": "Constraints to add. Each entry is a tagged kind object plus optional `label` (receipt claim name) and `driven` (reference dimension: measured, not enforced). Kinds: coincident{a,b}, distance{a,b,value}, horizontalDistance{a,value}, verticalDistance{a,value}, horizontal{a,b}, vertical{a,b}, parallel{a,b}, perpendicular{a,b}, equalLength{a,b}, length{a,value}, pointOnEdge{point,edge}, concentric{a,b}, fixed{a}, rotation{node,ref,value}, symmetric{a,b,axis}, angle{a,b,value}. Dimensional `value` is a number (mm/deg) or a formula string over document parameters (\"board_width - 2*margin\"). An anchor: {kind:'pcbFootprint', node, ref, pad?} (footprint origin or named pad), {kind:'pcbOutlineVertex'|'pcbOutlineEdge', node, index}, {kind:'sketchPoint', node, segment, point:'start'|'end'|'center'}, or {kind:'partEdge', node, faceA, faceB} (topological face names, e.g. 'n7:top'/'n7:front' — resolved fail-closed; part geometry is authoritative and never moves).",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "document_id",
+        "constraints"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "delete_constraint",
+    "title": "Delete Constraint",
+    "description": "Delete a design constraint by id or label (or `all: true` to clear the set). Frees degrees of freedom; geometry stays where it is.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id."
+        },
+        "id": {
+          "type": "string",
+          "description": "Constraint id (or label) to delete."
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Delete every constraint."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "list_constraints",
+    "title": "List Constraints",
+    "description": "List the document's design constraints with their current measured values and residuals, per-group degrees of freedom, and over/under-constrained status. Use before deleting or when a solve reports non-convergence.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline Document IR (stateless path)."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "solve_constraints",
+    "title": "Solve Constraints",
+    "description": "Re-solve the document's design constraints against current geometry — run after set_placement, set_board_outline, or sketch edits that may have violated them. Reports per-group convergence and DOF, moved footprints/vertices/sketches, and back-annotates driven dimensions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
@@ -7049,7 +7146,7 @@
   {
     "name": "place_components",
     "title": "Place Components",
-    "description": "Create the board and place schematic components on it. Mutates the session document (pass document_id). Outline: rectangle (board_width/height), circle with optional center bore (board_shape — e.g. a motor stator), or any polygon (outline, e.g. from board_from_solid). strategy=radial rings components for annular boards. Returns `placement_drc` — the pre-routing DRC subset (shorts, pad clearance, courtyard overlaps, off-board parts); when `placement_drc.clean` is false, fix the floorplan with set_placement before route_nets instead of routing on top of the fault. Also returns a `utilization` report (board vs occupied area, % used, component bounding box, and an advisory suggested_outline) so you can right-size an over-large board in one step.",
+    "description": "Create the board and place schematic components on it. Mutates the session document (pass document_id). Outline: rectangle (board_width/height), circle with optional center bore (board_shape — e.g. a motor stator), or any polygon (outline, e.g. from board_from_solid). strategy=radial rings components for annular boards. Returns `placement_drc` — the pre-routing DRC subset (shorts, pad clearance, courtyard overlaps, off-board parts); when `placement_drc.clean` is false, fix the floorplan with set_placement before route_nets instead of routing on top of the fault. `placement_drc.layout_lint` adds heuristic EE warnings (crystal far from its oscillator pins, decoupling cap far from its supply pin, connector off the board edge, high-current pads crowding USB/analog) with refs and distances. Also returns a `utilization` report (board vs occupied area, % used, component bounding box, and an advisory suggested_outline) so you can right-size an over-large board in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
