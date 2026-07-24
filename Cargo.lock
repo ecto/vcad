@@ -5701,6 +5701,7 @@ name = "tang"
 version = "0.2.0"
 dependencies = [
  "paste",
+ "robust",
 ]
 
 [[package]]
@@ -7200,6 +7201,7 @@ dependencies = [
  "vcad-kernel-enclosure",
  "vcad-kernel-fea",
  "vcad-kernel-fillet",
+ "vcad-kernel-flow",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-naming",
@@ -7207,6 +7209,7 @@ dependencies = [
  "vcad-kernel-particle",
  "vcad-kernel-photonics",
  "vcad-kernel-primitives",
+ "vcad-kernel-qcd",
  "vcad-kernel-sheet",
  "vcad-kernel-shell",
  "vcad-kernel-sketch",
@@ -7404,6 +7407,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-flow"
+version = "0.9.4"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "serde",
+ "serde_json",
+ "vcad-kernel-gpu",
+ "vcad-kernel-thermal",
+ "vcad-receipt",
+ "wgpu",
+]
+
+[[package]]
 name = "vcad-kernel-geom"
 version = "0.9.4"
 dependencies = [
@@ -7429,7 +7446,6 @@ dependencies = [
 name = "vcad-kernel-math"
 version = "0.9.4"
 dependencies = [
- "robust",
  "tang",
 ]
 
@@ -7530,6 +7546,14 @@ dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-topo",
+]
+
+[[package]]
+name = "vcad-kernel-qcd"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -10,20 +10,36 @@ vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onsha
 
 ## Prerequisites
 
-vcad depends on the `tang` math workspace at a **sibling path** (`../tang`). Clone it
-next to vcad before running `cargo build`:
+vcad depends on the `tang` math workspace and the `phyz` physics workspace at
+**sibling paths** (`../tang`, `../phyz`). Clone both next to vcad before running
+`cargo build` — a default build fails without either (`vcad-kernel-physics` and
+`vcad-sim` are in default-members, and `vcad-kernel-wasm`'s default `physics`
+feature pulls phyz in too):
 
 ```bash
 git clone git@github.com:ecto/tang.git ../tang
+git clone git@github.com:ecto/phyz.git ../phyz
 ```
 
 Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
-`../tang/crates/*`.
+`../tang/crates/*`; `vcad-kernel-physics` and `vcad-sim` point at
+`../../../phyz/crates/*` (i.e. `../phyz` relative to the repo root).
 
 **Fresh worktrees** (`.claude/worktrees/*`) start with no `node_modules` — run `npm ci`
 before any npm/tauri command. Tauri needs the `cargo-tauri` binary (installed globally
 via `cargo install tauri-cli`); the npm scripts invoke it as `cargo tauri`, so no local
 `tauri` on PATH is required.
+
+Worktree roots live at `.claude/worktrees/<name>`, so the sibling path deps
+resolve to `.claude/worktrees/tang` and `.claude/worktrees/phyz`. Symlinks
+inside `.claude/worktrees/` make this work (`tang -> /Users/cam/Developer/tang`,
+`phyz -> /Users/cam/Developer/phyz`); they must exist — or be created — before
+`cargo` commands will build from a worktree (run from the **main** checkout):
+
+```bash
+ln -sfn "$(cd .. && pwd)/tang" .claude/worktrees/tang
+ln -sfn "$(cd .. && pwd)/phyz" .claude/worktrees/phyz
+```
 
 After `npm ci`, the app imports from `@vcad/core`, `@vcad/engine`, `@vcad/ir`, `@vcad/mcp`
 which all resolve to `dist/index.js` — so workspace packages must be built before

@@ -134,12 +134,14 @@ import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
 import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as flowToolDefs } from "./tools/flow.js";
 import { toolDefs as circuitToolDefs } from "./tools/circuit.js";
 import { toolDefs as structureToolDefs } from "./tools/structure.js";
 import { toolDefs as emToolDefs } from "./tools/em.js";
 import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
 import { toolDefs as photonicsToolDefs } from "./tools/photonics.js";
 import { toolDefs as neutronicsToolDefs } from "./tools/neutronics.js";
+import { toolDefs as qcdToolDefs } from "./tools/qcd.js";
 import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
@@ -322,12 +324,14 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...particleToolDefs,
   ...toleranceToolDefs,
   ...thermalToolDefs,
+  ...flowToolDefs,
   ...circuitToolDefs,
   ...structureToolDefs,
   ...emToolDefs,
   ...antennaToolDefs,
   ...photonicsToolDefs,
   ...neutronicsToolDefs,
+  ...qcdToolDefs,
   ...physicsToolDefs,
   ...loonMacroToolDefs,
   ...dfmToolDefs,
@@ -421,8 +425,10 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "simulate_photonics",
   "analyze_antenna",
   "solve_thermal",
+  "simulate_flow",
   "analyze_structure",
   "simulate_neutron_shield",
+  "simulate_lattice_gauge",
   "analyze_tolerance_stackup",
   "simulate_circuit",
   "tune_circuit",

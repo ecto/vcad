@@ -6273,6 +6273,27 @@ export function isSlicerAvailable() {
 }
 
 /**
+ * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson action):
+ * plaquette, Wilson loops, string tension (Creutz ratios + static
+ * potential + Cornell fit), Polyakov deconfinement order parameter,
+ * flux-tube profile, and rendering field snapshots — every observable a
+ * binned-jackknife mean ± error, deterministic per seed.
+ *
+ * `spec_json` is a `vcad_kernel_qcd::spec::SimSpec`.
+ * @param {string} spec_json
+ * @returns {any}
+ */
+export function latticeGaugeSimulate(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.latticeGaugeSimulate(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
  * `WasmClearance`). Operates on already-placed geometry, so callers can
  * measure between any two evaluated parts (or merged part groups) without
@@ -7512,6 +7533,32 @@ export function sheetMetalSequence(chain_json) {
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
+}
+
+/**
+ * Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure drop,
+ * flow rates, mass audit, optional thermal pickup, and predicted claims.
+ * The per-voxel velocity/pressure/temperature fields are only returned
+ * when `include_fields` is true — summarize by default, the fields are
+ * grid-sized.
+ *
+ * `spec_json` is a `vcad_kernel_flow::spec::FlowSpec`, `options_json` a
+ * `vcad_kernel_flow::solve::SolveOptions` (empty or `{}` for defaults).
+ * @param {string} spec_json
+ * @param {string} options_json
+ * @param {boolean} include_fields
+ * @returns {any}
+ */
+export function simulateFlow(spec_json, options_json, include_fields) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.simulateFlow(ptr0, len0, ptr1, len1, include_fields);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -10021,12 +10068,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3687, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3688, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3719, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3720, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3712, function: Function { arguments: [Externref], shim_idx: 3713, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3744, function: Function { arguments: [Externref], shim_idx: 3745, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

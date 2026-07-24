@@ -101,12 +101,14 @@ vcad/
 
 ## Development
 
-> **Heads up:** vcad depends on the `tang` math workspace at a **sibling path**
-> (`../tang`). Clone it next to vcad before any `cargo` command, or the
-> workspace will fail to resolve:
+> **Heads up:** vcad depends on the `tang` math workspace and the `phyz`
+> physics workspace at **sibling paths** (`../tang`, `../phyz`). Clone both
+> next to vcad before any `cargo` command, or the workspace will fail to
+> resolve:
 >
 > ```bash
 > git clone git@github.com:ecto/tang.git ../tang
+> git clone git@github.com:ecto/phyz.git ../phyz
 > ```
 
 ```bash

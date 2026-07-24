@@ -605,6 +605,12 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Steady laminar LBM flow solve (FlowSpec/options JSON + fields flag). */
+  simulateFlow?: (
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ) => unknown;
   /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
   documentDiff?: (oldJson: string, newJson: string) => unknown;
   /** Apply a `DocumentDiff` to a document, returning the patched document. */
@@ -663,6 +669,8 @@ export interface KernelModule {
   photonicsSimulate?: (specJson: string, optionsJson: string) => unknown;
   /** Monte Carlo neutron shielding run (ShieldSpec/params JSON). */
   neutronicsSimulate?: (specJson: string, paramsJson: string) => unknown;
+  /** Lattice gauge theory Monte Carlo run (SimSpec JSON). */
+  latticeGaugeSimulate?: (specJson: string) => unknown;
   /** Static structural analysis of a box solid. */
   analyzeStaticsBox?: (
     specJson: string,
@@ -1047,6 +1055,7 @@ export class Engine {
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
       thermalSolveTransient: (wasmModule as Record<string, unknown>).thermalSolveTransient as KernelModule["thermalSolveTransient"],
+      simulateFlow: (wasmModule as Record<string, unknown>).simulateFlow as KernelModule["simulateFlow"],
       documentDiff: (wasmModule as Record<string, unknown>).documentDiff as KernelModule["documentDiff"],
       documentDiffApply: (wasmModule as Record<string, unknown>).documentDiffApply as KernelModule["documentDiffApply"],
       documentMerge: (wasmModule as Record<string, unknown>).documentMerge as KernelModule["documentMerge"],
@@ -1061,6 +1070,7 @@ export class Engine {
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
       photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
       neutronicsSimulate: (wasmModule as Record<string, unknown>).neutronicsSimulate as KernelModule["neutronicsSimulate"],
+      latticeGaugeSimulate: (wasmModule as Record<string, unknown>).latticeGaugeSimulate as KernelModule["latticeGaugeSimulate"],
       analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
       analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
@@ -1406,6 +1416,27 @@ export class Engine {
     return fn(specJson, transientJson, paramsJson, optionsJson);
   }
 
+  /**
+   * Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure
+   * drop, flow rates, mass audit, optional thermal pickup, and predicted
+   * receipt claims. Per-voxel fields are only returned when
+   * `includeFields` is true. Inputs are JSON strings (FlowSpec, options);
+   * see `vcad-kernel-flow`.
+   */
+  simulateFlow(
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ): unknown {
+    const fn = this.kernel.simulateFlow;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "simulateFlow is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, optionsJson, includeFields);
+  }
+
   private circuitFn<K extends keyof KernelModule>(name: K): NonNullable<KernelModule[K]> {
     const fn = this.kernel[name];
     if (typeof fn !== "function") {
@@ -1553,6 +1584,22 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson);
+  }
+
+  /**
+   * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson
+   * action): plaquette, Wilson loops, string tension, Polyakov order
+   * parameter, flux-tube profile, field snapshots — jackknife errors
+   * throughout; see `vcad-kernel-qcd`.
+   */
+  latticeGaugeSimulate(specJson: string): unknown {
+    const fn = this.kernel.latticeGaugeSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "latticeGaugeSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson);
   }
 
   topologyOptimizeBox(

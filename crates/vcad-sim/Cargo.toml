@@ -10,10 +10,10 @@ publish = false
 [dependencies]
 vcad-ir = { workspace = true }
 vcad-kernel-physics = { workspace = true }
-phyz = { path = "../../../phyz/crates/phyz" }
-phyz-gpu = { path = "../../../phyz/crates/phyz-gpu" }
-phyz-model = { path = "../../../phyz/crates/phyz-model" }
-phyz-math = { path = "../../../phyz/crates/phyz-math" }
+phyz = { workspace = true }
+phyz-gpu = { workspace = true }
+phyz-model = { workspace = true }
+phyz-math = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 

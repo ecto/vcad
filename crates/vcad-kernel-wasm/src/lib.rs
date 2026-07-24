@@ -8373,6 +8373,105 @@ pub fn thermal_solve(
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
 }
 
+// ---------------------------------------------------------------------------
+// Fluid flow (vcad-kernel-flow)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct WasmFlowFields {
+    /// Velocity per voxel, m/s, layout `(k*ny + j)*nx + i`.
+    velocity_m_s: Vec<[f64; 3]>,
+    /// Gauge pressure per voxel, Pa.
+    gauge_pressure_pa: Vec<f64>,
+    /// Temperature per voxel, °C (thermal runs only).
+    temperature_c: Option<Vec<f64>>,
+}
+
+#[derive(serde::Serialize)]
+struct WasmFlowSolve {
+    divisions: [usize; 3],
+    voxel_mm: f64,
+    scaling: vcad_kernel::vcad_kernel_flow::lattice::Scaling,
+    steps: usize,
+    steady_residual: f64,
+    pressure_drop_pa: f64,
+    inlet_flow_m3_s: f64,
+    outlet_flow_m3_s: f64,
+    mass_balance_residual: f64,
+    max_speed_m_s: f64,
+    outlet_temp_c: Option<f64>,
+    heat_pickup_w: Option<f64>,
+    wall_heat_w: Option<f64>,
+    claim_set: vcad_kernel::vcad_kernel_flow::receipt::ClaimSet,
+    receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+    /// Per-voxel fields, present only when requested — they are grid-sized.
+    fields: Option<WasmFlowFields>,
+}
+
+/// Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure drop,
+/// flow rates, mass audit, optional thermal pickup, and predicted claims.
+/// The per-voxel velocity/pressure/temperature fields are only returned
+/// when `include_fields` is true — summarize by default, the fields are
+/// grid-sized.
+///
+/// `spec_json` is a `vcad_kernel_flow::spec::FlowSpec`, `options_json` a
+/// `vcad_kernel_flow::solve::SolveOptions` (empty or `{}` for defaults).
+#[wasm_bindgen(js_name = simulateFlow)]
+pub fn simulate_flow(
+    spec_json: &str,
+    options_json: &str,
+    include_fields: bool,
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_flow as fl;
+    let spec: fl::spec::FlowSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let opts: fl::solve::SolveOptions =
+        if options_json.trim().is_empty() || options_json.trim() == "{}" {
+            Default::default()
+        } else {
+            serde_json::from_str(options_json)
+                .map_err(|e| JsError::new(&format!("bad options: {e}")))?
+        };
+    let model = spec.resolve().map_err(|e| JsError::new(&e.to_string()))?;
+    let n_voxels: usize = model.divisions.iter().product();
+    if n_voxels > 2_000_000 {
+        return Err(JsError::new(&format!(
+            "grid too large for the MCP tier: {n_voxels} voxels (cap 2,000,000) — lower `divisions`"
+        )));
+    }
+    let sol = fl::solve::solve_steady(&model, &opts).map_err(|e| JsError::new(&e.to_string()))?;
+    // The lumped oracle needs an analytic duct geometry we cannot in general
+    // recover from a voxelized region soup; the caller-facing receipt keeps
+    // cross_route_residual empty rather than inventing one.
+    let claim_set = fl::receipt::predicted_claims(&model, &sol, &opts, None);
+    let receipt_claims = fl::receipt::design_claims(&claim_set);
+    let fields = include_fields.then(|| WasmFlowFields {
+        velocity_m_s: sol.velocity_m_s.clone(),
+        gauge_pressure_pa: sol.gauge_pressure_pa.clone(),
+        temperature_c: sol.temperature_c.clone(),
+    });
+    let out = WasmFlowSolve {
+        divisions: model.divisions,
+        voxel_mm: model.voxel_mm(),
+        scaling: sol.scaling,
+        steps: sol.steps,
+        steady_residual: sol.steady_residual,
+        pressure_drop_pa: sol.pressure_drop_pa,
+        inlet_flow_m3_s: sol.inlet_flow_m3_s,
+        outlet_flow_m3_s: sol.outlet_flow_m3_s,
+        mass_balance_residual: sol.mass_balance_residual,
+        max_speed_m_s: sol.max_speed_m_s,
+        outlet_temp_c: sol.outlet_temp_c,
+        heat_pickup_w: sol.heat_pickup_w,
+        wall_heat_w: sol.wall_heat_w,
+        claim_set,
+        receipt_claims,
+        fields,
+    };
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[derive(serde::Serialize)]
 struct WasmThermalTransient {
     divisions: [usize; 3],
@@ -9683,4 +9782,83 @@ pub fn build_stl_bytes(
 #[wasm_bindgen(js_name = eulerXyzDegToQuat)]
 pub fn euler_xyz_deg_to_quat_wasm(x_deg: f64, y_deg: f64, z_deg: f64) -> Vec<f64> {
     vcad_kernel_export::euler_xyz_deg_to_quat(x_deg, y_deg, z_deg).to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Lattice gauge theory (vcad-kernel-qcd)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct WasmLatticeGaugeOut {
+    result: vcad_kernel::vcad_kernel_qcd::spec::SimResult,
+    /// Derived physics (empty when the constituent loops are unresolved).
+    creutz_ratios: Vec<vcad_kernel::vcad_kernel_qcd::analysis::CreutzRatio>,
+    static_potential: Vec<vcad_kernel::vcad_kernel_qcd::analysis::PotentialPoint>,
+    cornell_fit: Option<vcad_kernel::vcad_kernel_qcd::analysis::CornellFit>,
+    /// `vcad.qcd-claims/1` — present only when the run's statistics
+    /// clear the fail-closed bar; otherwise `claim_error` says why.
+    claims: Option<vcad_kernel::vcad_kernel_qcd::receipt::ClaimSet>,
+    claim_error: Option<String>,
+}
+
+/// Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson action):
+/// plaquette, Wilson loops, string tension (Creutz ratios + static
+/// potential + Cornell fit), Polyakov deconfinement order parameter,
+/// flux-tube profile, and rendering field snapshots — every observable a
+/// binned-jackknife mean ± error, deterministic per seed.
+///
+/// `spec_json` is a `vcad_kernel_qcd::spec::SimSpec`.
+#[wasm_bindgen(js_name = latticeGaugeSimulate)]
+pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_qcd as qcd;
+    let spec: qcd::spec::SimSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    // Cost gate for the MCP tier: link-updates dominate; SU(3)
+    // Cabibbo–Marinari costs ~6x an SU(2) heatbath per link, and the
+    // flux-tube accumulator adds V_spatial^2 work per measured sweep.
+    let volume: usize = spec.dims.iter().product();
+    let links = volume * 4;
+    let total_sweeps =
+        (spec.thermalization_sweeps + spec.measurement_sweeps) * (1 + spec.overrelax_per_heatbath);
+    let group_factor = match spec.gauge {
+        qcd::spec::Gauge::Su2 => 1usize,
+        qcd::spec::Gauge::Su3 => 6,
+    };
+    let update_cost = links
+        .saturating_mul(total_sweeps)
+        .saturating_mul(group_factor);
+    let vs = spec.dims[0] * spec.dims[1] * spec.dims[2];
+    let flux_cost = if spec.flux_tube.is_some() {
+        vs.saturating_mul(vs)
+            .saturating_mul(spec.measurement_sweeps)
+    } else {
+        0
+    };
+    const COST_CAP: usize = 400_000_000;
+    let cost = update_cost.saturating_add(flux_cost);
+    if cost > COST_CAP {
+        return Err(JsError::new(&format!(
+            "run too large for the MCP tier: cost {cost} (cap {COST_CAP}). Shrink the lattice, \
+             the sweep counts, or the flux-tube request — error bars scale as 1/sqrt(sweeps), \
+             so a smaller honest run beats a truncated big one."
+        )));
+    }
+    let result = qcd::spec::run(&spec).map_err(|e| JsError::new(&e.to_string()))?;
+    let creutz_ratios = qcd::analysis::creutz_ratios(&result.wilson_loops);
+    let static_potential = qcd::analysis::static_potential(&result.temporal_loops);
+    let cornell_fit = qcd::analysis::fit_cornell(&static_potential);
+    let (claims, claim_error) = match qcd::receipt::build_claims(&result) {
+        Ok(cs) => (Some(cs), None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+    let out = WasmLatticeGaugeOut {
+        result,
+        creutz_ratios,
+        static_potential,
+        cornell_fit,
+        claims,
+        claim_error,
+    };
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
 }
