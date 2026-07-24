@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Document } from "@vcad/ir";
+import { getKernelWasm } from "../wasm-singleton.js";
 import {
   EvalError,
   ParseError,
@@ -12,7 +13,14 @@ import {
   resolveParameters,
 } from "../expressions.js";
 
-describe("expression parser (TS, matches tang-expr)", () => {
+// expressions.ts is a thin wrapper over the kernel WASM expression
+// bindings; these fixtures verify the binding end-to-end (marshalling,
+// error mapping, and the Rust parser/evaluator semantics behind it).
+beforeAll(async () => {
+  await getKernelWasm();
+});
+
+describe("expression parser (WASM binding)", () => {
   const env = { x: 3, y: 4, wheelbase: 1000 };
 
   it.each([
