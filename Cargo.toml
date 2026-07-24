@@ -200,6 +200,7 @@ thiserror = "2"
 tang = { path = "../tang/crates/tang", version = "0.2" }
 tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
 tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
+phyz-md = { path = "../phyz/crates/phyz-md", version = "0.1" }
 slotmap = "1"
 anyhow = "1"
 toml = "0.8"

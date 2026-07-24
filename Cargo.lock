@@ -4019,6 +4019,7 @@ dependencies = [
 name = "phyz"
 version = "0.3.0"
 dependencies = [
+ "phyz-math",
  "tang",
 ]
 
@@ -4041,6 +4042,13 @@ version = "0.1.0"
 dependencies = [
  "tang",
  "tang-la",
+]
+
+[[package]]
+name = "phyz-md"
+version = "0.1.0"
+dependencies = [
+ "phyz-math",
 ]
 
 [[package]]
@@ -7235,6 +7243,7 @@ dependencies = [
 name = "vcad-kernel-atoms"
 version = "0.9.4"
 dependencies = [
+ "phyz-md",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
