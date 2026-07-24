@@ -232,7 +232,11 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
                     },
                     position: local,
                     rotation: pp.rot + rot,
-                    drill: (!pp.smd).then_some(DrillSpec { diameter: pp.drill, oval: false, oval_height: None }),
+                    drill: (!pp.smd).then_some(DrillSpec {
+                        diameter: pp.drill,
+                        oval: false,
+                        oval_height: None,
+                    }),
                     net: pad_nets.get(&(name.clone(), pp.name.clone())).cloned(),
                     layers: if pp.smd {
                         vec![side]
