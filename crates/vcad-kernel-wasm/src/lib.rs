@@ -504,6 +504,34 @@ pub fn estimate_cost_for_process(
     serde_wasm_bindgen::to_value(&estimate).map_err(|e| JsError::new(&e.to_string()))
 }
 
+// =============================================================================
+// Animation timeline sampling
+// =============================================================================
+
+/// Sample a document timeline into its full per-frame sequence.
+///
+/// `timeline_json` must deserialize into `vcad_ir::animation::Timeline`.
+/// Returns a JSON array of `SequenceFrame` objects (params/joints/
+/// visibility/explode/camera/geometryDirty per frame) — one call per
+/// sequence, so callers never cross the WASM boundary per track or frame.
+#[wasm_bindgen]
+pub fn sample_timeline_sequence(timeline_json: &str) -> Result<String, JsError> {
+    let tl: vcad_ir::animation::Timeline = serde_json::from_str(timeline_json)
+        .map_err(|e| JsError::new(&format!("invalid timeline JSON: {e}")))?;
+    serde_json::to_string(&tl.sample_sequence()).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Sample a single animation track's value at time `t` seconds.
+///
+/// `track_json` must deserialize into `vcad_ir::animation::AnimTrack`.
+/// A track with no keys samples to 0.
+#[wasm_bindgen]
+pub fn sample_timeline_track(track_json: &str, t: f64) -> Result<f64, JsError> {
+    let track: vcad_ir::animation::AnimTrack = serde_json::from_str(track_json)
+        .map_err(|e| JsError::new(&format!("invalid track JSON: {e}")))?;
+    Ok(vcad_ir::animation::Timeline::sample_track(&track, t).unwrap_or(0.0))
+}
+
 /// Initialize the WASM module (sets up panic hook for better error messages).
 #[wasm_bindgen(start)]
 pub fn init() {

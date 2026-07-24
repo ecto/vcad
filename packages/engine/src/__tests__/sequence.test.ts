@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { AnimTrack, Document, Timeline } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import {
@@ -6,6 +6,15 @@ import {
   sampleSequence,
   sampleTrackValue,
 } from "../sequence.js";
+import { getKernelWasm } from "../wasm-singleton.js";
+
+// The samplers are thin wrappers over the Rust reference
+// (Timeline::sample_sequence); the expectations below were captured from
+// the prior TypeScript implementation, so this suite doubles as the
+// TS↔Rust agreement fixture.
+beforeAll(async () => {
+  await getKernelWasm();
+});
 
 function track(target: AnimTrack["target"], keys: AnimTrack["keys"]): AnimTrack {
   return { target, keys };
