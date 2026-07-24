@@ -40,6 +40,7 @@
 //! Units: geometry in millimeters (house convention), fluid properties
 //! and results in SI (Pa, m³/s, m/s).
 
+pub mod adjoint;
 pub mod conjugate;
 pub mod lattice;
 pub mod lumped;

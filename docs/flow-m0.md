@@ -104,7 +104,7 @@ measurement pack that closes the loop is M2.
 
 - **M0 (this)** — isothermal laminar internal flow; Poiseuille, Shah–
   London, Ghia; `vcad.flow-claims/1`; splitter-manifold flagship.
-- **M0.5** — WASM bindings + `simulate_flow` MCP tool (spec JSON in,
+- **M0.5 (done)** — WASM bindings + `simulate_flow` MCP tool (spec JSON in,
   claim set out), kernel-features catalog entry, changelog.
 - **M1** — thermal transport in the fluid (advection–diffusion on the
   LBM field, fixed wall temperatures); Nu-correlation oracles join the
