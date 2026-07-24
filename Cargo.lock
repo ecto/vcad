@@ -7179,6 +7179,7 @@ name = "vcad-kernel"
 version = "0.9.4"
 dependencies = [
  "serde_json",
+ "vcad-kernel-acoustics",
  "vcad-kernel-antenna",
  "vcad-kernel-booleans",
  "vcad-kernel-calibration",
@@ -7673,6 +7674,7 @@ dependencies = [
 name = "vcad-kernel-wasm"
 version = "0.9.4"
 dependencies = [
+ "base64 0.22.1",
  "console_error_panic_hook",
  "getrandom 0.2.17",
  "js-sys",

@@ -18,6 +18,7 @@ pub mod expressions;
 pub mod keybindings;
 pub mod sheet_metal;
 pub mod sketch_session;
+pub mod strike;
 
 // Re-export the atomic-domain WASM bindings (MdSim, atoms_* free functions).
 // `#[wasm_bindgen]` items live in the `vcad-kernel-atoms` dependency; the

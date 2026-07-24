@@ -17,6 +17,7 @@
 
 use std::path::Path;
 
+pub use vcad_kernel_acoustics;
 pub use vcad_kernel_antenna;
 pub use vcad_kernel_booleans;
 pub use vcad_kernel_calibration;

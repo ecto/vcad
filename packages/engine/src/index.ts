@@ -533,6 +533,10 @@ export interface KernelModule {
   nestSheetMetalParts?: (partsJson: string, paramsJson: string) => string;
   /** Built-in materials registry → JSON array. */
   getSheetMetalMaterials?: () => string;
+  /** Mallet-strike pipeline on a flat free-free bar → JSON. */
+  simulateStrikeKernel?: (inputJson: string) => string;
+  /** Note name ("C6", "F#4") → Hz. Throws on garbage. */
+  noteToHz?: (note: string) => number;
   /** Built-in bend table → JSON `{id, rows}`. */
   getSheetMetalBendTable?: () => string;
   /** Built-in shop catalog (e.g. `"sendcutsend"`) → JSON or `{error}`. */
@@ -1022,6 +1026,8 @@ export class Engine {
       sheetMetalSequence: (wasmModule as Record<string, unknown>).sheetMetalSequence as KernelModule["sheetMetalSequence"],
       nestSheetMetalParts: (wasmModule as Record<string, unknown>).nestSheetMetalParts as KernelModule["nestSheetMetalParts"],
       getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
+      simulateStrikeKernel: (wasmModule as Record<string, unknown>).simulateStrikeKernel as KernelModule["simulateStrikeKernel"],
+      noteToHz: (wasmModule as Record<string, unknown>).noteToHz as KernelModule["noteToHz"],
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
@@ -1771,6 +1777,29 @@ export class Engine {
       chain,
       this.kernel as unknown as Parameters<typeof runSheetMetalSequence>[1],
     );
+  }
+
+  /**
+   * Run the kernel's mallet-strike pipeline (free-free bar modal analysis +
+   * synthesis + FFT verdict). Input/output shapes are JSON mirrors of
+   * `vcad_kernel_acoustics::strike::{StrikeInput, StrikeResult}` with the
+   * WAV base64-encoded as `wav_base64`.
+   */
+  simulateStrike(input: unknown): unknown {
+    const kernel = this.kernel as unknown as KernelModule;
+    if (!kernel.simulateStrikeKernel) {
+      throw new Error("kernel WASM build lacks simulateStrikeKernel — rebuild @vcad/kernel-wasm");
+    }
+    return JSON.parse(kernel.simulateStrikeKernel(JSON.stringify(input)));
+  }
+
+  /** Parse a note name ("C6", "F#4") to Hz via the kernel. */
+  noteToHz(note: string): number {
+    const kernel = this.kernel as unknown as KernelModule;
+    if (!kernel.noteToHz) {
+      throw new Error("kernel WASM build lacks noteToHz — rebuild @vcad/kernel-wasm");
+    }
+    return kernel.noteToHz(note);
   }
 
   /** Return the kernel's curated sheet-metal materials registry. */

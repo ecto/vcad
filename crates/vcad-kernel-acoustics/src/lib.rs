@@ -70,6 +70,7 @@ pub mod optimize;
 pub mod radiation;
 pub mod receipt;
 pub mod spec;
+pub mod strike;
 pub mod sweep;
 
 pub use cavity::{Cavity, EndCondition, Segment};
