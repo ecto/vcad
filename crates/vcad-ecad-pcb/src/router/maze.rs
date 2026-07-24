@@ -721,7 +721,9 @@ impl Raster {
         let nl = layers.len();
         let mut states = vec![CELL_WIDE; plane * nl];
 
-        // Cells outside the board outline are blocked on every layer.
+        // Cells outside the board outline are blocked on every layer. (Cells
+        // *near* the outline are handled by the session's board-edge obstacle
+        // elements, whose per-net clearance is the rules' edge_clearance.)
         if grid.bounded {
             for iy in 0..grid.ny {
                 for ix in 0..grid.nx {

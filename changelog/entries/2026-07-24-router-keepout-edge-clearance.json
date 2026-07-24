@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-keepout-edge-clearance",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "fix",
+  "title": "Autorouter respects keepouts and board-edge clearance",
+  "summary": "route_nets' legality oracle now indexes no-tracks keepouts and the board outline (incl. cutouts), so routes never cross keepouts or hug the edge inside edge_clearance; multi-round negotiation can no longer finish below the single-round baseline.",
+  "features": ["pcb", "autorouter", "drc"],
+  "mcpTools": ["route_nets", "run_drc", "validate_for_fab"]
+}
