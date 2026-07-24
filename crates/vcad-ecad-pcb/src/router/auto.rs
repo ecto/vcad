@@ -1066,90 +1066,22 @@ fn route_pass(
     // that failed in one round find a path once the board settles. Stop the
     // instant a round places nothing new, so a stuck board exits immediately.
     let mut pending = unrouted_conns;
-    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1):
-    // instead of sequential rip-up, run PathFinder rounds on the GPU — all
-    // pending connections propose under history pricing, the oracle commits
-    // winners, losers' paths deposit history, repeat. Leftovers fall through
-    // to the CPU rip-up loop below unchanged.
+    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1).
+    // Ordering is board-regime-dependent (routerbench finding): on
+    // layer-rich boards negotiation-first replaced the ratchet outright
+    // (the CM5's 67-minute chain); on 2-3 layer boards its greedy priced
+    // commits consume scarce corridors the rescue arsenal spends more
+    // carefully (the VESC lost 4 points to it). Pre-arsenal negotiation
+    // therefore requires >= 4 copper layers; thin boards negotiate after
+    // the arsenal, on its leftovers only.
     #[cfg(feature = "gpu")]
-    if std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1") && !pending.is_empty() {
-        let clearance = pcb.rules.default_rules.clearance;
-        let geom = super::gpu_bridge::class_geometry(pcb, width / 2.0, clearance);
-        let n_nodes = geom.nx * geom.ny * geom.layers.len();
-        if n_nodes > 0 {
-            let mut history = vec![0u32; n_nodes];
-            const NEG_ROUNDS: usize = 6;
-            const HISTORY_STEP_COST: u32 = 1500;
-            for round in 0..NEG_ROUNDS {
-                if pending.is_empty() {
-                    break;
-                }
-                let sw_neg = Stopwatch::start();
-                let Some(proposals) = super::gpu_bridge::gpu_negotiation_round(
-                    &session,
-                    pcb,
-                    &pending,
-                    width / 2.0,
-                    clearance,
-                    &history,
-                ) else {
-                    break;
-                };
-                let mut committed = 0usize;
-                let mut still: Vec<Conn> = Vec::new();
-                for ((net, from, to), prop) in pending.drain(..).zip(proposals) {
-                    let Some(path) = prop else {
-                        still.push((net, from, to));
-                        continue;
-                    };
-                    let cand = Candidate {
-                        net: net.clone(),
-                        from,
-                        to,
-                        width: session.width_for(&net, width),
-                        segments: path.segments.clone(),
-                        vias: path.vias.clone(),
-                        thin_segments: vec![],
-                        thin_width: width,
-                    };
-                    match validate_and_commit(&mut session, pcb, cand, &placed) {
-                        Some(p) => {
-                            placed.push(p);
-                            committed += 1;
-                            // Present-sharing: even winners price their cells
-                            // so round-(n+1) contenders route around them.
-                            super::gpu_bridge::deposit_history(
-                                &mut history,
-                                &geom,
-                                &path,
-                                HISTORY_STEP_COST,
-                            );
-                        }
-                        None => {
-                            super::gpu_bridge::deposit_history(
-                                &mut history,
-                                &geom,
-                                &path,
-                                HISTORY_STEP_COST,
-                            );
-                            still.push((net, from, to));
-                        }
-                    }
-                }
-                log::info!(
-                    "gpu negotiate round {}/{NEG_ROUNDS}: committed {committed}, pending {} in {:.1}s",
-                    round + 1,
-                    still.len(),
-                    sw_neg.ms() / 1000.0,
-                );
-                pending = still;
-                if committed == 0 {
-                    break;
-                }
-            }
-        }
+    let negotiation_enabled = std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1");
+    #[cfg(feature = "gpu")]
+    let negotiate_first = copper_layers(pcb).len() >= 4;
+    #[cfg(feature = "gpu")]
+    if negotiation_enabled && negotiate_first && !pending.is_empty() {
+        pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
-
     for _ in 0..ripup_rounds {
         if pending.is_empty() {
             break;
@@ -1180,6 +1112,13 @@ fn route_pass(
         if placed.len() <= placed_before {
             break;
         }
+    }
+
+    // Thin-board negotiation (see ordering note above): the arsenal has had
+    // first claim; negotiation now works only its leftovers.
+    #[cfg(feature = "gpu")]
+    if negotiation_enabled && !negotiate_first && !pending.is_empty() {
+        pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
 
     (session, placed, pending)
@@ -4747,4 +4686,95 @@ mod tests {
             d.reason
         );
     }
+}
+
+/// GPU PathFinder negotiation rounds (charter M4): propose-all under
+/// history pricing, oracle-commit winners, price everyone's paths,
+/// repeat. Returns the still-unrouted leftovers. Ordering relative to the
+/// CPU rescue arsenal is the caller's choice — see the routerbench
+/// finding at the call sites.
+#[cfg(feature = "gpu")]
+fn gpu_negotiate_rounds(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    placed: &mut Vec<Placed>,
+    mut pending: Vec<Conn>,
+    width: f64,
+) -> Vec<Conn> {
+    let clearance = pcb.rules.default_rules.clearance;
+    let geom = super::gpu_bridge::class_geometry(pcb, width / 2.0, clearance);
+    let n_nodes = geom.nx * geom.ny * geom.layers.len();
+    if n_nodes > 0 {
+        let mut history = vec![0u32; n_nodes];
+        const NEG_ROUNDS: usize = 6;
+        const HISTORY_STEP_COST: u32 = 1500;
+        for round in 0..NEG_ROUNDS {
+            if pending.is_empty() {
+                break;
+            }
+            let sw_neg = Stopwatch::start();
+            let Some(proposals) = super::gpu_bridge::gpu_negotiation_round(
+                session,
+                pcb,
+                &pending,
+                width / 2.0,
+                clearance,
+                &history,
+            ) else {
+                break;
+            };
+            let mut committed = 0usize;
+            let mut still: Vec<Conn> = Vec::new();
+            for ((net, from, to), prop) in pending.drain(..).zip(proposals) {
+                let Some(path) = prop else {
+                    still.push((net, from, to));
+                    continue;
+                };
+                let cand = Candidate {
+                    net: net.clone(),
+                    from,
+                    to,
+                    width: session.width_for(&net, width),
+                    segments: path.segments.clone(),
+                    vias: path.vias.clone(),
+                    thin_segments: vec![],
+                    thin_width: width,
+                };
+                match validate_and_commit(session, pcb, cand, placed) {
+                    Some(p) => {
+                        placed.push(p);
+                        committed += 1;
+                        // Present-sharing: even winners price their cells
+                        // so round-(n+1) contenders route around them.
+                        super::gpu_bridge::deposit_history(
+                            &mut history,
+                            &geom,
+                            &path,
+                            HISTORY_STEP_COST,
+                        );
+                    }
+                    None => {
+                        super::gpu_bridge::deposit_history(
+                            &mut history,
+                            &geom,
+                            &path,
+                            HISTORY_STEP_COST,
+                        );
+                        still.push((net, from, to));
+                    }
+                }
+            }
+            log::info!(
+                "gpu negotiate round {}/{NEG_ROUNDS}: committed {committed}, pending {} in {:.1}s",
+                round + 1,
+                still.len(),
+                sw_neg.ms() / 1000.0,
+            );
+            pending = still;
+            if committed == 0 {
+                break;
+            }
+        }
+    }
+    pending
 }
