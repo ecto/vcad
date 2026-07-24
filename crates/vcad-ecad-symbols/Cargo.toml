@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+roxmltree = "0.20"
 vcad-ir = { workspace = true }
 vcad-ecad-package = { workspace = true }
 nom = { workspace = true }

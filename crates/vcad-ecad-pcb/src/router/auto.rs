@@ -872,11 +872,49 @@ fn route_pass(
             let (cs, scarcity) = plan_with_scarcity(&session, lo, hi, pitch, layers, &conns);
             // Corridor map keyed BEFORE reordering (cs aligns with the
             // original conns order).
-            let map: HashMap<ConnKey, (Vec2, Vec2)> = cs
+            let mut map: HashMap<ConnKey, (Vec2, Vec2)> = cs
                 .into_iter()
                 .zip(conns.iter())
                 .filter_map(|(c, (net, from, to))| c.map(|w| (conn_key(net, *from, *to), w)))
                 .collect();
+            // Bus rivers (the "human look"): members of a length-match group
+            // share ONE corridor — the union of their individual windows —
+            // so a DDR lane or RGMII bank travels as a ribbon through one
+            // channel instead of fanning across the board.
+            {
+                let net_names: Vec<String> = {
+                    let mut v: std::collections::BTreeSet<String> = Default::default();
+                    for (n, _, _) in &conns {
+                        v.insert(n.clone());
+                    }
+                    v.into_iter().collect()
+                };
+                let groups = super::classes::classify_nets(&net_names).match_groups;
+                for members in groups.values() {
+                    let member_set: std::collections::BTreeSet<&str> =
+                        members.iter().map(|s| s.as_str()).collect();
+                    let mut lo = Vec2::new(f64::INFINITY, f64::INFINITY);
+                    let mut hi = Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+                    let mut keys = Vec::new();
+                    for (net, from, to) in &conns {
+                        if member_set.contains(net.as_str()) {
+                            let key = conn_key(net, *from, *to);
+                            if let Some((wl, wh)) = map.get(&key) {
+                                lo.x = lo.x.min(wl.x);
+                                lo.y = lo.y.min(wl.y);
+                                hi.x = hi.x.max(wh.x);
+                                hi.y = hi.y.max(wh.y);
+                                keys.push(key);
+                            }
+                        }
+                    }
+                    if keys.len() > 1 && lo.x.is_finite() {
+                        for key in keys {
+                            map.insert(key, (lo, hi));
+                        }
+                    }
+                }
+            }
             // Scarcest-first ordering (the campaign's decisive lesson,
             // proven by the graft test + apex run): nets with the least
             // corridor slack route on the emptiest board; flexible nets
@@ -994,6 +1032,90 @@ fn route_pass(
     // that failed in one round find a path once the board settles. Stop the
     // instant a round places nothing new, so a stuck board exits immediately.
     let mut pending = unrouted_conns;
+    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1):
+    // instead of sequential rip-up, run PathFinder rounds on the GPU — all
+    // pending connections propose under history pricing, the oracle commits
+    // winners, losers' paths deposit history, repeat. Leftovers fall through
+    // to the CPU rip-up loop below unchanged.
+    #[cfg(feature = "gpu")]
+    if std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1") && !pending.is_empty() {
+        let clearance = pcb.rules.default_rules.clearance;
+        let geom = super::gpu_bridge::class_geometry(pcb, width / 2.0, clearance);
+        let n_nodes = geom.nx * geom.ny * geom.layers.len();
+        if n_nodes > 0 {
+            let mut history = vec![0u32; n_nodes];
+            const NEG_ROUNDS: usize = 6;
+            const HISTORY_STEP_COST: u32 = 1500;
+            for round in 0..NEG_ROUNDS {
+                if pending.is_empty() {
+                    break;
+                }
+                let sw_neg = Stopwatch::start();
+                let Some(proposals) = super::gpu_bridge::gpu_negotiation_round(
+                    &session,
+                    pcb,
+                    &pending,
+                    width / 2.0,
+                    clearance,
+                    &history,
+                ) else {
+                    break;
+                };
+                let mut committed = 0usize;
+                let mut still: Vec<Conn> = Vec::new();
+                for ((net, from, to), prop) in pending.drain(..).zip(proposals) {
+                    let Some(path) = prop else {
+                        still.push((net, from, to));
+                        continue;
+                    };
+                    let cand = Candidate {
+                        net: net.clone(),
+                        from,
+                        to,
+                        width: session.width_for(&net, width),
+                        segments: path.segments.clone(),
+                        vias: path.vias.clone(),
+                        thin_segments: vec![],
+                        thin_width: width,
+                    };
+                    match validate_and_commit(&mut session, pcb, cand, &placed) {
+                        Some(p) => {
+                            placed.push(p);
+                            committed += 1;
+                            // Present-sharing: even winners price their cells
+                            // so round-(n+1) contenders route around them.
+                            super::gpu_bridge::deposit_history(
+                                &mut history,
+                                &geom,
+                                &path,
+                                HISTORY_STEP_COST,
+                            );
+                        }
+                        None => {
+                            super::gpu_bridge::deposit_history(
+                                &mut history,
+                                &geom,
+                                &path,
+                                HISTORY_STEP_COST,
+                            );
+                            still.push((net, from, to));
+                        }
+                    }
+                }
+                log::info!(
+                    "gpu negotiate round {}/{NEG_ROUNDS}: committed {committed}, pending {} in {:.1}s",
+                    round + 1,
+                    still.len(),
+                    sw_neg.ms() / 1000.0,
+                );
+                pending = still;
+                if committed == 0 {
+                    break;
+                }
+            }
+        }
+    }
+
     for _ in 0..ripup_rounds {
         if pending.is_empty() {
             break;
@@ -1141,6 +1263,44 @@ fn route_batch(
         queue.push(((net, from, to), 0usize));
     }
     let cache_skips = unrouted.len();
+    // GPU search phase (charter M1, `--features gpu` + VCAD_GPU_BATCH=1):
+    // propose candidates for the whole queue in one batched dispatch; every
+    // proposal still passes validate_and_commit (the exact oracle), and any
+    // conn the GPU cannot serve falls through to the CPU search unchanged.
+    #[cfg(feature = "gpu")]
+    let mut gpu_proposals: std::collections::HashMap<ConnKey, Candidate> = Default::default();
+    #[cfg(feature = "gpu")]
+    if std::env::var("VCAD_GPU_BATCH").as_deref() == Ok("1") && !queue.is_empty() {
+        let conns_only: Vec<Conn> = queue.iter().map(|(c, _)| c.clone()).collect();
+        let clearance = pcb.rules.default_rules.clearance;
+        if let Some(paths) =
+            super::gpu_bridge::gpu_search_batch(session, pcb, &conns_only, width / 2.0, clearance)
+        {
+            let mut proposed = 0usize;
+            for ((net, from, to), path) in conns_only.iter().zip(paths) {
+                if let Some(p) = path {
+                    gpu_proposals.insert(
+                        conn_key(net, *from, *to),
+                        Candidate {
+                            net: net.clone(),
+                            from: *from,
+                            to: *to,
+                            width: session.width_for(net, width),
+                            segments: p.segments,
+                            vias: p.vias,
+                            thin_segments: vec![],
+                            thin_width: width,
+                        },
+                    );
+                    proposed += 1;
+                }
+            }
+            log::info!(
+                "gpu batch: proposed {proposed}/{} candidates in one dispatch stream",
+                conns_only.len()
+            );
+        }
+    }
     let mut batches = 0usize;
     let mut committed = 0usize;
     let mut conflicts = 0usize;
@@ -1153,6 +1313,10 @@ fn route_batch(
         let candidates: Vec<Option<Candidate>> = batch
             .par_iter()
             .map(|((net, from, to), _)| {
+                #[cfg(feature = "gpu")]
+                if let Some(c) = gpu_proposals.get(&conn_key(net, *from, *to)) {
+                    return Some(c.clone());
+                }
                 search_route(
                     session,
                     pcb,
@@ -1454,6 +1618,7 @@ fn try_route_escape(
 /// wants to place, valid against the session it was searched on. Committing
 /// re-validates against the *current* session, so candidates can be searched
 /// in parallel against a frozen snapshot and committed sequentially.
+#[derive(Clone)]
 pub(super) struct Candidate {
     pub(super) net: String,
     pub(super) from: Vec2,
@@ -2976,7 +3141,15 @@ fn joint_window_repair(
             still.len(),
             sw.ms() / 1000.0,
         );
+        // A round that converted nothing proves the knots need MORE than a
+        // bigger window (they need different copper elsewhere) — escalating
+        // the margin re-proves the same stuck set at 2-4x the cost. Stop.
+        let converted = pending.len().saturating_sub(still.len());
         pending = still;
+        if converted == 0 {
+            log::info!("joint repair: round converted nothing — stopping escalation");
+            break;
+        }
         // Fresh failure cache per escalation: the windows change shape.
         fail_cache = FailCache::new();
     }

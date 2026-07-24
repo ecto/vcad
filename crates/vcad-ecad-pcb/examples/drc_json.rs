@@ -20,6 +20,7 @@ fn main() {
     let violations = check_drc(&pcb);
     let mut by_rule: BTreeMap<String, usize> = BTreeMap::new();
     let mut hard = 0usize;
+    let mut shown: BTreeMap<String, usize> = BTreeMap::new();
     for v in &violations {
         *by_rule.entry(format!("{:?}", v.rule)).or_default() += 1;
         if matches!(v.rule, DrcRuleType::Short | DrcRuleType::Clearance) {
@@ -28,7 +29,9 @@ fn main() {
                 .as_deref()
                 .map(|f| v.message.contains(f))
                 .unwrap_or(true);
-            if show && hard <= 40 {
+            let n = shown.entry(format!("{:?}", v.rule)).or_default();
+            if show && *n < 1200 {
+                *n += 1;
                 println!("HARD: {}", &v.message[..v.message.len().min(160)]);
             }
         }

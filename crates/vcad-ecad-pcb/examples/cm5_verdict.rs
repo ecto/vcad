@@ -120,6 +120,27 @@ fn main() {
         let names: Vec<&str> = conns.iter().map(|c| c.0.as_str()).collect();
         match route_window_complete(&session, (*lo, *hi), &layers, conns, width, budget) {
             CompleteOutcome::Routed(paths) => {
+                // Fail-closed: the window router's coarse grid can hide
+                // sub-clearance gaps its pitch cannot see, and joint paths
+                // do not know the intra-pair gap rule. Probe every segment
+                // through the (pair-aware) session before trusting the
+                // routing; a path the oracle rejects downgrades the cluster
+                // to an honest unknown.
+                let all_legal = conns.iter().zip(&paths).all(|((net, _, _), path)| {
+                    path.iter().all(|&(a, b, l)| {
+                        let g = vcad_ecad_pcb::spatial::CopperGeom::Segment {
+                            a,
+                            b,
+                            half_w: width / 2.0,
+                        };
+                        session.probe(&g, l, net, session.clearance_for(net)).legal
+                    })
+                });
+                if !all_legal {
+                    unknown += conns.len();
+                    println!("UNKNOWN  {names:?} (paths failed oracle probe)");
+                    continue;
+                }
                 routed += conns.len();
                 let segs: usize = paths.iter().map(|p| p.len()).sum();
                 println!("ROUTED   {names:?} ({segs} segments found)");
