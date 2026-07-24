@@ -46,6 +46,25 @@ stage's greedy phase — the sequential rescue arsenal that fires per-batch —
 and is the next named integration (negotiation-first ordering, arsenal only
 for negotiation's leftovers).
 
+## Reproducibility on merged main (2026-07-24)
+
+Two full-board runs on merged main (post #649/#661), one clean solo:
+**0.891 routability in 105 min** (both runs, identical score — the route is
+deterministic given the tree). The 40-net hard subset reproduces exactly
+(1.000 in 4.1 s vs the branch's 3.2 s).
+
+Reading across all 11 full-board runs (branch + main): the honest
+reproducible claim is **0.89–0.94 routability in 1–2 h** — run 2's
+67 min / 0.925 was the best draw of a distribution, not the typical run.
+Still 5–10× over the historic 8–24 h pipelines, but the single-run headline
+above should be read with that spread.
+
+One consistent finding across every logged run: the CPU push-shove
+negotiation rounds cost ~20 min each and **net-lose placed connections in
+every single run** (e.g. 489 → 455 while pending grows), with the score only
+recovering afterward. Capping or removing them is the cheapest named lever
+toward 30 min (~40–60 min of wall-clock) and possibly a quality gain.
+
 ## What is proven
 
 - **Full accounting**: every connection ends routed or carries a named
