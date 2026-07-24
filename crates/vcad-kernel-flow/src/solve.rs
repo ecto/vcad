@@ -162,6 +162,10 @@ pub struct Solution {
     /// Steady state closes `wall_heat_w ≈ heat_pickup_w` for ported
     /// runs — the thermal energy audit.
     pub wall_heat_w: Option<f64>,
+    /// Heat entering through isothermal *walls only*, W (excludes the
+    /// inlet exchange) — what a film coefficient is priced from in the
+    /// conjugate loop.
+    pub wall_heat_walls_only_w: Option<f64>,
 }
 
 /// Run the lattice to steady state.
@@ -735,33 +739,41 @@ fn finish(
     };
 
     // Thermal outputs (M1).
-    let (temperature_c, outlet_temp_c, heat_pickup_w, wall_heat_w) = match &model.thermal {
-        None => (None, None, None, None),
-        Some(t) => {
-            let rho_cp = model.fluid.density_kg_m3 * t.heat_capacity_j_kg_k;
-            let outlet_temp = if outlet_flow.abs() > f64::MIN_POSITIVE {
-                Some(outlet_heat_flux / outlet_flow)
-            } else {
-                None
-            };
-            let heat_pickup = if outlet_flow.abs() > f64::MIN_POSITIVE {
-                Some(rho_cp * (outlet_heat_flux - inlet_adv_flux * t.inlet_temp_c))
-            } else {
-                None
-            };
-            // Boundary heat, link route: the per-step θ-exchange the
-            // scalar lattice actually performed through its Dirichlet
-            // boundaries (isothermal walls + inlet exchange beyond the
-            // advected baseline), converted to watts. The field-route
-            // `heat_pickup_w` above is measured independently from the
-            // outlet velocity/temperature fields — the thermal audit is
-            // the gap between the two.
-            let (qw, qi, _qo) = q_boundary_lat;
-            let scale_w = rho_cp * dx_m * dx_m * dx_m / scaling.dt_s;
-            let wall_heat = Some((qw + qi) * scale_w);
-            (Some(temp.to_vec()), outlet_temp, heat_pickup, wall_heat)
-        }
-    };
+    let (temperature_c, outlet_temp_c, heat_pickup_w, wall_heat_w, wall_heat_walls_only_w) =
+        match &model.thermal {
+            None => (None, None, None, None, None),
+            Some(t) => {
+                let rho_cp = model.fluid.density_kg_m3 * t.heat_capacity_j_kg_k;
+                let outlet_temp = if outlet_flow.abs() > f64::MIN_POSITIVE {
+                    Some(outlet_heat_flux / outlet_flow)
+                } else {
+                    None
+                };
+                let heat_pickup = if outlet_flow.abs() > f64::MIN_POSITIVE {
+                    Some(rho_cp * (outlet_heat_flux - inlet_adv_flux * t.inlet_temp_c))
+                } else {
+                    None
+                };
+                // Boundary heat, link route: the per-step θ-exchange the
+                // scalar lattice actually performed through its Dirichlet
+                // boundaries (isothermal walls + inlet exchange beyond the
+                // advected baseline), converted to watts. The field-route
+                // `heat_pickup_w` above is measured independently from the
+                // outlet velocity/temperature fields — the thermal audit is
+                // the gap between the two.
+                let (qw, qi, _qo) = q_boundary_lat;
+                let scale_w = rho_cp * dx_m * dx_m * dx_m / scaling.dt_s;
+                let wall_heat = Some((qw + qi) * scale_w);
+                let wall_heat_walls_only = Some(qw * scale_w);
+                (
+                    Some(temp.to_vec()),
+                    outlet_temp,
+                    heat_pickup,
+                    wall_heat,
+                    wall_heat_walls_only,
+                )
+            }
+        };
 
     Solution {
         scaling: *scaling,
@@ -778,6 +790,7 @@ fn finish(
         outlet_temp_c,
         heat_pickup_w,
         wall_heat_w,
+        wall_heat_walls_only_w,
     }
 }
 
