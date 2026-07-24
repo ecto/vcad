@@ -57,6 +57,10 @@ pub enum GpuError {
     /// GPU context not initialized.
     #[error("GPU context not initialized - call GpuContext::init() first")]
     NotInitialized,
+
+    /// Invalid caller-provided input (dimensions, alignment, lengths).
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 /// Global GPU context holding device and queue.

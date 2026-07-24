@@ -2913,5 +2913,8 @@ mod ts_tests {
         // Re-runnable verification receipt (not reachable from Document).
         crate::ecad::Receipt::export_all().expect("Receipt export failed");
         crate::ecad::ReceiptStatus::export_all().expect("ReceiptStatus export failed");
+        // Timeline sampling output (produced by sample_sequence, not
+        // reachable from Document).
+        crate::animation::SequenceFrame::export_all().expect("SequenceFrame export failed");
     }
 }

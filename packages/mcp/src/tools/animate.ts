@@ -372,6 +372,7 @@ export async function animate(
     );
   }
   doc.timeline = timeline;
+  await getKernelWasm(); // sampleSequence runs in the kernel WASM
   const frames = sampleSequence(doc);
   return ok({
     duration_s: timeline.durationS,
@@ -737,6 +738,7 @@ export async function renderSequence(
     );
   }
 
+  await getKernelWasm(); // sampleSequence runs in the kernel WASM
   const frames = sampleSequence(doc, timeline);
   if (frames.length > MAX_FRAMES) {
     return err(
@@ -1039,6 +1041,7 @@ export async function exportVideo(
     return err(`timeline invalid:\n${issues.map((i) => i.problem).join("\n")}`);
   }
 
+  await getKernelWasm(); // sampleSequence runs in the kernel WASM
   const frames = sampleSequence(doc, timeline);
   if (frames.length > MAX_FRAMES) {
     return err(
