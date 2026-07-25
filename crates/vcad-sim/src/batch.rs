@@ -141,6 +141,12 @@ impl BatchSimPipeline {
             .dt(1.0 / 240.0);
 
         let mut instance_to_body: HashMap<String, usize> = HashMap::new();
+        // Per-body part→body rotation `R_b` (`p_body = R_b * p_part`). phyz
+        // body frames coincide with the joint frame, so a child hung off a
+        // non-Z revolute has a rotated body frame — and its own children's
+        // `parent_to_joint` is measured from that rotated frame. Identity for
+        // ground and free bodies.
+        let mut body_rotations: Vec<Mat3> = Vec::new();
         let mut body_count = 0usize;
 
         // Compute box inertia from a primitive node
@@ -196,6 +202,7 @@ impl BatchSimPipeline {
             let xform = instance_transform(ground_inst);
             builder = builder.add_fixed_body(&ground_inst.id, -1, xform, inertia);
             instance_to_body.insert(ground_inst.id.clone(), body_count);
+            body_rotations.push(Mat3::identity());
             body_count += 1;
         }
 
@@ -223,14 +230,22 @@ impl BatchSimPipeline {
                 let part = part_defs
                     .get(&child_inst.part_def_id)
                     .ok_or(SimError::NoAssembly)?;
-                let (_, inertia) = compute_inertia(part.root);
+                let (_, mut inertia) = compute_inertia(part.root);
 
-                let phyz_joint = build_phyz_model_joint(joint)?;
+                // Body frame = joint frame, so the part-axis-aligned box
+                // inertia has to be rotated into it.
+                let r_part_to_body = joint_frame_rotation(&joint.kind).transpose();
+                inertia.inertia = r_part_to_body
+                    .mul_mat(&inertia.inertia)
+                    .mul_mat(&r_part_to_body.transpose());
+
+                let phyz_joint = build_phyz_model_joint(joint, &body_rotations[parent_body_idx])?;
 
                 builder =
                     builder.add_body(&child_inst.id, parent_body_idx as i32, phyz_joint, inertia);
 
                 instance_to_body.insert(child_inst.id.clone(), body_count);
+                body_rotations.push(r_part_to_body);
                 body_count += 1;
                 visited.insert(child_inst.id.clone());
                 queue.push(child_inst.id.clone());
@@ -246,29 +261,37 @@ impl BatchSimPipeline {
 /// Mirrors `vcad_kernel_physics::joints::vcad_joint_to_phyz`, but targets the
 /// `phyz_model` crate's `Joint` type (required by `phyz-gpu`'s `ModelBuilder`),
 /// which is a separate Rust type from `phyz::model::Joint`.
-fn build_phyz_model_joint(joint: &vcad_ir::Joint) -> Result<phyz_model::Joint, SimError> {
-    use phyz_math::{Mat3, SpatialTransform, Vec3};
+///
+/// `r_parent` is the parent body's part→body rotation: `parent_to_joint` is
+/// measured from the parent *body* frame, which is itself rotated whenever
+/// the parent hangs off a non-Z joint axis. Composing it out here is what
+/// keeps the axis-alignment rotation from compounding down a serial chain.
+fn build_phyz_model_joint(
+    joint: &vcad_ir::Joint,
+    r_parent: &phyz_math::Mat3,
+) -> Result<phyz_model::Joint, SimError> {
+    use phyz_math::{SpatialTransform, Vec3};
     use phyz_model::Joint as PhyzJoint;
     use vcad_ir::JointKind;
 
-    // Convert parent anchor from mm to meters — this becomes the translation
-    // in the parent-to-joint transform.
-    let anchor = Vec3::new(
+    // parent_anchor is in the parent *part*'s mm coordinates; phyz wants the
+    // joint origin in the parent *body* frame, in meters.
+    let anchor = r_parent.mul_vec(Vec3::new(
         joint.parent_anchor.x / 1000.0,
         joint.parent_anchor.y / 1000.0,
         joint.parent_anchor.z / 1000.0,
-    );
+    ));
+
+    // Plücker parent→joint coordinate map: the transpose of the joint frame's
+    // axes expressed in the parent body frame.
+    let rot = r_parent
+        .mul_mat(&joint_frame_rotation(&joint.kind))
+        .transpose();
+    let xform = SpatialTransform::new(rot, anchor);
 
     match &joint.kind {
-        JointKind::Fixed => {
-            let xform = SpatialTransform::new(Mat3::identity(), anchor);
-            Ok(PhyzJoint::fixed(xform))
-        }
-        JointKind::Revolute { axis, limits } => {
-            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
-            let rot = rotation_aligning_z_to(axis_vec);
-            let xform = SpatialTransform::new(rot, anchor);
-
+        JointKind::Fixed => Ok(PhyzJoint::fixed(xform)),
+        JointKind::Revolute { limits, .. } => {
             let mut phyz_joint = PhyzJoint::revolute(xform);
 
             if let Some((lower, upper)) = limits {
@@ -278,9 +301,9 @@ fn build_phyz_model_joint(joint: &vcad_ir::Joint) -> Result<phyz_model::Joint, S
             Ok(phyz_joint)
         }
         JointKind::Slider { axis, limits } => {
+            // Slider joint frames are part-aligned, so the axis carries over
+            // unchanged.
             let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
-            let xform = SpatialTransform::new(Mat3::identity(), anchor);
-
             let mut phyz_joint = PhyzJoint::prismatic(xform, axis_vec);
 
             if let Some((lower, upper)) = limits {
@@ -289,15 +312,22 @@ fn build_phyz_model_joint(joint: &vcad_ir::Joint) -> Result<phyz_model::Joint, S
 
             Ok(phyz_joint)
         }
-        JointKind::Cylindrical { axis } => {
-            let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
-            let rot = rotation_aligning_z_to(axis_vec);
-            let xform = SpatialTransform::new(rot, anchor);
-            Ok(PhyzJoint::revolute(xform))
+        JointKind::Cylindrical { .. } => Ok(PhyzJoint::revolute(xform)),
+        JointKind::Ball => Ok(PhyzJoint::spherical(xform)),
+    }
+}
+
+/// Rotation whose columns are the joint frame's axes in the part frame:
+/// phyz revolute joints spin about the joint frame's Z, so that frame is
+/// oriented to put Z on the declared axis.
+fn joint_frame_rotation(kind: &vcad_ir::JointKind) -> phyz_math::Mat3 {
+    use vcad_ir::JointKind;
+    match kind {
+        JointKind::Revolute { axis, .. } | JointKind::Cylindrical { axis } => {
+            rotation_aligning_z_to(phyz_math::Vec3::new(axis.x, axis.y, axis.z).normalize())
         }
-        JointKind::Ball => {
-            let xform = SpatialTransform::new(Mat3::identity(), anchor);
-            Ok(PhyzJoint::spherical(xform))
+        JointKind::Slider { .. } | JointKind::Fixed | JointKind::Ball => {
+            phyz_math::Mat3::identity()
         }
     }
 }

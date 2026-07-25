@@ -65,27 +65,47 @@ impl MotorTarget {
 
 /// Create a phyz joint from a vcad joint definition.
 ///
-/// Returns the phyz Joint and the parent-to-joint spatial transform.
-pub(crate) fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, PhysicsError> {
-    // Convert parent anchor from mm to meters — this becomes the translation
-    // in the parent-to-joint transform.
-    let anchor = Vec3::new(
+/// `parent_frame` is the parent body's part→body map `(R_p, t_p)` with
+/// `p_body = R_p * p_part_m + t_p` (see [`PhysicsWorld::body_part_frames`]).
+/// It is **required**: phyz's `parent_to_joint` maps the *parent body* frame
+/// to the joint frame, and a jointed parent's body frame is itself rotated by
+/// its own axis-alignment rotation. Ignoring it leaks one axis-alignment
+/// rotation into every link past the first and compounds down the chain —
+/// invisible at depth 1 (ground is unrotated), fatal for any serial arm or
+/// leg with non-Z joint axes.
+///
+/// [`PhysicsWorld::body_part_frames`]: crate::world::PhysicsWorld
+pub(crate) fn vcad_joint_to_phyz(
+    joint: &VcadJoint,
+    parent_frame: (&Mat3, &Vec3),
+) -> Result<PhyzJoint, PhysicsError> {
+    let (r_parent, t_parent) = parent_frame;
+
+    // Joint origin: parent_anchor is in the parent *part*'s mm coordinates;
+    // phyz wants it in the parent *body* frame, in meters.
+    let anchor_part_m = Vec3::new(
         joint.parent_anchor.x / 1000.0,
         joint.parent_anchor.y / 1000.0,
         joint.parent_anchor.z / 1000.0,
     );
+    let anchor = r_parent.mul_vec(anchor_part_m) + *t_parent;
+
+    // Plücker parent→joint coordinate map. The joint frame's axes expressed
+    // in the parent *part* frame are the columns of `joint_frame_rotation`;
+    // in the parent *body* frame they are `R_p * R_j`. The coordinate map is
+    // the transpose of that.
+    let rot = r_parent
+        .mul_mat(&joint_frame_rotation(&joint.kind))
+        .transpose();
 
     match &joint.kind {
         JointKind::Fixed => {
-            let xform = SpatialTransform::new(Mat3::identity(), anchor);
+            let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::fixed(xform))
         }
         JointKind::Revolute { limits, .. } => {
-            // phyz revolute joints rotate about Z in joint frame.
-            // We need to orient the joint frame so that Z aligns with the desired axis.
-            // Plücker parent→joint coordinate map: E = Rᵀ where R carries
-            // the joint frame axes (Z = motion axis) in parent coordinates.
-            let rot = joint_frame_rotation(&joint.kind).transpose();
+            // phyz revolute joints rotate about Z in the joint frame, so
+            // `joint_frame_rotation` orients that frame's Z onto the axis.
             let xform = SpatialTransform::new(rot, anchor);
 
             let mut phyz_joint = PhyzJoint::revolute(xform);
@@ -97,8 +117,10 @@ pub(crate) fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, Physics
             Ok(phyz_joint)
         }
         JointKind::Slider { axis, limits } => {
+            // The slider's joint frame is part-aligned (identity
+            // `joint_frame_rotation`), so the axis needs no re-expression.
             let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
-            let xform = SpatialTransform::new(Mat3::identity(), anchor);
+            let xform = SpatialTransform::new(rot, anchor);
 
             let mut phyz_joint = PhyzJoint::prismatic(xform, axis_vec);
 
@@ -111,12 +133,11 @@ pub(crate) fn vcad_joint_to_phyz(joint: &VcadJoint) -> Result<PhyzJoint, Physics
         }
         JointKind::Cylindrical { .. } => {
             // Approximate as revolute (primary DOF)
-            let rot = joint_frame_rotation(&joint.kind).transpose();
             let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::revolute(xform))
         }
         JointKind::Ball => {
-            let xform = SpatialTransform::new(Mat3::identity(), anchor);
+            let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::spherical(xform))
         }
     }
@@ -217,7 +238,7 @@ mod tests {
             state: 0.0,
         };
 
-        let phyz_joint = vcad_joint_to_phyz(&joint).unwrap();
+        let phyz_joint = vcad_joint_to_phyz(&joint, (&Mat3::identity(), &Vec3::zero())).unwrap();
 
         // Check that joint was created and has correct limits
         assert!(phyz_joint.limits.is_some());
