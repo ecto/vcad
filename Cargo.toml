@@ -75,6 +75,7 @@ members = [
     "crates/vcad-ecad-verify",
     "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
+    "crates/vcad-ecad-fabprep",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
@@ -171,6 +172,7 @@ default-members = [
     "crates/vcad-ecad-verify",
     "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
+    "crates/vcad-ecad-fabprep",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
@@ -204,6 +206,8 @@ thiserror = "2"
 tang = { path = "../tang/crates/tang", version = "0.2" }
 tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
 tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
+# phyz moved every crate onto its workspace version (0.3.1); the sub-crates
+# are no longer independently 0.1.x.
 phyz = { path = "../phyz/crates/phyz", version = "0.3" }
 phyz-gpu = { path = "../phyz/crates/phyz-gpu", version = "0.3" }
 phyz-model = { path = "../phyz/crates/phyz-model", version = "0.3" }
@@ -285,6 +289,7 @@ vcad-ecad-pcb = { path = "crates/vcad-ecad-pcb", version = "0.9.4" }
 vcad-ecad-verify = { path = "crates/vcad-ecad-verify", version = "0.9.4" }
 vcad-ecad-source = { path = "crates/vcad-ecad-source", version = "0.9.4" }
 vcad-ecad-export = { path = "crates/vcad-ecad-export", version = "0.9.4" }
+vcad-ecad-fabprep = { path = "crates/vcad-ecad-fabprep", version = "0.9.4" }
 vcad-ecad-sim = { path = "crates/vcad-ecad-sim", version = "0.9.4" }
 vcad-ecad-diff = { path = "crates/vcad-ecad-diff", version = "0.9.4" }
 nom = "7"
@@ -346,3 +351,6 @@ opt-level = 3
 tang = { path = "../tang/crates/tang" }
 tang-la = { path = "../tang/crates/tang-la" }
 tang-expr = { path = "../tang/crates/tang-expr" }
+# clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
+# vendored copy adds the missing libc++ link arms. Identical source otherwise.
+clipper-sys = { path = "third_party/clipper-sys" }

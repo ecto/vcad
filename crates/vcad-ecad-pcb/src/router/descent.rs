@@ -25,6 +25,7 @@
 //! the product.
 
 use tang_expr::{ExprGraph, ExprId};
+use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
 
 /// Weights for the objective's terms.
@@ -297,6 +298,315 @@ pub fn descend_pair_runs(
         skew: (plen - nlen).abs(),
         iters: it,
     })
+}
+
+/// What [`descend_board`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DescentReport {
+    /// Pairs whose geometry was replaced with a lower-skew descent.
+    pub tuned: usize,
+    /// Pairs that had enough interior freedom to attempt.
+    pub attempted: usize,
+    /// Attempts thrown away because the exact oracle rejected the geometry
+    /// or the whole-net skew did not actually improve.
+    pub rejected: usize,
+}
+
+/// Run the differentiable pair polish over every classified pair on a routed
+/// board, committing only geometry the exact oracle accepts.
+///
+/// This is the library form of what `examples/si_descent.rs` used to do
+/// inline, so the router's finishing stage and the example share one
+/// implementation. Per pair: take the longest single-layer run of each leg,
+/// densify it, build the obstacle set from every other net's copper near the
+/// corridor, descend, then accept only if (a) every optimized segment probes
+/// legal against a session with both nets' old copper removed and (b) the
+/// WHOLE-net skew actually fell. Anything else leaves the pair untouched.
+pub fn descend_board(pcb: &mut Pcb, iters: usize) -> DescentReport {
+    use super::classes::{apply_classes, classify_nets};
+    use super::length_match::longest_chain;
+    use crate::session::RouteSession;
+    use crate::spatial::CopperGeom;
+    use vcad_ir::ecad::{PcbLayer, Trace};
+
+    let nets: Vec<String> = {
+        let mut v: std::collections::BTreeSet<String> = Default::default();
+        for f in &pcb.footprints {
+            for pad in &f.pads {
+                if let Some(n) = &pad.net {
+                    if !n.is_empty() {
+                        v.insert(n.clone());
+                    }
+                }
+            }
+        }
+        v.into_iter().collect()
+    };
+    let c = classify_nets(&nets);
+    apply_classes(pcb, &c);
+    let dp = pcb
+        .rules
+        .class_rules
+        .iter()
+        .find(|r| r.name == super::classes::DIFF_PAIR_CLASS);
+    let gap_edge = dp.and_then(|r| r.diff_pair_gap).unwrap_or(0.25);
+    let leg_w = dp.and_then(|r| r.diff_pair_width).unwrap_or(0.2);
+    // +20um cushion, the same reasoning the clearance hinge uses: the gap
+    // spring is a SOFT term traded against skew, so its equilibrium has to
+    // land outside the hard rule the oracle enforces (pair gap - 5um).
+    // Targeting the gap exactly puts every descended pair on the threshold
+    // and the oracle then rejects all of them.
+    let gap_centre = gap_edge + leg_w + 0.02;
+
+    // Longest single-layer run of a net, plus the length of everything else.
+    let net_run = |pcb: &Pcb, net: &str| -> Option<(PcbLayer, Vec<Vec2>, f64, f64)> {
+        let mut layers: Vec<PcbLayer> = pcb
+            .traces
+            .iter()
+            .filter(|t| t.net == net)
+            .map(|t| t.layer)
+            .collect();
+        layers.sort();
+        layers.dedup();
+        let total: f64 = pcb
+            .traces
+            .iter()
+            .filter(|t| t.net == net)
+            .map(|t| (t.end - t.start).length())
+            .sum();
+        let mut best: Option<(f64, Vec<Vec2>, PcbLayer)> = None;
+        for layer in layers {
+            let segs: Vec<&Trace> = pcb
+                .traces
+                .iter()
+                .filter(|t| t.net == net && t.layer == layer)
+                .collect();
+            if let Some(points) = longest_chain(&segs) {
+                let len: f64 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+                if best.as_ref().map(|(l, _, _)| len > *l).unwrap_or(true) {
+                    best = Some((len, points, layer));
+                }
+            }
+        }
+        best.map(|(len, pts, layer)| {
+            let width = pcb
+                .traces
+                .iter()
+                .find(|t| t.net == net && t.layer == layer)
+                .map(|t| t.width)
+                .unwrap_or(0.08);
+            (layer, pts, total - len, width)
+        })
+    };
+
+    let mut report = DescentReport::default();
+    for (pn, nn) in &c.pairs {
+        let (Some((pl, p_raw, extra_p, p_w)), Some((nlayer, n_raw, extra_n, n_w))) =
+            (net_run(pcb, pn), net_run(pcb, nn))
+        else {
+            continue;
+        };
+        // Point hinges only constrain POINTS — a long segment between two
+        // legal points sweeps across the board unconstrained. Resampling at
+        // ~0.4mm makes point coverage approximate segment coverage.
+        let densify = |pts: &[Vec2]| -> Vec<Vec2> {
+            let mut out = vec![pts[0]];
+            for w in pts.windows(2) {
+                let len = (w[1] - w[0]).length();
+                let n = (len / 0.4).ceil().max(1.0) as usize;
+                for i in 1..=n {
+                    let t = i as f64 / n as f64;
+                    out.push(w[0] + (w[1] - w[0]).scale(t));
+                }
+            }
+            out
+        };
+        let p_pts = densify(&p_raw);
+        let n_pts = densify(&n_raw);
+        let run_w = p_w.max(n_w);
+        let plen: f64 = p_pts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).length())
+            .sum::<f64>()
+            + extra_p;
+        let nlen: f64 = n_pts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).length())
+            .sum::<f64>()
+            + extra_n;
+        if (plen - nlen).abs() < 0.2 || p_pts.len() < 3 || n_pts.len() < 3 {
+            continue; // already matched, or no interior freedom
+        }
+        report.attempted += 1;
+
+        let session = RouteSession::from_pcb(pcb);
+        let clearance = session.clearance_for(pn);
+        let (mut lo, mut hi) = (
+            Vec2::new(f64::INFINITY, f64::INFINITY),
+            Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+        );
+        for p in p_pts.iter().chain(n_pts.iter()) {
+            lo.x = lo.x.min(p.x - 3.0);
+            lo.y = lo.y.min(p.y - 3.0);
+            hi.x = hi.x.max(p.x + 3.0);
+            hi.y = hi.y.max(p.y + 3.0);
+        }
+        // Obstacles: EVERY copper element near the corridor on either run
+        // layer, from a session with both nets removed — pads and vias
+        // included, since a descended run can swing across a pad field a
+        // trace-only obstacle set cannot see.
+        let mut ob_board = pcb.clone();
+        ob_board.traces.retain(|t| t.net != *pn && t.net != *nn);
+        ob_board.vias.retain(|v| v.net != *pn && v.net != *nn);
+        let ob_session = RouteSession::from_pcb(&ob_board);
+        let mut obstacles = Vec::new();
+        let mut ob_layers = vec![pl];
+        if nlayer != pl {
+            ob_layers.push(nlayer);
+        }
+        for &layer in &ob_layers {
+            ob_session.for_each_blocking(
+                layer,
+                "",
+                [lo.x, lo.y],
+                [hi.x, hi.y],
+                |geom, emin, emax, req| {
+                    // +0.05mm safety: the hinge is a soft penalty traded
+                    // against skew, so its equilibrium must land OUTSIDE the
+                    // hard rule the oracle enforces.
+                    let required = req + run_w / 2.0 + 0.05;
+                    match geom {
+                        CopperGeom::Segment { a, b, half_w } => obstacles.push(DescentObstacle {
+                            a: *a,
+                            b: *b,
+                            required: required + half_w,
+                        }),
+                        CopperGeom::Disc { center, r } => obstacles.push(DescentObstacle {
+                            a: *center,
+                            b: *center,
+                            required: required + r,
+                        }),
+                        _ => {
+                            let c = Vec2::new((emin[0] + emax[0]) / 2.0, (emin[1] + emax[1]) / 2.0);
+                            let hd = ((emax[0] - emin[0]).powi(2) + (emax[1] - emin[1]).powi(2))
+                                .sqrt()
+                                / 2.0;
+                            obstacles.push(DescentObstacle {
+                                a: c,
+                                b: c,
+                                required: required + hd,
+                            });
+                        }
+                    }
+                },
+            );
+        }
+
+        let Some(r) = descend_pair_runs(
+            &p_pts,
+            &n_pts,
+            extra_p,
+            extra_n,
+            pl == nlayer,
+            gap_centre,
+            &obstacles,
+            &DescentWeights::default(),
+            iters,
+        ) else {
+            continue;
+        };
+
+        // Fail-closed: every optimized segment passes the exact oracle. Each
+        // leg is checked against a board with only ITS OWN old copper removed,
+        // so the twin stays an obstacle — the session applies the declared
+        // pair gap to it, so a correctly coupled leg passes while one that has
+        // drifted into its partner does not. (Dropping both nets would let the
+        // descent short the pair to itself unnoticed: the gap spring is a soft
+        // term, not a guarantee.)
+        // Both legs move together, so the twin must be present at its NEW
+        // position: checking P-new against N-old rejects every descent,
+        // because the pair as a whole has shifted.
+        let with_new = |keep: &str, moved: &[Vec2], moved_net: &str, layer: PcbLayer, w: f64| {
+            let mut b = pcb.clone();
+            b.traces.retain(|t| t.net != *pn && t.net != *nn);
+            b.traces.extend(moved.windows(2).map(|s| Trace {
+                start: s[0],
+                end: s[1],
+                width: w,
+                layer,
+                net: moved_net.to_string(),
+                source: None,
+            }));
+            let _ = keep;
+            RouteSession::from_pcb(&b)
+        };
+        // P is judged against a board holding N's descended copper, and
+        // vice versa.
+        let p_session = with_new(pn, &r.n_pts, nn, nlayer, n_w);
+        let n_session = with_new(nn, &r.p_pts, pn, pl, p_w);
+        let legal = |sess: &RouteSession, pts: &[Vec2], net: &str, layer: PcbLayer, w: f64| {
+            pts.windows(2).all(|seg| {
+                sess.probe(
+                    &CopperGeom::Segment {
+                        a: seg[0],
+                        b: seg[1],
+                        half_w: w / 2.0,
+                    },
+                    layer,
+                    net,
+                    clearance,
+                )
+                .legal
+            })
+        };
+        if !legal(&p_session, &r.p_pts, pn, pl, p_w)
+            || !legal(&n_session, &r.n_pts, nn, nlayer, n_w)
+        {
+            report.rejected += 1;
+            continue;
+        }
+        // Whole-net accounting: r.skew is run-only; judge the committed
+        // outcome on the full nets and accept only real improvements.
+        let before = (plen - nlen).abs();
+        let run_p_after: f64 = r.p_pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+        let run_n_after: f64 = r.n_pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+        let after = ((run_p_after + extra_p) - (run_n_after + extra_n)).abs();
+        if after >= before {
+            report.rejected += 1;
+            continue;
+        }
+        let mut work2 = pcb.clone();
+        let replace_run = |work2: &mut Pcb,
+                           net: &str,
+                           layer: PcbLayer,
+                           old: &[Vec2],
+                           new: &[Vec2],
+                           width: f64| {
+            let on_old = |t: &Trace| {
+                t.net == net
+                    && t.layer == layer
+                    && old.windows(2).any(|w| {
+                        (t.start - w[0]).length() < 1e-6 && (t.end - w[1]).length() < 1e-6
+                            || (t.start - w[1]).length() < 1e-6 && (t.end - w[0]).length() < 1e-6
+                    })
+            };
+            work2.traces.retain(|t| !on_old(t));
+            work2.traces.extend(new.windows(2).map(|w| Trace {
+                start: w[0],
+                end: w[1],
+                width,
+                layer,
+                net: net.to_string(),
+                source: None,
+            }));
+        };
+        replace_run(&mut work2, pn, pl, &p_raw, &r.p_pts, p_w);
+        replace_run(&mut work2, nn, nlayer, &n_raw, &r.n_pts, n_w);
+        *pcb = work2;
+        report.tuned += 1;
+        log::info!("descent: {pn} whole-net skew {before:.3} -> {after:.3} mm");
+    }
+    report
 }
 
 fn pt_seg_dist_f64(p: Vec2, a: Vec2, b: Vec2) -> f64 {

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-negotiation-first-ordering",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "perf",
+  "title": "Autorouter routes large boards in minutes, not hours",
+  "summary": "On layer-rich boards the GPU negotiator now takes the unrouted tail before the sequential CPU rescue arsenal, which fires once over its leftovers; the rip-up rounds it replaced are skipped and speculative rounds are budgeted against the baseline.",
+  "features": ["pcb", "autorouter", "gpu"],
+  "mcpTools": ["route_nets"]
+}

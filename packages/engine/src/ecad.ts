@@ -323,6 +323,112 @@ export async function tryRunDrc(pcb: Pcb): Promise<EcadProbe<DrcViolationResult[
 }
 
 // ---------------------------------------------------------------------------
+// Fab preparation (calibrate → route/certify → fix loop → prune → receipt)
+// ---------------------------------------------------------------------------
+
+/** Options for {@link runFabPrep} (mirrors `vcad_ecad_fabprep::FabPrepOptions`). */
+export interface FabPrepOptions {
+  /** Derive and apply rule calibration from the board's own declared via classes. */
+  calibrate_rules?: boolean;
+  /** Route or certify the connections the board arrived without. */
+  route_remaining?: boolean;
+  /** Maximum strip-and-re-route rounds. */
+  max_rounds?: number;
+  /** Search knobs for the complete window router. */
+  verdict?: { budget: number; max_cluster: number };
+  /** Remove copper reaching no pad or pour of its net before the final DRC. */
+  prune_dangling?: boolean;
+  /** DRC rule names whose route-attributable violations are explicitly waived. */
+  accept_rules?: string[];
+}
+
+/**
+ * The fab-prep receipt (mirrors `vcad_ecad_fabprep::FabPrepReport`). Typed
+ * loosely on purpose: the Rust side owns the shape, and mirroring every field
+ * here would be one more place to drift.
+ */
+export interface FabPrepReport {
+  converged: boolean;
+  blocker: string | null;
+  calibration_requested: boolean;
+  calibration: {
+    applied: {
+      rule: string;
+      declared: number;
+      calibrated: number;
+      justification: string;
+    }[];
+    refused: { rule: string; requested: number; floor: number; reason: string }[];
+  };
+  initial_verdict: Record<string, unknown> | null;
+  rounds: Record<string, unknown>[];
+  pruned_traces: number;
+  pruned_vias: number;
+  connectivity: { on_arrival: number; on_completion: number };
+  accepted_rules: string[];
+  delta: {
+    rules: {
+      rule: string;
+      baseline: number;
+      final_count: number;
+      route_attributable: number;
+      mode: string;
+      route_fixable: boolean;
+      accepted: boolean;
+    }[];
+    baseline_total: number;
+    final_total: number;
+    route_attributable_total: number;
+    route_attributable_fixable: number;
+    route_attributable_accepted: number;
+    offenders: {
+      rule: string;
+      severity: string;
+      position: [number, number];
+      message: string;
+      required: number;
+      nets: string[];
+    }[];
+  };
+  board: Record<string, number>;
+}
+
+/**
+ * Run the whole fab-preparation pipeline and return the fixed board plus its
+ * DRC-delta receipt.
+ *
+ * Same three-state contract as {@link tryRunDrc}: a kernel that cannot parse the
+ * board reports `error`, never a converged run. The caller writes the returned
+ * board back to the session only on `ok` — and ships it only when
+ * `report.converged`.
+ */
+export async function runFabPrep(
+  pcb: Pcb,
+  options?: FabPrepOptions,
+): Promise<EcadProbe<{ report: FabPrepReport; pcb: Pcb }>> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) {
+    return { ok: false, reason: "unavailable", message: "ECAD kernel WASM not loaded" };
+  }
+  if (typeof wasm.ecadFabPrep !== "function") {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "kernel WASM predates ecadFabPrep",
+    };
+  }
+  try {
+    const out = wasm.ecadFabPrep(
+      JSON.stringify(pcb),
+      options ? JSON.stringify(options) : undefined,
+    ) as { report: FabPrepReport; pcb: Pcb };
+    return { ok: true, value: out };
+  } catch (e) {
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // PCB Design-for-Manufacturing (fab-profile capability checks)
 // ---------------------------------------------------------------------------
 

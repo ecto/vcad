@@ -183,6 +183,7 @@ export {
   runPcbDfm,
   getPcbDfmPack,
   tryRunDrc,
+  runFabPrep,
   critiqueRoute,
   netContinuity,
   runErc,
@@ -231,6 +232,8 @@ export type { DesignSolveReport, ConstraintGroupReport } from "./ecad.js";
 export type {
   EcadProbe,
   DrcViolationResult,
+  FabPrepOptions,
+  FabPrepReport,
   PcbFabProfile,
   PcbDfmSeverity,
   PcbDfmLocation,

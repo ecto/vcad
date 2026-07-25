@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 mod app;
 mod chat_session;
+mod fabprep;
 mod input;
 mod keybinding_adapter;
 mod log_capture;
@@ -179,6 +180,61 @@ enum Commands {
     Info {
         /// Path to the .vcad file
         file: PathBuf,
+    },
+
+    /// Take a routed .pcb.json to a complete fab package plus a DRC-delta receipt
+    ///
+    /// Runs the whole fab-prep pipeline in one command: (optionally) calibrate
+    /// the board's design rules from its own declared via classes, route or
+    /// certify the remaining connections, then loop — census the violations the
+    /// routing is answerable for, strip their nets, re-route through the
+    /// session-probed ladder — until that number reaches zero. Prunes dangling
+    /// copper, then exports Gerbers, drill, KiCad board, BOM and pick-and-place.
+    ///
+    /// The receipt reports route-attributable violations against the SAME board
+    /// stripped of all routing, because absolute zero is not achievable on an
+    /// imported fixture. If the loop does not converge, the offenders are
+    /// reported, no fabrication files are written, and the exit code is 1.
+    FabPrep {
+        /// Routed board (.pcb.json)
+        input: PathBuf,
+        /// Output directory (default: <input>-fab next to the input)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Derive and apply design-rule calibration from the board's own
+        /// declared via classes and pre-existing holes. OFF by default:
+        /// silently relaxing DRC rules to make a board pass is a footgun.
+        /// Every change is logged with its derivation in the receipt.
+        #[arg(long)]
+        calibrate_rules: bool,
+        /// Skip the opening verdict pass (take the board as fully routed)
+        #[arg(long)]
+        skip_routing: bool,
+        /// Keep copper that reaches no pad or pour of its net
+        #[arg(long)]
+        skip_prune: bool,
+        /// Skip the board SVG (the slowest optional artifact on a dense board)
+        #[arg(long)]
+        skip_svg: bool,
+        /// Maximum strip-and-re-route rounds
+        #[arg(long, default_value = "8")]
+        max_rounds: usize,
+        /// Per-cluster search budget (node expansions) for the complete router
+        #[arg(long, default_value = "5000000")]
+        budget: usize,
+        /// Maximum connections coalesced into one joint search window
+        #[arg(long, default_value = "6")]
+        max_cluster: usize,
+        /// Write the receipt and board only — never fabrication files
+        #[arg(long)]
+        report_only: bool,
+        /// Accept a DRC rule's route-attributable violations instead of fixing
+        /// them (repeatable, e.g. --accept MinTraceWidth). The violations are
+        /// still counted and listed in the receipt and the waiver is named in
+        /// FAB_NOTES.md — it stops blocking the verdict, it does not hide
+        /// anything. An unrecognised rule name refuses the run.
+        #[arg(long = "accept", value_name = "RULE")]
+        accept: Vec<String>,
     },
 
     /// Run a physics simulation on a robot assembly (.vcad or .urdf)
@@ -354,6 +410,39 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::FabPrep {
+            input,
+            output,
+            calibrate_rules,
+            skip_routing,
+            skip_prune,
+            skip_svg,
+            max_rounds,
+            budget,
+            max_cluster,
+            report_only,
+            accept,
+        }) => {
+            let output = output.unwrap_or_else(|| fabprep::default_output_dir(&input));
+            let converged = fabprep::run(&fabprep::FabPrepArgs {
+                input,
+                output,
+                calibrate_rules,
+                skip_routing,
+                skip_prune,
+                skip_svg,
+                max_rounds,
+                budget,
+                max_cluster,
+                report_only,
+                accept,
+            })?;
+            // Fail closed: a board that did not converge must not look like a
+            // successful run to a script or a CI step.
+            if !converged {
+                std::process::exit(1);
+            }
         }
         Some(Commands::Simulate {
             input,

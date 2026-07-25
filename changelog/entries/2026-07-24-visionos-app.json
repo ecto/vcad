@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-24-visionos-app",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "feat",
+  "title": "vcad for Apple Vision Pro",
+  "summary": "The full native editor ported to visionOS: documents float in a volume with the feature tree, inspector, tool palette, and AI composer around them.",
+  "features": ["native", "visionos", "assembly", "patterns"]
+}

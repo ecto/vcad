@@ -78,7 +78,7 @@
 //! search (it ignores which net must pair with which terminal), so it can
 //! only fire on genuinely infeasible instances.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use vcad_ir::ecad::PcbLayer;
 use vcad_ir::Vec2;
@@ -86,9 +86,78 @@ use vcad_ir::Vec2;
 use crate::session::RouteSession;
 use crate::spatial::CopperGeom;
 
-/// Hard cap on grid cells per axis; the pitch coarsens to fit. Keeps the
+/// Default cap on grid cells per axis; the pitch coarsens to fit. Keeps the
 /// state space honest (≤ 48×48×4 ≈ 9.2k nodes).
-const MAX_AXIS_CELLS: usize = 48;
+pub const MAX_AXIS_CELLS: usize = 48;
+
+/// Which copper layers a connection's two terminals may attach on — normally
+/// the layers each terminal's pad actually exists on.
+///
+/// Without this the search takes the first layer whose cell happens to be free,
+/// which on a ten-layer board is usually *not* the pad's layer: the emitted stub
+/// then floats on an inner layer with nothing joining it to the pad, and the
+/// board grows a net island instead of a connection. Empty means unconstrained
+/// (the whole searched stack).
+#[derive(Debug, Clone, Default)]
+pub struct TerminalLayers {
+    /// Layers the `from` terminal may attach on.
+    pub from: Vec<PcbLayer>,
+    /// Layers the `to` terminal may attach on.
+    pub to: Vec<PcbLayer>,
+}
+
+/// The via the caller will actually commit for a layer change.
+///
+/// Supplying it makes the router's legality model identical to the caller's
+/// commit rule instead of merely similar: the barrel is probed at its real pad
+/// size, the drill is checked against the board's hole-to-hole rule (which no
+/// layer-scoped copper probe can see), and the grid pitch is floored so two
+/// vias of one routing can never land closer than that rule allows. Without it
+/// the router falls back to a pad-size heuristic and leaves drills to the
+/// caller — which is where a "routed" path can still fail a fail-closed commit.
+#[derive(Debug, Clone, Copy)]
+pub struct ViaClass {
+    /// Via pad (annulus) diameter, mm.
+    pub pad_diameter: f64,
+    /// Drilled hole diameter, mm.
+    pub drill: f64,
+}
+
+/// Search resources the caller may raise without weakening the decision
+/// procedure: the DFS expansion budget and the grid's cells-per-axis cap.
+///
+/// The two are coupled on purpose. A wide window at a fixed cell cap coarsens
+/// the pitch until unrelated terminals collide in one cell and free channels
+/// vanish — the discretization, not the copper, then decides the verdict.
+/// Raising [`Self::max_axis_cells`] alongside the window keeps the pitch at its
+/// `(width + separation)` floor, so the answer stays about the board.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowBudget {
+    /// Maximum DFS node expansions before the search reports "unknown".
+    pub expansions: usize,
+    /// Cap on grid cells per axis. The pitch never goes *below* the
+    /// `width + separation` floor, so a generous cap simply stops the pitch
+    /// from coarsening on a large window.
+    pub max_axis_cells: usize,
+}
+
+impl WindowBudget {
+    /// `expansions` at the default cell cap.
+    pub fn new(expansions: usize) -> Self {
+        Self {
+            expansions,
+            max_axis_cells: MAX_AXIS_CELLS,
+        }
+    }
+
+    /// Same budget with a raised cells-per-axis cap.
+    pub fn with_max_axis_cells(self, max_axis_cells: usize) -> Self {
+        Self {
+            max_axis_cells,
+            ..self
+        }
+    }
+}
 
 /// Outcome of the complete window router.
 #[derive(Debug, Clone)]
@@ -129,6 +198,45 @@ pub fn route_window_complete(
     width: f64,
     budget: usize,
 ) -> CompleteOutcome {
+    route_window_complete_with(
+        session,
+        window,
+        layers,
+        conns,
+        width,
+        WindowBudget::new(budget),
+    )
+}
+
+/// [`route_window_complete`] with explicit search resources — see
+/// [`WindowBudget`].
+pub fn route_window_complete_with(
+    session: &RouteSession,
+    window: (Vec2, Vec2),
+    layers: &[PcbLayer],
+    conns: &[(String, Vec2, Vec2)],
+    width: f64,
+    limits: WindowBudget,
+) -> CompleteOutcome {
+    route_window_complete_pinned(session, window, layers, conns, &[], width, None, limits)
+}
+
+/// [`route_window_complete_with`], with each connection's terminals pinned to
+/// the layers they may attach on (see [`TerminalLayers`]) and the caller's real
+/// via geometry (see [`ViaClass`]). A shorter `terminals` slice than `conns`
+/// leaves the remaining connections unconstrained.
+#[allow(clippy::too_many_arguments)]
+pub fn route_window_complete_pinned(
+    session: &RouteSession,
+    window: (Vec2, Vec2),
+    layers: &[PcbLayer],
+    conns: &[(String, Vec2, Vec2)],
+    terminals: &[TerminalLayers],
+    width: f64,
+    via: Option<ViaClass>,
+    limits: WindowBudget,
+) -> CompleteOutcome {
+    let budget = limits.expansions;
     if conns.is_empty() {
         return CompleteOutcome::Routed(Vec::new());
     }
@@ -143,16 +251,48 @@ pub fn route_window_complete(
         .map(|(n, _, _)| session.clearance_for(n))
         .collect();
     let max_clearance = clearances.iter().cloned().fold(0.0_f64, f64::max);
-    let grid = WinGrid::new(window, width, max_clearance);
+    // Pair-aware pitch. Node disjointness is only a *sufficient* legality rule
+    // when one pitch of separation satisfies every rule that can apply between
+    // two paths — and between the two legs of a declared differential pair the
+    // probe demands the intra-pair GAP, which routinely exceeds the base
+    // clearance. Two twins in one window at clearance pitch route uncoupled and
+    // then fail the oracle (the fail-closed probe the caller commits through),
+    // which shows up as an honest-but-avoidable unknown. Spacing the grid by the
+    // widest gap among the window's twin pairs restores "distinct cells ⇒
+    // mutually legal" for pairs, exactly as it already holds for singles.
+    let mut separation = max_clearance;
+    for (i, (a, _, _)) in conns.iter().enumerate() {
+        for (b, _, _) in conns.iter().skip(i + 1) {
+            if let Some(gap) = session.pair_gap_between(a, b) {
+                separation = separation.max(gap);
+            }
+        }
+    }
+    // Second pitch floor: two vias one cell apart must satisfy the board's
+    // hole-to-hole rule, or a routing this model calls legal lands drill
+    // collisions the moment it is committed.
+    let drill_floor = via.map_or(0.0, |v| v.drill + session.hole_to_hole());
+    let grid = WinGrid::new(
+        window,
+        width,
+        separation,
+        drill_floor,
+        limits.max_axis_cells,
+    );
     let plane = grid.nx * grid.ny;
     let nl = layers.len();
     let n_nodes = plane * nl;
     let half_w = width / 2.0;
-    // Via legality is probed as a disc covering the real microvia pad (the
-    // largest via class this router ever realizes is the adjacent-layer
-    // microvia) on both spanned layers. Probing smaller than the committed
-    // pad let verdict copper pass here and fail board DRC by the difference.
-    let via_r = (width * 1.5).max(0.11);
+    // Via legality is probed as a disc covering the real committed pad on every
+    // spanned layer. Probing smaller than the committed pad let verdict copper
+    // pass here and fail board DRC by the difference.
+    let via_r = (width * 1.5)
+        .max(0.11)
+        .max(via.map_or(0.0, |v| v.pad_diameter / 2.0));
+    let via_drill = via.map(|v| v.drill);
+    // Every layer change the router emits must also clear existing *holes*.
+    let barrel_ok =
+        |center: Vec2| -> bool { via_drill.is_none_or(|d| session.probe_drill(center, d).legal) };
 
     // --- Free-node raster (fixed copper only) ----------------------------
     // A node is free iff a zero-length capsule (trace centre) at the cell
@@ -184,35 +324,137 @@ pub fn route_window_complete(
     // determinism; the connector from the exact endpoint to the cell centre
     // must itself probe legal.
     let mut terms: Vec<(usize, usize)> = Vec::with_capacity(conns.len()); // (src node, dst node)
+    /// Per-connection escape layers: `Some(pad layer)` when that terminal
+    /// reaches the grid through a stub-plus-via dog-bone rather than landing on
+    /// the pad's own layer.
+    type Escape = (Option<PcbLayer>, Option<PcbLayer>);
+    let mut escapes: Vec<Escape> = Vec::with_capacity(conns.len());
     for (ci, (net, from, to)) in conns.iter().enumerate() {
         let clr = clearances[ci];
-        let attach = |p: Vec2| -> Option<usize> {
-            let cell = grid.snap(p);
-            let c = grid.world(cell);
-            (0..nl).find_map(|li| {
-                let node = li * plane + cell;
-                let conn_ok = session
-                    .probe(
-                        &CopperGeom::Segment { a: p, b: c, half_w },
-                        layers[li],
-                        net,
-                        clr,
-                    )
-                    .legal;
-                (free[node] && conn_ok).then_some(node)
+        let pinned = terminals.get(ci);
+        // Attachment candidates: cells in rings around the snapped one, nearest
+        // first. A pad on a fine-pitch part often has its own nearest cell
+        // centre buried in a neighbour's clearance while a cell one step out is
+        // free; since the pad-to-cell connector is probed exactly either way,
+        // reaching for that cell is not a cheat — and it is what lets the stub
+        // stay on the pad's own layer instead of surfacing on an inner one with
+        // nothing joining it to the pad.
+        // Reach measured in millimetres, not cells: a dog-bone escape lands
+        // within about a millimetre of its pad whatever the pitch happens to be.
+        let attach_ring = ((1.0 / grid.pitch).ceil() as i64).clamp(2, 4);
+        let attach = |p: Vec2, allowed: &[PcbLayer]| -> Option<(usize, Option<PcbLayer>)> {
+            let base = grid.snap(p);
+            let (bx, by) = ((base % grid.nx) as i64, (base / grid.nx) as i64);
+            let mut cands: Vec<(i64, usize)> = Vec::new();
+            for dy in -attach_ring..=attach_ring {
+                for dx in -attach_ring..=attach_ring {
+                    let (x, y) = (bx + dx, by + dy);
+                    if x < 0 || y < 0 || x >= grid.nx as i64 || y >= grid.ny as i64 {
+                        continue;
+                    }
+                    cands.push((dx * dx + dy * dy, y as usize * grid.nx + x as usize));
+                }
+            }
+            cands.sort_unstable();
+            let stub_ok = |p: Vec2, c: Vec2, layer: PcbLayer| {
+                session
+                    .probe(&CopperGeom::Segment { a: p, b: c, half_w }, layer, net, clr)
+                    .legal
+            };
+            // First choice: land directly on a layer the pad is on. Nothing to
+            // join, nothing to drill.
+            let direct = cands.iter().find_map(|&(_, cell)| {
+                let c = grid.world(cell);
+                (0..nl)
+                    .filter(|&li| allowed.is_empty() || allowed.contains(&layers[li]))
+                    .find_map(|li| {
+                        (free[li * plane + cell] && stub_ok(p, c, layers[li]))
+                            .then_some((li * plane + cell, None))
+                    })
+            });
+            if direct.is_some() || allowed.is_empty() {
+                return direct;
+            }
+            // Otherwise escape like a real router does: a stub on the pad's own
+            // layer to a nearby cell, then a via down to the layer the search
+            // wants. The whole barrel is probed — pad copper on every layer it
+            // spans plus the hole-to-hole rule — so the escape is legal by the
+            // same oracle that will judge the committed board, not by assumption.
+            cands.iter().find_map(|&(_, cell)| {
+                let c = grid.world(cell);
+                if dist(p, c) < 1e-6 {
+                    // Pad centre on the cell centre leaves no stub to carry the
+                    // layer change; take another cell.
+                    return None;
+                }
+                let pad_li = (0..nl).find(|&li| allowed.contains(&layers[li]))?;
+                if !stub_ok(p, c, layers[pad_li]) || !barrel_ok(c) {
+                    return None;
+                }
+                (0..nl).find_map(|li| {
+                    if li == pad_li || !free[li * plane + cell] {
+                        return None;
+                    }
+                    let span = if li < pad_li {
+                        li..=pad_li
+                    } else {
+                        pad_li..=li
+                    };
+                    let barrel = CopperGeom::Disc {
+                        center: c,
+                        r: via_r,
+                    };
+                    span.clone()
+                        .all(|s| session.probe(&barrel, layers[s], net, clr).legal)
+                        .then_some((li * plane + cell, Some(layers[pad_li])))
+                })
             })
         };
-        match (attach(*from), attach(*to)) {
-            (Some(s), Some(t)) => terms.push((s, t)),
-            _ => {
+        let (from_pins, to_pins) = pinned
+            .map(|t| (t.from.as_slice(), t.to.as_slice()))
+            .unwrap_or((&[], &[]));
+        match (attach(*from, from_pins), attach(*to, to_pins)) {
+            (Some((s, se)), Some((t, te))) => {
+                terms.push((s, t));
+                escapes.push((se, te));
+            }
+            (s, _) => {
+                // Name the copper that walls the pad in: the cut here is the
+                // ring of blockers around the terminal itself.
+                let stuck = if s.is_none() { *from } else { *to };
+                let pins = if s.is_none() { from_pins } else { to_pins };
+                let on = if pins.is_empty() {
+                    format!("all {nl} copper layers")
+                } else {
+                    format!("its {} pad layer(s) {pins:?}", pins.len())
+                };
+                let census = blocking_nets(
+                    session,
+                    &CopperGeom::Segment {
+                        a: stuck,
+                        b: grid.world(grid.snap(stuck)),
+                        half_w,
+                    },
+                    layers,
+                    net,
+                    clr,
+                );
                 return CompleteOutcome::ProvedInfeasible {
                     reason: format!(
                         "terminal of net {net} at ({:.2}, {:.2})/({:.2}, {:.2}) has no \
-                         clearance-legal grid attachment on any layer — the pad is walled \
-                         in at the current rules and grid pitch {:.3} mm",
-                        from.x, from.y, to.x, to.y, grid.pitch
+                         clearance-legal grid attachment — the pad at ({:.2}, {:.2}) is \
+                         walled in on {on} by {} at the current rules and grid pitch \
+                         {:.3} mm",
+                        from.x,
+                        from.y,
+                        to.x,
+                        to.y,
+                        stuck.x,
+                        stuck.y,
+                        name_census(&census),
+                        grid.pitch
                     ),
-                }
+                };
             }
         }
     }
@@ -220,16 +462,19 @@ pub fn route_window_complete(
     // node-disjoint — a genuine infeasibility at this pitch. Two connections
     // of the SAME net sharing a cell is not: same-net copper may legally
     // share space, but this model's per-connection node-disjointness can't
-    // express that, so the honest answer is unknown, never a proof.
+    // express that, so the honest answer is unknown, never a proof. A single
+    // connection whose OWN two terminals snap into one cell is neither: it is
+    // simply shorter than the pitch, and its path is that one node.
     {
-        let mut seen: HashMap<usize, &str> = HashMap::new();
+        let mut seen: HashMap<usize, (&str, usize)> = HashMap::new();
         for (ci, &(s, t)) in terms.iter().enumerate() {
             for node in [s, t] {
                 match seen.get(&node) {
                     None => {
-                        seen.insert(node, conns[ci].0.as_str());
+                        seen.insert(node, (conns[ci].0.as_str(), ci));
                     }
-                    Some(&other) if other != conns[ci].0 => {
+                    Some(&(_, cj)) if cj == ci => {}
+                    Some(&(other, _)) if other != conns[ci].0 => {
                         return CompleteOutcome::ProvedInfeasible {
                             reason: format!(
                                 "terminals of nets {} and {other} collide in the same \
@@ -244,6 +489,32 @@ pub fn route_window_complete(
             }
         }
     }
+    // An escape barrel occupies its cell on every layer it spans, so those
+    // nodes are no longer free for anyone. Terminal nodes are exempt: they are
+    // already reserved one-per-connection by node disjointness, and blanking
+    // one here would make its own connection unroutable.
+    {
+        let terminal: HashSet<usize> = terms.iter().flat_map(|&(s, t)| [s, t]).collect();
+        for (ci, &(se, te)) in escapes.iter().enumerate() {
+            for (escape, node) in [(se, terms[ci].0), (te, terms[ci].1)] {
+                let Some(pad_layer) = escape else { continue };
+                let (cell, attach_li) = (node % plane, node / plane);
+                let pad_li = layers.iter().position(|l| *l == pad_layer).unwrap_or(0);
+                let span = if attach_li < pad_li {
+                    attach_li..=pad_li
+                } else {
+                    pad_li..=attach_li
+                };
+                for li in span {
+                    let barrel_node = li * plane + cell;
+                    if !terminal.contains(&barrel_node) {
+                        free[barrel_node] = false;
+                    }
+                }
+            }
+        }
+    }
+    let free = free;
 
     // --- Edge legality (lazy, memoized) ----------------------------------
     let mut edge_memo: HashMap<u64, bool> = HashMap::new();
@@ -274,14 +545,15 @@ pub fn route_window_complete(
         } else {
             // Via edge: disc on both spanned (adjacent) layers.
             debug_assert_eq!(ca, cb);
-            let center = grid.world(ca);
-            let disc = CopperGeom::Disc { center, r: via_r };
-            conns.iter().zip(&clearances).all(|((net, _, _), &clr)| {
-                // Drill barrels ignore layer spans — check the hole rule too.
-                session.probe_via_hole(center, net).legal
-                    && session.probe(&disc, layers[la], net, clr).legal
-                    && session.probe(&disc, layers[lb], net, clr).legal
-            })
+            let disc = CopperGeom::Disc {
+                center: grid.world(ca),
+                r: via_r,
+            };
+            barrel_ok(grid.world(ca))
+                && conns.iter().zip(&clearances).all(|((net, _, _), &clr)| {
+                    session.probe(&disc, layers[la], net, clr).legal
+                        && session.probe(&disc, layers[lb], net, clr).legal
+                })
         };
         edge_memo.insert(key, ok);
         ok
@@ -312,6 +584,58 @@ pub fn route_window_complete(
         }
         out
     };
+
+    // --- One connection: reachability decides it exactly ------------------
+    // With k = 1 there is nothing to be node-disjoint *from*, so "a joint
+    // routing exists" collapses to s–t reachability over the free graph. BFS
+    // settles that in O(E): either a shortest path (fewest cells, hence least
+    // copper) or an exhausted reachable component, which *is* the proof. No
+    // budget can trip, so a lone connection never comes back unknown — the
+    // exhaustive DFS is only ever needed to decide genuinely joint instances.
+    if conns.len() == 1 {
+        let (s, t) = terms[0];
+        let empty = BitSet::new(n_nodes);
+        return match bfs_path(s, t, &free, &empty, &neighbors, &mut edge_ok) {
+            Ok(path) => CompleteOutcome::Routed(vec![emit_segments(
+                &grid, plane, layers, conns[0].1, conns[0].2, escapes[0], &path,
+            )]),
+            Err(reached_from) => {
+                // Report the tighter pocket. The graph is undirected, so either
+                // terminal's reachable component certifies the severance; the
+                // one enclosed by fewer nodes names a small, checkable cut
+                // instead of "everything but this corner".
+                let reached_to = bfs_path(t, usize::MAX, &free, &empty, &neighbors, &mut edge_ok)
+                    .err()
+                    .unwrap_or_default();
+                let live = |r: &Vec<bool>| r.iter().filter(|v| **v).count();
+                let (reached, from_side) =
+                    if live(&reached_to) > 0 && live(&reached_to) < live(&reached_from) {
+                        (reached_to, false)
+                    } else {
+                        (reached_from, true)
+                    };
+                CompleteOutcome::ProvedInfeasible {
+                    reason: severed_reason(
+                        session,
+                        &grid,
+                        &Topology {
+                            plane,
+                            layers,
+                            via_r,
+                            half_w,
+                        },
+                        &conns[0],
+                        clearances[0],
+                        &free,
+                        &reached,
+                        &neighbors,
+                        terms[0],
+                        from_side,
+                    ),
+                }
+            }
+        };
+    }
 
     // --- Max-flow necessary-condition pre-pass ---------------------------
     let (flow, cut_cells) = max_node_disjoint_flow(&free, plane, grid.nx, nl, &terms, &neighbors);
@@ -347,8 +671,83 @@ pub fn route_window_complete(
                 lo.y - grid.pitch / 2.0,
                 hi.y + grid.pitch / 2.0,
             ));
+        } else {
+            // Flow 0 with an empty min *vertex* cut means the terminals are
+            // outright severed: nothing is saturated, so the cut is the ring of
+            // blocked nodes enclosing the sources. Name it — a certificate that
+            // does not say where the wall is, or whose copper it is, is not
+            // much of a certificate.
+            let mut reached = vec![false; n_nodes];
+            for &(s, _) in &terms {
+                if !free[s] || reached[s] {
+                    continue;
+                }
+                if let Err(seen) = bfs_path(
+                    s,
+                    usize::MAX,
+                    &free,
+                    &BitSet::new(n_nodes),
+                    &neighbors,
+                    &mut edge_ok,
+                ) {
+                    for (v, r) in seen.iter().enumerate() {
+                        reached[v] |= *r;
+                    }
+                }
+            }
+            reason.push_str(&format!(
+                " ({})",
+                frontier_census(
+                    session,
+                    &grid,
+                    &Topology {
+                        plane,
+                        layers,
+                        via_r,
+                        half_w,
+                    },
+                    &conns[0].0,
+                    clearances[0],
+                    &free,
+                    &reached,
+                    &neighbors,
+                )
+            ));
         }
         return CompleteOutcome::ProvedInfeasible { reason };
+    }
+
+    // --- Cheap witness attempt: sequential shortest paths ------------------
+    // The DFS's first descent is a greedy *walk*, not a shortest path, so on a
+    // wide window it can wander for millions of expansions before its first
+    // completion — the dominant source of honest-but-avoidable unknowns. A few
+    // sequential BFS assignments (each net taking a shortest path through what
+    // the earlier nets left free) find the easy joint routings in milliseconds.
+    // Success is a witness: the paths are node-disjoint by construction, so it
+    // needs no proof. Failure proves nothing and falls through to the
+    // exhaustive search, so completeness is untouched.
+    for order in attempt_orders(&terms, grid.nx, plane) {
+        if let Some(paths) =
+            sequential_bfs(&order, &terms, &free, n_nodes, &neighbors, &mut edge_ok)
+        {
+            return CompleteOutcome::Routed(
+                paths
+                    .iter()
+                    .enumerate()
+                    .map(|(ci, path)| {
+                        emit_segments(
+                            &grid,
+                            plane,
+                            layers,
+                            conns[ci].1,
+                            conns[ci].2,
+                            escapes[ci],
+                            path,
+                        )
+                    })
+                    .collect(),
+            );
+        }
     }
 
     // --- Exhaustive backtracking DFS -------------------------------------
@@ -376,6 +775,7 @@ pub fn route_window_complete(
                     layers,
                     conns[ci].1,
                     conns[ci].2,
+                    escapes[ci],
                     path,
                 ));
             }
@@ -521,13 +921,24 @@ fn emit_segments(
     layers: &[PcbLayer],
     from: Vec2,
     to: Vec2,
+    escape: (Option<PcbLayer>, Option<PcbLayer>),
     path: &[usize],
 ) -> Vec<(Vec2, Vec2, PcbLayer)> {
     let mut segs: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
     if path.is_empty() {
         return segs;
     }
-    let mut run: Vec<Vec2> = vec![from];
+    // A dog-bone terminal contributes its stub on the pad's own layer; the
+    // layer change at the stub's far end is a via the caller materializes from
+    // the layer discontinuity, exactly as for a mid-path layer change.
+    let first_cell = grid.world(path[0] % plane);
+    let mut run: Vec<Vec2> = match escape.0 {
+        Some(pad_layer) => {
+            segs.push((from, first_cell, pad_layer));
+            vec![first_cell]
+        }
+        None => vec![from],
+    };
     let mut run_layer = path[0] / plane;
     let flush = |run: &mut Vec<Vec2>, layer: PcbLayer, segs: &mut Vec<(Vec2, Vec2, PcbLayer)>| {
         let pts = simplify(run);
@@ -555,11 +966,300 @@ fn emit_segments(
             run.push(w);
         }
     }
-    if run.last().map(|p| dist(*p, to) > 1e-9).unwrap_or(true) {
-        run.push(to);
+    match escape.1 {
+        Some(pad_layer) => {
+            let last_cell = grid.world(path[path.len() - 1] % plane);
+            flush(&mut run, layers[run_layer], &mut segs);
+            segs.push((last_cell, to, pad_layer));
+        }
+        None => {
+            if run.last().map(|p| dist(*p, to) > 1e-9).unwrap_or(true) {
+                run.push(to);
+            }
+            flush(&mut run, layers[run_layer], &mut segs);
+        }
     }
-    flush(&mut run, layers[run_layer], &mut segs);
     segs
+}
+
+/// The window discretization facts the path and certificate helpers share.
+struct Topology<'a> {
+    plane: usize,
+    layers: &'a [PcbLayer],
+    via_r: f64,
+    half_w: f64,
+}
+
+/// Shortest path (fewest nodes) from `start` to `goal` over free, unoccupied
+/// nodes joined by legal edges.
+///
+/// On failure the reachable set is returned — the exhausted component that *is*
+/// the infeasibility proof for a single connection. Passing `usize::MAX` as
+/// `goal` asks for that set outright.
+fn bfs_path(
+    start: usize,
+    goal: usize,
+    free: &[bool],
+    occ: &BitSet,
+    neighbors: &dyn Fn(usize) -> Vec<usize>,
+    edge_ok: &mut dyn FnMut(usize, usize) -> bool,
+) -> Result<Vec<usize>, Vec<bool>> {
+    let mut seen = vec![false; free.len()];
+    if !free[start] || occ.get(start) {
+        return Err(seen);
+    }
+    let mut prev = vec![usize::MAX; free.len()];
+    seen[start] = true;
+    let mut q = VecDeque::from([start]);
+    while let Some(u) = q.pop_front() {
+        if u == goal {
+            let mut path = vec![u];
+            let mut cur = u;
+            while cur != start {
+                cur = prev[cur];
+                path.push(cur);
+            }
+            path.reverse();
+            return Ok(path);
+        }
+        for nb in neighbors(u) {
+            if seen[nb] || !free[nb] || occ.get(nb) || !edge_ok(u, nb) {
+                continue;
+            }
+            seen[nb] = true;
+            prev[nb] = u;
+            q.push_back(nb);
+        }
+    }
+    Err(seen)
+}
+
+/// Route the connections in `order`, each taking a shortest path through the
+/// nodes its predecessors left free. Returns per-connection paths (indexed by
+/// connection, not by position in `order`) when every one succeeds — a
+/// node-disjoint joint routing by construction. `None` means only "this order
+/// did not work"; it is never evidence of infeasibility.
+fn sequential_bfs(
+    order: &[usize],
+    terms: &[(usize, usize)],
+    free: &[bool],
+    n_nodes: usize,
+    neighbors: &dyn Fn(usize) -> Vec<usize>,
+    edge_ok: &mut dyn FnMut(usize, usize) -> bool,
+) -> Option<Vec<Vec<usize>>> {
+    let mut occ = BitSet::new(n_nodes);
+    let mut paths = vec![Vec::new(); terms.len()];
+    for &i in order {
+        let (s, t) = terms[i];
+        if occ.get(t) {
+            return None;
+        }
+        let path = bfs_path(s, t, free, &occ, neighbors, edge_ok).ok()?;
+        for &node in &path {
+            occ.set(node);
+        }
+        paths[i] = path;
+    }
+    Some(paths)
+}
+
+/// Deterministic connection orders for the witness attempt: as given, longest
+/// terminal span first (the constrained nets pick their corridor before the
+/// short ones fill it), then shortest first.
+fn attempt_orders(terms: &[(usize, usize)], nx: usize, plane: usize) -> Vec<Vec<usize>> {
+    let span = |&(s, t): &(usize, usize)| {
+        let coords = |n: usize| ((n % plane) % nx, (n % plane) / nx, n / plane);
+        let (sx, sy, sl) = coords(s);
+        let (tx, ty, tl) = coords(t);
+        sx.abs_diff(tx) + sy.abs_diff(ty) + sl.abs_diff(tl)
+    };
+    let identity: Vec<usize> = (0..terms.len()).collect();
+    let mut longest = identity.clone();
+    longest.sort_by_key(|&i| (std::cmp::Reverse(span(&terms[i])), i));
+    let mut shortest = identity.clone();
+    shortest.sort_by_key(|&i| (span(&terms[i]), i));
+    let mut orders = vec![identity];
+    for order in [longest, shortest] {
+        if !orders.contains(&order) {
+            orders.push(order);
+        }
+    }
+    orders
+}
+
+/// Tally, per net, how many blockers stand between `geom` and legality on any
+/// of `layers`, for any of the candidate `nets` (net name, clearance).
+fn census_add(
+    census: &mut BTreeMap<String, usize>,
+    session: &RouteSession,
+    geom: &CopperGeom,
+    layers: &[PcbLayer],
+    nets: &[(&str, f64)],
+) {
+    for &layer in layers {
+        for &(net, clearance) in nets {
+            for blocker in session.probe(geom, layer, net, clearance).blockers {
+                *census.entry(blocker.net).or_default() += 1;
+            }
+        }
+    }
+}
+
+/// Nets whose copper blocks `geom`, as a census.
+fn blocking_nets(
+    session: &RouteSession,
+    geom: &CopperGeom,
+    layers: &[PcbLayer],
+    net: &str,
+    clearance: f64,
+) -> BTreeMap<String, usize> {
+    let mut census = BTreeMap::new();
+    census_add(&mut census, session, geom, layers, &[(net, clearance)]);
+    census
+}
+
+/// The heaviest few blockers, named: `"GND (61), /VDD_5V (4)"`.
+fn name_census(census: &BTreeMap<String, usize>) -> String {
+    if census.is_empty() {
+        return "copper the window's union-legality raster rejects for a sibling net".into();
+    }
+    let mut ranked: Vec<(&String, &usize)> = census.iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    ranked
+        .iter()
+        .take(3)
+        .map(|(net, n)| {
+            let named = if net.is_empty() { "<no net>" } else { net };
+            format!("{named} ({n})")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Describe the ring of blocked nodes that encloses `reached` — the vertex cut
+/// the search ran into — by size, extent, and the copper that forms it.
+#[allow(clippy::too_many_arguments)]
+fn frontier_census(
+    session: &RouteSession,
+    grid: &WinGrid,
+    topo: &Topology,
+    net: &str,
+    clearance: f64,
+    free: &[bool],
+    reached: &[bool],
+    neighbors: &dyn Fn(usize) -> Vec<usize>,
+) -> String {
+    let mut cut: Vec<usize> = Vec::new();
+    let mut census: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut lo, mut hi) = (
+        Vec2::new(f64::INFINITY, f64::INFINITY),
+        Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+    );
+    for (v, _) in reached.iter().enumerate().filter(|(_, r)| **r) {
+        for nb in neighbors(v) {
+            if reached[nb] {
+                continue;
+            }
+            cut.push(nb);
+            let p = grid.world(nb % topo.plane);
+            lo.x = lo.x.min(p.x);
+            lo.y = lo.y.min(p.y);
+            hi.x = hi.x.max(p.x);
+            hi.y = hi.y.max(p.y);
+            // The copper that forbids this step: the swept trace for an
+            // in-plane move, the via pad for a layer change.
+            let (la, ca) = (v / topo.plane, v % topo.plane);
+            let (lb, cb) = (nb / topo.plane, nb % topo.plane);
+            if la == lb {
+                let geom = CopperGeom::Segment {
+                    a: grid.world(ca),
+                    b: grid.world(cb),
+                    half_w: topo.half_w,
+                };
+                census_add(
+                    &mut census,
+                    session,
+                    &geom,
+                    &[topo.layers[la]],
+                    &[(net, clearance)],
+                );
+            } else {
+                let geom = CopperGeom::Disc {
+                    center: grid.world(ca),
+                    r: topo.via_r,
+                };
+                census_add(
+                    &mut census,
+                    session,
+                    &geom,
+                    &[topo.layers[la], topo.layers[lb]],
+                    &[(net, clearance)],
+                );
+            }
+        }
+    }
+    cut.sort_unstable();
+    cut.dedup();
+    if cut.is_empty() {
+        return format!(
+            "the {} free node{} it can reach have no blocked neighbour at all: the window \
+             itself is too small to leave the terminal's pocket",
+            free.iter().filter(|f| **f).count(),
+            if free.len() == 1 { "" } else { "s" }
+        );
+    }
+    format!(
+        "the enclosing cut is {} blocked node{} spanning x={:.2}..{:.2}, y={:.2}..{:.2}, held \
+         by {}",
+        cut.len(),
+        if cut.len() == 1 { "" } else { "s" },
+        lo.x - grid.pitch / 2.0,
+        hi.x + grid.pitch / 2.0,
+        lo.y - grid.pitch / 2.0,
+        hi.y + grid.pitch / 2.0,
+        name_census(&census),
+    )
+}
+
+/// Certificate for a lone connection whose terminals are severed on the
+/// canonical grid: what was exhausted, and which copper closed the door.
+#[allow(clippy::too_many_arguments)]
+fn severed_reason(
+    session: &RouteSession,
+    grid: &WinGrid,
+    topo: &Topology,
+    conn: &(String, Vec2, Vec2),
+    clearance: f64,
+    free: &[bool],
+    reached: &[bool],
+    neighbors: &dyn Fn(usize) -> Vec<usize>,
+    terms: (usize, usize),
+    from_side: bool,
+) -> String {
+    let (net, from, to) = conn;
+    let n_free = free.iter().filter(|f| **f).count();
+    let n_reached = reached.iter().filter(|r| **r).count();
+    let (searched, other, other_node) = if from_side {
+        (from, to, terms.1)
+    } else {
+        (to, from, terms.0)
+    };
+    format!(
+        "net {net} is severed inside the window: breadth-first search from its \
+         {} terminal at ({:.2}, {:.2}) exhausted every reachable node — {n_reached} of the \
+         {n_free} clearance-free (cell, layer) nodes on the {}-layer stack — without touching \
+         the other terminal at ({:.2}, {:.2}) (layer {:?}); {}. With k = 1 reachability is \
+         exact, so no path exists on the canonical grid at pitch {:.3} mm",
+        if from_side { "from" } else { "to" },
+        searched.x,
+        searched.y,
+        topo.layers.len(),
+        other.x,
+        other.y,
+        topo.layers[other_node / topo.plane],
+        frontier_census(session, grid, topo, net, clearance, free, reached, neighbors),
+        grid.pitch,
+    )
 }
 
 /// Max number of pairwise node-disjoint source→target paths through the free
@@ -732,17 +1432,26 @@ struct WinGrid {
 }
 
 impl WinGrid {
-    fn new(window: (Vec2, Vec2), width: f64, clearance: f64) -> Self {
+    fn new(
+        window: (Vec2, Vec2),
+        width: f64,
+        separation: f64,
+        drill_floor: f64,
+        max_axis_cells: usize,
+    ) -> Self {
         let (lo, hi) = window;
         let span_x = (hi.x - lo.x).max(1e-3);
         let span_y = (hi.y - lo.y).max(1e-3);
-        // 6% over the exact width+clearance floor: node-disjoint paths in
-        // adjacent columns sit at pitch - width — exactly the clearance at
+        // 6% over the exact width+separation floor: node-disjoint paths in
+        // adjacent columns sit at pitch - width — exactly the separation at
         // the floor, which board DRC then fails on floating-point margins.
-        let mut pitch = ((width + clearance) * 1.06).max(0.02);
+        let mut pitch = ((width + separation) * 1.06)
+            .max(0.02)
+            .max(drill_floor * 1.02);
+        let cap = max_axis_cells.max(2) as f64;
         let need = (span_x / pitch).max(span_y / pitch);
-        if need > MAX_AXIS_CELLS as f64 {
-            pitch = (span_x / MAX_AXIS_CELLS as f64).max(span_y / MAX_AXIS_CELLS as f64);
+        if need > cap {
+            pitch = (span_x / cap).max(span_y / cap);
         }
         let nx = (span_x / pitch).ceil() as usize + 1;
         let ny = (span_y / pitch).ceil() as usize + 1;
@@ -1030,11 +1739,101 @@ mod tests {
         assert_probe_legal(&session, &conns, &routed, 0.25);
     }
 
+    /// A lone connection is decided by reachability, which no budget can
+    /// interrupt: budget 1 must still answer, and answer definitively.
     #[test]
-    fn tiny_budget_reports_unknown_never_infeasible() {
-        // Same (feasible) instance as the crossing test: with budget=1 the
-        // flow pre-pass passes, the DFS trips immediately, and the honest
-        // answer is BudgetExhausted — never a fake infeasibility proof.
+    fn one_connection_is_never_unknown() {
+        let pcb = board(vec![], &[PcbLayer::FCu, PcbLayer::BCu]);
+        let session = RouteSession::from_pcb(&pcb);
+        let conns = vec![(
+            "A".to_string(),
+            Vec2::new(12.0, 12.0),
+            Vec2::new(28.0, 28.0),
+        )];
+        let r = route_window_complete(&session, WINDOW, &[PcbLayer::FCu], &conns, 0.25, 1);
+        let CompleteOutcome::Routed(routed) = r else {
+            panic!("a reachable lone connection must route at any budget, got {r:?}");
+        };
+        assert_connected(&conns, &routed);
+        assert_probe_legal(&session, &conns, &routed, 0.25);
+    }
+
+    /// A lone connection walled off by foreign copper is *proved* infeasible —
+    /// never unknown — and the certificate names the cut it ran into.
+    #[test]
+    fn one_severed_connection_is_proved_with_a_named_cut() {
+        // A closed box of foreign copper around the source terminal.
+        let boxed = vec![
+            trace("GND", Vec2::new(11.0, 11.0), Vec2::new(13.0, 11.0)),
+            trace("GND", Vec2::new(13.0, 11.0), Vec2::new(13.0, 13.0)),
+            trace("GND", Vec2::new(13.0, 13.0), Vec2::new(11.0, 13.0)),
+            trace("GND", Vec2::new(11.0, 13.0), Vec2::new(11.0, 11.0)),
+        ];
+        let pcb = board(boxed, &[PcbLayer::FCu]);
+        let session = RouteSession::from_pcb(&pcb);
+        let conns = vec![(
+            "A".to_string(),
+            Vec2::new(12.0, 12.0),
+            Vec2::new(28.0, 28.0),
+        )];
+        let r = route_window_complete(&session, WINDOW, &[PcbLayer::FCu], &conns, 0.25, 2_000_000);
+        let CompleteOutcome::ProvedInfeasible { reason } = r else {
+            panic!("a boxed-in terminal must be proved infeasible, got {r:?}");
+        };
+        assert!(
+            reason.contains("GND"),
+            "certificate must name the copper forming the cut: {reason}"
+        );
+    }
+
+    /// Terminals pinned to a layer must attach there — a path that surfaces on
+    /// another layer would be electrically dangling.
+    #[test]
+    fn pinned_terminals_attach_on_their_own_layer() {
+        let pcb = board(vec![], &[PcbLayer::FCu, PcbLayer::BCu]);
+        let session = RouteSession::from_pcb(&pcb);
+        let conns = vec![(
+            "A".to_string(),
+            Vec2::new(12.0, 12.0),
+            Vec2::new(28.0, 28.0),
+        )];
+        let pins = vec![TerminalLayers {
+            from: vec![PcbLayer::BCu],
+            to: vec![PcbLayer::BCu],
+        }];
+        let r = route_window_complete_pinned(
+            &session,
+            WINDOW,
+            &[PcbLayer::FCu, PcbLayer::BCu],
+            &conns,
+            &pins,
+            0.25,
+            None,
+            WindowBudget::new(2_000_000),
+        );
+        let CompleteOutcome::Routed(routed) = r else {
+            panic!("an empty board must route a pinned connection, got {r:?}");
+        };
+        assert_connected(&conns, &routed);
+        assert_eq!(
+            routed[0].first().map(|s| s.2),
+            Some(PcbLayer::BCu),
+            "the first segment must leave the pad on the pinned layer"
+        );
+        assert_eq!(
+            routed[0].last().map(|s| s.2),
+            Some(PcbLayer::BCu),
+            "the last segment must reach the pad on the pinned layer"
+        );
+    }
+
+    #[test]
+    fn tiny_budget_never_fakes_infeasibility() {
+        // Same (feasible) instance as the crossing test, with budget=1. The
+        // budget bounds the exhaustive DFS only: the sequential-BFS witness
+        // pass runs first and settles this instance, so the outcome here is a
+        // routing. What must never happen — at any budget — is a claim of
+        // infeasibility for an instance whose space was not exhausted.
         let pcb = board(vec![], &[PcbLayer::FCu, PcbLayer::BCu]);
         let session = RouteSession::from_pcb(&pcb);
         let conns = vec![
@@ -1063,8 +1862,13 @@ mod tests {
             1,
         );
         assert!(
-            matches!(r, CompleteOutcome::BudgetExhausted),
-            "budget=1 must yield BudgetExhausted, got {r:?}"
+            !matches!(r, CompleteOutcome::ProvedInfeasible { .. }),
+            "budget=1 must never yield an infeasibility proof, got {r:?}"
         );
+        let CompleteOutcome::Routed(routed) = r else {
+            panic!("the witness pass settles this feasible instance, got {r:?}");
+        };
+        assert_connected(&conns, &routed);
+        assert_probe_legal(&session, &conns, &routed, 0.25);
     }
 }

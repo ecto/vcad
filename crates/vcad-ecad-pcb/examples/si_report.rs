@@ -178,6 +178,42 @@ fn main() {
         worst.0, worst.1
     );
 
+    // Per-pair detail for the two claims that are worst-case minima/maxima
+    // over every routed pair: one bad pair breaks the claim, so the report
+    // has to name it, not just score it.
+    {
+        let gap = pcb.rules.default_rules.diff_pair_gap.unwrap_or(0.25);
+        let w = pcb
+            .rules
+            .default_rules
+            .diff_pair_width
+            .unwrap_or(pcb.rules.default_rules.trace_width);
+        let max_sep = (w + gap) * 1.75;
+        let mut rows: Vec<(f64, f64, &str)> = Vec::new();
+        for (p, n) in &c.pairs {
+            let (lp, ln) = (net_routed_length(&pcb, p), net_routed_length(&pcb, n));
+            if lp > 0.0 && ln > 0.0 {
+                rows.push((
+                    vcad_ecad_pcb::router::pair_coupled_fraction(&pcb, p, n, max_sep),
+                    (lp - ln).abs(),
+                    p.as_str(),
+                ));
+            }
+        }
+        rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let weak = rows.iter().filter(|r| r.0 < 0.5).count();
+        println!("pairs below 0.5 coupled fraction: {weak} of {}", rows.len());
+        for (frac, skew, net) in rows.iter().take(12) {
+            println!("  coupled {frac:.3}  skew {skew:6.3} mm  {net}");
+        }
+        let mut by_skew = rows.clone();
+        by_skew.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        println!("worst intra-pair skews:");
+        for (frac, skew, net) in by_skew.iter().take(8) {
+            println!("  skew {skew:6.3} mm  coupled {frac:.3}  {net}");
+        }
+    }
+
     // The claim set: the machine-checkable verdict this whole report exists
     // to feed. Bounds = the human CM5 envelope.
     let set = si_claims(&pcb, &c, &SiBounds::default());

@@ -280,7 +280,7 @@ pub fn route_net_maze3d(
         // The drill barrel is layer-independent: a blind/buried via must keep
         // the hole-to-hole rule against every other-net hole on the board, not
         // just the ones sharing its copper layers.
-        session.probe_via_hole(p, net).legal
+        session.probe_via_drill(p, net).legal
             && layers[a.min(b)..=a.max(b)]
                 .iter()
                 .all(|&l| session.probe(&disc, l, net, clearance).legal)
