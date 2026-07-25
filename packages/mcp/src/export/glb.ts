@@ -14,6 +14,7 @@
 import { getKernelWasmSync } from "@vcad/engine";
 import type { EvaluatedScene } from "@vcad/engine";
 import type { Document, Vec3 } from "@vcad/ir";
+import { sceneExportUnits } from "./scene-units.js";
 
 interface ExportWasm {
   buildGlbBytes(
@@ -251,20 +252,41 @@ export function buildGlb(
  * {@link buildPartLabels}. Omitted entries fall back to `part_<idx>`.
  *
  * Parts keep the neutral default material; for colored PCB previews the
- * caller builds {@link GlbMesh}es directly and calls {@link buildGlb}. */
+ * caller builds {@link GlbMesh}es directly and calls {@link buildGlb}.
+ *
+ * Assembly instances become one node each, named `"<instanceId>:<name>"`,
+ * with the FK-solved world pose on the node TRS and geometry left part-local
+ * — so the structure round-trips into other tools instead of flattening, and
+ * repeated instances of one partDef share a single glTF mesh. */
 export function toGlbBytes(
   scene: EvaluatedScene,
   name: string,
   partLabels?: string[],
 ): Uint8Array {
-  const meshes: GlbMesh[] = scene.parts.map((part, i) => ({
-    name: partLabels?.[i] ?? `part_${i}`,
-    positions: part.mesh.positions,
-    indices: part.mesh.indices,
-    normals: part.mesh.normals,
+  const meshes: GlbMesh[] = sceneExportUnits(scene, partLabels).map((unit) => ({
+    name: unit.name,
+    positions: unit.mesh.positions,
+    indices: unit.mesh.indices,
+    normals: unit.mesh.normals,
     color: DEFAULT_MATERIAL.color,
     metallic: DEFAULT_MATERIAL.metallic,
     roughness: DEFAULT_MATERIAL.roughness,
+    meshKey: unit.meshKey,
+    transform: unit.transform
+      ? {
+          translation: [
+            unit.transform.translation.x,
+            unit.transform.translation.y,
+            unit.transform.translation.z,
+          ],
+          rotationQuat: eulerXyzDegToQuat(unit.transform.rotation),
+          scale: [
+            unit.transform.scale.x,
+            unit.transform.scale.y,
+            unit.transform.scale.z,
+          ],
+        }
+      : undefined,
   }));
   return buildGlb(meshes, name);
 }
