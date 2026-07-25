@@ -60,6 +60,40 @@ impl RTreeObject for SessionElement {
     }
 }
 
+/// A drilled hole (via barrel or through-hole pad) in the session's drill
+/// index. Holes are indexed apart from copper because the hole-to-hole rule is
+/// mechanical: it ignores nets *and* layers, so two vias whose layer spans never
+/// meet — a blind In1–In2 microvia and a buried In5–In6 one — are invisible to a
+/// layer-scoped copper probe yet still collide in the drill file.
+#[derive(Clone)]
+struct DrillElement {
+    center: Vec2,
+    radius: f64,
+}
+
+impl RTreeObject for DrillElement {
+    type Envelope = AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_corners(
+            [self.center.x - self.radius, self.center.y - self.radius],
+            [self.center.x + self.radius, self.center.y + self.radius],
+        )
+    }
+}
+
+/// Result of a [`RouteSession::probe_drill`] hole-to-hole test.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrillProbe {
+    /// Whether the candidate hole satisfies the board's hole-to-hole rule.
+    pub legal: bool,
+    /// Closest edge-to-edge distance to an existing hole (mm); infinite when
+    /// the board has no other holes.
+    pub min_spacing: f64,
+    /// Centre of the nearest hole, when one was found.
+    pub nearest: Option<Vec2>,
+}
+
 /// A piece of existing copper found within the required clearance of a probed
 /// candidate.
 #[derive(Debug, Clone, PartialEq)]
@@ -161,11 +195,25 @@ pub struct RouteSession {
     /// probe enforces the pair GAP between the twins' leg-width copper, so no
     /// routing stage can emit an intra-pair pinch the DRC would flag.
     pair_rules: HashMap<String, (String, f64, f64)>,
+    /// Pad positions of the nets in `pair_rules` — the breakout regions where
+    /// the DRC relaxes the pair gap (see [`RouteSession::in_pair_breakout`]).
+    pair_pads: HashMap<String, Vec<Vec2>>,
+    /// Whether the intra-pair gap is scored the way the DRC scores it, including
+    /// against copper that carries no width of its own — see
+    /// [`RouteSession::set_strict_pair_coupling`].
+    strict_pair_coupling: bool,
     default_clearance: f64,
     /// Largest clearance any net requires — the broadphase must reach this far
     /// so a wide net's clearance is never missed when it exceeds the candidate's.
     max_clearance: f64,
     net_width: HashMap<String, f64>,
+    /// Every drilled hole on the board, for the layer- and net-agnostic
+    /// hole-to-hole rule (see [`DrillElement`]).
+    drills: RTree<DrillElement>,
+    /// Largest indexed drill radius — the broadphase reach for a drill probe.
+    max_drill_radius: f64,
+    /// The board's minimum hole-to-hole edge spacing (mm).
+    hole_to_hole: f64,
     /// Per-span bboxes (parallel to `live`), so a remove can stamp the dirty
     /// grid without consulting the tree.
     bounds: Vec<[f64; 4]>,
@@ -272,6 +320,24 @@ impl RouteSession {
             .values()
             .copied()
             .fold(default_clearance, f64::max);
+        let drills = drill_elements(pcb);
+        let max_drill_radius = drills.iter().map(|d| d.radius).fold(0.0_f64, f64::max);
+        let pair_nets: std::collections::HashSet<String> = crate::drc::diff_pairs(pcb)
+            .into_iter()
+            .flat_map(|dp| [dp.net_p, dp.net_n])
+            .collect();
+        let mut pair_pads: HashMap<String, Vec<Vec2>> = HashMap::new();
+        for fp in &pcb.footprints {
+            for pad in &fp.pads {
+                let Some(net) = pad.net.as_ref().filter(|n| pair_nets.contains(*n)) else {
+                    continue;
+                };
+                pair_pads
+                    .entry(net.clone())
+                    .or_default()
+                    .push(crate::geometry::pad_world_position(fp, pad));
+            }
+        }
         Self {
             tree: RTree::bulk_load(session_elems),
             live,
@@ -286,9 +352,14 @@ impl RouteSession {
                 }
                 m
             },
+            pair_pads,
+            strict_pair_coupling: false,
             default_clearance,
             max_clearance,
             net_width: build_net_trace_width_map(pcb),
+            drills: RTree::bulk_load(drills),
+            max_drill_radius,
+            hole_to_hole: pcb.rules.hole_to_hole,
             bounds,
             dirty,
             change_epoch: 0,
@@ -314,6 +385,113 @@ impl RouteSession {
             .get(net)
             .copied()
             .unwrap_or(self.default_clearance)
+    }
+
+    /// Test a candidate drilled hole against every hole already on the board.
+    ///
+    /// Nets and layers are deliberately ignored: hole-to-hole is a mechanical
+    /// rule about the drill file, and it is the one legality question a copper
+    /// probe structurally cannot answer — two vias on disjoint layer spans share
+    /// no layer, so no layer-scoped probe ever compares them, and they land as
+    /// drill collisions the DRC only finds after the fact.
+    pub fn probe_drill(&self, center: Vec2, diameter: f64) -> DrillProbe {
+        let r = diameter / 2.0;
+        let reach = r + self.max_drill_radius + self.hole_to_hole;
+        let mut min_spacing = f64::INFINITY;
+        let mut nearest = None;
+        for hole in self
+            .drills
+            .locate_in_envelope_intersecting(&AABB::from_corners(
+                [center.x - reach, center.y - reach],
+                [center.x + reach, center.y + reach],
+            ))
+        {
+            let d = ((hole.center.x - center.x).powi(2) + (hole.center.y - center.y).powi(2))
+                .sqrt()
+                - hole.radius
+                - r;
+            if d < min_spacing {
+                min_spacing = d;
+                nearest = Some(hole.center);
+            }
+        }
+        DrillProbe {
+            legal: min_spacing >= self.hole_to_hole - 1e-6,
+            min_spacing,
+            nearest,
+        }
+    }
+
+    /// Score the intra-pair gap exactly as the DRC does — including against a
+    /// twin's pads and via annuli, which carry no width of their own and which
+    /// `drc::pair_aware_clearance_w` therefore treats as coupled leg copper.
+    ///
+    /// Off by default, because it is *stricter* than the geometry the pair
+    /// router currently realizes: its dog-bone offsets and jogs are sized to the
+    /// base clearance, so turning this on globally would stop pairs from
+    /// changing layers rather than making them legal (see the twin-clearance
+    /// tests in `router::pair`). A caller that must not emit copper the board
+    /// DRC will flag — the verdict driver, which commits fail-closed — turns it
+    /// on and pays for it in routability instead.
+    pub fn set_strict_pair_coupling(&mut self, strict: bool) {
+        self.strict_pair_coupling = strict;
+    }
+
+    /// Whether a candidate/blocker pair sits in a twin's **pad breakout**, where
+    /// the DRC relaxes the intra-pair gap to the base clearance.
+    ///
+    /// Mirrors `drc::check_clearance`: the gap binds the coupled run, not the
+    /// escape region (1.5 mm) around either twin's own pads, where the legs must
+    /// converge to reach their land patterns. The DRC judges a pair from the
+    /// *trace* side, so copper with no endpoints of its own — a via annulus or a
+    /// pad — imposes nothing from its side of the comparison.
+    fn in_pair_breakout(
+        &self,
+        cand: &CopperGeom,
+        blocker: &CopperGeom,
+        net: &str,
+        twin: &str,
+    ) -> bool {
+        const BREAKOUT_MM: f64 = 1.5;
+        let near_pad =
+            |p: Vec2| {
+                [net, twin].iter().any(|n| {
+                    self.pair_pads.get(*n).into_iter().flatten().any(|q| {
+                        (q.x - p.x).powi(2) + (q.y - p.y).powi(2) <= BREAKOUT_MM * BREAKOUT_MM
+                    })
+                })
+            };
+        let side = |g: &CopperGeom| match g {
+            CopperGeom::Segment { a, b, .. } => near_pad(*a) || near_pad(*b),
+            _ => true,
+        };
+        side(cand) && side(blocker)
+    }
+
+    /// The board's minimum hole-to-hole edge spacing (mm).
+    pub fn hole_to_hole(&self) -> f64 {
+        self.hole_to_hole
+    }
+
+    /// Index a drilled hole so later [`RouteSession::probe_drill`] calls see it.
+    /// Call this for every via a router commits — the copper commit alone leaves
+    /// the barrel invisible to the hole-to-hole rule.
+    pub fn commit_drill(&mut self, center: Vec2, diameter: f64) {
+        let radius = diameter / 2.0;
+        self.max_drill_radius = self.max_drill_radius.max(radius);
+        self.drills.insert(DrillElement { center, radius });
+    }
+
+    /// The declared intra-pair gap between `net` and `other` when the two are
+    /// twins of a differential pair, else `None`. This is the separation the
+    /// probe demands between their leg-width copper, so a router that must keep
+    /// two candidate paths mutually legal has to space them by at least this
+    /// much — not merely by the base clearance.
+    pub fn pair_gap_between(&self, net: &str, other: &str) -> Option<f64> {
+        self.pair_rules
+            .get(net)
+            .filter(|(twin, _, _)| twin == other)
+            .map(|&(_, gap, _)| gap)
     }
 
     /// The trace width for `net` from its net class, or `fallback` if the net
@@ -532,11 +710,18 @@ impl RouteSession {
             // base clearance — the uncoupled entry region.
             if let Some((twin, gap, leg_w)) = self.pair_rules.get(net) {
                 if &e.net == twin {
-                    let fat = |g: &CopperGeom| match g {
+                    // Which copper counts as a coupled leg. Segments count at
+                    // (nearly) the leg width — a thinner neck is the uncoupled
+                    // entry by definition. Copper with no width of its own (a
+                    // pad, a via annulus) counts only in strict mode, which is
+                    // how `drc::pair_aware_clearance_w` scores it.
+                    let strict = self.strict_pair_coupling;
+                    let leg = |g: &CopperGeom| match g {
                         CopperGeom::Segment { half_w, .. } => 2.0 * half_w >= leg_w - 0.01,
-                        _ => false,
+                        _ => strict,
                     };
-                    if fat(geom) && fat(&e.geom) {
+                    if leg(geom) && leg(&e.geom) && !self.in_pair_breakout(geom, &e.geom, net, twin)
+                    {
                         required = required.max(gap - 0.005);
                     }
                 }
@@ -557,6 +742,31 @@ impl RouteSession {
             blockers,
         }
     }
+}
+
+/// Every drilled hole on `pcb`: via barrels and through-hole pads. Mirrors the
+/// DRC's own hole census (`check_hole_to_hole`), so the router's answer and the
+/// board's verdict cannot disagree.
+fn drill_elements(pcb: &Pcb) -> Vec<DrillElement> {
+    let mut out: Vec<DrillElement> = pcb
+        .vias
+        .iter()
+        .map(|via| DrillElement {
+            center: via.position,
+            radius: via.drill / 2.0,
+        })
+        .collect();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if let Some(drill) = &pad.drill {
+                out.push(DrillElement {
+                    center: crate::geometry::pad_world_position(fp, pad),
+                    radius: drill.diameter / 2.0,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Axis-aligned bounding box (copper extent) of a [`CopperGeom`].
@@ -822,6 +1032,56 @@ mod tests {
         // AGND is tied to GND board-wide, so an overlap is not a violation.
         let r = session.probe(&seg(50.0, 0.125), PcbLayer::FCu, "AGND", 0.2);
         assert!(r.legal, "net-tied copper must be exempt");
+    }
+
+    /// Drills are compared across layer spans and nets, because that is what
+    /// the fab file says: two vias whose copper never shares a layer still
+    /// collide in the drill. This is the one legality question the copper probe
+    /// structurally cannot answer.
+    #[test]
+    fn drill_probe_sees_holes_no_copper_probe_could() {
+        let mut pcb = empty_pcb();
+        pcb.vias.push(vcad_ir::ecad::Via {
+            position: Vec2::new(50.0, 50.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::In1Cu,
+            end_layer: PcbLayer::In2Cu,
+            net: "GND".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        // hole_to_hole is 0.5 here: edge distance must be at least that.
+        let touching = session.probe_drill(Vec2::new(50.4, 50.0), 0.4);
+        assert!(
+            !touching.legal && touching.min_spacing < 0.5,
+            "a hole 0.4mm away (edge 0.0mm) must be illegal, got {touching:?}"
+        );
+        assert_eq!(touching.nearest, Some(Vec2::new(50.0, 50.0)));
+        let clear = session.probe_drill(Vec2::new(51.5, 50.0), 0.4);
+        assert!(
+            clear.legal,
+            "a hole 1.5mm away must be legal, got {clear:?}"
+        );
+        // A copper probe on a layer the existing via does not span sees nothing
+        // there at all — hence the separate index.
+        assert!(
+            session
+                .probe(
+                    &CopperGeom::Disc {
+                        center: Vec2::new(50.4, 50.0),
+                        r: 0.4,
+                    },
+                    PcbLayer::In5Cu,
+                    "SIG",
+                    0.2,
+                )
+                .legal,
+            "the copper probe cannot see a hole on an unshared layer"
+        );
+        // Newly committed drills join the index.
+        session.commit_drill(Vec2::new(60.0, 60.0), 0.4);
+        assert!(!session.probe_drill(Vec2::new(60.3, 60.0), 0.4).legal);
     }
 
     #[test]
