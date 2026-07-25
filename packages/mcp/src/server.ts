@@ -29,6 +29,8 @@ import {
   dropSession,
   runInSessionScope,
   recordHistorySnapshot,
+  currentBootToken,
+  durabilityWarning,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
 import { previewVersion, previewGlbFor } from "./tools/preview.js";
@@ -39,6 +41,7 @@ import {
   createPackStore,
   sessionStoreInfo,
   warnIfSessionStoreNotDurable,
+  isSessionStoreDurable,
 } from "./session-store.js";
 // Re-exported so the Vercel entry (services/mcp/entry.ts) and standalone
 // /health (http.ts) report the same durability state as server_info.
@@ -586,6 +589,9 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
+    "",
+    "",
+    "Sessions and server restarts: a `document_id` is a handle to server-side state, NOT storage. If ANY preview goes dark, a widget stops updating, or a call fails with an unknown `document_id`, check `server_info` FIRST — a low `uptime_s` or a changed `instance_id` means the SERVER RESTARTED and the feature is fine. That is the fastest way to tell a restart from a bug, and it should be the first check for any preview-shaped complaint. On a restart every live document_id dies at once, so previously-working widgets all go dark together — that is not a renderer bug. When `server_info` reports `durable:false`, sessions are in-memory only and cannot be recovered: keep the authoring source (your `create_cad_loon` call or record of edits) so a document can be rebuilt, and snapshot long-lived work with `checkpoint_document` / `save_document`. Every tool result also carries `_meta['io.vcad/build']` with `boot_token` + `instance_id`, so a changed value flags a restart without polling.",
     "",
     "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation. Surgical copper edits: `get_copper` lists existing traces/vias/zones (filtered by layer/net/bbox/kind) with the same indices `delete_trace`/`delete_via`/`delete_zone` accept — discover, then delete, without exporting the document. Where two nets must touch on purpose (wye neutral, split ground, shunt tap), declare it with `add_net_tie` — prefer a region-scoped tie (position+radius) so DRC stays honest away from the junction; `delete_net_tie` takes it back.",
   ].join("\n");
@@ -1302,6 +1308,13 @@ export async function createServer(
           uptime_s: info.uptime_s,
           expected_build_sha,
           is_stale,
+          // Restart detection without polling: boot_token changes iff the
+          // process serving these calls restarted, and session_durable says
+          // whether that restart cost the caller their open documents. A
+          // client that remembers the last pair learns about a restart on the
+          // very next call, instead of when a dead document_id finally fails.
+          boot_token: currentBootToken(),
+          session_durable: isSessionStoreDurable(),
         },
       };
     } catch {
@@ -1475,6 +1488,14 @@ export async function createServer(
       // (import_step / create_cad_loon) aren't double-registered.
       if (!result.isError && def?.behavior.writesDoc) {
         const writtenId = effectiveDocId(result, args);
+        // A tool that just MINTED a session (returned an id the caller didn't
+        // pass in) is the one moment an agent can still act on the storage
+        // contract — before 30 turns of work depend on a handle that a restart
+        // will silently invalidate. Say it once per session, in a
+        // model-visible text block; no-op when the store is durable.
+        if (writtenId && writtenId !== incomingId) {
+          noteSessionDurability(result, writtenId);
+        }
         if (writtenId) {
           try {
             await persistSession(sessionStore, writtenId);
@@ -1785,6 +1806,28 @@ function resolvePreviewDocumentId(
  * does NOT call resolvePreviewDocumentId, which registers a fresh session for
  * import_step / create_cad_loon and would double-mint here.
  */
+/** Sessions already warned about non-durability, so a long build gets the
+ *  notice once rather than on every mint. Capped so it can't grow unbounded on
+ *  a long-lived instance. */
+const durabilityWarned = new Set<string>();
+
+/**
+ * Append the non-durable-storage warning to a session-minting tool result.
+ * Model-visible by design (a text block, not `_meta`): the whole point is that
+ * the AGENT learns it must keep the authoring source. No-op when the store is
+ * durable, or when this session was already warned about.
+ */
+function noteSessionDurability(result: ToolResult, documentId: string): void {
+  const warning = durabilityWarning();
+  if (!warning || durabilityWarned.has(documentId)) return;
+  if (durabilityWarned.size > 1000) durabilityWarned.clear();
+  durabilityWarned.add(documentId);
+  result.content = [
+    ...(result.content ?? []),
+    { type: "text", text: JSON.stringify({ durability: warning }) },
+  ];
+}
+
 function effectiveDocId(
   result: {
     content: Array<{ type: string; text: string }>;

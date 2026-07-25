@@ -75,12 +75,61 @@ function randomSuffix(): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// ─── Boot generation (restart detection) ─────────────────────────────────────
+//
+// A non-durable server keeps sessions in process memory, so a restart silently
+// invalidates every live document_id. The first symptom used to be an
+// indistinguishable "Unknown document_id" much later — identical to the error
+// for a typo'd id, even though the remediations are opposite (re-author the
+// work vs fix the argument). Stamping the minting process's boot token INTO the
+// id makes the two cases mechanically separable: an id whose token isn't ours
+// was minted by a process that is gone.
+
+/** Length of the boot-token prefix carried in a session id's suffix segment. */
+const BOOT_TOKEN_LEN = 4;
+
+/** This process's boot token — fresh at every cold start, stable for its life. */
+const BOOT_TOKEN: string = randomSuffix().slice(0, BOOT_TOKEN_LEN);
+
+/** The boot token of the process serving this call. Changes iff the server
+ *  restarted, so a client that remembers it can detect a restart without
+ *  polling anything. Surfaced on every tool result's `_meta`. */
+export function currentBootToken(): string {
+  return BOOT_TOKEN;
+}
+
+/** Extract the boot token from a session id, or null if the id doesn't carry
+ *  one (a hand-written id, or one minted before ids were generation-tagged). */
+export function sessionIdBootToken(documentId: string): string | null {
+  const m = /^doc_\d+_([A-Za-z0-9_-]{4,})$/.exec(documentId);
+  return m ? m[1].slice(0, BOOT_TOKEN_LEN) : null;
+}
+
+/** True when `documentId` was minted by a DIFFERENT process than the one
+ *  serving this call — i.e. the server restarted (or, on a multi-instance
+ *  deploy, another instance answered) since the id was handed out. */
+export function isForeignSessionId(documentId: string): boolean {
+  const token = sessionIdBootToken(documentId);
+  return token !== null && token !== BOOT_TOKEN;
+}
+
+/** Whether this deployment's session store survives a restart. Injected by the
+ *  Node layer (`session.ts`) because the probe reads process env; browser
+ *  bundles keep the conservative default. */
+let durabilityProbe: () => boolean = () => false;
+
+/** Install the durability probe (Node-only bridge to `isSessionStoreDurable`). */
+export function setDurabilityProbe(probe: () => boolean): void {
+  durabilityProbe = probe;
+}
+
 export function nextSessionId(): string {
   // The counter keeps intra-process uniqueness; the random suffix makes the id
   // unguessable. Once a session persists to a user's account the id is a
   // capability — sequential ids would let one caller enumerate another's
-  // warm-cache sessions.
-  return `doc_${nextId++}_${randomSuffix()}`;
+  // warm-cache sessions. The boot token rides in front of the random bytes, so
+  // it costs no extra id segment and can't be confused for one.
+  return `doc_${nextId++}_${BOOT_TOKEN}${randomSuffix()}`;
 }
 
 /** Register a freshly-built document as a session and return its id.
@@ -99,12 +148,45 @@ export function registerSession(doc: Document): string {
  *  it, and a genuine miss still throws the pinned error. */
 export function getSession(documentId: string): Document {
   const doc = documents.get(documentId);
-  if (!doc) {
-    throw new Error(
-      `Unknown document_id "${documentId}". Open one with open_document first, or list active sessions with the documents map.`,
-    );
-  }
+  if (!doc) throw new Error(unknownSessionMessage(documentId));
   return doc;
+}
+
+/**
+ * The "Unknown document_id" error text, specialized to WHY the id didn't
+ * resolve. The dispatch layer has already tried the durable store by the time
+ * this fires, so a miss is terminal — but the remediation differs sharply:
+ *
+ *  - foreign boot token → the minting process is gone. On a non-durable store
+ *    the session's contents went with it and the only fix is to re-run the
+ *    authoring calls. Saying so turns a mystifying late failure into a
+ *    self-announcing one.
+ *  - our boot token (or no token) → this process minted no such id: a typo, a
+ *    stale copy/paste, or an already-closed session.
+ */
+export function unknownSessionMessage(documentId: string): string {
+  const head = `Unknown document_id "${documentId}".`;
+  if (isForeignSessionId(documentId)) {
+    const durable = durabilityProbe();
+    return durable
+      ? `${head} It was minted by a different server process (this one booted ` +
+          `as "${BOOT_TOKEN}") and was not found in the durable session store — ` +
+          `it may have been closed or dropped. Re-open it, or re-run the ` +
+          `authoring calls that built it.`
+      : `${head} SESSION LOST TO A SERVER RESTART — this id was minted by an ` +
+          `earlier process (this one booted as "${BOOT_TOKEN}") and sessions on ` +
+          `this server are in-memory only, so its contents are gone. This is ` +
+          `not a typo: re-run the authoring calls that built the document (a ` +
+          `checkpoint_document / save_document snapshot, or the original ` +
+          `create_cad_loon source, restores it). Check server_info — a low ` +
+          `uptime_s confirms the restart. Configure a durable session store to ` +
+          `prevent this.`;
+  }
+  return (
+    `${head} This server has no such session — check for a typo, or it was ` +
+    `closed. Open one with open_document first, or list active sessions with ` +
+    `the documents map.`
+  );
 }
 
 // ─── Dual-mode document input (session id OR inline document) ─────────────────
