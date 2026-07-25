@@ -63,12 +63,12 @@ pub use auto::{
     UnroutedDiagnostic,
 };
 pub use congestion::Congestion;
+pub use descent::{descend_board, DescentReport};
 pub use diff_pair::route_diff_pair;
 pub use length_match::{
     check_length_match, match_lengths, LengthMatchOptions, LengthMatchResult, NetLengthReport,
 };
 pub use maze::route_net_maze;
-pub use descent::{descend_board, DescentReport};
 pub use pair::{census_pairs, polish_pairs, PairBail, PairCensus, PairCensusRow};
 pub use si_claims::coupled_fraction as pair_coupled_fraction;
 
@@ -285,20 +285,17 @@ fn compensate_run(pcb: &Pcb, net: &str, twin_net: &str, deficit: f64) -> Option<
             hi[1] = hi[1].max(p.y + 3.0);
         }
         let mut obstacles: Vec<(Vec2, Vec2, f64)> = Vec::new();
-        session.for_each_blocking(layer, net, lo, hi, |geom, emin, emax, req| {
-            match geom {
-                crate::spatial::CopperGeom::Segment { a, b, half_w } => {
-                    obstacles.push((*a, *b, req + half_w + width / 2.0))
-                }
-                crate::spatial::CopperGeom::Disc { center, r } => {
-                    obstacles.push((*center, *center, req + r + width / 2.0))
-                }
-                _ => {
-                    let c = Vec2::new((emin[0] + emax[0]) / 2.0, (emin[1] + emax[1]) / 2.0);
-                    let hd =
-                        ((emax[0] - emin[0]).powi(2) + (emax[1] - emin[1]).powi(2)).sqrt() / 2.0;
-                    obstacles.push((c, c, req + hd + width / 2.0));
-                }
+        session.for_each_blocking(layer, net, lo, hi, |geom, emin, emax, req| match geom {
+            crate::spatial::CopperGeom::Segment { a, b, half_w } => {
+                obstacles.push((*a, *b, req + half_w + width / 2.0))
+            }
+            crate::spatial::CopperGeom::Disc { center, r } => {
+                obstacles.push((*center, *center, req + r + width / 2.0))
+            }
+            _ => {
+                let c = Vec2::new((emin[0] + emax[0]) / 2.0, (emin[1] + emax[1]) / 2.0);
+                let hd = ((emax[0] - emin[0]).powi(2) + (emax[1] - emin[1]).powi(2)).sqrt() / 2.0;
+                obstacles.push((c, c, req + hd + width / 2.0));
             }
         });
         // Validation session: the board without THIS net's copper, so the
@@ -379,37 +376,37 @@ fn compensate_run(pcb: &Pcb, net: &str, twin_net: &str, deficit: f64) -> Option<
                 }
             }
             for tuned in candidates {
-            let legal = tuned.windows(2).all(|w| {
-                vsession
-                    .probe(
-                        &crate::spatial::CopperGeom::Segment {
-                            a: w[0],
-                            b: w[1],
-                            half_w: width / 2.0,
-                        },
-                        layer,
-                        net,
-                        clearance,
-                    )
-                    .legal
-            });
-            if !legal {
-                log::trace!(
-                    "compensate {net}: {layer:?} w={width} amp={amp:.3} candidate illegal"
-                );
-                continue;
-            }
-            let mut work = pcb.clone();
-            work.traces.retain(|t| !on_run(t));
-            work.traces.extend(tuned.windows(2).map(|w| Trace {
-                start: w[0],
-                end: w[1],
-                width,
-                layer,
-                net: net.to_string(),
-                source: None,
-            }));
-            return Some(work);
+                let legal = tuned.windows(2).all(|w| {
+                    vsession
+                        .probe(
+                            &crate::spatial::CopperGeom::Segment {
+                                a: w[0],
+                                b: w[1],
+                                half_w: width / 2.0,
+                            },
+                            layer,
+                            net,
+                            clearance,
+                        )
+                        .legal
+                });
+                if !legal {
+                    log::trace!(
+                        "compensate {net}: {layer:?} w={width} amp={amp:.3} candidate illegal"
+                    );
+                    continue;
+                }
+                let mut work = pcb.clone();
+                work.traces.retain(|t| !on_run(t));
+                work.traces.extend(tuned.windows(2).map(|w| Trace {
+                    start: w[0],
+                    end: w[1],
+                    width,
+                    layer,
+                    net: net.to_string(),
+                    source: None,
+                }));
+                return Some(work);
             }
         }
     }
@@ -457,7 +454,11 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
             continue;
         }
         // Which leg is short, and by how much.
-        let (short_net, deficit) = if lp < ln { (pn, ln - lp) } else { (nn, lp - ln) };
+        let (short_net, deficit) = if lp < ln {
+            (pn, ln - lp)
+        } else {
+            (nn, lp - ln)
+        };
         let twin_net = if short_net == pn { nn } else { pn };
         let Some(work) = compensate_run(pcb, short_net, twin_net, deficit) else {
             log::debug!("si-finish: {pn} skew {before:.3}mm — no run could absorb {deficit:.3}mm");
@@ -507,23 +508,20 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
             let mut bare = work.clone();
             bare.traces.retain(|t| t.net != **net);
             let vsession = RouteSession::from_pcb(&bare);
-            work.traces
-                .iter()
-                .filter(|t| t.net == **net)
-                .all(|t| {
-                    vsession
-                        .probe(
-                            &crate::spatial::CopperGeom::Segment {
-                                a: t.start,
-                                b: t.end,
-                                half_w: t.width / 2.0,
-                            },
-                            t.layer,
-                            &t.net,
-                            vsession.clearance_for(&t.net),
-                        )
-                        .legal
-                })
+            work.traces.iter().filter(|t| t.net == **net).all(|t| {
+                vsession
+                    .probe(
+                        &crate::spatial::CopperGeom::Segment {
+                            a: t.start,
+                            b: t.end,
+                            half_w: t.width / 2.0,
+                        },
+                        t.layer,
+                        &t.net,
+                        vsession.clearance_for(&t.net),
+                    )
+                    .legal
+            })
         });
         if !legal {
             log::debug!("si-finish: {pn} meander rejected by oracle");
@@ -732,7 +730,11 @@ mod compensation_tests {
         let len = |p: &[Vec2]| -> f64 { p.windows(2).map(|w| (w[1] - w[0]).length()).sum() };
 
         // Same 20mm path, two segments vs forty.
-        let coarse = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(20.0, 0.0)];
+        let coarse = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(20.0, 0.0),
+        ];
         let fine: Vec<Vec2> = (0..=40).map(|i| Vec2::new(i as f64 * 0.5, 0.0)).collect();
 
         for (name, run) in [("coarse", &coarse), ("fine", &fine)] {

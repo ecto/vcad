@@ -19,10 +19,7 @@ fn main() {
         .init();
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("usage: si_census <board> [expansions]");
-    let expansions: usize = args
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(400_000);
+    let expansions: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(400_000);
 
     let text = std::fs::read_to_string(&path).expect("read board");
     let pcb: Pcb = if path.ends_with(".json") {

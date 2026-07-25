@@ -424,8 +424,16 @@ pub fn descend_board(pcb: &mut Pcb, iters: usize) -> DescentReport {
         let p_pts = densify(&p_raw);
         let n_pts = densify(&n_raw);
         let run_w = p_w.max(n_w);
-        let plen: f64 = p_pts.windows(2).map(|w| (w[1] - w[0]).length()).sum::<f64>() + extra_p;
-        let nlen: f64 = n_pts.windows(2).map(|w| (w[1] - w[0]).length()).sum::<f64>() + extra_n;
+        let plen: f64 = p_pts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).length())
+            .sum::<f64>()
+            + extra_p;
+        let nlen: f64 = n_pts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).length())
+            .sum::<f64>()
+            + extra_n;
         if (plen - nlen).abs() < 0.2 || p_pts.len() < 3 || n_pts.len() < 3 {
             continue; // already matched, or no interior freedom
         }

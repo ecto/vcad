@@ -587,15 +587,14 @@ pub(super) fn try_route_pair_reason(
     };
 
     // Realize the two legs from the centerline.
-    let (leg_a, leg_b) =
-        match realize_legs(&center, half_sep, via_off, via_d / 2.0, clearance, w) {
-            Some(l) => l,
-            None => {
-                log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
-                restore(session, placed, ripped);
-                return Err(PairBail::DegenerateCenterline);
-            }
-        };
+    let (leg_a, leg_b) = match realize_legs(&center, half_sep, via_off, via_d / 2.0, clearance, w) {
+        Some(l) => l,
+        None => {
+            log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
+            restore(session, placed, ripped);
+            return Err(PairBail::DegenerateCenterline);
+        }
+    };
 
     // Leg → net assignment: the one whose pad connectors are shortest (the
     // non-crossing assignment — crossing connectors are strictly longer).
@@ -651,7 +650,10 @@ pub(super) fn try_route_pair_reason(
                 b: to,
                 half_w: nw / 2.0,
             };
-            if session.probe(&hop, to_layer, net, session.clearance_for(net)).legal {
+            if session
+                .probe(&hop, to_layer, net, session.clearance_for(net))
+                .legal
+            {
                 return Some((vec![(from, to, to_layer)], vec![]));
             }
         }
@@ -883,14 +885,20 @@ fn longest_coupled_window(
             run_start.get_or_insert(k);
         } else if let Some(s) = run_start.take() {
             let cand = (s, k - 1);
-            if best.map(|(bs, be)| cand.1 - cand.0 > be - bs).unwrap_or(true) {
+            if best
+                .map(|(bs, be)| cand.1 - cand.0 > be - bs)
+                .unwrap_or(true)
+            {
                 best = Some(cand);
             }
         }
     }
     if let Some(s) = run_start {
         let cand = (s, center.len() - 1);
-        if best.map(|(bs, be)| cand.1 - cand.0 > be - bs).unwrap_or(true) {
+        if best
+            .map(|(bs, be)| cand.1 - cand.0 > be - bs)
+            .unwrap_or(true)
+        {
             best = Some(cand);
         }
     }
@@ -1241,12 +1249,8 @@ pub fn census_pairs(pcb: &Pcb, max_expansions: usize) -> PairCensus {
                         });
                     }
                 }
-                let f = crate::router::si_claims::coupled_fraction(
-                    &probe,
-                    pn,
-                    nn,
-                    (w + gap) * 1.75,
-                );
+                let f =
+                    crate::router::si_claims::coupled_fraction(&probe, pn, nn, (w + gap) * 1.75);
                 placed.push(mine);
                 placed.push(theirs);
                 (None, f)
@@ -2150,12 +2154,8 @@ mod tests {
             let pads = pads_of_net(&pcb, &pl.net);
             assert!(!pads.is_empty());
             // All copper this net committed, with its layer.
-            let copper: Vec<(Vec2, Vec2, PcbLayer)> = pl
-                .segments
-                .iter()
-                .chain(pl.stubs.iter())
-                .copied()
-                .collect();
+            let copper: Vec<(Vec2, Vec2, PcbLayer)> =
+                pl.segments.iter().chain(pl.stubs.iter()).copied().collect();
             for pad in pads {
                 let pad_layers = pad_layers_at(&pcb, &pl.net, pad);
                 let touched = copper.iter().any(|&(a, b, l)| {

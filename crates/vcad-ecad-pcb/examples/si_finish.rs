@@ -17,8 +17,12 @@ fn main() {
         .format_timestamp_millis()
         .init();
     let mut args = std::env::args().skip(1);
-    let input = args.next().expect("usage: si_finish <in> <out> [exp] [iters]");
-    let output = args.next().expect("usage: si_finish <in> <out> [exp] [iters]");
+    let input = args
+        .next()
+        .expect("usage: si_finish <in> <out> [exp] [iters]");
+    let output = args
+        .next()
+        .expect("usage: si_finish <in> <out> [exp] [iters]");
     let expansions: usize = args
         .next()
         .and_then(|s| s.parse().ok())
