@@ -6790,13 +6790,17 @@
   {
     "name": "create_robot_env",
     "title": "Create Robot Env",
-    "description": "Create a physics simulation environment from a vcad assembly. Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. The environment provides a gym-style interface for RL training. Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
+    "description": "Create a physics simulation environment from a vcad assembly. Session-first: pass the `document_id` of the assembly already open — the env binds to that same session, so there is no IR round-trip and the sim can't run against a stale copy. Inline `document` IR is the stateless fallback; exactly one of the two is required. Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and document_id (what the replay viewer and the other session tools bind to). Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id of the assembly to simulate (from open_document / create_cad_loon). Preferred: the env binds to this same session, so no IR round-trip is needed and the sim can never run against a stale copy."
+        },
         "document": {
           "type": "object",
-          "description": "vcad IR Document describing the robot assembly"
+          "description": "Inline Document IR describing the robot assembly, used instead of a session. Use this stateless path when no `document_id` is resident (e.g. a cold serverless instance). Exactly one of `document_id` or `document` must be given."
         },
         "end_effector_ids": {
           "type": "array",
@@ -6819,7 +6823,6 @@
         }
       },
       "required": [
-        "document",
         "end_effector_ids"
       ]
     },
@@ -6839,7 +6842,7 @@
   {
     "name": "gym_step",
     "title": "Gym Step",
-    "description": "Step the physics simulation with an action. action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). Returns observation (joint positions/velocities, end effector poses), reward, and done flag.",
+    "description": "Step the physics simulation with an action. action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). Returns observation (joint positions/velocities, end effector poses), reward, and done flag. The observation carries both the bare positional arrays and id-keyed views: `joints[i] = {id, position, velocity}` and `end_effectors[i] = {id, pose}`, so no ordering has to be remembered.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6877,7 +6880,7 @@
   {
     "name": "gym_reset",
     "title": "Gym Reset",
-    "description": "Reset the simulation environment to its initial state. Returns the initial observation.",
+    "description": "Reset the simulation environment to its initial state. Returns the initial observation, with joint values keyed by joint id (`joints`) and end effector poses keyed by instance id (`end_effectors`) alongside the bare arrays.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6897,7 +6900,7 @@
   {
     "name": "gym_observe",
     "title": "Gym Observe",
-    "description": "Get the current observation from the simulation without stepping. Returns joint positions, velocities, and end effector poses.",
+    "description": "Get the current observation from the simulation without stepping. Returns joint positions, velocities, and end effector poses — both as bare arrays and keyed by joint / instance id.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7242,13 +7245,17 @@
   {
     "name": "batch_create_envs",
     "title": "Batch Create Envs",
-    "description": "Create N parallel simulation environments from a single robot assembly. Returns a batch_id for use with batch_step and batch_reset. Enables parallel RL training across multiple environments.",
+    "description": "Create N parallel simulation environments from a single robot assembly. Session-first: pass the `document_id` of the open assembly, or inline `document` IR as the stateless fallback — exactly one is required. Returns a batch_id for use with batch_step and batch_reset. Enables parallel RL training across multiple environments.",
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id of the assembly to simulate (from open_document / create_cad_loon). Preferred: the env binds to this same session, so no IR round-trip is needed and the sim can never run against a stale copy."
+        },
         "document": {
           "type": "object",
-          "description": "vcad IR Document describing the robot assembly"
+          "description": "Inline Document IR describing the robot assembly, used instead of a session. Use this stateless path when no `document_id` is resident (e.g. a cold serverless instance). Exactly one of `document_id` or `document` must be given."
         },
         "n_envs": {
           "type": "number",
@@ -7275,7 +7282,6 @@
         }
       },
       "required": [
-        "document",
         "n_envs",
         "end_effector_ids"
       ]

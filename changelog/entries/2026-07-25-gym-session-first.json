@@ -1,0 +1,18 @@
+{
+  "id": "2026-07-25-gym-session-first",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "feat",
+  "title": "Sim from a session id, not a re-sent document",
+  "summary": "create_robot_env and batch_create_envs now take document_id, binding the env to the live session instead of a re-sent IR copy, and observations come back keyed by joint / instance id.",
+  "features": ["physics", "simulation", "mcp"],
+  "mcpTools": [
+    "create_robot_env",
+    "batch_create_envs",
+    "gym_reset",
+    "gym_observe",
+    "gym_step",
+    "batch_reset",
+    "batch_step"
+  ]
+}
