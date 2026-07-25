@@ -87,6 +87,103 @@ pub struct SiFinishReport {
     pub over_tolerance: usize,
 }
 
+/// Insert outward bumps into `points` adding about `deficit` mm of length,
+/// each bulging AWAY from `twin` copper.
+///
+/// This is phase compensation, and it is the only shape that works on a
+/// coupled leg. A generic meander generator bends to whichever side its
+/// pattern says, which on half the bends is straight into the partner trace
+/// sitting one gap away. Bulging away from the twin uses the open board on
+/// the far side of the pair instead.
+///
+/// It is needed because a coupled pair's skew is not an accident of routing:
+/// the two legs are offsets of ONE centerline, so at every bend the outer leg
+/// takes the long way round and the inner the short way. The difference is
+/// `(w + gap) · Σ 2·tan(θ/2)` over signed turns — about 0.9mm for a single net
+/// right-angle turn at this board's 0.2/0.25 geometry, against a 1.1mm claim
+/// bound. It cannot be tuned out by shifting the pair sideways either: a
+/// lateral shift changes both legs by the same amount and their difference
+/// depends only on the total separation. Length has to be added back.
+fn bump_away(
+    points: &[Vec2],
+    twin: &[(Vec2, Vec2)],
+    deficit: f64,
+    amplitude: f64,
+) -> Option<Vec<Vec2>> {
+    if points.len() < 2 || deficit <= 0.0 {
+        return None;
+    }
+    let pt_seg = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+        let ab = b - a;
+        let l2 = ab.x * ab.x + ab.y * ab.y;
+        if l2 < 1e-18 {
+            return (p - a).length();
+        }
+        let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+        (p - (a + ab.scale(t))).length()
+    };
+    let twin_dist = |p: Vec2| -> f64 {
+        twin.iter()
+            .map(|&(a, b)| pt_seg(p, a, b))
+            .fold(f64::INFINITY, f64::min)
+    };
+
+    // Bumps are TILED along each segment, not one per segment. A single bump
+    // on a long straight adds almost nothing — its gain is
+    // 2·(hypot(L/3, h) − L/3), which for a 17mm run at 1.2mm amplitude is
+    // 0.19mm, nowhere near a 1.3mm deficit. Cells sized to the amplitude keep
+    // each bump's aspect ratio steep, where the length actually comes from.
+    let cell = (3.0 * amplitude).max(1.0);
+    let third = cell / 3.0;
+    let gain_per_cell = 2.0 * ((third * third + amplitude * amplitude).sqrt() - third);
+    if gain_per_cell < 1e-3 {
+        return None;
+    }
+    let mut out: Vec<Vec2> = Vec::with_capacity(points.len() * 4);
+    let mut added = 0.0f64;
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        out.push(a);
+        let len = (b - a).length();
+        if added >= deficit || len < cell {
+            continue;
+        }
+        let dir = (b - a).scale(1.0 / len);
+        let nrm = Vec2::new(-dir.y, dir.x);
+        // Bulge to whichever side is farther from the twin. The twin runs
+        // parallel to the whole segment, so one decision per segment holds.
+        let mid = a + dir.scale(len / 2.0);
+        let sign = if twin_dist(mid + nrm.scale(amplitude)) >= twin_dist(mid - nrm.scale(amplitude))
+        {
+            1.0
+        } else {
+            -1.0
+        };
+        let off = nrm.scale(sign * amplitude);
+        // Leave the last partial cell alone so the bumps stay clear of the
+        // segment's endpoints (vias, corners, pad breakouts).
+        let cells = ((len / cell).floor() as usize).saturating_sub(1);
+        let mut t = cell * 0.5;
+        for _ in 0..cells {
+            if added >= deficit {
+                break;
+            }
+            out.push(a + dir.scale(t + third) + off);
+            out.push(a + dir.scale(t + 2.0 * third) + off);
+            added += gain_per_cell;
+            t += cell;
+        }
+    }
+    out.push(*points.last().unwrap());
+    // Only worth committing if it closed most of the gap; a partial bump just
+    // moves the skew around.
+    if added >= deficit * 0.6 {
+        Some(out)
+    } else {
+        None
+    }
+}
+
 /// Add `deficit` mm to `net` by meandering one of its runs, preferring runs
 /// that have room. Returns the modified board, or `None` if no run could
 /// absorb it.
@@ -100,9 +197,26 @@ pub struct SiFinishReport {
 /// uncoupled by construction, and it has open board around it. So candidates
 /// are ordered narrowest-first, and the coupled legs are tried only as a last
 /// resort.
-fn compensate_run(pcb: &Pcb, net: &str, deficit: f64) -> Option<Pcb> {
+fn compensate_run(pcb: &Pcb, net: &str, twin_net: &str, deficit: f64) -> Option<Pcb> {
     use length_tune::{generate_meanders_checked, LengthTuneParams, MeanderStyle};
     use vcad_ir::ecad::Trace;
+
+    // Pair geometry, for the coupling-preserving amplitude cap below.
+    let dp = pcb
+        .rules
+        .class_rules
+        .iter()
+        .find(|r| r.name == classes::DIFF_PAIR_CLASS);
+    let leg_w = dp
+        .and_then(|r| r.diff_pair_width)
+        .or(pcb.rules.default_rules.diff_pair_width)
+        .unwrap_or(0.2);
+    let gap = dp
+        .and_then(|r| r.diff_pair_gap)
+        .or(pcb.rules.default_rules.diff_pair_gap)
+        .unwrap_or(0.25);
+    let pair_pitch = leg_w + gap;
+    let max_sep = pair_pitch * 1.75;
 
     // Candidate runs: longest unbranched chain per (layer, width) class.
     let mut classes: Vec<(PcbLayer, f64)> = pcb
@@ -179,7 +293,26 @@ fn compensate_run(pcb: &Pcb, net: &str, deficit: f64) -> Option<Pcb> {
         // copper between two waypoints crosses an obstacle. Validate each
         // candidate with the exact oracle instead and shrink the amplitude
         // until one is genuinely legal.
-        let mut amplitude = 1.2;
+        // The twin's copper on this layer, for the away-side decision.
+        let twin: Vec<(Vec2, Vec2)> = pcb
+            .traces
+            .iter()
+            .filter(|t| t.net == twin_net && t.layer == layer)
+            .map(|t| (t.start, t.end))
+            .collect();
+
+        // On a COUPLED leg the amplitude is capped by the coupling window:
+        // `min_pair_coupled_fraction` counts a P sample as coupled only while
+        // some N copper is within 1.75x the pair pitch, so a bump swinging
+        // further than that buys skew by destroying coupling — measured, and
+        // it cost 0.777 -> 0.252 on the subset board. Breakout copper is
+        // uncoupled already and keeps the generous amplitude.
+        let is_leg = (width - leg_w).abs() < 0.01;
+        let mut amplitude = if is_leg {
+            ((max_sep - pair_pitch) * 0.7).max(0.05)
+        } else {
+            1.2
+        };
         for _ in 0..6 {
             let params = LengthTuneParams {
                 target_length: run_len + deficit,
@@ -188,20 +321,31 @@ fn compensate_run(pcb: &Pcb, net: &str, deficit: f64) -> Option<Pcb> {
                 style: MeanderStyle::Trombone,
             };
             let meanders = generate_meanders_checked(&points, &params, clearance, &obstacles);
+            let amp = amplitude;
             amplitude *= 0.75;
-            let Some(meanders) = meanders else { continue };
-            if meanders.is_empty() {
-                continue;
-            }
-            // Splice the meander waypoints into the run.
-            let mut tuned: Vec<Vec2> = Vec::new();
-            for (i, w) in points.windows(2).enumerate() {
-                tuned.push(w[0]);
-                if let Some(m) = meanders.iter().find(|m| m.segment_index == i) {
-                    tuned.extend(m.points.iter().copied());
+            // Two candidate shapes per amplitude: the generic meander, and —
+            // for coupled legs, where the generic one bends into the twin —
+            // bumps that bulge away from it.
+            let mut candidates: Vec<Vec<Vec2>> = Vec::new();
+            if let Some(meanders) = meanders {
+                if !meanders.is_empty() {
+                    let mut tuned: Vec<Vec2> = Vec::new();
+                    for (i, w) in points.windows(2).enumerate() {
+                        tuned.push(w[0]);
+                        if let Some(m) = meanders.iter().find(|m| m.segment_index == i) {
+                            tuned.extend(m.points.iter().copied());
+                        }
+                    }
+                    tuned.push(*points.last().unwrap());
+                    candidates.push(tuned);
                 }
             }
-            tuned.push(*points.last().unwrap());
+            if !twin.is_empty() {
+                if let Some(bumped) = bump_away(&points, &twin, deficit, amp) {
+                    candidates.push(bumped);
+                }
+            }
+            for tuned in candidates {
             let legal = tuned.windows(2).all(|w| {
                 vsession
                     .probe(
@@ -230,6 +374,7 @@ fn compensate_run(pcb: &Pcb, net: &str, deficit: f64) -> Option<Pcb> {
                 source: None,
             }));
             return Some(work);
+            }
         }
     }
     None
@@ -277,7 +422,8 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
         }
         // Which leg is short, and by how much.
         let (short_net, deficit) = if lp < ln { (pn, ln - lp) } else { (nn, lp - ln) };
-        let Some(work) = compensate_run(pcb, short_net, deficit) else {
+        let twin_net = if short_net == pn { nn } else { pn };
+        let Some(work) = compensate_run(pcb, short_net, twin_net, deficit) else {
             log::debug!("si-finish: {pn} skew {before:.3}mm — no run could absorb {deficit:.3}mm");
             over += 1;
             continue;
@@ -286,6 +432,33 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
             - length_match::net_routed_length(&work, nn))
         .abs();
         if after >= before {
+            over += 1;
+            continue;
+        }
+        // The two pair claims pull against each other: length added to a
+        // coupled leg has to go somewhere, and "somewhere" is away from the
+        // twin, which costs coupled fraction. Demanding zero loss deadlocks
+        // (it refused 5 of 9 pairs outright and skew stayed at 1.499mm), so
+        // spend the slack the claim actually leaves: keep the pair well clear
+        // of the 0.5 bound — COUPLING_FLOOR is the human board's own margin,
+        // not a relaxed bound — and let skew take the rest. A pair already
+        // below the floor may not be pushed lower.
+        const COUPLING_FLOOR: f64 = 0.7;
+        let gap_c = pcb.rules.default_rules.diff_pair_gap.unwrap_or(0.25);
+        let w_c = pcb
+            .rules
+            .default_rules
+            .diff_pair_width
+            .unwrap_or(pcb.rules.default_rules.trace_width);
+        let sep = (w_c + gap_c) * 1.75;
+        let (cf_before, cf_after) = (
+            si_claims::coupled_fraction(pcb, pn, nn, sep),
+            si_claims::coupled_fraction(&work, pn, nn, sep),
+        );
+        if cf_after < COUPLING_FLOOR.min(cf_before) - 1e-9 {
+            log::debug!(
+                "si-finish: {pn} compensation would cost coupling ({cf_before:.3} -> {cf_after:.3}) — skipped"
+            );
             over += 1;
             continue;
         }
@@ -365,7 +538,20 @@ pub fn si_finish(pcb: &mut Pcb, expansions: usize, descent_iters: usize) -> SiFi
     // Tolerance well inside the 1.1mm claim bound: the claim is a maximum
     // over every pair, so leaving a pair at 1.05mm is one reroute away from
     // breaking it.
-    let (meandered, over_tolerance) = meander_pair_skew(pcb, 0.6);
+    //
+    // Iterated: one pass can only absorb what the run's straight stretches
+    // have room for at one amplitude, so a large deficit closes over several
+    // passes. Stops as soon as a pass fixes nothing, so a board that is
+    // already matched pays for exactly one pass.
+    let (mut meandered, mut over_tolerance) = (0usize, 0usize);
+    for _ in 0..6 {
+        let (fixed, over) = meander_pair_skew(pcb, 0.6);
+        meandered += fixed;
+        over_tolerance = over;
+        if fixed == 0 {
+            break;
+        }
+    }
     log::info!("si-finish: meandered {meandered} pairs, {over_tolerance} still over tolerance");
     SiFinishReport {
         polished,
