@@ -33,7 +33,7 @@ import {
   durabilityWarning,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
-import { previewVersion, previewGlbFor } from "./tools/preview.js";
+import { previewVersion, previewGlbFor, PREVIEW_MAX_BASE64 } from "./tools/preview.js";
 import {
   createSessionStore,
   createSessionEventStore,
@@ -1749,9 +1749,15 @@ function sessionHasPcb(docId: string): boolean {
 }
 
 /** Upper bound for a preview GLB riding inline in a mount result's `_meta`.
- *  Matches the artifact-offload text ethos: big geometry goes through the
- *  fetch path; this fast path is for the common small-to-medium part. */
-const INLINE_PREVIEW_MAX_BASE64 = 1_500_000;
+ *
+ *  Re-exported from the preview module so the inline attach and the viewer's
+ *  `get_preview_glb` fallback share ONE ceiling. They used to be unrelated:
+ *  this cap made oversized documents fall through to a fetch path with no
+ *  limit of its own, which then blew the transport's result ceiling — so
+ *  everything above the cap was guaranteed to fail. `previewGlbFor` now fits
+ *  the payload to this budget, so being over it is a degraded preview, not a
+ *  missing one. */
+const INLINE_PREVIEW_MAX_BASE64 = PREVIEW_MAX_BASE64;
 
 /**
  * Attach a ready-to-render preview GLB to a mount-tool result's `_meta`
@@ -1770,7 +1776,8 @@ export async function attachInlinePreview(
 ): Promise<void> {
   try {
     const preview = await previewGlbFor(getSession(docId), engine);
-    if (!preview || preview.glb.length > INLINE_PREVIEW_MAX_BASE64) return;
+    if (!preview || preview.oversize) return;
+    if (preview.glb.length > INLINE_PREVIEW_MAX_BASE64) return;
     result._meta = {
       ...result._meta,
       "vcad.io/preview": {
@@ -1778,6 +1785,7 @@ export async function attachInlinePreview(
         glb: preview.glb,
         version: preview.version,
         ...(preview.mode ? { mode: preview.mode } : {}),
+        ...(preview.degraded ? { degraded: true } : {}),
       },
     };
   } catch {
