@@ -16,7 +16,7 @@ import {
   type PhysicsStepResult,
   type PhysicsActionType,
 } from "@vcad/engine";
-import { registerSession } from "./session.js";
+import { getSession, registerSession } from "./session.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Observation from the robot environment (re-export for API compatibility) */
@@ -56,9 +56,13 @@ const MAX_TRAJECTORY = 600;
 export interface EnvRecord {
   /** The assembly the env was created from — replay FK re-poses a clone. */
   document: Document;
-  /** Session id the assembly was registered under, so the viewer can fetch
-   *  its geometry via get_preview_glb. */
+  /** Session id the env is bound to, so the viewer can fetch its geometry via
+   *  get_preview_glb. The caller's own `document_id` when one was passed;
+   *  otherwise a session freshly registered from the inline IR. */
   documentId: string;
+  /** End-effector instance ids, in the order the caller passed them — the
+   *  labeling for `end_effector_poses` rows. */
+  endEffectorIds: string[];
   /** Per-step joint positions (degrees/mm), oldest first, capped at 600. */
   trajectory: number[][];
   /** Per-step rewards, index-aligned with `trajectory`. */
@@ -106,16 +110,140 @@ interface BatchGroup {
     substeps?: number;
     maxSteps?: number;
   };
+  /** Observation-order joint ids captured at creation (null on kernel builds
+   *  predating `jointIds()`), used to label batch observations. */
+  jointIds: string[] | null;
 }
 const batchGroups = new Map<string, BatchGroup>();
+
+/** Description shared by the two env-creating tools' `document` arg, so both
+ *  advertise the same session-first contract as the rest of the surface. */
+const INLINE_DOC_DESC =
+  "Inline Document IR describing the robot assembly, used instead of a " +
+  "session. Use this stateless path when no `document_id` is resident " +
+  "(e.g. a cold serverless instance). Exactly one of `document_id` or " +
+  "`document` must be given.";
+
+const SESSION_DOC_DESC =
+  "Session id of the assembly to simulate (from open_document / " +
+  "create_cad_loon). Preferred: the env binds to this same session, so no " +
+  "IR round-trip is needed and the sim can never run against a stale copy.";
+
+/** Resolve the assembly for an env-creating tool from either a resident
+ *  session id or inline IR. Fails closed — naming the offending combination —
+ *  when both or neither are supplied, so an agent can never quietly simulate
+ *  a copy that has drifted from the session it also named.
+ *
+ *  Unlike `resolveDocInput` (which prefers `document_id` and ignores a
+ *  redundant inline `document`), this is strict: passing both is ambiguous
+ *  here because the returned `document_id` — what the replay viewer and
+ *  get_preview_glb bind to — differs between the two paths. */
+function resolveEnvDocument(args: {
+  document_id?: unknown;
+  document?: unknown;
+}): {
+  doc: Document;
+  /** Non-null only on the session path — the inline path registers its
+   *  session after the env is successfully created, so a failed create can't
+   *  leave an orphan session behind. */
+  documentId: string | null;
+  source: "session" | "inline";
+} {
+  const id = typeof args.document_id === "string" ? args.document_id : "";
+  const inline =
+    args.document && typeof args.document === "object" ? args.document : null;
+
+  if (id && inline) {
+    throw new Error(
+      "Pass either `document_id` or `document`, not both — they resolve to " +
+        "different sessions and the inline copy may be stale. Drop `document` " +
+        `to simulate session "${id}" in place.`,
+    );
+  }
+  if (!id && !inline) {
+    throw new Error(
+      "Pass `document_id` (from open_document) to simulate a resident " +
+        "session — or an inline `document` object for the stateless flow. " +
+        "Exactly one is required.",
+    );
+  }
+  if (id) {
+    // Throws its own pinned "Unknown document_id" error when not resident.
+    return { doc: getSession(id), documentId: id, source: "session" };
+  }
+  return { doc: inline as Document, documentId: null, source: "inline" };
+}
+
+/** A joint's observation entries, keyed by joint id so the caller never has to
+ *  reconstruct the positional contract from `doc.joints`. */
+interface LabeledJoint {
+  id: string;
+  position: number;
+  velocity: number;
+}
+
+/** An end effector's pose, keyed by the instance id it was requested under. */
+interface LabeledEndEffector {
+  id: string;
+  pose: [number, number, number, number, number, number, number];
+}
+
+/** An observation with the bare arrays retained (unchanged wire contract) plus
+ *  id-keyed views of the same numbers. */
+type LabeledObservation = PhysicsObservation & {
+  joint_ids?: string[] | null;
+  joints?: LabeledJoint[];
+  end_effectors?: LabeledEndEffector[];
+};
+
+/**
+ * Attach id-keyed views to an observation.
+ *
+ * The bare `joint_positions` / `joint_velocities` / `end_effector_poses`
+ * arrays are left exactly as-is — existing callers and the replay ring buffer
+ * still read them positionally. What's added is the labeling those arrays
+ * silently assumed: `joints[i].id` names the joint whose numbers sit at index
+ * i, and `end_effectors[i].id` names the instance whose 7-float pose does.
+ * A caller that reads only the labeled views cannot mis-attribute a value by
+ * forgetting the order it passed `end_effector_ids` in.
+ *
+ * `jointIds` is null on kernel builds predating `jointIds()`; the labeled
+ * `joints` view is then omitted rather than guessed, and `joint_ids: null`
+ * marks the gap explicitly.
+ */
+function labelObservation(
+  obs: PhysicsObservation,
+  jointIds: string[] | null,
+  endEffectorIds: string[],
+): LabeledObservation {
+  const labeled: LabeledObservation = { ...obs, joint_ids: jointIds };
+  if (jointIds && jointIds.length === obs.joint_positions.length) {
+    labeled.joints = jointIds.map((id, i) => ({
+      id,
+      position: obs.joint_positions[i],
+      velocity: obs.joint_velocities[i],
+    }));
+  }
+  if (endEffectorIds.length === obs.end_effector_poses.length) {
+    labeled.end_effectors = endEffectorIds.map((id, i) => ({
+      id,
+      pose: obs.end_effector_poses[i],
+    }));
+  }
+  return labeled;
+}
 
 /** JSON Schema for create_robot_env input */
 export const createRobotEnvSchema = {
   type: "object" as const,
   properties: {
+    document_id: {
+      type: "string" as const,
+      description: SESSION_DOC_DESC,
+    },
     document: {
       type: "object" as const,
-      description: "vcad IR Document describing the robot assembly",
+      description: INLINE_DOC_DESC,
     },
     end_effector_ids: {
       type: "array" as const,
@@ -135,7 +263,7 @@ export const createRobotEnvSchema = {
       description: "Maximum episode length (default: 1000)",
     },
   },
-  required: ["document", "end_effector_ids"],
+  required: ["end_effector_ids"],
 };
 
 /** JSON Schema for gym_step input */
@@ -200,7 +328,8 @@ export const gymCloseSchema = {
 /** Create a new robot simulation environment */
 export async function createRobotEnv(input: unknown): Promise<GymResult> {
   const args = input as {
-    document: Document;
+    document_id?: string;
+    document?: Document;
     end_effector_ids: string[];
     dt?: number;
     substeps?: number;
@@ -226,7 +355,12 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
   try {
     const envId = `sim_${randomBytes(12).toString("base64url")}`;
 
-    const env = await PhysicsEnv.create(args.document, {
+    // Session-first: a `document_id` binds the env to that live session (no IR
+    // round-trip, no stale copy). Inline IR registers a new session so the
+    // inline viewer still has geometry to fetch.
+    const { doc, documentId: sessionId, source } = resolveEnvDocument(args);
+
+    const env = await PhysicsEnv.create(doc, {
       endEffectorIds: args.end_effector_ids,
       dt: args.dt,
       substeps: args.substeps,
@@ -235,12 +369,18 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
 
     simulations.set(envId, env);
 
-    // Register the assembly as a session so the inline viewer can render it,
-    // and start the replay record its playback UI reads via get_sim_replay.
-    const documentId = registerSession(args.document);
+    // On the inline path, register the assembly as a session so the inline
+    // viewer can fetch its geometry. On the session path we reuse the caller's
+    // id — one session, so a later mutation of it and the env's replay
+    // geometry can't diverge.
+    const documentId = sessionId ?? registerSession(doc);
+
+    // Start the replay record the viewer's playback UI reads via
+    // get_sim_replay.
     envRecords.set(envId, {
-      document: args.document,
+      document: doc,
       documentId,
+      endEffectorIds: args.end_effector_ids,
       trajectory: [],
       rewards: [],
       dones: [],
@@ -253,7 +393,20 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
 
     const info = {
       env_id: envId,
+      // Binding contract, spelled out because two handles come back:
+      //  · env_id      → gym_step / gym_reset / gym_observe / gym_close
+      //  · document_id → the replay viewer, get_preview_glb, and every other
+      //                  session tool (render_view, inspect_cad, update, …)
+      // On the session path document_id IS the id you passed — the env and the
+      // document you keep editing are the same session. On the inline path it
+      // is a NEW session minted from the IR you sent.
       document_id: documentId,
+      document_source: source,
+      binds: {
+        env_id: "gym_step, gym_reset, gym_observe, gym_close",
+        document_id:
+          "replay viewer, get_preview_glb, and session tools (render_view, inspect_cad, update)",
+      },
       num_joints: env.numJoints,
       // Observation ordering contract: joint_positions[i] and
       // joint_velocities[i] refer to joint_ids[i]. Null when the loaded
@@ -323,8 +476,17 @@ export function gymStep(input: unknown): GymResult {
       }
     }
 
+    const labeled = {
+      ...result,
+      observation: labelObservation(
+        result.observation,
+        env.jointIds,
+        record?.endEffectorIds ?? [],
+      ),
+    };
+
     return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(labeled, null, 2) }],
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -365,7 +527,20 @@ export function gymReset(input: unknown): GymResult {
     }
 
     return {
-      content: [{ type: "text", text: JSON.stringify(observation, null, 2) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            labelObservation(
+              observation,
+              env.jointIds,
+              record?.endEffectorIds ?? [],
+            ),
+            null,
+            2,
+          ),
+        },
+      ],
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -392,8 +567,22 @@ export function gymObserve(input: unknown): GymResult {
 
   try {
     const observation = env.observe();
+    const record = envRecords.get(args.env_id);
     return {
-      content: [{ type: "text", text: JSON.stringify(observation, null, 2) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            labelObservation(
+              observation,
+              env.jointIds,
+              record?.endEffectorIds ?? [],
+            ),
+            null,
+            2,
+          ),
+        },
+      ],
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -432,9 +621,13 @@ export function gymClose(input: unknown): GymResult {
 export const batchCreateEnvsSchema = {
   type: "object" as const,
   properties: {
+    document_id: {
+      type: "string" as const,
+      description: SESSION_DOC_DESC,
+    },
     document: {
       type: "object" as const,
-      description: "vcad IR Document describing the robot assembly",
+      description: INLINE_DOC_DESC,
     },
     n_envs: {
       type: "number" as const,
@@ -458,7 +651,7 @@ export const batchCreateEnvsSchema = {
       description: "Maximum episode length (default: 1000)",
     },
   },
-  required: ["document", "n_envs", "end_effector_ids"],
+  required: ["n_envs", "end_effector_ids"],
 };
 
 /** JSON Schema for batch_step input */
@@ -501,7 +694,8 @@ export const batchResetSchema = {
 /** Create N parallel simulation environments from a single assembly */
 export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
   const args = input as {
-    document: Document;
+    document_id?: string;
+    document?: Document;
     n_envs: number;
     end_effector_ids: string[];
     dt?: number;
@@ -526,6 +720,10 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
 
   try {
     const batchId = `batch_${randomBytes(12).toString("base64url")}`;
+    // Same session-first contract as create_robot_env. Batches mount no
+    // viewer, so a resolved session id is used only to read the assembly —
+    // the inline path registers nothing.
+    const { doc, documentId, source } = resolveEnvDocument(args);
     const envOptions = {
       endEffectorIds: args.end_effector_ids,
       dt: args.dt,
@@ -535,7 +733,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
 
     // Create N environments in parallel
     const envPromises = Array.from({ length: args.n_envs }, () =>
-      PhysicsEnv.create(args.document, envOptions),
+      PhysicsEnv.create(doc, envOptions),
     );
     const envs = await Promise.all(envPromises);
 
@@ -544,16 +742,27 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
     batchGroups.set(batchId, {
       envs,
       actionDim,
-      document: args.document,
+      document: doc,
       options: envOptions,
+      jointIds: envs[0].jointIds,
     });
 
     const info = {
       batch_id: batchId,
+      // batch_step / batch_reset bind to batch_id. No document session is
+      // minted here — a batch has no viewer; `document_id` echoes the session
+      // read from, and is null on the inline path.
+      document_id: documentId,
+      document_source: source,
       n_envs: args.n_envs,
       action_dim: actionDim,
       observation_dim: envs[0].observationDim,
       num_joints: envs[0].numJoints,
+      // Observation ordering contract, echoed so batch callers get the same
+      // labeling the single-env path returns per observation.
+      joint_ids: envs[0].jointIds,
+      actuated_joint_ids: envs[0].actuatedJointIds,
+      end_effector_ids: args.end_effector_ids,
     };
 
     return {
@@ -607,7 +816,13 @@ export function batchStep(input: unknown): GymResult {
 
     // Return compact summary: per-env observations and done flags
     const summary = {
-      observations: results.map((r) => r.observation),
+      observations: results.map((r) =>
+        labelObservation(
+          r.observation,
+          group.jointIds,
+          group.options.endEffectorIds,
+        ),
+      ),
       rewards: results.map((r) => r.reward),
       dones: results.map((r) => r.done),
     };
@@ -639,7 +854,13 @@ export function batchReset(input: unknown): GymResult {
   }
 
   try {
-    const observations = group.envs.map((env) => env.reset());
+    const observations = group.envs.map((env) =>
+      labelObservation(
+        env.reset(),
+        group.jointIds,
+        group.options.endEffectorIds,
+      ),
+    );
     return {
       content: [{ type: "text", text: JSON.stringify({ observations }, null, 2) }],
     };
@@ -658,8 +879,12 @@ export const toolDefs: ToolDef[] = [
     pack: "physics",
     description:
       "Create a physics simulation environment from a vcad assembly. " +
-      "Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. " +
-      "The environment provides a gym-style interface for RL training. " +
+      "Session-first: pass the `document_id` of the assembly already open — the env " +
+      "binds to that same session, so there is no IR round-trip and the sim can't run " +
+      "against a stale copy. Inline `document` IR is the stateless fallback; exactly " +
+      "one of the two is required. " +
+      "Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and " +
+      "document_id (what the replay viewer and the other session tools bind to). " +
       "Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     inputSchema: createRobotEnvSchema,
     handler: (a) => createRobotEnv(a),
@@ -674,7 +899,10 @@ export const toolDefs: ToolDef[] = [
     description:
       "Step the physics simulation with an action. " +
       "action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). " +
-      "Returns observation (joint positions/velocities, end effector poses), reward, and done flag.",
+      "Returns observation (joint positions/velocities, end effector poses), reward, and done flag. " +
+      "The observation carries both the bare positional arrays and id-keyed views: " +
+      "`joints[i] = {id, position, velocity}` and `end_effectors[i] = {id, pose}`, so no " +
+      "ordering has to be remembered.",
     inputSchema: gymStepSchema,
     handler: (a) => gymStep(a),
     behavior: behavior({}),
@@ -683,7 +911,9 @@ export const toolDefs: ToolDef[] = [
     name: "gym_reset",
     pack: "physics",
     description:
-      "Reset the simulation environment to its initial state. Returns the initial observation.",
+      "Reset the simulation environment to its initial state. Returns the initial " +
+      "observation, with joint values keyed by joint id (`joints`) and end effector " +
+      "poses keyed by instance id (`end_effectors`) alongside the bare arrays.",
     inputSchema: gymResetSchema,
     handler: (a) => gymReset(a),
     behavior: behavior({}),
@@ -693,7 +923,8 @@ export const toolDefs: ToolDef[] = [
     pack: "physics",
     description:
       "Get the current observation from the simulation without stepping. " +
-      "Returns joint positions, velocities, and end effector poses.",
+      "Returns joint positions, velocities, and end effector poses — both as bare " +
+      "arrays and keyed by joint / instance id.",
     inputSchema: gymObserveSchema,
     handler: (a) => gymObserve(a),
     behavior: behavior({}),
@@ -711,6 +942,8 @@ export const toolDefs: ToolDef[] = [
     pack: "physics",
     description:
       "Create N parallel simulation environments from a single robot assembly. " +
+      "Session-first: pass the `document_id` of the open assembly, or inline `document` " +
+      "IR as the stateless fallback — exactly one is required. " +
       "Returns a batch_id for use with batch_step and batch_reset. " +
       "Enables parallel RL training across multiple environments.",
     inputSchema: batchCreateEnvsSchema,
