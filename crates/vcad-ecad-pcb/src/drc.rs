@@ -5590,13 +5590,28 @@ mod tests {
     fn dead_copper_shorted_to_a_live_net_is_still_pruned() {
         let mut pcb = clean_pcb();
         // Net A: two pads, properly joined — the live net.
-        pcb.footprints
-            .push(one_pad_footprint("U1", Vec2::new(10.0, 10.0), 0.0, Vec2::new(0.0, 0.0), "A"));
-        pcb.footprints
-            .push(one_pad_footprint("U2", Vec2::new(30.0, 10.0), 0.0, Vec2::new(0.0, 0.0), "A"));
+        pcb.footprints.push(one_pad_footprint(
+            "U1",
+            Vec2::new(10.0, 10.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "A",
+        ));
+        pcb.footprints.push(one_pad_footprint(
+            "U2",
+            Vec2::new(30.0, 10.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "A",
+        ));
         // Net B: a pad far away, so B's copper below reaches no pad of its own.
-        pcb.footprints
-            .push(one_pad_footprint("U3", Vec2::new(10.0, 50.0), 0.0, Vec2::new(0.0, 0.0), "B"));
+        pcb.footprints.push(one_pad_footprint(
+            "U3",
+            Vec2::new(10.0, 50.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "B",
+        ));
         let trace = |a: Vec2, b: Vec2, net: &str| Trace {
             start: a,
             end: b,

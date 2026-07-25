@@ -7,7 +7,9 @@ use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: starved_legs <board>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: starved_legs <board>");
     let text = std::fs::read_to_string(&path).expect("read");
     let pcb: Pcb = if path.ends_with(".json") {
         serde_json::from_str(&text).expect("parse")
