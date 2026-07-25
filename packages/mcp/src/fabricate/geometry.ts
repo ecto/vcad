@@ -14,8 +14,9 @@
  */
 
 import type { Document } from "@vcad/ir";
-import type { Engine, TriangleMesh } from "@vcad/engine";
+import type { Engine, EvaluatedScene, TriangleMesh } from "@vcad/engine";
 import { computeMeshProperties } from "../tools/inspect.js";
+import { sceneExportUnits, worldMesh } from "../export/scene-units.js";
 import type { GeometryMetrics } from "./types.js";
 
 const EMPTY: GeometryMetrics = {
@@ -28,23 +29,28 @@ const EMPTY: GeometryMetrics = {
   bbox: null,
 };
 
-/** Evaluate `ir` and aggregate geometry metrics across all parts. */
+/** Evaluate `ir` and aggregate geometry metrics across all parts.
+ *
+ * Assembly-authored documents have no scene roots — their geometry is
+ * instances placed by the joint tree — so instances are folded in world-space
+ * alongside root parts, matching what `inspect_cad` reports. */
 export function measureDocument(ir: Document, engine: Engine): GeometryMetrics {
-  let scene: { parts: Array<{ mesh: TriangleMesh }> };
+  let scene: EvaluatedScene;
   try {
-    scene = engine.evaluate(ir) as { parts: Array<{ mesh: TriangleMesh }> };
+    scene = engine.evaluate(ir);
   } catch {
     return { ...EMPTY };
   }
-  if (!scene.parts || scene.parts.length === 0) return { ...EMPTY };
+  const bodies: TriangleMesh[] = sceneExportUnits(scene).map(worldMesh);
+  if (bodies.length === 0) return { ...EMPTY };
 
   let volume = 0;
   let area = 0;
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
 
-  for (const part of scene.parts) {
-    const props = computeMeshProperties(part.mesh);
+  for (const mesh of bodies) {
+    const props = computeMeshProperties(mesh);
     volume += props.volume;
     area += props.area;
     min[0] = Math.min(min[0], props.bbox.min.x);
@@ -63,7 +69,7 @@ export function measureDocument(ir: Document, engine: Engine): GeometryMetrics {
 
   return {
     ok: true,
-    parts: scene.parts.length,
+    parts: bodies.length,
     volume_mm3: volume,
     surface_area_mm2: area,
     footprint_mm2: dx * dy,

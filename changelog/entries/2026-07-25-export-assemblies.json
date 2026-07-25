@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-export-assemblies",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "export_cad exports assemblies",
+  "summary": "Assembly documents (partDefs + instances) now export to STL and GLB — STL bakes world transforms, GLB keeps one named node per instance.",
+  "features": ["assembly", "export"],
+  "mcpTools": ["export_cad", "quote_manufacturing"]
+}
