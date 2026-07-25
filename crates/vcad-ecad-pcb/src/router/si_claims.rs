@@ -98,7 +98,11 @@ fn seg_len(a: Vec2, b: Vec2) -> f64 {
 /// Fraction of `p_net`'s routed length that runs coupled to `n_net`: sampled
 /// at each P segment midpoint, coupled means some same-layer N segment passes
 /// within `max_sep` (center-to-center).
-pub(crate) fn coupled_fraction(pcb: &Pcb, p_net: &str, n_net: &str, max_sep: f64) -> f64 {
+///
+/// Exposed as `router::pair_coupled_fraction` so reports can name the pairs
+/// that break `min_pair_coupled_fraction` — the claim is a minimum over every
+/// routed pair, so the aggregate alone never says which one to fix.
+pub fn coupled_fraction(pcb: &Pcb, p_net: &str, n_net: &str, max_sep: f64) -> f64 {
     let p_segs: Vec<_> = pcb.traces.iter().filter(|t| t.net == p_net).collect();
     let n_segs: Vec<_> = pcb.traces.iter().filter(|t| t.net == n_net).collect();
     if p_segs.is_empty() || n_segs.is_empty() {
