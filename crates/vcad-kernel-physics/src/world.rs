@@ -279,8 +279,12 @@ impl PhysicsWorld {
                 body_part_frames.push((r_part_to_body, r_part_to_body.mul_vec(-anchor_m)));
                 let inertia = build_inertia(&mesh, mass, authored);
 
-                // Create phyz joint
-                let phyz_joint = vcad_joint_to_phyz(joint)?;
+                // Create phyz joint. `parent_to_joint` is measured from the
+                // parent *body* frame, which for a jointed parent is itself
+                // rotated by that joint's axis alignment — pass it in so the
+                // rotation does not accumulate down the chain.
+                let (r_parent, t_parent) = body_part_frames[parent_body_idx];
+                let phyz_joint = vcad_joint_to_phyz(joint, (&r_parent, &t_parent))?;
 
                 builder =
                     builder.add_body(&child_inst.id, parent_body_idx as i32, phyz_joint, inertia);
@@ -1216,5 +1220,259 @@ mod tests {
             "expected nonzero gravity torque at q=60° about Y axis, got {}",
             t
         );
+    }
+
+    /// Build the three-link hanging chain from the depth-compounding repro:
+    /// ground at world z=500, then three identical 20x20x100 segments each
+    /// hanging -Z from its own origin, joined tip-to-tip by revolute joints
+    /// about `axis`. At zero joint angle every link must sit exactly 100 mm
+    /// below the previous one with an identity orientation, for *any* axis.
+    fn hanging_chain(axis: VcadVec3) -> Document {
+        let mut doc = Document::new();
+
+        // seg geometry: 20x20x100 box translated so it hangs down -Z.
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: None,
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(20.0, 20.0, 100.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            vcad_ir::Node {
+                id: 2,
+                name: None,
+                op: vcad_ir::CsgOp::Translate {
+                    child: 1,
+                    offset: VcadVec3::new(-10.0, -10.0, -100.0),
+                },
+            },
+        );
+        // base geometry: a small block for the ground instance.
+        doc.nodes.insert(
+            3,
+            vcad_ir::Node {
+                id: 3,
+                name: None,
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(40.0, 40.0, 20.0),
+                },
+            },
+        );
+
+        let mut part_defs = HashMap::new();
+        part_defs.insert(
+            "seg".to_string(),
+            PartDef {
+                id: "seg".to_string(),
+                name: None,
+                root: 2,
+                default_material: None,
+                inertial: None,
+            },
+        );
+        part_defs.insert(
+            "base".to_string(),
+            PartDef {
+                id: "base".to_string(),
+                name: None,
+                root: 3,
+                default_material: None,
+                inertial: None,
+            },
+        );
+        doc.part_defs = Some(part_defs);
+
+        let inst = |id: &str, part: &str, z: f64| Instance {
+            id: id.to_string(),
+            part_def_id: part.to_string(),
+            name: None,
+            tags: Vec::new(),
+            transform: Some(vcad_ir::Transform3D {
+                translation: VcadVec3::new(0.0, 0.0, z),
+                ..Default::default()
+            }),
+            material: None,
+        };
+        doc.instances = Some(vec![
+            inst("i-base", "base", 500.0),
+            inst("i-1", "seg", 500.0),
+            inst("i-2", "seg", 400.0),
+            inst("i-3", "seg", 300.0),
+        ]);
+
+        let joint = |id: &str, parent: &str, child: &str, pz: f64| Joint {
+            id: id.to_string(),
+            name: None,
+            parent_instance_id: Some(parent.to_string()),
+            child_instance_id: child.to_string(),
+            parent_anchor: VcadVec3::new(0.0, 0.0, pz),
+            child_anchor: VcadVec3::new(0.0, 0.0, 0.0),
+            kind: JointKind::Revolute {
+                axis,
+                limits: Some((-90.0, 90.0)),
+            },
+            state: 0.0,
+        };
+        doc.joints = Some(vec![
+            joint("j1", "i-base", "i-1", 0.0),
+            joint("j2", "i-1", "i-2", -100.0),
+            joint("j3", "i-2", "i-3", -100.0),
+        ]);
+        doc.ground_instance_id = Some("i-base".to_string());
+
+        doc
+    }
+
+    /// Poses of the chain at zero joint angle must be axis-independent:
+    /// links at z = 0.5, 0.4, 0.3 m, all with identity orientation. The
+    /// axis-alignment rotation used to point phyz's Z-only revolute at an
+    /// arbitrary axis must not leak into the child body's world frame — it
+    /// used to, invisibly at depth 1 and compounding at every depth beyond.
+    fn assert_chain_poses(axis: VcadVec3) {
+        let doc = hanging_chain(axis);
+        let world = PhysicsWorld::from_document(&doc).unwrap();
+
+        for (inst, expect_z) in [("i-1", 0.5), ("i-2", 0.4), ("i-3", 0.3)] {
+            let (pos, quat) = world.get_instance_pose(inst).unwrap();
+            assert!(
+                (pos[0]).abs() < 1e-9 && (pos[1]).abs() < 1e-9 && (pos[2] - expect_z).abs() < 1e-9,
+                "axis {:?}: {} at {:?}, expected [0, 0, {}]",
+                (axis.x, axis.y, axis.z),
+                inst,
+                pos,
+                expect_z
+            );
+            // Identity quaternion, up to sign.
+            assert!(
+                (quat[0].abs() - 1.0).abs() < 1e-9
+                    && quat[1].abs() < 1e-9
+                    && quat[2].abs() < 1e-9
+                    && quat[3].abs() < 1e-9,
+                "axis {:?}: {} orientation {:?}, expected identity",
+                (axis.x, axis.y, axis.z),
+                inst,
+                quat
+            );
+        }
+    }
+
+    #[test]
+    fn test_chain_zero_pose_z_axis() {
+        assert_chain_poses(VcadVec3::new(0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn test_chain_zero_pose_y_axis() {
+        assert_chain_poses(VcadVec3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn test_chain_zero_pose_x_axis() {
+        assert_chain_poses(VcadVec3::new(1.0, 0.0, 0.0));
+    }
+
+    /// Mixed-axis chain, the humanoid-leg shape: yaw/roll/pitch alternating.
+    /// Same invariant — the chain hangs straight down at zero angle.
+    #[test]
+    fn test_chain_zero_pose_mixed_axes() {
+        let mut doc = hanging_chain(VcadVec3::new(0.0, 0.0, 1.0));
+        let axes = [
+            VcadVec3::new(0.0, 0.0, 1.0),
+            VcadVec3::new(0.0, 1.0, 0.0),
+            VcadVec3::new(1.0, 0.0, 0.0),
+        ];
+        for (joint, axis) in doc.joints.as_mut().unwrap().iter_mut().zip(axes) {
+            joint.kind = JointKind::Revolute {
+                axis,
+                limits: Some((-90.0, 90.0)),
+            };
+        }
+        let world = PhysicsWorld::from_document(&doc).unwrap();
+        for (inst, expect_z) in [("i-1", 0.5), ("i-2", 0.4), ("i-3", 0.3)] {
+            let (pos, quat) = world.get_instance_pose(inst).unwrap();
+            assert!(
+                pos[0].abs() < 1e-9 && pos[1].abs() < 1e-9 && (pos[2] - expect_z).abs() < 1e-9,
+                "mixed axes: {} at {:?}, expected [0, 0, {}]",
+                inst,
+                pos,
+                expect_z
+            );
+            assert!(
+                (quat[0].abs() - 1.0).abs() < 1e-9,
+                "mixed axes: {} orientation {:?}, expected identity",
+                inst,
+                quat
+            );
+        }
+    }
+
+    /// Physics FK must agree with the CAD-side assembly evaluator at every
+    /// joint configuration, not just zero — the shared-oracle check. The CAD
+    /// evaluator is the reference: it was correct while the physics
+    /// conversion was not.
+    #[test]
+    fn test_physics_fk_matches_cad_fk_mixed_axes() {
+        let mut doc = hanging_chain(VcadVec3::new(0.0, 1.0, 0.0));
+        let axes = [
+            VcadVec3::new(1.0, 0.0, 0.0),
+            VcadVec3::new(0.0, 1.0, 0.0),
+            VcadVec3::new(0.0, 0.0, 1.0),
+        ];
+        let angles = [17.0, -35.0, 48.0];
+        for ((joint, axis), state) in doc
+            .joints
+            .as_mut()
+            .unwrap()
+            .iter_mut()
+            .zip(axes)
+            .zip(angles)
+        {
+            joint.kind = JointKind::Revolute {
+                axis,
+                limits: Some((-90.0, 90.0)),
+            };
+            joint.state = state;
+        }
+
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+        let poses = world.forward_kinematics_at(&angles).unwrap();
+
+        // CAD-side reference: walk the chain by hand with the same
+        // convention the assembly evaluator uses — each joint places its
+        // child at parent_anchor, rotated by `state` about `axis`.
+        let mut ref_rot = Mat3::identity();
+        let mut ref_pos = Vec3::new(0.0, 0.0, 0.5);
+        for (i, joint) in doc.joints.as_ref().unwrap().iter().enumerate() {
+            let JointKind::Revolute { axis, .. } = joint.kind else {
+                unreachable!()
+            };
+            let anchor = Vec3::new(
+                joint.parent_anchor.x / 1000.0,
+                joint.parent_anchor.y / 1000.0,
+                joint.parent_anchor.z / 1000.0,
+            );
+            ref_pos += ref_rot.mul_vec(anchor);
+            let a = Vec3::new(axis.x, axis.y, axis.z).normalize();
+            ref_rot = ref_rot.mul_mat(&phyz::math::Mat3::rotation_axis(a, angles[i].to_radians()));
+
+            let inst = format!("i-{}", i + 1);
+            let (pos, _) = poses[&inst];
+            for k in 0..3 {
+                let expect = [ref_pos.x, ref_pos.y, ref_pos.z][k];
+                assert!(
+                    (pos[k] - expect).abs() < 1e-9,
+                    "{} component {}: physics {} vs CAD {}",
+                    inst,
+                    k,
+                    pos[k],
+                    expect
+                );
+            }
+        }
     }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-physics-joint-axis-frame-leak",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Fix compounding pose error on non-Z joint axes",
+  "summary": "Serial chains with X/Y revolute axes reported wrong link poses at zero angle; the axis-alignment rotation leaked into each child body frame and compounded with depth.",
+  "features": ["physics", "assembly", "simulation"],
+  "mcpTools": ["create_robot_env", "gym_reset", "gym_observe", "gym_step"]
+}
