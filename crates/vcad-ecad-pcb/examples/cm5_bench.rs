@@ -186,21 +186,51 @@ fn main() {
         eprintln!("unrouted {}: {}", d.net, d.reason);
     }
 
+    // Apply the routed copper to the board, then run the SI finishing pass
+    // (reroute-then-descend). Both of its stages are non-regressive and
+    // oracle-gated, so this can only improve the pair claims — and it runs
+    // here, inside the route, so a *freshly routed* board is the one the
+    // receipt is measured on.
+    for t in &r.traces {
+        pcb.traces.push(Trace {
+            start: t.start,
+            end: t.end,
+            width: t.width,
+            layer: t.layer,
+            net: t.net.clone(),
+            source: None,
+        });
+    }
+    for v in &r.vias {
+        pcb.vias.push(Via {
+            position: v.position,
+            diameter: pcb.rules.default_rules.via_diameter,
+            drill: pcb.rules.default_rules.via_drill,
+            start_layer: v.start_layer,
+            end_layer: v.end_layer,
+            net: v.net.clone(),
+            source: None,
+        });
+    }
+    if std::env::var("VCAD_SI_FINISH").as_deref() != Ok("0") {
+        let t1 = Instant::now();
+        let fin = vcad_ecad_pcb::router::si_finish(&mut pcb, 2_000_000, 2000);
+        println!(
+            "si-finish: {}/{} pairs re-coupled, {}/{} descended ({} rejected), {:.1}s",
+            fin.polished,
+            fin.polish_attempted,
+            fin.descent.tuned,
+            fin.descent.attempted,
+            fin.descent.rejected,
+            t1.elapsed().as_secs_f64(),
+        );
+    }
+
     // SI scoreboard: skew per length-match group and per differential pair,
     // measured on the routed copper. This is the gap the meander tuner must
     // close — and the number the human board is matched to within microns.
     {
-        let mut with_routes = pcb.clone();
-        for t in &r.traces {
-            with_routes.traces.push(Trace {
-                start: t.start,
-                end: t.end,
-                width: t.width,
-                layer: t.layer,
-                net: t.net.clone(),
-                source: None,
-            });
-        }
+        let with_routes = pcb.clone();
         for (gname, members) in &classifier.match_groups {
             let lens: Vec<(f64, &str)> = members
                 .iter()
@@ -235,28 +265,9 @@ fn main() {
     }
 
     // Save the routed board for rendering / inspection without re-routing.
+    // The copper is already applied to `pcb` above (the SI finishing pass
+    // rewrites some of it, so it has to be applied before that runs).
     if let Some(out) = out_json {
-        for t in &r.traces {
-            pcb.traces.push(Trace {
-                start: t.start,
-                end: t.end,
-                width: t.width,
-                layer: t.layer,
-                net: t.net.clone(),
-                source: None,
-            });
-        }
-        for v in &r.vias {
-            pcb.vias.push(Via {
-                position: v.position,
-                diameter: pcb.rules.default_rules.via_diameter,
-                drill: pcb.rules.default_rules.via_drill,
-                start_layer: v.start_layer,
-                end_layer: v.end_layer,
-                net: v.net.clone(),
-                source: None,
-            });
-        }
         std::fs::write(&out, serde_json::to_string(&pcb).expect("serialize board"))
             .expect("write routed board json");
         eprintln!("wrote {out}");

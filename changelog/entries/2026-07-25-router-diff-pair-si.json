@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-router-diff-pair-si",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Differential pairs route coupled and length-matched",
+  "summary": "Coupled pairs can now escape a BGA on an inner layer instead of failing outright, USB DP/DM pairs are recognized, and a finishing pass re-couples, descends and phase-compensates each pair so intra-pair skew lands inside the signal-integrity receipt's bounds.",
+  "features": ["pcb", "autorouter", "diff-pairs", "signal-integrity", "drc"],
+  "mcpTools": ["route_nets", "route_diff_pair", "run_drc", "build_receipt"]
+}

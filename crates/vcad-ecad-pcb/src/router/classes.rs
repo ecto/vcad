@@ -47,20 +47,6 @@ impl NetClassifier {
     }
 }
 
-/// USB 2.0 `DP`/`DM` partner (D+/D−) — a convention
-/// [`pair_partner`] does not cover because it is not symmetric-suffix.
-fn usb_dp_dm_partner(net: &str) -> Option<String> {
-    for (a, b) in [("DP", "DM"), ("DM", "DP"), ("D+", "D-"), ("D-", "D+")] {
-        if let Some(base) = net.strip_suffix(a) {
-            // Require a separator before the token so e.g. "LDP" doesn't match.
-            if base.ends_with('.') || base.ends_with('_') || base.ends_with('-') {
-                return Some(format!("{base}{b}"));
-            }
-        }
-    }
-    None
-}
-
 /// Scan `nets` and recover pairs and match groups from their names.
 pub fn classify_nets(nets: &[String]) -> NetClassifier {
     let set: std::collections::BTreeSet<&str> = nets.iter().map(|s| s.as_str()).collect();
@@ -71,9 +57,9 @@ pub fn classify_nets(nets: &[String]) -> NetClassifier {
         if paired.contains(net.as_str()) {
             continue;
         }
-        let partner = pair_partner(net)
-            .or_else(|| usb_dp_dm_partner(net))
-            .filter(|p| set.contains(p.as_str()));
+        // `pair_partner` is the single source of truth: what this classifier
+        // declares as a pair is exactly what the pair router can route.
+        let partner = pair_partner(net).filter(|p| set.contains(p.as_str()));
         if let Some(p) = partner {
             // Canonical order: positive leg first when identifiable.
             let (pos, neg) = if net.ends_with('N') || net.ends_with('M') || net.ends_with('-') {

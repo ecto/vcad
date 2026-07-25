@@ -102,5 +102,10 @@ the point of the row.)
 ## Next
 
 1. Wire M4 negotiation into the route/ratchet stages (the <30 min path).
-2. Reroute-then-descend for extreme-skew pairs; descent for the rest.
+2. ~~Reroute-then-descend for extreme-skew pairs; descent for the rest.~~ —
+   done, see [gpu-router-m7-pair-si.md](gpu-router-m7-pair-si.md). Coupled
+   construction went 17 → 39 of 49 pairs (the phantom centerline had been
+   pinned to the outer layer, where a BGA has only pads); a 40-net board now
+   reaches receipt Pass end to end; the full board is still 2/4, pinned by
+   short pairs whose legs land on different layers and by four detour pairs.
 3. Re-run this document's table after each; claims move only with runs.
