@@ -626,16 +626,6 @@ pub(super) fn try_route_pair_reason(
         return Err(PairBail::CenterlineSearch);
     };
 
-    // Realize the two legs from the centerline.
-    let (leg_a, leg_b) = match realize_legs(&center, half_sep, via_off, via_d / 2.0, clearance, w) {
-        Some(l) => l,
-        None => {
-            log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
-            restore(session, placed, ripped);
-            return Err(PairBail::DegenerateCenterline);
-        }
-    };
-
     // Leg → net assignment: the one whose pad connectors are shortest (the
     // non-crossing assignment — crossing connectors are strictly longer).
     //
@@ -645,13 +635,6 @@ pub(super) fn try_route_pair_reason(
     // are maze routes that detour around whatever is in the way, so the
     // ranking it produces is mostly noise.
     let cost = |leg: &Leg, s: Vec2, e: Vec2| dist(s, leg.first) + dist(e, leg.last);
-    let a_mine = cost(&leg_a, from, to) + cost(&leg_b, p_from, p_to)
-        <= cost(&leg_b, from, to) + cost(&leg_a, p_from, p_to);
-    let (mine, theirs) = if a_mine {
-        (leg_a, leg_b)
-    } else {
-        (leg_b, leg_a)
-    };
 
     // Connector from a pad to a leg end: straight when short, maze-routed at
     // single width when the crow-flight would thread a pin field (the second
@@ -697,11 +680,6 @@ pub(super) fn try_route_pair_reason(
                 return Some((vec![(from, to, to_layer)], vec![]));
             }
         }
-        let margin = 4.0 + w;
-        let window = (
-            Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
-            Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
-        );
         // Multi-goal attachment: the connector may terminate anywhere along
         // the leg's copper, not only at its endpoint — an offset leg end can
         // sit against a neighbouring pad where no legal approach exists.
@@ -735,39 +713,59 @@ pub(super) fn try_route_pair_reason(
                 on_board
             }
         };
-        let r = route_net_maze3d(
-            session,
-            &pcb.outline.vertices,
-            &copper,
-            net,
-            from,
-            &from_layers,
-            to,
-            &[to_layer],
-            nw,
-            via_d,
-            Some(cong),
-            120_000,
-            0.5,
-            Some(window),
-            &goals,
-            &[],
-            true,
-        );
-        if r.success {
-            Some((r.segments, r.vias))
-        } else {
-            log::debug!(
-                "pair-connector: {net} {:.2}mm ({:.2},{:.2})->({:.2},{:.2}) layer {:?} failed",
-                dist(from, to),
-                from.x,
-                from.y,
-                to.x,
-                to.y,
-                to_layer
+        // Escalating window. The hop itself is sub-millimetre, but its LENGTH
+        // is the wrong scale to size the search by: a pad inside a fine-pitch
+        // field can only reach another layer by escaping the field laterally
+        // first and dropping its via outside — the channels between 1.37mm
+        // pads on a 1.7mm pitch are 0.33mm, wide enough for the 0.08mm neck
+        // but not for a 0.21mm via plus clearance. A window drawn 4mm around
+        // a 0.8mm hop cannot contain that detour, so the connector failed
+        // while a perfectly good coupled corridor sat 0.8mm away (CM5: the
+        // last five pairs, all of them `/ETH.*` and `/PCIe.*` at U4).
+        for margin in [4.0 + w, 10.0 + w, 20.0 + w] {
+            let window = (
+                Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
+                Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
             );
-            None
+            let r = route_net_maze3d(
+                session,
+                &pcb.outline.vertices,
+                &copper,
+                net,
+                from,
+                &from_layers,
+                to,
+                &[to_layer],
+                nw,
+                via_d,
+                Some(cong),
+                120_000,
+                0.5,
+                Some(window),
+                &goals,
+                &[],
+                true,
+            );
+            if r.success {
+                if margin > 4.0 + w + 1e-9 {
+                    log::debug!(
+                        "pair-connector: {net} reached at {margin:.0}mm window ({:.2}mm hop)",
+                        dist(from, to)
+                    );
+                }
+                return Some((r.segments, r.vias));
+            }
         }
+        log::debug!(
+            "pair-connector: {net} {:.2}mm ({:.2},{:.2})->({:.2},{:.2}) layer {:?} failed",
+            dist(from, to),
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            to_layer
+        );
+        None
     };
     // Ordering (census 9's lesson): commit BOTH legs first — they are
     // parallel and disjoint by construction — then route the four pad
@@ -786,38 +784,8 @@ pub(super) fn try_route_pair_reason(
             thin_width: nw,
         }
     };
-    let Some(mut placed_mine) =
-        validate_and_commit(session, pcb, leg_cand(&mine, net, from, to), placed)
-    else {
-        log::debug!("pair: {net}/{partner}: leg 1 failed validation");
-        restore(session, placed, ripped);
-        return Err(PairBail::LegValidation);
-    };
-    let Some(mut placed_theirs) = validate_and_commit(
-        session,
-        pcb,
-        leg_cand(&theirs, &partner, p_from, p_to),
-        placed,
-    ) else {
-        log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
-        for &sp in &placed_mine.spans {
-            session.remove(sp);
-        }
-        restore(session, placed, ripped);
-        return Err(PairBail::LegValidation);
-    };
     // Connectors, all four against both committed legs. Committed as thin
     // copper directly into each leg's Placed (stubs channel).
-    let rollback_all = |session: &mut RouteSession,
-                        placed: &mut Vec<Placed>,
-                        a: &Placed,
-                        b: &Placed,
-                        ripped: Vec<Placed>| {
-        for &sp in a.spans.iter().chain(b.spans.iter()) {
-            session.remove(sp);
-        }
-        restore(session, placed, ripped);
-    };
     let attach = |session: &mut RouteSession,
                   pl: &mut Placed,
                   leg: &Leg,
@@ -868,20 +836,138 @@ pub(super) fn try_route_pair_reason(
         pl.via_pts.extend(tv);
         true
     };
-    if !attach(session, &mut placed_mine, &mine, from, to)
-        || !attach(session, &mut placed_theirs, &theirs, p_from, p_to)
-    {
-        rollback_all(session, placed, &placed_mine, &placed_theirs, ripped);
-        return Err(PairBail::Connector);
+    // Connector retreat. A coupled corridor can be perfectly good and still be
+    // unreachable: the leg end lands inside a through-hole field on a deep
+    // inner layer, and the sub-millimetre hop from the pad to it has no legal
+    // path (CM5 census: every remaining bail was a *head* connector of 0.6-1.2mm
+    // into In4Cu/BCu/In8Cu under the 100-pin connector). Giving up there throws
+    // away the whole coupled run over its last half-millimetre.
+    //
+    // So trim the centerline back from the end that failed and try again: a
+    // shorter coupled run whose ends sit in open copper, with slightly longer
+    // neck-down connectors covering the difference. Rungs are asymmetric
+    // because the two ends fail independently, and each is small next to the
+    // spans this rescues (0.6-3mm off a 21-33mm pair).
+    const RETREAT_RUNGS: [(f64, f64); 7] = [
+        (0.0, 0.0),
+        (0.6, 0.0),
+        (0.0, 0.6),
+        (1.5, 0.0),
+        (0.0, 1.5),
+        (1.5, 1.5),
+        (3.0, 3.0),
+    ];
+    let mut outcome: Option<(Placed, Placed, f64)> = None;
+    let mut last_bail = PairBail::Connector;
+    for (r_from, r_to) in RETREAT_RUNGS {
+        let Some(center_t) = trim_centerline(&center, r_from, r_to) else {
+            continue;
+        };
+        let Some((leg_a, leg_b)) =
+            realize_legs(&center_t, half_sep, via_off, via_d / 2.0, clearance, w)
+        else {
+            last_bail = PairBail::DegenerateCenterline;
+            continue;
+        };
+        let a_mine = cost(&leg_a, from, to) + cost(&leg_b, p_from, p_to)
+            <= cost(&leg_b, from, to) + cost(&leg_a, p_from, p_to);
+        let (mine, theirs) = if a_mine {
+            (leg_a, leg_b)
+        } else {
+            (leg_b, leg_a)
+        };
+        // Ordering (census 9's lesson): commit BOTH legs first — they are
+        // parallel and disjoint by construction — then route the four pad
+        // connectors against the complete picture, so no connector can cut the
+        // coupled corridor before the other leg exists.
+        let Some(mut placed_mine) =
+            validate_and_commit(session, pcb, leg_cand(&mine, net, from, to), placed)
+        else {
+            log::debug!("pair: {net}/{partner}: leg 1 failed validation");
+            last_bail = PairBail::LegValidation;
+            continue;
+        };
+        let Some(mut placed_theirs) = validate_and_commit(
+            session,
+            pcb,
+            leg_cand(&theirs, &partner, p_from, p_to),
+            placed,
+        ) else {
+            log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
+            for &sp in &placed_mine.spans {
+                session.remove(sp);
+            }
+            last_bail = PairBail::LegValidation;
+            continue;
+        };
+        if attach(session, &mut placed_mine, &mine, from, to)
+            && attach(session, &mut placed_theirs, &theirs, p_from, p_to)
+        {
+            if r_from + r_to > 0.0 {
+                log::debug!(
+                    "pair: {net}/{partner}: connectors reached after {r_from}/{r_to}mm retreat"
+                );
+            }
+            let len: f64 = center_t.iter().map(|(a, b, _)| dist(*a, *b)).sum();
+            outcome = Some((placed_mine, placed_theirs, len));
+            break;
+        }
+        // Connectors failed: drop this attempt's copper (keeping the ripped
+        // partner routes for the next rung) and retreat further.
+        for &sp in placed_mine.spans.iter().chain(placed_theirs.spans.iter()) {
+            session.remove(sp);
+        }
+        last_bail = PairBail::Connector;
     }
+    let Some((placed_mine, placed_theirs, center_len)) = outcome else {
+        restore(session, placed, ripped);
+        return Err(last_bail);
+    };
 
-    let center_len: f64 = center.iter().map(|(a, b, _)| dist(*a, *b)).sum();
     log::info!(
         "pair: routed {net} + {partner} coupled (centerline {:.1}mm, {} via pair(s), w={w} gap={gap})",
         center_len,
         placed_mine.via_pts.len(),
     );
     Ok((placed_mine, placed_theirs))
+}
+
+/// Shorten a centerline by `r_from` millimetres at its start and `r_to` at its
+/// end, measured along the polyline. Returns `None` if the trim would leave
+/// less than a via pitch of coupled run — at that point the pair is better off
+/// as two singles than as a token stub.
+fn trim_centerline(center: &Centerline, r_from: f64, r_to: f64) -> Option<Centerline> {
+    if r_from <= 0.0 && r_to <= 0.0 {
+        return Some(center.clone());
+    }
+    let total: f64 = center.iter().map(|(a, b, _)| dist(*a, *b)).sum();
+    const MIN_COUPLED_MM: f64 = 1.0;
+    if total - r_from - r_to < MIN_COUPLED_MM {
+        return None;
+    }
+    let mut out: Centerline = Vec::new();
+    let mut walked = 0.0;
+    for &(a, b, l) in center {
+        let seg = dist(a, b);
+        if seg < 1e-9 {
+            continue;
+        }
+        let (s0, s1) = (walked, walked + seg);
+        walked = s1;
+        // Clip this segment to the surviving [r_from, total - r_to] interval.
+        let lo = r_from.max(s0);
+        let hi = (total - r_to).min(s1);
+        if hi - lo < 1e-9 {
+            continue;
+        }
+        let dir = (b - a).scale(1.0 / seg);
+        out.push((a + dir.scale(lo - s0), a + dir.scale(hi - s0), l));
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// The longest contiguous run of `center` (as an inclusive segment index
