@@ -6,6 +6,7 @@
  */
 
 import type {
+  Document,
   SchematicSheet,
   Pcb,
   Trace,
@@ -180,6 +181,66 @@ async function verifyWithKernel<T>(
 export async function isEcadAvailable(): Promise<boolean> {
   const wasm = await loadEcadWasm();
   return wasm !== null;
+}
+
+/** Per-plane group outcome of a design-constraint solve. */
+export interface ConstraintGroupReport {
+  node: number;
+  status: string;
+  converged: boolean;
+  iterations: number;
+  residualNorm: number;
+  dof: number;
+  constraintCount: number;
+}
+
+/** Aggregate report from the document-level design-constraint solver. */
+export interface DesignSolveReport {
+  converged: boolean;
+  groups: ConstraintGroupReport[];
+  movedFootprints: string[];
+  movedVertices: string[];
+  movedSketches: number[];
+  drivenValues: Array<{ id: string; value: number }>;
+  residuals: Array<{ id: string; residual: number; driven: boolean }>;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Solve the document's design constraints in the kernel. Returns the updated
+ * document (footprint positions/rotations, outline vertices, sketch points,
+ * back-annotated driven dimensions) plus the solve report. Fail-closed: a
+ * missing kernel or a parse error is an `errored` outcome, never a silent
+ * no-op "success".
+ */
+export async function solveDesignConstraints(
+  doc: Document,
+  options?: { extraFixed?: Array<{ node: number; ref: string }> },
+): Promise<VerifyOutcome<{ document: Document; report: DesignSolveReport }>> {
+  return verifyWithKernel("design constraints", (wasm) => {
+    if (typeof wasm.solveDesignConstraints !== "function") {
+      throw new Error("kernel WASM predates solveDesignConstraints");
+    }
+    return JSON.parse(
+      wasm.solveDesignConstraints(JSON.stringify(doc), JSON.stringify(options ?? {})),
+    ) as { document: Document; report: DesignSolveReport };
+  });
+}
+
+/**
+ * Validate and measure the document's constraints without mutating anything —
+ * every dimensional constraint's current value lands in `drivenValues`.
+ */
+export async function checkDesignConstraints(
+  doc: Document,
+): Promise<VerifyOutcome<DesignSolveReport>> {
+  return verifyWithKernel("design constraints (check)", (wasm) => {
+    if (typeof wasm.checkDesignConstraints !== "function") {
+      throw new Error("kernel WASM predates checkDesignConstraints");
+    }
+    return JSON.parse(wasm.checkDesignConstraints(JSON.stringify(doc))) as DesignSolveReport;
+  });
 }
 
 /**
@@ -894,6 +955,35 @@ export async function exportKicadSch(sheet: SchematicSheet): Promise<string | nu
     return wasm.exportKicadSch(JSON.stringify(sheet)) as string;
   } catch (e) {
     console.warn("[ECAD] KiCad schematic export failed:", e);
+    return null;
+  }
+}
+
+/**
+ * Export a linked KiCad 9 project bundle (`<name>.kicad_pro` / `.kicad_sch` /
+ * `.kicad_pcb`) with footprint→symbol cross-probe paths. Returns
+ * `[filename, contents]` pairs, or null if the ECAD WASM is unavailable or
+ * predates the bundle export.
+ */
+export async function exportKicadProject(
+  sheet: SchematicSheet,
+  pcb: Pcb,
+  name: string,
+): Promise<Array<[string, string]> | null> {
+  // Structural cast: the checked-in WASM package may predate this binding
+  // (artifacts are only refreshed on main), so probe for it at runtime.
+  const wasm = (await loadEcadWasm()) as {
+    exportKicadProject?: (sheetJson: string, pcbJson: string, name: string) => unknown;
+  } | null;
+  if (!wasm || typeof wasm.exportKicadProject !== "function") return null;
+  try {
+    return wasm.exportKicadProject(
+      JSON.stringify(sheet),
+      JSON.stringify(pcb),
+      name,
+    ) as Array<[string, string]>;
+  } catch (e) {
+    console.warn("[ECAD] KiCad project export failed:", e);
     return null;
   }
 }

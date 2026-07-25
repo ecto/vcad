@@ -205,9 +205,38 @@ async function loadAndInit(): Promise<WasmModule> {
     await mod.default(hint ? { module_or_path: hint } : undefined);
   }
 
+  assertKernelBaseline(mod);
   wasmModule = mod;
   generation++;
   return mod;
+}
+
+/** Bindings every supported kernel-wasm bundle must export. The TS fallbacks
+ *  that used to paper over their absence (semanticDiffFallback, the loon
+ *  serializer mirror) were deleted 2026-07-24 — a bundle missing any of
+ *  these is stale and fails init loudly instead of degrading silently. */
+const REQUIRED_BINDINGS = [
+  "evaluateDocument",
+  "documentDiff",
+  "documentMerge",
+  "documentToLoon",
+  "documentToLoonChecked",
+] as const;
+
+function assertKernelBaseline(mod: WasmModule): void {
+  const missing = REQUIRED_BINDINGS.filter(
+    (name) => typeof (mod as Record<string, unknown>)[name] !== "function",
+  );
+  if (missing.length > 0) {
+    const version =
+      typeof (mod as { get_kernel_version?: () => string }).get_kernel_version ===
+      "function"
+        ? (mod as { get_kernel_version: () => string }).get_kernel_version()
+        : "unknown";
+    throw new Error(
+      `stale @vcad/kernel-wasm bundle (kernel version ${version}): missing required bindings ${missing.join(", ")} — rebuild the workspace (VCAD_WASM_SKIP unset) or update to a current bundle`,
+    );
+  }
 }
 
 /**

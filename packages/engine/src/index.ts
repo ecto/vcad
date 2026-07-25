@@ -93,7 +93,6 @@ export type { GpuGeometryResult } from "./gpu.js";
 // Caching and incremental evaluation
 export {
   semanticDiff,
-  semanticDiffFallback,
   threeWayMerge,
   mergeAvailable,
   type DocumentDiff,
@@ -111,6 +110,13 @@ export type { EvaluateOptions } from "./evaluate.js";
 // The authoritative TS-side Transform3D application (extrinsic X→Y→Z euler,
 // matrix Rz·Ry·Rx) — exported so renderers can regression-test against it.
 export { transformMesh } from "./evaluate.js";
+// Kernel-preferred variants: same contract, but computed by the WASM kernel
+// when the loaded build has the bindings (TS above is the fallback).
+export {
+  transformMeshWithKernel,
+  embroideryPatternToMeshWithKernel,
+  type MeshKernel,
+} from "./evaluate.js";
 export type { TransformInfo } from "./transform-walk.js";
 
 // Animation sequencer — samples a document Timeline into per-frame state.
@@ -193,6 +199,7 @@ export {
   tryExportFabFiles,
   parseKicadPcb,
   exportKicadPcb,
+  exportKicadProject,
   exportKicadSch,
   builtinSymbols,
   footprintForName,
@@ -217,7 +224,10 @@ export {
   verifySubstitution,
   buildReceipt,
   verifyReceipt,
+  solveDesignConstraints,
+  checkDesignConstraints,
 } from "./ecad.js";
+export type { DesignSolveReport, ConstraintGroupReport } from "./ecad.js";
 export type {
   EcadProbe,
   DrcViolationResult,
@@ -320,7 +330,8 @@ export type {
   MaterialCard,
 } from "./atoms.js";
 
-// Cross-domain PCB ↔ enclosure verification (pure; no kernel dependency)
+// Cross-domain PCB ↔ enclosure verification (backed by vcad-kernel-enclosure
+// via WASM — callers must initialize the kernel first)
 export {
   checkEnclosureFit,
   deriveBoardFromCavity,
@@ -530,6 +541,10 @@ export interface KernelModule {
   nestSheetMetalParts?: (partsJson: string, paramsJson: string) => string;
   /** Built-in materials registry → JSON array. */
   getSheetMetalMaterials?: () => string;
+  /** Mallet-strike pipeline on a flat free-free bar → JSON. */
+  simulateStrikeKernel?: (inputJson: string) => string;
+  /** Note name ("C6", "F#4") → Hz. Throws on garbage. */
+  noteToHz?: (note: string) => number;
   /** Built-in bend table → JSON `{id, rows}`. */
   getSheetMetalBendTable?: () => string;
   /** Built-in shop catalog (e.g. `"sendcutsend"`) → JSON or `{error}`. */
@@ -590,6 +605,12 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Steady laminar LBM flow solve (FlowSpec/options JSON + fields flag). */
+  simulateFlow?: (
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ) => unknown;
   /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
   documentDiff?: (oldJson: string, newJson: string) => unknown;
   /** Apply a `DocumentDiff` to a document, returning the patched document. */
@@ -648,6 +669,8 @@ export interface KernelModule {
   photonicsSimulate?: (specJson: string, optionsJson: string) => unknown;
   /** Monte Carlo neutron shielding run (ShieldSpec/params JSON). */
   neutronicsSimulate?: (specJson: string, paramsJson: string) => unknown;
+  /** Lattice gauge theory Monte Carlo run (SimSpec JSON). */
+  latticeGaugeSimulate?: (specJson: string) => unknown;
   /** Static structural analysis of a box solid. */
   analyzeStaticsBox?: (
     specJson: string,
@@ -1019,6 +1042,8 @@ export class Engine {
       sheetMetalSequence: (wasmModule as Record<string, unknown>).sheetMetalSequence as KernelModule["sheetMetalSequence"],
       nestSheetMetalParts: (wasmModule as Record<string, unknown>).nestSheetMetalParts as KernelModule["nestSheetMetalParts"],
       getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
+      simulateStrikeKernel: (wasmModule as Record<string, unknown>).simulateStrikeKernel as KernelModule["simulateStrikeKernel"],
+      noteToHz: (wasmModule as Record<string, unknown>).noteToHz as KernelModule["noteToHz"],
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
@@ -1030,6 +1055,7 @@ export class Engine {
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
       thermalSolveTransient: (wasmModule as Record<string, unknown>).thermalSolveTransient as KernelModule["thermalSolveTransient"],
+      simulateFlow: (wasmModule as Record<string, unknown>).simulateFlow as KernelModule["simulateFlow"],
       documentDiff: (wasmModule as Record<string, unknown>).documentDiff as KernelModule["documentDiff"],
       documentDiffApply: (wasmModule as Record<string, unknown>).documentDiffApply as KernelModule["documentDiffApply"],
       documentMerge: (wasmModule as Record<string, unknown>).documentMerge as KernelModule["documentMerge"],
@@ -1044,6 +1070,7 @@ export class Engine {
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
       photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
       neutronicsSimulate: (wasmModule as Record<string, unknown>).neutronicsSimulate as KernelModule["neutronicsSimulate"],
+      latticeGaugeSimulate: (wasmModule as Record<string, unknown>).latticeGaugeSimulate as KernelModule["latticeGaugeSimulate"],
       analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
       analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
@@ -1389,6 +1416,27 @@ export class Engine {
     return fn(specJson, transientJson, paramsJson, optionsJson);
   }
 
+  /**
+   * Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure
+   * drop, flow rates, mass audit, optional thermal pickup, and predicted
+   * receipt claims. Per-voxel fields are only returned when
+   * `includeFields` is true. Inputs are JSON strings (FlowSpec, options);
+   * see `vcad-kernel-flow`.
+   */
+  simulateFlow(
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ): unknown {
+    const fn = this.kernel.simulateFlow;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "simulateFlow is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, optionsJson, includeFields);
+  }
+
   private circuitFn<K extends keyof KernelModule>(name: K): NonNullable<KernelModule[K]> {
     const fn = this.kernel[name];
     if (typeof fn !== "function") {
@@ -1536,6 +1584,22 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson);
+  }
+
+  /**
+   * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson
+   * action): plaquette, Wilson loops, string tension, Polyakov order
+   * parameter, flux-tube profile, field snapshots — jackknife errors
+   * throughout; see `vcad-kernel-qcd`.
+   */
+  latticeGaugeSimulate(specJson: string): unknown {
+    const fn = this.kernel.latticeGaugeSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "latticeGaugeSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson);
   }
 
   topologyOptimizeBox(
@@ -1768,6 +1832,29 @@ export class Engine {
       chain,
       this.kernel as unknown as Parameters<typeof runSheetMetalSequence>[1],
     );
+  }
+
+  /**
+   * Run the kernel's mallet-strike pipeline (free-free bar modal analysis +
+   * synthesis + FFT verdict). Input/output shapes are JSON mirrors of
+   * `vcad_kernel_acoustics::strike::{StrikeInput, StrikeResult}` with the
+   * WAV base64-encoded as `wav_base64`.
+   */
+  simulateStrike(input: unknown): unknown {
+    const kernel = this.kernel as unknown as KernelModule;
+    if (!kernel.simulateStrikeKernel) {
+      throw new Error("kernel WASM build lacks simulateStrikeKernel — rebuild @vcad/kernel-wasm");
+    }
+    return JSON.parse(kernel.simulateStrikeKernel(JSON.stringify(input)));
+  }
+
+  /** Parse a note name ("C6", "F#4") to Hz via the kernel. */
+  noteToHz(note: string): number {
+    const kernel = this.kernel as unknown as KernelModule;
+    if (!kernel.noteToHz) {
+      throw new Error("kernel WASM build lacks noteToHz — rebuild @vcad/kernel-wasm");
+    }
+    return kernel.noteToHz(note);
   }
 
   /** Return the kernel's curated sheet-metal materials registry. */

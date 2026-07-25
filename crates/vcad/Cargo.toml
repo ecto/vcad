@@ -20,6 +20,7 @@ drafting = ["dep:vcad-kernel-drafting"]
 [dependencies]
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
+vcad-kernel-export = { workspace = true }
 vcad-kernel-drafting = { workspace = true, optional = true }
 tang = { workspace = true }
 thiserror = { workspace = true }

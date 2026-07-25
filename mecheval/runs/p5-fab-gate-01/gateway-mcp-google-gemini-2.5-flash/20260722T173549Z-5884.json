@@ -1,0 +1,135 @@
+{
+  "schema_version": 0,
+  "task_id": "p5-fab-gate-01",
+  "task_sha256": "3aa56088fcc221b92611e9a74f8eb8881b899aa92b946c76d84b3281d858116d",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          40,
+          25
+        ]
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 3,
+      "type": "fab_ready",
+      "params": {
+        "type": "fab_ready"
+      },
+      "result": "fail",
+      "details": {
+        "detail": {
+          "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+        },
+        "stage": "drc"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T173549Z-5884",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-flash",
+    "name": "AI Gateway (MCP, google/gemini-2.5-flash)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-flash",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p5-fab-gate-01",
+    "rendered": "Design a fabrication-ready printed circuit board: 5V from a USB connector regulated to 3.3V by a linear regulator, with input and output capacitors and a power-indicator LED with its resistor — at least five footprints. Board outline at most 40mm × 25mm, two copper layers. Declare nets VBUS, 3V3, and GND; place and route so every net's copper is fully connected. This is the fab gate: beyond a clean design-rule check, the board must survive Gerber serialization of every layer — if it can't be exported for manufacture, it doesn't pass. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.1387499999999875
+      },
+      {
+        "n": 1,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1_t1gIf54RYloV"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9237080000020796
+      }
+    ],
+    "tokens": {
+      "input": 45455,
+      "output": 0,
+      "total": 45455,
+      "cache_creation_input": 0,
+      "cache_read_input": 0
+    },
+    "wallclock_sec": 17.215349833
+  },
+  "output": {
+    "vcad_path": "20260722T173549Z-5884.vcad",
+    "vcad_sha256": "88702a434c8a56dd90e18ceeb72570261b14b6a1853d5ae2404b15d12f82630a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T17:35:49.605Z",
+    "ended_at": "2026-07-22T17:36:06.831Z"
+  },
+  "signature": null
+}

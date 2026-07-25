@@ -1,0 +1,119 @@
+{
+  "version": "0.1",
+  "nodes": {},
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "schematic": {
+    "title": "Battery LED Series Circuit",
+    "components": [
+      {
+        "ref": "J1",
+        "value": "Battery Connector 2-pin",
+        "footprintId": "Connector_JST:JST_PH_2",
+        "position": {
+          "x": 20,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "VBAT+",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "VBAT-",
+            "pin_type": "Passive",
+            "position": {
+              "x": 5,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "R1",
+        "value": "1k",
+        "footprintId": "Resistor_SMD:R_0805",
+        "position": {
+          "x": 60,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "R1_1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "R1_2",
+            "pin_type": "Passive",
+            "position": {
+              "x": 5,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "D1",
+        "value": "LED",
+        "footprintId": "LED_SMD:LED_0805_2012Metric",
+        "position": {
+          "x": 100,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "A",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "K",
+            "pin_type": "Passive",
+            "position": {
+              "x": 5,
+              "y": 0
+            }
+          }
+        ]
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "labels": [],
+    "nets": {
+      "VBAT+": [
+        "J1.1",
+        "R1.1"
+      ],
+      "LED_NODE": [
+        "R1.2",
+        "D1.1"
+      ],
+      "VBAT-": [
+        "J1.2",
+        "D1.2"
+      ]
+    }
+  }
+}

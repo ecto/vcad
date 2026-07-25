@@ -38,7 +38,12 @@ export function computeVolume(mesh: TriangleMesh): number {
   return computeVolumeTS(mesh);
 }
 
-/** TypeScript fallback for volume computation. */
+/**
+ * TypeScript fallback for volume computation, used only until the async
+ * WASM import resolves in the browser. Mirrors the canonical kernel
+ * implementation in crates/vcad-kernel-tessellate/src/mesh_props.rs —
+ * change that first, this second.
+ */
 function computeVolumeTS(mesh: TriangleMesh): number {
   const numTriangles = mesh.indices.length / 3;
   let volume = 0;

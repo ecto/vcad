@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-flow-cfd-lbm",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "feat",
+  "title": "Laminar CFD: lattice-Boltzmann flow solver",
+  "summary": "New simulate_flow tool: steady laminar D3Q19 LBM on a voxel grid with pressure drop, flow rates, mass audit, thermal pickup, and predicted vcad.flow-claims/1 receipts.",
+  "features": ["flow", "cfd", "simulation"],
+  "mcpTools": ["simulate_flow"]
+}

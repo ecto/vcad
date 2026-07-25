@@ -1,0 +1,120 @@
+{
+  "schema_version": 0,
+  "task_id": "p3-led-bar-01",
+  "task_sha256": "140879121d98a5e876fa432bcfcb3296c81a576c7e594711015f47d2b8dd342c",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          60,
+          25
+        ]
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 18
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 4,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T154416Z-9529",
+  "model": {
+    "id": "default-cube",
+    "name": "DEFAULT_CUBE (baseline villain)",
+    "provider": "stub",
+    "params": {
+      "size_mm": 50
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p3-led-bar-01",
+    "rendered": "Design a printed circuit board for an 8-LED indicator bar driven by a serial shift register: one shift register in a SOIC-16 package, eight LEDs, eight current-limiting resistors, and a 5-pin input header (VCC, GND, DATA, CLK, LATCH) — at least eighteen footprints total. Board outline at most 60mm × 25mm (a bar), two copper layers. Each shift-register output drives one LED through its own resistor to GND. Declare all nets, place components so the LEDs form a row, and route every net so its copper is fully connected — the parallel LED nets across a narrow board make routing discipline matter. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "create_cad_document",
+        "args": {
+          "stub": "DEFAULT_CUBE"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.007166999999999035
+      }
+    ],
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0
+    },
+    "wallclock_sec": 0.000007166999999999035
+  },
+  "output": {
+    "vcad_path": "20260722T154416Z-9529.vcad",
+    "vcad_sha256": "28d5c821b73f5b947dfc1bb0f4382f6eba938d89685e58567414b7a290f5d645",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T15:44:16.656Z",
+    "ended_at": "2026-07-22T15:44:16.661Z"
+  },
+  "signature": null
+}

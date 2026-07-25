@@ -28,9 +28,11 @@
 //! ```
 
 pub mod builtin;
+pub mod eagle_brd;
 pub mod footprint;
 pub mod kicad_mod;
 pub mod kicad_pcb;
+pub mod kicad_sch;
 pub mod kicad_sym;
 pub mod kicad_write;
 
@@ -39,10 +41,12 @@ mod sexpr;
 use serde::{Deserialize, Serialize};
 
 // Re-export public API
+pub use eagle_brd::parse_eagle_brd;
 pub use kicad_mod::{parse_footprint_lib, FootprintDef, FootprintLib, GraphicDef, PadDef};
 pub use kicad_pcb::parse_kicad_pcb;
+pub use kicad_sch::parse_kicad_sch;
 pub use kicad_sym::{parse_symbol_lib, Symbol, SymbolGraphic, SymbolLib, SymbolPin};
-pub use kicad_write::{write_kicad_pcb, write_kicad_sch};
+pub use kicad_write::{write_kicad_pcb, write_kicad_project, write_kicad_sch};
 
 /// A key-value property from a KiCad library element.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

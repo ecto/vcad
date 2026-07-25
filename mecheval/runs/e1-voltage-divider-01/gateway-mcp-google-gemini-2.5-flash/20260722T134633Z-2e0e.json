@@ -1,0 +1,92 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-voltage-divider-01",
+  "task_sha256": "2b30ac88cb54283f8eae88c0716078cd0f396f82a9d0708b1bd6d84194e9e451",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no schematic in document (fail-closed: erc_clean requires document.schematic)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 1,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T134633Z-2e0e",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-flash",
+    "name": "AI Gateway (MCP, google/gemini-2.5-flash)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-flash",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-voltage-divider-01",
+    "rendered": "Capture a schematic for a resistive voltage divider: an input terminal VIN, two resistors in series to ground, and an output terminal VOUT tapped between them. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean. Output a .vcad document with the schematic sheet in the document's schematic field.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.0586669999999856
+      },
+      {
+        "n": 1,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1_4Bj3tqtM_CYp"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0751669999990554
+      }
+    ],
+    "tokens": {
+      "input": 45387,
+      "output": 0,
+      "total": 45387
+    },
+    "wallclock_sec": 8.823106875
+  },
+  "output": {
+    "vcad_path": "20260722T134633Z-2e0e.vcad",
+    "vcad_sha256": "88702a434c8a56dd90e18ceeb72570261b14b6a1853d5ae2404b15d12f82630a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T13:46:33.121Z",
+    "ended_at": "2026-07-22T13:46:41.954Z"
+  },
+  "signature": null
+}

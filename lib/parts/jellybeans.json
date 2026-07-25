@@ -752,7 +752,179 @@
         { "number": "53", "name": "QSPI_SD0", "type": "Bidirectional" },
         { "number": "54", "name": "QSPI_SD2", "type": "Bidirectional" },
         { "number": "55", "name": "QSPI_SD1", "type": "Bidirectional" },
-        { "number": "56", "name": "QSPI_CSn", "type": "Bidirectional" }
+        { "number": "56", "name": "QSPI_CSn", "type": "Bidirectional" },
+        { "number": "EP", "name": "GND", "type": "PowerInput" }
+      ]
+    },
+    {
+      "name": "DRV8833",
+      "aliases": ["DRV8833PW", "DRV8833PWP", "DRV8833PWPR"],
+      "description": "Dual H-bridge DC/stepper motor driver, 2.7-10.8V, 1.5A/bridge",
+      "footprints": ["TSSOP-16", "HTSSOP-16"],
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/drv8833.pdf",
+      "app_notes": [
+        "Bypass VM (pin 13) with 10uF bulk + 0.1uF ceramic close to the pin.",
+        "VCP (pin 14) needs a 10nF X7R cap (rated for VM) from VCP to VM.",
+        "VINT (pin 11) needs a 2.2uF ceramic to GND; do not otherwise load it.",
+        "Drive nSLEEP (pin 1) high to enable; tie AISEN/BISEN to GND if unused.",
+        "nFAULT (pin 8) is open-drain — pull up to the logic supply."
+      ],
+      "pins": [
+        { "number": "1", "name": "nSLEEP", "type": "Input" },
+        { "number": "2", "name": "AOUT1", "type": "Output" },
+        { "number": "3", "name": "AISEN", "type": "Passive" },
+        { "number": "4", "name": "AOUT2", "type": "Output" },
+        { "number": "5", "name": "BOUT2", "type": "Output" },
+        { "number": "6", "name": "BISEN", "type": "Passive" },
+        { "number": "7", "name": "BOUT1", "type": "Output" },
+        { "number": "8", "name": "nFAULT", "type": "OpenCollector" },
+        { "number": "9", "name": "BIN1", "type": "Input" },
+        { "number": "10", "name": "BIN2", "type": "Input" },
+        { "number": "11", "name": "VINT", "type": "PowerOutput" },
+        { "number": "12", "name": "GND", "type": "PowerInput" },
+        { "number": "13", "name": "VM", "type": "PowerInput" },
+        { "number": "14", "name": "VCP", "type": "Passive" },
+        { "number": "15", "name": "AIN2", "type": "Input" },
+        { "number": "16", "name": "AIN1", "type": "Input" }
+      ]
+    },
+    {
+      "name": "DRV8837",
+      "aliases": ["DRV8837C", "DRV8837DSG", "DRV8837CDSG"],
+      "description": "Single H-bridge DC motor driver, 0-11V, 1.8A (WSON-8)",
+      "footprints": ["WSON-8", "DFN-8"],
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/drv8837.pdf",
+      "app_notes": [
+        "Bypass VM (pin 1) and VCC (pin 7) each with 0.1uF ceramic to GND.",
+        "Drive nSLEEP (pin 8) high to enable the outputs.",
+        "Solder the exposed thermal pad to the GND plane."
+      ],
+      "pins": [
+        { "number": "1", "name": "VM", "type": "PowerInput" },
+        { "number": "2", "name": "OUT1", "type": "Output" },
+        { "number": "3", "name": "GND", "type": "PowerInput" },
+        { "number": "4", "name": "OUT2", "type": "Output" },
+        { "number": "5", "name": "IN2", "type": "Input" },
+        { "number": "6", "name": "IN1", "type": "Input" },
+        { "number": "7", "name": "VCC", "type": "PowerInput" },
+        { "number": "8", "name": "nSLEEP", "type": "Input" }
+      ]
+    },
+    {
+      "name": "W25Q32",
+      "aliases": [
+        "W25Q32JV",
+        "W25Q16JV",
+        "W25Q64",
+        "W25Q64JV",
+        "W25Q128",
+        "W25Q128JV",
+        "W25Q80"
+      ],
+      "description": "Winbond SPI/QSPI NOR flash (25Q series, shared 8-pin pinout)",
+      "footprints": ["SOIC-8", "WSON-8", "SOIC-8W"],
+      "datasheet_url": "https://www.winbond.com/resource-files/w25q32jv%20revi%2005232021%20plus.pdf",
+      "app_notes": [
+        "Bypass VCC (pin 8) with 0.1uF ceramic to GND close to the pin.",
+        "Pull /CS (pin 1) up to VCC (typ. 10k) so flash is deselected on reset.",
+        "In plain SPI, /WP and /HOLD may be pulled to VCC; in QSPI they are IO2/IO3."
+      ],
+      "pins": [
+        { "number": "1", "name": "/CS", "type": "Input" },
+        { "number": "2", "name": "DO(IO1)", "type": "Bidirectional" },
+        { "number": "3", "name": "/WP(IO2)", "type": "Bidirectional" },
+        { "number": "4", "name": "GND", "type": "PowerInput" },
+        { "number": "5", "name": "DI(IO0)", "type": "Bidirectional" },
+        { "number": "6", "name": "CLK", "type": "Input" },
+        { "number": "7", "name": "/HOLD(IO3)", "type": "Bidirectional" },
+        { "number": "8", "name": "VCC", "type": "PowerInput" }
+      ]
+    },
+    {
+      "name": "CH340G",
+      "aliases": ["CH340", "CH340C", "CH340N", "CH340E"],
+      "description": "USB-to-UART bridge (WCH CH340, SOP-16)",
+      "footprints": ["SOIC-16", "SOP-16"],
+      "datasheet_url": "https://www.wch-ic.com/downloads/CH340DS1_PDF.html",
+      "app_notes": [
+        "CH340G needs a 12MHz crystal on XI/XO with ~22pF load caps; CH340C/N have an internal oscillator (leave XI/XO open).",
+        "At 5V VCC, bypass V3 (pin 4) with 0.1uF to GND; for 3.3V operation tie V3 to VCC.",
+        "Tie R232 (pin 15) to GND for normal UART operation.",
+        "Bypass VCC (pin 16) with 0.1uF ceramic close to the pin."
+      ],
+      "pins": [
+        { "number": "1", "name": "GND", "type": "PowerInput" },
+        { "number": "2", "name": "TXD", "type": "Output" },
+        { "number": "3", "name": "RXD", "type": "Input" },
+        { "number": "4", "name": "V3", "type": "PowerOutput" },
+        { "number": "5", "name": "UD+", "type": "Bidirectional" },
+        { "number": "6", "name": "UD-", "type": "Bidirectional" },
+        { "number": "7", "name": "XI", "type": "Input" },
+        { "number": "8", "name": "XO", "type": "Output" },
+        { "number": "9", "name": "CTS#", "type": "Input" },
+        { "number": "10", "name": "DSR#", "type": "Input" },
+        { "number": "11", "name": "RI#", "type": "Input" },
+        { "number": "12", "name": "DCD#", "type": "Input" },
+        { "number": "13", "name": "DTR#", "type": "Output" },
+        { "number": "14", "name": "RTS#", "type": "Output" },
+        { "number": "15", "name": "R232", "type": "Input" },
+        { "number": "16", "name": "VCC", "type": "PowerInput" }
+      ]
+    },
+    {
+      "name": "TP4056",
+      "aliases": ["TP4056X", "TC4056A"],
+      "description": "1A single-cell Li-ion linear charger with thermal regulation",
+      "footprints": ["SOP-8", "ESOP-8", "SOIC-8"],
+      "datasheet_url": "https://www.mouser.com/datasheet/2/1099/TP4056-3062546.pdf",
+      "app_notes": [
+        "PROG (pin 2) resistor sets charge current: I_chg = 1200V / R_prog (1.2k = 1A, 2k = 580mA).",
+        "Tie TEMP (pin 1) to GND to disable the NTC battery-temperature sense.",
+        "/CHRG (pin 7) and /STDBY (pin 6) are open-drain status outputs — pull up (often via LEDs) to VCC.",
+        "Bypass VCC (pin 4) and BAT (pin 5) each with 10uF to GND; drive CE (pin 8) high to enable charging."
+      ],
+      "pins": [
+        { "number": "1", "name": "TEMP", "type": "Input" },
+        { "number": "2", "name": "PROG", "type": "Passive" },
+        { "number": "3", "name": "GND", "type": "PowerInput" },
+        { "number": "4", "name": "VCC", "type": "PowerInput" },
+        { "number": "5", "name": "BAT", "type": "PowerOutput" },
+        { "number": "6", "name": "/STDBY", "type": "OpenCollector" },
+        { "number": "7", "name": "/CHRG", "type": "OpenCollector" },
+        { "number": "8", "name": "CE", "type": "Input" }
+      ]
+    },
+    {
+      "name": "Crystal",
+      "aliases": ["XTAL", "HC-49S", "HC-49", "HC-49US"],
+      "description": "Two-terminal quartz crystal (through-hole HC-49 or 2-pad SMD)",
+      "footprints": ["HC-49S", "Crystal_SMD_5032-2Pin", "Crystal_SMD_3215-2Pin"],
+      "datasheet_url": "https://ecsxtal.com/store/pdf/hc-49us.pdf",
+      "app_notes": [
+        "Add a load capacitor to GND on each side: C = 2*(CL - Cstray), typically 12-22pF.",
+        "Keep the crystal and its caps close to the MCU with a quiet local ground."
+      ],
+      "pins": [
+        { "number": "1", "name": "X1", "type": "Passive" },
+        { "number": "2", "name": "X2", "type": "Passive" }
+      ]
+    },
+    {
+      "name": "Crystal-3225",
+      "aliases": ["ABM8", "ABM8G", "ABM8-272-T3", "NX3225GA", "TSX-3225"],
+      "description": "4-pad 3.2x2.5mm SMD crystal (pads 1/3 crystal, 2/4 ground)",
+      "footprints": ["Crystal_SMD_3225-4Pin", "3225"],
+      "datasheet_url": "https://abracon.com/Resonators/ABM8-272-T3.pdf",
+      "app_notes": [
+        "Pads 2 and 4 are the grounded case/corner pads.",
+        "RP2040 reference design: 12MHz ABM8-272-T3, two 15pF load caps, 1k series resistor on XOUT.",
+        "Load capacitors: C = 2*(CL - Cstray); check the crystal's specified CL."
+      ],
+      "pins": [
+        { "number": "1", "name": "XIN", "type": "Passive" },
+        { "number": "2", "name": "GND", "type": "PowerInput" },
+        { "number": "3", "name": "XOUT", "type": "Passive" },
+        { "number": "4", "name": "GND2", "type": "PowerInput" }
       ]
     }
   ]

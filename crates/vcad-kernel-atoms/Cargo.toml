@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 vcad-ir = { workspace = true }
+phyz-md = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

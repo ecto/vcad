@@ -3223,6 +3223,9 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "vcad-ecad-export",
+ "vcad-ecad-pcb",
+ "vcad-ecad-schematic",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
@@ -4040,6 +4043,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phyz-md"
+version = "0.1.0"
+dependencies = [
+ "phyz-math",
+]
+
+[[package]]
 name = "phyz-model"
 version = "0.1.0"
 dependencies = [
@@ -4781,6 +4791,12 @@ name = "robust"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839"
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rstar"
@@ -5683,6 +5699,7 @@ name = "tang"
 version = "0.2.0"
 dependencies = [
  "paste",
+ "robust",
 ]
 
 [[package]]
@@ -6821,6 +6838,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-drafting",
+ "vcad-kernel-export",
 ]
 
 [[package]]
@@ -6900,6 +6918,17 @@ dependencies = [
  "js-sys",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "vcad-design-constraints"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-ecad-pcb",
+ "vcad-ir",
+ "vcad-kernel-constraints",
 ]
 
 [[package]]
@@ -6993,13 +7022,18 @@ dependencies = [
  "rstar",
  "serde",
  "serde_json",
+ "tang-expr",
  "thiserror 2.0.18",
  "toml 0.8.23",
+ "vcad-ecad-export",
  "vcad-ecad-package",
+ "vcad-ecad-sim",
  "vcad-ecad-symbols",
  "vcad-ir",
+ "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-sheet",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7039,6 +7073,7 @@ name = "vcad-ecad-symbols"
 version = "0.9.4"
 dependencies = [
  "nom",
+ "roxmltree",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -7153,15 +7188,19 @@ name = "vcad-kernel"
 version = "0.9.4"
 dependencies = [
  "serde_json",
+ "vcad-kernel-acoustics",
  "vcad-kernel-antenna",
  "vcad-kernel-booleans",
+ "vcad-kernel-calibration",
  "vcad-kernel-cam",
  "vcad-kernel-constraints",
  "vcad-kernel-cost",
  "vcad-kernel-dfm",
  "vcad-kernel-em",
+ "vcad-kernel-enclosure",
  "vcad-kernel-fea",
  "vcad-kernel-fillet",
+ "vcad-kernel-flow",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-naming",
@@ -7169,6 +7208,7 @@ dependencies = [
  "vcad-kernel-particle",
  "vcad-kernel-photonics",
  "vcad-kernel-primitives",
+ "vcad-kernel-qcd",
  "vcad-kernel-sheet",
  "vcad-kernel-shell",
  "vcad-kernel-sketch",
@@ -7205,6 +7245,7 @@ dependencies = [
 name = "vcad-kernel-atoms"
 version = "0.9.4"
 dependencies = [
+ "phyz-md",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -7225,6 +7266,15 @@ dependencies = [
  "vcad-kernel-sketch",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
+]
+
+[[package]]
+name = "vcad-kernel-calibration"
+version = "0.9.4"
+dependencies = [
+ "ryu",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7318,6 +7368,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-enclosure"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "vcad-kernel-export"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-fea"
 version = "0.9.4"
 dependencies = [
@@ -7340,6 +7406,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-flow"
+version = "0.9.4"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "serde",
+ "serde_json",
+ "vcad-kernel-gpu",
+ "vcad-kernel-thermal",
+ "vcad-receipt",
+ "wgpu",
+]
+
+[[package]]
 name = "vcad-kernel-geom"
 version = "0.9.4"
 dependencies = [
@@ -7353,6 +7433,7 @@ version = "0.9.4"
 dependencies = [
  "bytemuck",
  "pollster",
+ "tang-expr",
  "thiserror 2.0.18",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -7364,7 +7445,6 @@ dependencies = [
 name = "vcad-kernel-math"
 version = "0.9.4"
 dependencies = [
- "robust",
  "tang",
 ]
 
@@ -7465,6 +7545,14 @@ dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-topo",
+]
+
+[[package]]
+name = "vcad-kernel-qcd"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7636,6 +7724,7 @@ dependencies = [
 name = "vcad-kernel-wasm"
 version = "0.9.4"
 dependencies = [
+ "base64 0.22.1",
  "console_error_panic_hook",
  "getrandom 0.2.17",
  "js-sys",
@@ -7646,6 +7735,7 @@ dependencies = [
  "vcad-app",
  "vcad-chat",
  "vcad-crdt",
+ "vcad-design-constraints",
  "vcad-diff",
  "vcad-ecad-export",
  "vcad-ecad-parts",
@@ -7661,8 +7751,10 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-atoms",
+ "vcad-kernel-calibration",
  "vcad-kernel-cam",
  "vcad-kernel-drafting",
+ "vcad-kernel-export",
  "vcad-kernel-geom",
  "vcad-kernel-gpu",
  "vcad-kernel-math",

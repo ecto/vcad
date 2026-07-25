@@ -1,0 +1,119 @@
+{
+  "version": "0.1",
+  "nodes": {},
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "schematic": {
+    "title": "Battery LED Series Circuit",
+    "components": [
+      {
+        "ref": "J1",
+        "value": "Battery 2-pin",
+        "footprintId": "Connector_JST:JST_PH_2",
+        "position": {
+          "x": 20,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "BAT+",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "BAT-",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "R1",
+        "value": "330R",
+        "footprintId": "Resistor_SMD:R_0805",
+        "position": {
+          "x": 60,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "1",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "2",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      },
+      {
+        "ref": "D1",
+        "value": "LED Red",
+        "footprintId": "LED_SMD:LED_0805",
+        "position": {
+          "x": 100,
+          "y": 50
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "A",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "K",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "labels": [],
+    "nets": {
+      "BAT+": [
+        "J1.1",
+        "R1.1"
+      ],
+      "N_SERIES": [
+        "R1.2",
+        "D1.1"
+      ],
+      "BAT-": [
+        "J1.2",
+        "D1.2"
+      ]
+    }
+  }
+}

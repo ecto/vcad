@@ -25,6 +25,14 @@ jobs:
       matrix:
         toolchain: [stable, nightly]
     steps:
+      # The full workspace build now overflows the stock runner disk
+      # ("No space left on device" during linking) — drop the big
+      # preinstalled toolchains we never use before building.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@v6
       - name: Clone sibling repos
         run: |
@@ -63,6 +71,33 @@ jobs:
       - name: IR types in sync (Rust → TS codegen)
         if: matrix.toolchain == 'stable'
         run: npm run ir:check
+
+  # Real-KiCad verification of the .kicad_sch/.kicad_pcb exporters: the
+  # ignored tests in vcad-ecad-symbols run kicad-cli (ERC gate + netlist
+  # equivalence against sheet.nets). Locally: install KiCad 9 and run
+  #   cargo test -p vcad-ecad-symbols -- --ignored --nocapture
+  # (kicad-cli found via PATH, $KICAD_CLI, or the macOS app bundle).
+  kicad-verify:
+    name: KiCad export verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+      - name: Install KiCad 9 (kicad-cli)
+        run: |
+          sudo add-apt-repository -y ppa:kicad/kicad-9.0-releases
+          sudo apt-get update
+          # --no-install-recommends skips the symbol/footprint/3D libraries
+          # (~gigabytes) — the tests embed their own lib_symbols.
+          sudo apt-get install -y --no-install-recommends kicad
+          kicad-cli version
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p vcad-ecad-symbols -- --ignored --nocapture
 
   # wasm-pack dominates the TS critical path (~3m23s of a 7m job), so it
   # runs as its own job. The TS job starts in parallel and downloads the

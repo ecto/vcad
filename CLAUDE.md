@@ -10,20 +10,36 @@ vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onsha
 
 ## Prerequisites
 
-vcad depends on the `tang` math workspace at a **sibling path** (`../tang`). Clone it
-next to vcad before running `cargo build`:
+vcad depends on the `tang` math workspace and the `phyz` physics workspace at
+**sibling paths** (`../tang`, `../phyz`). Clone both next to vcad before running
+`cargo build` — a default build fails without either (`vcad-kernel-physics` and
+`vcad-sim` are in default-members, and `vcad-kernel-wasm`'s default `physics`
+feature pulls phyz in too):
 
 ```bash
 git clone git@github.com:ecto/tang.git ../tang
+git clone git@github.com:ecto/phyz.git ../phyz
 ```
 
 Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
-`../tang/crates/*`.
+`../tang/crates/*`; `vcad-kernel-physics` and `vcad-sim` point at
+`../../../phyz/crates/*` (i.e. `../phyz` relative to the repo root).
 
 **Fresh worktrees** (`.claude/worktrees/*`) start with no `node_modules` — run `npm ci`
 before any npm/tauri command. Tauri needs the `cargo-tauri` binary (installed globally
 via `cargo install tauri-cli`); the npm scripts invoke it as `cargo tauri`, so no local
 `tauri` on PATH is required.
+
+Worktree roots live at `.claude/worktrees/<name>`, so the sibling path deps
+resolve to `.claude/worktrees/tang` and `.claude/worktrees/phyz`. Symlinks
+inside `.claude/worktrees/` make this work (`tang -> /Users/cam/Developer/tang`,
+`phyz -> /Users/cam/Developer/phyz`); they must exist — or be created — before
+`cargo` commands will build from a worktree (run from the **main** checkout):
+
+```bash
+ln -sfn "$(cd .. && pwd)/tang" .claude/worktrees/tang
+ln -sfn "$(cd .. && pwd)/phyz" .claude/worktrees/phyz
+```
 
 After `npm ci`, the app imports from `@vcad/core`, `@vcad/engine`, `@vcad/ir`, `@vcad/mcp`
 which all resolve to `dist/index.js` — so workspace packages must be built before
@@ -68,6 +84,43 @@ supabase db push --dry-run         # preview migration changes
 supabase db push                   # apply migrations to production
 supabase db diff -f name           # generate migration from local changes
 ```
+
+## MCP server distribution — never point a config at dist/index.js
+
+A config referencing a checkout's `packages/mcp/dist/index.js` can silently
+serve stale code (the 2026-07-23 ice-viz session lost hours to a dist built 4
+days earlier on a parked feature branch — missing the parts DB, fix_drc,
+crystal footprints, and inline previews, and minting dead artifact URLs).
+Two supported channels instead:
+
+**User mode (default) — published npm package:**
+
+```json
+{ "command": "npx", "args": ["-y", "@vcad/mcp"] }
+```
+
+`.github/workflows/mcp-publish.yml` publishes a self-contained bundle (server
++ kernel WASM in one tarball, version/sha/time baked in — see
+`packages/mcp/scripts/build-npm.mjs`, which mirrors `services/mcp/build.sh`)
+on every main merge touching `packages/**` or `lib/**`, versioned
+`<base>-main.<run>` on the `latest` dist-tag. The kernel structurally cannot
+lag the server: they ship in the same immutable tarball, smoke-tested
+(`scripts/mcp-npm-smoke.mjs` — boot + WASM init + initialize handshake)
+before publish. Needs the `NPM_TOKEN` repo secret.
+
+**Contributor mode — self-validating launcher, for sessions hacking on the
+server itself (runs the branch under your feet):**
+
+```json
+{ "command": "node", "args": ["/path/to/vcad/packages/mcp/scripts/serve.mjs"] }
+```
+
+`serve.mjs` fingerprints the checkout (git tree hash of `packages/` + `lib/`
+plus a digest of uncommitted changes), rebuilds the workspace when the stamp
+in `dist/.build-stamp.json` doesn't match, warns on stderr when the checkout
+is behind `origin/main`, then execs the server. A raw `npm run build` doesn't
+write the stamp, so the next `serve` triggers one redundant rebuild and then
+stamps — self-correcting, not an error.
 
 ## Supabase
 

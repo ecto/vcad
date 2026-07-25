@@ -11,6 +11,11 @@
 //! - [`congestion`] -- PathFinder-style negotiated-congestion history-cost field
 
 pub mod auto;
+pub mod classes;
+pub mod descent;
+#[cfg(feature = "gpu")]
+pub mod gpu_bridge;
+pub mod si_claims;
 
 /// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
 /// Elapsed milliseconds, or 0.0 when timing is unavailable.
@@ -45,6 +50,7 @@ pub mod diff_pair;
 pub(crate) mod escape;
 pub mod global;
 pub mod grid;
+pub(crate) mod legalize;
 pub mod length_match;
 pub mod length_tune;
 pub mod maze;
@@ -62,6 +68,7 @@ pub use length_match::{
     check_length_match, match_lengths, LengthMatchOptions, LengthMatchResult, NetLengthReport,
 };
 pub use maze::route_net_maze;
+pub use pair::polish_pairs;
 
 use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;

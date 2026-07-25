@@ -151,6 +151,12 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   },
   parameter_gradient: { title: "Parameter Gradient", annotations: RO },
 
+  // ── Design constraints (document-level geometric solver) ───────────────
+  add_constraint: { title: "Add Constraint", annotations: RW },
+  delete_constraint: { title: "Delete Constraint", annotations: RW },
+  list_constraints: { title: "List Constraints", annotations: RO },
+  solve_constraints: { title: "Solve Constraints", annotations: RW },
+
   // ── Print-then-measure calibration loop ────────────────────────────────
   predict_print: { title: "Predict Print", annotations: RO },
   record_measurement: { title: "Record Measurement", annotations: RW },
@@ -255,9 +261,14 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   simulate_photonics: { title: "Simulate Photonics", annotations: RO },
   analyze_antenna: { title: "Analyze Antenna", annotations: RO },
   solve_thermal: { title: "Solve Thermal", annotations: RO },
+  simulate_flow: { title: "Simulate Flow", annotations: RO },
   analyze_structure: { title: "Analyze Structure", annotations: RO },
   simulate_neutron_shield: {
     title: "Simulate Neutron Shield",
+    annotations: RO,
+  },
+  simulate_lattice_gauge: {
+    title: "Simulate Lattice Gauge Theory",
     annotations: RO,
   },
   analyze_tolerance_stackup: {
@@ -298,6 +309,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   render_ratsnest: { title: "Render Ratsnest", annotations: RO },
   render_stackup: { title: "Render Stackup", annotations: RO },
   run_drc: { title: "Run DRC", annotations: RO },
+  fix_drc: { title: "Fix DRC", annotations: RW },
   search_electronic_parts: { title: "Search Electronic Parts", annotations: RO_NET },
   resolve_part: { title: "Resolve Part", annotations: RO_NET },
   find_alternatives: { title: "Find Alternatives", annotations: RO_NET },

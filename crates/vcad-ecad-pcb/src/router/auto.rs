@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use vcad_ir::ecad::{Pcb, PcbLayer};
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
 use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, RatsnestLine};
@@ -248,6 +248,9 @@ pub(super) struct Placed {
     /// Fan-out / dog-bone stubs that escape a fine-pitch pad to its via, each on
     /// its own copper layer (the pad's layer). Emitted as traces, not on `layer`.
     pub(super) stubs: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Width the stubs were committed at (fan-out: the net width; pair
+    /// connectors: the board default — the neck-down width).
+    pub(super) stub_width: f64,
     pub(super) via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
     pub(super) spans: Vec<SpanId>,
 }
@@ -327,11 +330,19 @@ pub fn route_all_with_opts(
     // region is unchanged — re-proving known failures was pure waste.
     let mut round_cache = FailCache::new();
 
+    // Set when convergence is detected before the scheduled last round: the
+    // next round is a final fine-retry polish of the best pass, then we stop.
+    // Without this, the early-stop skipped the fine-pitch retry that only the
+    // last round enables — a multi-round run could then end *below* the
+    // single-round baseline, whose round 0 IS the last round and gets the
+    // retry (observed on the corridor benchmark: 4 rounds routed 16/24 where
+    // 1 round routed 18/24).
+    let mut polish = false;
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
         // history field are enhancement layers applied from round 1 onward.
         let use_push_shove = opts.use_push_shove && round > 0;
-        let last_round_flag = round + 1 == rounds;
+        let last_round_flag = polish || round + 1 == rounds;
         let (session, placed, pending) = if round == 0 {
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
@@ -353,7 +364,12 @@ pub fn route_all_with_opts(
                 use_push_shove,
                 opts.effective_ripup_rounds(),
                 opts.effective_expansions(),
-                last_round_flag,
+                // Always run round 0 with the rescue/fine-retry arsenal: it
+                // must reproduce the single-round baseline EXACTLY, or
+                // keep-best's no-regression guarantee is vacuous (a 4-round
+                // run once routed fewer nets than a 1-round run because only
+                // the last round armed the rescue pass).
+                true,
                 &opts.priority_nets,
             )
         } else {
@@ -384,7 +400,7 @@ pub fn route_all_with_opts(
             placed.len(),
             pending.len(),
         );
-        let last_round = round + 1 == rounds;
+        let last_round = last_round_flag;
         if !last_round && !pending.is_empty() {
             // Raise each still-unrouted net's priority for next round.
             for (net, _, _) in &pending {
@@ -405,9 +421,22 @@ pub fn route_all_with_opts(
             .unwrap_or(true);
         if is_better {
             best = Some((session, placed, pending));
+            if last_round {
+                break;
+            }
         } else if round > 0 {
-            log::info!("negotiation converged after round {} — stopping", round + 1);
-            break;
+            if last_round {
+                log::info!("negotiation converged after round {} — stopping", round + 1);
+                break;
+            }
+            // Converged below the scheduled last round: spend one more round
+            // as a fine-retry polish of the best pass before stopping, so the
+            // early stop never forfeits the last-round-only retry.
+            log::info!(
+                "negotiation converged after round {} — final fine-retry round",
+                round + 1
+            );
+            polish = true;
         }
 
         let fully_routed = best.as_ref().map(|(_, _, p)| p.is_empty()).unwrap_or(false);
@@ -418,6 +447,14 @@ pub fn route_all_with_opts(
 
     let (mut session, mut placed, pending) =
         best.expect("negotiation always runs at least one pass");
+
+    // The rescue stages below solve *legality* knots, not corridor contention:
+    // run them on a flat history field. Inheriting the negotiation deposits
+    // inflated their searches (history cost widens A*'s frontier until the
+    // expansion budget dies) — observed as joint repair recovering 2 nets on a
+    // flat field but 0 on the polluted one, a multi-round run thereby ending
+    // below the single-round baseline.
+    let cong = Congestion::new(&pcb.outline.vertices);
 
     // Fan-out rescue (issue #289 part 1): connections rip-up still couldn't
     // place — most often a net into a fine-pitch pad that can't be escaped on
@@ -450,7 +487,75 @@ pub fn route_all_with_opts(
     // Stitch the planed nets' pads down to their planes (issue #289 part 2).
     // Runs after signal routing so each stitching via avoids the routed copper
     // and is probed on every copper layer it spans before being committed.
-    let stitch = stitch_planes(&mut session, pcb, &planes, nets_filter, &placed, width);
+    let mut stitch = stitch_planes(&mut session, pcb, &planes, nets_filter, &placed, width);
+
+    // Maze rescue for pads the radial dog-bone couldn't escape (issue: a
+    // fine-pitch pad boxed in by already-routed copper has no *straight*
+    // stub out, but a bent path threads it). Route the pad to the nearest
+    // same-net stitched point — a stitching via, a pad sitting directly on
+    // its plane, or a same-net trace already laid on a plane layer — with the
+    // full maze arsenal; any path it finds (including vias it drops itself)
+    // reaches the plane galvanically. Only pads that still fail here are
+    // reported as UnstitchedPad.
+    let failed = std::mem::take(&mut stitch.failed_pads);
+    for (net, pad_pt) in failed {
+        let mut targets: Vec<Vec2> = stitch
+            .vias
+            .iter()
+            .filter(|(_, n)| n == &net)
+            .map(|(p, _)| *p)
+            .collect();
+        if let Some(layers) = planes.get(&net) {
+            for fp in &pcb.footprints {
+                for pad in &fp.pads {
+                    if pad.net.as_deref() == Some(net.as_str())
+                        && pad.layers.iter().any(|l| layers.contains(l))
+                    {
+                        targets.push(crate::geometry::pad_world_position(fp, pad));
+                    }
+                }
+            }
+            // Same-net copper already routed onto a plane layer is a galvanic
+            // target too — a signal route that dived to the plane layer floods
+            // into the pour, so a segment endpoint there reaches the plane.
+            for p in placed.iter().filter(|p| p.net == net) {
+                for &(a, b, l) in &p.segments {
+                    if layers.contains(&l) {
+                        targets.push(a);
+                        targets.push(b);
+                    }
+                }
+            }
+        }
+        // Never route the pad to itself (a same-net pad coincident with it, or
+        // a zero-length target) — that is not a path to the plane.
+        targets.retain(|t| dist(*t, pad_pt) > 1e-6);
+        targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
+        let mut rescued = false;
+        for t in targets.into_iter().take(3) {
+            if let Some(p) = try_route(
+                &mut session,
+                pcb,
+                width,
+                &net,
+                pad_pt,
+                t,
+                &mut placed,
+                &cong,
+                opts.use_push_shove,
+                opts.effective_expansions(),
+                true,
+            ) {
+                placed.push(p);
+                stitch.nets.insert(net.clone());
+                rescued = true;
+                break;
+            }
+        }
+        if !rescued {
+            stitch.failed_pads.push((net, pad_pt));
+        }
+    }
 
     // Flatten the placed connections into the result.
     let mut traces = Vec::new();
@@ -471,7 +576,7 @@ pub fn route_all_with_opts(
             traces.push(RoutedTrace {
                 start: *a,
                 end: *b,
-                width: p.width,
+                width: p.stub_width,
                 layer: *l,
                 net: p.net.clone(),
             });
@@ -513,6 +618,21 @@ pub fn route_all_with_opts(
         routed.insert(n.clone());
     }
 
+    // Post-route legalization: merge duplicate/overlapping same-net vias,
+    // prune same-net bypass noodles, and fail-closed demote any net whose new
+    // copper is still hole-to-hole illegal. Enforces the invariant that an
+    // autoroute pass never returns HoleToHole or SameNetBypass violations of
+    // its own making.
+    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias);
+    if legal.merged_vias > 0 || legal.pruned_traces > 0 || !legal.demoted.is_empty() {
+        log::info!(
+            "post-route legalization: merged {} vias, pruned {} traces, demoted {} nets",
+            legal.merged_vias,
+            legal.pruned_traces,
+            legal.demoted.len(),
+        );
+    }
+
     // Diagnose every signal connection the router could not close: which nets
     // block it, where, and which layer/via might help. Computed against the
     // final settled session so the blocker set reflects the real obstruction.
@@ -520,7 +640,7 @@ pub fn route_all_with_opts(
     let signal_unrouted = still_unrouted.len();
     let mut diagnostics: Vec<UnroutedDiagnostic> = still_unrouted
         .iter()
-        .map(|(net, from, to)| diagnose_unrouted(&session, net, *from, *to, width, &copper))
+        .map(|(net, from, to)| diagnose_unrouted(&session, pcb, net, *from, *to, width, &copper))
         .collect();
 
     let mut unrouted: BTreeSet<String> = still_unrouted.into_iter().map(|(n, _, _)| n).collect();
@@ -529,6 +649,27 @@ pub fn route_all_with_opts(
     for (net, pad_pt) in &stitch.failed_pads {
         unrouted.insert(net.clone());
         diagnostics.push(diagnose_stitch_failure(net, *pad_pt));
+    }
+    // A net demoted by legalization had all its new copper stripped: report it
+    // unrouted with the offending position rather than return illegal copper.
+    for (net, at) in &legal.demoted {
+        unrouted.insert(net.clone());
+        diagnostics.push(UnroutedDiagnostic {
+            net: net.clone(),
+            from: *at,
+            to: *at,
+            blocking_nets: Vec::new(),
+            region_min: *at,
+            region_max: *at,
+            suggested_layer: None,
+            suggested_via: None,
+            reason: format!(
+                "post-route legalization removed net '{net}': a routed via near \
+                 ({:.2}, {:.2}) stayed hole-to-hole illegal against existing board \
+                 holes after via merging",
+                at.x, at.y
+            ),
+        });
     }
     // A net both routed and (partially) failed is still incompletely connected —
     // keep it flagged so the caller knows to inspect it.
@@ -556,6 +697,7 @@ pub fn route_all_with_opts(
 /// Build a diagnostic for a signal connection the router could not close.
 fn diagnose_unrouted(
     session: &RouteSession,
+    pcb: &Pcb,
     net: &str,
     from: Vec2,
     to: Vec2,
@@ -564,6 +706,35 @@ fn diagnose_unrouted(
 ) -> UnroutedDiagnostic {
     let w = session.width_for(net, width);
     let clearance = session.clearance_for(net);
+
+    // Root-cause check before the congestion census: a class width wider than
+    // an endpoint's pad that ALSO has no legal necked approach can never land
+    // there — no amount of freeing corridors elsewhere will route it. Name
+    // the pad and the mismatch instead of reporting generic congestion.
+    for &pt in &[from, to] {
+        let Some((fp, pad)) = pad_at(pcb, pt) else {
+            continue;
+        };
+        let Some(pad_w) = pad_min_dim(pad) else {
+            continue;
+        };
+        if w > pad_w + 1e-9 && plan_neckdown(session, pcb, net, pt, w).is_none() {
+            return UnroutedDiagnostic {
+                net: net.to_string(),
+                from,
+                to,
+                blocking_nets: Vec::new(),
+                region_min: Vec2::new(pt.x - NECK_APPROACH_MM, pt.y - NECK_APPROACH_MM),
+                region_max: Vec2::new(pt.x + NECK_APPROACH_MM, pt.y + NECK_APPROACH_MM),
+                suggested_layer: None,
+                suggested_via: None,
+                reason: format!(
+                    "class width {w:.2}mm cannot land on {}.{} pad {pad_w:.2}mm and no clearance-legal neck-down approach exists — reduce the class width or free space around the pad",
+                    fp.reference, pad.number
+                ),
+            };
+        }
+    }
     // A corridor a few tracks wide around the direct path — the band a detour
     // would actually thread, so the blockers reported are the real obstruction.
     let chw = w / 2.0 + clearance + w * 3.0;
@@ -735,21 +906,73 @@ fn route_pass(
             let (cs, scarcity) = plan_with_scarcity(&session, lo, hi, pitch, layers, &conns);
             // Corridor map keyed BEFORE reordering (cs aligns with the
             // original conns order).
-            let map: HashMap<ConnKey, (Vec2, Vec2)> = cs
+            let mut map: HashMap<ConnKey, (Vec2, Vec2)> = cs
                 .into_iter()
                 .zip(conns.iter())
                 .filter_map(|(c, (net, from, to))| c.map(|w| (conn_key(net, *from, *to), w)))
                 .collect();
+            // Bus rivers (the "human look"): members of a length-match group
+            // share ONE corridor — the union of their individual windows —
+            // so a DDR lane or RGMII bank travels as a ribbon through one
+            // channel instead of fanning across the board.
+            {
+                let net_names: Vec<String> = {
+                    let mut v: std::collections::BTreeSet<String> = Default::default();
+                    for (n, _, _) in &conns {
+                        v.insert(n.clone());
+                    }
+                    v.into_iter().collect()
+                };
+                let groups = super::classes::classify_nets(&net_names).match_groups;
+                for members in groups.values() {
+                    let member_set: std::collections::BTreeSet<&str> =
+                        members.iter().map(|s| s.as_str()).collect();
+                    let mut lo = Vec2::new(f64::INFINITY, f64::INFINITY);
+                    let mut hi = Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+                    let mut keys = Vec::new();
+                    for (net, from, to) in &conns {
+                        if member_set.contains(net.as_str()) {
+                            let key = conn_key(net, *from, *to);
+                            if let Some((wl, wh)) = map.get(&key) {
+                                lo.x = lo.x.min(wl.x);
+                                lo.y = lo.y.min(wl.y);
+                                hi.x = hi.x.max(wh.x);
+                                hi.y = hi.y.max(wh.y);
+                                keys.push(key);
+                            }
+                        }
+                    }
+                    if keys.len() > 1 && lo.x.is_finite() {
+                        for key in keys {
+                            map.insert(key, (lo, hi));
+                        }
+                    }
+                }
+            }
             // Scarcest-first ordering (the campaign's decisive lesson,
             // proven by the graft test + apex run): nets with the least
             // corridor slack route on the emptiest board; flexible nets
             // route around them. Priority nets stay in front; constraint
             // degree breaks residual ties; length breaks the rest.
+            // Pair legs rank ahead of singles: a coupled phantom needs a
+            // corridor 4-6 tracks wide, which only exists on an empty board —
+            // singles thread around committed pairs far better than pairs
+            // thread around committed singles (si4: 27/49 coupled, every
+            // failure a phantom-search bail against single-net congestion).
+            let pair_nets: std::collections::BTreeSet<&str> = pcb
+                .rules
+                .net_class_assignments
+                .get(super::classes::DIFF_PAIR_CLASS)
+                .map(|v| v.iter().map(|s| s.as_str()).collect())
+                .unwrap_or_default();
             let mut order: Vec<usize> = (0..conns.len()).collect();
             order.sort_by(|&a, &b| {
                 let pa = opts_priority.contains(&conns[a].0);
                 let pb = opts_priority.contains(&conns[b].0);
+                let qa = pair_nets.contains(conns[a].0.as_str());
+                let qb = pair_nets.contains(conns[b].0.as_str());
                 pb.cmp(&pa)
+                    .then_with(|| qb.cmp(&qa))
                     .then_with(|| {
                         scarcity[a]
                             .min_residual
@@ -767,6 +990,60 @@ fn route_pass(
             map
         }
     };
+
+    // Pair-first stage: differential-pair legs route FIRST and COUPLED, on
+    // the emptiest board — the anti-pattern proven by the CM5 campaign was
+    // pairs entering the batch as independent singles and the pair stage
+    // firing only as a rescue. Membership comes from the declared diff-pair
+    // class (see router::classes). A pair that fails coupled routing falls
+    // back into the batch as singles, so routability can never regress.
+    let pair_nets: std::collections::BTreeSet<&str> = pcb
+        .rules
+        .net_class_assignments
+        .get(super::classes::DIFF_PAIR_CLASS)
+        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    if !pair_nets.is_empty() {
+        let mut routed_pairs: std::collections::BTreeSet<String> = Default::default();
+        let mut deferred = Vec::with_capacity(conns.len());
+        let mut coupled = 0usize;
+        for (net, from, to) in std::mem::take(&mut conns) {
+            let base = super::pair::pair_partner(&net).map(|p| {
+                if p < net {
+                    format!("{p}|{net}")
+                } else {
+                    format!("{net}|{p}")
+                }
+            });
+            let done = base.as_ref().is_some_and(|b| routed_pairs.contains(b));
+            if !done && pair_nets.contains(net.as_str()) {
+                if let Some((mine, theirs)) = super::pair::try_route_pair(
+                    &mut session,
+                    pcb,
+                    width,
+                    &net,
+                    from,
+                    to,
+                    &mut placed,
+                    cong,
+                    max_expansions,
+                ) {
+                    placed.push(mine);
+                    placed.push(theirs);
+                    coupled += 1;
+                    if let Some(b) = base {
+                        routed_pairs.insert(b);
+                    }
+                    continue;
+                }
+            }
+            deferred.push((net, from, to));
+        }
+        conns = deferred;
+        if coupled > 0 {
+            log::info!("pair-first: {coupled} pairs routed coupled");
+        }
+    }
 
     let unrouted_conns = route_batch(
         &mut session,
@@ -789,10 +1066,32 @@ fn route_pass(
     // that failed in one round find a path once the board settles. Stop the
     // instant a round places nothing new, so a stuck board exits immediately.
     let mut pending = unrouted_conns;
+    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1).
+    // Ordering is board-regime-dependent (routerbench finding): on
+    // layer-rich boards negotiation-first replaced the ratchet outright
+    // (the CM5's 67-minute chain); on 2-3 layer boards its greedy priced
+    // commits consume scarce corridors the rescue arsenal spends more
+    // carefully (the VESC lost 4 points to it). Pre-arsenal negotiation
+    // therefore requires >= 4 copper layers; thin boards negotiate after
+    // the arsenal, on its leftovers only.
+    #[cfg(feature = "gpu")]
+    let negotiation_enabled = std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1");
+    #[cfg(feature = "gpu")]
+    let negotiate_first = copper_layers(pcb).len() >= 4;
+    #[cfg(feature = "gpu")]
+    if negotiation_enabled && negotiate_first && !pending.is_empty() {
+        pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
+    }
     for _ in 0..ripup_rounds {
         if pending.is_empty() {
             break;
         }
+        // Keep-best: a rip-up round can end with FEWER placed connections
+        // than it started (it rips victims it then fails to restore — the
+        // CM5 logs show 504 -> 489 over a 46-minute round). The negotiation
+        // loop above snapshots and discards regressing rounds; this loop
+        // must too, or one bad round permanently costs the board copper.
+        let snapshot = (session.clone(), placed.clone(), pending.clone());
         let placed_before = placed.len();
         let sw_rip = Stopwatch::start();
         pending = ripup_pass(
@@ -816,9 +1115,21 @@ fn route_pass(
             pending.len(),
             sw_rip.ms() / 1000.0,
         );
-        if placed.len() <= placed_before {
+        if placed.len() < placed_before {
+            log::info!("ripup round regressed — restoring pre-round snapshot");
+            (session, placed, pending) = snapshot;
             break;
         }
+        if placed.len() == placed_before {
+            break;
+        }
+    }
+
+    // Thin-board negotiation (see ordering note above): the arsenal has had
+    // first claim; negotiation now works only its leftovers.
+    #[cfg(feature = "gpu")]
+    if negotiation_enabled && !negotiate_first && !pending.is_empty() {
+        pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
 
     (session, placed, pending)
@@ -863,7 +1174,10 @@ fn incremental_round(
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
-    let budget_ms = 1_200_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
+    // Flat 20-minute budget regardless of effort: scaling by expansion
+    // budget multiplied speculative-round cost right back up at high effort
+    // (effort 10 → 3.3h/round), exactly what the budget exists to prevent.
+    let budget_ms = 1_200_000.0;
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -873,12 +1187,15 @@ fn incremental_round(
         cong,
         use_push_shove,
         max_expansions,
-        false,
+        // Speculative rounds stay search-only (no rescue arsenal), but the
+        // final polish round — the only one flagged fine_retry — gets the
+        // same rescue + fine-pitch retry the single-round baseline's last
+        // round enjoys, so keep-best genuinely never regresses below it.
+        fine_retry,
         Some(budget_ms),
         fail_cache,
         &HashMap::new(),
     );
-    let _ = fine_retry;
     log::info!(
         "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s",
         placed.len(),
@@ -933,6 +1250,44 @@ fn route_batch(
         queue.push(((net, from, to), 0usize));
     }
     let cache_skips = unrouted.len();
+    // GPU search phase (charter M1, `--features gpu` + VCAD_GPU_BATCH=1):
+    // propose candidates for the whole queue in one batched dispatch; every
+    // proposal still passes validate_and_commit (the exact oracle), and any
+    // conn the GPU cannot serve falls through to the CPU search unchanged.
+    #[cfg(feature = "gpu")]
+    let mut gpu_proposals: std::collections::HashMap<ConnKey, Candidate> = Default::default();
+    #[cfg(feature = "gpu")]
+    if std::env::var("VCAD_GPU_BATCH").as_deref() == Ok("1") && !queue.is_empty() {
+        let conns_only: Vec<Conn> = queue.iter().map(|(c, _)| c.clone()).collect();
+        let clearance = pcb.rules.default_rules.clearance;
+        if let Some(paths) =
+            super::gpu_bridge::gpu_search_batch(session, pcb, &conns_only, width / 2.0, clearance)
+        {
+            let mut proposed = 0usize;
+            for ((net, from, to), path) in conns_only.iter().zip(paths) {
+                if let Some(p) = path {
+                    gpu_proposals.insert(
+                        conn_key(net, *from, *to),
+                        Candidate {
+                            net: net.clone(),
+                            from: *from,
+                            to: *to,
+                            width: session.width_for(net, width),
+                            segments: p.segments,
+                            vias: p.vias,
+                            thin_segments: vec![],
+                            thin_width: width,
+                        },
+                    );
+                    proposed += 1;
+                }
+            }
+            log::info!(
+                "gpu batch: proposed {proposed}/{} candidates in one dispatch stream",
+                conns_only.len()
+            );
+        }
+    }
     let mut batches = 0usize;
     let mut committed = 0usize;
     let mut conflicts = 0usize;
@@ -945,6 +1300,10 @@ fn route_batch(
         let candidates: Vec<Option<Candidate>> = batch
             .par_iter()
             .map(|((net, from, to), _)| {
+                #[cfg(feature = "gpu")]
+                if let Some(c) = gpu_proposals.get(&conn_key(net, *from, *to)) {
+                    return Some(c.clone());
+                }
                 search_route(
                     session,
                     pcb,
@@ -1246,6 +1605,7 @@ fn try_route_escape(
 /// wants to place, valid against the session it was searched on. Committing
 /// re-validates against the *current* session, so candidates can be searched
 /// in parallel against a frozen snapshot and committed sequentially.
+#[derive(Clone)]
 pub(super) struct Candidate {
     pub(super) net: String,
     pub(super) from: Vec2,
@@ -1253,6 +1613,12 @@ pub(super) struct Candidate {
     pub(super) width: f64,
     pub(super) segments: Vec<(Vec2, Vec2, PcbLayer)>,
     pub(super) vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+    /// Segments probed and committed at [`Candidate::thin_width`] instead of
+    /// `width` — the neck-down channel (pair connectors through pin fields).
+    /// They land in [`Placed::stubs`].
+    pub(super) thin_segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Width for `thin_segments` (defaults to `width` when unused).
+    pub(super) thin_width: f64,
 }
 
 /// The pure-search half of [`try_route`]: find a clearance-legal route
@@ -1281,6 +1647,18 @@ pub(super) fn search_route(
     let from_layers = pad_anchor_layers(pcb, from, &copper);
     let to_layers = pad_anchor_layers(pcb, to, &copper);
 
+    // Pad-entry neck-down: a class width wider than an endpoint's pad (a
+    // 1.0 mm power class into a 0.35 mm TSSOP pad) can never legally land —
+    // every search at `w` dies against the neighbouring pads and the net is
+    // reported unrouted with no explanation. When that's the case, plan a
+    // short approach stub at min(pad width, class width) out of the pad and
+    // search from the stub's landing point instead; the stub is carried as a
+    // thin segment so the class width holds everywhere but the final approach.
+    let neck_from = plan_neckdown(session, pcb, net, from, w);
+    let neck_to = plan_neckdown(session, pcb, net, to, w);
+    let sf = neck_from.as_ref().map(|p| p.landing).unwrap_or(from);
+    let st = neck_to.as_ref().map(|p| p.landing).unwrap_or(to);
+
     // Layer-aware maze A* first, biased away from contested regions by the
     // history field. The search prices vias (VIA_COST) so it stays on one
     // layer when it can and dives only when a detour would cost more.
@@ -1300,9 +1678,9 @@ pub(super) fn search_route(
             &pcb.outline.vertices,
             &copper,
             net,
-            from,
+            sf,
             &from_layers,
-            to,
+            st,
             &to_layers,
             w,
             via_d,
@@ -1347,6 +1725,8 @@ pub(super) fn search_route(
         // every resume because the ratsnest keys completion off traces).
         log::debug!("{net}: connection already satisfied by existing copper contact");
         return Some(Candidate {
+            thin_segments: vec![],
+            thin_width: width,
             net: net.to_string(),
             from,
             to,
@@ -1366,13 +1746,13 @@ pub(super) fn search_route(
         // the DRC-clean invariant.
         let mut found = None;
         for (li, &layer) in copper.iter().enumerate() {
-            if let Some(segs) = try_push_shove(session, pcb, layer, net, from, to, w) {
+            if let Some(segs) = try_push_shove(session, pcb, layer, net, sf, st, w) {
                 let through = (
                     *copper.first().unwrap_or(&PcbLayer::FCu),
                     *copper.last().unwrap_or(&PcbLayer::BCu),
                 );
                 let vias = if li > 0 {
-                    vec![(from, through.0, through.1), (to, through.0, through.1)]
+                    vec![(sf, through.0, through.1), (st, through.0, through.1)]
                 } else {
                     Vec::new()
                 };
@@ -1385,7 +1765,26 @@ pub(super) fn search_route(
         return None;
     };
 
+    // The necked approach stubs (pad → landing) ride along as thin segments:
+    // probed and committed at the neck width, everything else at `w`.
+    let thin_segments: Vec<(Vec2, Vec2, PcbLayer)> = [&neck_from, &neck_to]
+        .into_iter()
+        .flatten()
+        .map(|p| p.stub)
+        .collect();
+    let thin_width = [&neck_from, &neck_to]
+        .into_iter()
+        .flatten()
+        .map(|p| p.width)
+        .fold(f64::INFINITY, f64::min);
+    let thin_width = if thin_width.is_finite() {
+        thin_width
+    } else {
+        width
+    };
     Some(Candidate {
+        thin_segments,
+        thin_width,
         net: net.to_string(),
         from,
         to,
@@ -1420,7 +1819,29 @@ pub(super) fn validate_and_commit(
             b: *b,
             half_w: hw,
         };
+        let pr = session.probe(&seg, *l, net, clearance);
+        if !pr.legal {
+            log::debug!(
+                "validate: {net} segment ({:.2},{:.2})->({:.2},{:.2}) {l:?} w={w} illegal — blocker {} at {:.3}mm",
+                a.x,
+                a.y,
+                b.x,
+                b.y,
+                pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+                pr.min_clearance
+            );
+            return None;
+        }
+    }
+    let thin_hw = cand.thin_width / 2.0;
+    for (a, b, l) in &cand.thin_segments {
+        let seg = CopperGeom::Segment {
+            a: *a,
+            b: *b,
+            half_w: thin_hw,
+        };
         if !session.probe(&seg, *l, net, clearance).legal {
+            log::debug!("validate: {net} THIN segment illegal");
             return None;
         }
     }
@@ -1456,10 +1877,26 @@ pub(super) fn validate_and_commit(
             center: p,
             r: via_r,
         };
-        let legal = span_slice(la, lb)
-            .iter()
-            .all(|&l| session.probe(&disc, l, net, clearance).legal);
-        if !legal {
+        let mut bad: Option<(PcbLayer, String, f64)> = None;
+        for &l in span_slice(la, lb) {
+            let pr = session.probe(&disc, l, net, clearance);
+            if !pr.legal {
+                bad = Some((
+                    l,
+                    pr.blockers
+                        .first()
+                        .map(|b| b.net.clone())
+                        .unwrap_or_default(),
+                    pr.min_clearance,
+                ));
+                break;
+            }
+        }
+        if let Some((l, bnet, d)) = bad {
+            log::debug!(
+                "validate: {net} via ({:.3},{:.3}) {la:?}..{lb:?} illegal on {l:?} — blocker {bnet} at {d:.3}mm",
+                p.x, p.y
+            );
             return None;
         }
         new_vias.push((p, la, lb));
@@ -1468,6 +1905,9 @@ pub(super) fn validate_and_commit(
     let mut spans = Vec::new();
     for (a, b, l) in &segments {
         spans.push(commit_seg(session, net, *a, *b, hw, *l));
+    }
+    for (a, b, l) in &cand.thin_segments {
+        spans.push(commit_seg(session, net, *a, *b, thin_hw, *l));
     }
     for &(p, la, lb) in &new_vias {
         commit_via(session, net, p, via_r, span_slice(la, lb), &mut spans);
@@ -1478,7 +1918,8 @@ pub(super) fn validate_and_commit(
         to: cand.to,
         width: w,
         segments,
-        stubs: Vec::new(),
+        stubs: cand.thin_segments,
+        stub_width: cand.thin_width,
         via_pts: new_vias,
         spans,
     })
@@ -1579,6 +2020,136 @@ fn pad_anchor_layers(pcb: &Pcb, p: Vec2, copper: &[PcbLayer]) -> Vec<PcbLayer> {
         }
     }
     vec![*copper.first().unwrap_or(&PcbLayer::FCu)]
+}
+
+/// The footprint pad (if any) whose world position coincides with `p`.
+fn pad_at(pcb: &Pcb, p: Vec2) -> Option<(&Footprint, &Pad)> {
+    pcb.footprints.iter().find_map(|fp| {
+        fp.pads
+            .iter()
+            .find(|pad| dist(crate::geometry::pad_world_position(fp, pad), p) < 0.01)
+            .map(|pad| (fp, pad))
+    })
+}
+
+/// The narrowest copper dimension of a pad — the widest trace that can land
+/// on it without hanging past its edges. `None` for custom polygon pads.
+fn pad_min_dim(pad: &Pad) -> Option<f64> {
+    match &pad.shape {
+        PadShape::Circle { diameter } => Some(*diameter),
+        PadShape::Rect { width, height }
+        | PadShape::Oval { width, height }
+        | PadShape::RoundRect { width, height, .. } => Some(width.min(*height)),
+        PadShape::Custom { .. } => None,
+    }
+}
+
+/// A planned pad-entry neck-down: the final approach into a pad that the
+/// net's class width cannot legally land on.
+struct NeckPlan {
+    /// Where the full-width route begins/ends (the stub's outer end).
+    landing: Vec2,
+    /// The approach stub (pad → landing) on the pad's layer.
+    stub: (Vec2, Vec2, PcbLayer),
+    /// Stub width: `min(pad width, class width)`.
+    width: f64,
+}
+
+/// Length of the necked pad-entry approach (mm).
+const NECK_APPROACH_MM: f64 = 1.0;
+
+/// Plan a pad-entry neck-down for the endpoint `pad_pt` when the class width
+/// `w` cannot legally land on its pad (class wider than the pad's narrow
+/// dimension). Fans the approach directions outward-first (away from the
+/// footprint origin — out of the pin row on a QFP/TSSOP) and returns the
+/// first direction where the neck stub is clearance-legal AND the landing has
+/// room for the full class width to begin. `None` when the endpoint is not a
+/// pad, the class width lands fine, or no legal approach exists. Pure search
+/// against the session — commits nothing.
+fn plan_neckdown(
+    session: &RouteSession,
+    pcb: &Pcb,
+    net: &str,
+    pad_pt: Vec2,
+    w: f64,
+) -> Option<NeckPlan> {
+    let (fp, pad) = pad_at(pcb, pad_pt)?;
+    let pad_w = pad_min_dim(pad)?;
+    if w <= pad_w + 1e-9 {
+        return None;
+    }
+    let neck_w = pad_w.min(w);
+    let copper = copper_layers(pcb);
+    let layer = pad
+        .layers
+        .iter()
+        .copied()
+        .find(|l| copper.contains(l))
+        .unwrap_or(*copper.first().unwrap_or(&PcbLayer::FCu));
+    let clearance = session.clearance_for(net);
+    let bounded = pcb.outline.vertices.len() >= 3;
+    let out = Vec2::new(pad_pt.x - fp.position.x, pad_pt.y - fp.position.y);
+    let base = if out.x.abs() + out.y.abs() > 1e-9 {
+        out.y.atan2(out.x)
+    } else {
+        0.0
+    };
+    let mut dirs: Vec<f64> = (0..ESCAPE_DIRS)
+        .map(|k| std::f64::consts::TAU * k as f64 / ESCAPE_DIRS as f64)
+        .collect();
+    let ang_diff = |a: f64| {
+        let d = (a - base).rem_euclid(std::f64::consts::TAU);
+        d.min(std::f64::consts::TAU - d)
+    };
+    dirs.sort_by(|a, b| {
+        ang_diff(*a)
+            .partial_cmp(&ang_diff(*b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for ang in dirs {
+        let landing = Vec2::new(
+            pad_pt.x + NECK_APPROACH_MM * ang.cos(),
+            pad_pt.y + NECK_APPROACH_MM * ang.sin(),
+        );
+        if bounded && !point_in_polygon(landing, &pcb.outline.vertices) {
+            continue;
+        }
+        let stub_ok = session
+            .probe(
+                &CopperGeom::Segment {
+                    a: pad_pt,
+                    b: landing,
+                    half_w: neck_w / 2.0,
+                },
+                layer,
+                net,
+                clearance,
+            )
+            .legal;
+        if !stub_ok {
+            continue;
+        }
+        let land_ok = session
+            .probe(
+                &CopperGeom::Disc {
+                    center: landing,
+                    r: w / 2.0,
+                },
+                layer,
+                net,
+                clearance,
+            )
+            .legal;
+        if !land_ok {
+            continue;
+        }
+        return Some(NeckPlan {
+            landing,
+            stub: (pad_pt, landing, layer),
+            width: neck_w,
+        });
+    }
+    None
 }
 
 /// Push-and-shove fallback: route `net` on `layer` with the visibility-graph
@@ -1765,6 +2336,7 @@ fn try_route_fanout(
         width: w,
         segments: rb.segments.into_iter().map(|(a, b)| (a, b, back)).collect(),
         stubs,
+        stub_width: w,
         via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
     })
@@ -1796,7 +2368,7 @@ struct Escape {
 /// the pad cannot be escaped.
 ///
 /// `force_fanout` skips the at-pad via entirely and goes straight to the
-/// dog-bone ring search. Set it for sub-0.65 mm-pitch pads: a 0.6 mm via can't
+/// dog-bone ring search. Set it for 0.65 mm-pitch-and-finer pads: a 0.6 mm via can't
 /// physically land between 0.5 mm-pitch QFP/QFN pins, so the stitch must escape
 /// into the fan-out even when an at-pad via *would* probe clearance-legal (e.g.
 /// a fine-pitch pad whose neighbours share its net).
@@ -2081,7 +2653,7 @@ fn stitch_planes(
                 .filter(|o| !std::ptr::eq(*o, pad))
                 .map(|o| dist(pad.position, o.position))
                 .fold(f64::INFINITY, f64::min);
-            let fine_pitch = pitch < FINE_PITCH_MM;
+            let fine_pitch = pitch <= FINE_PITCH_MM;
             let clearance = session.clearance_for(net);
             let w = session.width_for(net, width);
             // Reuse a coincident same-net stitch via dropped for an earlier pad.
@@ -2290,12 +2862,18 @@ fn reroute_victims_with_restore(
     ) {
         let restored = originals
             .remove(&conn_key(&net, from, to))
-            .filter(|orig| orig.stubs.is_empty())
             .and_then(|orig| {
+                // Stub-carrying routes (fan-out dog-bones, pair connectors)
+                // restore through the thin channel — before it existed they
+                // were dropped as unrouted, and once pair routes made stubs
+                // common the rip-up loop bled routes every round (si3: round
+                // 0 record 509, then pending exploded 56→124).
                 validate_and_commit(
                     session,
                     pcb,
                     Candidate {
+                        thin_segments: orig.stubs.clone(),
+                        thin_width: orig.stub_width,
                         net: orig.net.clone(),
                         from: orig.from,
                         to: orig.to,
@@ -2486,6 +3064,8 @@ fn joint_window_repair(
                                     }
                                 }
                                 let cand = Candidate {
+                                    thin_segments: vec![],
+                                    thin_width: session.width_for(&conn.0, width),
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
@@ -2548,7 +3128,15 @@ fn joint_window_repair(
             still.len(),
             sw.ms() / 1000.0,
         );
+        // A round that converted nothing proves the knots need MORE than a
+        // bigger window (they need different copper elsewhere) — escalating
+        // the margin re-proves the same stuck set at 2-4x the cost. Stop.
+        let converted = pending.len().saturating_sub(still.len());
         pending = still;
+        if converted == 0 {
+            log::info!("joint repair: round converted nothing — stopping escalation");
+            break;
+        }
         // Fresh failure cache per escalation: the windows change shape.
         fail_cache = FailCache::new();
     }
@@ -3153,6 +3741,68 @@ mod tests {
         }
     }
 
+    /// The legalization invariant: an autoroute pass on a clean placement must
+    /// never introduce HoleToHole or SameNetBypass violations of its own
+    /// making. Routes a board that exercises every via emitter (crossing
+    /// signal nets + plane stitching), applies the result, and judges it with
+    /// the full DRC.
+    #[test]
+    fn autoroute_never_introduces_hole_or_bypass_violations() {
+        let pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    5.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    45.0,
+                    25.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, -2.0, "C")],
+                ),
+                fp(
+                    "U3",
+                    45.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "B"), pad("2", 0.0, 2.0, "C")],
+                ),
+                fp("U4", 8.0, 25.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U5", 25.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U6", 42.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+        // The placement itself is clean: no holes, no copper.
+        assert!(
+            check_drc(&pcb0).iter().all(|v| !matches!(
+                v.rule,
+                crate::drc::DrcRuleType::HoleToHole | crate::drc::DrcRuleType::SameNetBypass
+            )),
+            "fixture placement must be clean"
+        );
+
+        let r = route_all(&pcb0, 0.25, &[]);
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let viols = check_drc(&pcb);
+        let introduced: Vec<_> = viols
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::HoleToHole | crate::drc::DrcRuleType::SameNetBypass
+                )
+            })
+            .collect();
+        assert!(
+            introduced.is_empty(),
+            "autoroute introduced illegal copper: {:?}",
+            introduced.iter().map(|v| &v.message).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn stitches_power_pads_to_inner_planes() {
         // GND plane on In1Cu, V3V3 plane on In2Cu; SMD power pads on FCu. Without
@@ -3254,12 +3904,22 @@ mod tests {
         let r = route_all(&pcb0, 0.25, &[]);
 
         let vias: Vec<_> = r.vias.iter().filter(|v| v.net == "VCC").collect();
-        assert_eq!(
-            vias.len(),
-            3,
-            "one stitch via per fine-pitch VCC pad, got {:?}",
-            vias.iter().map(|v| v.position).collect::<Vec<_>>()
+        // At 0.5 mm pitch the three per-pad stitch vias land closer than the
+        // 0.5 mm hole-to-hole rule allows, so post-route legalization merges
+        // them: at least one via survives, and every surviving pair is legal.
+        assert!(
+            !vias.is_empty(),
+            "fine-pitch VCC pads must be stitched to the plane"
         );
+        for (i, a) in vias.iter().enumerate() {
+            for b in vias.iter().skip(i + 1) {
+                let edge = dist(a.position, b.position) - 0.4;
+                assert!(
+                    edge >= 0.5 - 1e-6,
+                    "surviving stitch vias must be hole-to-hole legal, got edge {edge:.3}mm"
+                );
+            }
+        }
         // Each stitch via must sit OFF every pad — the escape-in-fanout, not on-pad.
         let pads = [
             Vec2::new(24.5, 15.0),
@@ -3303,6 +3963,103 @@ mod tests {
             })
             .count();
         assert_eq!(unstitched, 0, "every fine-pitch VCC pad must be stitched");
+    }
+
+    /// A 0.65 mm-pitch TSSOP-style pad (0.4 x 1.4, long axis in Y).
+    fn tssop_pad(num: &str, x: f64, y: f64, net: &str) -> Pad {
+        Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 0.4,
+                height: 1.4,
+            },
+            position: Vec2::new(x, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        }
+    }
+
+    #[test]
+    fn stitches_tssop_plane_pads_via_escape_fanout() {
+        // The RP2040 motor-board regression: a DRV8833-style TSSOP at exactly
+        // 0.65 mm pitch with GND / AISEN-sense pads on a bottom GND plane. An
+        // at-pad via cannot fit between 0.65 mm-pitch pins, so the stitcher must
+        // execute the escape itself (stub + dog-bone via) rather than emit an
+        // UnstitchedPad violation. Neighbouring pads carry signal nets that are
+        // also routed, so the fan-out region is realistically contested.
+        let mut top: Vec<Pad> = Vec::new();
+        let mut bot: Vec<Pad> = Vec::new();
+        // Two rows of 8 pins, 0.65 pitch, rows 5.0 apart (body between them).
+        // GND on pins 3 and 4 of the top row (adjacent same-net, the
+        // AISEN/BISEN case) and pin 2 of the bottom row.
+        let nets_top = ["A1", "A2", "GND", "GND", "A3", "A4", "A5", "A6"];
+        let nets_bot = ["B1", "GND", "B2", "B3", "B4", "B5", "B6", "B7"];
+        for (i, n) in nets_top.iter().enumerate() {
+            top.push(tssop_pad(&format!("{}", i + 1), i as f64 * 0.65, 2.5, n));
+        }
+        for (i, n) in nets_bot.iter().enumerate() {
+            bot.push(tssop_pad(&format!("{}", i + 9), i as f64 * 0.65, -2.5, n));
+        }
+        let mut pads = top;
+        pads.extend(bot);
+        let mut fps = vec![fp("U2", 20.0, 15.0, pads)];
+        // Far-side partners so the signal nets actually route through the area.
+        for (i, n) in ["A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4"]
+            .iter()
+            .enumerate()
+        {
+            fps.push(fp(
+                &format!("R{}", i + 1),
+                38.0,
+                4.0 + i as f64 * 3.0,
+                vec![pad("1", 0.0, 0.0, n)],
+            ));
+        }
+        let mut pcb0 = board(fps);
+        pcb0.zones = vec![plane("GND", PcbLayer::BCu)];
+
+        let r = route_all(&pcb0, 0.25, &[]);
+
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let viols = check_drc(&pcb);
+        let unstitched: Vec<_> = viols
+            .iter()
+            .filter(|v| v.rule == crate::drc::DrcRuleType::UnstitchedPad)
+            .map(|v| v.message.clone())
+            .collect();
+        assert!(
+            unstitched.is_empty(),
+            "fine-pitch plane pads must be stitched by the router, got: {unstitched:?}"
+        );
+        let bad = viols
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Short | crate::drc::DrcRuleType::Clearance
+                )
+            })
+            .count();
+        assert_eq!(bad, 0, "stitched board must be short/clearance clean");
+        // And no stitch via may sit on a fine-pitch pad (physically impossible).
+        for v in r.vias.iter().filter(|v| v.net == "GND") {
+            for f in &pcb0.footprints {
+                if f.reference != "U2" {
+                    continue;
+                }
+                for p in &f.pads {
+                    let pt = crate::geometry::pad_world_position(f, p);
+                    assert!(
+                        dist(v.position, pt) > 0.1,
+                        "stitch via must dog-bone off the 0.65mm-pitch pad at {pt:?}"
+                    );
+                }
+            }
+        }
     }
 
     /// A square board of the given side (mm), 2-layer, default rules.
@@ -3646,6 +4403,7 @@ mod tests {
             width: 0.25,
             segments,
             stubs: Vec::new(),
+            stub_width: 0.25,
             via_pts: Vec::new(),
             spans,
         }];
@@ -3801,4 +4559,233 @@ mod tests {
             "the victim's original copper must still be in the session"
         );
     }
+
+    fn pad_sized(num: &str, x: f64, y: f64, net: &str, w: f64, h: f64) -> Pad {
+        Pad {
+            shape: PadShape::Rect {
+                width: w,
+                height: h,
+            },
+            ..pad(num, x, y, net)
+        }
+    }
+
+    /// Assign `net` to a class routing at `width` mm.
+    fn with_class(pcb: &mut Pcb, net: &str, width: f64) {
+        pcb.rules.class_rules.push(NetClassRules {
+            name: "power".into(),
+            trace_width: width,
+            clearance: 0.2,
+            via_diameter: 0.8,
+            via_drill: 0.4,
+            diff_pair_gap: None,
+            diff_pair_width: None,
+        });
+        pcb.rules
+            .net_class_assignments
+            .insert("power".into(), vec![net.into()]);
+    }
+
+    /// A wide net class must neck down into a fine-pitch pad instead of being
+    /// silently unroutable (the RP2040/DRV8833 repro: a 1.0 mm power class
+    /// into 0.35 mm pads at 0.65 mm pitch reported UnconnectedNet with no
+    /// explanation).
+    #[test]
+    fn wide_class_necks_down_into_fine_pitch_pad() {
+        // U2: a TSSOP-like pin row at 0.65 mm pitch, 0.35 mm-wide pads; the
+        // middle pad carries the wide-class net "VM", its neighbours other nets.
+        let mut pcb = board(vec![
+            fp("U1", 10.0, 15.0, vec![pad("1", 0.0, 0.0, "VM")]),
+            fp(
+                "U2",
+                30.0,
+                15.0,
+                vec![
+                    pad_sized("11", -0.65, 0.0, "A", 0.35, 0.8),
+                    pad_sized("12", 0.0, 0.0, "VM", 0.35, 0.8),
+                    pad_sized("13", 0.65, 0.0, "B", 0.35, 0.8),
+                ],
+            ),
+        ]);
+        with_class(&mut pcb, "VM", 1.0);
+
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(
+            r.routed_nets.contains(&"VM".to_string())
+                && !r.unrouted_nets.contains(&"VM".to_string()),
+            "VM must route via pad-entry neck-down, got unrouted={:?} diagnostics={:?}",
+            r.unrouted_nets,
+            r.diagnostics.iter().map(|d| &d.reason).collect::<Vec<_>>()
+        );
+
+        // The class width holds on the run, and the pad approach is necked to
+        // the pad width — a short stub touching the pad at < class width.
+        let vm: Vec<_> = r.traces.iter().filter(|t| t.net == "VM").collect();
+        assert!(
+            vm.iter().any(|t| (t.width - 1.0).abs() < 1e-9),
+            "the run must stay at the 1.0mm class width"
+        );
+        let pad_pt = Vec2::new(30.0, 15.0);
+        let neck: Vec<_> = vm
+            .iter()
+            .filter(|t| dist(t.start, pad_pt) < 0.01 || dist(t.end, pad_pt) < 0.01)
+            .collect();
+        assert!(
+            !neck.is_empty(),
+            "a trace must actually land on the fine-pitch pad"
+        );
+        for t in &neck {
+            assert!(
+                t.width <= 0.35 + 1e-9,
+                "the pad approach must be necked to min(pad, class) = 0.35mm, got {}",
+                t.width
+            );
+            assert!(
+                dist(t.start, t.end) <= NECK_APPROACH_MM + 1e-9,
+                "the neck is only the final approach, got {:.2}mm",
+                dist(t.start, t.end)
+            );
+        }
+
+        // And the applied board is still short/clearance clean.
+        assert_eq!(bad_drc(&pcb, &r), 0, "necked board must be DRC-clean");
+    }
+
+    /// When even the neck-down cannot land (the pad is sealed in), the failure
+    /// must name the cause — class width vs pad width, with the pad's identity
+    /// — instead of reporting a bare unconnected net.
+    #[test]
+    fn unroutable_wide_class_names_pad_landing_cause() {
+        // Target pad boxed in by a solid ring of other-net pads: no stub
+        // direction is clearance-legal at any width.
+        let mut pads = vec![pad_sized("1", 0.0, 0.0, "VM", 0.3, 0.3)];
+        for k in 0..12 {
+            let ang = std::f64::consts::TAU * k as f64 / 12.0;
+            pads.push(pad_sized(
+                &format!("R{k}"),
+                0.7 * ang.cos(),
+                0.7 * ang.sin(),
+                "X",
+                0.5,
+                0.5,
+            ));
+        }
+        let mut pcb = board(vec![
+            fp("U1", 10.0, 15.0, vec![pad("1", 0.0, 0.0, "VM")]),
+            fp("U2", 30.0, 15.0, pads),
+        ]);
+        with_class(&mut pcb, "VM", 1.0);
+
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(
+            r.unrouted_nets.contains(&"VM".to_string()),
+            "the sealed pad must leave VM unrouted"
+        );
+        let d = r
+            .diagnostics
+            .iter()
+            .find(|d| d.net == "VM")
+            .expect("VM must carry a diagnostic");
+        assert!(
+            d.reason.contains("cannot land on U2.1 pad 0.30mm"),
+            "diagnostic must name the pad-landing cause, got: {}",
+            d.reason
+        );
+        assert!(
+            d.reason.contains("class width 1.00mm"),
+            "diagnostic must name the class width, got: {}",
+            d.reason
+        );
+    }
+}
+
+/// GPU PathFinder negotiation rounds (charter M4): propose-all under
+/// history pricing, oracle-commit winners, price everyone's paths,
+/// repeat. Returns the still-unrouted leftovers. Ordering relative to the
+/// CPU rescue arsenal is the caller's choice — see the routerbench
+/// finding at the call sites.
+#[cfg(feature = "gpu")]
+fn gpu_negotiate_rounds(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    placed: &mut Vec<Placed>,
+    mut pending: Vec<Conn>,
+    width: f64,
+) -> Vec<Conn> {
+    let clearance = pcb.rules.default_rules.clearance;
+    let geom = super::gpu_bridge::class_geometry(pcb, width / 2.0, clearance);
+    let n_nodes = geom.nx * geom.ny * geom.layers.len();
+    if n_nodes > 0 {
+        let mut history = vec![0u32; n_nodes];
+        const NEG_ROUNDS: usize = 6;
+        const HISTORY_STEP_COST: u32 = 1500;
+        for round in 0..NEG_ROUNDS {
+            if pending.is_empty() {
+                break;
+            }
+            let sw_neg = Stopwatch::start();
+            let Some(proposals) = super::gpu_bridge::gpu_negotiation_round(
+                session,
+                pcb,
+                &pending,
+                width / 2.0,
+                clearance,
+                &history,
+            ) else {
+                break;
+            };
+            let mut committed = 0usize;
+            let mut still: Vec<Conn> = Vec::new();
+            for ((net, from, to), prop) in pending.drain(..).zip(proposals) {
+                let Some(path) = prop else {
+                    still.push((net, from, to));
+                    continue;
+                };
+                let cand = Candidate {
+                    net: net.clone(),
+                    from,
+                    to,
+                    width: session.width_for(&net, width),
+                    segments: path.segments.clone(),
+                    vias: path.vias.clone(),
+                    thin_segments: vec![],
+                    thin_width: width,
+                };
+                match validate_and_commit(session, pcb, cand, placed) {
+                    Some(p) => {
+                        placed.push(p);
+                        committed += 1;
+                        // Present-sharing: even winners price their cells
+                        // so round-(n+1) contenders route around them.
+                        super::gpu_bridge::deposit_history(
+                            &mut history,
+                            &geom,
+                            &path,
+                            HISTORY_STEP_COST,
+                        );
+                    }
+                    None => {
+                        super::gpu_bridge::deposit_history(
+                            &mut history,
+                            &geom,
+                            &path,
+                            HISTORY_STEP_COST,
+                        );
+                        still.push((net, from, to));
+                    }
+                }
+            }
+            log::info!(
+                "gpu negotiate round {}/{NEG_ROUNDS}: committed {committed}, pending {} in {:.1}s",
+                round + 1,
+                still.len(),
+                sw_neg.ms() / 1000.0,
+            );
+            pending = still;
+            if committed == 0 {
+                break;
+            }
+        }
+    }
+    pending
 }

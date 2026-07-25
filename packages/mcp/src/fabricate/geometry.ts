@@ -2,9 +2,11 @@
  * vcad Fabricate — lean geometry measurement for cost models.
  *
  * A trimmed-down cousin of the inspect_cad math: evaluates the document and
- * aggregates volume / surface area / bounding box across all parts. Cost
- * models only need volume, footprint, and the max bounding dimension, so this
- * intentionally skips per-part mass / center-of-mass.
+ * aggregates volume / surface area / bounding box across all parts via the
+ * kernel's `computeMeshProperties` (shared through `tools/inspect.js` — no
+ * local mesh math). Cost models only need volume, footprint, and the max
+ * bounding dimension, so this intentionally skips per-part mass /
+ * center-of-mass.
  *
  * Tolerant by design: a PCB/ecad document (or any doc the kernel can't mesh
  * into solids) yields ok:false with zeroed metrics, and the caller falls back
@@ -13,43 +15,8 @@
 
 import type { Document } from "@vcad/ir";
 import type { Engine, TriangleMesh } from "@vcad/engine";
+import { computeMeshProperties } from "../tools/inspect.js";
 import type { GeometryMetrics } from "./types.js";
-
-function vertex(mesh: TriangleMesh, index: number): [number, number, number] {
-  const i = index * 3;
-  return [mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]];
-}
-
-/** Signed volume of the tetrahedron (origin, p1, p2, p3). */
-function signedTetVolume(
-  p1: [number, number, number],
-  p2: [number, number, number],
-  p3: [number, number, number],
-): number {
-  return (
-    (p1[0] * (p2[1] * p3[2] - p3[1] * p2[2]) -
-      p2[0] * (p1[1] * p3[2] - p3[1] * p1[2]) +
-      p3[0] * (p1[1] * p2[2] - p2[1] * p1[2])) /
-    6.0
-  );
-}
-
-function triArea(
-  p1: [number, number, number],
-  p2: [number, number, number],
-  p3: [number, number, number],
-): number {
-  const ax = p2[0] - p1[0],
-    ay = p2[1] - p1[1],
-    az = p2[2] - p1[2];
-  const bx = p3[0] - p1[0],
-    by = p3[1] - p1[1],
-    bz = p3[2] - p1[2];
-  const cx = ay * bz - az * by;
-  const cy = az * bx - ax * bz;
-  const cz = ax * by - ay * bx;
-  return Math.sqrt(cx * cx + cy * cy + cz * cz) / 2.0;
-}
 
 const EMPTY: GeometryMetrics = {
   ok: false,
@@ -77,21 +44,15 @@ export function measureDocument(ir: Document, engine: Engine): GeometryMetrics {
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
 
   for (const part of scene.parts) {
-    const mesh = part.mesh;
-    const numTris = mesh.indices.length / 3;
-    for (let t = 0; t < numTris; t++) {
-      const p1 = vertex(mesh, mesh.indices[t * 3]);
-      const p2 = vertex(mesh, mesh.indices[t * 3 + 1]);
-      const p3 = vertex(mesh, mesh.indices[t * 3 + 2]);
-      volume += signedTetVolume(p1, p2, p3);
-      area += triArea(p1, p2, p3);
-      for (const p of [p1, p2, p3]) {
-        for (let k = 0; k < 3; k++) {
-          if (p[k] < min[k]) min[k] = p[k];
-          if (p[k] > max[k]) max[k] = p[k];
-        }
-      }
-    }
+    const props = computeMeshProperties(part.mesh);
+    volume += props.volume;
+    area += props.area;
+    min[0] = Math.min(min[0], props.bbox.min.x);
+    min[1] = Math.min(min[1], props.bbox.min.y);
+    min[2] = Math.min(min[2], props.bbox.min.z);
+    max[0] = Math.max(max[0], props.bbox.max.x);
+    max[1] = Math.max(max[1], props.bbox.max.y);
+    max[2] = Math.max(max[2], props.bbox.max.z);
   }
 
   if (!Number.isFinite(min[0])) return { ...EMPTY };
@@ -103,7 +64,7 @@ export function measureDocument(ir: Document, engine: Engine): GeometryMetrics {
   return {
     ok: true,
     parts: scene.parts.length,
-    volume_mm3: Math.abs(volume),
+    volume_mm3: volume,
     surface_area_mm2: area,
     footprint_mm2: dx * dy,
     max_dim_mm: Math.max(dx, dy, dz),

@@ -1,0 +1,601 @@
+{
+  "schema_version": 0,
+  "task_id": "p2-h-bridge-01",
+  "task_sha256": "9974c80665b923f741696805fad0e73eaf3db1dd7fe4d28e595814d6fe7105f1",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          40
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 40,
+            "width_mm": 50
+          }
+        ],
+        "max_mm": [
+          50,
+          40
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 6
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 7,
+        "min": 6
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "sample": [],
+        "violations": 0
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T184504Z-5c5a",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-pro",
+    "name": "AI Gateway (MCP, google/gemini-2.5-pro)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-pro",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p2-h-bridge-01",
+    "rendered": "Design a printed circuit board for a discrete H-bridge motor driver: four MOSFETs in SOT-23 or larger packages, a 2-pin motor output header, and a 3-pin logic/power input header — at least six footprints. Board outline at most 50mm × 40mm, two copper layers. Declare nets VMOT, GND, OUT_A, OUT_B, and the two gate-drive signals; place components and route every net so its copper is fully connected. Motor current paths (VMOT, OUT_A, OUT_B, GND) should use wide traces. The board must pass a design-rule check clean: no clearance violations, no split nets, no shorts between the half-bridges. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.689333000000005
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "H-Bridge Motor Driver",
+          "nets": {
+            "OUT_B": [
+              "Q3.2",
+              "Q4.3",
+              "J2.2"
+            ],
+            "OUT_A": [
+              "Q1.2",
+              "Q2.3",
+              "J2.1"
+            ],
+            "VMOT": [
+              "J1.1",
+              "Q1.3",
+              "Q3.3"
+            ],
+            "GATE_A": [
+              "J1.3",
+              "Q1.1",
+              "Q2.1"
+            ],
+            "GND": [
+              "J1.2",
+              "Q2.2",
+              "Q4.2"
+            ],
+            "GATE_B": [
+              "J3.1",
+              "Q3.1",
+              "Q4.1"
+            ]
+          },
+          "components": [
+            {
+              "ref": "Q1",
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "x": 100,
+              "part": "N-MOSFET",
+              "pins": [
+                {
+                  "type": "Input",
+                  "name": "G",
+                  "number": "1"
+                },
+                {
+                  "name": "S",
+                  "number": "2",
+                  "type": "Passive"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ],
+              "y": 50
+            },
+            {
+              "pins": [
+                {
+                  "type": "Input",
+                  "name": "G",
+                  "number": "1"
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive"
+                },
+                {
+                  "name": "D",
+                  "number": "3",
+                  "type": "Passive"
+                }
+              ],
+              "y": 80,
+              "part": "N-MOSFET",
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "ref": "Q2",
+              "x": 100
+            },
+            {
+              "ref": "Q3",
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "x": 150,
+              "part": "N-MOSFET",
+              "pins": [
+                {
+                  "type": "Input",
+                  "name": "G",
+                  "number": "1"
+                },
+                {
+                  "type": "Passive",
+                  "number": "2",
+                  "name": "S"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ],
+              "y": 50
+            },
+            {
+              "ref": "Q4",
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "x": 150,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input"
+                },
+                {
+                  "type": "Passive",
+                  "number": "2",
+                  "name": "S"
+                },
+                {
+                  "type": "Passive",
+                  "name": "D",
+                  "number": "3"
+                }
+              ],
+              "y": 80,
+              "part": "N-MOSFET"
+            },
+            {
+              "x": 50,
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
+              "ref": "J1",
+              "value": "Power+LogicA",
+              "y": 60
+            },
+            {
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+              "ref": "J2",
+              "value": "MotorOut",
+              "x": 200,
+              "y": 70
+            },
+            {
+              "x": 50,
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "ref": "J3",
+              "value": "LogicB",
+              "y": 90
+            }
+          ]
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.915541000002122
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "title": "H-Bridge Motor Driver",
+          "nets": {
+            "VMOT": [
+              "J1.1",
+              "Q1.3",
+              "Q3.3"
+            ],
+            "OUT_B": [
+              "Q3.2",
+              "Q4.3",
+              "J2.2"
+            ],
+            "GATE_B": [
+              "J3.1",
+              "Q3.1",
+              "Q4.1"
+            ],
+            "GATE_A": [
+              "J1.3",
+              "Q1.1",
+              "Q2.1"
+            ],
+            "GND": [
+              "J1.2",
+              "Q2.2",
+              "Q4.2"
+            ],
+            "OUT_A": [
+              "Q1.2",
+              "Q2.3",
+              "J2.1"
+            ]
+          },
+          "components": [
+            {
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input"
+                },
+                {
+                  "type": "Passive",
+                  "name": "S",
+                  "number": "2"
+                },
+                {
+                  "type": "Passive",
+                  "name": "D",
+                  "number": "3"
+                }
+              ],
+              "ref": "Q1",
+              "part": "N-MOSFET",
+              "y": 50,
+              "x": 100
+            },
+            {
+              "ref": "Q2",
+              "pins": [
+                {
+                  "type": "Input",
+                  "name": "G",
+                  "number": "1"
+                },
+                {
+                  "number": "2",
+                  "type": "Passive",
+                  "name": "S"
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive"
+                }
+              ],
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "x": 100,
+              "y": 80,
+              "part": "N-MOSFET"
+            },
+            {
+              "ref": "Q3",
+              "pins": [
+                {
+                  "name": "G",
+                  "type": "Input",
+                  "number": "1"
+                },
+                {
+                  "type": "Passive",
+                  "name": "S",
+                  "number": "2"
+                },
+                {
+                  "type": "Passive",
+                  "name": "D",
+                  "number": "3"
+                }
+              ],
+              "footprint": "Package_TO_SOT_SMD:SOT-23",
+              "y": 50,
+              "part": "N-MOSFET",
+              "x": 150
+            },
+            {
+              "part": "N-MOSFET",
+              "y": 80,
+              "x": 150,
+              "ref": "Q4",
+              "pins": [
+                {
+                  "name": "G",
+                  "type": "Input",
+                  "number": "1"
+                },
+                {
+                  "number": "2",
+                  "type": "Passive",
+                  "name": "S"
+                },
+                {
+                  "number": "3",
+                  "type": "Passive",
+                  "name": "D"
+                }
+              ],
+              "footprint": "Package_TO_SOT_SMD:SOT-23"
+            },
+            {
+              "ref": "J1",
+              "pins": [
+                {
+                  "type": "PowerInput",
+                  "name": "VMOT",
+                  "number": "1"
+                },
+                {
+                  "name": "GND",
+                  "type": "PowerInput",
+                  "number": "2"
+                },
+                {
+                  "type": "Input",
+                  "name": "GATE_A",
+                  "number": "3"
+                }
+              ],
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
+              "value": "Power+LogicA",
+              "x": 50,
+              "y": 60
+            },
+            {
+              "x": 200,
+              "y": 70,
+              "pins": [
+                {
+                  "type": "Output",
+                  "name": "OUT_A",
+                  "number": "1"
+                },
+                {
+                  "name": "OUT_B",
+                  "type": "Output",
+                  "number": "2"
+                }
+              ],
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+              "ref": "J2",
+              "value": "MotorOut"
+            },
+            {
+              "value": "LogicB",
+              "pins": [
+                {
+                  "name": "GATE_B",
+                  "type": "Input",
+                  "number": "1"
+                }
+              ],
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical",
+              "ref": "J3",
+              "y": 90,
+              "x": 50
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7536249999975553
+      },
+      {
+        "n": 3,
+        "tool": "place_components",
+        "args": {
+          "strategy": "force_directed",
+          "board_height": 40,
+          "board_width": 50,
+          "document_id": "doc_2_u6-fNapICNEJ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.635041000001365
+      },
+      {
+        "n": 4,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_u6-fNapICNEJ",
+          "placements": [
+            {
+              "ref": "Q1",
+              "y": 10,
+              "x": 20
+            },
+            {
+              "ref": "Q2",
+              "y": 30,
+              "x": 20
+            },
+            {
+              "x": 30,
+              "ref": "Q3",
+              "y": 10
+            },
+            {
+              "ref": "Q4",
+              "y": 30,
+              "x": 30
+            },
+            {
+              "y": 20,
+              "ref": "J1",
+              "x": 5
+            },
+            {
+              "y": 20,
+              "ref": "J2",
+              "x": 45
+            },
+            {
+              "x": 5,
+              "y": 10,
+              "ref": "J3"
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.355958999993163
+      },
+      {
+        "n": 5,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_u6-fNapICNEJ",
+          "clearance": 0.25,
+          "classes": [
+            {
+              "track_width": 1,
+              "nets": [
+                "VMOT",
+                "GND",
+                "OUT_A",
+                "OUT_B"
+              ],
+              "name": "power"
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0042499999981374
+      },
+      {
+        "n": 6,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_u6-fNapICNEJ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.51366599999892
+      },
+      {
+        "n": 7,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_u6-fNapICNEJ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.63566699999501
+      },
+      {
+        "n": 8,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_u6-fNapICNEJ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5348329999978887
+      }
+    ],
+    "tokens": {
+      "input": 413931,
+      "output": 7875,
+      "total": 421806,
+      "cache_creation_input": 0,
+      "cache_read_input": 337873
+    },
+    "wallclock_sec": 123.649673292
+  },
+  "output": {
+    "vcad_path": "20260722T184504Z-5c5a.vcad",
+    "vcad_sha256": "e161e5f1e4b2bea299df4b8cd8d36609e9628eb45c118fd78e92d4b510f5ea4e",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:45:04.950Z",
+    "ended_at": "2026-07-22T18:47:08.647Z"
+  },
+  "signature": null
+}

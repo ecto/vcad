@@ -374,6 +374,7 @@ mod tests {
             width: 0.25,
             segments,
             stubs: Vec::new(),
+            stub_width: 0.25,
             via_pts: Vec::new(),
             spans: Vec::new(),
         }

@@ -1,0 +1,127 @@
+{
+  "version": "0.1",
+  "nodes": {},
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "schematic": {
+    "components": [
+      {
+        "ref": "J1",
+        "value": "Battery",
+        "footprintId": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+        "position": {
+          "x": 10,
+          "y": 30
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "~",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "~",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ],
+        "properties": {
+          "part": "Battery"
+        }
+      },
+      {
+        "ref": "R1",
+        "value": "330",
+        "footprintId": "Resistor_SMD:R_0805_2012Metric",
+        "position": {
+          "x": 40,
+          "y": 30
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "~",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "~",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ],
+        "properties": {
+          "part": "Resistor"
+        }
+      },
+      {
+        "ref": "D1",
+        "value": "LED",
+        "footprintId": "LED_SMD:LED_0805_2012Metric",
+        "position": {
+          "x": 70,
+          "y": 30
+        },
+        "rotation": 0,
+        "pins": [
+          {
+            "number": "1",
+            "name": "A",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "number": "2",
+            "name": "K",
+            "pin_type": "Passive",
+            "position": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ],
+        "properties": {
+          "part": "LED"
+        }
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "labels": [],
+    "nets": {
+      "GND": [
+        "J1.2",
+        "D1.2"
+      ],
+      "VCC": [
+        "J1.1",
+        "R1.1"
+      ],
+      "LED_A": [
+        "R1.2",
+        "D1.1"
+      ]
+    }
+  }
+}

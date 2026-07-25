@@ -32,6 +32,7 @@ pub mod digitize;
 pub mod error;
 pub mod hoop;
 pub mod pattern;
+pub mod render;
 pub mod stats;
 pub mod stitch;
 pub mod thread;
@@ -43,6 +44,7 @@ pub use digitize::{
 pub use error::{EmbroideryError, Result};
 pub use hoop::{brother_pe800, brother_se1900, Hoop, MachineProfile};
 pub use pattern::{EmbPattern, PatternMetadata};
+pub use render::{ribbon_mesh, RibbonGroup, RibbonMesh, RIBBON_HALF_WIDTH};
 pub use stats::{compute_stats, PatternStats};
 pub use stitch::{StitchCommand, StitchGroup};
 pub use thread::{brother_palette, Thread};

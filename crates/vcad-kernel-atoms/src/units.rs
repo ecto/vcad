@@ -13,15 +13,8 @@
 //! `a[Å/fs²] = FORCE_TO_ACCEL * F[eV/Å] / m[amu]`. Kinetic energy in eV is then
 //! `0.5 * m * v² / FORCE_TO_ACCEL`, which keeps energy conservation exact under
 //! this convention.
+//!
+//! The constants are re-exported from [`phyz_md::field::units`] so this crate
+//! and the phyz-md engine it delegates to share one set of values.
 
-/// Convert `eV/Å / amu` to `Å/fs²`.
-///
-/// Derived from `1 eV/Å = 1.602176634e-9 N`, `1 amu = 1.66053906660e-27 kg`,
-/// and `1 m/s² = 1e-20 Å/fs²`.
-pub const FORCE_TO_ACCEL: f64 = 9.648_533_212_331_e-3;
-
-/// Boltzmann constant in eV/K.
-pub const KB_EV_PER_K: f64 = 8.617_333_262e-5;
-
-/// Coulomb constant `1/(4πε₀)` in eV·Å/e² (so `E = KE_COULOMB q_i q_j / r`).
-pub const KE_COULOMB: f64 = 14.399_645_351_950_54;
+pub use phyz_md::field::units::{FORCE_TO_ACCEL, KB_EV_PER_K, KE_COULOMB};

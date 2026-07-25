@@ -1,0 +1,18 @@
+{
+  "id": "p2-usb-power-01",
+  "suite": "P",
+  "tier": "P2",
+  "title": "USB 5V→3.3V supply",
+  "prompt": "Design a printed circuit board that takes 5V from a USB connector and regulates it to 3.3V with a linear regulator. Required components: USB connector, LDO regulator, input capacitor, output capacitor, and a power-indicator LED with its resistor — at least five footprints. Board outline at most 40mm × 25mm, two copper layers. Declare nets VBUS, 3V3, and GND; place components and route every net so its copper is fully connected, with input/output capacitors electrically adjacent to the regulator pins. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+  "inputs": [],
+  "checks": [
+    { "type": "board_envelope", "max_mm": [40.0, 25.0] },
+    { "type": "component_count", "min": 5 },
+    { "type": "nets_fully_connected" },
+    { "type": "drc_clean" }
+  ],
+  "anti_cheese": {},
+  "limits": {},
+  "pass_k": 5,
+  "tags": ["pcbeval", "layout", "power", "drc"]
+}

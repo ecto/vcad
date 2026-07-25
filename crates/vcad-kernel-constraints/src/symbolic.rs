@@ -370,6 +370,18 @@ pub(crate) fn build_residual_exprs(
                 residuals.push(c1y - c2y);
             }
 
+            Constraint::OffsetCoincident {
+                point_a,
+                point_b,
+                dx,
+                dy,
+            } => {
+                let (ax, ay) = sym_point(*point_a, entities);
+                let (bx, by) = sym_point(*point_b, entities);
+                residuals.push(bx - ax - ExprId::from_f64(*dx));
+                residuals.push(by - ay - ExprId::from_f64(*dy));
+            }
+
             Constraint::Fixed { point, x, y } => {
                 let (px, py) = sym_point(*point, entities);
                 let tx = ExprId::from_f64(*x);

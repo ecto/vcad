@@ -23,9 +23,30 @@ import {
   type PassKEntry,
   type RunMeta,
 } from "@mecheval/harness/pass_k";
-import { copy, fonts, fontsHref, theme, type TitleBlock } from "./tokens.js";
+import { copy, domains, family, fonts, fontsHref, theme, type TitleBlock } from "./tokens.js";
 
 const PASS_K = 5;
+// Path prefix for the MechEval chapter inside dist/. All of the chapter's
+// internal links are relative, so the whole site relocates by prefixing
+// its emitted paths here. mecheval.com 301s to /mech (vercel.json).
+const MECH = domains.find((d) => d.slug === "mech")!.pathPrefix;
+
+// The chapter currently being emitted. Chapter pages (index/task/model/run)
+// read their brand + tagline from here; main() swaps it per domain.
+const CHAPTER: { brand: string; tagline: string } = {
+  brand: copy.brand,
+  tagline: copy.tagline,
+};
+
+/** Which chapter a task belongs to, by suite (E/P → pcb, else mech). */
+function suiteDomain(suite: string): "mech" | "pcb" {
+  return suite === "E" || suite === "P" ? "pcb" : "mech";
+}
+
+/** Fallback when a run's task has no spec on disk: the id's tier letter. */
+function taskIdDomain(taskId: string): "mech" | "pcb" {
+  return /^[ep]\d/.test(taskId) ? "pcb" : "mech";
+}
 // Resolve REPO_ROOT relative to this script (mecheval/leaderboard/dist/build.js)
 // so we work the same whether invoked via `npm run build -w …` (cwd = leaderboard
 // package), `node mecheval/leaderboard/dist/build.js` (cwd = repo root), or
@@ -184,9 +205,30 @@ function modelDisplayName(modelId: string): string {
  *  - "claude-mcp-claude-opus-4-7"     → { label: "Claude Opus 4.7", mode: "mcp" }
  *  - "wafer-direct-GLM-5.2"           → { label: "GLM-5.2", color: violet }
  */
+/** Collapse solver-harness variants of the same model into one identity.
+ *  "claude-direct-claude-opus-4-7" and "claude-mcp-claude-opus-4-7" are the
+ *  same model reached through different harness plumbing; the harness must
+ *  not affect the result, so the leaderboard aggregates them together.
+ *  Strips `direct`/`mcp` tokens and collapses the duplicated family token
+ *  that leaves behind. */
+function canonicalModelId(modelId: string): string {
+  if (modelId === "default-cube" || modelId === "DEFAULT_CUBE") return modelId;
+  const tokens = modelId.split("-");
+  // Harness plumbing (direct / mcp / gateway) and provider routing prefixes
+  // are not part of the model's identity — the same model reached through
+  // the Anthropic API, the OpenAI API, or the Vercel AI Gateway must
+  // aggregate as one row.
+  const drop = new Set([
+    "direct", "mcp", "gateway",
+    "openai", "anthropic", "google", "xai", "meta", "wafer", "zhipu", "zai",
+  ]);
+  let parts = tokens.filter((t) => !drop.has(t.toLowerCase()));
+  parts = parts.filter((t, i) => i === 0 || t.toLowerCase() !== parts[i - 1].toLowerCase());
+  return parts.join("-");
+}
+
 function modelIdentity(modelId: string): {
   label: string;
-  mode: "mcp" | "direct" | null;
   color: string;
   provider: "openai" | "anthropic" | "zhipu" | "google" | "meta" | null;
 } {
@@ -208,10 +250,9 @@ function modelIdentity(modelId: string): {
     : "var(--accent)";
 
   const tokens = modelId.split("-");
-  const mode = tokens.includes("mcp") ? "mcp" : tokens.includes("direct") ? "direct" : null;
 
   if (modelId === "default-cube" || modelId === "DEFAULT_CUBE") {
-    return { label: "Default cube", mode, color: "var(--ink-faint)", provider: null };
+    return { label: "Default cube", color: "var(--ink-faint)", provider: null };
   }
 
   // Drop provider + mode tokens, collapse a duplicated family token
@@ -242,7 +283,7 @@ function modelIdentity(modelId: string): {
     label = parts.map(cap).join(" ");
   }
 
-  return { label: label || modelId, mode, color, provider };
+  return { label: label || modelId, color, provider };
 }
 
 /** An inline SVG mark for a model's provider, tinted to the brand colour
@@ -803,6 +844,12 @@ const STYLES = `
   }
   .spec-expected .run-render { padding: 0; margin: 0; justify-content: center; }
   .spec-expected .run-render svg { max-height: 360px; }
+  /* PCB renders carry a small intrinsic px size (mm × scale); let them
+     grow to the tile instead of rendering postage-stamp sized. */
+  .spec-expected .run-render svg[aria-label="vcad pcb render"],
+  .run-render svg[aria-label="vcad pcb render"] {
+    width: 100%; height: auto; max-height: 420px;
+  }
 
   .check-list { margin: var(--s2) 0; }
   .check-item {
@@ -883,6 +930,67 @@ const STYLES = `
 
   /* tool-call trace */
   .tool-list { margin: var(--s2) 0; }
+
+  /* ── run transcript timeline ─────────────────────────────────────── */
+  .run-exports {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s4);
+    margin: var(--s3) 0 var(--s5);
+  }
+  .export-btn {
+    font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+    color: var(--ink); border: 1px solid var(--rule-strong);
+    border-radius: 6px; padding: 5px 10px;
+  }
+  .export-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .export-prompt summary {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .export-prompt pre {
+    font-size: 12.5px; background: var(--sunken); border: 1px solid var(--rule);
+    border-radius: 8px; padding: var(--s4); white-space: pre-wrap;
+    max-width: 72ch; margin-top: var(--s3);
+  }
+  .timeline { margin: var(--s2) 0; }
+  .tl-item { display: grid; grid-template-columns: 22px 1fr; gap: var(--s3); }
+  .tl-rail { position: relative; }
+  .tl-rail::before {
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 1px; background: var(--rule);
+  }
+  .tl-item:first-child .tl-rail::before { top: 10px; }
+  .tl-item:last-child .tl-rail::before { bottom: auto; height: 10px; }
+  .tl-dot {
+    position: absolute; left: 50%; top: 7px; transform: translateX(-50%);
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--tl-c, var(--ink-faint));
+    box-shadow: 0 0 0 3px var(--ground);
+  }
+  .tl-body { padding: 3px 0 var(--s4); min-width: 0; }
+  .tl-head { display: flex; align-items: baseline; gap: var(--s3); }
+  .tl-tool { font-size: 13.5px; font-weight: 600; color: var(--tl-c, var(--ink)); }
+  .tl-kind { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .tl-kind.ok { color: var(--ink-faint); }
+  .tl-kind.bad { color: var(--fail); font-weight: 700; }
+  .tl-ms { font-size: 11.5px; color: var(--ink-faint); margin-left: auto; }
+  .tl-summary { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
+  .tl-raw summary {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+    cursor: pointer; margin-top: 4px;
+  }
+  .tl-raw pre {
+    font-size: 12px; background: var(--sunken); border: 1px solid var(--rule);
+    border-radius: 8px; padding: var(--s3); overflow-x: auto; margin-top: var(--s2);
+  }
+  .tl-err .tl-summary { color: var(--fail); }
+  /* Category tints — the pcb renderer's own layer colours. */
+  .tl-author  { --tl-c: var(--accent); }
+  .tl-place   { --tl-c: #A24BFF; }
+  .tl-route   { --tl-c: #9DFF34; }
+  .tl-verify  { --tl-c: var(--pass); }
+  .tl-see     { --tl-c: #00E5D0; }
+  .tl-session { --tl-c: var(--ink-faint); }
+  .tl-other   { --tl-c: var(--ink-faint); }
   .tool-item {
     display: grid; grid-template-columns: 28px 1fr auto auto;
     align-items: baseline; gap: var(--s4);
@@ -1003,13 +1111,328 @@ function titleBlockHtml(tb: TitleBlock, generatedAt: string): string {
 function footerHtml(): string {
   return `<div class="footer">
     <div class="stack">
-      <b>${escape(copy.brand)}</b> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+      <b>${escape(CHAPTER.brand)}</b> &middot; part of <a href="/">${escape(family.brand)}</a> &middot; an evaluation suite by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
     </div>
     <div>
       sibling project: <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
       &middot; <a href="${copy.repoUrl}">github</a>
     </div>
   </div>`;
+}
+
+/** The umbrella index at `/` — designed as the cover sheet of a drawing
+ *  set: masthead, serif epigraph, the scale ladder as Fig. 1 on a shared
+ *  log axis, booktabs contents + roster tables, and a numbered method
+ *  section. Chapter pages carry their own brand; this page carries the
+ *  family's. */
+
+/** IBM Plex (site identity) + Newsreader italic for the epigraph. Loaded
+ *  only on the family index so chapter pages stay lean. */
+const familyFontsHref =
+  "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&display=swap";
+
+/** Characteristic length band per chapter, as log10(meters). Presentation
+ *  data for Fig. 1 only. */
+const SCALE_BANDS: Record<string, [number, number]> = {
+  atom: [-10, -7],
+  sim: [-6, 0],
+  pcb: [-4, -1],
+  mech: [-3, 0],
+};
+
+function familyIndexPage(
+  models: ModelSummary[],
+  stats: Record<string, { models: number; tasks: number; runs: number }>,
+  k: number,
+): string {
+  const generatedAt = new Date().toISOString();
+  const live = domains.filter((d) => d.live);
+
+  // ── Fig. 1: the scale ladder ─────────────────────────────────────────
+  // Shared log axis, 1 Å → 1 m (log10 −10 … 0). Bands positioned in %.
+  const AXIS_MIN = -10;
+  const AXIS_SPAN = 10;
+  const pct = (v: number) => ((v - AXIS_MIN) / AXIS_SPAN) * 100;
+  const axisTicks = [
+    { at: -10, label: "1 Å" },
+    { at: -9, label: "1 nm", minor: true },
+    { at: -6, label: "1 µm" },
+    { at: -3, label: "1 mm" },
+    { at: 0, label: "1 m" },
+  ];
+  const minorTicks = Array.from({ length: 11 }, (_, i) => -10 + i);
+
+  const ladderRows = [...domains]
+    .sort((a, b) => (SCALE_BANDS[a.slug]?.[0] ?? 0) - (SCALE_BANDS[b.slug]?.[0] ?? 0))
+    .map((d, i) => {
+      const [lo, hi] = SCALE_BANDS[d.slug] ?? [-3, 0];
+      const left = pct(lo);
+      const width = pct(hi) - pct(lo);
+      const band = `<span class="band${d.live ? "" : " band-soon"}" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"></span>`;
+      const name = d.live
+        ? `<a href="/${d.pathPrefix}/">${escape(d.name)}</a>`
+        : `<span class="soon-name">${escape(d.name)}</span>`;
+      return `<div class="ladder-row rise" style="--d:${(i + 3) * 70}ms">
+        <div class="ladder-name mono">${name}${d.live ? "" : `<span class="soon-flag">soon</span>`}</div>
+        <div class="ladder-track">${band}</div>
+      </div>`;
+    })
+    .join("\n");
+
+  const axisLabels = axisTicks
+    .map(
+      (t) =>
+        `<span class="axis-label${t.minor ? " axis-label-minor" : ""} mono" style="left:${pct(t.at).toFixed(1)}%">${t.label}</span>`,
+    )
+    .join("");
+  const axisTickMarks = minorTicks
+    .map((v) => {
+      const major = axisTicks.some((t) => t.at === v);
+      return `<span class="axis-tick${major ? " major" : ""}" style="left:${pct(v).toFixed(1)}%"></span>`;
+    })
+    .join("");
+
+  // ── § 1 contents (booktabs) ──────────────────────────────────────────
+  const contentsRows = domains
+    .map((d, i) => {
+      const sheet = String(i + 1).padStart(2, "0");
+      const chapterCell = d.live
+        ? `<a class="ch-name" href="/${d.pathPrefix}/">${escape(d.name)}</a>`
+        : `<span class="ch-name ch-soon">${escape(d.name)}</span>`;
+      const st = stats[d.slug];
+      const status =
+        d.live && st
+          ? `<span class="status-live">${st.models} models · ${st.tasks} tasks · ${fmtCompact(st.runs)} runs</span>`
+          : `<span class="status-soon">in preparation · <span class="mono">${escape(d.comDomain)}</span></span>`;
+      return `<tr${d.live ? "" : ` class="row-soon"`}>
+        <td class="mono cell-sheet">${sheet}</td>
+        <td>${chapterCell}<div class="ch-tagline">${escape(d.tagline)}</div></td>
+        <td class="mono cell-scale">${escape(d.scale)}</td>
+        <td class="cell-status">${status}</td>
+      </tr>`;
+    })
+    .join("\n");
+
+  // ── § 2 roster (booktabs) ────────────────────────────────────────────
+  const rosterRows = models
+    .map((m, i) => {
+      const id = modelIdentity(m.model_id);
+      const passk = m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
+      const mark = providerMark(id.provider);
+      return `<tr>
+        <td class="mono cell-sheet">${String(i + 1).padStart(2, "0")}</td>
+        <td><a class="roster-model" style="--c:${id.color}" href="/mech/model/${encodeURIComponent(m.model_id)}.html"><span class="roster-mark">${mark}</span>${escape(id.label)}</a></td>
+        <td class="mono cell-num">${fmtNum(m.mean_score)}</td>
+        <td class="mono cell-num">${passk}</td>
+        <td class="cell-chapters mono">mech</td>
+      </tr>`;
+    })
+    .join("\n");
+
+  const roster =
+    models.length === 0
+      ? ""
+      : `<section class="fam-section rise" style="--d:560ms">
+      <div class="section-head">
+        <span class="section-no mono">§ 2</span>
+        <h2>Roster</h2>
+      </div>
+      <p class="section-note">Every model with official runs, ranked by mean check-pass rate. The cross-chapter index appears once a model holds runs in two or more chapters.</p>
+      <table class="booktabs">
+        <thead><tr><th class="cell-sheet"></th><th>model</th><th class="cell-num">score</th><th class="cell-num">pass<sup>${k}</sup></th><th>chapters</th></tr></thead>
+        <tbody>${rosterRows}</tbody>
+      </table>
+      <p class="fig-caption"><span class="mono">Table 1</span> — the family roster. Scores are per-chapter until the cross-chapter index opens.</p>
+    </section>`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="${escape(family.subtagline)}">
+<meta name="theme-color" content="${theme.light.ground}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="${theme.dark.ground}" media="(prefers-color-scheme: dark)">
+<title>${escape(family.brand)} — ${escape(family.tagline)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="${familyFontsHref}">
+<style>${STYLES}</style>
+<style>
+  /* ── family cover sheet ─────────────────────────────────────────── */
+  .fam-sheet { max-width: 880px; }
+
+  /* Corner crop marks — registration for the "printed sheet". */
+  .crop { position: absolute; width: 18px; height: 18px; pointer-events: none; }
+  .crop::before, .crop::after { content: ""; position: absolute; background: var(--ink-faint); opacity: 0.55; }
+  .crop::before { width: 18px; height: 1px; }
+  .crop::after { width: 1px; height: 18px; }
+  .crop-tl { top: 26px; left: 0; }
+  .crop-tr { top: 26px; right: 0; }
+  .crop-bl { bottom: 26px; left: 0; }
+  .crop-br { bottom: 26px; right: 0; }
+  .crop-tr::before, .crop-br::before { right: 0; }
+  .crop-tr::after, .crop-br::after { right: 0; }
+  .crop-bl::before, .crop-br::before { bottom: 0; }
+  .crop-bl::after, .crop-br::after { bottom: 0; }
+
+  /* Masthead */
+  .masthead { margin: var(--s7) 0 var(--s8); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--ink-faint);
+    display: flex; align-items: baseline; gap: var(--s3);
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule-strong); align-self: center; }
+  .masthead h1 {
+    font-size: clamp(44px, 9vw, 76px); font-weight: 650; letter-spacing: -0.035em;
+    line-height: 1.02; margin: var(--s4) 0 var(--s5);
+  }
+  .epigraph {
+    font-family: "Newsreader", Georgia, serif; font-style: italic;
+    font-size: clamp(19px, 3vw, 24px); font-weight: 400; line-height: 1.45;
+    color: var(--ink-soft); margin: 0 0 var(--s3); max-width: 34em;
+  }
+  .subline { font-size: 15px; color: var(--ink-faint); max-width: 44em; margin: 0; }
+
+  /* Sections */
+  .fam-section { margin: var(--s9) 0 0; }
+  .section-head { display: flex; align-items: baseline; gap: var(--s3); border-top: 2px solid var(--ink); padding-top: var(--s3); }
+  .section-no { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.08em; }
+  .section-head h2 { font-size: 15px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin: 0; }
+  .section-note { font-size: 14px; color: var(--ink-soft); max-width: 46em; margin: var(--s3) 0 var(--s5); }
+
+  /* Fig. 1 — the scale ladder */
+  .ladder { margin: var(--s5) 0 var(--s2); }
+  .ladder-axis { position: relative; height: 26px; margin-left: var(--ladder-gutter, 172px); }
+  .axis-rule { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--ink-soft); }
+  .axis-tick { position: absolute; bottom: 0; width: 1px; height: 5px; background: var(--ink-soft); opacity: 0.5; }
+  .axis-tick.major { height: 9px; opacity: 1; }
+  .axis-label { position: absolute; bottom: 12px; transform: translateX(-50%); font-size: 11px; color: var(--ink-faint); white-space: nowrap; }
+  .ladder-row { display: grid; grid-template-columns: var(--ladder-gutter, 172px) 1fr; align-items: center; min-height: 44px; border-bottom: 1px solid var(--rule); }
+  .ladder-row:last-child { border-bottom: 1px solid var(--ink-soft); }
+  .ladder-name { font-size: 14px; letter-spacing: 0.01em; display: flex; align-items: baseline; gap: var(--s2); }
+  .ladder-name a { color: var(--ink); font-weight: 500; }
+  .ladder-name a:hover { color: var(--accent); }
+  .soon-name { color: var(--ink-faint); }
+  .soon-flag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); border: 1px solid var(--rule-strong); border-radius: 3px; padding: 1px 5px; }
+  .ladder-track { position: relative; height: 100%; min-height: 44px; }
+  .band { position: absolute; top: 50%; transform: translateY(-50%); height: 10px; background: var(--ink); border-radius: 1px; }
+  .band-soon {
+    background: repeating-linear-gradient(-45deg, var(--ink-faint) 0 1px, transparent 1px 5px);
+    border: 1px solid var(--rule-strong); opacity: 0.9;
+  }
+  .fig-caption { font-size: 12.5px; color: var(--ink-faint); margin: var(--s3) 0 0; }
+  .fig-caption .mono { color: var(--ink-soft); }
+
+  /* Booktabs tables: heavy head/foot rules, no vertical rules. */
+  .booktabs { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .booktabs thead th {
+    text-align: left; font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
+    border-bottom: 1px solid var(--ink-soft); padding: var(--s2) var(--s3) var(--s2) 0;
+  }
+  .booktabs tbody td { border-bottom: 1px solid var(--rule); padding: var(--s3) var(--s3) var(--s3) 0; vertical-align: baseline; }
+  .booktabs tbody tr:last-child td { border-bottom: 2px solid var(--ink); }
+  .booktabs tbody tr:not(.row-soon):hover td { background: var(--hover); }
+  .cell-sheet { width: 34px; color: var(--ink-faint); font-size: 12px; }
+  .cell-scale { white-space: nowrap; font-size: 12.5px; color: var(--ink-soft); }
+  .cell-num { text-align: right; width: 72px; font-size: 13px; }
+  .booktabs thead th.cell-num { text-align: right; }
+  .cell-status { font-size: 13px; }
+  .status-live { color: var(--pass); font-weight: 500; }
+  .status-soon { color: var(--ink-faint); }
+  .status-soon .mono { font-size: 12px; }
+  .ch-name { font-weight: 600; color: var(--ink); }
+  .ch-name:hover { color: var(--accent); }
+  .ch-soon { color: var(--ink-faint); font-weight: 600; }
+  .ch-tagline { font-size: 12.5px; color: var(--ink-faint); max-width: 34em; margin-top: 2px; }
+  .row-soon td { color: var(--ink-faint); }
+  .roster-model { color: var(--ink); font-weight: 500; display: inline-flex; align-items: center; gap: var(--s2); }
+  .roster-model:hover { color: var(--c, var(--accent)); }
+  .roster-mark { color: var(--c, var(--ink-soft)); display: inline-flex; }
+  .roster-mark .brand-mark { width: 13px; height: 13px; }
+  .cell-chapters { font-size: 12px; color: var(--ink-soft); }
+
+  /* Method */
+  .method { columns: 1; max-width: 46em; }
+  .method p { font-size: 14.5px; color: var(--ink-soft); margin: 0 0 var(--s4); }
+  .method p b { color: var(--ink); font-weight: 600; }
+
+  /* Reveal — one staggered pass on load, then done. */
+  .rise { animation: rise 0.55s var(--ease) both; animation-delay: var(--d, 0ms); }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .rise { animation: none; } }
+
+  @media (max-width: 640px) {
+    .ladder-axis, .ladder-row { --ladder-gutter: 108px; }
+    .axis-label-minor { display: none; }
+    .cell-scale, .cell-chapters { display: none; }
+    .booktabs thead th.cell-scale { display: none; }
+    .masthead { margin-top: var(--s5); }
+  }
+</style>
+</head>
+<body><main class="sheet fam-sheet">
+<span class="crop crop-tl"></span><span class="crop crop-tr"></span><span class="crop crop-bl"></span><span class="crop crop-br"></span>
+
+<header class="masthead">
+  <div class="eyebrow rise" style="--d:0ms">${escape(family.canonicalHost)} · an evaluation family · sheet 0 of ${domains.length}</div>
+  <h1 class="rise" style="--d:60ms">${escape(family.brand)}</h1>
+  <p class="epigraph rise" style="--d:140ms">${escape(family.tagline)}</p>
+  <p class="subline rise" style="--d:200ms">${escape(family.subtagline)}</p>
+</header>
+
+<section class="fam-section rise" style="--d:260ms">
+  <div class="section-head">
+    <span class="section-no mono">Fig. 1</span>
+    <h2>The scale ladder</h2>
+  </div>
+  <p class="section-note">Four chapters, one kernel. Each chapter grades design at a characteristic length scale; together they span ten orders of magnitude.</p>
+  <div class="ladder">
+    <div class="ladder-axis">${axisTickMarks}${axisLabels}<span class="axis-rule"></span></div>
+    ${ladderRows}
+  </div>
+  <p class="fig-caption"><span class="mono">Fig. 1</span> — chapters of the evaluation family by characteristic length, 1 Å to 1 m (log scale). Hatched bands are in preparation.</p>
+</section>
+
+<section class="fam-section rise" style="--d:420ms">
+  <div class="section-head">
+    <span class="section-no mono">§ 1</span>
+    <h2>Contents</h2>
+  </div>
+  <table class="booktabs">
+    <thead><tr><th class="cell-sheet">no.</th><th>chapter</th><th class="cell-scale">scale</th><th>status</th></tr></thead>
+    <tbody>${contentsRows}</tbody>
+  </table>
+</section>
+
+${roster}
+
+<section class="fam-section rise" style="--d:640ms">
+  <div class="section-head">
+    <span class="section-no mono">§ 3</span>
+    <h2>Method</h2>
+  </div>
+  <div class="method">
+    <p><b>Deterministic oracles only.</b> Every check is a computation the vcad kernel performs exactly — mass properties, design-rule checks, circuit simulation, physics rollouts. No LLM judges, no similarity scores, no human graders.</p>
+    <p><b>pass<sup>${k}</sup>.</b> Each task runs ${k} times; a (model, task) pair scores only when every attempt passes every check. Villain baselines — trivial cheese solvers — are kept in CI and must fail.</p>
+    <p><b>Auditable to the bolt.</b> Every number on every leaderboard resolves to a forensic run blob: prompt seed, full tool trace, output geometry, per-check grader verdicts. Click through and read it.</p>
+    <p><b>Held-out splits.</b> Public tasks are fair game for tuning; scored runs include a private split, rotated on suspicion of contamination.</p>
+  </div>
+</section>
+
+<div class="footer rise" style="--d:700ms">
+  <div class="stack">
+    <b>${escape(family.brand)}</b> &middot; an evaluation family by <a href="${copy.footerOwnerUrl}">${escape(copy.footerOwner)}</a>
+  </div>
+  <div>
+    graded by <a href="${copy.siblingProjectUrl}">${escape(copy.siblingProjectName)}</a>
+    &middot; <a href="${copy.repoUrl}">github</a>
+  </div>
+</div>
+<p class="meta">generated ${generatedAt} · static site, regenerate with <code>npm run build -w @mecheval/leaderboard</code></p>
+</main></body></html>`;
 }
 
 function pageShell(
@@ -1024,7 +1447,7 @@ function pageShell(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="${escape(copy.tagline)}">
+<meta name="description" content="${escape(CHAPTER.tagline)}">
 <meta name="theme-color" content="${theme.light.ground}" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="${theme.dark.ground}" media="(prefers-color-scheme: dark)">
 <title>${escape(title)}</title>
@@ -1054,7 +1477,7 @@ function modelBarChart(models: ModelSummary[], k: number): string {
       const passk =
         m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
       const id = modelIdentity(m.model_id);
-      const meta = id.mode === "mcp" ? `${passk} · mcp` : passk;
+      const meta = passk;
       const mark = providerMark(id.provider) || `<span class="dot"></span>`;
       return `<a class="vbar${showLeader && i === 0 ? " lead" : ""}" href="model/${encodeURIComponent(m.model_id)}.html" style="--c:${id.color}" title="${escape(m.model_id)} · score ${fmtNum(m.mean_score)} · pass^${k} ${passk}">
         <span class="vbar-col">
@@ -1078,7 +1501,7 @@ function modelTable(models: ModelSummary[], k: number): string {
       const id = modelIdentity(m.model_id);
       return `
       <tr class="${showLeader && i === 0 ? "rank-1" : ""}">
-        <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</a></td>
+        <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(id.label)}</a></td>
         <td class="num">${m.tasks_attempted}</td>
         <td class="num">${m.total_attempts}</td>
         <td class="num">${m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—"}</td>
@@ -1105,7 +1528,7 @@ function matrix(
   const head = modelIds
     .map((mid) => {
       const id = modelIdentity(mid);
-      const label = `${id.label}${id.mode === "mcp" ? " · mcp" : ""}`;
+      const label = id.label;
       return `<th><a href="model/${encodeURIComponent(mid)}.html" title="${escape(mid)}">${escape(label)}</a></th>`;
     })
     .join("");
@@ -1243,7 +1666,9 @@ function paretoScatter(
   // Replace placeholder href with a real one (task page is the safest target —
   // we don't always have a single-run url for an aggregated entry).
   const dotsLinked = dots.replace(
-    /href="run-link-([^"]+?)-((?:claude|default)[^"]+)"/g,
+    // Task ids end in a two-digit serial ("a1-block-01"); split there so
+    // any model id — including arbitrary gateway slugs — parses.
+    /href="run-link-([^"]+?-\d{2})-([^"]+)"/g,
     (_, t) => `href="task/${encodeURIComponent(t as string)}.html"`,
   );
 
@@ -1446,8 +1871,8 @@ function indexPage(
   const body = `
     <div class="hero">
       <div>
-        <div class="wordmark"><span class="dot"></span><h1>${escape(copy.brand)}</h1></div>
-        <p class="tagline-main">${escape(copy.tagline)}</p>
+        <div class="wordmark"><span class="dot"></span><h1>${escape(CHAPTER.brand)}</h1></div>
+        <p class="tagline-main">${escape(CHAPTER.tagline)}</p>
         ${heroMetricHtml}
       </div>
       <div class="mascot">${mascotSvg ?? ""}</div>
@@ -1479,11 +1904,11 @@ function indexPage(
       Corpus: ${runs.length} run blobs across ${rankedModels.length} models and ${taskIds.length} tasks.
     </p>`;
   return pageShell(
-    "mecheval — eval suite for AI mechanical design",
+    `${CHAPTER.brand} — ${CHAPTER.tagline}`,
     "",
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: "INDEX",
       scale: passKReady > 0 ? `pass^${k} · ${passKAchieved}/${passKReady}` : `pass^${k}`,
       project: "leaderboard",
@@ -1615,10 +2040,10 @@ function taskPage(
   if (!spec) {
     return pageShell(
       `mecheval — ${taskId}`,
-      `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
+      `<a href="../index.html">← ${escape(CHAPTER.brand)}</a> / task / ${escape(taskId)}`,
       `<h1>${escape(taskId)}</h1>
        <div class="nodata">no task spec found at mecheval/tasks/${escape(taskId)}.json</div>`,
-      { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
+      { drawing: CHAPTER.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
     );
   }
   // ── per-task model results (a mini leaderboard for this task) ──
@@ -1634,7 +2059,7 @@ function taskPage(
           const mark = providerMark(id.provider) || `<span class="dot"></span>`;
           return `<a class="mr${r.solved ? "" : " unsolved"}" href="../model/${encodeURIComponent(r.modelId)}.html" style="--c:${id.color}">
             <span class="mr-mark">${mark}</span>
-            <span class="mr-name">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</span>
+            <span class="mr-name">${escape(id.label)}</span>
             <span class="mr-pass">${r.passes}/${r.total} pass</span>
             <span class="mr-score">${fmtNum(r.best)}</span>
           </a>`;
@@ -1722,10 +2147,10 @@ function taskPage(
   `;
   return pageShell(
     `mecheval — ${taskId}`,
-    `<a href="../index.html">← ${escape(copy.brand)}</a> / task / ${escape(taskId)}`,
+    `<a href="../index.html">← ${escape(CHAPTER.brand)}</a> / task / ${escape(taskId)}`,
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: `TASK · ${taskId}`,
       scale: `${runsForTask.length} runs`,
       project: `${spec.suite} · ${spec.tier}`,
@@ -1744,10 +2169,10 @@ function modelPage(modelId: string, runsForModel: RunMeta[]): string {
   const taskCount = new Set(runsForModel.map((r) => r.task_id)).size;
   return pageShell(
     `mecheval — ${modelId}`,
-    `<a href="../index.html">← ${escape(copy.brand)}</a> / model / ${escape(modelId)}`,
+    `<a href="../index.html">← ${escape(CHAPTER.brand)}</a> / model / ${escape(modelId)}`,
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: `MODEL · ${modelId}`,
       scale: `${runsForModel.length} runs · ${taskCount} tasks`,
       project: modelDisplayName(modelId),
@@ -1780,6 +2205,69 @@ function measuredValue(c: { type: string; details: Record<string, unknown> }): s
   }
 }
 
+/** Category tint for a tool-call timeline entry. */
+function toolCategory(tool: string): string {
+  if (/^(create_schematic|create_cad_loon|create|define_loon|import_)/.test(tool)) return "author";
+  if (/^(place_components|set_placement|set_board_outline|board_from_solid)/.test(tool)) return "place";
+  if (/^(route_nets|route_diff_pair|add_trace|add_via|add_zone|add_coil|length_match)/.test(tool)) return "route";
+  if (/^(run_drc|run_erc|validate_for_fab|verify_|check_|dfm_|placement_drc)/.test(tool)) return "verify";
+  if (/^(render_|describe_|inspect_|measure|get_pad_positions|get_copper)/.test(tool)) return "see";
+  if (/^(open_document|get_document|save_document|checkpoint|update|delete)/.test(tool)) return "session";
+  return "other";
+}
+
+/** One-line human summary of a tool call, derived from its args. Falls
+ *  back to a compact key list so unknown tools still narrate. */
+function toolSummary(tool: string, args: unknown): string {
+  const a = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const n = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+  switch (tool) {
+    case "open_document":
+      return "opened a fresh session";
+    case "create_schematic": {
+      const nets = a.nets && typeof a.nets === "object" ? Object.keys(a.nets as object).length : 0;
+      return `declared ${n(a.components)} components and ${nets} nets`;
+    }
+    case "place_components": {
+      const size =
+        a.board_width && a.board_height ? `${a.board_width}×${a.board_height}mm board` : "board";
+      return `placed components on a ${size} (${a.strategy ?? "grid"})`;
+    }
+    case "set_placement":
+      return `moved ${n(a.placements)} component${n(a.placements) === 1 ? "" : "s"} by hand`;
+    case "route_nets": {
+      const which = n(a.nets) ? `${n(a.nets)} nets` : "all nets";
+      const effort = a.effort ? ` at effort ${a.effort}` : "";
+      return `routed ${which}${effort}`;
+    }
+    case "run_drc":
+      return "ran the design-rule check";
+    case "run_erc":
+      return "ran the electrical-rule check";
+    case "validate_for_fab":
+      return "ran the fab-readiness gate";
+    case "render_pcb":
+      return "looked at the board";
+    case "render_view":
+      return "looked at the part";
+    case "get_document":
+      return "read the final document";
+    case "create_cad_loon":
+      return `authored geometry in loon (${String((a.code as string) ?? "").length} chars)`;
+    case "inspect_cad":
+      return "measured the document";
+    default: {
+      const keys = Object.keys(a).filter((k) => k !== "document_id");
+      return keys.length ? `args: ${keys.slice(0, 5).join(", ")}` : "";
+    }
+  }
+}
+
+/** Compact duration: ms under a second, seconds above. */
+function fmtMs(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms.toFixed(0)}ms`;
+}
+
 function runPage(
   blob: FullBlob,
   vcad: string | null,
@@ -1788,7 +2276,7 @@ function runPage(
   refSvg: string | null,
 ): string {
   const taskId = blob.task_id;
-  const modelId = blob.model.id;
+  const modelId = canonicalModelId(blob.model.id);
   const runId = blob.run_id;
   const id = modelIdentity(modelId);
   const mark = providerMark(id.provider) || `<span class="dot" style="--c:${id.color}"></span>`;
@@ -1852,27 +2340,46 @@ function runPage(
         .join("")}</div>`
     : `<div class="nodata">no checks</div>`;
 
-  // ── tool-call trace ──
+  // (helpers for the timeline live at module scope: toolCategory,
+  // toolSummary, fmtMs)
+  // ── transcript timeline ──
+  // The run blob's trace, rendered as a narrated timeline rather than a
+  // raw call table: each entry gets a category tint and a one-line human
+  // summary derived from its args, with the raw JSON one click away.
   const traceHtml = blob.trace.tool_calls.length
-    ? `<div class="tool-list">${blob.trace.tool_calls
-        .map(
-          (tc) => `<div class="tool-item">
-        <span class="tool-num">${tc.n}</span>
-        <span class="tool-name">${escape(tc.tool)}</span>
-        <span class="tool-kind ${tc.result_kind === "ok" ? "ok" : "bad"}">${escape(tc.result_kind)}</span>
-        <span class="tool-ms">${tc.wallclock_ms.toFixed(0)} ms</span>
-        <details class="tool-args"><summary>args</summary><pre>${escape(JSON.stringify(tc.args, null, 2))}</pre></details>
-      </div>`,
-        )
+    ? `<div class="timeline">${blob.trace.tool_calls
+        .map((tc) => {
+          const cat = toolCategory(tc.tool);
+          const summary = toolSummary(tc.tool, tc.args);
+          const ok = tc.result_kind === "ok";
+          return `<div class="tl-item tl-${cat}${ok ? "" : " tl-err"}">
+        <span class="tl-rail"><span class="tl-dot"></span></span>
+        <div class="tl-body">
+          <div class="tl-head">
+            <span class="tl-tool mono">${escape(tc.tool)}</span>
+            <span class="tl-kind ${ok ? "ok" : "bad"}">${ok ? "ok" : "error"}</span>
+            <span class="tl-ms mono">${fmtMs(tc.wallclock_ms)}</span>
+          </div>
+          ${summary ? `<div class="tl-summary">${escape(summary)}</div>` : ""}
+          <details class="tl-raw"><summary>raw args</summary><pre>${escape(JSON.stringify(tc.args, null, 2))}</pre></details>
+        </div>
+      </div>`;
+        })
         .join("")}</div>`
     : `<div class="nodata">single-shot solver — no tool calls</div>`;
+
+  const exportsHtml = `<div class="run-exports">
+    ${vcad ? `<a class="export-btn" href="${escape(runId)}.vcad" download>⬇ .vcad output</a>` : ""}
+    <a class="export-btn" href="${escape(runId)}.json" download>⬇ run blob (JSON)</a>
+    <details class="export-prompt"><summary>rendered prompt</summary><pre>${escape(blob.prompt.rendered)}</pre></details>
+  </div>`;
 
   const body = `
     <div class="run-head">
       <div class="run-verdict">${verdictHtml}</div>
       <h1><a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(title)}</a></h1>
       <div class="run-by" style="--c:${id.color}">
-        <span class="run-by-model"><span class="run-mark">${mark}</span><a href="../../../model/${encodeURIComponent(modelId)}.html">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</a></span>
+        <span class="run-by-model"><span class="run-mark">${mark}</span><a href="../../../model/${encodeURIComponent(modelId)}.html">${escape(id.label)}</a></span>
         <span class="muted">·</span>
         <span class="run-id">${escape(runId)}</span>
         <span class="muted">·</span>
@@ -1892,6 +2399,7 @@ function runPage(
     ${checksHtml}
 
     <h2>Process</h2>
+    ${exportsHtml}
     ${traceHtml}
 
     <details style="margin-top: 22px;"><summary>Prompt sent to the model</summary>
@@ -1911,10 +2419,10 @@ function runPage(
   `;
   return pageShell(
     `mecheval — ${title} · ${id.label}`,
-    `<a href="../../../index.html">← ${escape(copy.brand)}</a> / <a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(taskId)}</a> / ${escape(id.label)}`,
+    `<a href="../../../index.html">← ${escape(CHAPTER.brand)}</a> / <a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(taskId)}</a> / ${escape(id.label)}`,
     body,
     {
-      drawing: copy.brand,
+      drawing: CHAPTER.brand,
       sheet: `RUN · ${runId}`,
       scale: passed ? "PASS" : `${blob.summary.checks_passed}/${blob.summary.checks_total}`,
       project: `${taskId} · ${modelDisplayName(modelId)}`,
@@ -1965,6 +2473,11 @@ async function writePage(relPath: string, html: string): Promise<void> {
 
 async function main(): Promise<void> {
   const runs = await loadAllRuns(RUNS_DIR);
+  // Merge solver-harness variants (direct vs mcp) of the same model before
+  // any aggregation — the harness must not affect the result. Blob paths
+  // keep their original on-disk ids; only the display/aggregation id and
+  // the emitted URLs change.
+  for (const r of runs) r.model_id = canonicalModelId(r.model_id);
   const entries = passKBy(runs, PASS_K);
   const models = modelSummary(entries);
   const taskSpecs = await loadTaskSpecs();
@@ -1983,7 +2496,11 @@ async function main(): Promise<void> {
   const runSvgs = new Map<string, string | null>();
   for (const r of runs) {
     const vcadPath = r.blob_path.replace(/\.json$/, ".vcad");
-    const cacheKey = `runs/${r.task_id}/${r.model_id}/${r.run_id}`;
+    // Cache key follows the on-disk blob path (original solver-qualified
+    // model dir), not the canonicalized model_id — keeps the committed
+    // cache valid across the direct/mcp merge.
+    const diskModelDir = dirname(r.blob_path).split("/").pop() ?? r.model_id;
+    const cacheKey = `runs/${r.task_id}/${diskModelDir}/${r.run_id}`;
     const svg = existsSync(vcadPath)
       ? await getOrRenderSvg(vcadPath, cacheKey)
       : null;
@@ -2007,8 +2524,12 @@ async function main(): Promise<void> {
         continue;
       }
     }
+    // Villain baselines never supply reference imagery — a cube standing
+    // in as the "expected" render for a schematic task is worse than a
+    // dash.
+    const VILLAINS = new Set(["default-cube", "flood-zone"]);
     const taskRuns = runs
-      .filter((r) => r.task_id === tid)
+      .filter((r) => r.task_id === tid && !VILLAINS.has(r.model_id))
       .slice()
       .sort((a, b) => b.run_id.localeCompare(a.run_id));
     const pick =
@@ -2027,35 +2548,71 @@ async function main(): Promise<void> {
     taskRefSvgs.set(tid, svg);
   }
 
-  // Index.
+  // Partition tasks + runs into chapters by suite (E/P → pcb, else mech).
+  const domainOfTask = (tid: string): "mech" | "pcb" => {
+    const spec = taskSpecs.get(tid);
+    return spec ? suiteDomain(spec.suite) : taskIdDomain(tid);
+  };
+  const chapterSlugs = ["mech", "pcb"] as const;
+  const chapterData = chapterSlugs.map((slug) => {
+    const chTaskIds = [...seenTaskIds].filter((t) => domainOfTask(t) === slug).sort();
+    const chRuns = runs.filter((r) => domainOfTask(r.task_id) === slug);
+    const chEntries = passKBy(chRuns, PASS_K);
+    const chModels = modelSummary(chEntries);
+    return { slug, taskIds: chTaskIds, runs: chRuns, entries: chEntries, models: chModels };
+  });
+
+  // Family index at the site root. Chapter sites live under their
+  // pathPrefix; the branded .com domains 301 into them (vercel.json).
+  const familyStats = Object.fromEntries(
+    chapterData.map((c) => [
+      c.slug,
+      { models: c.models.length, tasks: c.taskIds.length, runs: c.runs.length },
+    ]),
+  );
   await writePage(
     "index.html",
-    indexPage(
-      runs,
-      entries,
-      models,
-      [...seenTaskIds].sort(),
-      PASS_K,
-      mascotSvg,
-      taskRefSvgs,
-    ),
+    familyIndexPage(models, familyStats, PASS_K),
   );
 
-  // Task pages.
-  for (const tid of seenTaskIds) {
-    const runsForTask = runs.filter((r) => r.task_id === tid);
-    await writePage(
-      `task/${tid}.html`,
-      taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs, taskRefSvgs.get(tid) ?? null),
-    );
-  }
+  // Chapter sites: index + task + model pages, each under its pathPrefix
+  // with its own brand.
+  for (const ch of chapterData) {
+    const domain = domains.find((d) => d.slug === ch.slug)!;
+    if (!domain.live) continue;
+    const prefix = domain.pathPrefix;
+    CHAPTER.brand = domain.name;
+    CHAPTER.tagline = domain.tagline;
 
-  // Model pages.
-  const modelIds = new Set(runs.map((r) => r.model_id));
-  for (const mid of modelIds) {
-    const runsForModel = runs.filter((r) => r.model_id === mid);
-    await writePage(`model/${mid}.html`, modelPage(mid, runsForModel));
+    await writePage(
+      `${prefix}/index.html`,
+      indexPage(
+        ch.runs,
+        ch.entries,
+        ch.models,
+        ch.taskIds,
+        PASS_K,
+        ch.slug === "mech" ? mascotSvg : null,
+        taskRefSvgs,
+      ),
+    );
+
+    for (const tid of ch.taskIds) {
+      const runsForTask = ch.runs.filter((r) => r.task_id === tid);
+      await writePage(
+        `${prefix}/task/${tid}.html`,
+        taskPage(taskSpecs.get(tid) ?? null, tid, runsForTask, runSvgs, taskRefSvgs.get(tid) ?? null),
+      );
+    }
+
+    const chModelIds = new Set(ch.runs.map((r) => r.model_id));
+    for (const mid of chModelIds) {
+      const runsForModel = ch.runs.filter((r) => r.model_id === mid);
+      await writePage(`${prefix}/model/${mid}.html`, modelPage(mid, runsForModel));
+    }
   }
+  CHAPTER.brand = copy.brand;
+  CHAPTER.tagline = copy.tagline;
 
   // Run pages — reuse the SVG map populated above; copy each .vcad
   // into dist alongside the blob so the run page can offer it as a
@@ -2067,16 +2624,24 @@ async function main(): Promise<void> {
     const svgKey = `${r.task_id}::${r.model_id}::${r.run_id}`;
     const vcadSvg = runSvgs.get(svgKey) ?? null;
     if (vcadSvg) renderedRuns++;
+    const runPrefix = domainOfTask(r.task_id) === "pcb" ? "pcb" : MECH;
     await writePage(
-      `run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
+      `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
       runPage(blob, vcad, vcadSvg, taskSpecs.get(r.task_id) ?? null, taskRefSvgs.get(r.task_id) ?? null),
+    );
+    // Drop the full forensic blob alongside the HTML — the "run blob
+    // (JSON)" export button on the Process section links to it.
+    await writeFile(
+      resolve(OUT_DIR, `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.json`),
+      JSON.stringify(blob, null, 2),
+      "utf8",
     );
     // Drop the .vcad file alongside the HTML so it can be linked.
     if (vcad) {
       await writeFile(
         resolve(
           OUT_DIR,
-          `run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
+          `${runPrefix}/run/${r.task_id}/${r.model_id}/${r.run_id}.vcad`,
         ),
         vcad,
         "utf8",
@@ -2086,7 +2651,7 @@ async function main(): Promise<void> {
   console.log(`rendered ${renderedRuns} of ${runs.length} run artifacts`);
 
   console.log(
-    `wrote ${OUT_DIR}: index + ${seenTaskIds.size} tasks + ${modelIds.size} models + ${runs.length} runs`,
+    `wrote ${OUT_DIR}: family index + ${chapterData.map((c) => `${c.slug}(${c.taskIds.length}t/${c.models.length}m/${c.runs.length}r)`).join(" + ")}`,
   );
 }
 

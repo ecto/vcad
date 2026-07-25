@@ -105,6 +105,80 @@ contributors: Array<StudyContributor>,
 requirement: StudyRequirement, };
 
 /**
+ * A stable reference to a piece of geometry a constraint grips.
+ *
+ * Anchors are the universal target vocabulary: PCB footprints and outline
+ * geometry, sketch segment points, and named mechanical part edges all
+ * address through the same type, which is what lets one constraint relate
+ * geometry across domains.
+ */
+export type Anchor = { "kind": "pcbFootprint", 
+/**
+ * PcbBoard node id.
+ */
+node: number, 
+/**
+ * Footprint reference designator ("U1", "J3").
+ */
+ref: string, 
+/**
+ * Pad name/number on that footprint; `None` = footprint origin.
+ */
+pad?: string, } | { "kind": "pcbOutlineVertex", 
+/**
+ * PcbBoard node id.
+ */
+node: number, 
+/**
+ * 0-based vertex index.
+ */
+index: number, } | { "kind": "pcbOutlineEdge", 
+/**
+ * PcbBoard node id.
+ */
+node: number, 
+/**
+ * 0-based index of the edge's start vertex.
+ */
+index: number, } | { "kind": "sketchPoint", 
+/**
+ * Sketch2D node id.
+ */
+node: number, 
+/**
+ * 0-based segment index into the sketch's `segments`.
+ */
+segment: number, 
+/**
+ * Which point of the segment.
+ */
+point: SketchPointRef, } | { "kind": "sketchSegment", 
+/**
+ * Sketch2D node id.
+ */
+node: number, 
+/**
+ * 0-based segment index into the sketch's `segments`.
+ */
+segment: number, } | { "kind": "partEdge", 
+/**
+ * Part root node id.
+ */
+node: number, 
+/**
+ * First adjacent face name.
+ */
+faceA: string, 
+/**
+ * Second adjacent face name.
+ */
+faceB: string, 
+/**
+ * Geometric snapshot for fallback resolution.
+ */
+hint?: EdgeHintIr, };
+
+/**
  * A single keyframe: value at time `t` (seconds), eased from the previous key.
  */
 export type AnimKey = { 
@@ -310,6 +384,28 @@ min: Vec3,
  * Maximum corner.
  */
 max: Vec3, };
+
+/**
+ * A per-frame camera pose in orbit coordinates, compiled from the
+ * timeline's declarative [`CameraShot`]s by [`Timeline::sample_sequence`].
+ */
+export type CameraPose = { 
+/**
+ * Azimuth around the scene, degrees.
+ */
+azimuthDeg: number, 
+/**
+ * Elevation above the horizon, degrees.
+ */
+elevationDeg: number, 
+/**
+ * Distance factor (1 = default framing, 0.5 = half distance).
+ */
+dolly: number, 
+/**
+ * Optional part/instance id the camera is framing.
+ */
+target?: string, };
 
 /**
  * A saved camera position/orientation.
@@ -519,6 +615,155 @@ min_mm: number,
  * chamber floor. Penetration beyond the tolerance still fails.
  */
 allow_contact?: boolean, };
+
+/**
+ * The geometric relationship a [`DesignConstraint`] asserts.
+ *
+ * Dimensional variants carry an [`Expr`] value (literal number or a formula
+ * over document parameters). Distances/lengths are mm; angles/rotations are
+ * degrees.
+ */
+export type ConstraintKind = { "type": "coincident", 
+/**
+ * First point.
+ */
+a: Anchor, 
+/**
+ * Second point.
+ */
+b: Anchor, } | { "type": "distance", 
+/**
+ * First point.
+ */
+a: Anchor, 
+/**
+ * Second point.
+ */
+b: Anchor, 
+/**
+ * Target distance in mm.
+ */
+value: Expr, } | { "type": "horizontalDistance", 
+/**
+ * The point.
+ */
+a: Anchor, 
+/**
+ * Target X in mm.
+ */
+value: Expr, } | { "type": "verticalDistance", 
+/**
+ * The point.
+ */
+a: Anchor, 
+/**
+ * Target Y in mm.
+ */
+value: Expr, } | { "type": "horizontal", 
+/**
+ * First point (or edge start).
+ */
+a: Anchor, 
+/**
+ * Second point (or edge end).
+ */
+b: Anchor, } | { "type": "vertical", 
+/**
+ * First point.
+ */
+a: Anchor, 
+/**
+ * Second point.
+ */
+b: Anchor, } | { "type": "parallel", 
+/**
+ * First edge.
+ */
+a: Anchor, 
+/**
+ * Second edge.
+ */
+b: Anchor, } | { "type": "perpendicular", 
+/**
+ * First edge.
+ */
+a: Anchor, 
+/**
+ * Second edge.
+ */
+b: Anchor, } | { "type": "equalLength", 
+/**
+ * First edge.
+ */
+a: Anchor, 
+/**
+ * Second edge.
+ */
+b: Anchor, } | { "type": "length", 
+/**
+ * The edge.
+ */
+a: Anchor, 
+/**
+ * Target length in mm.
+ */
+value: Expr, } | { "type": "pointOnEdge", 
+/**
+ * The point.
+ */
+point: Anchor, 
+/**
+ * The edge.
+ */
+edge: Anchor, } | { "type": "concentric", 
+/**
+ * First center.
+ */
+a: Anchor, 
+/**
+ * Second center.
+ */
+b: Anchor, } | { "type": "fixed", 
+/**
+ * The point.
+ */
+a: Anchor, } | { "type": "rotation", 
+/**
+ * PcbBoard node id.
+ */
+node: number, 
+/**
+ * Footprint reference designator.
+ */
+ref: string, 
+/**
+ * Target rotation in degrees.
+ */
+value: Expr, } | { "type": "symmetric", 
+/**
+ * First point.
+ */
+a: Anchor, 
+/**
+ * Second point.
+ */
+b: Anchor, 
+/**
+ * Mirror axis (edge-like anchor).
+ */
+axis: Anchor, } | { "type": "angle", 
+/**
+ * First edge.
+ */
+a: Anchor, 
+/**
+ * Second edge.
+ */
+b: Anchor, 
+/**
+ * Target angle in degrees.
+ */
+value: Expr, };
 
 /**
  * Provenance of a piece of copper: who placed it.
@@ -1107,6 +1352,32 @@ courtyard_aabb: Box3D,
 ipc: IpcGoals, };
 
 /**
+ * A persisted, solver-enforced design constraint.
+ *
+ * Stored in `Document.constraints`; solved by `vcad-design-constraints`;
+ * re-verified fail-closed as a `constraint.<label-or-id>` receipt claim.
+ */
+export type DesignConstraint = { 
+/**
+ * Stable id ("c1", "c2", …) for edit/delete and claim identity.
+ */
+id: string, 
+/**
+ * Optional human label used for the receipt claim name.
+ */
+label?: string, 
+/**
+ * The geometric relationship.
+ */
+kind: ConstraintKind, 
+/**
+ * Driven (reference) dimension: contributes no residuals to the solve;
+ * its value is back-annotated from solved geometry instead. Only
+ * meaningful on dimensional kinds.
+ */
+driven: boolean, };
+
+/**
  * The unified, versioned verification receipt for a design.
  */
 export type DesignReceipt = { 
@@ -1246,6 +1517,12 @@ bindings?: Bindings,
  */
 clearance_specs?: Array<ClearanceSpec>, 
 /**
+ * Document-level design constraints spanning sketches, PCB layout, and
+ * mechanical parts. Solved by the design-constraint solver and
+ * re-verified fail-closed as receipt claims (Holds/Stale/Violated).
+ */
+constraints?: Array<DesignConstraint>, 
+/**
  * Persisted solver studies (structural FEA, tolerance stackup, …) for
  * the unified Analyze mode. Like `clearance_specs`, studies are
  * re-verified against the current geometry rather than computed once —
@@ -1371,6 +1648,25 @@ ovalHeight?: number, };
  * Interpolation easing between two keyframes.
  */
 export type Ease = "linear" | "step" | "ease-in-out";
+
+/**
+ * Geometric snapshot of a part edge for fallback resolution, mirroring the
+ * kernel naming crate's `EdgeHint`. Recorded when the anchor is created so
+ * the edge can be re-found geometrically if topological names drift.
+ */
+export type EdgeHintIr = { 
+/**
+ * Edge midpoint in world coordinates (mm).
+ */
+midpoint: [number, number, number], 
+/**
+ * Unit direction of the edge.
+ */
+direction: [number, number, number], 
+/**
+ * Edge length in mm.
+ */
+length: number, };
 
 /**
  * A declarative edge selector, resolved against the current topology at
@@ -2997,6 +3293,44 @@ start: Vec2,
 end: Vec2, };
 
 /**
+ * Sampled state for a single frame of the timeline.
+ */
+export type SequenceFrame = { 
+/**
+ * Frame index (0-based).
+ */
+index: number, 
+/**
+ * Time in seconds.
+ */
+t: number, 
+/**
+ * Animated parameter name → value at `t`.
+ */
+params: Record<string, number>, 
+/**
+ * Joint id → state at `t`.
+ */
+joints: Record<string, number>, 
+/**
+ * Instance id → visible (track value > 0.5).
+ */
+visibility: Record<string, boolean>, 
+/**
+ * Global exploded-view factor (0 = assembled).
+ */
+explode: number, 
+/**
+ * Camera pose compiled from the timeline's shots.
+ */
+camera: CameraPose, 
+/**
+ * True iff params differ from the previous frame (frame 0: true if
+ * any parameter track exists).
+ */
+geometryDirty: boolean, };
+
+/**
  * Direction tag for sheet-metal flanges. Wire-compatible with
  * `vcad_kernel_sheet::BendDirection` — kept local to `vcad-ir` so the IR
  * crate stays light on kernel deps.
@@ -3063,6 +3397,11 @@ visibleEdgeColor?: number,
  * Outline color of edges occluded by other geometry, packed 0xRRGGBB (default 0x000000).
  */
 hiddenEdgeColor?: number, };
+
+/**
+ * Which point of a sketch segment an [`Anchor::SketchPoint`] grips.
+ */
+export type SketchPointRef = "start" | "end" | "center";
 
 /**
  * A segment of a 2D sketch profile.

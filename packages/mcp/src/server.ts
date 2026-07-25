@@ -18,7 +18,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
-import { commandRegistry } from "@vcad/core";
+import { commandRegistry, getPcbNodeIds } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import {
   documents,
@@ -124,6 +124,7 @@ import { toolDefs as exportToolDefs } from "./tools/export.js";
 import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
 import { toolDefs as measureToolDefs } from "./tools/measure.js";
 import { toolDefs as parametersToolDefs } from "./tools/parameters.js";
+import { toolDefs as designConstraintsToolDefs } from "./tools/design-constraints.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
 import { toolDefs as renderToolDefs } from "./tools/render.js";
 import { toolDefs as verifyToolDefs } from "./tools/verify.js";
@@ -133,12 +134,14 @@ import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
 import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as flowToolDefs } from "./tools/flow.js";
 import { toolDefs as circuitToolDefs } from "./tools/circuit.js";
 import { toolDefs as structureToolDefs } from "./tools/structure.js";
 import { toolDefs as emToolDefs } from "./tools/em.js";
 import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
 import { toolDefs as photonicsToolDefs } from "./tools/photonics.js";
 import { toolDefs as neutronicsToolDefs } from "./tools/neutronics.js";
+import { toolDefs as qcdToolDefs } from "./tools/qcd.js";
 import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
@@ -311,6 +314,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...inspectToolDefs,
   ...measureToolDefs,
   ...parametersToolDefs,
+  ...designConstraintsToolDefs,
   ...printCheckToolDefs,
   ...renderToolDefs,
   ...verifyToolDefs,
@@ -320,12 +324,14 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...particleToolDefs,
   ...toleranceToolDefs,
   ...thermalToolDefs,
+  ...flowToolDefs,
   ...circuitToolDefs,
   ...structureToolDefs,
   ...emToolDefs,
   ...antennaToolDefs,
   ...photonicsToolDefs,
   ...neutronicsToolDefs,
+  ...qcdToolDefs,
   ...physicsToolDefs,
   ...loonMacroToolDefs,
   ...dfmToolDefs,
@@ -404,6 +410,11 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "list_parameters",
   "set_parameters",
   "parameter_gradient",
+  // ── Design constraints (document-level geometric solver) ───
+  "add_constraint",
+  "delete_constraint",
+  "list_constraints",
+  "solve_constraints",
   // ── Topology optimization ──────────────────────────────────
   "topology_optimize",
   // ── Charged-particle optics (fusor / IEC / trap family) ────
@@ -414,8 +425,10 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "simulate_photonics",
   "analyze_antenna",
   "solve_thermal",
+  "simulate_flow",
   "analyze_structure",
   "simulate_neutron_shield",
+  "simulate_lattice_gauge",
   "analyze_tolerance_stackup",
   "simulate_circuit",
   "tune_circuit",
@@ -513,6 +526,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "render_ratsnest",
   "render_stackup",
   "run_drc",
+  "fix_drc",
   "search_electronic_parts",
   "resolve_part",
   "find_alternatives",
@@ -1416,10 +1430,21 @@ export async function createServer(
           // the content-addressed GLB cache for the poll loop. Best-effort
           // and size-capped; hosts that strip `_meta` (and oversized docs)
           // fall back to the fetch path unchanged.
-          if (
-            def.behavior.mount &&
-            (clientHasInlineUi() || context.assumeUiClient === true)
-          ) {
+          //
+          // NOT gated on the client's declared UI capability: Claude Code
+          // mounts the widget without ever declaring
+          // `extensions["io.modelcontextprotocol/ui"]` at initialize, and in
+          // that host the widget's fallback `get_preview_glb` round trip is
+          // not dependable — gating on the capability left the freshly
+          // placed board rendering as "no geometry to preview". `_meta` is
+          // ignored by UI-less clients and never model-visible, so the only
+          // cost of always attaching is transport bytes.
+          // PCB-mutating tools (route_nets, add_zone, …) aren't mount tools,
+          // but the already-mounted widget's fetch path has the same
+          // dependability problem — without the inline GLB a board-only
+          // session renders "no geometry to preview" after every copper
+          // mutation. Attach for any geometry write on a PCB session too.
+          if (def.behavior.mount || sessionHasPcb(docId)) {
             await attachInlinePreview(result, docId, engine);
           }
         }
@@ -1541,14 +1566,49 @@ export function slimPreviewForInlineUi(
   );
   if (!alwaysSlim && totalChars <= 8192) return;
 
+  // Verification verdicts must survive slimming — dropping placement_drc from
+  // a big place_components body let callers route on a floorplan with 7
+  // courtyard overlaps and never see them, and a slimmed-away route_nets
+  // `receipt:true` silently un-verifies the call. Carry the fault/verdict
+  // fields through to the slim stub; everything else stays behind get_document.
+  const keep: Record<string, unknown> = {};
+  for (const block of result.content) {
+    if (block.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(block.text) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      for (const field of SLIM_PRESERVED_FIELDS) {
+        if (parsed[field] !== undefined && keep[field] === undefined) {
+          keep[field] = parsed[field];
+        }
+      }
+    } catch {
+      // non-JSON block — nothing to preserve
+    }
+  }
+
   const summary =
     `CAD document ready (${docId}). Geometry is available in the inline 3D viewer. ` +
     "Use get_document for the full IR, inspect_cad for metrics, or export_cad to export.";
   result.content = [
     { type: "text", text: summary },
-    { type: "text", text: JSON.stringify({ document_id: docId }) },
+    { type: "text", text: JSON.stringify({ document_id: docId, ...keep }) },
   ];
 }
+
+/** Fields that must never be slimmed away: success/fault verdicts the caller
+ *  branches on (placement DRC, unresolved shorts, lint, warnings) and the
+ *  verification receipt (route_nets `receipt:true` and any receipt-bearing
+ *  mutator) — the receipt IS the deliverable, not preview bulk. */
+const SLIM_PRESERVED_FIELDS = [
+  "success",
+  "placement_drc",
+  "placement_conflicts",
+  "fallback_footprints",
+  "warnings",
+  "receipt",
+  "receipt_error",
+] as const;
 
 /**
  * Attach the preview document id to a tool result: in structuredContent
@@ -1588,6 +1648,25 @@ function attachPreviewHandle(
       type: "text",
       text: JSON.stringify({ document_id: docId }),
     });
+  }
+}
+
+/**
+ * Does this session document contain a PCB (a `PcbBoard` root or the legacy
+ * bare `doc.pcb`)? Gates the inline `_meta` preview attach for non-mount PCB
+ * mutators — board-only documents have no CAD part scene, so the widget's
+ * fetch fallback is the only alternative and it isn't dependable in every
+ * host.
+ */
+function sessionHasPcb(docId: string): boolean {
+  try {
+    const doc = getSession(docId);
+    return (
+      getPcbNodeIds(doc).length > 0 ||
+      Boolean((doc as { pcb?: unknown }).pcb)
+    );
+  } catch {
+    return false;
   }
 }
 

@@ -1,0 +1,243 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-led-driver-01",
+  "task_sha256": "cd80c25d470b71491491a205b829b76267f84ac53e9bcc96e1e6a4f2ccd285a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "pass",
+      "details": {
+        "candidate": {
+          "components": 3,
+          "nets": 3
+        },
+        "golden": {
+          "components": 3,
+          "nets": 3
+        },
+        "isomorphic": true
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 2,
+    "checks_total": 2,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T182139Z-5e1e",
+  "model": {
+    "id": "gateway-mcp-anthropic-claude-sonnet-4.5",
+    "name": "AI Gateway (MCP, anthropic/claude-sonnet-4.5)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "anthropic/claude-sonnet-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-led-driver-01",
+    "rendered": "Capture a schematic for a battery-powered LED: a 2-pin battery, a current-limiting resistor, and an LED in series, returning to the battery's other terminal. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-led-driver-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.907958000000008
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "Battery-Powered LED",
+          "components": [
+            {
+              "ref": "BT1",
+              "value": "Battery",
+              "footprint": "Battery:BatteryHolder_2x_AA",
+              "x": 50,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "+",
+                  "type": "PowerOutput",
+                  "x": 50,
+                  "y": 45
+                },
+                {
+                  "number": "2",
+                  "name": "-",
+                  "type": "PowerInput",
+                  "x": 50,
+                  "y": 55
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "330",
+              "footprint": "Resistor_SMD:R_0805",
+              "x": 100,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": 95,
+                  "y": 50
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 105,
+                  "y": 50
+                }
+              ]
+            },
+            {
+              "ref": "D1",
+              "value": "LED",
+              "footprint": "LED_SMD:LED_0805",
+              "x": 150,
+              "y": 50,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive",
+                  "x": 145,
+                  "y": 50
+                },
+                {
+                  "number": "2",
+                  "name": "K",
+                  "type": "Passive",
+                  "x": 155,
+                  "y": 50
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VCC": [
+              "BT1.1",
+              "R1.1"
+            ],
+            "LED": [
+              "R1.2",
+              "D1.1"
+            ],
+            "GND": [
+              "D1.2",
+              "BT1.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5855409999985568
+      },
+      {
+        "n": 2,
+        "tool": "run_erc",
+        "args": {
+          "document_id": "doc_2_sKJkpuGRno7T"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.961290999999619
+      },
+      {
+        "n": 3,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_sKJkpuGRno7T"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0609159999985422
+      },
+      {
+        "n": 4,
+        "tool": "save_document",
+        "args": {
+          "document_id": "doc_2_sKJkpuGRno7T",
+          "name": "battery-led-circuit"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3415410000015981
+      },
+      {
+        "n": 5,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_sKJkpuGRno7T"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.035250000000815
+      }
+    ],
+    "tokens": {
+      "input": 384010,
+      "output": 918,
+      "total": 384928,
+      "cache_creation_input": 77392,
+      "cache_read_input": 230622
+    },
+    "wallclock_sec": 30.480276292000003
+  },
+  "output": {
+    "vcad_path": "20260722T182139Z-5e1e.vcad",
+    "vcad_sha256": "f2c5e0b3cab0182177e7b86f85561c81fae7682d6c1d87f5e46278f8d5adb50f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T18:21:39.737Z",
+    "ended_at": "2026-07-22T18:22:10.228Z"
+  },
+  "signature": null
+}

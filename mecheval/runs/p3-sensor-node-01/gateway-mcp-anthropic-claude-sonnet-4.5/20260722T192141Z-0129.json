@@ -1,0 +1,2953 @@
+{
+  "schema_version": 0,
+  "task_id": "p3-sensor-node-01",
+  "task_sha256": "de0b7e3a8aac236769924979543afda4469f7bd9618bf8bb6b378247355492c0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          45,
+          35
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 35,
+            "width_mm": 45
+          }
+        ],
+        "max_mm": [
+          45,
+          35
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 10
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 11,
+        "min": 10
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 7,
+        "sample": [
+          {
+            "actual": 11,
+            "message": "Unconnected net '3V3': pads split across 11 disjoint copper groups",
+            "position": [
+              18.25,
+              19.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 11,
+            "message": "Unconnected net 'GND': pads split across 11 disjoint copper groups",
+            "position": [
+              18.25,
+              16.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SCL': pads split across 3 disjoint copper groups",
+            "position": [
+              23.75,
+              21.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SDA': pads split across 3 disjoint copper groups",
+            "position": [
+              23.25,
+              21.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWCLK': pads split across 2 disjoint copper groups",
+            "position": [
+              25.75,
+              18.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWDIO': pads split across 2 disjoint copper groups",
+            "position": [
+              25.75,
+              17.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'VIN': pads split across 3 disjoint copper groups",
+            "position": [
+              32.3,
+              13.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          }
+        ]
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "boards": 1,
+        "sample": [
+          {
+            "actual": 0.5574999999999992,
+            "message": "courtyards of U3 and C5 overlap",
+            "position": [
+              11.475,
+              15.17125
+            ],
+            "required": 0,
+            "rule": "CourtyardOverlap",
+            "severity": "Error"
+          },
+          {
+            "actual": 11,
+            "message": "Unconnected net '3V3': pads split across 11 disjoint copper groups",
+            "position": [
+              18.25,
+              19.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 11,
+            "message": "Unconnected net 'GND': pads split across 11 disjoint copper groups",
+            "position": [
+              18.25,
+              16.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SCL': pads split across 3 disjoint copper groups",
+            "position": [
+              23.75,
+              21.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'SDA': pads split across 3 disjoint copper groups",
+            "position": [
+              23.25,
+              21.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWCLK': pads split across 2 disjoint copper groups",
+            "position": [
+              25.75,
+              18.25
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 2,
+            "message": "Unconnected net 'SWDIO': pads split across 2 disjoint copper groups",
+            "position": [
+              25.75,
+              17.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          },
+          {
+            "actual": 3,
+            "message": "Unconnected net 'VIN': pads split across 3 disjoint copper groups",
+            "position": [
+              32.3,
+              13.75
+            ],
+            "required": 1,
+            "rule": "UnconnectedNet",
+            "severity": "Error"
+          }
+        ],
+        "violations": 8
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "fail",
+      "details": {
+        "findings": [
+          {
+            "distance_mm": 8.500882307149066,
+            "ic": "U1",
+            "nearest_cap": "C5",
+            "net": "3V3",
+            "ok": false,
+            "pad": "1"
+          },
+          {
+            "distance_mm": 7.325639903789975,
+            "ic": "U1",
+            "nearest_cap": "C3",
+            "net": "3V3",
+            "ok": false,
+            "pad": "9"
+          },
+          {
+            "distance_mm": 2.663428241946833,
+            "ic": "U3",
+            "nearest_cap": "C5",
+            "net": "3V3",
+            "ok": true,
+            "pad": "6"
+          },
+          {
+            "distance_mm": 5.055655249322289,
+            "ic": "U3",
+            "nearest_cap": "C5",
+            "net": "3V3",
+            "ok": true,
+            "pad": "8"
+          }
+        ],
+        "ic_power_pads": 4,
+        "max_mm": 6
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 5,
+    "score": 0.4,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T192141Z-0129",
+  "model": {
+    "id": "gateway-mcp-anthropic-claude-sonnet-4.5",
+    "name": "AI Gateway (MCP, anthropic/claude-sonnet-4.5)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "anthropic/claude-sonnet-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p3-sensor-node-01",
+    "rendered": "Design a printed circuit board for a battery-powered I2C sensor node: a microcontroller in a quad flat package, a 3.3V LDO regulator, an I2C sensor in a SOIC-8 package, two I2C pull-up resistors, at least three decoupling/bulk capacitors, and a 4-pin power/programming header — at least ten footprints total. Board outline at most 45mm × 35mm, two copper layers. Declare nets VIN, 3V3, GND, SDA, SCL, and the two programming signals; the sensor and MCU share the I2C bus with pull-ups to 3V3, and every IC power pin gets a decoupling capacitor placed within 6mm (pad-to-pad) of the pin it serves. Place all components and route every net so its copper is fully connected. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.093333000000001
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "STM32F030",
+              "footprint": "LQFP-32",
+              "x": 100,
+              "y": 100
+            },
+            {
+              "ref": "U2",
+              "value": "LM1117-3.3",
+              "footprint": "SOT-223",
+              "x": 50,
+              "y": 100
+            },
+            {
+              "ref": "U3",
+              "value": "BME280",
+              "footprint": "SOIC-8",
+              "x": 150,
+              "y": 100
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 120,
+              "y": 80
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 130,
+              "y": 80
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 40,
+              "y": 90
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 60,
+              "y": 90
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 90,
+              "y": 90
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 100,
+              "y": 90
+            },
+            {
+              "ref": "C5",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 160,
+              "y": 90
+            },
+            {
+              "ref": "J1",
+              "value": "CONN_4",
+              "footprint": "PinHeader_1x4_P2.54mm",
+              "x": 30,
+              "y": 100
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.1",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.3",
+              "C2.1",
+              "U1.1",
+              "U1.9",
+              "C3.1",
+              "C4.1",
+              "U3.8",
+              "U3.7",
+              "C5.1",
+              "R1.1",
+              "R2.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.2",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C4.2",
+              "U1.8",
+              "U1.23",
+              "U3.1",
+              "U3.2",
+              "U3.5",
+              "C5.2"
+            ],
+            "SDA": [
+              "U1.15",
+              "U3.3",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.16",
+              "U3.4",
+              "R2.2"
+            ],
+            "SWDIO": [
+              "J1.3",
+              "U1.20"
+            ],
+            "SWCLK": [
+              "J1.4",
+              "U1.21"
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.866874999999709
+      },
+      {
+        "n": 2,
+        "tool": "create_schematic",
+        "args": {
+          "title": "I2C Sensor Node",
+          "components": [
+            {
+              "ref": "U1",
+              "value": "MCU",
+              "footprint": "LQFP-32",
+              "x": 100,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VDD_1",
+                  "type": "PowerInput",
+                  "x": -5,
+                  "y": 0
+                },
+                {
+                  "number": "8",
+                  "name": "VSS_1",
+                  "type": "PowerInput",
+                  "x": -5,
+                  "y": -2
+                },
+                {
+                  "number": "9",
+                  "name": "VDD_2",
+                  "type": "PowerInput",
+                  "x": -5,
+                  "y": -4
+                },
+                {
+                  "number": "15",
+                  "name": "PB6_I2C_SDA",
+                  "type": "Bidirectional",
+                  "x": 5,
+                  "y": 0
+                },
+                {
+                  "number": "16",
+                  "name": "PB7_I2C_SCL",
+                  "type": "Bidirectional",
+                  "x": 5,
+                  "y": -2
+                },
+                {
+                  "number": "20",
+                  "name": "PA13_SWDIO",
+                  "type": "Bidirectional",
+                  "x": 5,
+                  "y": -4
+                },
+                {
+                  "number": "21",
+                  "name": "PA14_SWCLK",
+                  "type": "Input",
+                  "x": 5,
+                  "y": -6
+                },
+                {
+                  "number": "23",
+                  "name": "VSS_2",
+                  "type": "PowerInput",
+                  "x": -5,
+                  "y": -6
+                }
+              ]
+            },
+            {
+              "ref": "U2",
+              "value": "LM1117-3.3",
+              "footprint": "SOT-223",
+              "x": 50,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "GND",
+                  "type": "PowerInput",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "VOUT",
+                  "type": "PowerOutput",
+                  "x": 5,
+                  "y": 0
+                },
+                {
+                  "number": "3",
+                  "name": "VIN",
+                  "type": "PowerInput",
+                  "x": -5,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "U3",
+              "value": "BME280",
+              "footprint": "SOIC-8",
+              "x": 150,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "GND",
+                  "type": "PowerInput",
+                  "x": -5,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "CSB",
+                  "type": "Input",
+                  "x": -5,
+                  "y": -2
+                },
+                {
+                  "number": "3",
+                  "name": "SDI",
+                  "type": "Bidirectional",
+                  "x": -5,
+                  "y": -4
+                },
+                {
+                  "number": "4",
+                  "name": "SCK",
+                  "type": "Input",
+                  "x": -5,
+                  "y": -6
+                },
+                {
+                  "number": "5",
+                  "name": "SDO",
+                  "type": "Output",
+                  "x": 5,
+                  "y": -6
+                },
+                {
+                  "number": "6",
+                  "name": "VDDIO",
+                  "type": "PowerInput",
+                  "x": 5,
+                  "y": -4
+                },
+                {
+                  "number": "7",
+                  "name": "GND",
+                  "type": "PowerInput",
+                  "x": 5,
+                  "y": -2
+                },
+                {
+                  "number": "8",
+                  "name": "VDD",
+                  "type": "PowerInput",
+                  "x": 5,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 120,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "R2",
+              "value": "4.7k",
+              "footprint": "R_0603",
+              "x": 130,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "C1",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 40,
+              "y": 90,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "C2",
+              "value": "10uF",
+              "footprint": "C_0805",
+              "x": 60,
+              "y": 90,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "C3",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 90,
+              "y": 90,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "C4",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 100,
+              "y": 90,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "C5",
+              "value": "100nF",
+              "footprint": "C_0603",
+              "x": 160,
+              "y": 90,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive",
+                  "x": -2,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive",
+                  "x": 2,
+                  "y": 0
+                }
+              ]
+            },
+            {
+              "ref": "J1",
+              "value": "CONN_4",
+              "footprint": "PinHeader_1x4_P2.54mm",
+              "x": 30,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VIN",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": -2
+                },
+                {
+                  "number": "3",
+                  "name": "SWDIO",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": -4
+                },
+                {
+                  "number": "4",
+                  "name": "SWCLK",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": -6
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VIN": [
+              "J1.1",
+              "U2.3",
+              "C1.1"
+            ],
+            "3V3": [
+              "U2.2",
+              "C2.1",
+              "U1.1",
+              "U1.9",
+              "C3.1",
+              "C4.1",
+              "U3.6",
+              "U3.8",
+              "C5.1",
+              "R1.1",
+              "R2.1"
+            ],
+            "GND": [
+              "J1.2",
+              "U2.1",
+              "C1.2",
+              "C2.2",
+              "C3.2",
+              "C4.2",
+              "U1.8",
+              "U1.23",
+              "U3.1",
+              "U3.7",
+              "C5.2"
+            ],
+            "SDA": [
+              "U1.15",
+              "U3.3",
+              "R1.2"
+            ],
+            "SCL": [
+              "U1.16",
+              "U3.4",
+              "R2.2"
+            ],
+            "SWDIO": [
+              "J1.3",
+              "U1.20"
+            ],
+            "SWCLK": [
+              "J1.4",
+              "U1.21"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7238330000036513
+      },
+      {
+        "n": 3,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "board_width": 45,
+          "board_height": 35,
+          "strategy": "force_directed"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14.189750000005006
+      },
+      {
+        "n": 4,
+        "tool": "get_pad_positions",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6139159999947879
+      },
+      {
+        "n": 5,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 12.5,
+              "y": 23.5,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 30,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10.5,
+              "y": 13,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 27,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 26,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 8,
+              "y": 24,
+              "rotation": 90
+            },
+            {
+              "ref": "C4",
+              "x": 11,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 14,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 18,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 18,
+              "y": 14,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 6,
+              "y": 8,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.845083000000159
+      },
+      {
+        "n": 6,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6253329999890411
+      },
+      {
+        "n": 7,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 26,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 26,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6456250000046566
+      },
+      {
+        "n": 8,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 17,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 25,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 25,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8083330000081332
+      },
+      {
+        "n": 9,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 10,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5932920000050217
+      },
+      {
+        "n": 10,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 9,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4872919999907026
+      },
+      {
+        "n": 11,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.355249999993248
+      },
+      {
+        "n": 12,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 26,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3965000000025611
+      },
+      {
+        "n": 13,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 24,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.428583000000799
+      },
+      {
+        "n": 14,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 22,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3481659999961266
+      },
+      {
+        "n": 15,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 30,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.344375000000582
+      },
+      {
+        "n": 16,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 8,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.403416000001016
+      },
+      {
+        "n": 17,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 24,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5194590000028256
+      },
+      {
+        "n": 18,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 26,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 26,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3107079999899724
+      },
+      {
+        "n": 19,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 27,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 27,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2839999999850988
+      },
+      {
+        "n": 20,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 19,
+              "y": 27.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 27.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2320000000181608
+      },
+      {
+        "n": 21,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 18,
+              "y": 27.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 27.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2328330000163987
+      },
+      {
+        "n": 22,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 18,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.265291999996407
+      },
+      {
+        "n": 23,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 17,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3333329999877606
+      },
+      {
+        "n": 24,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 16,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 24,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.278083000011975
+      },
+      {
+        "n": 25,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 20,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 28,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2062079999886919
+      },
+      {
+        "n": 26,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 20,
+              "y": 28.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 28.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.276958000002196
+      },
+      {
+        "n": 27,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 20,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1725830000068527
+      },
+      {
+        "n": 28,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 7,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 20,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1986250000190921
+      },
+      {
+        "n": 29,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 32,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 32,
+              "y": 6.5,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 20,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5294160000048578
+      },
+      {
+        "n": 30,
+        "tool": "set_placement",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap",
+          "placements": [
+            {
+              "ref": "U1",
+              "x": 22,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "U2",
+              "x": 30,
+              "y": 12,
+              "rotation": 0
+            },
+            {
+              "ref": "U3",
+              "x": 10,
+              "y": 18,
+              "rotation": 0
+            },
+            {
+              "ref": "C1",
+              "x": 36,
+              "y": 16,
+              "rotation": 0
+            },
+            {
+              "ref": "C2",
+              "x": 28,
+              "y": 6,
+              "rotation": 0
+            },
+            {
+              "ref": "C3",
+              "x": 20,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C4",
+              "x": 26,
+              "y": 29,
+              "rotation": 0
+            },
+            {
+              "ref": "C5",
+              "x": 12,
+              "y": 15,
+              "rotation": 0
+            },
+            {
+              "ref": "R1",
+              "x": 16,
+              "y": 22,
+              "rotation": 0
+            },
+            {
+              "ref": "R2",
+              "x": 16,
+              "y": 20,
+              "rotation": 0
+            },
+            {
+              "ref": "J1",
+              "x": 38,
+              "y": 24,
+              "rotation": 0
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.184624999994412
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_-BRm2nERxoap"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0974590000114404
+      }
+    ],
+    "tokens": {
+      "input": 2679122,
+      "output": 13377,
+      "total": 2692499,
+      "cache_creation_input": 96572,
+      "cache_read_input": 2506308
+    },
+    "wallclock_sec": 206.47650241600002
+  },
+  "output": {
+    "vcad_path": "20260722T192141Z-0129.vcad",
+    "vcad_sha256": "179a6b134fede02325fa82af09e73a070ef959233125dce3d9d69b0dab559736",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T19:21:41.581Z",
+    "ended_at": "2026-07-22T19:25:08.148Z"
+  },
+  "signature": null
+}

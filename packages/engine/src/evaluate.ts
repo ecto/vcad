@@ -49,7 +49,25 @@ interface KernelModule {
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
   /** Resolve a stdlib part → sub-document JSON. */
   buildPart?: (path: string, paramsJson: string) => string;
+  /** Kernel-side embroidery ribbon meshing (newer WASM builds). */
+  embroideryDesignToMesh?: (designJson: string) => {
+    positions: number[];
+    indices: number[];
+    colors: number[];
+  };
+  /** Kernel-side mesh placement (newer WASM builds). */
+  transformMeshBuffers?: (
+    positions: Float32Array,
+    normals: Float32Array | undefined,
+    transformJson: string,
+  ) => { positions: number[]; normals?: number[] };
 }
+
+/** The subset of {@link KernelModule} the mesh helpers feature-detect. */
+export type MeshKernel = Pick<
+  KernelModule,
+  "embroideryDesignToMesh" | "transformMeshBuffers"
+>;
 
 /** Shape of the WASM evaluator result */
 interface WasmEvaluatedScene {
@@ -92,8 +110,13 @@ function wasmMeshToTriangleMesh(m: WasmMesh): TriangleMesh {
  * Loft, Text2D, ImportedMesh, assembly with forward kinematics, and clash
  * detection.
  *
- * Falls back to the TypeScript evaluator when the WASM evaluator is not
- * available (e.g., older WASM builds).
+ * A kernel without the `evaluateDocument` binding is unsupported (every
+ * supported deployment ships a current checked-in WASM bundle, refreshed by
+ * wasm-refresh.yml) and throws a clear error. The TS evaluator below is NOT
+ * an old-bundle shim — see its doc comment — but it does still serve as the
+ * recovery path when the WASM evaluator throws at runtime on a specific
+ * document (the TS pass can often still mesh it, and its per-node dispatch
+ * localizes the failure).
  */
 export function evaluateDocument(
   doc: Document,
@@ -113,8 +136,14 @@ export function evaluateDocument(
   // see concrete f64s for any parameter-bound fields in their params map.
   doc = expandPartInstances(doc, kernel);
 
-  // Try the Rust WASM evaluator first
-  if (kernel.evaluateDocument) {
+  if (!kernel.evaluateDocument) {
+    throw new Error(
+      "kernel WASM bundle is missing the evaluateDocument binding — rebuild @vcad/kernel-wasm (stale bundle); old bundles are unsupported",
+    );
+  }
+
+  // Rust WASM evaluator first; TS evaluator only as runtime-error recovery.
+  {
     try {
       const docJson = JSON.stringify(doc);
       const result = kernel.evaluateDocument(
@@ -133,8 +162,8 @@ export function evaluateDocument(
         if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
           const emb = findEmbroideryPattern(visibleRoots[i].root, doc.nodes);
           if (emb) {
-            const baseMesh = embroideryPatternToMesh(emb.pattern);
-            const mesh = transformMesh(baseMesh, emb.transform);
+            const baseMesh = embroideryPatternToMeshWithKernel(emb.pattern, kernel);
+            const mesh = transformMeshWithKernel(baseMesh, emb.transform, kernel);
             return { mesh, material: p.material };
           }
           // Sheet-metal: the regular evaluator returns empty for these ops
@@ -196,7 +225,7 @@ export function evaluateDocument(
     }
   }
 
-  // Fallback: TypeScript evaluator
+  // Recovery: TypeScript evaluator (per-node dispatch localizes the failure)
   return evaluateDocumentTS(doc, kernel, options);
 }
 
@@ -238,42 +267,16 @@ function convertSketchToProfile(op: Sketch2DOp) {
   };
 }
 
-/** Extract a TriangleMesh from a Solid. */
+/** Extract a TriangleMesh from a Solid.
+ *
+ * Index validity is the kernel's contract: `getMesh` drops any triangle
+ * referencing an out-of-bounds vertex before returning (and logs the
+ * occurrence), so no re-validation happens here. */
 function solidToMesh(solid: Solid): TriangleMesh {
   const meshData = solid.getMesh();
-  const positions = new Float32Array(meshData.positions);
-  const indices = new Uint32Array(meshData.indices);
-
-  // Validate indices - check for out-of-bounds references
-  const numVertices = positions.length / 3;
-  let hasInvalidIndices = false;
-  for (let i = 0; i < indices.length; i++) {
-    if (indices[i] >= numVertices) {
-      hasInvalidIndices = true;
-      break;
-    }
-  }
-
-  if (hasInvalidIndices) {
-    const validIndices: number[] = [];
-    for (let i = 0; i < indices.length; i += 3) {
-      const i0 = indices[i];
-      const i1 = indices[i + 1];
-      const i2 = indices[i + 2];
-      if (i0 < numVertices && i1 < numVertices && i2 < numVertices) {
-        validIndices.push(i0, i1, i2);
-      }
-    }
-    return {
-      positions,
-      indices: new Uint32Array(validIndices),
-      normals: meshData.normals ? new Float32Array(meshData.normals) : undefined,
-    };
-  }
-
   return {
-    positions,
-    indices,
+    positions: new Float32Array(meshData.positions),
+    indices: new Uint32Array(meshData.indices),
     normals: meshData.normals ? new Float32Array(meshData.normals) : undefined,
   };
 }
@@ -334,7 +337,7 @@ export function resolveSheetMetalPart(
   return {
     mesh: isIdentityTransform(sm.transform)
       ? mesh
-      : transformMesh(mesh, sm.transform),
+      : transformMeshWithKernel(mesh, sm.transform, kernel as MeshKernel),
     sheetMetal,
   };
 }
@@ -397,6 +400,69 @@ export function embroideryPatternToMesh(op: EmbroideryPatternOp): TriangleMesh {
 }
 
 /**
+ * Kernel-preferred embroidery meshing: use the WASM `embroideryDesignToMesh`
+ * binding when the loaded kernel has it, otherwise fall back to the TS
+ * {@link embroideryPatternToMesh}. Both implement the same ribbon-quad
+ * generation; the kernel (crates/vcad-embroidery `render.rs`) is the source
+ * of truth, the TS port survives for older WASM builds.
+ */
+export function embroideryPatternToMeshWithKernel(
+  op: EmbroideryPatternOp,
+  kernel: MeshKernel | undefined,
+): TriangleMesh {
+  if (kernel?.embroideryDesignToMesh) {
+    try {
+      const m = kernel.embroideryDesignToMesh(JSON.stringify(op.design));
+      return {
+        positions: new Float32Array(m.positions),
+        indices: new Uint32Array(m.indices),
+        colors: new Float32Array(m.colors),
+      };
+    } catch (e) {
+      console.warn(
+        "[ENGINE] kernel embroideryDesignToMesh failed, falling back to TS:",
+        e,
+      );
+    }
+  }
+  return embroideryPatternToMesh(op);
+}
+
+/**
+ * Kernel-preferred mesh placement: use the WASM `transformMeshBuffers`
+ * binding when the loaded kernel has it, otherwise fall back to the TS
+ * {@link transformMesh}. Same convention either way: scale → rotate
+ * (Rz·Ry·Rx, degrees) → translate on positions, rotation only on normals.
+ */
+export function transformMeshWithKernel(
+  mesh: TriangleMesh,
+  transform: TransformInfo,
+  kernel: MeshKernel | undefined,
+): TriangleMesh {
+  if (kernel?.transformMeshBuffers) {
+    try {
+      const r = kernel.transformMeshBuffers(
+        mesh.positions,
+        mesh.normals,
+        JSON.stringify(transform),
+      );
+      return {
+        positions: new Float32Array(r.positions),
+        indices: mesh.indices,
+        normals: r.normals ? new Float32Array(r.normals) : undefined,
+        colors: mesh.colors,
+      };
+    } catch (e) {
+      console.warn(
+        "[ENGINE] kernel transformMeshBuffers failed, falling back to TS:",
+        e,
+      );
+    }
+  }
+  return transformMesh(mesh, transform);
+}
+
+/**
  * Apply a transform to mesh positions.
  */
 export function transformMesh(
@@ -456,10 +522,22 @@ export function transformMesh(
 }
 
 /**
- * TypeScript fallback evaluator.
+ * TypeScript evaluator — deliberately kept, NOT an old-WASM-bundle shim.
  *
- * Used when the WASM `evaluateDocument` is not available. Produces `Solid`
- * objects alongside meshes (needed for STEP export and BRep ray tracing).
+ * Of the three TS mirrors of kernel functionality (this, the diff fallback,
+ * the loon serializer fallback), this is the one that's genuinely
+ * load-bearing, for reasons unrelated to bundle age:
+ *
+ * 1. It's the only evaluator that keeps live BRep `Solid` handles attached
+ *    to each part — the WASM `evaluateDocument` returns meshes only.
+ *    `Engine.evaluateWithSolids` (STEP export, BRep ray tracing) and
+ *    `runDfm` (routes DFM through `Solid.runDfm` without re-serializing the
+ *    BRep) depend on this.
+ * 2. It's the runtime-error recovery path when the WASM evaluator throws on
+ *    a specific document, and the worker's explicit `evaluatorMode: "ts"`.
+ *
+ * It still uses the WASM `Solid` class for all geometry — it duplicates the
+ * dispatch/orchestration layer, not the kernel.
  */
 export function evaluateDocumentTS(
   doc: Document,
@@ -481,8 +559,8 @@ export function evaluateDocumentTS(
     // Check if this is an EmbroideryPattern
     const embPattern = findEmbroideryPattern(entry.root, doc.nodes);
     if (embPattern) {
-      const baseMesh = embroideryPatternToMesh(embPattern.pattern);
-      const mesh = transformMesh(baseMesh, embPattern.transform);
+      const baseMesh = embroideryPatternToMeshWithKernel(embPattern.pattern, kernel);
+      const mesh = transformMeshWithKernel(baseMesh, embPattern.transform, kernel);
       solids.push(Solid.empty());
       return { mesh, material: entry.material };
     }
@@ -495,7 +573,7 @@ export function evaluateDocumentTS(
         indices: new Uint32Array(imported.mesh.indices),
         normals: imported.mesh.normals ? new Float32Array(imported.mesh.normals) : undefined,
       };
-      const mesh = transformMesh(baseMesh, imported.transform);
+      const mesh = transformMeshWithKernel(baseMesh, imported.transform, kernel);
       solids.push(Solid.empty());
       return { mesh, material: entry.material };
     }

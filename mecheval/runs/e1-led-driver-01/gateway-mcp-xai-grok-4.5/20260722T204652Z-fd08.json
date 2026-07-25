@@ -1,0 +1,303 @@
+{
+  "schema_version": 0,
+  "task_id": "e1-led-driver-01",
+  "task_sha256": "cd80c25d470b71491491a205b829b76267f84ac53e9bcc96e1e6a4f2ccd285a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "erc_clean",
+      "params": {
+        "type": "erc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "sample": [],
+        "violations": 0
+      }
+    },
+    {
+      "n": 1,
+      "type": "netlist_isomorphic",
+      "params": {
+        "type": "netlist_isomorphic",
+        "golden": "golden_netlist"
+      },
+      "result": "pass",
+      "details": {
+        "candidate": {
+          "components": 3,
+          "nets": 3
+        },
+        "golden": {
+          "components": 3,
+          "nets": 3
+        },
+        "isomorphic": true
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 2,
+    "checks_total": 2,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T204652Z-fd08",
+  "model": {
+    "id": "gateway-mcp-xai-grok-4.5",
+    "name": "AI Gateway (MCP, xai/grok-4.5)",
+    "provider": "xai",
+    "params": {
+      "mode": "mcp",
+      "model": "xai/grok-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "e1-led-driver-01",
+    "rendered": "Capture a schematic for a battery-powered LED: a 2-pin battery, a current-limiting resistor, and an LED in series, returning to the battery's other terminal. Every component pin must be connected to a net — no floating pins, no duplicate reference designators. The schematic must pass an electrical-rule check clean, and its netlist must realize exactly this circuit. Output a .vcad document with the schematic sheet (including its explicit netlist) in the document's schematic field.",
+    "attachments": [
+      {
+        "kind": "golden_netlist",
+        "path": "assets/e1-led-driver-netlist.json",
+        "agent_visible": false
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.957125000000019
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "Battery-powered LED",
+          "components": [
+            {
+              "ref": "BT1",
+              "value": "3V",
+              "footprint": "Battery:BatteryHolder_Keystone_2460_1xAA",
+              "x": 50,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "+",
+                  "type": "PowerOutput"
+                },
+                {
+                  "number": "2",
+                  "name": "-",
+                  "type": "PowerOutput"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "330",
+              "footprint": "Resistor_SMD:R_0805",
+              "x": 120,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "D1",
+              "value": "LED",
+              "footprint": "LED_SMD:LED_0805",
+              "x": 190,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "K",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VCC": [
+              "BT1.1",
+              "R1.1"
+            ],
+            "LED": [
+              "R1.2",
+              "D1.1"
+            ],
+            "GND": [
+              "D1.2",
+              "BT1.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5765830000000278
+      },
+      {
+        "n": 2,
+        "tool": "run_erc",
+        "args": {
+          "document_id": "doc_2_nnoFL0I8pyDJ"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.869291000000885
+      },
+      {
+        "n": 3,
+        "tool": "create_schematic",
+        "args": {
+          "title": "Battery-powered LED",
+          "components": [
+            {
+              "ref": "BT1",
+              "value": "3V",
+              "footprint": "Battery:BatteryHolder_Keystone_2460_1xAA",
+              "x": 50,
+              "y": 100,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "+",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "-",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "R1",
+              "value": "330",
+              "footprint": "Resistor_SMD:R_0805",
+              "x": 120,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "1",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "2",
+                  "type": "Passive"
+                }
+              ]
+            },
+            {
+              "ref": "D1",
+              "value": "LED",
+              "footprint": "LED_SMD:LED_0805",
+              "x": 190,
+              "y": 80,
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "A",
+                  "type": "Passive"
+                },
+                {
+                  "number": "2",
+                  "name": "K",
+                  "type": "Passive"
+                }
+              ]
+            }
+          ],
+          "nets": {
+            "VCC": [
+              "BT1.1",
+              "R1.1"
+            ],
+            "LED": [
+              "R1.2",
+              "D1.1"
+            ],
+            "GND": [
+              "D1.2",
+              "BT1.2"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3762499999975262
+      },
+      {
+        "n": 4,
+        "tool": "run_erc",
+        "args": {
+          "document_id": "doc_3_Qdc4kWOq660u"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8448339999995369
+      },
+      {
+        "n": 5,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_3_Qdc4kWOq660u"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8134170000012091
+      }
+    ],
+    "tokens": {
+      "input": 344929,
+      "output": 1147,
+      "total": 346076,
+      "cache_creation_input": 0,
+      "cache_read_input": 275328
+    },
+    "wallclock_sec": 26.548237
+  },
+  "output": {
+    "vcad_path": "20260722T204652Z-fd08.vcad",
+    "vcad_sha256": "4c56b9d46a1a01420cf37e669adf7914ac6f64b5b2a3e27ee14494a203997bab",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T20:46:52.602Z",
+    "ended_at": "2026-07-22T20:47:19.158Z"
+  },
+  "signature": null
+}

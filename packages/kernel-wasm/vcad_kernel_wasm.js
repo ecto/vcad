@@ -3098,6 +3098,68 @@ export function atoms_write_xyz(molecule_json) {
 }
 
 /**
+ * Join a `PrintPrediction` (JSON) with measurements (JSON array of
+ * `[id, value]` pairs) into a `CalibrationReport` (JSON). `options_json` is
+ * the TS options object; the wrapper stamps `recorded_at` (this crate has
+ * no clock).
+ * @param {string} prediction_json
+ * @param {string} measurements_json
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function buildCalibrationReportJson(prediction_json, measurements_json, options_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(prediction_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(measurements_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.buildCalibrationReportJson(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Build binary GLB bytes from a JSON `GlbSpec` plus shared flat data
+ * buffers. Geometry (positions/normals/animation keyframes) lives in
+ * `f32_data`, indices in `u32_data`; the spec references `[offset, len]`
+ * spans into them. Single source of truth for GLB serialization — the
+ * `@vcad/mcp` and `@vcad/core` exporters are thin wrappers over this.
+ * @param {string} spec_json
+ * @param {Float32Array} f32_data
+ * @param {Uint32Array} u32_data
+ * @returns {Uint8Array}
+ */
+export function buildGlbBytes(spec_json, f32_data, u32_data) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(f32_data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(u32_data, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.buildGlbBytes(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
  * Build a built-in part's sub-document given its path and params JSON.
  *
  * `path` is either a bare id (`"fastener.bolt.socket-head"`) or prefixed
@@ -3132,6 +3194,30 @@ export function buildPart(path, params_json) {
 }
 
 /**
+ * Build binary STL bytes from a JSON `StlSpec` plus shared flat data
+ * buffers (see [`build_glb_bytes`] for the buffer convention).
+ * @param {string} spec_json
+ * @param {Float32Array} f32_data
+ * @param {Uint32Array} u32_data
+ * @returns {Uint8Array}
+ */
+export function buildStlBytes(spec_json, f32_data, u32_data) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF32ToWasm0(f32_data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(u32_data, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.buildStlBytes(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
  * Build the system prompt sent with every `/api/chat` request.
  *
  * `parts_json` must deserialize into `Vec<vcad_chat::PartInfo>` (the TS
@@ -3159,6 +3245,50 @@ export function build_chat_system_prompt(parts_json, selection_json) {
         deferred3_0 = ret[0];
         deferred3_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Default ± tolerance for a measurable kind ("dimension" | "diameter" |
+ * "mass") that doesn't declare one.
+ * @param {string} kind
+ * @param {number} predicted
+ * @returns {number}
+ */
+export function calibrationDefaultTolerance(kind, predicted) {
+    const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.calibrationDefaultTolerance(ptr0, len0, predicted);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
+ * Content fingerprint (fnv1a-128 over the canonicalized JSON) of a document
+ * IR or any JSON value, passed as a JSON string.
+ * @param {string} doc_json
+ * @returns {string}
+ */
+export function calibrationFingerprintDocument(doc_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.calibrationFingerprintDocument(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
@@ -3571,6 +3701,34 @@ export function camToolpathStats(toolpath_json) {
 }
 
 /**
+ * Validate and measure the document's constraints without mutating
+ * anything. Returns the solve report JSON (dimensional constraints all
+ * measured into `drivenValues`).
+ * @param {string} doc_json
+ * @returns {string}
+ */
+export function checkDesignConstraints(doc_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.checkDesignConstraints(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Check a solid for DFM (Design for Manufacturing) printability issues.
  *
  * Returns warnings with face indices for viewport highlighting.
@@ -3769,6 +3927,31 @@ export function computeCreasedNormalsGpu(positions, indices, crease_angle) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.computeCreasedNormalsGpu(ptr0, len0, ptr1, len1, crease_angle);
     return ret;
+}
+
+/**
+ * Compute aggregate mass properties of a triangle mesh: divergence-theorem
+ * volume, surface area, axis-aligned bounding box, volume-weighted center
+ * of mass (with an area-weighted surface-centroid fallback for open or
+ * inconsistently wound meshes), and triangle count.
+ *
+ * Positions are `[x, y, z, ...]` (flat f32), indices are `[i0, i1, i2, ...]`.
+ * Returns `{ volume, area, bbox: { min: {x,y,z}, max: {x,y,z} },
+ * centerOfMass: {x,y,z}, triangles }` in the same units as positions (mm).
+ * @param {Float32Array} positions
+ * @param {Uint32Array} indices
+ * @returns {any}
+ */
+export function computeMeshProperties(positions, indices) {
+    const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.computeMeshProperties(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -5051,6 +5234,258 @@ export function emSimulate(spec_json, params_json, options_json) {
 }
 
 /**
+ * Tessellate an IR `EmbroideryDesign` (JSON) into a flat ribbon-quad
+ * mesh at Z=0 with per-vertex thread colors — the kernel-side
+ * equivalent of the engine's `embroideryPatternToMesh`.
+ *
+ * Returns `{ positions, indices, colors }`.
+ * @param {string} design_json
+ * @returns {any}
+ */
+export function embroideryDesignToMesh(design_json) {
+    const ptr0 = passStringToWasm0(design_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.embroideryDesignToMesh(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Per-component Z extents from kernel component meshes (board-local).
+ * @param {string} meshes_json
+ * @param {string} pcb_json
+ * @returns {string}
+ */
+export function enclosure_component_extents(meshes_json, pcb_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(meshes_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_component_extents(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Edge connectors a board declares, each tagged with the nearest board edge.
+ * @param {string} pcb_json
+ * @param {string} outline_json
+ * @returns {string}
+ */
+export function enclosure_connectors(pcb_json, outline_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(outline_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_connectors(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Seed a board from a cavity: inset outline, a hole over every standoff, and
+ * the placement that drops it back into the case.
+ * @param {string} cavity_json
+ * @param {string} standoffs_json
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function enclosure_derive_board(cavity_json, standoffs_json, options_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(cavity_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(standoffs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_derive_board(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Extract the cavity, standoffs, and wall openings from an enclosure solid's
+ * triangle mesh (flat `[x,y,z,…]` positions + triangle indices).
+ *
+ * Returns `EnclosureFeatures` JSON; `cavity` is `null` when the solid has no
+ * open-top pocket (e.g. a solid block).
+ * @param {Float64Array} positions
+ * @param {Uint32Array} indices
+ * @returns {string}
+ */
+export function enclosure_features(positions, indices) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArrayF64ToWasm0(positions, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_features(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Run the four cross-domain fit checks. Takes `EnclosureFitInput` JSON,
+ * returns `EnclosureFitReport` JSON.
+ * @param {string} input_json
+ * @returns {string}
+ */
+export function enclosure_fit(input_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(input_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_fit(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Mounting holes a board declares (MountingHole footprints + NPTH pads), in
+ * board-local coordinates. Takes `Pcb` JSON.
+ * @param {string} pcb_json
+ * @returns {string}
+ */
+export function enclosure_mounting_holes(pcb_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_mounting_holes(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Axis-aligned bounds of a board outline polygon.
+ * @param {string} outline_json
+ * @returns {string}
+ */
+export function enclosure_outline_aabb(outline_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(outline_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_outline_aabb(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Map a board-local point into the enclosure-world frame.
+ * @param {number} x
+ * @param {number} y
+ * @param {number} z
+ * @param {string} placement_json
+ * @returns {string}
+ */
+export function enclosure_to_world(x, y, z, placement_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(placement_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.enclosure_to_world(x, y, z, ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Estimate print cost from volume (instant, pre-slice).
  * @param {number} volume_mm3
  * @param {number} infill_density
@@ -5095,6 +5530,21 @@ export function estimate_cost_for_process(process, material_name, part_volume_mm
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Convert a Transform3D Euler rotation in degrees (extrinsic XYZ, the
+ * kernel's `R = Rz·Ry·Rx` convention) to a glTF quaternion `[x, y, z, w]`.
+ * @param {number} x_deg
+ * @param {number} y_deg
+ * @param {number} z_deg
+ * @returns {Float64Array}
+ */
+export function eulerXyzDegToQuat(x_deg, y_deg, z_deg) {
+    const ret = wasm.eulerXyzDegToQuat(x_deg, y_deg, z_deg);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
 }
 
 /**
@@ -5231,6 +5681,38 @@ export function exportKicadPcb(pcb_json) {
 }
 
 /**
+ * Export a linked KiCad 9 project bundle: `<name>.kicad_pro`,
+ * `<name>.kicad_sch`, and `<name>.kicad_pcb`, with board footprints
+ * carrying `(path …)` references to their schematic symbol uuids so
+ * KiCad can cross-probe between the two editors.
+ *
+ * # Arguments
+ * * `sheet_json` - JSON-serialized `SchematicSheet` struct
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `name` - Project basename (no extension)
+ *
+ * # Returns
+ * Array of `[filename, contents]` string pairs as JsValue.
+ * @param {string} sheet_json
+ * @param {string} pcb_json
+ * @param {string} name
+ * @returns {any}
+ */
+export function exportKicadProject(sheet_json, pcb_json, name) {
+    const ptr0 = passStringToWasm0(sheet_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.exportKicadProject(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Export a `SchematicSheet` to a native, editable KiCad 9 `.kicad_sch`
  * schematic file.
  *
@@ -5286,6 +5768,53 @@ export function exportProjectedViewToDxf(view_json) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
+}
+
+/**
+ * Evaluate a previously parsed wire AST against `env` (a plain
+ * `{ name: number }` object).
+ * @param {any} ast
+ * @param {any} env
+ * @returns {number}
+ */
+export function exprEvalAst(ast, env) {
+    const ret = wasm.exprEvalAst(ast, env);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
+ * Parse and evaluate an expression string in one shot.
+ * @param {string} src
+ * @param {any} env
+ * @returns {number}
+ */
+export function exprEvaluate(src, env) {
+    const ptr0 = passStringToWasm0(src, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.exprEvaluate(ptr0, len0, env);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
+ * Parse an expression string into its wire AST.
+ * Errors carry the message `parse error at offset N: ...`.
+ * @param {string} src
+ * @returns {any}
+ */
+export function exprParse(src) {
+    const ptr0 = passStringToWasm0(src, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.exprParse(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -5744,6 +6273,27 @@ export function isSlicerAvailable() {
 }
 
 /**
+ * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson action):
+ * plaquette, Wilson loops, string tension (Creutz ratios + static
+ * potential + Cornell fit), Polyakov deconfinement order parameter,
+ * flux-tube profile, and rendering field snapshots — every observable a
+ * binned-jackknife mean ± error, deterministic per seed.
+ *
+ * `spec_json` is a `vcad_kernel_qcd::spec::SimSpec`.
+ * @param {string} spec_json
+ * @returns {any}
+ */
+export function latticeGaugeSimulate(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.latticeGaugeSimulate(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
  * `WasmClearance`). Operates on already-placed geometry, so callers can
  * measure between any two evaluated parts (or merged part groups) without
@@ -5846,6 +6396,21 @@ export function neutronicsSimulate(spec_json, params_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Parse a note name (`"C6"`, `"F#4"`, `"Bb3"`) to Hz. Errors on garbage.
+ * @param {string} note
+ * @returns {number}
+ */
+export function noteToHz(note) {
+    const ptr0 = passStringToWasm0(note, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.noteToHz(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
 }
 
 /**
@@ -6791,6 +7356,111 @@ export function render_svg_view_section(vcad_json, scale, view, section) {
 }
 
 /**
+ * Resolve a whole document: evaluate parameters, apply bindings onto
+ * concrete node fields. Takes the document as a JSON string and returns
+ * `{"doc": <resolved document>, "env": {name: number}}` as a JSON string.
+ * @param {string} doc_json
+ * @returns {string}
+ */
+export function resolveDocumentJson(doc_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.resolveDocumentJson(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Resolve a `{ name: Parameter }` map (JSON string) into a concrete
+ * environment, returned as a JSON string `{ name: number }`.
+ * @param {string} params_json
+ * @returns {string}
+ */
+export function resolveParametersJson(params_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.resolveParametersJson(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Sample a document timeline into its full per-frame sequence.
+ *
+ * `timeline_json` must deserialize into `vcad_ir::animation::Timeline`.
+ * Returns a JSON array of `SequenceFrame` objects (params/joints/
+ * visibility/explode/camera/geometryDirty per frame) — one call per
+ * sequence, so callers never cross the WASM boundary per track or frame.
+ * @param {string} timeline_json
+ * @returns {string}
+ */
+export function sample_timeline_sequence(timeline_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(timeline_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sample_timeline_sequence(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Sample a single animation track's value at time `t` seconds.
+ *
+ * `track_json` must deserialize into `vcad_ir::animation::AnimTrack`.
+ * A track with no keys samples to 0.
+ * @param {string} track_json
+ * @param {number} t
+ * @returns {number}
+ */
+export function sample_timeline_track(track_json, t) {
+    const ptr0 = passStringToWasm0(track_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.sample_timeline_track(ptr0, len0, t);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -6862,6 +7532,61 @@ export function sheetMetalSequence(chain_json) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure drop,
+ * flow rates, mass audit, optional thermal pickup, and predicted claims.
+ * The per-voxel velocity/pressure/temperature fields are only returned
+ * when `include_fields` is true — summarize by default, the fields are
+ * grid-sized.
+ *
+ * `spec_json` is a `vcad_kernel_flow::spec::FlowSpec`, `options_json` a
+ * `vcad_kernel_flow::solve::SolveOptions` (empty or `{}` for defaults).
+ * @param {string} spec_json
+ * @param {string} options_json
+ * @param {boolean} include_fields
+ * @returns {any}
+ */
+export function simulateFlow(spec_json, options_json, include_fields) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.simulateFlow(ptr0, len0, ptr1, len1, include_fields);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Run the mallet-strike pipeline on a flat free-free bar.
+ *
+ * `input_json` is a [`strike::StrikeInput`]; returns the result JSON with
+ * `wav_base64` populated when `include_wav` was set.
+ * @param {string} input_json
+ * @returns {string}
+ */
+export function simulateStrikeKernel(input_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(input_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.simulateStrikeKernel(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 
@@ -7160,6 +7885,39 @@ export function sliceSolid(solid, settings, segments) {
 }
 
 /**
+ * Solve the document's design constraints and return
+ * `{ document, report }` — the updated document (footprint positions and
+ * rotations, outline vertices, sketch points, back-annotated driven
+ * dimensions) plus the solve report (per-group status, DOF, moved
+ * geometry, errors).
+ * @param {string} doc_json
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function solveDesignConstraints(doc_json, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.solveDesignConstraints(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Solve forward kinematics for an assembly document.
  *
  * # Arguments
@@ -7426,6 +8184,32 @@ export function topologyOptimizeMesh(spec_json, positions, indices) {
 }
 
 /**
+ * Apply a placement (`scale → rotate → translate`, rotation Rz·Ry·Rx in
+ * degrees — the engine `transformMesh` convention) to flat mesh buffers.
+ *
+ * `transform_json` is `{ translate: {x,y,z}, rotate: {x,y,z}, scale: {x,y,z} }`.
+ * Positions get the full placement; normals (optional) get the rotation
+ * only. Returns `{ positions, normals? }`.
+ * @param {Float32Array} positions
+ * @param {Float32Array | null | undefined} normals
+ * @param {string} transform_json
+ * @returns {any}
+ */
+export function transformMeshBuffers(positions, normals, transform_json) {
+    const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(normals) ? 0 : passArrayF32ToWasm0(normals, wasm.__wbindgen_malloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(transform_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.transformMeshBuffers(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Write a DST file from an embroidery pattern JSON string.
  * @param {string} json
  * @returns {Uint8Array}
@@ -7485,6 +8269,12 @@ function __wbg_get_imports() {
             const ret = arg0.WorkerGlobalScope;
             return ret;
         },
+        __wbg___wbindgen_bigint_get_as_i64_8fcf4ce7f1ca72a2: function(arg0, arg1) {
+            const v = arg1;
+            const ret = typeof(v) === 'bigint' ? v : undefined;
+            getDataViewMemory0().setBigInt64(arg0 + 8 * 1, isLikeNone(ret) ? BigInt(0) : ret, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
+        },
         __wbg___wbindgen_boolean_get_bbbb1c18aa2f5e25: function(arg0) {
             const v = arg0;
             const ret = typeof(v) === 'boolean' ? v : undefined;
@@ -7499,6 +8289,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_in_47fa6863be6f2f25: function(arg0, arg1) {
             const ret = arg0 in arg1;
+            return ret;
+        },
+        __wbg___wbindgen_is_bigint_31b12575b56f32fc: function(arg0) {
+            const ret = typeof(arg0) === 'bigint';
             return ret;
         },
         __wbg___wbindgen_is_function_0095a73b8b156f76: function(arg0) {
@@ -7520,6 +8314,10 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_is_undefined_9e4d92534c42d778: function(arg0) {
             const ret = arg0 === undefined;
+            return ret;
+        },
+        __wbg___wbindgen_jsval_eq_11888390b0186270: function(arg0, arg1) {
+            const ret = arg0 === arg1;
             return ret;
         },
         __wbg___wbindgen_jsval_loose_eq_9dd77d8cd6671811: function(arg0, arg1) {
@@ -8071,6 +8869,10 @@ function __wbg_get_imports() {
         __wbg_end_6f776519f1faa582: function(arg0) {
             arg0.end();
         },
+        __wbg_entries_58c7934c745daac7: function(arg0) {
+            const ret = Object.entries(arg0);
+            return ret;
+        },
         __wbg_error_7534b8e9a36f1ab4: function(arg0, arg1) {
             let deferred0_0;
             let deferred0_1;
@@ -8390,6 +9192,16 @@ function __wbg_get_imports() {
             let result;
             try {
                 result = arg0 instanceof HTMLCanvasElement;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_Map_53af74335dec57f4: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof Map;
             } catch (_) {
                 result = false;
             }
@@ -9256,12 +10068,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3735, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3736, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3719, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3720, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3760, function: Function { arguments: [Externref], shim_idx: 3761, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3744, function: Function { arguments: [Externref], shim_idx: 3745, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

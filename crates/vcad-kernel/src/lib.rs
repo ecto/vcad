@@ -17,21 +17,26 @@
 
 use std::path::Path;
 
+pub use vcad_kernel_acoustics;
 pub use vcad_kernel_antenna;
 pub use vcad_kernel_booleans;
+pub use vcad_kernel_calibration;
 pub use vcad_kernel_cam;
 pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;
 pub use vcad_kernel_dfm;
 pub use vcad_kernel_em;
+pub use vcad_kernel_enclosure;
 pub use vcad_kernel_fea;
 pub use vcad_kernel_fillet;
+pub use vcad_kernel_flow;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
 pub use vcad_kernel_neutronics;
 pub use vcad_kernel_particle;
 pub use vcad_kernel_photonics;
 pub use vcad_kernel_primitives;
+pub use vcad_kernel_qcd;
 pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
 pub use vcad_kernel_sketch;
@@ -59,6 +64,7 @@ use vcad_kernel_step::StepError;
 use vcad_kernel_tessellate::{mesh_clearance, tessellate_brep, TriangleMesh};
 
 pub use vcad_kernel_tessellate::ClearanceResult;
+pub use vcad_kernel_tessellate::{compute_mesh_properties, MeshBBox, MeshProperties};
 
 /// Error returned when STEP export fails.
 #[derive(Debug)]

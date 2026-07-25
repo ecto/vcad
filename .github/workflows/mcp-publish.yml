@@ -1,0 +1,69 @@
+name: Publish @vcad/mcp to npm
+
+# Continuous npm channel for the MCP server. Every main merge that can
+# affect the server (TS packages, loon stdlib, or a kernel-WASM refresh
+# commit from wasm-refresh.yml) publishes a fresh self-contained bundle:
+# server + kernel WASM in one tarball, version/sha/time baked in.
+#
+# This is the distribution half of the staleness fix: local MCP configs
+# point at `npx -y @vcad/mcp` (immutable published artifact, kernel can
+# never lag the server) instead of a mutable checkout's dist/. Dev-mode
+# sessions hacking on the server itself use packages/mcp/scripts/serve.mjs.
+#
+# Versioning: <package.json base>-main.<run_number>, published to the
+# `latest` dist-tag — npx -y always resolves to the newest main build.
+# Requires the NPM_TOKEN secret (npm automation token for @vcad).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "lib/**"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-publish-main
+  # Only the newest main state matters; superseded publishes are waste.
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - name: Install
+        run: npm ci
+      - name: Build server packages (checked-in kernel WASM)
+        # Explicit dependency order — `npm run build --workspaces` does NOT
+        # topologically sort, so @vcad/app can build before its deps and fail
+        # the step. Same package set + order as services/mcp/build.sh; the
+        # rest of the workspace (app, docs, leaderboard) is irrelevant here.
+        run: |
+          npm run build -w @vcad/ir
+          npm run build -w @vcad/engine
+          npm run build -w @vcad/core
+          npm run build -w @vcad/mcp
+      - name: Stage npm bundle
+        run: |
+          BASE=$(node -p "require('./packages/mcp/package.json').version")
+          export VCAD_NPM_VERSION="${BASE}-main.${{ github.run_number }}"
+          echo "Publishing @vcad/mcp@${VCAD_NPM_VERSION}"
+          node packages/mcp/scripts/build-npm.mjs
+      - name: Smoke test bundle
+        # The bundle must boot, init the kernel from its co-located WASM, and
+        # answer an MCP initialize over stdio before it may publish.
+        run: |
+          node scripts/mcp-npm-smoke.mjs packages/mcp/npm-dist/index.mjs
+      - name: Publish
+        run: npm publish ./packages/mcp/npm-dist --access public --tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

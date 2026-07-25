@@ -10,10 +10,11 @@
 //! legs to the actual pads, and commit both nets atomically (all-or-nothing)
 //! through [`validate_and_commit`] — so the DRC-clean invariant is untouched.
 
-use vcad_ir::ecad::{Pcb, PcbLayer};
+use vcad_ir::ecad::{Pcb, PcbLayer, Trace, Via};
 use vcad_ir::Vec2;
 
 use crate::session::RouteSession;
+use crate::spatial::CopperGeom;
 
 use super::auto::{copper_layers, dist, validate_and_commit, Candidate, Placed};
 use super::congestion::Congestion;
@@ -152,9 +153,15 @@ pub(super) fn try_route_pair(
 
     let (w, gap) = pair_geometry(session, pcb, net, width);
     let half_sep = (w + gap) / 2.0;
-    let fat_w = 2.0 * w + gap;
     let via_d = pcb.rules.default_rules.via_diameter;
     let clearance = session.clearance_for(net);
+    // The phantom corridor must cover everything realize_legs emits: the two
+    // legs AND the via dog-bones, which sit at ±via_off with via_d discs
+    // (census 11: leg segments/jogs stepped outside a 2w+gap corridor onto
+    // unprobed copper whenever the search dropped a layer change).
+    let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
+    let voff_max = via_off.max(via_d / 2.0 + 1.5 * clearance + w / 2.0 - half_sep);
+    let fat_w = (2.0 * w + gap).max(2.0 * (voff_max + via_d / 2.0));
     let copper = copper_layers(pcb);
     let first_layer = *copper.first().unwrap_or(&PcbLayer::FCu);
 
@@ -213,6 +220,8 @@ pub(super) fn try_route_pair(
     let restore = |session: &mut RouteSession, placed: &mut Vec<Placed>, ripped: Vec<Placed>| {
         for orig in ripped {
             let cand = Candidate {
+                thin_segments: vec![],
+                thin_width: orig.width,
                 net: orig.net.clone(),
                 from: orig.from,
                 to: orig.to,
@@ -229,42 +238,86 @@ pub(super) fn try_route_pair(
 
     // Centerline search: one phantom fat trace. No tree goals/sources — a
     // coupled pair needs clean pad-to-pad geometry, not a tap onto a tree.
+    //
+    // Neck-down retreat (the CM5 bail census: 96/110 failures were this
+    // search): near pin fields no fat capsule exists, so on failure the
+    // coupling endpoints retreat toward the span middle in escalating steps
+    // and the single-width connector stubs cover the necked ends — exactly
+    // how a human escapes a BGA with a pair: singles in the field, coupled
+    // in the open.
     let budget = max_expansions.max(100_000);
-    let r = route_net_maze3d(
-        session,
-        &pcb.outline.vertices,
-        &copper,
-        net,
-        start,
-        &[first_layer],
-        end,
-        &[first_layer],
-        fat_w,
-        via_d,
-        Some(cong),
-        budget,
-        1.0,
-        None,
-        &[],
-        &[],
-        true,
-    );
-    if !r.success || r.segments.is_empty() {
+    let mut found = None;
+    // Asymmetric ladder: most pairs have only ONE end in a pin field, so
+    // necking both ends symmetrically wastes coupled length and misses the
+    // cases where only one side needs the retreat.
+    for (r_from, r_to) in [
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (1.0, 1.0),
+        (2.0, 0.0),
+        (0.0, 2.0),
+        (2.0, 2.0),
+        (4.0, 0.0),
+        (0.0, 4.0),
+        (4.0, 4.0),
+        (8.0, 4.0),
+        (4.0, 8.0),
+        (8.0, 8.0),
+        (12.0, 12.0),
+        (16.0, 16.0),
+    ] {
+        let usable = span - 2.0 * lead;
+        if r_from + r_to >= usable - 1.0 {
+            continue;
+        }
+        let s_pt = start + dir.scale(r_from);
+        let e_pt = end - dir.scale(r_to);
+        let r = route_net_maze3d(
+            session,
+            &pcb.outline.vertices,
+            &copper,
+            net,
+            s_pt,
+            &[first_layer],
+            e_pt,
+            &[first_layer],
+            fat_w,
+            via_d,
+            Some(cong),
+            budget,
+            1.0,
+            None,
+            &[],
+            &[],
+            true,
+        );
+        if r.success && !r.segments.is_empty() {
+            if r_from + r_to > 0.0 {
+                log::debug!(
+                    "pair: {net}/{partner}: coupled after {r_from}/{r_to}mm neck-down retreat"
+                );
+            }
+            found = Some(r);
+            break;
+        }
+    }
+    let Some(r) = found else {
         log::debug!("pair: {net}/{partner}: phantom centerline search failed");
         restore(session, placed, ripped);
         return None;
-    }
+    };
 
     // Realize the two legs from the centerline.
-    let via_off = half_sep.max((via_d + clearance) / 2.0 + 0.01);
-    let (leg_a, leg_b) = match realize_legs(&r.segments, half_sep, via_off) {
-        Some(l) => l,
-        None => {
-            log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
-            restore(session, placed, ripped);
-            return None;
-        }
-    };
+    let (leg_a, leg_b) =
+        match realize_legs(&r.segments, half_sep, via_off, via_d / 2.0, clearance, w) {
+            Some(l) => l,
+            None => {
+                log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
+                restore(session, placed, ripped);
+                return None;
+            }
+        };
 
     // Leg → net assignment: the one whose pad connectors are shortest (the
     // non-crossing assignment — crossing connectors are strictly longer).
@@ -277,42 +330,191 @@ pub(super) fn try_route_pair(
         (leg_b, leg_a)
     };
 
-    let build = |leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Candidate {
-        let mut segments = Vec::with_capacity(leg.segments.len() + 2);
-        if dist(from, leg.first) > 1e-9 {
-            segments.push((from, leg.first, leg.first_layer));
+    // Connector from a pad to a leg end: straight when short, maze-routed at
+    // single width when the crow-flight would thread a pin field (the second
+    // CM5 bail census: 71 leg validations failed on straight stubs crossing
+    // field copper after the neck-down retreat).
+    // Neck-down width for pad connectors: the board's default single-ended
+    // width. A 0.2mm pair leg cannot pass between 0.4mm-pitch pads; the
+    // 0.08mm single can — exactly how the human escapes these fields.
+    let nw = pcb.rules.default_rules.trace_width.min(w);
+    type ConnectorCopper = (Vec<(Vec2, Vec2, PcbLayer)>, Vec<(Vec2, PcbLayer, PcbLayer)>);
+    let connect = |session: &RouteSession,
+                   net: &str,
+                   from: Vec2,
+                   to: Vec2,
+                   to_layer: PcbLayer,
+                   leg: &Leg|
+     -> Option<ConnectorCopper> {
+        if dist(from, to) <= 1e-9 {
+            return Some((vec![], vec![]));
         }
-        segments.extend(leg.segments.iter().copied());
-        if dist(leg.last, to) > 1e-9 {
-            segments.push((leg.last, to, leg.last_layer));
+        if dist(from, to) <= nw * 2.0 {
+            return Some((vec![(from, to, to_layer)], vec![]));
         }
+        let margin = 4.0 + w;
+        let window = (
+            Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
+            Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
+        );
+        // Multi-goal attachment: the connector may terminate anywhere along
+        // the leg's copper, not only at its endpoint — an offset leg end can
+        // sit against a neighbouring pad where no legal approach exists.
+        let goals: Vec<(CopperGeom, [f64; 2], [f64; 2], PcbLayer)> = leg
+            .segments
+            .iter()
+            .map(|&(a, b, l)| {
+                (
+                    CopperGeom::Segment {
+                        a,
+                        b,
+                        half_w: w / 2.0,
+                    },
+                    [a.x.min(b.x) - w, a.y.min(b.y) - w],
+                    [a.x.max(b.x) + w, a.y.max(b.y) + w],
+                    l,
+                )
+            })
+            .collect();
+        let r = route_net_maze3d(
+            session,
+            &pcb.outline.vertices,
+            &copper,
+            net,
+            from,
+            &copper,
+            to,
+            &[to_layer],
+            nw,
+            via_d,
+            Some(cong),
+            120_000,
+            0.5,
+            Some(window),
+            &goals,
+            &[],
+            true,
+        );
+        if r.success {
+            Some((r.segments, r.vias))
+        } else {
+            log::debug!(
+                "pair-connector: {net} {:.2}mm ({:.2},{:.2})->({:.2},{:.2}) layer {:?} failed",
+                dist(from, to),
+                from.x,
+                from.y,
+                to.x,
+                to.y,
+                to_layer
+            );
+            None
+        }
+    };
+    // Ordering (census 9's lesson): commit BOTH legs first — they are
+    // parallel and disjoint by construction — then route the four pad
+    // connectors against the complete picture, so no connector can cut the
+    // coupled corridor before the other leg exists. Rollback keeps the
+    // all-or-nothing contract.
+    let leg_cand = |leg: &Leg, net: &str, from: Vec2, to: Vec2| -> Candidate {
         Candidate {
             net: net.to_string(),
             from,
             to,
             width: w,
-            segments,
+            segments: leg.segments.clone(),
             vias: leg.vias.clone(),
+            thin_segments: vec![],
+            thin_width: nw,
         }
     };
-    let cand_mine = build(&mine, net, from, to);
-    let cand_theirs = build(&theirs, &partner, p_from, p_to);
-
-    // Atomic commit: both legs or neither.
-    let Some(placed_mine) = validate_and_commit(session, pcb, cand_mine, placed) else {
+    let Some(mut placed_mine) =
+        validate_and_commit(session, pcb, leg_cand(&mine, net, from, to), placed)
+    else {
         log::debug!("pair: {net}/{partner}: leg 1 failed validation");
         restore(session, placed, ripped);
         return None;
     };
-    let Some(placed_theirs) = validate_and_commit(session, pcb, cand_theirs, placed) else {
-        // Leg 2 failed: rip leg 1 back out, restore the partner originals.
-        for &s in &placed_mine.spans {
-            session.remove(s);
-        }
+    let Some(mut placed_theirs) = validate_and_commit(
+        session,
+        pcb,
+        leg_cand(&theirs, &partner, p_from, p_to),
+        placed,
+    ) else {
         log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
+        for &sp in &placed_mine.spans {
+            session.remove(sp);
+        }
         restore(session, placed, ripped);
         return None;
     };
+    // Connectors, all four against both committed legs. Committed as thin
+    // copper directly into each leg's Placed (stubs channel).
+    let rollback_all = |session: &mut RouteSession,
+                        placed: &mut Vec<Placed>,
+                        a: &Placed,
+                        b: &Placed,
+                        ripped: Vec<Placed>| {
+        for &sp in a.spans.iter().chain(b.spans.iter()) {
+            session.remove(sp);
+        }
+        restore(session, placed, ripped);
+    };
+    let attach = |session: &mut RouteSession,
+                  pl: &mut Placed,
+                  leg: &Leg,
+                  pad_a: Vec2,
+                  pad_b: Vec2|
+     -> bool {
+        let net = pl.net.clone();
+        let Some((head, hv)) = connect(session, &net, pad_a, leg.first, leg.first_layer, leg)
+        else {
+            log::debug!("pair-connector: {net} head failed");
+            return false;
+        };
+        for (a, b, l) in &head {
+            let id = crate::spatial::CopperElement {
+                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
+                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
+                net: net.clone(),
+                layer: *l,
+                geom: CopperGeom::Segment {
+                    a: *a,
+                    b: *b,
+                    half_w: nw / 2.0,
+                },
+            };
+            pl.spans.push(session.commit(id));
+            pl.stubs.push((*a, *b, *l));
+        }
+        pl.via_pts.extend(hv);
+        let Some((tail, tv)) = connect(session, &net, pad_b, leg.last, leg.last_layer, leg) else {
+            log::debug!("pair-connector: {net} tail failed");
+            return false;
+        };
+        for (a, b, l) in &tail {
+            let id = crate::spatial::CopperElement {
+                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
+                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
+                net: net.clone(),
+                layer: *l,
+                geom: CopperGeom::Segment {
+                    a: *a,
+                    b: *b,
+                    half_w: nw / 2.0,
+                },
+            };
+            pl.spans.push(session.commit(id));
+            pl.stubs.push((*a, *b, *l));
+        }
+        pl.via_pts.extend(tv);
+        true
+    };
+    if !attach(session, &mut placed_mine, &mine, from, to)
+        || !attach(session, &mut placed_theirs, &theirs, p_from, p_to)
+    {
+        rollback_all(session, placed, &placed_mine, &placed_theirs, ripped);
+        return None;
+    }
 
     let center_len: f64 = r.segments.iter().map(|(a, b, _)| dist(*a, *b)).sum();
     log::info!(
@@ -330,7 +532,10 @@ pub(super) fn try_route_pair(
 fn realize_legs(
     center: &[(Vec2, Vec2, PcbLayer)],
     half_sep: f64,
-    via_off: f64,
+    _via_off: f64,
+    via_r: f64,
+    clearance: f64,
+    w: f64,
 ) -> Option<(Leg, Leg)> {
     // Group the centerline into contiguous same-layer polyline runs.
     let mut runs: Vec<(PcbLayer, Vec<Vec2>)> = Vec::new();
@@ -347,62 +552,460 @@ fn realize_legs(
         return None;
     }
 
+    // Simplify each centerline run before offsetting: merge collinear steps
+    // and dissolve segments shorter than the offset distance. Offsetting a
+    // grid staircase whose steps are shorter than half_sep folds the offset
+    // polyline back over itself — census 14's twin-blocker shorts.
+    let min_seg = half_sep * 2.0;
+    let simplify = |pts: &[Vec2]| -> Vec<Vec2> {
+        let mut out: Vec<Vec2> = vec![pts[0]];
+        for &p in &pts[1..pts.len() - 1] {
+            let a = *out.last().unwrap();
+            if dist(a, p) < min_seg {
+                continue;
+            }
+            // Drop collinear interior points.
+            if out.len() >= 2 {
+                let b = out[out.len() - 2];
+                let d0 = (a - b).normalize();
+                let d1 = (p - a).normalize();
+                if (d0.x * d1.y - d0.y * d1.x).abs() < 1e-9 && d0.dot(d1) > 0.0 {
+                    out.pop();
+                }
+            }
+            out.push(p);
+        }
+        let last = *pts.last().unwrap();
+        if out.len() >= 2 && dist(*out.last().unwrap(), last) < min_seg {
+            out.pop();
+        }
+        out.push(last);
+        out
+    };
+    let runs: Vec<(PcbLayer, Vec<Vec2>)> = runs
+        .into_iter()
+        .map(|(l, pts)| (l, simplify(&pts)))
+        .collect();
+    if runs.iter().any(|(_, pts)| pts.len() < 2) {
+        return None;
+    }
+
+    // One combined centerline: runs concatenated with junction vertices kept
+    // (a junction is an interior vertex of the whole polyline, so both its
+    // sides offset with ONE mitered normal — per-run offsetting gave each
+    // side a different normal and shaved the pair gap at every junction).
+    let mut pts: Vec<Vec2> = Vec::new();
+    let mut seg_layers: Vec<PcbLayer> = Vec::new();
+    for (layer, rp) in &runs {
+        for (k, p) in rp.iter().enumerate() {
+            match pts.last() {
+                Some(last) if dist(*last, *p) < 1e-6 => {
+                    if k > 0 {
+                        // interior duplicate — skip
+                    }
+                }
+                _ => pts.push(*p),
+            }
+            if pts.len() >= 2 && seg_layers.len() < pts.len() - 1 {
+                seg_layers.push(*layer);
+            }
+        }
+    }
+    // Trim terminal reversals (maze end-approach overshoot-and-return):
+    // offsetting a cusp hurls one leg across the other's lane. Interior
+    // cusps (rare) make the pair bail rather than emit crossing copper.
+    let rev = |a: Vec2, b: Vec2, c: Vec2| -> bool {
+        let d0 = (b - a).normalize();
+        let d1 = (c - b).normalize();
+        d0.dot(d1) < -0.5
+    };
+    while pts.len() >= 3 && rev(pts[pts.len() - 3], pts[pts.len() - 2], pts[pts.len() - 1]) {
+        pts.pop();
+        seg_layers.pop();
+    }
+    while pts.len() >= 3 && rev(pts[0], pts[1], pts[2]) {
+        pts.remove(0);
+        seg_layers.remove(0);
+    }
+    for k in 1..pts.len().saturating_sub(1) {
+        if rev(pts[k - 1], pts[k], pts[k + 1]) {
+            log::debug!("pair: interior centerline cusp — bailing");
+            return None;
+        }
+    }
+    if pts.len() < 2 || seg_layers.len() != pts.len() - 1 {
+        log::debug!(
+            "pair: combined centerline malformed: {} pts {} seg layers",
+            pts.len(),
+            seg_layers.len()
+        );
+        return None;
+    }
+    // In-line vias demand the disc clears the other leg's line — but only
+    // when the centerline actually changes layers.
+    let has_transition = seg_layers.windows(2).any(|w2| w2[0] != w2[1]);
+    if has_transition && 2.0 * half_sep < via_r + clearance + w / 2.0 + 0.01 {
+        log::debug!(
+            "pair: in-line via gate: 2*half_sep {} too small",
+            2.0 * half_sep
+        );
+        return None;
+    }
+    let need = 2.0 * via_r + clearance + 0.04;
+    let lat = 2.0 * half_sep;
+    let stagger = if lat >= need {
+        0.0
+    } else {
+        (need * need - lat * lat).sqrt()
+    };
+
     let leg = |sign: f64| -> Option<Leg> {
+        let off = offset_polyline(&pts, sign * half_sep);
+        let other = offset_polyline(&pts, -sign * half_sep);
+        if off.len() != pts.len() || other.len() != pts.len() {
+            return None;
+        }
         let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
         let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
-        let mut first: Option<(Vec2, PcbLayer)> = None;
-        let mut prev_end: Option<(Vec2, PcbLayer)> = None;
-        for (layer, pts) in &runs {
-            let off = offset_polyline(pts, sign * half_sep);
-            if off.len() < 2 {
-                return None;
-            }
-            if first.is_none() {
-                first = Some((off[0], *layer));
-            }
-            // Layer transition from the previous run: one via for this leg,
-            // offset perpendicular from the centerline junction, with jog
-            // connectors on both layers when it doesn't sit on the leg line.
-            if let Some((pe, pl)) = prev_end {
-                let junction = pts[0];
-                // Perpendicular at the junction: direction of the new run's
-                // first segment (matches the offset used for the leg points).
-                let d = (pts[1] - pts[0]).normalize();
-                let n = d.perp();
-                let vp = junction + n.scale(sign * via_off);
-                if dist(pe, vp) > 1e-9 {
-                    segments.push((pe, vp, pl));
+        for k in 0..off.len() - 1 {
+            let (a, b, l) = (off[k], off[k + 1], seg_layers[k]);
+            // Layer change at vertex k (k>0): via on this leg's own line at
+            // the mitered junction vertex; the `sign<0` leg pulls its via
+            // back along its previous segment so the two discs clear.
+            if k > 0 && seg_layers[k - 1] != l {
+                let pl = seg_layers[k - 1];
+                let vp = if sign > 0.0 {
+                    off[k]
+                } else {
+                    // Pull back along this leg's own segment until the disc
+                    // truly clears the twin's via at ITS mitered vertex —
+                    // the nominal stagger under-counts when the miter shifts
+                    // the twin's vertex along the corner.
+                    let (pa, pb) = (off[k - 1], off[k]);
+                    let seg_len = dist(pa, pb);
+                    let d = (pb - pa).normalize();
+                    let need_d = 2.0 * via_r + clearance + 0.04;
+                    let mut t = stagger.min(seg_len - 1e-6).max(0.0);
+                    let mut vp = pb - d.scale(t);
+                    while dist(vp, other[k]) < need_d && t + 0.05 < seg_len {
+                        t += 0.05;
+                        vp = pb - d.scale(t);
+                    }
+                    if dist(vp, other[k]) < need_d {
+                        return None;
+                    }
+                    vp
+                };
+                // Retrace from the (possibly pulled-back) via to the mitered
+                // vertex on the NEW layer, staying on this leg's line.
+                if dist(vp, off[k]) > 1e-9 {
+                    segments.push((vp, off[k], l));
                 }
-                if dist(vp, off[0]) > 1e-9 {
-                    segments.push((vp, off[0], *layer));
-                }
-                vias.push((vp, pl, *layer));
+                vias.push((vp, pl, l));
             }
-            for wpair in off.windows(2) {
-                if dist(wpair[0], wpair[1]) > 1e-9 {
-                    segments.push((wpair[0], wpair[1], *layer));
-                }
+            if dist(a, b) > 1e-9 {
+                segments.push((a, b, l));
             }
-            prev_end = Some((*off.last().unwrap(), *layer));
         }
-        let (first, first_layer) = first?;
-        let (last, last_layer) = prev_end?;
+        let first = *off.first().unwrap();
+        let last = *off.last().unwrap();
         Some(Leg {
             segments,
             vias,
             first,
-            first_layer,
+            first_layer: seg_layers[0],
             last,
-            last_layer,
+            last_layer: *seg_layers.last().unwrap(),
         })
     };
     Some((leg(1.0)?, leg(-1.0)?))
+}
+
+/// Pair polish: on a FINISHED board, rip each still-uncoupled pair and
+/// re-route it coupled against the settled copper. The board is quiet, the
+/// pair gets a focused high-effort attempt, and failure restores the
+/// original copper — strictly non-regressive per pair.
+///
+/// Returns `(polished, attempted)`.
+pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
+    let nets: Vec<String> = {
+        let mut v: std::collections::BTreeSet<String> = Default::default();
+        for f in &pcb.footprints {
+            for pad in &f.pads {
+                if let Some(n) = &pad.net {
+                    if !n.is_empty() {
+                        v.insert(n.clone());
+                    }
+                }
+            }
+        }
+        v.into_iter().collect()
+    };
+    let classifier = super::classes::classify_nets(&nets);
+    let width = pcb.rules.default_rules.trace_width;
+    let (mut polished, mut attempted) = (0usize, 0usize);
+    for (pn, nn) in &classifier.pairs {
+        let (w, gap) = {
+            // Peek the class geometry for the coupling test pitch.
+            let s = RouteSession::from_pcb(pcb);
+            pair_geometry(&s, pcb, pn, width)
+        };
+        let frac = crate::router::si_claims::coupled_fraction(pcb, pn, nn, (w + gap) * 1.75);
+        if frac >= 0.5 {
+            continue;
+        }
+        let p_pads = pads_of_net(pcb, pn);
+        if p_pads.len() < 2 {
+            continue;
+        }
+        attempted += 1;
+        // Rip both nets' routed copper off a working copy of the board.
+        let mut work = pcb.clone();
+        work.traces.retain(|t| &t.net != pn && &t.net != nn);
+        work.vias.retain(|v| &v.net != pn && &v.net != nn);
+        // MST endpoints: the two farthest pads of the P net.
+        let (mut from, mut to, mut best) = (p_pads[0], p_pads[0], -1.0);
+        for i in 0..p_pads.len() {
+            for j in i + 1..p_pads.len() {
+                let d = dist(p_pads[i], p_pads[j]);
+                if d > best {
+                    best = d;
+                    from = p_pads[i];
+                    to = p_pads[j];
+                }
+            }
+        }
+        // Corridor rip: single-ended (non-pair, non-plane) traces crossing
+        // the pair's corridor band move aside — the same negotiation right
+        // singles hold against each other. Ripped singles re-route after the
+        // pair commits; any that fail restore verbatim only if the pair
+        // failed (the pair outranks a flexible single).
+        let band = 2.0 * (w + gap) + 1.0;
+        let plane_nets: std::collections::BTreeSet<&str> = pcb
+            .zones
+            .iter()
+            .filter(|z| !z.net.is_empty())
+            .map(|z| z.net.as_str())
+            .collect();
+        // Corridor test: distance from the segment ends to the from→to LINE
+        // — a bbox test on a long diagonal span sweeps half the board into
+        // the rip set and the all-must-reroute bar becomes unmeetable.
+        let span_dir = {
+            let d = to - from;
+            let l = dist(from, to).max(1e-9);
+            d.scale(1.0 / l)
+        };
+        let span_len = dist(from, to);
+        let to_line = |p: Vec2| -> f64 {
+            let v = p - from;
+            let t = (v.x * span_dir.x + v.y * span_dir.y).clamp(0.0, span_len);
+            dist(p, from + span_dir.scale(t))
+        };
+        let in_band = |a: Vec2, b: Vec2| to_line(a) <= band || to_line(b) <= band;
+        let mut ripped_nets: std::collections::BTreeSet<String> = Default::default();
+        for t in &work.traces {
+            if !classifier.is_pair_member(&t.net)
+                && !plane_nets.contains(t.net.as_str())
+                && in_band(t.start, t.end)
+            {
+                ripped_nets.insert(t.net.clone());
+            }
+        }
+        let ripped_copper: Vec<Trace> = work
+            .traces
+            .iter()
+            .filter(|t| ripped_nets.contains(&t.net))
+            .cloned()
+            .collect();
+        let ripped_vias: Vec<Via> = work
+            .vias
+            .iter()
+            .filter(|v| ripped_nets.contains(&v.net))
+            .cloned()
+            .collect();
+        work.traces.retain(|t| !ripped_nets.contains(&t.net));
+        work.vias.retain(|v| !ripped_nets.contains(&v.net));
+        log::debug!(
+            "pair-polish: {pn}: ripping {} corridor singles",
+            ripped_nets.len()
+        );
+
+        let mut session = RouteSession::from_pcb(&work);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&work.outline.vertices);
+        let pair_result = try_route_pair(
+            &mut session,
+            &work,
+            width,
+            pn,
+            from,
+            to,
+            &mut placed,
+            &cong,
+            effort_expansions,
+        );
+        let Some((mine, theirs)) = pair_result else {
+            continue; // original board untouched — nothing was committed to pcb
+        };
+        // Re-route each ripped single against the pair-carrying session; a
+        // single that fails brings the whole attempt down (restore original).
+        let mut singles_ok = true;
+        let mut rerouted: Vec<Placed> = Vec::new();
+        'singles: for net in &ripped_nets {
+            let pads = pads_of_net(&work, net);
+            if pads.len() < 2 {
+                continue;
+            }
+            for i in 1..pads.len() {
+                let r = route_net_maze3d(
+                    &session,
+                    &work.outline.vertices,
+                    &copper_layers(&work),
+                    net,
+                    pads[i - 1],
+                    &copper_layers(&work),
+                    pads[i],
+                    &copper_layers(&work),
+                    session.width_for(net, width),
+                    work.rules.default_rules.via_diameter,
+                    Some(&cong),
+                    effort_expansions,
+                    1.0,
+                    None,
+                    &[],
+                    &[],
+                    true,
+                );
+                if !r.success {
+                    // Fall back to the single's ORIGINAL copper when it is
+                    // still legal beside the new pair.
+                    let orig: Vec<(Vec2, Vec2, PcbLayer)> = ripped_copper
+                        .iter()
+                        .filter(|t| &t.net == net)
+                        .map(|t| (t.start, t.end, t.layer))
+                        .collect();
+                    let ovias: Vec<(Vec2, PcbLayer, PcbLayer)> = ripped_vias
+                        .iter()
+                        .filter(|v| &v.net == net)
+                        .map(|v| (v.position, v.start_layer, v.end_layer))
+                        .collect();
+                    let cand = Candidate {
+                        net: net.clone(),
+                        from: pads[0],
+                        to: pads[pads.len() - 1],
+                        width: session.width_for(net, width),
+                        segments: orig,
+                        vias: ovias,
+                        thin_segments: vec![],
+                        thin_width: width,
+                    };
+                    match validate_and_commit(&mut session, &work, cand, &placed) {
+                        Some(pl) => {
+                            rerouted.push(pl);
+                            continue 'singles;
+                        }
+                        None => {
+                            singles_ok = false;
+                            break 'singles;
+                        }
+                    }
+                }
+                let cand = Candidate {
+                    net: net.clone(),
+                    from: pads[i - 1],
+                    to: pads[i],
+                    width: session.width_for(net, width),
+                    segments: r.segments,
+                    vias: r.vias,
+                    thin_segments: vec![],
+                    thin_width: width,
+                };
+                match validate_and_commit(&mut session, &work, cand, &placed) {
+                    Some(pl) => rerouted.push(pl),
+                    None => {
+                        singles_ok = false;
+                        break 'singles;
+                    }
+                }
+            }
+        }
+        if !singles_ok {
+            log::debug!("pair-polish: {pn}: displaced single failed to re-route — reverting");
+            continue;
+        }
+        // Success: write pair + rerouted singles back onto the working
+        // board (the ripped originals were removed above; reroutes or
+        // restored originals replace them).
+        for pl in rerouted.iter() {
+            for &(a, b, l) in &pl.segments {
+                work.traces.push(Trace {
+                    start: a,
+                    end: b,
+                    width: pl.width,
+                    layer: l,
+                    net: pl.net.clone(),
+                    source: None,
+                });
+            }
+            for &(pt, la, lb) in &pl.via_pts {
+                work.vias.push(Via {
+                    position: pt,
+                    diameter: work.rules.default_rules.via_diameter,
+                    drill: work.rules.default_rules.via_drill,
+                    start_layer: la,
+                    end_layer: lb,
+                    net: pl.net.clone(),
+                    source: None,
+                });
+            }
+        }
+        {
+            for pl in [&mine, &theirs] {
+                for &(a, b, l) in &pl.segments {
+                    work.traces.push(Trace {
+                        start: a,
+                        end: b,
+                        width: pl.width,
+                        layer: l,
+                        net: pl.net.clone(),
+                        source: None,
+                    });
+                }
+                for &(a, b, l) in &pl.stubs {
+                    work.traces.push(Trace {
+                        start: a,
+                        end: b,
+                        width: pl.stub_width,
+                        layer: l,
+                        net: pl.net.clone(),
+                        source: None,
+                    });
+                }
+                for &(pt, la, lb) in &pl.via_pts {
+                    work.vias.push(Via {
+                        position: pt,
+                        diameter: work.rules.default_rules.via_diameter,
+                        drill: work.rules.default_rules.via_drill,
+                        start_layer: la,
+                        end_layer: lb,
+                        net: pl.net.clone(),
+                        source: None,
+                    });
+                }
+            }
+            *pcb = work;
+            polished += 1;
+            log::info!("pair-polish: {pn} + {nn} now coupled");
+        }
+    }
+    (polished, attempted)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::RouteSession;
+    use crate::spatial::CopperGeom;
     use vcad_ir::ecad::*;
 
     #[test]
@@ -494,8 +1097,8 @@ mod tests {
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.15,
-                    via_diameter: 0.8,
-                    via_drill: 0.4,
+                    via_diameter: 0.35,
+                    via_drill: 0.2,
                     diff_pair_gap: None,
                     diff_pair_width: None,
                 },
@@ -503,8 +1106,8 @@ mod tests {
                     name: "DIFF".into(),
                     trace_width: 0.2,
                     clearance: 0.15,
-                    via_diameter: 0.8,
-                    via_drill: 0.4,
+                    via_diameter: 0.35,
+                    via_drill: 0.2,
                     diff_pair_gap: Some(0.25),
                     diff_pair_width: Some(0.2),
                 }],
@@ -684,5 +1287,285 @@ mod tests {
         )
         .is_none());
         assert_eq!(session.len(), baseline);
+    }
+
+    /// Deterministic repro for the layer-transition geometry (censuses
+    /// 11-17): a copper wall on FCu forces the pair through vias to BCu and
+    /// back. The pair must still route, and every committed P element must
+    /// clear every N element — the twin-blocker class of failures rendered
+    /// as a unit test.
+    #[test]
+    fn pair_layer_transition_keeps_twin_clearance() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let mut pcb = pair_board();
+        // Wall of foreign copper across FCu at x=25, leaving no FCu route.
+        pcb.traces.push(Trace {
+            start: Vec2::new(25.0, 0.0),
+            end: Vec2::new(25.0, 30.0),
+            width: 0.4,
+            layer: PcbLayer::FCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let r = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.0, 15.325),
+            &mut placed,
+            &cong,
+            400_000,
+        );
+        let (mine, theirs) = r.expect("pair must route across the FCu wall via BCu");
+        assert!(
+            !mine.via_pts.is_empty() && !theirs.via_pts.is_empty(),
+            "route must actually change layers"
+        );
+        // Twin clearance: every P segment vs every N segment on shared layers.
+        let clearance = 0.15;
+        let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+            let pt_seg = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+                let ab = b - a;
+                let l2 = ab.x * ab.x + ab.y * ab.y;
+                if l2 < 1e-18 {
+                    return dist(p, a);
+                }
+                let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+                dist(p, a + ab.scale(t))
+            };
+            pt_seg(a1, a2, b2)
+                .min(pt_seg(b1, a2, b2))
+                .min(pt_seg(a2, a1, b1))
+                .min(pt_seg(b2, a1, b1))
+        };
+        let all = |p: &Placed| -> Vec<(Vec2, Vec2, PcbLayer, f64)> {
+            let mut v: Vec<(Vec2, Vec2, PcbLayer, f64)> = p
+                .segments
+                .iter()
+                .map(|&(a, b, l)| (a, b, l, p.width))
+                .collect();
+            v.extend(p.stubs.iter().map(|&(a, b, l)| (a, b, l, p.stub_width)));
+            v
+        };
+        let mut worst = f64::INFINITY;
+        for &(a1, b1, l1, w1) in &all(&mine) {
+            for &(a2, b2, l2, w2) in &all(&theirs) {
+                if l1 != l2 {
+                    continue;
+                }
+                let edge = seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0;
+                worst = worst.min(edge);
+            }
+        }
+        assert!(
+            worst >= clearance - 1e-9,
+            "twin edge clearance {worst:.3}mm < {clearance}"
+        );
+    }
+
+    /// Twin-clearance check shared by the transition repros, using the
+    /// DRC's own pair semantics: LEG copper must keep the declared gap
+    /// (minus the 5um tolerance); stub/connector copper (the pad breakout)
+    /// needs only the base clearance.
+    fn assert_twin_clear(mine: &Placed, theirs: &Placed, clearance: f64) {
+        let gap_req = 0.25 - 0.005;
+        let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+            let pt_seg = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+                let ab = b - a;
+                let l2 = ab.x * ab.x + ab.y * ab.y;
+                if l2 < 1e-18 {
+                    return dist(p, a);
+                }
+                let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+                dist(p, a + ab.scale(t))
+            };
+            pt_seg(a1, a2, b2)
+                .min(pt_seg(b1, a2, b2))
+                .min(pt_seg(a2, a1, b1))
+                .min(pt_seg(b2, a1, b1))
+        };
+        let all = |p: &Placed| -> Vec<(Vec2, Vec2, PcbLayer, f64)> {
+            let mut v: Vec<(Vec2, Vec2, PcbLayer, f64)> = p
+                .segments
+                .iter()
+                .map(|&(a, b, l)| (a, b, l, p.width))
+                .collect();
+            v.extend(p.stubs.iter().map(|&(a, b, l)| (a, b, l, p.stub_width)));
+            v
+        };
+        // Legs vs legs: full gap. Anything touching a stub: base clearance.
+        let legs = |p: &Placed| -> Vec<(Vec2, Vec2, PcbLayer, f64)> {
+            p.segments
+                .iter()
+                .map(|&(a, b, l)| (a, b, l, p.width))
+                .collect()
+        };
+        let mut worst_leg = f64::INFINITY;
+        for &(a1, b1, l1, w1) in &legs(mine) {
+            for &(a2, b2, l2, w2) in &legs(theirs) {
+                if l1 == l2 {
+                    worst_leg = worst_leg.min(seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0);
+                }
+            }
+        }
+        assert!(
+            worst_leg >= gap_req - 1e-9,
+            "twin LEG gap {worst_leg:.3}mm < {gap_req} (DRC pair-gap rule)"
+        );
+        let mut worst = f64::INFINITY;
+        for &(a1, b1, l1, w1) in &all(mine) {
+            for &(a2, b2, l2, w2) in &all(theirs) {
+                if l1 == l2 {
+                    worst = worst.min(seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0);
+                }
+            }
+        }
+        assert!(
+            worst >= clearance - 1e-9,
+            "twin edge clearance {worst:.3}mm < {clearance}"
+        );
+    }
+
+    /// Corner transition: walls force the pair through a via field at an
+    /// L-turn — the corner-normal rotation case the straight-wall repro
+    /// cannot exercise.
+    #[test]
+    fn pair_corner_transition_keeps_twin_clearance() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let mut pcb = pair_board();
+        // Move the destination pads to force an L (right then up).
+        pcb.footprints[1].position = Vec2::new(45.0, 15.0);
+        for pad in &mut pcb.footprints[1].pads {
+            pad.position = Vec2::new(pad.position.y, pad.position.x + 10.0);
+        }
+        // Wall on FCu with a vertical jog channel only reachable on BCu.
+        pcb.traces.push(Trace {
+            start: Vec2::new(30.0, 0.0),
+            end: Vec2::new(30.0, 30.0),
+            width: 0.4,
+            layer: PcbLayer::FCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let r = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.325, 25.0),
+            &mut placed,
+            &cong,
+            400_000,
+        );
+        let (mine, theirs) = r.expect("pair must route the L across the wall");
+        assert_twin_clear(&mine, &theirs, 0.15);
+    }
+
+    /// Probe-level contract: with a declared pair class, leg-width copper of
+    /// one twin at less than the gap from the other twin's leg-width copper
+    /// must probe ILLEGAL — the rule the DRC enforces, enforced at the
+    /// source. (The si8 boards carried 0.127mm leg pinches the probe let
+    /// through; this test pins the contract.)
+    #[test]
+    fn probe_enforces_intra_pair_gap() {
+        let pcb = pair_board();
+        let mut session = RouteSession::from_pcb(&pcb);
+        // Commit a P leg.
+        session.commit(crate::spatial::CopperElement {
+            min: [10.0 - 0.2, 20.0 - 0.2],
+            max: [30.0 + 0.2, 20.0 + 0.2],
+            net: "/ETH.2_P".into(),
+            layer: PcbLayer::FCu,
+            geom: CopperGeom::Segment {
+                a: Vec2::new(10.0, 20.0),
+                b: Vec2::new(30.0, 20.0),
+                half_w: 0.1,
+            },
+        });
+        // N leg-width copper 0.13mm edge-to-edge away: legal at base
+        // clearance (0.15... test board clearance 0.15 — use 0.33 center =
+        // 0.13 edge) but ILLEGAL under the 0.25 gap.
+        let n_leg = CopperGeom::Segment {
+            a: Vec2::new(10.0, 20.33),
+            b: Vec2::new(30.0, 20.33),
+            half_w: 0.1,
+        };
+        // Edge distance = 0.33 - 0.2 = 0.13 < 0.245.
+        let pr = session.probe(&n_leg, PcbLayer::FCu, "/ETH.2_N", 0.15);
+        assert!(
+            !pr.legal,
+            "leg-width twin copper at 0.13mm must be illegal (gap rule), min_clearance={:.3}",
+            pr.min_clearance
+        );
+        // Thin (neck) copper at the same distance stays legal vs base 0.08.
+        let n_neck = CopperGeom::Segment {
+            a: Vec2::new(10.0, 20.33),
+            b: Vec2::new(30.0, 20.33),
+            half_w: 0.04,
+        };
+        let pr2 = session.probe(&n_neck, PcbLayer::FCu, "/ETH.2_N", 0.08);
+        assert!(pr2.legal, "neck copper at base clearance stays legal");
+    }
+
+    /// End-to-end: routing the twins as independent SINGLES through the
+    /// ordinary maze must still respect the pair gap — the session probe is
+    /// the enforcement point every stage shares. (si8 carried parallel
+    /// leg-width singles at 0.33mm separation = fallback-geometry spacing;
+    /// this pins the e2e contract the probe test alone cannot.)
+    #[test]
+    fn singles_of_a_pair_keep_the_gap() {
+        use super::super::auto::{route_all_with_opts, RouteOptions};
+        let pcb = pair_board();
+        let r = route_all_with_opts(&pcb, 0.25, &[], &RouteOptions::default());
+        assert_eq!(r.unrouted_nets.len(), 0, "both legs must route");
+        // Min distance between P and N copper (leg width only).
+        let seg_seg = |a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2| -> f64 {
+            let pt = |p: Vec2, a: Vec2, b: Vec2| -> f64 {
+                let ab = b - a;
+                let l2 = ab.x * ab.x + ab.y * ab.y;
+                if l2 < 1e-18 {
+                    return dist(p, a);
+                }
+                let t = (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / l2).clamp(0.0, 1.0);
+                dist(p, a + ab.scale(t))
+            };
+            pt(a1, a2, b2)
+                .min(pt(b1, a2, b2))
+                .min(pt(a2, a1, b1))
+                .min(pt(b2, a1, b1))
+        };
+        let mut worst = f64::INFINITY;
+        for t1 in r
+            .traces
+            .iter()
+            .filter(|t| t.net == "/ETH.2_P" && t.width >= 0.19)
+        {
+            for t2 in r
+                .traces
+                .iter()
+                .filter(|t| t.net == "/ETH.2_N" && t.width >= 0.19)
+            {
+                if t1.layer == t2.layer {
+                    worst = worst.min(
+                        seg_seg(t1.start, t1.end, t2.start, t2.end)
+                            - t1.width / 2.0
+                            - t2.width / 2.0,
+                    );
+                }
+            }
+        }
+        assert!(
+            worst >= 0.245 - 1e-9,
+            "leg-width singles of a pair must keep the gap: worst={worst:.3}"
+        );
     }
 }

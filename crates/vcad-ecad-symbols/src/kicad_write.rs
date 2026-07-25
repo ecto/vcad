@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 
 use vcad_ir::ecad::{
     BoardOutline, Footprint, FootprintGraphic, LabelScope, LayerStackup, Pad, PadShape, PadType,
-    Pcb, PcbLayer, PinType, SchematicComponent, SchematicLabel, SchematicSheet, Trace, TraceArc,
-    Via, Zone,
+    Pcb, PcbLayer, PinType, SchematicComponent, SchematicLabel, SchematicPin, SchematicSheet,
+    Trace, TraceArc, Via, Zone,
 };
 use vcad_ir::Vec2;
 
@@ -226,11 +226,30 @@ impl NetTable {
 }
 
 // ---------------------------------------------------------------------------
+// Schematic ↔ board linkage
+// ---------------------------------------------------------------------------
+
+/// UUIDs captured while writing a schematic, used to link the board file back
+/// to it so KiCad can cross-probe (click a symbol → highlight its footprint).
+struct SchematicLinks {
+    /// The schematic's root sheet uuid (also recorded in the `.kicad_pro`).
+    root_uuid: String,
+    /// Reference designator (e.g. `R1`) → symbol instance uuid.
+    symbol_uuids: BTreeMap<String, String>,
+    /// The schematic filename, emitted as each footprint's `sheetfile`.
+    sch_filename: String,
+}
+
+// ---------------------------------------------------------------------------
 // PCB writer
 // ---------------------------------------------------------------------------
 
 /// Serialize a [`Pcb`] to a KiCad 9 `.kicad_pcb` board file.
 pub fn write_kicad_pcb(pcb: &Pcb) -> String {
+    write_kicad_pcb_impl(pcb, None)
+}
+
+fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
     let mut e = Emitter::new();
     let nets = NetTable::build(pcb);
 
@@ -256,7 +275,7 @@ pub fn write_kicad_pcb(pcb: &Pcb) -> String {
 
     // Footprints
     for fp in &pcb.footprints {
-        write_footprint(&mut e, fp, &nets);
+        write_footprint(&mut e, fp, &nets, links);
     }
 
     // Board outline (Edge.Cuts)
@@ -378,7 +397,12 @@ fn write_closed_loop(e: &mut Emitter, verts: &[Vec2], edge: &dyn Fn(&mut Emitter
     }
 }
 
-fn write_footprint(e: &mut Emitter, fp: &Footprint, nets: &NetTable) {
+fn write_footprint(
+    e: &mut Emitter,
+    fp: &Footprint,
+    nets: &NetTable,
+    links: Option<&SchematicLinks>,
+) {
     let layer = if fp.front { "F.Cu" } else { "B.Cu" };
     let uuid = e.uuid();
     let name = if fp.footprint_name.is_empty() {
@@ -403,6 +427,16 @@ fn write_footprint(e: &mut Emitter, fp: &Footprint, nets: &NetTable) {
 
     write_fp_property(e, "Reference", &fp.reference, "F.SilkS");
     write_fp_property(e, "Value", &fp.value, "F.Fab");
+
+    // Cross-probe linkage: point the footprint at its schematic symbol
+    // instance (KiCad 9 root-sheet paths are "/<symbol-uuid>").
+    if let Some(links) = links {
+        if let Some(sym_uuid) = links.symbol_uuids.get(&fp.reference) {
+            e.line(2, &format!("(path {})", q(&format!("/{}", sym_uuid))));
+            e.line(2, "(sheetname \"/\")");
+            e.line(2, &format!("(sheetfile {})", q(&links.sch_filename)));
+        }
+    }
 
     for g in &fp.graphics {
         write_fp_graphic(e, g);
@@ -760,9 +794,36 @@ fn arc_points(center: Vec2, radius: f64, start_deg: f64, end_deg: f64) -> (Vec2,
 /// opens and is editable in KiCad 9 with references, values, and connectivity
 /// (wires / labels / junctions) preserved.  It is a faithful editable starting
 /// point rather than a pixel-match of KiCad's built-in symbol artwork.
+///
+/// Recognizable part classes (resistors, capacitors, diodes/LEDs,
+/// inductors, transistors — see [`symbol_artwork`]) get real schematic
+/// artwork; anything else keeps the generic rectangular body.
+///
+/// When the stored component positions are degenerate (all at one point, or
+/// packed tighter than the symbol bodies allow), a deterministic auto-layout
+/// pass replaces them with a readable left-to-right signal-flow arrangement
+/// derived from `sheet.nets`; otherwise stored positions pass through
+/// untouched.  Declared nets are additionally emitted as global-label stubs on
+/// every referenced pin so connectivity survives into KiCad even without
+/// drawn wires.
 pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
+    write_kicad_sch_impl(sheet, "", "").0
+}
+
+/// Writer core shared by [`write_kicad_sch`] and [`write_kicad_project`].
+///
+/// `project_name` is embedded in each symbol's `(instances (project …))`
+/// block and `sch_filename` is recorded in the returned links; both are empty
+/// for a standalone (projectless) export, which keeps that output unchanged.
+fn write_kicad_sch_impl(
+    sheet: &SchematicSheet,
+    project_name: &str,
+    sch_filename: &str,
+) -> (String, SchematicLinks) {
     let mut e = Emitter::new();
     let root_uuid = e.uuid();
+    let mut symbol_uuids = BTreeMap::new();
+    let placements = sheet_placements(sheet);
 
     e.line(0, "(kicad_sch");
     e.line(1, "(version 20250114)");
@@ -770,6 +831,15 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     e.line(1, "(generator_version \"9.0\")");
     e.line(1, &format!("(uuid {})", q(&root_uuid)));
     e.line(1, "(paper \"A4\")");
+
+    // Title block. No date — output must be byte-stable (golden tests, diffs).
+    if let Some(title) = &sheet.title {
+        e.line(1, "(title_block");
+        e.line(2, &format!("(title {})", q(title)));
+        e.line(2, "(rev \"vcad\")");
+        e.line(2, "(company \"generated by vcad\")");
+        e.line(1, ")");
+    }
 
     // lib_symbols — one generated definition per component (keyed by ref).
     e.line(1, "(lib_symbols");
@@ -779,44 +849,76 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     e.line(1, ")");
 
     // Component instances.
-    for comp in &sheet.components {
-        write_sch_symbol(&mut e, comp, &root_uuid);
+    for (comp, pos) in sheet.components.iter().zip(&placements) {
+        let uuid = write_sch_symbol(&mut e, comp, *pos, &root_uuid, project_name);
+        symbol_uuids.insert(comp.reference.clone(), uuid);
     }
 
     // Wires.
     for w in &sheet.wires {
-        let uuid = e.uuid();
-        e.line(1, "(wire");
-        e.line(2, "(pts");
-        e.line(3, &format!("(xy {} {})", num(w.start.x), num(w.start.y)));
-        e.line(3, &format!("(xy {} {})", num(w.end.x), num(w.end.y)));
-        e.line(2, ")");
-        e.line(2, "(stroke");
-        e.line(3, "(width 0)");
-        e.line(3, "(type default)");
-        e.line(2, ")");
-        e.line(2, &format!("(uuid {})", q(&uuid)));
-        e.line(1, ")");
+        write_wire(&mut e, w.start, w.end);
     }
 
     // Junctions.
     for j in &sheet.junctions {
-        let uuid = e.uuid();
-        e.line(1, "(junction");
-        e.line(
-            2,
-            &format!("(at {} {})", num(j.position.x), num(j.position.y)),
-        );
-        e.line(2, "(diameter 0)");
-        e.line(2, "(color 0 0 0 0)");
-        e.line(2, &format!("(uuid {})", q(&uuid)));
-        e.line(1, ")");
+        write_junction(&mut e, j.position);
     }
 
     // Labels.
     for l in &sheet.labels {
         write_label(&mut e, l);
     }
+
+    // Netlist declared as data (the MCP `nets` flow): a wire stub plus a
+    // global label at every connected pin, on the placed positions, so
+    // connectivity reaches KiCad even when the sheet has no drawn wires.
+    let stubs = net_stubs(sheet, &placements);
+    for st in &stubs {
+        write_wire(&mut e, st.start, st.end);
+        write_label(
+            &mut e,
+            &SchematicLabel {
+                name: st.net.clone(),
+                position: st.end,
+                rotation: st.label_rotation,
+                scope: LabelScope::Global,
+            },
+        );
+    }
+
+    // Junction dots where ≥3 wire endpoints (drawn wires + generated stubs)
+    // coincide, so KiCad doesn't render tees as crossing-without-connection.
+    let mut endpoints: BTreeMap<String, (Vec2, usize)> = BTreeMap::new();
+    {
+        let mut touch = |p: Vec2| {
+            endpoints
+                .entry(point_key(p))
+                .and_modify(|(_, n)| *n += 1)
+                .or_insert((p, 1));
+        };
+        for w in &sheet.wires {
+            touch(w.start);
+            touch(w.end);
+        }
+        for st in &stubs {
+            touch(st.start);
+            touch(st.end);
+        }
+    }
+    let declared: std::collections::BTreeSet<String> = sheet
+        .junctions
+        .iter()
+        .map(|j| point_key(j.position))
+        .collect();
+    for (key, (p, n)) in &endpoints {
+        if *n >= 3 && !declared.contains(key) {
+            write_junction(&mut e, *p);
+        }
+    }
+
+    // No-connect flags on pins that are in no net and touch no wire endpoint,
+    // so KiCad ERC doesn't warn "pin not connected" on intentionally open pins.
+    write_no_connects(&mut e, sheet, &placements, &endpoints);
 
     e.line(1, "(sheet_instances");
     e.line(2, "(path \"/\"");
@@ -825,7 +927,682 @@ pub fn write_kicad_sch(sheet: &SchematicSheet) -> String {
     e.line(1, ")");
     e.line(1, "(embedded_fonts no)");
     e.line(0, ")");
-    e.buf
+    (
+        e.buf,
+        SchematicLinks {
+            root_uuid,
+            symbol_uuids,
+            sch_filename: sch_filename.to_string(),
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Class-specific symbol artwork
+// ---------------------------------------------------------------------------
+//
+// Recognizable part classes (R/C/D/LED/L/Q, by reference prefix plus value /
+// footprint hints) get real KiCad symbol artwork — zigzag resistors, plate
+// capacitors, diode triangles — instead of the generic bounding rectangle, so
+// exported schematics read like hand-drawn ones. Artwork is generated in a
+// canonical frame (pin 1 at (-d, 0), pin 2 at (d, 0)) and rotated onto the
+// component's actual pin axis, so pin positions — and therefore wire / label
+// connectivity — are untouched.
+
+/// A graphic primitive inside a lib_symbol body.
+enum SymPrim {
+    /// Open polyline through the given points.
+    Polyline(Vec<Vec2>),
+    /// Arc through start → mid → end.
+    Arc { start: Vec2, mid: Vec2, end: Vec2 },
+    /// Circle outline.
+    Circle { center: Vec2, radius: f64 },
+}
+
+/// Class-specific body artwork plus per-pin (angle, length) overrides,
+/// parallel to `comp.pins`.
+struct SymbolArtwork {
+    prims: Vec<SymPrim>,
+    pins: Vec<(f64, f64)>,
+}
+
+/// Two-pin part classes with dedicated artwork.
+enum TwoPinClass {
+    Resistor,
+    Capacitor { polarized: bool },
+    Diode { led: bool },
+    Inductor,
+}
+
+/// Leading alphabetic run of a reference designator, uppercased ("R12" → "R",
+/// "LED3" → "LED").
+fn ref_prefix(reference: &str) -> String {
+    reference
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+
+/// Case-insensitive "any needle appears in value or footprint id".
+fn hints_contain(comp: &SchematicComponent, needles: &[&str]) -> bool {
+    let hay = format!(
+        "{} {}",
+        comp.value.to_ascii_lowercase(),
+        comp.footprint_id.to_ascii_lowercase()
+    );
+    needles.iter().any(|n| hay.contains(n))
+}
+
+/// Classify a component into a two-pin artwork class, if it matches one.
+fn classify_two_pin(comp: &SchematicComponent) -> Option<TwoPinClass> {
+    match ref_prefix(&comp.reference).as_str() {
+        "R" => Some(TwoPinClass::Resistor),
+        "C" => Some(TwoPinClass::Capacitor {
+            polarized: hints_contain(comp, &["elec", "tant", "polar", "cp_"]),
+        }),
+        "LED" => Some(TwoPinClass::Diode { led: true }),
+        "D" => Some(TwoPinClass::Diode {
+            led: hints_contain(comp, &["led"]),
+        }),
+        "L" => Some(TwoPinClass::Inductor),
+        _ => None,
+    }
+}
+
+/// Grid-snapped pin angle pointing from the pin position toward the origin.
+fn axis_pin_angle(p: Vec2) -> f64 {
+    if p.x.abs() >= p.y.abs() {
+        if p.x > 0.0 {
+            180.0
+        } else {
+            0.0
+        }
+    } else if p.y > 0.0 {
+        270.0
+    } else {
+        90.0
+    }
+}
+
+/// Build class-specific artwork for a component, or `None` to keep the
+/// generic rectangle body.
+fn symbol_artwork(comp: &SchematicComponent, pins: &[SchematicPin]) -> Option<SymbolArtwork> {
+    if ref_prefix(&comp.reference) == "Q" {
+        return transistor_artwork(pins);
+    }
+    let class = classify_two_pin(comp)?;
+    two_pin_artwork(pins, &class)
+}
+
+/// Artwork for symmetric two-pin parts. Requires exactly two pins placed
+/// opposite each other through the origin (the layout `create_schematic`
+/// produces: ±2.54 or ±3.81 on an axis).
+fn two_pin_artwork(pins: &[SchematicPin], class: &TwoPinClass) -> Option<SymbolArtwork> {
+    if pins.len() != 2 {
+        return None;
+    }
+    let p1 = pins[0].position;
+    let p2 = pins[1].position;
+    if (p1.x + p2.x).abs() > 1e-6 || (p1.y + p2.y).abs() > 1e-6 {
+        return None;
+    }
+    let d = (p1.x * p1.x + p1.y * p1.y).sqrt();
+    if d < 2.0 {
+        return None;
+    }
+    // Rotation from the canonical frame (pin 1 at (-d, 0)) onto the pin axis.
+    let u = Vec2::new((p2.x - p1.x) / (2.0 * d), (p2.y - p1.y) / (2.0 * d));
+    let map = |x: f64, y: f64| Vec2::new(u.x * x - u.y * y, u.y * x + u.x * y);
+    let poly =
+        |pts: &[(f64, f64)]| SymPrim::Polyline(pts.iter().map(|&(x, y)| map(x, y)).collect());
+    let arc = |s: (f64, f64), m: (f64, f64), e: (f64, f64)| SymPrim::Arc {
+        start: map(s.0, s.1),
+        mid: map(m.0, m.1),
+        end: map(e.0, e.1),
+    };
+
+    let (prims, len1, len2) = match class {
+        TwoPinClass::Resistor => {
+            // IEEE zigzag spanning the body, three peaks up / two down.
+            let b = (0.6 * d).min(2.286);
+            let a = 1.016;
+            let zigzag = poly(&[
+                (-b, 0.0),
+                (-2.0 * b / 3.0, a),
+                (-b / 3.0, -a),
+                (0.0, a),
+                (b / 3.0, -a),
+                (2.0 * b / 3.0, a),
+                (b, 0.0),
+            ]);
+            (vec![zigzag], d - b, d - b)
+        }
+        TwoPinClass::Capacitor { polarized } => {
+            let g = 0.508;
+            let h = 1.27;
+            let mut prims = vec![poly(&[(-g, -h), (-g, h)])];
+            let len2 = if *polarized {
+                // Curved negative plate bowing away from the flat plate,
+                // plus a "+" marker beside pin 1.
+                prims.push(arc((g + 0.55, -h), (g, 0.0), (g + 0.55, h)));
+                prims.push(poly(&[(-g - 1.9, h), (-g - 1.1, h)]));
+                prims.push(poly(&[(-g - 1.5, h - 0.4), (-g - 1.5, h + 0.4)]));
+                d - g - 0.55
+            } else {
+                prims.push(poly(&[(g, -h), (g, h)]));
+                d - g
+            };
+            (prims, d - g, len2)
+        }
+        TwoPinClass::Diode { led } => {
+            // Triangle pointing anode (pin 1) → cathode (pin 2), bar at the
+            // cathode; LEDs add two light-emission arrows.
+            let b = (0.5 * d).min(1.27);
+            let mut prims = vec![
+                poly(&[(-b, b), (-b, -b), (b, 0.0), (-b, b)]),
+                poly(&[(b, -b), (b, b)]),
+            ];
+            if *led {
+                prims.push(poly(&[(-0.3, b + 0.3), (0.6, b + 1.2), (0.25, b + 1.1)]));
+                prims.push(poly(&[(0.5, b + 0.1), (1.4, b + 1.0), (1.05, b + 0.9)]));
+            }
+            (prims, d - b, d - b)
+        }
+        TwoPinClass::Inductor => {
+            // Four humps across the body.
+            let b = (0.75 * d).min(2.54);
+            let r = b / 4.0;
+            let prims = (0..4)
+                .map(|k| {
+                    let c = -b + r + 2.0 * r * k as f64;
+                    arc((c - r, 0.0), (c, r), (c + r, 0.0))
+                })
+                .collect();
+            (prims, d - b, d - b)
+        }
+    };
+
+    if len1 < 0.4 || len2 < 0.4 {
+        return None;
+    }
+    Some(SymbolArtwork {
+        prims,
+        pins: vec![(axis_pin_angle(p1), len1), (axis_pin_angle(p2), len2)],
+    })
+}
+
+/// BJT artwork for the common layout: base alone on the left at y≈0,
+/// collector and emitter on the right at ±y.
+fn transistor_artwork(pins: &[SchematicPin]) -> Option<SymbolArtwork> {
+    if pins.len() != 3 {
+        return None;
+    }
+    let mut base_idx = None;
+    let mut right: Vec<usize> = Vec::new();
+    for (i, p) in pins.iter().enumerate() {
+        if p.position.x < 0.0 {
+            if base_idx.is_some() {
+                return None;
+            }
+            base_idx = Some(i);
+        } else {
+            right.push(i);
+        }
+    }
+    let base_idx = base_idx?;
+    let base = pins[base_idx].position;
+    if right.len() != 2 || base.y.abs() > 0.5 {
+        return None;
+    }
+    let (a, b) = (pins[right[0]].position, pins[right[1]].position);
+    if a.y * b.y >= 0.0 || a.y.abs() < 1.9 || b.y.abs() < 1.9 {
+        return None;
+    }
+    let base_len = -base.x - 0.635;
+    if base_len < 0.4 {
+        return None;
+    }
+    let top = if a.y > 0.0 { a } else { b };
+    let bot = if a.y > 0.0 { b } else { a };
+
+    let prims = vec![
+        // Vertical base bar, branch lines to collector/emitter pin stubs,
+        // and the envelope circle.
+        SymPrim::Polyline(vec![Vec2::new(-0.635, -1.397), Vec2::new(-0.635, 1.397)]),
+        SymPrim::Polyline(vec![Vec2::new(-0.635, 0.508), Vec2::new(top.x, 1.27)]),
+        SymPrim::Polyline(vec![Vec2::new(-0.635, -0.508), Vec2::new(bot.x, -1.27)]),
+        SymPrim::Circle {
+            center: Vec2::new((top.x - 0.635) / 2.0, 0.0),
+            radius: 2.54,
+        },
+    ];
+
+    let mut out = vec![(0.0, 0.0); 3];
+    out[base_idx] = (0.0, base_len);
+    for &i in &right {
+        let p = pins[i].position;
+        out[i] = if p.y > 0.0 {
+            (270.0, p.y - 1.27)
+        } else {
+            (90.0, -p.y - 1.27)
+        };
+    }
+    Some(SymbolArtwork { prims, pins: out })
+}
+
+/// Emit lib_symbol graphic primitives at body depth (inside the `_0_1`
+/// sub-symbol).
+fn write_sym_prims(e: &mut Emitter, prims: &[SymPrim]) {
+    let stroke_fill = |e: &mut Emitter| {
+        e.line(5, "(stroke");
+        e.line(6, "(width 0.254)");
+        e.line(6, "(type default)");
+        e.line(5, ")");
+        e.line(5, "(fill");
+        e.line(6, "(type none)");
+        e.line(5, ")");
+    };
+    for prim in prims {
+        match prim {
+            SymPrim::Polyline(pts) => {
+                e.line(4, "(polyline");
+                e.line(5, "(pts");
+                for v in pts {
+                    e.line(6, &format!("(xy {} {})", num(v.x), num(v.y)));
+                }
+                e.line(5, ")");
+                stroke_fill(e);
+                e.line(4, ")");
+            }
+            SymPrim::Arc { start, mid, end } => {
+                e.line(4, "(arc");
+                e.line(5, &format!("(start {} {})", num(start.x), num(start.y)));
+                e.line(5, &format!("(mid {} {})", num(mid.x), num(mid.y)));
+                e.line(5, &format!("(end {} {})", num(end.x), num(end.y)));
+                stroke_fill(e);
+                e.line(4, ")");
+            }
+            SymPrim::Circle { center, radius } => {
+                e.line(4, "(circle");
+                e.line(5, &format!("(center {} {})", num(center.x), num(center.y)));
+                e.line(5, &format!("(radius {})", num(*radius)));
+                stroke_fill(e);
+                e.line(4, ")");
+            }
+        }
+    }
+}
+
+// Placement pass
+// ---------------------------------------------------------------------------
+
+/// KiCad schematic grid pitch (mm). Pin offsets in generated symbols are
+/// multiples of this, so snapping component origins keeps pin ends on-grid.
+const SCH_GRID: f64 = 1.27;
+
+/// Snap a coordinate to the schematic grid.
+fn snap_grid(v: f64) -> f64 {
+    (v / SCH_GRID).round() * SCH_GRID
+}
+
+/// Half-extents (x, y) of a component's pin bounding box — the space the
+/// symbol itself needs on the sheet.
+fn comp_half_extents(comp: &SchematicComponent) -> (f64, f64) {
+    let mut hx: f64 = 2.54;
+    let mut hy: f64 = 2.54;
+    // Measure the pins the symbol will actually be drawn with: a component
+    // whose stored pins are degenerate gets a synthesized layout that is far
+    // wider than the stored (0,0) stack, and spacing must account for it.
+    for p in &symbol_layout(comp).pins {
+        hx = hx.max(p.position.x.abs());
+        hy = hy.max(p.position.y.abs());
+    }
+    (hx, hy)
+}
+
+/// One position per component: the stored positions when they are usable, or
+/// a deterministic auto-layout when they are degenerate.
+fn sheet_placements(sheet: &SchematicSheet) -> Vec<Vec2> {
+    if placement_is_degenerate(sheet) {
+        return auto_layout(sheet);
+    }
+    // Stored positions pass through — but snap them to the schematic grid when
+    // nothing on the sheet is drawn at fixed coordinates. KiCad's connection
+    // grid is 1.27 mm, and a pin landing off it (`endpoint_off_grid`) can't be
+    // wired to without dropping the grid size, which defeats the editable
+    // handoff even though our synthesized connectivity is internally correct.
+    //
+    // Only safe when connectivity is fully synthesized: snapping moves symbols
+    // by up to half a grid step, which would pull pins off any hand-drawn wire
+    // or label placed at explicit coordinates. Those sheets keep raw positions.
+    let synthesized_only = sheet.wires.is_empty() && sheet.labels.is_empty();
+    sheet
+        .components
+        .iter()
+        .map(|c| {
+            if synthesized_only {
+                Vec2::new(snap_grid(c.position.x), snap_grid(c.position.y))
+            } else {
+                c.position
+            }
+        })
+        .collect()
+}
+
+/// Stored positions are degenerate when two or more symbols overlap — which
+/// covers everything-at-origin and any spacing tighter than the symbol bodies
+/// allow.
+fn placement_is_degenerate(sheet: &SchematicSheet) -> bool {
+    let comps = &sheet.components;
+    for i in 0..comps.len() {
+        let (hxi, hyi) = comp_half_extents(&comps[i]);
+        for j in (i + 1)..comps.len() {
+            let (hxj, hyj) = comp_half_extents(&comps[j]);
+            let dx = (comps[i].position.x - comps[j].position.x).abs();
+            let dy = (comps[i].position.y - comps[j].position.y).abs();
+            if dx < hxi + hxj && dy < hyi + hyj {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Component index for a `"R1.2"`-style pin reference, or `None` if the
+/// reference names no component on the sheet.
+fn pin_ref_comp<'a>(sheet: &SchematicSheet, pin_ref: &'a str) -> Option<(usize, &'a str)> {
+    let (comp_ref, pin_no) = pin_ref.rsplit_once('.')?;
+    let idx = sheet
+        .components
+        .iter()
+        .position(|c| c.reference == comp_ref)?;
+    Some((idx, pin_no))
+}
+
+/// Deterministic readable layout from declared connectivity: BFS rank from
+/// signal sources into columns (sources left, sinks right), each column
+/// ordered top-to-bottom by shared-net count, spaced by symbol extents plus
+/// label clearance, all origins snapped to the schematic grid.
+fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
+    let n = sheet.components.len();
+
+    // Per-component net degree and adjacency, from the declared netlist.
+    let mut degree = vec![0u32; n];
+    let mut adjacency: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); n];
+    if let Some(nets) = &sheet.nets {
+        for pins in nets.values() {
+            let mut members = std::collections::BTreeSet::new();
+            for pin_ref in pins {
+                if let Some((idx, _)) = pin_ref_comp(sheet, pin_ref) {
+                    members.insert(idx);
+                }
+            }
+            for &i in &members {
+                degree[i] += 1;
+                for &j in &members {
+                    if i != j {
+                        adjacency[i].insert(j);
+                    }
+                }
+            }
+        }
+    }
+
+    // BFS roots: components that drive signal (output/power-output pins);
+    // fall back to the first component so the walk always starts somewhere.
+    let mut roots: Vec<usize> = (0..n)
+        .filter(|&i| {
+            sheet.components[i]
+                .pins
+                .iter()
+                .any(|p| matches!(p.pin_type, PinType::Output | PinType::PowerOutput))
+        })
+        .collect();
+    if roots.is_empty() && n > 0 {
+        roots.push(0);
+    }
+
+    // Multi-source BFS rank → column index.
+    let mut column = vec![usize::MAX; n];
+    let mut queue = std::collections::VecDeque::new();
+    for &r in &roots {
+        column[r] = 0;
+        queue.push_back(r);
+    }
+    let mut max_col = 0;
+    while let Some(i) = queue.pop_front() {
+        for &j in &adjacency[i] {
+            if column[j] == usize::MAX {
+                column[j] = column[i] + 1;
+                max_col = max_col.max(column[j]);
+                queue.push_back(j);
+            }
+        }
+    }
+    // Components the netlist never reached: park them in a trailing column,
+    // wrapped so an unconnected sheet still lays out as a compact grid.
+    let unreached: Vec<usize> = (0..n).filter(|&i| column[i] == usize::MAX).collect();
+    const WRAP: usize = 4;
+    for (k, &i) in unreached.iter().enumerate() {
+        column[i] = max_col + 1 + k / WRAP;
+    }
+
+    // Group by column; order each column by shared-net count (heaviest at the
+    // top), tying back to the stable component index.
+    let n_cols = column.iter().map(|c| c + 1).max().unwrap_or(0);
+    let mut cols: Vec<Vec<usize>> = vec![Vec::new(); n_cols];
+    for i in 0..n {
+        cols[column[i]].push(i);
+    }
+    for col in &mut cols {
+        col.sort_by_key(|&i| (std::cmp::Reverse(degree[i]), i));
+    }
+
+    // Clearance around each symbol for reference/value and net-stub labels.
+    const LABEL_CLEARANCE_X: f64 = 10.16;
+    const LABEL_CLEARANCE_Y: f64 = 6.35;
+    const ORIGIN: f64 = 25.4;
+
+    let mut positions = vec![Vec2::new(0.0, 0.0); n];
+    let mut x_cursor = ORIGIN;
+    for col in &cols {
+        let col_half_w = col
+            .iter()
+            .map(|&i| comp_half_extents(&sheet.components[i]).0 + LABEL_CLEARANCE_X)
+            .fold(0.0f64, f64::max);
+        let cx = snap_grid(x_cursor + col_half_w);
+        let mut y_cursor = ORIGIN;
+        for &i in col {
+            let (_, hy) = comp_half_extents(&sheet.components[i]);
+            let cy = snap_grid(y_cursor + hy + LABEL_CLEARANCE_Y);
+            positions[i] = Vec2::new(cx, cy);
+            y_cursor = cy + hy + LABEL_CLEARANCE_Y;
+        }
+        x_cursor = cx + col_half_w;
+    }
+    positions
+}
+
+/// World position of a pin's connection end, given the component's placed
+/// origin. Symbol-local coordinates are Y-up; the sheet is Y-down.
+fn pin_world(comp: &SchematicComponent, comp_pos: Vec2, pin_pos: Vec2) -> Vec2 {
+    let px = if comp.mirror { -pin_pos.x } else { pin_pos.x };
+    let py = pin_pos.y;
+    let th = comp.rotation.to_radians();
+    let (s, c) = (th.sin(), th.cos());
+    // Snap the *rotated offset*, not the absolute result: component origins are
+    // not always grid multiples, and snapping absolutely would shift a stub off
+    // the pin it anchors to. Offsets from 90°-multiple rotations are already
+    // grid multiples, so those pass through bit-identical; only odd angles move.
+    // Endpoints sharing a coordinate before the snap still share it after, so
+    // stubs stay axis-aligned wherever the rotation permits.
+    Vec2::new(
+        comp_pos.x + snap_to_grid(px * c - py * s),
+        comp_pos.y + snap_to_grid(-(px * s + py * c)),
+    )
+}
+
+/// Schematic wire grid (mm). Generated connection points land on it so KiCad
+/// treats them as on-grid, connectable endpoints.
+const WIRE_GRID: f64 = 1.27;
+
+/// Round to the nearest [`WIRE_GRID`] multiple.
+fn snap_to_grid(v: f64) -> f64 {
+    (v / WIRE_GRID).round() * WIRE_GRID
+}
+
+/// Stable text key for endpoint-coincidence tests, using the same 6-decimal
+/// rounding the emitter prints with — so "same point" means "same printed
+/// point", with no float-epsilon disagreement against the emitted file.
+fn point_key(p: Vec2) -> String {
+    format!("{},{}", num(p.x), num(p.y))
+}
+
+fn write_junction(e: &mut Emitter, at: Vec2) {
+    let uuid = e.uuid();
+    e.line(1, "(junction");
+    e.line(2, &format!("(at {} {})", num(at.x), num(at.y)));
+    e.line(2, "(diameter 0)");
+    e.line(2, "(color 0 0 0 0)");
+    e.line(2, &format!("(uuid {})", q(&uuid)));
+    e.line(1, ")");
+}
+
+/// Emit a `(no_connect)` at every pin that carries no connectivity: absent from
+/// every declared net, and not sitting on any wire endpoint. Without these,
+/// KiCad ERC reports "pin not connected" for pins left open on purpose.
+fn write_no_connects(
+    e: &mut Emitter,
+    sheet: &SchematicSheet,
+    placements: &[Vec2],
+    endpoints: &BTreeMap<String, (Vec2, usize)>,
+) {
+    let netted: std::collections::BTreeSet<&str> = sheet
+        .nets
+        .iter()
+        .flat_map(|nets| nets.values())
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    for (idx, comp) in sheet.components.iter().enumerate() {
+        for pin in &symbol_layout(comp).pins {
+            let pin_ref = format!("{}.{}", comp.reference, pin.number);
+            if netted.contains(pin_ref.as_str()) {
+                continue;
+            }
+            let at = pin_world(comp, placements[idx], pin.position);
+            if endpoints.contains_key(&point_key(at)) {
+                continue;
+            }
+            let uuid = e.uuid();
+            e.line(1, "(no_connect");
+            e.line(2, &format!("(at {} {})", num(at.x), num(at.y)));
+            e.line(2, &format!("(uuid {})", q(&uuid)));
+            e.line(1, ")");
+        }
+    }
+}
+
+/// A generated net stub: a short wire from a pin outward, labeled with its net.
+struct NetStub {
+    start: Vec2,
+    end: Vec2,
+    net: String,
+    label_rotation: f64,
+}
+
+/// Connectivity for `sheet.nets` (net name → `"R1.2"` pin refs): a short wire
+/// stub extending outward from each connected pin, capped with a global label
+/// carrying the net name. This is how a data-declared netlist reaches KiCad's
+/// ERC/netlister when the sheet has no coordinate-drawn wires.
+///
+/// Pins resolve through [`symbol_layout`], so components whose stored pin
+/// positions are degenerate get stubs on their *synthesized* pin ends rather
+/// than every stub collapsing onto the component origin. Positions come from
+/// the placement pass, never the stored ones.
+///
+/// Returned as data rather than emitted directly: the junction and no-connect
+/// passes both need these endpoints before anything is written.
+fn net_stubs(sheet: &SchematicSheet, placements: &[Vec2]) -> Vec<NetStub> {
+    let mut stubs = Vec::new();
+    let Some(nets) = &sheet.nets else {
+        return stubs;
+    };
+    // Points where the sheet already carries drawn connectivity. A pin sitting
+    // on one of these is wired up in KiCad's eyes, so adding a stub there would
+    // duplicate the net — and because a re-import reconstructs `nets` from that
+    // same drawn geometry, the duplicates would compound on every export cycle.
+    let mut drawn: Vec<Vec2> = Vec::new();
+    for w in &sheet.wires {
+        drawn.push(w.start);
+        drawn.push(w.end);
+    }
+    for l in &sheet.labels {
+        drawn.push(l.position);
+    }
+    let already_drawn = |p: Vec2| {
+        drawn
+            .iter()
+            .any(|d| (d.x - p.x).abs() < 1e-6 && (d.y - p.y).abs() < 1e-6)
+    };
+
+    for (net, pin_refs) in nets {
+        if net.is_empty() {
+            continue;
+        }
+        for pin_ref in pin_refs {
+            let Some((idx, pin_no)) = pin_ref_comp(sheet, pin_ref) else {
+                continue;
+            };
+            let comp = &sheet.components[idx];
+            let layout = symbol_layout(comp);
+            let Some(pi) = layout.pins.iter().position(|p| p.number == pin_no) else {
+                continue;
+            };
+            let pin = &layout.pins[pi];
+            if already_drawn(pin_world(comp, placements[idx], pin.position)) {
+                continue;
+            }
+            // Outward direction in symbol space (Y-up): opposite the pin's
+            // stub direction, which points toward the body.
+            let (ox, oy) = match layout.angles[pi] as i64 {
+                0 => (-1.0, 0.0),
+                180 => (1.0, 0.0),
+                90 => (0.0, -1.0),
+                _ => (0.0, 1.0),
+            };
+            let start = pin_world(comp, placements[idx], pin.position);
+            let end = pin_world(
+                comp,
+                placements[idx],
+                Vec2::new(
+                    pin.position.x + ox * PIN_PITCH,
+                    pin.position.y + oy * PIN_PITCH,
+                ),
+            );
+            // Label faces along the stub, reading away from the body.
+            let (dx, dy) = (end.x - start.x, end.y - start.y);
+            let label_rotation = if dx.abs() >= dy.abs() {
+                if dx >= 0.0 {
+                    0.0
+                } else {
+                    180.0
+                }
+            } else if dy >= 0.0 {
+                270.0
+            } else {
+                90.0
+            };
+            stubs.push(NetStub {
+                start,
+                end,
+                net: net.clone(),
+                label_rotation,
+            });
+        }
+    }
+    stubs
 }
 
 /// KiCad pin electrical-type token for a [`PinType`].
@@ -869,6 +1646,236 @@ fn sanitize_lib_name(s: &str) -> String {
     }
 }
 
+/// Schematic grid pitch (mm) — pins, stubs, and synthesized layouts snap to it.
+const PIN_PITCH: f64 = 2.54;
+/// Synthesized layout minimum body half-width (pin x minus the 2.54 pin
+/// length); wider when the top/bottom rails need the room.
+const SYNTH_BODY_X: f64 = 5.08;
+
+/// Effective symbol geometry: laid-out pins, matching per-pin angles (same
+/// order as `pins`), and the body rectangle.
+struct SymbolLayout {
+    pins: Vec<SchematicPin>,
+    angles: Vec<f64>,
+    body: (Vec2, Vec2),
+}
+
+/// Which symbol edge a laid-out pin sits on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    /// KiCad pin angle for this edge. The angle points from the pin's
+    /// connection end toward the body (see [`pin_angle`]), so a right-edge pin
+    /// is 180 and a top-edge pin points down at 270 — matching what
+    /// [`pin_angle`] already yields for side pins.
+    fn angle(self) -> f64 {
+        match self {
+            Edge::Left => 0.0,
+            Edge::Right => 180.0,
+            Edge::Top => 270.0,
+            Edge::Bottom => 90.0,
+        }
+    }
+}
+
+/// True when the pin name carries no information ("~" is KiCad's "no name").
+fn pin_name_empty(name: &str) -> bool {
+    matches!(name.trim(), "" | "~")
+}
+
+/// True for conventional ground-rail names (GND, VSS, VEE, V-, AGND, …).
+fn is_ground_name(name: &str) -> bool {
+    let n = name.trim().to_ascii_uppercase();
+    n == "V-"
+        || n.starts_with("GND")
+        || n.starts_with("VSS")
+        || n.starts_with("VEE")
+        || n.starts_with("AGND")
+        || n.starts_with("DGND")
+        || n.starts_with("PGND")
+}
+
+/// True for conventional supply-rail names (VCC, VDD, V+, VBAT, VBUS, VIN).
+fn is_supply_name(name: &str) -> bool {
+    let n = name.trim().to_ascii_uppercase();
+    n == "V+"
+        || n.starts_with("VCC")
+        || n.starts_with("VDD")
+        || n.starts_with("VBAT")
+        || n.starts_with("VBUS")
+        || n.starts_with("VIN")
+}
+
+/// Conventional edge for a pin with real metadata, or `None` for pins that
+/// just fill remaining left/right slots (passives and the like).
+fn pin_edge(pin: &SchematicPin) -> Option<Edge> {
+    match pin.pin_type {
+        PinType::PowerInput | PinType::PowerOutput => {
+            if is_ground_name(&pin.name) {
+                Some(Edge::Bottom)
+            } else {
+                Some(Edge::Top)
+            }
+        }
+        PinType::Input => Some(Edge::Left),
+        PinType::Output
+        | PinType::Bidirectional
+        | PinType::TriState
+        | PinType::OpenCollector
+        | PinType::OpenEmitter => Some(Edge::Right),
+        _ => {
+            // Passive/NC/Free pins with rail names still go to the rails.
+            if is_ground_name(&pin.name) {
+                Some(Edge::Bottom)
+            } else if is_supply_name(&pin.name) {
+                Some(Edge::Top)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Edge assignment for a degenerate-pin component, in declaration order.
+///
+/// Pins carrying real names/types get conventional placement — power rails on
+/// the top edge, grounds on the bottom, inputs on the left, outputs and
+/// bidirectionals on the right — with unclassified pins filling the shorter of
+/// the two side columns (left wins ties) so the body stays balanced. When no
+/// pin carries a usable name the layout falls back to the index-based
+/// left-then-right split.
+///
+/// Two-pin parts stay symmetric through the origin under every branch, which
+/// is what keeps the class artwork in [`symbol_artwork`] matching.
+fn synth_edges(comp: &SchematicComponent) -> Vec<Edge> {
+    if !comp.pins.iter().any(|p| !pin_name_empty(&p.name)) {
+        let n_left = comp.pins.len().div_ceil(2);
+        return (0..comp.pins.len())
+            .map(|i| if i < n_left { Edge::Left } else { Edge::Right })
+            .collect();
+    }
+    let mut edges: Vec<Option<Edge>> = comp.pins.iter().map(pin_edge).collect();
+    let count = |es: &[Option<Edge>], e: Edge| es.iter().filter(|x| **x == Some(e)).count();
+    for i in 0..edges.len() {
+        if edges[i].is_none() {
+            let fill = if count(&edges, Edge::Left) <= count(&edges, Edge::Right) {
+                Edge::Left
+            } else {
+                Edge::Right
+            };
+            edges[i] = Some(fill);
+        }
+    }
+    edges
+        .into_iter()
+        .map(|e| e.expect("every pin assigned an edge"))
+        .collect()
+}
+
+/// True when the component's pin positions carry no usable geometry — every
+/// pin stacked at a single point. The MCP `create_schematic` `nets` flow
+/// leaves them all at the (0,0) default, which would collapse the symbol body
+/// to a zero-area rectangle.
+fn pins_degenerate(comp: &SchematicComponent) -> bool {
+    match comp.pins.first() {
+        None => false,
+        Some(first) => comp.pins.iter().all(|p| p.position == first.position),
+    }
+}
+
+/// Effective pin layout, per-pin angles, and body rectangle for a symbol.
+///
+/// When pin positions are usable they pass through untouched (body from
+/// [`symbol_body`], angles from [`pin_angle`]). When they are missing or
+/// degenerate, an IC-style layout is synthesized on [`synth_edges`]: pins
+/// distributed along their conventional edges at 2.54mm pitch, on-grid, with
+/// the body rectangle derived from the resulting pin extents.
+///
+/// Angles come from the edge assignment rather than from pin geometry, so a
+/// top or bottom rail pin is never mistaken for a side pin on a tall symbol.
+fn symbol_layout(comp: &SchematicComponent) -> SymbolLayout {
+    if !pins_degenerate(comp) {
+        let body = symbol_body(comp);
+        let angles = comp
+            .pins
+            .iter()
+            .map(|p| pin_angle(comp, p.position, body))
+            .collect();
+        return SymbolLayout {
+            pins: comp.pins.clone(),
+            angles,
+            body,
+        };
+    }
+    let edges = synth_edges(comp);
+    let count = |e: Edge| edges.iter().filter(|x| **x == e).count();
+    let (n_left, n_right) = (count(Edge::Left), count(Edge::Right));
+    let (n_top, n_bottom) = (count(Edge::Top), count(Edge::Bottom));
+
+    // Rows on the side edges, columns on the top/bottom edges, everything
+    // centered on the 2.54mm grid.
+    let rows = n_left.max(n_right).max(1);
+    let top = (rows as f64 - 1.0) * PIN_PITCH / 2.0;
+    let body_y = top + PIN_PITCH;
+    let cols = n_top.max(n_bottom);
+    let body_x = if cols == 0 {
+        SYNTH_BODY_X
+    } else {
+        SYNTH_BODY_X.max((cols as f64 - 1.0) * PIN_PITCH / 2.0 + PIN_PITCH)
+    };
+    let (pin_x, pin_y) = (body_x + PIN_PITCH, body_y + PIN_PITCH);
+
+    // Slot counters per edge; pins keep their declared order along each edge.
+    let (mut i_left, mut i_right, mut i_top, mut i_bottom) = (0usize, 0, 0, 0);
+    let mut slot = |edge: Edge| -> Vec2 {
+        match edge {
+            Edge::Left => {
+                let row = i_left;
+                i_left += 1;
+                Vec2::new(-pin_x, top - row as f64 * PIN_PITCH)
+            }
+            Edge::Right => {
+                let row = i_right;
+                i_right += 1;
+                Vec2::new(pin_x, top - row as f64 * PIN_PITCH)
+            }
+            Edge::Top => {
+                let col = i_top;
+                i_top += 1;
+                let x0 = -(n_top as f64 - 1.0) * PIN_PITCH / 2.0;
+                Vec2::new(x0 + col as f64 * PIN_PITCH, pin_y)
+            }
+            Edge::Bottom => {
+                let col = i_bottom;
+                i_bottom += 1;
+                let x0 = -(n_bottom as f64 - 1.0) * PIN_PITCH / 2.0;
+                Vec2::new(x0 + col as f64 * PIN_PITCH, -pin_y)
+            }
+        }
+    };
+    let pins: Vec<SchematicPin> = comp
+        .pins
+        .iter()
+        .zip(&edges)
+        .map(|(p, &edge)| {
+            let mut np = p.clone();
+            np.position = slot(edge);
+            np
+        })
+        .collect();
+    SymbolLayout {
+        pins,
+        angles: edges.iter().map(|e| e.angle()).collect(),
+        body: (Vec2::new(-body_x, body_y), Vec2::new(body_x, -body_y)),
+    }
+}
+
 fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
     let lib_id = comp_lib_id(comp);
     e.line(2, &format!("(symbol {}", q(&lib_id)));
@@ -888,8 +1895,12 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
     write_lib_property(e, "Footprint", &comp.footprint_id, 2);
     write_lib_property(e, "Datasheet", "", 3);
 
-    // Body rectangle bounding the pins, plus the pins themselves.
-    let body = symbol_body(comp);
+    // Body — real artwork for recognized part classes, otherwise a generic
+    // rectangle bounding the pins. Classify against the *laid-out* pins so a
+    // component whose stored positions are degenerate (the nets flow) still
+    // gets artwork from its synthesized layout.
+    let SymbolLayout { pins, angles, body } = symbol_layout(comp);
+    let art = symbol_artwork(comp, &pins);
     e.line(
         3,
         &format!(
@@ -897,17 +1908,21 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
             q(&format!("{}_0_1", sanitize_lib_name(&comp.reference)))
         ),
     );
-    e.line(4, "(rectangle");
-    e.line(5, &format!("(start {} {})", num(body.0.x), num(body.0.y)));
-    e.line(5, &format!("(end {} {})", num(body.1.x), num(body.1.y)));
-    e.line(5, "(stroke");
-    e.line(6, "(width 0.254)");
-    e.line(6, "(type solid)");
-    e.line(5, ")");
-    e.line(5, "(fill");
-    e.line(6, "(type background)");
-    e.line(5, ")");
-    e.line(4, ")");
+    if let Some(a) = &art {
+        write_sym_prims(e, &a.prims);
+    } else {
+        e.line(4, "(rectangle");
+        e.line(5, &format!("(start {} {})", num(body.0.x), num(body.0.y)));
+        e.line(5, &format!("(end {} {})", num(body.1.x), num(body.1.y)));
+        e.line(5, "(stroke");
+        e.line(6, "(width 0.254)");
+        e.line(6, "(type solid)");
+        e.line(5, ")");
+        e.line(5, "(fill");
+        e.line(6, "(type background)");
+        e.line(5, ")");
+        e.line(4, ")");
+    }
     e.line(3, ")");
 
     e.line(
@@ -917,8 +1932,15 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
             q(&format!("{}_1_1", sanitize_lib_name(&comp.reference)))
         ),
     );
-    for pin in &comp.pins {
-        let angle = pin_angle(comp, pin.position, body);
+    for (i, pin) in pins.iter().enumerate() {
+        let (angle, length) = match &art {
+            Some(a) => a.pins[i],
+            // No class artwork: use the layout's own edge-derived angle, which
+            // is correct for the top/bottom rail pins conventional placement
+            // produces (pin_angle infers from geometry and can read a side pin
+            // on a tall symbol as a top pin).
+            None => (angles[i], 2.54),
+        };
         e.line(4, &format!("(pin {} line", pin_type_token(pin.pin_type)));
         e.line(
             5,
@@ -929,7 +1951,7 @@ fn write_lib_symbol(e: &mut Emitter, comp: &SchematicComponent) {
                 num(angle)
             ),
         );
-        e.line(5, "(length 2.54)");
+        e.line(5, &format!("(length {})", num(length)));
         e.line(5, &format!("(name {}", q(&pin.name)));
         e.line(6, "(effects");
         e.line(7, "(font");
@@ -1019,17 +2041,19 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
     }
 }
 
-fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str) {
+/// Emit one symbol instance and return its uuid (the board's cross-probe key).
+fn write_sch_symbol(
+    e: &mut Emitter,
+    comp: &SchematicComponent,
+    pos: Vec2,
+    root_uuid: &str,
+    project_name: &str,
+) -> String {
     let lib_id = comp_lib_id(comp);
     let uuid = e.uuid();
     e.line(1, "(symbol");
     e.line(2, &format!("(lib_id {})", q(&lib_id)));
-    let at = format!(
-        "(at {} {} {})",
-        num(comp.position.x),
-        num(comp.position.y),
-        num(comp.rotation)
-    );
+    let at = format!("(at {} {} {})", num(pos.x), num(pos.y), num(comp.rotation));
     e.line(2, &at);
     if comp.mirror {
         e.line(2, "(mirror y)");
@@ -1052,7 +2076,7 @@ fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str)
     }
 
     e.line(2, "(instances");
-    e.line(3, "(project \"\"");
+    e.line(3, &format!("(project {}", q(project_name)));
     e.line(4, &format!("(path {}", q(&format!("/{}", root_uuid))));
     e.line(5, &format!("(reference {})", q(&comp.reference)));
     e.line(5, "(unit 1)");
@@ -1060,6 +2084,7 @@ fn write_sch_symbol(e: &mut Emitter, comp: &SchematicComponent, root_uuid: &str)
     e.line(3, ")");
     e.line(2, ")");
     e.line(1, ")");
+    uuid
 }
 
 fn write_inst_property(e: &mut Emitter, key: &str, value: &str, y_off: f64, hide: bool) {
@@ -1100,6 +2125,108 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
     e.line(3, "(font");
     e.line(4, "(size 1.27 1.27)");
     e.line(3, ")");
+    e.line(2, ")");
+    e.line(2, &format!("(uuid {})", q(&uuid)));
+    e.line(1, ")");
+}
+
+// ---------------------------------------------------------------------------
+// Project bundle writer
+// ---------------------------------------------------------------------------
+
+/// Serialize a linked KiCad 9 project bundle: `<name>.kicad_pro`,
+/// `<name>.kicad_sch`, and `<name>.kicad_pcb` as `(filename, contents)` pairs.
+///
+/// Unlike exporting the two files separately, the bundle is *linked*: each
+/// board footprint carries a `(path "/<symbol-uuid>")` pointing at the
+/// schematic symbol instance with the same reference designator, and the
+/// project file records the schematic's root sheet uuid — so KiCad can
+/// cross-probe (click a symbol → highlight its footprint, and vice versa).
+/// Output is deterministic: the same inputs always produce identical bytes.
+pub fn write_kicad_project(sheet: &SchematicSheet, pcb: &Pcb, name: &str) -> Vec<(String, String)> {
+    let sch_filename = format!("{}.kicad_sch", name);
+    let (sch, links) = write_kicad_sch_impl(sheet, name, &sch_filename);
+    let board = write_kicad_pcb_impl(pcb, Some(&links));
+    let pro = write_kicad_pro(name, &links.root_uuid);
+    vec![
+        (format!("{}.kicad_pro", name), pro),
+        (sch_filename, sch),
+        (format!("{}.kicad_pcb", name), board),
+    ]
+}
+
+/// Minimal valid KiCad 9 project JSON (`meta.version` 3), recording the
+/// schematic's root sheet uuid in `sheets` the way KiCad itself does.
+fn write_kicad_pro(name: &str, root_uuid: &str) -> String {
+    let pro = serde_json::json!({
+        "board": {
+            "3dviewports": [],
+            "design_settings": {
+                "defaults": {},
+                "diff_pair_dimensions": [],
+                "drc_exclusions": [],
+                "meta": { "version": 2 },
+                "rule_severities": {},
+                "rules": {},
+                "track_widths": [],
+                "via_dimensions": []
+            },
+            "layer_presets": [],
+            "viewports": []
+        },
+        "boards": [],
+        "cvpcb": { "equivalence_files": [] },
+        "libraries": {
+            "pinned_footprint_libs": [],
+            "pinned_symbol_libs": []
+        },
+        "meta": {
+            "filename": format!("{}.kicad_pro", name),
+            "version": 3
+        },
+        "net_settings": {
+            "classes": [],
+            "meta": { "version": 4 },
+            "net_colors": null,
+            "netclass_assignments": null,
+            "netclass_patterns": []
+        },
+        "pcbnew": {
+            "last_paths": {
+                "gencad": "",
+                "idf": "",
+                "netlist": "",
+                "plot": "",
+                "pos_files": "",
+                "specctra_dsn": "",
+                "step": "",
+                "svg": "",
+                "vrml": ""
+            },
+            "page_layout_descr_file": ""
+        },
+        "schematic": {
+            "legacy_lib_dir": "",
+            "legacy_lib_list": []
+        },
+        "sheets": [[root_uuid, "Root"]],
+        "text_variables": {}
+    });
+    let mut s = serde_json::to_string_pretty(&pro).expect("static project JSON serializes");
+    s.push('\n');
+    s
+}
+
+fn write_wire(e: &mut Emitter, start: Vec2, end: Vec2) {
+    let uuid = e.uuid();
+    e.line(1, "(wire");
+    e.line(2, "(pts");
+    e.line(3, &format!("(xy {} {})", num(start.x), num(start.y)));
+    e.line(3, &format!("(xy {} {})", num(end.x), num(end.y)));
+    e.line(2, ")");
+    e.line(2, "(stroke");
+    e.line(3, "(width 0)");
+    e.line(3, "(type default)");
     e.line(2, ")");
     e.line(2, &format!("(uuid {})", q(&uuid)));
     e.line(1, ")");
@@ -1444,6 +2571,15 @@ mod tests {
         let sch = dir.join("sheet.kicad_sch");
         std::fs::write(&sch, write_kicad_sch(&sheet)).unwrap();
         println!("wrote {}", sch.display());
+
+        // Linked project bundle in its own subdirectory.
+        let proj_dir = dir.join("project");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        for (name, contents) in write_kicad_project(&sheet, &sample_pcb(), "vcad_demo") {
+            let path = proj_dir.join(&name);
+            std::fs::write(&path, contents).unwrap();
+            println!("wrote {}", path.display());
+        }
     }
 
     fn sample_sheet() -> SchematicSheet {
@@ -1518,6 +2654,73 @@ mod tests {
     }
 
     #[test]
+    fn project_bundle_links_symbols_to_footprints() {
+        let sheet = sample_sheet();
+        let pcb = sample_pcb();
+        let files = write_kicad_project(&sheet, &pcb, "demo");
+
+        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["demo.kicad_pro", "demo.kicad_sch", "demo.kicad_pcb"]
+        );
+        let get = |n: &str| &files.iter().find(|(f, _)| f == n).unwrap().1;
+        let pro = get("demo.kicad_pro");
+        let sch = get("demo.kicad_sch");
+        let board = get("demo.kicad_pcb");
+
+        // The project file parses as JSON and records the sch root sheet uuid.
+        let pro_json: serde_json::Value = serde_json::from_str(pro).expect("valid project JSON");
+        assert_eq!(pro_json["meta"]["filename"], "demo.kicad_pro");
+        let root_uuid = pro_json["sheets"][0][0].as_str().expect("root sheet uuid");
+        assert!(sch.contains(&format!("(uuid \"{}\")", root_uuid)));
+
+        // R1's schematic symbol uuid appears as R1's footprint path in the pcb.
+        // The symbol instance uuid is the `(uuid …)` line inside the `(symbol`
+        // block whose reference is R1.
+        let sym_block = sch
+            .split("\n\t(symbol\n")
+            .find(|b| b.contains("(property \"Reference\" \"R1\""))
+            .expect("R1 symbol instance in sch");
+        let sym_uuid = sym_block
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("(uuid \""))
+            .and_then(|s| s.strip_suffix("\")"))
+            .expect("R1 symbol uuid");
+        assert!(
+            board.contains(&format!("(path \"/{}\")", sym_uuid)),
+            "footprint path should reference R1's symbol uuid {}",
+            sym_uuid
+        );
+        assert!(board.contains("(sheetfile \"demo.kicad_sch\")"));
+
+        // Instances carry the project name; sch symbols use it for cross-probe.
+        assert!(sch.contains("(project \"demo\""));
+
+        // The bundled schematic is still a valid, re-importable .kicad_sch.
+        let reparsed = crate::kicad_sch::parse_kicad_sch(sch).expect("re-parse bundled sch");
+        let refs: Vec<String> = reparsed
+            .components
+            .iter()
+            .map(|c| c.reference.clone())
+            .collect();
+        assert!(refs.contains(&"R1".to_string()));
+
+        // Deterministic: same inputs → identical bytes.
+        assert_eq!(files, write_kicad_project(&sheet, &pcb, "demo"));
+    }
+
+    #[test]
+    fn standalone_exports_unchanged_by_bundle_refactor() {
+        // Standalone sch/pcb writers must not gain project linkage artifacts.
+        let sch = write_kicad_sch(&sample_sheet());
+        assert!(sch.contains("(project \"\""));
+        let board = write_kicad_pcb(&sample_pcb());
+        assert!(!board.contains("(sheetfile"));
+        assert!(!board.contains("(path \"/"));
+    }
+
+    #[test]
     fn schematic_writes_valid_shell() {
         use vcad_ir::ecad::{SchematicComponent, SchematicPin, SchematicWire};
         let sheet = SchematicSheet {
@@ -1566,5 +2769,1186 @@ mod tests {
         assert!(text.contains("(global_label \"VCC\""));
         assert!(text.contains("(wire"));
         assert!(text.trim_end().ends_with(')'));
+    }
+
+    /// A two-pin component with pins at (-d, 0) and (d, 0).
+    fn two_pin_comp(reference: &str, value: &str, footprint: &str, d: f64) -> SchematicComponent {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: footprint.into(),
+            position: Vec2::new(100.0, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(-d, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(d, 0.0),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    fn sheet_of(components: Vec<SchematicComponent>) -> SchematicSheet {
+        SchematicSheet {
+            title: None,
+            components,
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: None,
+        }
+    }
+
+    #[test]
+    fn resistor_gets_zigzag_not_rectangle() {
+        let sheet = sheet_of(vec![two_pin_comp("R1", "10k", "Resistor_SMD:R_0805", 3.81)]);
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(polyline"), "resistor body is a polyline");
+        assert!(!text.contains("(rectangle"), "no generic rectangle for R");
+        // Pin connection points are untouched.
+        assert!(text.contains("(at -3.81 0 0)"));
+        assert!(text.contains("(at 3.81 0 180)"));
+    }
+
+    #[test]
+    fn capacitor_gets_plates_polarized_gets_arc() {
+        let plain = sheet_of(vec![two_pin_comp(
+            "C1",
+            "100nF",
+            "Capacitor_SMD:C_0603",
+            2.54,
+        )]);
+        let text = write_kicad_sch(&plain);
+        assert!(text.contains("(polyline"));
+        assert!(!text.contains("(rectangle"));
+        assert!(!text.contains("(arc"), "plain cap has two straight plates");
+
+        let polar = sheet_of(vec![two_pin_comp(
+            "C2",
+            "100uF",
+            "Capacitor_THT:CP_Radial_D5.0mm",
+            3.81,
+        )]);
+        let text = write_kicad_sch(&polar);
+        assert!(text.contains("(arc"), "polarized cap has a curved plate");
+    }
+
+    #[test]
+    fn diode_led_and_inductor_get_artwork() {
+        let text = write_kicad_sch(&sheet_of(vec![
+            two_pin_comp("D1", "1N4148", "Diode_SMD:D_SOD-323", 2.54),
+            two_pin_comp("LED1", "Red", "LED_SMD:LED_0805", 2.54),
+            two_pin_comp("L1", "10uH", "Inductor_SMD:L_0805", 3.81),
+        ]));
+        assert!(text.contains("(polyline"), "diode triangle present");
+        assert!(text.contains("(arc"), "inductor humps present");
+        assert!(!text.contains("(rectangle"), "no generic rectangles");
+        // The LED symbol has more polylines than the plain diode (two arrows).
+        let led = write_kicad_sch(&sheet_of(vec![two_pin_comp(
+            "LED1",
+            "Red",
+            "LED_SMD:LED_0805",
+            2.54,
+        )]));
+        let plain = write_kicad_sch(&sheet_of(vec![two_pin_comp(
+            "D1",
+            "1N4148",
+            "Diode_SMD:D_SOD-323",
+            2.54,
+        )]));
+        assert_eq!(
+            led.matches("(polyline").count(),
+            plain.matches("(polyline").count() + 2
+        );
+    }
+
+    #[test]
+    fn transistor_gets_envelope_circle() {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let q = SchematicComponent {
+            reference: "Q1".into(),
+            value: "2N2222".into(),
+            footprint_id: "Package_TO_SOT_SMD:SOT-23".into(),
+            position: Vec2::new(100.0, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "B".into(),
+                    pin_type: PinType::Input,
+                    position: Vec2::new(-2.54, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "C".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(2.54, 2.54),
+                },
+                SchematicPin {
+                    number: "3".into(),
+                    name: "E".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(2.54, -2.54),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let text = write_kicad_sch(&sheet_of(vec![q]));
+        assert!(text.contains("(circle"), "BJT envelope circle present");
+        assert!(!text.contains("(rectangle"));
+        // Connection points untouched.
+        assert!(text.contains("(at -2.54 0 0)"));
+        assert!(text.contains("(at 2.54 2.54 270)"));
+        assert!(text.contains("(at 2.54 -2.54 90)"));
+    }
+
+    #[test]
+    fn unmatched_parts_keep_rectangle_body() {
+        // A U-prefixed IC and an R with asymmetric pins both fall back.
+        let mut ic = two_pin_comp("U1", "LM358", "Package_SO:SOIC-8", 2.54);
+        ic.pins[0].pin_type = PinType::Input;
+        let mut odd_r = two_pin_comp("R9", "10k", "Resistor_SMD:R_0805", 2.54);
+        odd_r.pins[1].position = Vec2::new(5.08, 2.54); // not symmetric
+        let text = write_kicad_sch(&sheet_of(vec![ic, odd_r]));
+        assert_eq!(text.matches("(rectangle").count(), 2);
+        assert!(!text.contains("(polyline"));
+    }
+
+    #[test]
+    fn vertical_two_pin_artwork_is_rotated_onto_axis() {
+        let mut c = two_pin_comp("C1", "100nF", "Capacitor_SMD:C_0603", 2.54);
+        c.pins[0].position = Vec2::new(0.0, 2.54);
+        c.pins[1].position = Vec2::new(0.0, -2.54);
+        let text = write_kicad_sch(&sheet_of(vec![c]));
+        assert!(text.contains("(polyline"));
+        assert!(!text.contains("(rectangle"));
+        assert!(text.contains("(at 0 2.54 270)"));
+        assert!(text.contains("(at 0 -2.54 90)"));
+    }
+
+    #[test]
+    fn schematic_is_deterministic() {
+        let sheet = sample_sheet();
+        assert_eq!(write_kicad_sch(&sheet), write_kicad_sch(&sheet));
+    }
+
+    /// Sheet with every component stacked at the origin (the naive
+    /// create_schematic drop) plus a declared netlist.
+    fn degenerate_sheet() -> SchematicSheet {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let two_pin = |number: &str, x: f64| SchematicPin {
+            number: number.into(),
+            name: "~".into(),
+            pin_type: PinType::Passive,
+            position: Vec2::new(x, 0.0),
+        };
+        let comp = |reference: &str, value: &str, pins: Vec<SchematicPin>| SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: String::new(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            mirror: false,
+            pins,
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "VCC".to_string(),
+            vec!["U1.1".to_string(), "R1.1".to_string(), "C1.1".to_string()],
+        );
+        nets.insert(
+            "OUT".to_string(),
+            vec!["U1.2".to_string(), "R2.1".to_string()],
+        );
+        nets.insert(
+            "GND".to_string(),
+            vec![
+                "R1.2".to_string(),
+                "R2.2".to_string(),
+                "C1.2".to_string(),
+                "C2.2".to_string(),
+            ],
+        );
+        SchematicSheet {
+            title: Some("degenerate".into()),
+            components: vec![
+                comp(
+                    "U1",
+                    "AMP",
+                    vec![
+                        SchematicPin {
+                            number: "1".into(),
+                            name: "IN".into(),
+                            pin_type: PinType::Input,
+                            position: Vec2::new(-5.08, 0.0),
+                        },
+                        SchematicPin {
+                            number: "2".into(),
+                            name: "OUT".into(),
+                            pin_type: PinType::Output,
+                            position: Vec2::new(5.08, 0.0),
+                        },
+                    ],
+                ),
+                comp("R1", "10k", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+                comp("R2", "1k", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+                comp("C1", "100nF", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+                comp("C2", "1uF", vec![two_pin("1", -2.54), two_pin("2", 2.54)]),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: Some(nets),
+        }
+    }
+
+    #[test]
+    fn degenerate_placement_is_auto_laid_out() {
+        let sheet = degenerate_sheet();
+        assert!(placement_is_degenerate(&sheet));
+        let placements = sheet_placements(&sheet);
+        assert_eq!(placements.len(), sheet.components.len());
+
+        for (i, p) in placements.iter().enumerate() {
+            // On-grid origins (pin offsets are grid multiples, so pin ends
+            // stay on-grid too).
+            assert!(
+                (p.x / SCH_GRID - (p.x / SCH_GRID).round()).abs() < 1e-9,
+                "component {} x off-grid: {}",
+                i,
+                p.x
+            );
+            assert!(
+                (p.y / SCH_GRID - (p.y / SCH_GRID).round()).abs() < 1e-9,
+                "component {} y off-grid: {}",
+                i,
+                p.y
+            );
+            // Distinct positions.
+            for (j, q2) in placements.iter().enumerate().skip(i + 1) {
+                assert!(
+                    p.x != q2.x || p.y != q2.y,
+                    "components {} and {} share a position",
+                    i,
+                    j
+                );
+                // Non-overlapping symbol bodies.
+                let (hxi, hyi) = comp_half_extents(&sheet.components[i]);
+                let (hxj, hyj) = comp_half_extents(&sheet.components[j]);
+                assert!(
+                    (p.x - q2.x).abs() >= hxi + hxj || (p.y - q2.y).abs() >= hyi + hyj,
+                    "components {} and {} overlap",
+                    i,
+                    j
+                );
+            }
+        }
+
+        // The source (U1, output pin) leads the signal flow: leftmost column.
+        let u1_x = placements[0].x;
+        for p in &placements[1..] {
+            assert!(p.x >= u1_x, "source U1 is not leftmost");
+        }
+
+        // Byte-stable output, with net stubs on the adjusted positions.
+        let text = write_kicad_sch(&sheet);
+        assert_eq!(text, write_kicad_sch(&sheet));
+        assert!(text.contains("(global_label \"VCC\""));
+        assert!(text.contains("(global_label \"OUT\""));
+        assert!(text.contains("(global_label \"GND\""));
+        // Stub anchors sit on placed pin ends, not the stored origin: the
+        // generated wire starts at the pin and the label caps its far end.
+        let u1_out = pin_world(
+            &sheet.components[0],
+            placements[0],
+            sheet.components[0].pins[1].position,
+        );
+        assert!(text.contains(&format!("(xy {} {})", num(u1_out.x), num(u1_out.y))));
+    }
+
+    #[test]
+    fn healthy_placement_passes_through() {
+        let sheet = sample_sheet();
+        assert!(!placement_is_degenerate(&sheet));
+        let placements = sheet_placements(&sheet);
+        assert_eq!(placements[0], Vec2::new(100.0, 50.0));
+        assert_eq!(placements[1], Vec2::new(120.0, 50.0));
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(at 100 50 0)"));
+        assert!(text.contains("(at 120 50 90)"));
+    }
+
+    /// Sheet whose components carry no pin geometry at all — every pin at the
+    /// (0,0) default, which is what the MCP `create_schematic` `nets` flow
+    /// produces. Distinct from [`degenerate_sheet`], where the *component*
+    /// positions collapse but pins are real.
+    fn degenerate_pins_sheet() -> SchematicSheet {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let comp = |reference: &str, value: &str, footprint: &str, x: f64| SchematicComponent {
+            reference: reference.into(),
+            value: value.into(),
+            footprint_id: footprint.into(),
+            position: Vec2::new(x, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(0.0, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(0.0, 0.0),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "VCC".to_string(),
+            vec!["R1.1".to_string(), "C1.1".to_string()],
+        );
+        nets.insert(
+            "GND".to_string(),
+            vec!["R1.2".to_string(), "C1.2".to_string()],
+        );
+        SchematicSheet {
+            title: Some("nets flow".into()),
+            components: vec![
+                comp("R1", "10k", "Resistor_SMD:R_0805", 100.0),
+                comp("C1", "100nF", "Capacitor_SMD:C_0603", 130.0),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: Some(nets),
+        }
+    }
+
+    /// The MCP `create_schematic` `nets` flow: pins all at the (0,0) default,
+    /// connectivity declared only as data. The exporter must synthesize a
+    /// usable symbol layout and emit wires + global labels so the netlist
+    /// round-trips into KiCad instead of collapsing to a zero-area body.
+    #[test]
+    fn nets_flow_synthesizes_layout_and_connectivity() {
+        let sheet = degenerate_pins_sheet();
+        let text = write_kicad_sch(&sheet);
+
+        // Nonzero connectivity: one wire stub + one global label per pin ref.
+        assert_eq!(text.matches("(wire").count(), 4);
+        assert_eq!(text.matches("(global_label \"VCC\"").count(), 2);
+        assert_eq!(text.matches("(global_label \"GND\"").count(), 2);
+
+        // Nondegenerate body. R1/C1 are recognized part classes, so the body is
+        // real artwork rather than the synthesized rectangle — but the invariant
+        // this test exists for still holds: nothing collapses onto the origin.
+        assert!(text.contains("(polyline"));
+        assert!(!text.contains("(start 0 0)"));
+        assert!(!text.contains("(xy 0 0)"));
+
+        // Pins land on the synthesized positions, not stacked at the origin.
+        assert!(text.contains("(at -7.62 0 0)"));
+        assert!(text.contains("(at 7.62 0 180)"));
+
+        // Deterministic.
+        assert_eq!(text, write_kicad_sch(&sheet));
+    }
+
+    /// The synthesized-layout body rectangle, which the nets-flow test above
+    /// used to assert before recognized part classes gained artwork. An
+    /// unrecognized reference still gets the generic rect at the layout extent,
+    /// so a regression in `symbol_layout` cannot hide behind the artwork path.
+    #[test]
+    fn degenerate_unrecognized_part_keeps_synthesized_rectangle() {
+        use vcad_ir::ecad::{SchematicComponent, SchematicPin};
+        let degenerate_pin = |number: &str| SchematicPin {
+            number: number.into(),
+            name: "~".into(),
+            pin_type: PinType::Passive,
+            position: Vec2::new(0.0, 0.0),
+        };
+        let sheet = sheet_of(vec![SchematicComponent {
+            reference: "U1".into(),
+            value: "NE555".into(),
+            footprint_id: "Package_SO:SOIC-8".into(),
+            position: Vec2::new(100.0, 50.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![degenerate_pin("1"), degenerate_pin("2")],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        }]);
+        let text = write_kicad_sch(&sheet);
+        // 2 pins → left/right at ±7.62, body x∈[-5.08, 5.08], y∈[-2.54, 2.54].
+        assert!(text.contains("(start -5.08 2.54)"));
+        assert!(text.contains("(end 5.08 -2.54)"));
+        assert!(text.contains("(at -7.62 0 0)"));
+        assert!(text.contains("(at 7.62 0 180)"));
+    }
+
+    /// Each pin of a degenerate-pin component must get its *own* stub anchor:
+    /// the bug was every net of a component collapsing onto one point, which
+    /// shorts them together in KiCad.
+    #[test]
+    fn degenerate_pins_get_distinct_stub_anchors() {
+        let sheet = degenerate_pins_sheet();
+        let placements = sheet_placements(&sheet);
+        let pins = symbol_layout(&sheet.components[0]).pins;
+        let a = pin_world(&sheet.components[0], placements[0], pins[0].position);
+        let b = pin_world(&sheet.components[0], placements[0], pins[1].position);
+        assert!(a != b, "R1 pin anchors collapsed to one point: {a:?}");
+    }
+
+    /// Minimal two-pin component for the schematic-polish tests.
+    fn test_comp(reference: &str, pos: Vec2, rotation: f64) -> SchematicComponent {
+        use vcad_ir::ecad::SchematicPin;
+        SchematicComponent {
+            reference: reference.into(),
+            value: "10k".into(),
+            footprint_id: "Resistor_SMD:R_0805".into(),
+            position: pos,
+            rotation,
+            mirror: false,
+            pins: vec![
+                SchematicPin {
+                    number: "1".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(-2.54, 0.0),
+                },
+                SchematicPin {
+                    number: "2".into(),
+                    name: "~".into(),
+                    pin_type: PinType::Passive,
+                    position: Vec2::new(2.54, 0.0),
+                },
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    fn empty_sheet() -> SchematicSheet {
+        SchematicSheet {
+            title: None,
+            components: vec![],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: None,
+        }
+    }
+
+    #[test]
+    fn title_block_present_when_titled_absent_otherwise() {
+        let mut sheet = empty_sheet();
+        let text = write_kicad_sch(&sheet);
+        assert!(!text.contains("(title_block"));
+
+        sheet.title = Some("Amp Board".into());
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(title_block"));
+        assert!(text.contains("(title \"Amp Board\")"));
+        assert!(text.contains("(rev \"vcad\")"));
+        assert!(text.contains("(company \"generated by vcad\")"));
+        // No wall-clock date — output must be byte-stable.
+        assert!(!text.contains("(date"));
+        assert_eq!(text, write_kicad_sch(&sheet));
+    }
+
+    #[test]
+    fn three_way_tee_gets_exactly_one_junction() {
+        use vcad_ir::ecad::SchematicWire;
+        let mut sheet = empty_sheet();
+        sheet.wires = vec![
+            SchematicWire {
+                start: Vec2::new(0.0, 0.0),
+                end: Vec2::new(12.7, 0.0),
+            },
+            SchematicWire {
+                start: Vec2::new(12.7, 0.0),
+                end: Vec2::new(25.4, 0.0),
+            },
+            SchematicWire {
+                start: Vec2::new(12.7, 0.0),
+                end: Vec2::new(12.7, 12.7),
+            },
+        ];
+        let text = write_kicad_sch(&sheet);
+        assert_eq!(text.matches("(junction").count(), 1);
+        assert!(text.contains("(at 12.7 0)"));
+
+        // Dedupe: a caller-declared junction at the tee is not emitted twice.
+        sheet.junctions = vec![vcad_ir::ecad::SchematicJunction {
+            position: Vec2::new(12.7, 0.0),
+        }];
+        let text = write_kicad_sch(&sheet);
+        assert_eq!(text.matches("(junction").count(), 1);
+    }
+
+    #[test]
+    fn unconnected_pin_gets_no_connect_at_placed_position() {
+        let mut sheet = empty_sheet();
+        sheet.components = vec![test_comp("R1", Vec2::new(100.0, 50.0), 0.0)];
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert("VCC".to_string(), vec!["R1.1".to_string()]);
+        sheet.nets = Some(nets);
+        let text = write_kicad_sch(&sheet);
+
+        // Pin 1 is netted (stub + label); pin 2 is open → exactly one
+        // no_connect, at pin 2's placed position.
+        assert_eq!(text.matches("(no_connect").count(), 1);
+        let placements = sheet_placements(&sheet);
+        let pins = symbol_layout(&sheet.components[0]).pins;
+        let p2 = pin_world(&sheet.components[0], placements[0], pins[1].position);
+        assert!(text.contains(&format!(
+            "(no_connect\n\t\t(at {} {})",
+            num(p2.x),
+            num(p2.y)
+        )));
+
+        // A fully netted sheet emits none.
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "VCC".to_string(),
+            vec!["R1.1".to_string(), "R1.2".to_string()],
+        );
+        sheet.nets = Some(nets);
+        let text = write_kicad_sch(&sheet);
+        assert_eq!(text.matches("(no_connect").count(), 0);
+    }
+
+    #[test]
+    fn rotated_stub_endpoints_snap_to_wire_grid() {
+        // 45° rotation: the rotated pin offsets would land on irrational
+        // coordinates without the grid snap.
+        let mut sheet = empty_sheet();
+        sheet.components = vec![test_comp("R1", Vec2::new(127.0, 63.5), 45.0)];
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "VCC".to_string(),
+            vec!["R1.1".to_string(), "R1.2".to_string()],
+        );
+        sheet.nets = Some(nets);
+        let text = write_kicad_sch(&sheet);
+
+        // Every stub endpoint is an exact 1.27mm multiple. Read the wire
+        // nodes rather than every `(xy …)` line in the file: symbol artwork
+        // carries its own `(xy …)` points in lib_symbols, and those are
+        // body-relative shapes, not connection points on the sheet grid.
+        let (_, root) = crate::sexpr::parse_sexpr(&text).expect("parse exported sheet");
+        let mut checked = 0;
+        for wire in root.find_all("wire") {
+            let pts = wire.find("pts").expect("wire has (pts …)");
+            for xy in pts.find_all("xy") {
+                let c = xy.children().expect("(xy x y)");
+                for v in [c[1].as_f64().expect("xy x"), c[2].as_f64().expect("xy y")] {
+                    let steps = v / 1.27;
+                    assert!(
+                        (steps - steps.round()).abs() < 1e-9,
+                        "off-grid stub coordinate {v}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        // 2 stubs × 2 endpoints × 2 coords.
+        assert_eq!(checked, 8);
+        assert_eq!(text, write_kicad_sch(&sheet));
+    }
+
+    /// 90°-multiple rotations must be untouched by the grid snap — their
+    /// offsets are already grid multiples, so the common case stays exact.
+    #[test]
+    fn right_angle_rotations_are_unaffected_by_snap() {
+        for rot in [0.0, 90.0, 180.0, 270.0] {
+            let comp = test_comp("R1", Vec2::new(100.0, 50.0), rot);
+            let pos = Vec2::new(100.0, 50.0);
+            for pin in &comp.pins {
+                let got = pin_world(&comp, pos, pin.position);
+                let th: f64 = rot.to_radians();
+                let (s, c) = (th.sin(), th.cos());
+                let (px, py) = (pin.position.x, pin.position.y);
+                let want = Vec2::new(pos.x + px * c - py * s, pos.y - (px * s + py * c));
+                assert!(
+                    (got.x - want.x).abs() < 1e-9 && (got.y - want.y).abs() < 1e-9,
+                    "rot {rot}: snap moved an on-grid point {want:?} → {got:?}"
+                );
+            }
+        }
+    }
+
+    /// Non-degenerate pin positions must pass through untouched.
+    #[test]
+    fn real_pin_positions_are_preserved() {
+        let sheet = sample_sheet();
+        let text = write_kicad_sch(&sheet);
+        assert!(text.contains("(at -2.54 0 0)"));
+        assert!(text.contains("(at 2.54 0 180)"));
+        // sample_sheet declares no data nets — no synthesized stubs beyond the
+        // one drawn wire.
+        assert_eq!(text.matches("(wire").count(), 1);
+    }
+
+    /// Synthesized-connectivity sheets get their stored positions snapped to
+    /// KiCad's 1.27 mm connection grid, so pins are wirable by hand after the
+    /// handoff (KiCad ERC flagged `endpoint_off_grid` before this).
+    #[test]
+    fn synthesized_sheets_snap_stored_positions_to_grid() {
+        // degenerate_pins_sheet stores y = 50.0, which is off the 1.27 grid,
+        // and is spaced widely enough that auto_layout does not take over.
+        let sheet = degenerate_pins_sheet();
+        assert!(
+            !placement_is_degenerate(&sheet),
+            "would bypass the snap path"
+        );
+        for p in sheet_placements(&sheet) {
+            // snap_grid is idempotent on grid points, so it is its own oracle
+            // here — 1.27 has no exact binary representation, which makes a
+            // fract()-based check unreliable.
+            assert!(
+                (snap_grid(p.x) - p.x).abs() < 1e-9 && (snap_grid(p.y) - p.y).abs() < 1e-9,
+                "placement {p:?} is off the {SCH_GRID} mm grid"
+            );
+        }
+    }
+
+    /// ...but a sheet with drawn geometry keeps its raw positions: snapping
+    /// would shift symbols off the wires and labels placed at fixed
+    /// coordinates, silently breaking connectivity.
+    #[test]
+    fn drawn_sheets_keep_raw_positions() {
+        let sheet = sample_sheet();
+        assert!(!sheet.wires.is_empty(), "sample must carry drawn geometry");
+        let placed = sheet_placements(&sheet);
+        for (c, p) in sheet.components.iter().zip(&placed) {
+            assert_eq!(c.position, *p);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Real-KiCad verification (requires kicad-cli; ignored by default)
+    // -----------------------------------------------------------------------
+    //
+    // The tests above assert what *we* believe the exported file says. These
+    // close the loop by handing the file to KiCad 9 itself and asking what it
+    // reads back — the only check that catches a self-consistent-but-wrong
+    // coordinate or connectivity convention.
+    //
+    // Run locally with:
+    //   cargo test -p vcad-ecad-symbols -- --ignored --nocapture
+    // kicad-cli is found via $KICAD_CLI, PATH, or the macOS app bundle.
+
+    /// Locate a KiCad 9 `kicad-cli` binary, or `None` (tests skip cleanly).
+    fn kicad_cli() -> Option<std::path::PathBuf> {
+        use std::path::PathBuf;
+        if let Ok(p) = std::env::var("KICAD_CLI") {
+            let p = PathBuf::from(p);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        if let Ok(out) = std::process::Command::new("which")
+            .arg("kicad-cli")
+            .output()
+        {
+            if out.status.success() {
+                let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+        let mac = PathBuf::from("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli");
+        if mac.is_file() {
+            return Some(mac);
+        }
+        None
+    }
+
+    /// Write the nets-flow sheet to a scratch dir and return its path.
+    /// Honors VCAD_KICAD_OUT so the artifacts can be kept for inspection.
+    fn export_nets_flow_sheet(subdir: &str) -> std::path::PathBuf {
+        export_sheet(subdir, &degenerate_pins_sheet())
+    }
+
+    /// Write `sheet` to a scratch `.kicad_sch` under `subdir`.
+    fn export_sheet(subdir: &str, sheet: &SchematicSheet) -> std::path::PathBuf {
+        let dir = std::env::var("VCAD_KICAD_OUT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vcad_kicad"))
+            .join(subdir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("nets_flow.kicad_sch");
+        std::fs::write(&path, write_kicad_sch(sheet)).unwrap();
+        path
+    }
+
+    /// Run `kicad-cli sch export netlist` on `sch` and return the net -> pin
+    /// refs map KiCad itself derives.
+    fn kicad_derived_nets(
+        cli: &std::path::Path,
+        sch: &std::path::Path,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+        use std::collections::{BTreeMap, BTreeSet};
+        let netfile = sch.with_file_name("derived.net");
+        let out = std::process::Command::new(cli)
+            .args([
+                "sch",
+                "export",
+                "netlist",
+                "--format",
+                "kicadsexpr",
+                "--output",
+            ])
+            .arg(&netfile)
+            .arg(sch)
+            .output()
+            .expect("run kicad-cli sch export netlist");
+        assert!(
+            out.status.success(),
+            "kicad-cli netlist export failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = std::fs::read_to_string(&netfile).unwrap();
+        let (_, root) = crate::sexpr::parse_sexpr(&text).expect("parse netlist s-expr");
+        let nets_node = root.find("nets").expect("netlist has (nets ...)");
+        let mut extracted: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for net in nets_node.find_all("net") {
+            let name = net
+                .find("name")
+                .and_then(|n| n.children().and_then(|c| c.get(1)).and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let mut pins = BTreeSet::new();
+            for node in net.find_all("node") {
+                let get = |key: &str| {
+                    node.find(key)
+                        .and_then(|n| n.children().and_then(|c| c.get(1)))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                pins.insert(format!("{}.{}", get("ref"), get("pin")));
+            }
+            if !pins.is_empty() {
+                extracted.insert(name, pins);
+            }
+        }
+        extracted
+    }
+
+    /// ERC gate: KiCad 9's own electrical-rules check reports zero errors on
+    /// the sheet the `nets` flow exports.  Warnings are printed but tolerated;
+    /// the two KiCad 9 currently raises on our output are both artifacts of
+    /// exporting a self-contained file rather than defects in it:
+    ///
+    /// - `lib_symbol_issues` — symbols are generated inline, so there is no
+    ///   on-disk `vcad` symbol library for KiCad to resolve against.
+    /// - `footprint_link_issues` — footprint ids reference the standard KiCad
+    ///   libraries, which need not be installed to check the schematic.
+    ///
+    /// `endpoint_off_grid` used to appear here too, from stored component
+    /// positions bypassing the grid snap; see `sheet_placements`.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_erc_reports_zero_errors() {
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_nets_flow_sheet("erc");
+        let report = sch.with_file_name("erc.json");
+        let out = std::process::Command::new(&cli)
+            .args(["sch", "erc", "--format", "json", "--output"])
+            .arg(&report)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch erc");
+        assert!(
+            out.status.success(),
+            "kicad-cli sch erc failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report).unwrap())
+                .expect("parse ERC json");
+        let mut errors = Vec::new();
+        for sheet in json["sheets"].as_array().unwrap_or(&Vec::new()) {
+            for v in sheet["violations"].as_array().unwrap_or(&Vec::new()) {
+                let line = format!(
+                    "[{}] {}: {}",
+                    v["severity"].as_str().unwrap_or("?"),
+                    v["type"].as_str().unwrap_or("?"),
+                    v["description"].as_str().unwrap_or("?")
+                );
+                if v["severity"].as_str() == Some("error") {
+                    errors.push(line);
+                } else {
+                    eprintln!("ERC warning (tolerated): {line}");
+                }
+            }
+        }
+        assert!(
+            errors.is_empty(),
+            "KiCad ERC errors:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Netlist equivalence — the real guarantee behind the `nets` flow: given
+    /// only data-declared connectivity (pins all at the (0,0) default), the
+    /// exporter synthesizes a layout whose geometry KiCad reads back as
+    /// *exactly* the netlist we declared.  Asserting against `sheet.nets`
+    /// rather than against our own expectations is what makes this a check on
+    /// the convention itself and not just on the writer's self-consistency.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_netlist_matches_declared_nets() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_nets_flow_sheet("netlist");
+        let netfile = sch.with_file_name("nets_flow.net");
+        let out = std::process::Command::new(&cli)
+            .args([
+                "sch",
+                "export",
+                "netlist",
+                "--format",
+                "kicadsexpr",
+                "--output",
+            ])
+            .arg(&netfile)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch export netlist");
+        assert!(
+            out.status.success(),
+            "kicad-cli netlist export failed: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        let text = std::fs::read_to_string(&netfile).unwrap();
+        let (_, root) = crate::sexpr::parse_sexpr(&text).expect("parse netlist s-expr");
+        let nets_node = root.find("nets").expect("netlist has (nets ...)");
+        let mut extracted: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for net in nets_node.find_all("net") {
+            let name = net
+                .find("name")
+                .and_then(|n| n.children().and_then(|c| c.get(1)).and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let mut pins = BTreeSet::new();
+            for node in net.find_all("node") {
+                let get = |key: &str| {
+                    node.find(key)
+                        .and_then(|n| n.children().and_then(|c| c.get(1)))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                pins.insert(format!("{}.{}", get("ref"), get("pin")));
+            }
+            if !pins.is_empty() {
+                extracted.insert(name, pins);
+            }
+        }
+
+        let declared: BTreeMap<String, BTreeSet<String>> = degenerate_pins_sheet()
+            .nets
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
+
+        assert_eq!(
+            extracted, declared,
+            "KiCad-derived connectivity differs from the declared sheet.nets"
+        );
+    }
+
+    /// Mixed-pin IC: degenerate stored positions, but real pin metadata.
+    fn sample_ic() -> SchematicComponent {
+        let pin = |number: &str, name: &str, pin_type: PinType| SchematicPin {
+            number: number.into(),
+            name: name.into(),
+            pin_type,
+            position: Vec2::new(0.0, 0.0),
+        };
+        SchematicComponent {
+            reference: "U1".into(),
+            value: "OPAMP".into(),
+            footprint_id: "Package_SO:SOIC-8".into(),
+            position: Vec2::new(100.33, 100.33),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![
+                pin("1", "VCC", PinType::PowerInput),
+                pin("2", "GND", PinType::PowerInput),
+                pin("3", "IN_A", PinType::Input),
+                pin("4", "IN_B", PinType::Input),
+                pin("5", "OUT", PinType::Output),
+            ],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Real pin metadata drives conventional edge assignment, with per-edge
+    /// angles and a nondegenerate body.
+    #[test]
+    fn metadata_pins_get_conventional_edges() {
+        let comp = sample_ic();
+        let layout = symbol_layout(&comp);
+        let (tl, br) = layout.body;
+        assert!(br.x > tl.x + 1.0, "body must have width");
+        assert!(tl.y > br.y + 1.0, "body must have height");
+
+        let find = |number: &str| {
+            let i = layout.pins.iter().position(|p| p.number == number).unwrap();
+            (layout.pins[i].position, layout.angles[i])
+        };
+        // VCC on the top edge, pointing down into the body.
+        let (vcc, a_vcc) = find("1");
+        assert!(vcc.y > tl.y, "VCC should sit above the body");
+        assert_eq!(a_vcc, 270.0);
+        // GND on the bottom edge, pointing up.
+        let (gnd, a_gnd) = find("2");
+        assert!(gnd.y < br.y, "GND should sit below the body");
+        assert_eq!(a_gnd, 90.0);
+        // Inputs on the left.
+        for n in ["3", "4"] {
+            let (p, a) = find(n);
+            assert!(p.x < tl.x, "input {n} should sit left of the body");
+            assert_eq!(a, 0.0);
+        }
+        // Output on the right.
+        let (out, a_out) = find("5");
+        assert!(out.x > br.x, "output should sit right of the body");
+        assert_eq!(a_out, 180.0);
+
+        // Every synthesized coordinate stays on the schematic grid.
+        for p in &layout.pins {
+            for v in [p.position.x, p.position.y] {
+                assert!((snap_grid(v) - v).abs() < 1e-9, "off-grid coordinate {v}");
+            }
+        }
+        // Distinct anchors: no two pins share a point.
+        for i in 0..layout.pins.len() {
+            for j in (i + 1)..layout.pins.len() {
+                assert!(
+                    layout.pins[i].position != layout.pins[j].position,
+                    "pins {i} and {j} collapsed onto one point"
+                );
+            }
+        }
+    }
+
+    /// Anonymous pins ("~"/empty names) keep the index-based left/right split,
+    /// geometry unchanged from before conventional placement existed.
+    #[test]
+    fn anonymous_pins_keep_index_split() {
+        let mut comp = sample_ic();
+        for p in &mut comp.pins {
+            p.name = "~".into();
+        }
+        let layout = symbol_layout(&comp);
+        // 5 anonymous pins -> 3 left, 2 right; nothing on the top/bottom rails.
+        let left = layout.pins.iter().filter(|p| p.position.x < 0.0).count();
+        let right = layout.pins.iter().filter(|p| p.position.x > 0.0).count();
+        assert_eq!((left, right), (3, 2));
+        assert!(layout.angles.iter().all(|a| *a == 0.0 || *a == 180.0));
+        // The historical +/-7.62 pin column.
+        assert!(layout.pins.iter().all(|p| p.position.x.abs() == 7.62));
+    }
+
+    /// A degenerate two-pin passive stays symmetric through the origin under
+    /// every branch, including when its pins carry rail names — that symmetry
+    /// is the gate the class artwork matches on.
+    #[test]
+    fn two_pin_parts_stay_symmetric_for_artwork() {
+        let mut comp = sample_ic();
+        comp.reference = "C1".into();
+        comp.value = "100nF".into();
+        comp.footprint_id = "Capacitor_SMD:C_0603".into();
+        comp.pins.truncate(2);
+        comp.pins[0].name = "VCC".into();
+        comp.pins[1].name = "GND".into();
+        comp.pins[0].pin_type = PinType::Passive;
+        comp.pins[1].pin_type = PinType::Passive;
+
+        let layout = symbol_layout(&comp);
+        let (a, b) = (layout.pins[0].position, layout.pins[1].position);
+        assert!(
+            (a.x + b.x).abs() < 1e-9 && (a.y + b.y).abs() < 1e-9,
+            "rail-named two-pin part lost origin symmetry: {a:?} {b:?}"
+        );
+    }
+
+    #[test]
+    fn metadata_layout_is_deterministic() {
+        let sheet = SchematicSheet {
+            title: None,
+            components: vec![sample_ic()],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: None,
+        };
+        assert_eq!(write_kicad_sch(&sheet), write_kicad_sch(&sheet));
+    }
+
+    /// A sheet whose IC carries real pin metadata, so the layout puts pins on
+    /// all four edges — including the top/bottom rails that only conventional
+    /// placement produces.
+    fn metadata_ic_sheet() -> SchematicSheet {
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert("VCC".to_string(), vec!["U1.1".to_string()]);
+        nets.insert("GND".to_string(), vec!["U1.2".to_string()]);
+        nets.insert("SIG_A".to_string(), vec!["U1.3".to_string()]);
+        nets.insert("SIG_B".to_string(), vec!["U1.4".to_string()]);
+        nets.insert("OUT".to_string(), vec!["U1.5".to_string()]);
+        SchematicSheet {
+            title: Some("metadata ic".into()),
+            components: vec![sample_ic()],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+            nets: Some(nets),
+        }
+    }
+
+    /// A top-edge power pin's net stub must run upward out of the symbol and
+    /// carry its global label at the far end.
+    #[test]
+    fn top_edge_power_pin_stub_goes_up() {
+        let sheet = metadata_ic_sheet();
+        let comp = &sheet.components[0];
+        let layout = symbol_layout(comp);
+        let i = layout.pins.iter().position(|p| p.number == "1").unwrap();
+        assert_eq!(layout.angles[i], 270.0, "VCC must be a top-edge pin");
+
+        let placements = sheet_placements(&sheet);
+        let start = pin_world(comp, placements[0], layout.pins[i].position);
+        // The stub runs outward from a top-edge pin: +y in the symbol's Y-up
+        // frame, which is a smaller y once mapped into the Y-down sheet.
+        let end = pin_world(
+            comp,
+            placements[0],
+            Vec2::new(
+                layout.pins[i].position.x,
+                layout.pins[i].position.y + PIN_PITCH,
+            ),
+        );
+        assert!(end.y < start.y, "top-edge stub should run up the sheet");
+
+        let text = write_kicad_sch(&sheet);
+        assert!(
+            text.contains(&format!("(xy {} {})", num(end.x), num(end.y))),
+            "stub should extend up from the pin"
+        );
+        assert!(text.contains("(global_label \"VCC\""));
+    }
+
+    /// The convention check that matters for conventional placement: KiCad
+    /// itself must derive the declared netlist from a symbol with pins on all
+    /// four edges. Top- and bottom-rail pins are new here — a wrong angle or a
+    /// stub drawn in the wrong direction would leave the label off the pin and
+    /// drop that net, which this catches and a self-consistency test cannot.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_netlist_matches_for_four_edge_symbol() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sheet = metadata_ic_sheet();
+
+        // Guard the premise: this sheet must actually exercise all four edges.
+        let angles = symbol_layout(&sheet.components[0]).angles;
+        for a in [0.0, 90.0, 180.0, 270.0] {
+            assert!(angles.contains(&a), "sheet does not exercise angle {a}");
+        }
+
+        let sch = export_sheet("netlist_ic", &sheet);
+        let extracted = kicad_derived_nets(&cli, &sch);
+        let declared: BTreeMap<String, BTreeSet<String>> = sheet
+            .nets
+            .unwrap()
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
+        assert_eq!(
+            extracted, declared,
+            "KiCad-derived connectivity differs from the declared sheet.nets"
+        );
+    }
+
+    /// A four-edge symbol must keep every connection point on KiCad's 1.27 mm
+    /// connection grid — the geometry claim conventional placement makes.
+    ///
+    /// This deliberately does *not* assert zero ERC errors. A sheet holding a
+    /// single IC always raises `power_pin_not_driven` and `pin_not_driven`:
+    /// nothing on it drives the power or signal inputs, which is a statement
+    /// about the fixture, not about pin placement. (The passives-only sheet in
+    /// `kicad_erc_reports_zero_errors` avoids them because passive pins are
+    /// exempt from the driven-ness rules.) The connectivity claim is covered by
+    /// `kicad_netlist_matches_for_four_edge_symbol`.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_four_edge_symbol_stays_on_grid() {
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let sch = export_sheet("erc_ic", &metadata_ic_sheet());
+        let report = sch.with_file_name("erc.json");
+        let out = std::process::Command::new(&cli)
+            .args(["sch", "erc", "--format", "json", "--output"])
+            .arg(&report)
+            .arg(&sch)
+            .output()
+            .expect("run kicad-cli sch erc");
+        let text = std::fs::read_to_string(&report).unwrap_or_default();
+        assert!(
+            !text.is_empty(),
+            "no ERC report produced: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !text.contains("endpoint_off_grid"),
+            "four-edge symbol put a connection point off the KiCad grid:\n{text}"
+        );
     }
 }

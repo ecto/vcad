@@ -287,6 +287,21 @@ describe("footprint discovery", () => {
     expect(qfn.matches[0].family).toBe("QFN");
   });
 
+  it("search_footprints resolves crystal / USB micro / HTSSOP queries", async () => {
+    // The RP2040-board repro: "crystal 3225" used to return 0 matches.
+    const xtal = out(await searchFootprints({ query: "crystal 3225" }));
+    expect(xtal.count).toBeGreaterThan(0);
+    expect(xtal.matches[0].family).toBe("Crystal");
+    const bare = out(await searchFootprints({ query: "3225" }));
+    expect((bare.matches as Array<{ family: string }>).map((m) => m.family)).toContain("Crystal");
+    const micro = out(await searchFootprints({ query: "USB micro" }));
+    expect(micro.matches[0].family).toBe("USB-Micro-B");
+    const htssop = out(await searchFootprints({ query: "HTSSOP-16" }));
+    expect(htssop.matches[0].family).toBe("HTSSOP");
+    const powerpad = out(await searchFootprints({ query: "powerpad" }));
+    expect(powerpad.matches[0].family).toBe("HTSSOP");
+  });
+
   it("search_footprints errors on an empty query", async () => {
     const res = await searchFootprints({ query: "  " });
     expect((res as { isError?: boolean }).isError).toBe(true);
@@ -307,6 +322,81 @@ describe("catalog parts (create_schematic resolves added FC parts)", () => {
     const names = comp.pins.map((p) => p.name);
     expect(names).toContain("CANH");
     expect(names).toContain("CANL");
+  });
+
+  it("resolves DRV8833 pins by part name (jellybean IC)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [{ ref: "U1", part: "DRV8833", footprint: "TSSOP-16", x: 0, y: 0 }],
+        nets: { VM: ["U1.13"], GND: ["U1.12"], AIN1: ["U1.16"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const comp = getSession(created.document_id).schematic!.components[0]!;
+    expect(comp.pins.length).toBe(16);
+    expect(comp.pins.find((p) => p.number === "16")!.name).toBe("AIN1");
+    expect(comp.pins.find((p) => p.number === "13")!.name).toBe("VM");
+  });
+
+  it("resolves RP2040 including the EP ground pad", async () => {
+    const created = out(
+      await createSchematic({
+        components: [{ ref: "U1", part: "RP2040", footprint: "QFN-56", x: 0, y: 0 }],
+        nets: { GND: ["U1.EP"], XIN: ["U1.20"], USB_DP: ["U1.47"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const comp = getSession(created.document_id).schematic!.components[0]!;
+    expect(comp.pins.length).toBe(57);
+    expect(comp.pins.find((p) => p.number === "EP")!.name).toBe("GND");
+  });
+});
+
+describe("two-terminal passive pin synthesis (create_schematic)", () => {
+  it("synthesizes pins 1/2 for a value-only chip passive", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          { ref: "C1", value: "100nF", footprint: "C_0603", x: 0, y: 0 },
+          { ref: "R1", value: "10k", footprint: "R_0402", x: 20, y: 0 },
+          { ref: "L1", value: "10uH", footprint: "L_0805", x: 40, y: 0 },
+          { ref: "D1", value: "1N4148", footprint: "D_SOD-123", x: 60, y: 0 },
+        ],
+        nets: { GND: ["C1.1", "R1.1"], SIG: ["C1.2", "R1.2", "L1.1", "D1.1"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    for (const comp of getSession(created.document_id).schematic!.components) {
+      expect(comp.pins.length, comp.ref).toBe(2);
+      expect(comp.pins.map((p) => p.number)).toEqual(["1", "2"]);
+      expect(comp.pins.every((p) => p.pin_type === "Passive")).toBe(true);
+    }
+    // No "has no pins" warnings for synthesized passives.
+    expect(
+      (created.warnings ?? []).filter((w: string) => w.includes("has no pins")),
+    ).toEqual([]);
+  });
+
+  it("explicit pins and non-passive footprints are untouched", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "C1",
+            value: "100nF",
+            footprint: "C_0603",
+            x: 0,
+            y: 0,
+            pins: [{ number: "A", name: "A", type: "Passive", x: 0, y: 0 }],
+          },
+          // Unknown IC footprint, no part: still warns instead of guessing pins.
+          { ref: "U1", value: "mystery", footprint: "SOIC-8", x: 20, y: 0 },
+        ],
+      }),
+    );
+    const comps = getSession(created.document_id).schematic!.components;
+    expect(comps[0]!.pins.map((p) => p.number)).toEqual(["A"]);
+    expect(comps[1]!.pins.length).toBe(0);
   });
 });
 
@@ -1416,6 +1506,46 @@ describe("ecad session flow", () => {
     // An unsupported extension is a clean tool error, not a throw.
     const bad = await exportKicad({ document_id: id, filename: "nope.brd" });
     expect(bad.isError).toBe(true);
+  });
+
+  it("export_kicad .kicad_pro exports a linked project bundle", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+
+    const result = await exportKicad({ document_id: id, filename: "demo.kicad_pro" });
+    if ((result as { isError?: boolean }).isError) {
+      // The checked-in kernel WASM predates exportKicadProject (artifacts are
+      // only refreshed on main); the tool must degrade with a clear error.
+      expect(JSON.stringify(result)).toContain("unavailable");
+      return;
+    }
+    const bundle = out(result);
+    expect(bundle.success).toBe(true);
+    expect(bundle.format).toBe("kicad_project");
+    expect(bundle.document_id).toBe(id);
+    const names = (bundle.files as Array<{ name: string }>).map((f) => f.name);
+    expect(names).toEqual(["demo.kicad_pro", "demo.kicad_sch", "demo.kicad_pcb"]);
+    const get = (n: string) =>
+      (bundle.files as Array<{ name: string; content: string }>).find((f) => f.name === n)!
+        .content;
+    // The project file is valid JSON recording the sheet root uuid.
+    const pro = JSON.parse(get("demo.kicad_pro"));
+    expect(pro.meta.filename).toBe("demo.kicad_pro");
+    const rootUuid = pro.sheets[0][0];
+    expect(get("demo.kicad_sch")).toContain(`(uuid "${rootUuid}")`);
+    // The board footprints are linked to schematic symbols (cross-probe paths).
+    expect(get("demo.kicad_pcb")).toContain('(sheetfile "demo.kicad_sch")');
+    expect(get("demo.kicad_pcb")).toMatch(/\(path "\/[0-9a-f-]{36}"\)/);
+
+    // A bare name (no extension) takes the same bundle path.
+    const bare = out(await exportKicad({ document_id: id, filename: "demo" }));
+    expect(bare.format).toBe("kicad_project");
   });
 
   it("export_gerber blocks a dirty (unconnected-net) board and returns the DRC summary", async () => {

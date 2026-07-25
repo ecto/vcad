@@ -153,6 +153,10 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
                 materialize_analysis_studies(&mut doc, feature);
                 continue;
             }
+            "design-constraints" => {
+                materialize_design_constraints(&mut doc, feature);
+                continue;
+            }
             _ => {}
         }
 
@@ -205,7 +209,8 @@ fn materialize_feature(
         | FeatureInput::DrawingSettings { .. }
         | FeatureInput::Schematic { .. }
         | FeatureInput::Molecule { .. }
-        | FeatureInput::AnalysisStudies { .. } => return None,
+        | FeatureInput::AnalysisStudies { .. }
+        | FeatureInput::DesignConstraints { .. } => return None,
         _ => {}
     }
 
@@ -1310,6 +1315,15 @@ fn materialize_molecule(doc: &mut Document, feature: &FeatureState) {
     }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
     {
         doc.molecule = serde_json::from_str(&json).ok();
+    }
+}
+
+fn materialize_design_constraints(doc: &mut Document, feature: &FeatureState) {
+    if let Some(FeatureInput::DesignConstraints {
+        constraints: Some(json),
+    }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
+    {
+        doc.constraints = serde_json::from_str(&json).unwrap_or_default();
     }
 }
 

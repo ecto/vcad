@@ -55,11 +55,49 @@ pub enum CheckSpec {
     /// Export to STEP, re-import, mass-props match within tolerance.
     StepRoundtrip { tolerance_pct: f64 },
 
-    /// ECAD design-rule check passes clean.
+    /// ECAD design-rule check passes clean. Fail-closed: a document with
+    /// no PCB fails.
     DrcClean,
 
-    /// ECAD electrical-rule check passes clean.
+    /// ECAD electrical-rule check passes clean. Fail-closed: a document
+    /// with no schematic fails.
     ErcClean,
+
+    /// Every named net's realized copper is one galvanically-connected
+    /// island (the NetIslands / UnconnectedNet / Short subset of DRC).
+    /// The ECAD analogue of `valid_solid`.
+    NetsFullyConnected,
+
+    /// Board outline bounding box fits inside `max_mm` ([x, y]).
+    BoardEnvelope { max_mm: [f64; 2] },
+
+    /// At least `min` placed footprints on the board. Anti-cheese floor —
+    /// stops degenerate near-empty boards from passing trivially.
+    ComponentCount { min: usize },
+
+    /// Decoupling discipline: every IC (footprint with at least
+    /// `min_ic_pads` pads) that has a pad on one of `power_nets` must have
+    /// a two-pad footprint (a capacitor) bridging that same power net to
+    /// one of `ground_nets`, with the cap's power pad within `max_mm` of
+    /// the IC's power pad. Fail-closed: a board with no qualifying IC
+    /// fails.
+    DecouplingProximity {
+        power_nets: Vec<String>,
+        ground_nets: Vec<String>,
+        max_mm: f64,
+        #[serde(default = "default_min_ic_pads")]
+        min_ic_pads: usize,
+    },
+
+    /// Suite E: the candidate schematic's netlist is graph-isomorphic to a
+    /// grader-only golden netlist (`golden` names an `inputs[]` entry by
+    /// kind). Refdes-agnostic: components match by class (R/C/L/LED/J/B/U,
+    /// classified from footprint + value) and pin-level connectivity.
+    NetlistIsomorphic { golden: String },
+
+    /// The board is fabrication-ready: DRC clean AND Gerber serialization
+    /// of every layer succeeds. The pcbeval P5 gate.
+    FabReady,
 
     /// DFM rule set passes for the named manufacturing process. The
     /// optional `rules` field is informational (legacy hint about which
@@ -188,6 +226,12 @@ impl CheckSpec {
             CheckSpec::StepRoundtrip { .. } => "step_roundtrip",
             CheckSpec::DrcClean => "drc_clean",
             CheckSpec::ErcClean => "erc_clean",
+            CheckSpec::NetsFullyConnected => "nets_fully_connected",
+            CheckSpec::BoardEnvelope { .. } => "board_envelope",
+            CheckSpec::ComponentCount { .. } => "component_count",
+            CheckSpec::DecouplingProximity { .. } => "decoupling_proximity",
+            CheckSpec::NetlistIsomorphic { .. } => "netlist_isomorphic",
+            CheckSpec::FabReady => "fab_ready",
             CheckSpec::Dfm { .. } => "dfm",
             CheckSpec::RefactorInvariant { .. } => "refactor_invariant",
             CheckSpec::BodyValid => "body_valid",
@@ -235,4 +279,10 @@ impl CheckSpec {
     pub fn is_suite_d(&self) -> bool {
         matches!(self, CheckSpec::ShapeSimilarityChamfer { .. })
     }
+}
+
+/// Serde default for `DecouplingProximity::min_ic_pads`: 8 pads —
+/// catches QFPs and SOICs while excluding SOT-23-class regulators.
+fn default_min_ic_pads() -> usize {
+    8
 }

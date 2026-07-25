@@ -1,0 +1,153 @@
+{
+  "schema_version": 0,
+  "task_id": "p1-decoupled-mcu-01",
+  "task_sha256": "4b296c97ea3e47bba3b2c3c9b1e58e32d729a43e4cceaafbc6b655d29b326cae",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          50
+        ]
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 4
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 5,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T172710Z-af3e",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-flash",
+    "name": "AI Gateway (MCP, google/gemini-2.5-flash)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-flash",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p1-decoupled-mcu-01",
+    "rendered": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors adjacent to its power pins, and a 4-pin programming header. Board outline at most 50mm × 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected — decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 4.536667000000023
+      },
+      {
+        "n": 1,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1_eIpGvVaPTwLh"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0244170000005397
+      }
+    ],
+    "tokens": {
+      "input": 45434,
+      "output": 0,
+      "total": 45434,
+      "cache_creation_input": 0,
+      "cache_read_input": 0
+    },
+    "wallclock_sec": 14.178874042
+  },
+  "output": {
+    "vcad_path": "20260722T172710Z-af3e.vcad",
+    "vcad_sha256": "88702a434c8a56dd90e18ceeb72570261b14b6a1853d5ae2404b15d12f82630a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T17:27:10.881Z",
+    "ended_at": "2026-07-22T17:27:25.070Z"
+  },
+  "signature": null
+}

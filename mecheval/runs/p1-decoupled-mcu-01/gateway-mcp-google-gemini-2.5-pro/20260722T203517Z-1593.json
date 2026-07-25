@@ -1,0 +1,218 @@
+{
+  "schema_version": 0,
+  "task_id": "p1-decoupled-mcu-01",
+  "task_sha256": "7c10ee3459f7921c0bc67a197732c54d000e70285d5c71906b04d8c823c5182e",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          50
+        ]
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 4
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    },
+    {
+      "n": 4,
+      "type": "decoupling_proximity",
+      "params": {
+        "type": "decoupling_proximity",
+        "power_nets": [
+          "VCC",
+          "3V3",
+          "VDD"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "max_mm": 6,
+        "min_ic_pads": 8
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no PCB in document (fail-closed: drc/board checks require a PcbBoard node)"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 5,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T203517Z-1593",
+  "model": {
+    "id": "gateway-mcp-google-gemini-2.5-pro",
+    "name": "AI Gateway (MCP, google/gemini-2.5-pro)",
+    "provider": "google",
+    "params": {
+      "mode": "mcp",
+      "model": "google/gemini-2.5-pro",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p1-decoupled-mcu-01",
+    "rendered": "Design a printed circuit board carrying a microcontroller in a quad flat package, two 100nF decoupling capacitors placed within 6mm (pad-to-pad) of the MCU power pins they serve, and a 4-pin programming header. Board outline at most 50mm × 50mm, two copper layers. Declare power (VCC, GND) and programming signal nets, place all four components, and route every net so its copper is fully connected — decoupling capacitors must actually connect the MCU power pins to VCC and GND. The board must pass a design-rule check clean. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 3.0844160000000045
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "nets": {
+            "GND": [
+              "U1.3",
+              "U1.5",
+              "U1.21",
+              "C1.2",
+              "C2.2",
+              "J1.2"
+            ],
+            "VCC": [
+              "U1.4",
+              "C1.1",
+              "J1.1"
+            ],
+            "PROG_2": [
+              "U1.28",
+              "J1.4"
+            ],
+            "PROG_1": [
+              "U1.27",
+              "J1.3"
+            ],
+            "AVCC": [
+              "U1.18",
+              "C2.1"
+            ]
+          },
+          "components": [
+            {
+              "y": 50,
+              "ref": "U1",
+              "x": 50,
+              "part": "ATmega328P-AU",
+              "footprint": "Package_QFP:TQFP-32_7x7mm_P0.8mm"
+            },
+            {
+              "x": 100,
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "value": "100nF",
+              "y": 50,
+              "ref": "C1"
+            },
+            {
+              "ref": "C2",
+              "y": 80,
+              "footprint": "Capacitor_SMD:C_0805_2012Metric",
+              "value": "100nF",
+              "x": 100
+            },
+            {
+              "ref": "J1",
+              "y": 50,
+              "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
+              "part": "CONN_01x04",
+              "x": 150
+            }
+          ]
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.9472919999971054
+      },
+      {
+        "n": 2,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1_d_dATBqRt0HT"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2559579999942798
+      }
+    ],
+    "tokens": {
+      "input": 91509,
+      "output": 4904,
+      "total": 96413,
+      "cache_creation_input": 0,
+      "cache_read_input": 43117
+    },
+    "wallclock_sec": 73.118761583
+  },
+  "output": {
+    "vcad_path": "20260722T203517Z-1593.vcad",
+    "vcad_sha256": "88702a434c8a56dd90e18ceeb72570261b14b6a1853d5ae2404b15d12f82630a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T20:35:17.730Z",
+    "ended_at": "2026-07-22T20:36:30.860Z"
+  },
+  "signature": null
+}

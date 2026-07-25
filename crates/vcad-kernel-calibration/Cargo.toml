@@ -1,0 +1,12 @@
+[package]
+name = "vcad-kernel-calibration"
+description = "Print-then-measure calibration statistics: prediction/measurement joins, axis-scale fits, printer-profile suggestions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ryu = "1"

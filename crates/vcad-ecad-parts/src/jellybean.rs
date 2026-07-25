@@ -402,7 +402,10 @@ mod tests {
                     .variants
                     .iter()
                     .find(|v| v.footprints.iter().any(|c| c == fp));
-                let actual = variant.map_or(p.pins.len(), |v| v.pins.len());
+                // The exposed thermal pad ("EP") is extra-to-count: QFN-56
+                // still reads 56 even though the die paddle is a 57th terminal.
+                let count = |pins: &[RawPin]| pins.iter().filter(|q| q.number != "EP").count();
+                let actual = variant.map_or(count(&p.pins), |v| count(&v.pins));
                 assert_eq!(
                     actual, expected,
                     "{} footprint {fp} implies {expected} pins but the pinout has {actual}",
@@ -441,7 +444,16 @@ mod tests {
             ("TPS562200", "SOT-23-6", 6),
             ("STM32G431CBT6", "LQFP-48", 48),
             ("STM32G431", "LQFP-48", 48), // alias
-            ("RP2040", "QFN-56", 56),
+            // 56 leads + the EP ground paddle.
+            ("RP2040", "QFN-56", 57),
+            ("DRV8833", "TSSOP-16", 16),
+            ("DRV8837", "WSON-8", 8),
+            ("W25Q32", "SOIC-8", 8),
+            ("W25Q128", "SOIC-8", 8), // alias
+            ("CH340G", "SOIC-16", 16),
+            ("CH340", "SOIC-16", 16), // alias
+            ("TP4056", "SOP-8", 8),
+            ("Crystal-3225", "Crystal_SMD_3225-4Pin", 4),
         ];
         for (name, fp, n) in cases {
             let def = resolve_part_def(name, Some(fp))
@@ -527,6 +539,28 @@ mod tests {
         assert_eq!(part.pins[7].y, 0.0);
         assert_eq!(part.pins[4].x, SYMBOL_WIDTH);
         assert!(part.pins[4].y > part.pins[7].y);
+    }
+
+    /// The RP2040's only ground is the QFN-56 exposed pad, numbered "EP" to
+    /// match the pad number the footprint engine generates.
+    #[test]
+    fn rp2040_has_ep_ground_and_key_pins() {
+        let part = resolve_part_def("RP2040", Some("QFN-56")).unwrap();
+        let pin = |n: &str| part.pins.iter().find(|p| p.number == n).unwrap();
+        assert_eq!(pin("EP").name, "GND");
+        assert_eq!(pin("EP").pin_type, "PowerInput");
+        assert_eq!(pin("20").name, "XIN");
+        assert_eq!(pin("21").name, "XOUT");
+        assert_eq!(pin("46").name, "USB_DM");
+        assert_eq!(pin("47").name, "USB_DP");
+    }
+
+    #[test]
+    fn two_pin_crystal_is_passive() {
+        let part = resolve_part_def("HC-49S", None).unwrap();
+        assert_eq!(part.name, "Crystal");
+        assert_eq!(part.pins.len(), 2);
+        assert!(part.pins.iter().all(|p| p.pin_type == "Passive"));
     }
 
     #[test]

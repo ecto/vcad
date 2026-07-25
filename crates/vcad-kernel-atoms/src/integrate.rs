@@ -2,12 +2,13 @@
 //!
 //! Positions are in Å, velocities in Å/fs, forces in eV/Å, masses in amu; the
 //! [`crate::units::FORCE_TO_ACCEL`] factor keeps `a = f·factor/m` consistent so
-//! energy is conserved in NVE.
+//! energy is conserved in NVE. The step numerics delegate to
+//! [`phyz_md::field::verlet`]; this type binds them to [`AtomSystem`] and a
+//! [`ForceField`].
 
 use crate::potential::ForceField;
 use crate::system::AtomSystem;
-use crate::units::{FORCE_TO_ACCEL, KB_EV_PER_K};
-use crate::vec3;
+use phyz_md::field::verlet::{verlet_step, Berendsen};
 
 /// Thermostat configuration for constant-temperature (NVT) runs.
 #[derive(Debug, Clone, Copy)]
@@ -52,55 +53,34 @@ impl<'a> Integrator<'a> {
 
     /// Advance the system by one velocity-Verlet step.
     pub fn step(&mut self, sys: &mut AtomSystem) {
-        let n = sys.len();
-        let dt = self.dt;
-        // v(t+dt/2) = v(t) + 0.5 dt a(t); x(t+dt) = x(t) + dt v(t+dt/2)
-        for i in 0..n {
-            let inv_m = FORCE_TO_ACCEL / self.masses(sys, i);
-            let a = vec3::scale(self.forces[i], inv_m);
-            vec3::add_assign(&mut sys.velocities[i], vec3::scale(a, 0.5 * dt));
-            let dx = vec3::scale(sys.velocities[i], dt);
-            vec3::add_assign(&mut sys.positions[i], dx);
-        }
-        // Recompute forces at new positions.
-        let (pot, forces) = self.ff.energy_forces(sys);
-        self.forces = forces;
-        self.potential = pot;
-        // v(t+dt) = v(t+dt/2) + 0.5 dt a(t+dt)
-        for i in 0..n {
-            let inv_m = FORCE_TO_ACCEL / self.masses(sys, i);
-            let a = vec3::scale(self.forces[i], inv_m);
-            vec3::add_assign(&mut sys.velocities[i], vec3::scale(a, 0.5 * dt));
-        }
-        // Berendsen velocity rescale toward target temperature.
-        if let Some(t) = self.thermostat {
-            self.apply_berendsen(sys, t);
-        }
-    }
-
-    #[inline]
-    fn masses(&self, sys: &AtomSystem, i: usize) -> f64 {
-        sys.masses[i]
-    }
-
-    fn apply_berendsen(&self, sys: &mut AtomSystem, t: Thermostat) {
-        let n = sys.len();
-        if n == 0 {
-            return;
-        }
-        let dof = 3.0 * n as f64;
-        let ke = sys.kinetic_energy();
-        let cur_t = 2.0 * ke / (dof * KB_EV_PER_K);
-        if cur_t <= 1e-12 {
-            return;
-        }
-        // lambda = sqrt(1 + dt/tau (T0/T - 1))
-        let ratio = t.target_k / cur_t;
-        let lambda2 = 1.0 + (self.dt / t.tau_fs) * (ratio - 1.0);
-        let lambda = lambda2.max(0.0).sqrt();
-        for v in &mut sys.velocities {
-            *v = vec3::scale(*v, lambda);
-        }
+        let ff = self.ff;
+        let thermostat = self.thermostat.map(|t| Berendsen {
+            target_k: t.target_k,
+            tau_fs: t.tau_fs,
+        });
+        // Move positions/velocities into locals so phyz-md can integrate them
+        // while the force closure re-materializes positions on `sys` for the
+        // AtomSystem-based ForceField. (Force fields see the system with the
+        // trial positions; velocities are restored after the step.)
+        let masses = sys.masses.clone();
+        let mut positions = std::mem::take(&mut sys.positions);
+        let mut velocities = std::mem::take(&mut sys.velocities);
+        verlet_step(
+            self.dt,
+            thermostat,
+            &mut positions,
+            &mut velocities,
+            &masses,
+            &mut self.forces,
+            &mut self.potential,
+            |pos| {
+                sys.positions.clear();
+                sys.positions.extend_from_slice(pos);
+                ff.energy_forces(sys)
+            },
+        );
+        sys.positions = positions;
+        sys.velocities = velocities;
     }
 
     /// Total energy (potential + kinetic) in eV given the current system.

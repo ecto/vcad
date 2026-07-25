@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+vcad-kernel-acoustics = { workspace = true }
 vcad-kernel-math = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-geom = { workspace = true }
@@ -30,11 +31,15 @@ vcad-kernel-topopt = { workspace = true }
 vcad-kernel-particle = { workspace = true }
 vcad-kernel-antenna = { workspace = true }
 vcad-kernel-em = { workspace = true }
+vcad-kernel-enclosure = { workspace = true }
 vcad-kernel-neutronics = { workspace = true }
+vcad-kernel-qcd = { workspace = true }
 vcad-kernel-photonics = { workspace = true }
 vcad-kernel-thermal = { workspace = true }
+vcad-kernel-flow = { workspace = true }
 vcad-kernel-fea = { workspace = true }
 vcad-kernel-tolerance = { workspace = true }
+vcad-kernel-calibration = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

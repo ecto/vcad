@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod animation;
+pub mod constraints;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
@@ -1889,6 +1890,12 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clearance_specs: Vec<ClearanceSpec>,
 
+    /// Document-level design constraints spanning sketches, PCB layout, and
+    /// mechanical parts. Solved by the design-constraint solver and
+    /// re-verified fail-closed as receipt claims (Holds/Stale/Violated).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<constraints::DesignConstraint>,
+
     /// Persisted solver studies (structural FEA, tolerance stackup, …) for
     /// the unified Analyze mode. Like `clearance_specs`, studies are
     /// re-verified against the current geometry rather than computed once —
@@ -2116,6 +2123,7 @@ impl Default for Document {
             parameters: HashMap::new(),
             bindings: Bindings::new(),
             clearance_specs: Vec::new(),
+            constraints: Vec::new(),
             analysis_studies: Vec::new(),
             drawing: None,
             timeline: None,
@@ -2905,5 +2913,8 @@ mod ts_tests {
         // Re-runnable verification receipt (not reachable from Document).
         crate::ecad::Receipt::export_all().expect("Receipt export failed");
         crate::ecad::ReceiptStatus::export_all().expect("ReceiptStatus export failed");
+        // Timeline sampling output (produced by sample_sequence, not
+        // reachable from Document).
+        crate::animation::SequenceFrame::export_all().expect("SequenceFrame export failed");
     }
 }

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-23-router-pad-entry-neckdown",
+  "version": "0.9.4",
+  "date": "2026-07-23",
+  "category": "fix",
+  "title": "Autorouter necks wide net classes into fine-pitch pads",
+  "summary": "A net class wider than its target pad now necks down for the final pad approach instead of being silently unroutable, and a net that still fails names the pad-landing cause in its diagnostic.",
+  "features": ["ecad", "autorouter"],
+  "mcpTools": ["route_nets"]
+}

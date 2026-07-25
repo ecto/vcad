@@ -280,6 +280,10 @@ pub struct PcbRenderOpts {
     pub hero: bool,
     /// Nets/refs to highlight.
     pub highlight: Highlight,
+    /// Skip the opaque canvas rectangle (and its grid) so the board sits
+    /// on whatever the page provides — leaderboard tiles, docs, decks.
+    /// The board substrate itself stays opaque.
+    pub transparent: bool,
 }
 
 impl Default for PcbRenderOpts {
@@ -287,6 +291,7 @@ impl Default for PcbRenderOpts {
         PcbRenderOpts {
             theme: Theme::Dark,
             grid: None,
+            transparent: false,
             show_values: true,
             show_net_labels: false,
             show_ratsnest: true,
@@ -1108,17 +1113,20 @@ pub fn render_pcb_svg_opts(
     let hl_on = hl.active();
 
     let bounds = board_bounds(pcb);
+    // Transparent renders are board-first tiles: shrink the margin so the
+    // board fills the frame instead of floating on canvas.
+    let margin_mm = if opts.transparent { 1.0 } else { MARGIN_MM };
     let xf = Xf {
         min_x: bounds.min_x,
         max_y: bounds.max_y,
         scale,
-        margin_px: MARGIN_MM * scale,
+        margin_px: margin_mm * scale,
     };
 
     let span_x = (bounds.max_x - bounds.min_x).max(0.0);
     let span_y = (bounds.max_y - bounds.min_y).max(0.0);
-    let w = span_x * scale + 2.0 * MARGIN_MM * scale;
-    let h = span_y * scale + 2.0 * MARGIN_MM * scale;
+    let w = span_x * scale + 2.0 * margin_mm * scale;
+    let h = span_y * scale + 2.0 * margin_mm * scale;
 
     let want = |l: PcbLayer| layers.contains(&l);
     let show_grid = opts.grid.unwrap_or_else(|| opts.theme.grid_default());
@@ -1156,13 +1164,15 @@ pub fn render_pcb_svg_opts(
 
     // ── body: background + grid + board (drawn first, behind ranked items) ──
     let mut body = String::new();
-    let _ = write!(
-        body,
-        "<rect x=\"0\" y=\"0\" width=\"{w:.2}\" height=\"{h:.2}\" fill=\"{}\"/>",
-        pal.background
-    );
-    if show_grid {
-        draw_grid(&mut body, w, h, scale, &pal);
+    if !opts.transparent {
+        let _ = write!(
+            body,
+            "<rect x=\"0\" y=\"0\" width=\"{w:.2}\" height=\"{h:.2}\" fill=\"{}\"/>",
+            pal.background
+        );
+        if show_grid {
+            draw_grid(&mut body, w, h, scale, &pal);
+        }
     }
     draw_board(&mut body, &xf, &pcb.outline, &pal);
 

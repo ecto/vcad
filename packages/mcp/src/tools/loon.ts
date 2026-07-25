@@ -6,7 +6,7 @@ import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
-import { documents, getSession } from "./session-core.js";
+import { documents, getSession, recordTriangles } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -146,7 +146,10 @@ export const toolDefs: ToolDef[] = [
         if (doc) {
           if (targetId) documents.set(targetId, doc);
           const integrity = computeIntegrity(doc, ctx.engine);
-          if (integrity) appendIntegrity(result, integrity);
+          if (integrity) {
+            appendIntegrity(result, integrity);
+            if (targetId) recordTriangles(targetId, integrity.triangles);
+          }
         }
       } catch {
         // Best-effort: never fail the authoring call over accounting.

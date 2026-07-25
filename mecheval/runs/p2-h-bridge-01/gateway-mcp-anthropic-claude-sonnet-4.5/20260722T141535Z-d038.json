@@ -1,0 +1,419 @@
+{
+  "schema_version": 0,
+  "task_id": "p2-h-bridge-01",
+  "task_sha256": "9974c80665b923f741696805fad0e73eaf3db1dd7fe4d28e595814d6fe7105f1",
+  "checks": [
+    {
+      "n": 0,
+      "type": "board_envelope",
+      "params": {
+        "type": "board_envelope",
+        "max_mm": [
+          50,
+          40
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "boards": [
+          {
+            "height_mm": 40,
+            "width_mm": 50
+          }
+        ],
+        "max_mm": [
+          50,
+          40
+        ]
+      }
+    },
+    {
+      "n": 1,
+      "type": "component_count",
+      "params": {
+        "type": "component_count",
+        "min": 6
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "footprints": 6,
+        "min": 6
+      }
+    },
+    {
+      "n": 2,
+      "type": "nets_fully_connected",
+      "params": {
+        "type": "nets_fully_connected"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "connectivity_violations": 0,
+        "sample": []
+      }
+    },
+    {
+      "n": 3,
+      "type": "drc_clean",
+      "params": {
+        "type": "drc_clean"
+      },
+      "result": "pass",
+      "details": {
+        "boards": 1,
+        "sample": [],
+        "violations": 0
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260722T141535Z-d038",
+  "model": {
+    "id": "gateway-mcp-anthropic-claude-sonnet-4.5",
+    "name": "AI Gateway (MCP, anthropic/claude-sonnet-4.5)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "anthropic/claude-sonnet-4.5",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "p2-h-bridge-01",
+    "rendered": "Design a printed circuit board for a discrete H-bridge motor driver: four MOSFETs in SOT-23 or larger packages, a 2-pin motor output header, and a 3-pin logic/power input header — at least six footprints. Board outline at most 50mm × 40mm, two copper layers. Declare nets VMOT, GND, OUT_A, OUT_B, and the two gate-drive signals; place components and route every net so its copper is fully connected. Motor current paths (VMOT, OUT_A, OUT_B, GND) should use wide traces. The board must pass a design-rule check clean: no clearance violations, no split nets, no shorts between the half-bridges. Output a .vcad document containing the board as a PcbBoard node.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.5646250000000066
+      },
+      {
+        "n": 1,
+        "tool": "create_schematic",
+        "args": {
+          "title": "H-Bridge Motor Driver",
+          "components": [
+            {
+              "ref": "Q1",
+              "value": "NMOS",
+              "footprint": "SOT-23",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 10
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive",
+                  "x": 20,
+                  "y": 5
+                }
+              ],
+              "x": 50,
+              "y": 50
+            },
+            {
+              "ref": "Q2",
+              "value": "NMOS",
+              "footprint": "SOT-23",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 10
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive",
+                  "x": 20,
+                  "y": 5
+                }
+              ],
+              "x": 50,
+              "y": 100
+            },
+            {
+              "ref": "Q3",
+              "value": "NMOS",
+              "footprint": "SOT-23",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 10
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive",
+                  "x": 20,
+                  "y": 5
+                }
+              ],
+              "x": 150,
+              "y": 50
+            },
+            {
+              "ref": "Q4",
+              "value": "NMOS",
+              "footprint": "SOT-23",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "G",
+                  "type": "Input",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "S",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 10
+                },
+                {
+                  "number": "3",
+                  "name": "D",
+                  "type": "Passive",
+                  "x": 20,
+                  "y": 5
+                }
+              ],
+              "x": 150,
+              "y": 100
+            },
+            {
+              "ref": "J1",
+              "value": "POWER_IN",
+              "footprint": "PinHeader_1x03_P2.54mm_Vertical",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "VMOT",
+                  "type": "PowerInput",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "GND",
+                  "type": "PowerInput",
+                  "x": 0,
+                  "y": 10
+                },
+                {
+                  "number": "3",
+                  "name": "LOGIC",
+                  "type": "Input",
+                  "x": 0,
+                  "y": 20
+                }
+              ],
+              "x": 20,
+              "y": 75
+            },
+            {
+              "ref": "J2",
+              "value": "MOTOR_OUT",
+              "footprint": "TerminalBlock_1x02_P5.08mm_Horizontal",
+              "pins": [
+                {
+                  "number": "1",
+                  "name": "OUT_A",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "number": "2",
+                  "name": "OUT_B",
+                  "type": "Passive",
+                  "x": 0,
+                  "y": 10
+                }
+              ],
+              "x": 180,
+              "y": 75
+            }
+          ],
+          "nets": {
+            "VMOT": [
+              "J1.1",
+              "Q1.3",
+              "Q3.3"
+            ],
+            "GND": [
+              "J1.2",
+              "Q2.2",
+              "Q4.2"
+            ],
+            "OUT_A": [
+              "Q1.2",
+              "Q2.3",
+              "J2.1"
+            ],
+            "OUT_B": [
+              "Q3.2",
+              "Q4.3",
+              "J2.2"
+            ],
+            "GATE_A_HI": [
+              "Q1.1"
+            ],
+            "GATE_A_LO": [
+              "Q2.1"
+            ],
+            "GATE_B_HI": [
+              "Q3.1"
+            ],
+            "GATE_B_LO": [
+              "Q4.1"
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7392500000005384
+      },
+      {
+        "n": 2,
+        "tool": "place_components",
+        "args": {
+          "document_id": "doc_2_1eCdHr2fF7y1",
+          "board_width": 50,
+          "board_height": 40,
+          "strategy": "grid"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.161292000000685
+      },
+      {
+        "n": 3,
+        "tool": "set_design_rules",
+        "args": {
+          "document_id": "doc_2_1eCdHr2fF7y1",
+          "clearance": 0.2,
+          "track_width": 0.25,
+          "via_diameter": 0.8,
+          "via_drill": 0.4,
+          "classes": [
+            {
+              "name": "power",
+              "nets": [
+                "VMOT",
+                "GND",
+                "OUT_A",
+                "OUT_B"
+              ],
+              "track_width": 1,
+              "clearance": 0.3
+            }
+          ]
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2549159999980475
+      },
+      {
+        "n": 4,
+        "tool": "route_nets",
+        "args": {
+          "document_id": "doc_2_1eCdHr2fF7y1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.868875000000116
+      },
+      {
+        "n": 5,
+        "tool": "run_drc",
+        "args": {
+          "document_id": "doc_2_1eCdHr2fF7y1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.5164999999979045
+      },
+      {
+        "n": 6,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_2_1eCdHr2fF7y1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.651624999998603
+      }
+    ],
+    "tokens": {
+      "input": 467598,
+      "output": 2079,
+      "total": 469677
+    },
+    "wallclock_sec": 51.863690709000004
+  },
+  "output": {
+    "vcad_path": "20260722T141535Z-d038.vcad",
+    "vcad_sha256": "ece1527597064ab93521f0857dd044d90428673b6b26c4c2e69def44fec7843d",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-07-22T14:15:35.175Z",
+    "ended_at": "2026-07-22T14:16:27.083Z"
+  },
+  "signature": null
+}
