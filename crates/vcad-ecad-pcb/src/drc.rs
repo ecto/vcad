@@ -2928,6 +2928,82 @@ pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
     continuity_of(pcb, &nodes, &mut dsu, net)
 }
 
+/// How connected one net's pads actually are on the finished board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetPadGroups {
+    /// The net.
+    pub net: String,
+    /// Pads carrying this net.
+    pub pads: usize,
+    /// Disjoint copper groups those pads land in. `1` is fully connected;
+    /// `n` means `n - 1` connections are still missing.
+    pub pad_groups: usize,
+    /// Traces and vias carrying this net. `0` with `pad_groups > 1` is a net
+    /// the router placed nothing for (or placed copper that was later pruned).
+    pub copper: usize,
+}
+
+/// Score every declared net's realized connectivity in one pass.
+///
+/// This is the board's *electrical* answer, and it is deliberately the same
+/// answer [`DrcRuleType::UnconnectedNet`] gives — same pad components, same
+/// union-find — so the two can never drift: a net here with `pad_groups > 1` is
+/// exactly a net that rule reports.
+///
+/// It exists because the router's own `routability` measures something else and
+/// is easy to mistake for this. That score is the fraction of attempted
+/// *connections* that closed, computed inside `route_all`; it says nothing
+/// about nets whose remaining connections were never attempted, and — because
+/// it is computed before [`crate::router::si_finish`] rips, re-routes and prunes
+/// — nothing about copper removed afterwards. On the full CM5 the two read
+/// 0.988 and 254-of-408-nets-unconnected at the same time, with 95 of those
+/// nets holding no copper at all. Both numbers were right about their own
+/// question; only this one is about whether the board works.
+///
+/// Nets with a single pad are omitted: there is nothing to connect.
+pub fn net_pad_groups(pcb: &Pcb) -> Vec<NetPadGroups> {
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut pads: HashMap<String, usize> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if node.pad.is_none() || node.net.is_empty() {
+            continue;
+        }
+        *pads.entry(node.net.clone()).or_default() += 1;
+        let root = dsu.find(i);
+        let entry = groups.entry(node.net.clone()).or_default();
+        if !entry.contains(&root) {
+            entry.push(root);
+        }
+    }
+    let mut copper: HashMap<&str, usize> = HashMap::new();
+    for t in &pcb.traces {
+        *copper.entry(t.net.as_str()).or_default() += 1;
+    }
+    for v in &pcb.vias {
+        *copper.entry(v.net.as_str()).or_default() += 1;
+    }
+
+    let mut out: Vec<NetPadGroups> = groups
+        .into_iter()
+        .filter_map(|(net, roots)| {
+            let pads = *pads.get(&net)?;
+            if pads < 2 {
+                return None;
+            }
+            let copper = copper.get(net.as_str()).copied().unwrap_or(0);
+            Some(NetPadGroups {
+                pad_groups: roots.len(),
+                net,
+                pads,
+                copper,
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.net.cmp(&b.net));
+    out
+}
+
 /// True if a net name looks like a power/ground rail — the nets whose copper is
 /// expected to be a continuous plane, so a [`build_receipt`](crate) verdict
 /// should check their realized continuity. Conservative + case-insensitive:
@@ -4423,6 +4499,77 @@ mod tests {
             violations
         );
         assert!(shorts[0].message.contains('1') && shorts[0].message.contains('2'));
+    }
+
+    /// The census agrees with the rule it mirrors, net for net — the whole
+    /// point of it is to be the same answer in a form you can total up.
+    #[test]
+    fn net_pad_groups_agrees_with_the_unconnected_rule() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // "split" has two pads and no copper; "joined" has two pads and a trace.
+        pcb.footprints.push(footprint(
+            "J1",
+            (10.0, 10.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "split")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (60.0, 60.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "split")],
+        ));
+        pcb.footprints.push(footprint(
+            "J3",
+            (20.0, 30.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "joined")],
+        ));
+        pcb.footprints.push(footprint(
+            "J4",
+            (30.0, 30.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "joined")],
+        ));
+        pcb.traces.push(Trace {
+            start: Vec2::new(20.0, 30.0),
+            end: Vec2::new(30.0, 30.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "joined".into(),
+            source: None,
+        });
+
+        let census = net_pad_groups(&pcb);
+        let by_net = |n: &str| {
+            census
+                .iter()
+                .find(|c| c.net == n)
+                .unwrap_or_else(|| panic!("{n} missing from census: {census:?}"))
+                .clone()
+        };
+        assert_eq!(by_net("split").pad_groups, 2);
+        assert_eq!(by_net("split").copper, 0, "no trace was placed for it");
+        assert_eq!(by_net("joined").pad_groups, 1);
+        assert_eq!(by_net("joined").copper, 1);
+
+        // And the totals match the rule's own verdicts exactly.
+        let flagged: std::collections::BTreeSet<String> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .filter_map(|v| v.message.split('\'').nth(1).map(|s| s.to_string()))
+            .collect();
+        let census_split: std::collections::BTreeSet<String> = census
+            .iter()
+            .filter(|c| c.pad_groups > 1)
+            .map(|c| c.net.clone())
+            .collect();
+        assert_eq!(
+            flagged, census_split,
+            "the census and UnconnectedNet must never disagree"
+        );
     }
 
     /// A net whose two pads are not connected by copper reports UnconnectedNet.

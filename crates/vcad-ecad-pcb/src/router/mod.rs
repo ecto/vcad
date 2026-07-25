@@ -73,7 +73,7 @@ pub use pair::{census_pairs, polish_pairs, PairBail, PairCensus, PairCensusRow};
 pub use si_claims::coupled_fraction as pair_coupled_fraction;
 
 /// What [`si_finish`] changed.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SiFinishReport {
     /// Uncoupled pairs re-routed coupled by the polish stage.
     pub polished: usize,
@@ -85,6 +85,17 @@ pub struct SiFinishReport {
     pub meandered: usize,
     /// Pairs still over the skew tolerance after every stage.
     pub over_tolerance: usize,
+    /// Nets this pass left with no copper at all.
+    ///
+    /// The stages here rip and re-route, and the prune that follows them
+    /// removes whatever came loose — so a net can arrive routed and leave with
+    /// nothing. `route_all` computed its routed/unrouted split and its
+    /// `routability` before any of that ran and cannot know, which is how the
+    /// full CM5 came to report 30 unrouted nets on a board where 95 multi-pad
+    /// nets held no copper. A caller reporting either number has to fold this
+    /// in; [`crate::drc::net_pad_groups`] is the board-level check that does
+    /// not depend on anyone remembering to.
+    pub emptied_nets: Vec<String>,
 }
 
 /// Insert outward bumps into `points` adding about `deficit` mm of length,
@@ -590,6 +601,15 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
 /// pair that fails restores its original copper, so this can only improve the
 /// board or leave it alone.
 pub fn si_finish(pcb: &mut Pcb, expansions: usize, descent_iters: usize) -> SiFinishReport {
+    let nets_with_copper = |b: &Pcb| -> std::collections::BTreeSet<String> {
+        b.traces
+            .iter()
+            .map(|t| t.net.clone())
+            .chain(b.vias.iter().map(|v| v.net.clone()))
+            .filter(|n| !n.is_empty())
+            .collect()
+    };
+    let copper_before = nets_with_copper(pcb);
     let (polished, polish_attempted) = polish_pairs(pcb, expansions);
     log::info!("si-finish: polish re-coupled {polished}/{polish_attempted} pairs");
     let descent = descend_board(pcb, descent_iters);
@@ -643,12 +663,26 @@ pub fn si_finish(pcb: &mut Pcb, expansions: usize, descent_iters: usize) -> SiFi
     if repaired > 0 {
         log::info!("si-finish: cleared {repaired} same-net bypass segment(s)");
     }
+    let copper_after = nets_with_copper(pcb);
+    let emptied_nets: Vec<String> = copper_before
+        .into_iter()
+        .filter(|n| !copper_after.contains(n))
+        .collect();
+    if !emptied_nets.is_empty() {
+        log::info!(
+            "si-finish: {} net(s) left with no copper — they are NOT routed, whatever \
+             route_all reported: {}",
+            emptied_nets.len(),
+            emptied_nets.join(", ")
+        );
+    }
     SiFinishReport {
         polished,
         polish_attempted,
         descent,
         meandered,
         over_tolerance,
+        emptied_nets,
     }
 }
 

@@ -261,6 +261,58 @@ fn main() {
             fin.descent.rejected,
             t1.elapsed().as_secs_f64(),
         );
+        if !fin.emptied_nets.is_empty() {
+            println!(
+                "si-finish: {} net(s) emptied of copper by the rip/prune stages: {}",
+                fin.emptied_nets.len(),
+                fin.emptied_nets.join(", ")
+            );
+        }
+    }
+
+    // The electrical scoreboard, measured on the board as it will ship.
+    //
+    // `routability` above is the fraction of attempted *connections* that
+    // closed, and it is computed inside `route_all` — before si_finish rips,
+    // re-routes and prunes. It is not a statement about whether the board
+    // works, and reading it as one hid a real gap for a long time: the CM5
+    // scored 0.988 on a board where 254 of 408 multi-pad nets were unconnected
+    // and 95 of them held no copper at all. This block is the honest number.
+    {
+        let census = vcad_ecad_pcb::drc::net_pad_groups(&pcb);
+        let total = census.len();
+        let connected = census.iter().filter(|n| n.pad_groups <= 1).count();
+        let bare = census
+            .iter()
+            .filter(|n| n.pad_groups > 1 && n.copper == 0)
+            .count();
+        let partial = total - connected - bare;
+        println!(
+            "nets: {connected}/{total} fully connected ({:.3}), {partial} partial, \
+             {bare} with no copper at all",
+            if total == 0 {
+                1.0
+            } else {
+                connected as f64 / total as f64
+            },
+        );
+        // How far the partial ones are from closing: `pad_groups - 1` is the
+        // number of connections still missing, so this separates "one hop
+        // short" (a rip-up budget problem) from "barely started" (a planning
+        // problem). They want completely different work.
+        let mut hist: BTreeMap<usize, usize> = BTreeMap::new();
+        for n in census.iter().filter(|n| n.pad_groups > 1 && n.copper > 0) {
+            *hist.entry(n.pad_groups - 1).or_default() += 1;
+        }
+        if !hist.is_empty() {
+            println!(
+                "  partial nets by missing connections: {}",
+                hist.iter()
+                    .map(|(missing, count)| format!("{missing}x{count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
     }
 
     // SI scoreboard: skew per length-match group and per differential pair,
