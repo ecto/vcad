@@ -773,7 +773,17 @@ pub fn route_all_with_opts(
     // autoroute pass never returns HoleToHole or SameNetBypass violations of
     // its own making.
     let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _)| *p).collect();
-    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias, &stitch_via_pts);
+    // Snapshot before legalization, not before the prune below: legalization
+    // now prunes dead copper itself (it has to — see `legalize`), so a net that
+    // ends up with nothing left has to be detectable across both passes.
+    let anchors_before = net_copper_anchors(&traces, &vias);
+    let legal = super::legalize::legalize(
+        pcb,
+        &mut traces,
+        &mut vias,
+        &stitch_via_pts,
+        opts.prune_dangling_copper,
+    );
     if legal.merged_vias > 0
         || legal.pruned_traces > 0
         || !legal.demoted.is_empty()
@@ -802,7 +812,6 @@ pub fn route_all_with_opts(
     // the function, so there is no session state left to keep in step.
     let mut pruned_out: Vec<(String, Vec2)> = Vec::new();
     if opts.prune_dangling_copper {
-        let before = net_copper_anchors(&traces, &vias);
         let (dead_traces, dead_vias) = super::legalize::prune_dangling(pcb, &mut traces, &mut vias);
         if dead_traces > 0 || dead_vias > 0 {
             log::info!(
@@ -811,15 +820,21 @@ pub fn route_all_with_opts(
                 traces.len(),
                 vias.len(),
             );
-            // Enforce the invariant rather than only asserting it in prose: a
-            // net whose copper is *entirely* gone was not routed by this pass,
-            // whatever `placed` recorded, so it is reported unrouted below.
-            let after = net_copper_anchors(&traces, &vias);
-            pruned_out = before
-                .into_iter()
-                .filter(|(net, _)| !after.contains_key(net))
-                .collect();
         }
+        // Enforce the invariant rather than only asserting it in prose: a net
+        // whose copper is *entirely* gone was not routed by this pass, whatever
+        // `placed` recorded, so it is reported unrouted below. Judged across
+        // legalization as a whole, since it prunes too — and this pass can
+        // legitimately remove nothing while the rounds inside it emptied a net.
+        // Demoted nets are excluded: they get their own, more specific
+        // diagnostic below.
+        let after = net_copper_anchors(&traces, &vias);
+        pruned_out = anchors_before
+            .into_iter()
+            .filter(|(net, _)| {
+                !after.contains_key(net) && !legal.demoted.iter().any(|(d, _)| d == net)
+            })
+            .collect();
     }
 
     // Diagnose every signal connection the router could not close: which nets
@@ -2356,6 +2371,44 @@ pub(super) fn validate_and_commit(
         // Drilled barrels collide regardless of layer span — the copper probes
         // below only compare vias that share a layer, so a blind/buried pair on
         // disjoint spans would otherwise sail through.
+        //
+        // The session answers for every hole already on the board, but not for
+        // the vias of *this* candidate: they are all probed here and committed
+        // together below, so each one is judged against a session that does not
+        // yet contain its siblings. A layer descent that steps In5→In7 and then
+        // In7→BCu emits exactly that shape — two same-net barrels a fraction of
+        // a millimetre apart, each legal on its own — and it is how the CM5's
+        // last HoleToHole (0.116mm < 0.250mm at (132.000, 95.345), a
+        // /MIPI0.D0_N stack) reached the drill file. Mutual legality is the
+        // caller's job; check the siblings explicitly, fail-closed.
+        //
+        // A descent that lands both barrels on the *same* point is one drilled
+        // hole, not two: fold the second into the first as a span union. Every
+        // layer of the union was probed by one of the two vias already, so this
+        // adds no unprobed copper — and it is the common shape, so rejecting it
+        // as a self-collision below would cost real routes.
+        let drill_r = session.via_drill_for(net) / 2.0;
+        if let Some(slot) = new_vias.iter_mut().find(|(q, _, _)| dist(*q, p) < 0.05) {
+            let (lo, hi) = span_union(&copper, (slot.1, slot.2), (la, lb));
+            slot.1 = lo;
+            slot.2 = hi;
+            continue;
+        }
+        if let Some(&(q, _, _)) = new_vias
+            .iter()
+            .find(|&&(q, _, _)| dist(q, p) - 2.0 * drill_r < session.hole_to_hole() - 1e-6)
+        {
+            log::debug!(
+                "validate: {net} via ({:.3},{:.3}) hole-to-hole illegal against its own \
+                 path's via ({:.3},{:.3}) — {:.3}mm edge spacing",
+                p.x,
+                p.y,
+                q.x,
+                q.y,
+                dist(q, p) - 2.0 * drill_r
+            );
+            return None;
+        }
         let hp = session.probe_via_drill(p, net);
         if !hp.legal {
             let near = hp.nearest.unwrap_or(p);
@@ -3045,6 +3098,27 @@ fn commit_stub(
     layer: PcbLayer,
 ) -> SpanId {
     commit_seg(session, net, a, b, hw, layer)
+}
+
+/// The stackup-order union of two via layer spans — the shallowest and deepest
+/// layer either one reaches — so a stacked In5→In7 / In7→BCu pair becomes one
+/// In5→BCu barrel. Layers absent from `copper` are ignored; if none are known,
+/// `a` is returned unchanged.
+pub(super) fn span_union(
+    copper: &[PcbLayer],
+    a: (PcbLayer, PcbLayer),
+    b: (PcbLayer, PcbLayer),
+) -> (PcbLayer, PcbLayer) {
+    let idx = |l: PcbLayer| copper.iter().position(|&c| c == l);
+    let mut all: Vec<usize> = [a.0, a.1, b.0, b.1]
+        .iter()
+        .filter_map(|&l| idx(l))
+        .collect();
+    all.sort_unstable();
+    match (all.first(), all.last()) {
+        (Some(&lo), Some(&hi)) => (copper[lo], copper[hi]),
+        _ => a,
+    }
 }
 
 /// Commit a via as a disc on every copper layer it spans (a through via),
@@ -3773,6 +3847,46 @@ mod tests {
     use super::*;
     use crate::drc::check_drc;
     use vcad_ir::ecad::*;
+
+    /// A layer descent emits its barrels as separate vias; two that land on the
+    /// same point are one drilled hole and must fold into a single span, or the
+    /// candidate's own self-collision check would reject the path.
+    #[test]
+    fn stacked_via_spans_union_into_one_barrel() {
+        let stack = [
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In2Cu,
+            PcbLayer::In3Cu,
+            PcbLayer::BCu,
+        ];
+        // Adjacent spans sharing a layer: In1..In3 ∪ In3..BCu = In1..BCu.
+        assert_eq!(
+            span_union(
+                &stack,
+                (PcbLayer::In1Cu, PcbLayer::In3Cu),
+                (PcbLayer::In3Cu, PcbLayer::BCu)
+            ),
+            (PcbLayer::In1Cu, PcbLayer::BCu)
+        );
+        // Order-independent, and a nested span is absorbed by the outer one.
+        assert_eq!(
+            span_union(
+                &stack,
+                (PcbLayer::BCu, PcbLayer::In3Cu),
+                (PcbLayer::In1Cu, PcbLayer::In3Cu)
+            ),
+            (PcbLayer::In1Cu, PcbLayer::BCu)
+        );
+        assert_eq!(
+            span_union(
+                &stack,
+                (PcbLayer::FCu, PcbLayer::BCu),
+                (PcbLayer::In1Cu, PcbLayer::In2Cu)
+            ),
+            (PcbLayer::FCu, PcbLayer::BCu)
+        );
+    }
 
     fn pad(num: &str, x: f64, y: f64, net: &str) -> Pad {
         Pad {

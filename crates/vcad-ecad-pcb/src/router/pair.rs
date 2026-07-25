@@ -1835,6 +1835,20 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                     hi_b.y = hi_b.y.max(p.y + 1.0);
                 }
             }
+            // `SameNetBypass` counts here despite being a *warning*. The gate
+            // is a severity filter only incidentally — what it is really for is
+            // "does the assembled board have defects the routed one did not",
+            // and a same-net bypass is one: the net still works as a node, but
+            // the shorted-out loop leaves a stub, which on a 5 GT/s PCIe lane
+            // or a DDR strobe is a signal-integrity defect and not a cosmetic
+            // one. This assembly is exactly where they come from — a re-routed
+            // pair leg laid against its own breakout connector, or a displaced
+            // single re-routed back across its own copper — and unlike the
+            // bypasses legalization can clear, these are load-bearing on both
+            // sides, so no post-pass can delete its way out of them. Declining
+            // the polish is the only honest fix, and it costs nothing: the
+            // pair keeps the copper it already had. Measured on the full CM5:
+            // 7 such bypasses shipped, all of them from this stage.
             let hard_here = |b: &Pcb| -> usize {
                 if !lo_b.x.is_finite() {
                     return 0;
@@ -1842,10 +1856,11 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                 crate::drc::check_drc_in_region(b, lo_b, hi_b)
                     .iter()
                     .filter(|v| {
-                        matches!(
+                        (matches!(
                             v.rule,
                             crate::drc::DrcRuleType::Clearance | crate::drc::DrcRuleType::Short
-                        ) && matches!(v.severity, crate::drc::DrcSeverity::Error)
+                        ) && matches!(v.severity, crate::drc::DrcSeverity::Error))
+                            || v.rule == crate::drc::DrcRuleType::SameNetBypass
                     })
                     .count()
             };
