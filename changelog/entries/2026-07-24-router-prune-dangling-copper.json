@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-prune-dangling-copper",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "fix",
+  "title": "Autorouter no longer leaves dead copper behind",
+  "summary": "route_nets now prunes its own dangling copper before returning — traces and vias whose island reaches no pad and no pour, left over from rip-up — cutting the CM5 40-net route from 1292 to 789 segments with routability unchanged.",
+  "features": ["pcb", "autorouter", "drc"],
+  "mcpTools": ["route_nets", "run_drc"]
+}

@@ -137,6 +137,14 @@ pub struct RouteOptions {
     /// trade completion for speed. Legality is never affected — effort buys
     /// more attempts, not looser rules.
     pub effort: f64,
+    /// Drop the router's own dead copper before returning: new traces and vias
+    /// whose galvanic island holds no pad and no pour fragment (the same
+    /// islands DRC reports as "copper only, no pads" — see
+    /// [`crate::drc::prune_dangling_copper`]). On by default: a fresh route
+    /// should never emit copper connected to nothing. Turn it off only to
+    /// inspect the raw emitter output; it removes nothing electrically live, so
+    /// routability and the routed/unrouted split read the same either way.
+    pub prune_dangling_copper: bool,
 }
 
 impl RouteOptions {
@@ -176,6 +184,7 @@ impl Default for RouteOptions {
             use_push_shove: true,
             effort: 1.0,
             priority_nets: Vec::new(),
+            prune_dangling_copper: true,
         }
     }
 }
@@ -633,6 +642,39 @@ pub fn route_all_with_opts(
         );
     }
 
+    // Dangling-copper prune: the last word on the copper this pass emits. The
+    // speculative emitters (fan-out escape vias, stubs whose route rip-up later
+    // replaced, stitching vias for a plane that never materialized) leave
+    // islands touching no pad and no pour — DRC's "copper only, no pads". They
+    // are electrically dead by construction, so removing them changes nothing
+    // the result reports: every placed connection runs pad to pad and lives in
+    // a pad-anchored island, so `still_unrouted` (and the routability and
+    // diagnostics derived from it below) is unaffected. Runs after legalization
+    // so the returned copper is final — nothing downstream can revive an island.
+    // The `session` is not consulted again after this point and does not escape
+    // the function, so there is no session state left to keep in step.
+    let mut pruned_out: Vec<(String, Vec2)> = Vec::new();
+    if opts.prune_dangling_copper {
+        let before = net_copper_anchors(&traces, &vias);
+        let (dead_traces, dead_vias) = super::legalize::prune_dangling(pcb, &mut traces, &mut vias);
+        if dead_traces > 0 || dead_vias > 0 {
+            log::info!(
+                "dangling-copper prune: removed {dead_traces} dead traces, {dead_vias} dead vias \
+                 ({} traces, {} vias remain)",
+                traces.len(),
+                vias.len(),
+            );
+            // Enforce the invariant rather than only asserting it in prose: a
+            // net whose copper is *entirely* gone was not routed by this pass,
+            // whatever `placed` recorded, so it is reported unrouted below.
+            let after = net_copper_anchors(&traces, &vias);
+            pruned_out = before
+                .into_iter()
+                .filter(|(net, _)| !after.contains_key(net))
+                .collect();
+        }
+    }
+
     // Diagnose every signal connection the router could not close: which nets
     // block it, where, and which layer/via might help. Computed against the
     // final settled session so the blocker set reflects the real obstruction.
@@ -649,6 +691,27 @@ pub fn route_all_with_opts(
     for (net, pad_pt) in &stitch.failed_pads {
         unrouted.insert(net.clone());
         diagnostics.push(diagnose_stitch_failure(net, *pad_pt));
+    }
+    // A net the prune emptied out placed nothing that survives: report it
+    // unrouted rather than claim a route with no copper behind it.
+    for (net, at) in &pruned_out {
+        unrouted.insert(net.clone());
+        diagnostics.push(UnroutedDiagnostic {
+            net: net.clone(),
+            from: *at,
+            to: *at,
+            blocking_nets: Vec::new(),
+            region_min: *at,
+            region_max: *at,
+            suggested_layer: None,
+            suggested_via: None,
+            reason: format!(
+                "every piece of copper this pass placed for '{net}' was electrically \
+                 dead (its island reached no pad and no pour) and was pruned near \
+                 ({:.2}, {:.2})",
+                at.x, at.y
+            ),
+        });
     }
     // A net demoted by legalization had all its new copper stripped: report it
     // unrouted with the offending position rather than return illegal copper.
@@ -692,6 +755,20 @@ pub fn route_all_with_opts(
         diagnostics,
         routability,
     }
+}
+
+/// One representative position per net that owns copper in the router's output
+/// — the census the dangling-copper prune is checked against, so a net that
+/// loses *all* its copper can be named (and located) in a diagnostic.
+fn net_copper_anchors(traces: &[RoutedTrace], vias: &[RoutedVia]) -> BTreeMap<String, Vec2> {
+    let mut out = BTreeMap::new();
+    for t in traces {
+        out.entry(t.net.clone()).or_insert(t.start);
+    }
+    for v in vias {
+        out.entry(v.net.clone()).or_insert(v.position);
+    }
+    out
 }
 
 /// Build a diagnostic for a signal connection the router could not close.
@@ -3803,6 +3880,61 @@ mod tests {
         );
     }
 
+    /// The dangling-copper invariant: nothing route_all returns may be
+    /// electrically dead. Runs the same every-emitter fixture through the
+    /// pruner's own oracle — after applying the result, no trace and no via is
+    /// left in an island that reaches neither a pad nor a pour.
+    #[test]
+    fn autoroute_returns_no_dangling_copper() {
+        let pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    5.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    45.0,
+                    25.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, -2.0, "C")],
+                ),
+                fp(
+                    "U3",
+                    45.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "B"), pad("2", 0.0, 2.0, "C")],
+                ),
+                fp("U4", 8.0, 25.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U5", 25.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U6", 42.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+
+        let r = route_all(&pcb0, 0.25, &[]);
+        assert!(!r.traces.is_empty(), "fixture must actually route");
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let (traces_before, vias_before) = (pcb.traces.len(), pcb.vias.len());
+        let (dead_t, dead_v) = crate::drc::prune_dangling_copper(&mut pcb);
+        assert_eq!(
+            (dead_t, dead_v),
+            (0, 0),
+            "route_all left {dead_t}/{traces_before} dead traces and \
+             {dead_v}/{vias_before} dead vias behind"
+        );
+
+        // And the prune must not have starved a net it reports as routed.
+        for net in &r.routed_nets {
+            assert!(
+                r.traces.iter().any(|t| &t.net == net) || r.vias.iter().any(|v| &v.net == net),
+                "net '{net}' is reported routed but owns no copper"
+            );
+        }
+    }
+
     #[test]
     fn stitches_power_pads_to_inner_planes() {
         // GND plane on In1Cu, V3V3 plane on In2Cu; SMD power pads on FCu. Without
@@ -4154,6 +4286,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                prune_dangling_copper: true,
             },
         );
         assert_eq!(
@@ -4192,6 +4325,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                prune_dangling_copper: true,
             },
         );
         // The shipped default: negotiated congestion + validated push-shove.
@@ -4285,6 +4419,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                prune_dangling_copper: true,
             },
         );
         let default = route_all(&pcb, 0.25, &[]);
