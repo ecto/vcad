@@ -449,7 +449,26 @@ Every original number is identical to M7's. **No bound was changed**, and the
 stripped-fixture DRC baseline is also unchanged at 311 short/clearance, 23
 `Clearance` — the connectivity fixes do not move it.
 
+## `si_finish` was handing back a dirtier board than it was given
+
+Caught by the end-to-end validation run, and invisible any other way. The
+same-net prune fixed inside `route_all` worked — the fresh route's prune removed
+**2030 dead traces** where re-pruning the old saved board found 393 — yet the
+final receipt was byte-identical to the unfixed baseline.
+
+The reason: `route_all` prunes as its last word, but `si_finish` runs *after* it,
+and every one of its stages rips copper and re-routes it. Measured: **231 dead
+traces and 52 dead vias** left behind, which `net_routed_length` counts as routed
+copper. `si_finish` now prunes at its end, upholding the same invariant
+`route_all` does.
+
+Worth stating as a lesson rather than a line of code: a prune placed anywhere but
+last is a prune that a later stage undoes, and the receipt is what noticed.
+
 ## Scoreboard
+
+Fresh full route on the fixed pipeline: 874.5s, routability **0.994**,
+379 routed / 29 unrouted, 895 vias.
 
 | claim | M7 | M8 measured | bound | |
 |---|---|---|---|---|
@@ -459,10 +478,31 @@ stripped-fixture DRC baseline is also unchanged at 311 short/clearance, 23
 | `min_pair_coupled_fraction` | 0.000 | 0.221 | ≥ 0.5 | BROKEN |
 | `vias_per_si_net` | 2.766 | 3.106 → **2.626** with spur prune | ≤ 3.0 | BROKEN / HOLDS |
 
-Two claims recovered (`worst_group_skew` decisively, `vias_per_si_net` once the
-spur pass lands), one new claim now makes the unrouted pairs visible instead of
-silently feeding the other two, and the headline skew is diagnosed to a
-reproducible cause with a named fix.
+**1 of 5 holds. The goal of this work — all claims HOLDS on the full board — was
+not reached**, and the reason is recorded above rather than papered over: the
+headline skew is one unfixed mechanism (redundant cycles), and reaching it by
+compensation would have meant tuning a number computed over copper that is not a
+route.
+
+One claim recovered decisively, a second recovered once the spur pass lands, and
+one new claim makes the unrouted pairs visible instead of silently feeding the
+other two.
+
+### DRC delta
+
+Against the stripped fixture (311 short/clearance, 23 `Clearance`):
+
+| rule | stripped | M7 full board | M8 fresh route | human |
+|---|---|---|---|---|
+| `Clearance` | 23 | 173 | **158** | 1044 |
+| `NetIslands` | 30 | 93 | **17** | 128 |
+| total | 847 | 3400 | **3164** | 14104 |
+
+Route-attributable `Clearance` is +135, down from +150, so acceptance on "no new
+route-attributable DRC" is **still not met** — it is better, not zero. As the
+human column shows, `MinDrill`, `AnnularRing` and `MinTraceWidth` fire on
+essentially every via and thin trace on the human board too, so they are
+imported-rule artifacts and `Clearance` is the number that attributes.
 
 ## What did not work
 
