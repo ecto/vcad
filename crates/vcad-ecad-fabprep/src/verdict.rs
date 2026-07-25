@@ -564,17 +564,19 @@ mod tests {
             source: None,
         });
         let session = RouteSession::from_pcb(&pcb);
-        assert!(session
-            .probe(
-                &CopperGeom::Disc {
-                    center: Vec2::new(5.0, 5.0),
-                    r: 0.3,
-                },
-                PcbLayer::FCu,
-                "A",
-                0.2,
-            )
-            .legal);
+        assert!(
+            session
+                .probe(
+                    &CopperGeom::Disc {
+                        center: Vec2::new(5.0, 5.0),
+                        r: 0.3,
+                    },
+                    PcbLayer::FCu,
+                    "A",
+                    0.2,
+                )
+                .legal
+        );
         assert!(
             !vias_legal(&pcb, &session, "A", &transition_path()),
             "a barrel 0.20mm hole-to-hole from an existing via must be illegal"
@@ -608,18 +610,20 @@ mod tests {
         assert_eq!(pcb.vias.len(), 1);
         assert_eq!(pcb.vias[0].position, Vec2::new(5.0, 5.0));
         // Interior layer now blocked for a foreign net...
-        assert!(!session
-            .probe(
-                &CopperGeom::Segment {
-                    a: Vec2::new(5.0, 4.0),
-                    b: Vec2::new(5.0, 6.0),
-                    half_w: 0.1,
-                },
-                PcbLayer::In1Cu,
-                "VICTIM",
-                0.2,
-            )
-            .legal);
+        assert!(
+            !session
+                .probe(
+                    &CopperGeom::Segment {
+                        a: Vec2::new(5.0, 4.0),
+                        b: Vec2::new(5.0, 6.0),
+                        half_w: 0.1,
+                    },
+                    PcbLayer::In1Cu,
+                    "VICTIM",
+                    0.2,
+                )
+                .legal
+        );
         // ...and the drill is in the hole index.
         assert!(!session.probe_drill(Vec2::new(5.5, 5.0), 0.3).legal);
         // A second path through the same spot is now refused rather than
