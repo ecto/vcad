@@ -2669,13 +2669,169 @@ mod raster {
     /// Matte, neutral background per the mecheval capture rules.
     pub(crate) const BACKGROUND: [u8; 3] = [244, 243, 241];
 
+    /// Output canvas dimensions in pixels. Row-major, `w` pixels per row.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct Canvas {
+        pub w: usize,
+        pub h: usize,
+    }
+
+    impl Canvas {
+        /// Index of pixel `(x, y)` in a row-major buffer.
+        pub(crate) fn idx(&self, x: usize, y: usize) -> usize {
+            y * self.w + x
+        }
+        /// Pixel count.
+        pub(crate) fn len(&self) -> usize {
+            self.w * self.h
+        }
+        /// True when `(x, y)` is on-canvas.
+        fn contains(&self, x: i64, y: i64) -> bool {
+            x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h
+        }
+        /// Shorter side, for size-relative linework weights.
+        fn min_side(&self) -> usize {
+            self.w.min(self.h)
+        }
+    }
+
+    /// A rasterized frame: RGB pixels plus a per-pixel coverage mask (255
+    /// where geometry, an edge stroke, or an annotation was drawn, 0 over
+    /// untouched background), and the canvas they were drawn on.
+    pub(crate) struct Frame {
+        pub rgb: Vec<u8>,
+        pub mask: Vec<u8>,
+        pub canvas: Canvas,
+    }
+
+    impl Frame {
+        /// Crop to the coverage mask's bounding box plus `margin` pixels.
+        /// `None` (or an empty mask) returns the frame untouched.
+        pub(crate) fn trimmed(self, margin: Option<u32>) -> Frame {
+            let Some(margin) = margin else {
+                return self;
+            };
+            let (mut x0, mut y0) = (self.canvas.w, self.canvas.h);
+            let (mut x1, mut y1) = (0usize, 0usize);
+            for y in 0..self.canvas.h {
+                for x in 0..self.canvas.w {
+                    if self.mask[self.canvas.idx(x, y)] != 0 {
+                        x0 = x0.min(x);
+                        y0 = y0.min(y);
+                        x1 = x1.max(x);
+                        y1 = y1.max(y);
+                    }
+                }
+            }
+            if x0 > x1 || y0 > y1 {
+                return self; // nothing drawn — leave the canvas alone
+            }
+            let m = margin as usize;
+            let x0 = x0.saturating_sub(m);
+            let y0 = y0.saturating_sub(m);
+            let x1 = (x1 + m).min(self.canvas.w - 1);
+            let y1 = (y1 + m).min(self.canvas.h - 1);
+            let out = Canvas {
+                w: x1 - x0 + 1,
+                h: y1 - y0 + 1,
+            };
+            let mut rgb = Vec::with_capacity(out.len() * 3);
+            let mut mask = Vec::with_capacity(out.len());
+            for y in y0..=y1 {
+                let row = self.canvas.idx(x0, y);
+                rgb.extend_from_slice(&self.rgb[row * 3..(row + out.w) * 3]);
+                mask.extend_from_slice(&self.mask[row..row + out.w]);
+            }
+            Frame {
+                rgb,
+                mask,
+                canvas: out,
+            }
+        }
+    }
+
+    /// Pick the output canvas for a projection whose screen extents are
+    /// `ex` × `ey` (mm). `height_px` wins outright; `auto_aspect` fits the
+    /// short axis to the projection (long axis keeps `size_px`); otherwise
+    /// the canvas is square, as it always was.
+    pub(crate) fn canvas_for(opts: &RasterOptions, ex: f64, ey: f64) -> Canvas {
+        const MIN_PX: u32 = 16;
+        let w = opts.size_px;
+        match opts.height_px {
+            Some(h) => Canvas {
+                w: w as usize,
+                h: h.max(MIN_PX) as usize,
+            },
+            None if opts.auto_aspect
+                && ex.is_finite()
+                && ey.is_finite()
+                && ex > 0.0
+                && ey > 0.0 =>
+            {
+                let short = |long: f64, other: f64| {
+                    ((w as f64 * other / long).round() as u32).clamp(MIN_PX, w)
+                };
+                if ex >= ey {
+                    Canvas {
+                        w: w as usize,
+                        h: short(ex, ey) as usize,
+                    }
+                } else {
+                    Canvas {
+                        w: short(ey, ex) as usize,
+                        h: w as usize,
+                    }
+                }
+            }
+            None => Canvas {
+                w: w as usize,
+                h: w as usize,
+            },
+        }
+    }
+
+    /// Pixels per mm that fit a projection with screen extents `ex` × `ey`
+    /// into `canvas` at `fill` of the binding axis. On a square canvas this
+    /// is evaluated exactly as it always was (`fill * size / extent`) so
+    /// existing reference renders stay byte-identical.
+    pub(crate) fn fit_scale(fill: f64, canvas: Canvas, ex: f64, ey: f64, extent: f64) -> f64 {
+        if canvas.w == canvas.h {
+            return fill * canvas.w as f64 / extent;
+        }
+        let axis = |px: usize, e: f64| {
+            if e > 0.0 {
+                fill * px as f64 / e
+            } else {
+                f64::INFINITY
+            }
+        };
+        let s = axis(canvas.w, ex).min(axis(canvas.h, ey));
+        if s.is_finite() {
+            s
+        } else {
+            fill * canvas.min_side() as f64 / extent
+        }
+    }
+
     /// Options for [`render_jpeg_str`] / [`render_jpeg_solids`].
     #[derive(Debug, Clone)]
     pub struct RasterOptions {
         /// Camera orientation.
         pub view: View,
-        /// Output canvas is `size_px` × `size_px`.
+        /// Canvas width in pixels; also the height unless `height_px` or
+        /// `auto_aspect` says otherwise.
         pub size_px: u32,
+        /// Canvas height in pixels. `None` = square (`size_px` × `size_px`),
+        /// unless `auto_aspect` picks a height from the projection.
+        pub height_px: Option<u32>,
+        /// Fit the canvas to the projected aspect ratio: the subject's long
+        /// screen axis keeps `size_px` pixels and the short axis shrinks to
+        /// match, instead of padding a square with background. Ignored when
+        /// `height_px` is set.
+        pub auto_aspect: bool,
+        /// Crop the output to the drawn content's bounding box, keeping this
+        /// many pixels of margin. `None` = no crop (the full canvas).
+        pub trim_margin_px: Option<u32>,
         /// Fraction of the canvas the part's long axis fills (mecheval
         /// capture rules say ~60%).
         pub fill_frac: f64,
@@ -2700,6 +2856,9 @@ mod raster {
             RasterOptions {
                 view: View::Isometric,
                 size_px: 1024,
+                height_px: None,
+                auto_aspect: false,
+                trim_margin_px: None,
                 fill_frac: 0.6,
                 quality: 92,
                 focus: None,
@@ -2773,20 +2932,17 @@ mod raster {
 
     /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
     /// the opaque vellum background).
-    pub(crate) fn encode_jpeg(
-        frame: (Vec<u8>, Vec<u8>),
-        opts: &RasterOptions,
-    ) -> Result<Vec<u8>, String> {
-        let (rgb, _mask) = frame;
+    pub(crate) fn encode_jpeg(frame: Frame, opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let frame = frame.trimmed(opts.trim_margin_px);
         let mut out = Vec::new();
         let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
             &mut out,
             opts.quality.clamp(1, 100),
         );
         enc.encode(
-            &rgb,
-            opts.size_px,
-            opts.size_px,
+            &frame.rgb,
+            frame.canvas.w as u32,
+            frame.canvas.h as u32,
             image::ExtendedColorType::Rgb8,
         )
         .map_err(|e| format!("jpeg encode: {}", e))?;
@@ -2795,14 +2951,11 @@ mod raster {
 
     /// PNG-encode a rasterized frame as RGBA: covered pixels are opaque,
     /// background pixels get alpha 0.
-    pub(crate) fn encode_png(
-        frame: (Vec<u8>, Vec<u8>),
-        opts: &RasterOptions,
-    ) -> Result<Vec<u8>, String> {
-        let (rgb, mask) = frame;
-        let mut rgba = Vec::with_capacity(mask.len() * 4);
-        for (i, &a) in mask.iter().enumerate() {
-            rgba.extend_from_slice(&rgb[i * 3..i * 3 + 3]);
+    pub(crate) fn encode_png(frame: Frame, opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let frame = frame.trimmed(opts.trim_margin_px);
+        let mut rgba = Vec::with_capacity(frame.mask.len() * 4);
+        for (i, &a) in frame.mask.iter().enumerate() {
+            rgba.extend_from_slice(&frame.rgb[i * 3..i * 3 + 3]);
             rgba.push(a);
         }
         let mut out = Vec::new();
@@ -2810,8 +2963,8 @@ mod raster {
         image::ImageEncoder::write_image(
             enc,
             &rgba,
-            opts.size_px,
-            opts.size_px,
+            frame.canvas.w as u32,
+            frame.canvas.h as u32,
             image::ExtendedColorType::Rgba8,
         )
         .map_err(|e| format!("png encode: {}", e))?;
@@ -2830,7 +2983,7 @@ mod raster {
         names: &[Option<String>],
         opts: &RasterOptions,
         focus: Option<&[bool]>,
-    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    ) -> Result<Frame, String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
         }
@@ -2937,16 +3090,25 @@ mod raster {
             ((hi3[0] - lo3[0]).powi(2) + (hi3[1] - lo3[1]).powi(2) + (hi3[2] - lo3[2]).powi(2))
                 .sqrt();
 
-        let size = opts.size_px as usize;
-        let px_per_mm = opts.fill_frac * opts.size_px as f64 / extent;
+        let canvas = canvas_for(opts, max[0] - min[0], max[1] - min[1]);
+        // The subject fills `fill_frac` of whichever canvas axis binds
+        // first; on a square canvas this is the historical
+        // `fill_frac * size_px / extent`, byte-for-byte.
+        let px_per_mm = fit_scale(
+            opts.fill_frac,
+            canvas,
+            max[0] - min[0],
+            max[1] - min[1],
+            extent,
+        );
         let cx = (min[0] + max[0]) / 2.0;
         let cy = (min[1] + max[1]) / 2.0;
-        let half = opts.size_px as f64 / 2.0;
+        let (halfx, halfy) = (canvas.w as f64 / 2.0, canvas.h as f64 / 2.0);
         // World point → (pixel x, pixel y, depth toward camera in mm).
         let to_px = |v: [f64; 3]| -> (f64, f64, f64) {
             (
-                (dot(v, right) - cx) * px_per_mm + half,
-                (dot(v, down) - cy) * px_per_mm + half,
+                (dot(v, right) - cx) * px_per_mm + halfx,
+                (dot(v, down) - cy) * px_per_mm + halfy,
                 dot(v, cam),
             )
         };
@@ -2955,10 +3117,10 @@ mod raster {
             .iter()
             .copied()
             .cycle()
-            .take(size * size * 3)
+            .take(canvas.len() * 3)
             .collect();
-        let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; size * size];
-        let mut mask: Vec<u8> = vec![0; size * size];
+        let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; canvas.len()];
+        let mut mask: Vec<u8> = vec![0; canvas.len()];
 
         // Depth range for depth cueing (below).
         let mut dmin = f64::INFINITY;
@@ -2998,7 +3160,7 @@ mod raster {
                     &mut rgb,
                     &mut zbuf,
                     &mut mask,
-                    size,
+                    canvas,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
                     art.cut[ti],
@@ -3015,12 +3177,12 @@ mod raster {
         let bias_base = 0.5 + 0.005 * diag;
         // Stroke width scales with the canvas so lines keep the same
         // apparent weight at high resolution (2px at ≤1024, 8px at 4096).
-        let stroke_px = (size / 512).max(2);
+        let stroke_px = (canvas.min_side() / 512).max(2);
         for art in &arts {
             let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
             for &(a, b, _kind) in &art.edges {
                 draw_edge(
-                    &mut rgb, &zbuf, &mut mask, size, proj[a], proj[b], bias_base, stroke_px,
+                    &mut rgb, &zbuf, &mut mask, canvas, proj[a], proj[b], bias_base, stroke_px,
                 );
             }
         }
@@ -3031,11 +3193,11 @@ mod raster {
         // stays opaque in the transparent PNG output.
         if opts.annotations.any() {
             draw_annotations(
-                &mut rgb, &mut mask, size, &arts, names, opts, &to_px, lo3, hi3,
+                &mut rgb, &mut mask, canvas, &arts, names, opts, &to_px, lo3, hi3,
             );
         }
 
-        Ok((rgb, mask))
+        Ok(Frame { rgb, mask, canvas })
     }
 
     fn edge_fn(a: (f64, f64, f64), b: (f64, f64, f64), px: f64, py: f64) -> f64 {
@@ -3054,7 +3216,7 @@ mod raster {
         rgb: &mut [u8],
         zbuf: &mut [f64],
         mask: &mut [u8],
-        size: usize,
+        canvas: Canvas,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
         hatch: bool,
@@ -3082,13 +3244,13 @@ mod raster {
             .cloned()
             .fold(f64::NEG_INFINITY, f64::max)
             .ceil()
-            .min((size - 1) as f64) as usize;
+            .min((canvas.w - 1) as f64) as usize;
         let y1 = ys
             .iter()
             .cloned()
             .fold(f64::NEG_INFINITY, f64::max)
             .ceil()
-            .min((size - 1) as f64) as usize;
+            .min((canvas.h - 1) as f64) as usize;
         if x0 > x1 || y0 > y1 {
             return;
         }
@@ -3105,7 +3267,7 @@ mod raster {
                 }
                 let inv = 1.0 / area.abs();
                 let depth = (w0 * p[0].2 + w1 * p[1].2 + w2 * p[2].2) * inv;
-                let idx = py * size + px;
+                let idx = canvas.idx(px, py);
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
                     mask[idx] = 255;
@@ -3142,7 +3304,7 @@ mod raster {
     fn draw_annotations(
         rgb: &mut [u8],
         mask: &mut [u8],
-        size: usize,
+        canvas: Canvas,
         arts: &[SolidArtifacts],
         names: &[Option<String>],
         opts: &RasterOptions,
@@ -3162,8 +3324,8 @@ mod raster {
                 }
                 let mut n = (-dy / len, dx / len);
                 let mid = ((ax + bx) / 2.0, (ay + by) / 2.0);
-                let half = size as f64 / 2.0;
-                if n.0 * (mid.0 - half) + n.1 * (mid.1 - half) < 0.0 {
+                let (halfx, halfy) = (canvas.w as f64 / 2.0, canvas.h as f64 / 2.0);
+                if n.0 * (mid.0 - halfx) + n.1 * (mid.1 - halfy) < 0.0 {
                     n = (-n.0, -n.1);
                 }
                 let off = 18.0;
@@ -3173,21 +3335,21 @@ mod raster {
                     draw_line_col(
                         rgb,
                         mask,
-                        size,
+                        canvas,
                         p,
                         (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0),
                         INK_RGB,
                         1,
                     );
                 }
-                draw_line_col(rgb, mask, size, a1, a2, INK_RGB, 1);
+                draw_line_col(rgb, mask, canvas, a1, a2, INK_RGB, 1);
                 let (ux, uy) = (dx / len, dy / len);
                 for p in [a1, a2] {
                     let t = ((ux - n.0) * 4.0, (uy - n.1) * 4.0);
                     draw_line_col(
                         rgb,
                         mask,
-                        size,
+                        canvas,
                         (p.0 - t.0, p.1 - t.1),
                         (p.0 + t.0, p.1 + t.1),
                         INK_RGB,
@@ -3195,7 +3357,7 @@ mod raster {
                     );
                 }
                 let text = (mid.0 + n.0 * (off + 14.0), mid.1 + n.1 * (off + 14.0));
-                draw_text_centered(rgb, mask, size, text, &dim.label, INK_RGB);
+                draw_text_centered(rgb, mask, canvas, text, &dim.label, INK_RGB);
             }
         }
         if annos.labels {
@@ -3214,18 +3376,18 @@ mod raster {
                     continue;
                 }
                 let anchor = ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0);
-                let dir = if anchor.0 + 120.0 > size as f64 {
+                let dir = if anchor.0 + 120.0 > canvas.w as f64 {
                     -1.0
                 } else {
                     1.0
                 };
                 let elbow = (anchor.0 + 22.0 * dir, anchor.1 - 22.0);
-                draw_line_col(rgb, mask, size, anchor, elbow, INK_RGB, 1);
+                draw_line_col(rgb, mask, canvas, anchor, elbow, INK_RGB, 1);
                 // Anchor dot.
                 draw_line_col(
                     rgb,
                     mask,
-                    size,
+                    canvas,
                     (anchor.0 - 1.0, anchor.1),
                     (anchor.0 + 1.0, anchor.1),
                     INK_RGB,
@@ -3237,11 +3399,11 @@ mod raster {
                 } else {
                     elbow.0 - 4.0 - tw as f64
                 };
-                draw_text(rgb, mask, size, (tx, elbow.1 - 7.0), name, INK_RGB);
+                draw_text(rgb, mask, canvas, (tx, elbow.1 - 7.0), name, INK_RGB);
             }
         }
         if annos.axes {
-            let origin = (48.0, size as f64 - 48.0);
+            let origin = (48.0, canvas.h as f64 - 48.0);
             let right = normalize(opts.view.right());
             let down = normalize(opts.view.down());
             for i in 0..3 {
@@ -3256,13 +3418,13 @@ mod raster {
                 let l = 26.0;
                 let tip = (origin.0 + ux * l, origin.1 + uy * l);
                 let color = AXIS_RGB[i];
-                draw_line_col(rgb, mask, size, origin, tip, color, 2);
+                draw_line_col(rgb, mask, canvas, origin, tip, color, 2);
                 for s in [0.45f64, -0.45] {
                     let (bx, by) = (-ux * s.cos() - uy * s.sin(), ux * s.sin() - uy * s.cos());
                     draw_line_col(
                         rgb,
                         mask,
-                        size,
+                        canvas,
                         tip,
                         (tip.0 + bx * 6.0, tip.1 + by * 6.0),
                         color,
@@ -3272,7 +3434,7 @@ mod raster {
                 draw_text_centered(
                     rgb,
                     mask,
-                    size,
+                    canvas,
                     (tip.0 + ux * 10.0, tip.1 + uy * 10.0),
                     AXIS_NAMES[i],
                     color,
@@ -3286,7 +3448,7 @@ mod raster {
     fn draw_line_col(
         rgb: &mut [u8],
         mask: &mut [u8],
-        size: usize,
+        canvas: Canvas,
         a: (f64, f64),
         b: (f64, f64),
         color: [u8; 3],
@@ -3301,10 +3463,10 @@ mod raster {
             for dy in 0..thick {
                 for dx in 0..thick {
                     let (qx, qy) = (x + dx, y + dy);
-                    if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
+                    if !canvas.contains(qx, qy) {
                         continue;
                     }
-                    let cell = qy as usize * size + qx as usize;
+                    let cell = canvas.idx(qx as usize, qy as usize);
                     let qi = cell * 3;
                     rgb[qi] = color[0];
                     rgb[qi + 1] = color[1];
@@ -3376,7 +3538,7 @@ mod raster {
     fn draw_text(
         rgb: &mut [u8],
         mask: &mut [u8],
-        size: usize,
+        canvas: Canvas,
         pos: (f64, f64),
         text: &str,
         color: [u8; 3],
@@ -3389,10 +3551,10 @@ mod raster {
         // PNG background as well as over part fills.
         for py in (y0 - 2)..(y0 + h + 2) {
             for px in (x0 - 2)..(x0 + w + 2) {
-                if px < 0 || py < 0 || px >= size as i64 || py >= size as i64 {
+                if !canvas.contains(px, py) {
                     continue;
                 }
-                let cell = py as usize * size + px as usize;
+                let cell = canvas.idx(px as usize, py as usize);
                 let qi = cell * 3;
                 rgb[qi] = BACKGROUND[0];
                 rgb[qi + 1] = BACKGROUND[1];
@@ -3412,10 +3574,10 @@ mod raster {
                         for sx in 0..FONT_SCALE {
                             let px = gx + (col * FONT_SCALE + sx) as i64;
                             let py = y0 + (row * FONT_SCALE + sy) as i64;
-                            if px < 0 || py < 0 || px >= size as i64 || py >= size as i64 {
+                            if !canvas.contains(px, py) {
                                 continue;
                             }
-                            let cell = py as usize * size + px as usize;
+                            let cell = canvas.idx(px as usize, py as usize);
                             let qi = cell * 3;
                             rgb[qi] = color[0];
                             rgb[qi + 1] = color[1];
@@ -3432,7 +3594,7 @@ mod raster {
     fn draw_text_centered(
         rgb: &mut [u8],
         mask: &mut [u8],
-        size: usize,
+        canvas: Canvas,
         pos: (f64, f64),
         text: &str,
         color: [u8; 3],
@@ -3442,7 +3604,7 @@ mod raster {
         draw_text(
             rgb,
             mask,
-            size,
+            canvas,
             (pos.0 - w / 2.0, pos.1 - h / 2.0),
             text,
             color,
@@ -3454,7 +3616,7 @@ mod raster {
         rgb: &mut [u8],
         zbuf: &[f64],
         mask: &mut [u8],
-        size: usize,
+        canvas: Canvas,
         a: (f64, f64, f64),
         b: (f64, f64, f64),
         bias_base: f64,
@@ -3470,11 +3632,11 @@ mod raster {
             let d = a.2 + (b.2 - a.2) * t;
             let ix = x.floor() as i64;
             let iy = y.floor() as i64;
-            if ix < 0 || iy < 0 || ix >= size as i64 || iy >= size as i64 {
+            if !canvas.contains(ix, iy) {
                 continue;
             }
             let (ux, uy) = (ix as usize, iy as usize);
-            let idx = uy * size + ux;
+            let idx = canvas.idx(ux, uy);
             let z = zbuf[idx];
             let visible = if z == f64::NEG_INFINITY {
                 // Over background: nothing occludes it.
@@ -3485,8 +3647,8 @@ mod raster {
                 // centre can be far from the edge's own depth.
                 let mut delta: f64 = 0.0;
                 let mut probe = |nx: i64, ny: i64| {
-                    if nx >= 0 && ny >= 0 && nx < size as i64 && ny < size as i64 {
-                        let nz = zbuf[ny as usize * size + nx as usize];
+                    if canvas.contains(nx, ny) {
+                        let nz = zbuf[canvas.idx(nx as usize, ny as usize)];
                         if nz != f64::NEG_INFINITY {
                             delta = delta.max((z - nz).abs());
                         } else {
@@ -3509,10 +3671,10 @@ mod raster {
             for dy in 0..stroke_px as i64 {
                 for dx in 0..stroke_px as i64 {
                     let (qx, qy) = (ix + dx, iy + dy);
-                    if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
+                    if !canvas.contains(qx, qy) {
                         continue;
                     }
-                    let pi = qy as usize * size + qx as usize;
+                    let pi = canvas.idx(qx as usize, qy as usize);
                     mask[pi] = 255;
                     let qi = pi * 3;
                     rgb[qi] = stroke[0];
@@ -3541,7 +3703,7 @@ pub use raytrace::{render_raytrace_jpeg_str, render_raytrace_png_str};
 /// paths are drop-in alternatives that read as the same house style.
 #[cfg(feature = "raytrace")]
 mod raytrace {
-    use super::raster::{encode_jpeg, encode_png, BACKGROUND};
+    use super::raster::{canvas_for, encode_jpeg, encode_png, fit_scale, Frame, BACKGROUND};
     use super::*;
     use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
     use vcad_kernel_raytrace::{bvh::BvhNode, Bvh, Ray};
@@ -3586,11 +3748,7 @@ mod raytrace {
     /// geometry colour (straight-alpha transparency); the JPEG flavour
     /// composites coverage over the opaque vellum background. Both share the
     /// tessellated path's `encode_jpeg` / `encode_png`.
-    fn rasterize_rt(
-        raw_vcad: &str,
-        opts: &RasterOptions,
-        png: bool,
-    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+    fn rasterize_rt(raw_vcad: &str, opts: &RasterOptions, png: bool) -> Result<Frame, String> {
         let tinted = evaluate_vcad(raw_vcad)?;
         if tinted.is_empty() {
             return Err("no solids produced".to_string());
@@ -3659,11 +3817,17 @@ mod raytrace {
         }
         let dspan = (dmax - dmin).max(1e-9);
 
-        let size = opts.size_px as usize;
-        let px_per_mm = opts.fill_frac * opts.size_px as f64 / extent;
+        let canvas = canvas_for(opts, max[0] - min[0], max[1] - min[1]);
+        let px_per_mm = fit_scale(
+            opts.fill_frac,
+            canvas,
+            max[0] - min[0],
+            max[1] - min[1],
+            extent,
+        );
         let cx = (min[0] + max[0]) / 2.0;
         let cy = (min[1] + max[1]) / 2.0;
-        let half = opts.size_px as f64 / 2.0;
+        let (halfx, halfy) = (canvas.w as f64 / 2.0, canvas.h as f64 / 2.0);
 
         // Orthographic rays: start on a plane just past the scene along
         // the camera direction, fire straight down it.
@@ -3674,13 +3838,13 @@ mod raytrace {
             .iter()
             .copied()
             .cycle()
-            .take(size * size * 3)
+            .take(canvas.len() * 3)
             .collect();
-        let mut mask: Vec<u8> = vec![0u8; size * size];
+        let mut mask: Vec<u8> = vec![0u8; canvas.len()];
 
         let n = (SS_GRID * SS_GRID) as f64;
-        for py in 0..size {
-            for px in 0..size {
+        for py in 0..canvas.h {
+            for px in 0..canvas.w {
                 // Sum only the sub-samples that hit a surface, and count
                 // them: `hits/n` is the pixel's coverage.
                 let mut acc = [0.0f64; 3];
@@ -3689,8 +3853,8 @@ mod raytrace {
                     for sx in 0..SS_GRID {
                         let fx = px as f64 + (sx as f64 + 0.5) / SS_GRID as f64;
                         let fy = py as f64 + (sy as f64 + 0.5) / SS_GRID as f64;
-                        let sx_mm = (fx - half) / px_per_mm + cx;
-                        let sy_mm = (fy - half) / px_per_mm + cy;
+                        let sx_mm = (fx - halfx) / px_per_mm + cx;
+                        let sy_mm = (fy - halfy) / px_per_mm + cy;
                         let origin = Point3::new(
                             right[0] * sx_mm + down[0] * sy_mm + cam[0] * d0,
                             right[1] * sx_mm + down[1] * sy_mm + cam[1] * d0,
@@ -3715,7 +3879,7 @@ mod raytrace {
                         }
                     }
                 }
-                let pi = py * size + px;
+                let pi = canvas.idx(px, py);
                 let idx = pi * 3;
                 if hits == 0 {
                     continue; // leave background rgb, mask 0 (transparent)
@@ -3733,7 +3897,7 @@ mod raytrace {
             }
         }
 
-        Ok((rgb, mask))
+        Ok(Frame { rgb, mask, canvas })
     }
 
     /// Shade an analytic hit with the same terms as the tessellated raster
@@ -4345,6 +4509,112 @@ mod tests {
     #[cfg(feature = "raster")]
     mod raster_tests {
         use super::*;
+
+        /// Width and height from a PNG's IHDR chunk.
+        fn png_dims(png: &[u8]) -> (u32, u32) {
+            let n = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+            (n(16), n(20))
+        }
+
+        #[test]
+        fn size_px_alone_still_renders_a_square() {
+            let png = render_png_str(
+                &cube_vcad(20.0, 20.0, 200.0),
+                &RasterOptions {
+                    size_px: 256,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(png_dims(&png), (256, 256));
+        }
+
+        #[test]
+        fn height_px_gives_a_non_square_canvas() {
+            let png = render_png_str(
+                &cube_vcad(20.0, 20.0, 200.0),
+                &RasterOptions {
+                    size_px: 128,
+                    height_px: Some(512),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(png_dims(&png), (128, 512));
+        }
+
+        #[test]
+        fn auto_aspect_fits_the_canvas_to_a_tall_part() {
+            // A 20 × 20 × 400 column seen from the front projects far
+            // taller than it is wide, so the canvas should too — the long
+            // axis keeps size_px and the short axis shrinks.
+            let png = render_png_str(
+                &cube_vcad(20.0, 20.0, 400.0),
+                &RasterOptions {
+                    view: View::Front,
+                    size_px: 512,
+                    auto_aspect: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let (w, h) = png_dims(&png);
+            assert_eq!(h, 512, "long axis keeps size_px");
+            assert!(w > 16 && w < 128, "short axis should shrink, got {w}x{h}");
+        }
+
+        #[test]
+        fn trim_crops_to_the_drawn_content_plus_margin() {
+            let doc = cube_vcad(20.0, 20.0, 200.0);
+            let opts = RasterOptions {
+                view: View::Front,
+                size_px: 256,
+                ..Default::default()
+            };
+            let full = png_dims(&render_png_str(&doc, &opts).unwrap());
+            let margin = 4;
+            let trimmed = png_dims(
+                &render_png_str(
+                    &doc,
+                    &RasterOptions {
+                        trim_margin_px: Some(margin),
+                        ..opts.clone()
+                    },
+                )
+                .unwrap(),
+            );
+            assert_eq!(full, (256, 256));
+            assert!(
+                trimmed.0 < full.0 && trimmed.1 < full.1,
+                "trim should shrink both axes: {trimmed:?} vs {full:?}"
+            );
+            // Default fill is 0.6, so ~40% of each axis is background; the
+            // crop keeps the content plus 2×margin.
+            let expect = |px: u32| ((px as f64 * 0.6).round() as u32, px);
+            let (lo, hi) = expect(256);
+            assert!(
+                trimmed.1 >= lo && trimmed.1 <= hi,
+                "trimmed height {} outside [{lo}, {hi}]",
+                trimmed.1
+            );
+        }
+
+        #[test]
+        fn trim_with_nothing_drawn_is_a_no_op() {
+            // Every render draws *something*, so the empty-mask branch is
+            // exercised through a margin larger than the canvas: the crop
+            // saturates at the canvas bounds rather than overflowing.
+            let png = render_png_str(
+                &cube_vcad(20.0, 20.0, 20.0),
+                &RasterOptions {
+                    size_px: 128,
+                    trim_margin_px: Some(9999),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(png_dims(&png), (128, 128));
+        }
 
         #[test]
         fn renders_cube_to_jpeg() {
