@@ -204,11 +204,13 @@ thiserror = "2"
 tang = { path = "../tang/crates/tang", version = "0.2" }
 tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
 tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
+# phyz moved every crate onto its workspace version (0.3.1); the sub-crates
+# are no longer independently 0.1.x.
 phyz = { path = "../phyz/crates/phyz", version = "0.3" }
-phyz-gpu = { path = "../phyz/crates/phyz-gpu", version = "0.1" }
-phyz-model = { path = "../phyz/crates/phyz-model", version = "0.1" }
-phyz-math = { path = "../phyz/crates/phyz-math", version = "0.1" }
-phyz-md = { path = "../phyz/crates/phyz-md", version = "0.1" }
+phyz-gpu = { path = "../phyz/crates/phyz-gpu", version = "0.3" }
+phyz-model = { path = "../phyz/crates/phyz-model", version = "0.3" }
+phyz-math = { path = "../phyz/crates/phyz-math", version = "0.3" }
+phyz-md = { path = "../phyz/crates/phyz-md", version = "0.3" }
 slotmap = "1"
 anyhow = "1"
 toml = "0.8"
