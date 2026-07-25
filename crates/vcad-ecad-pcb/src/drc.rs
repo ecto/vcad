@@ -1309,6 +1309,24 @@ fn single_layer_mask(layer: PcbLayer) -> u16 {
         .unwrap_or(0)
 }
 
+/// The copper geometry the connectivity graph sees for each *pad*, keyed by
+/// `(footprint reference, pad number)`.
+///
+/// Exposed so the cross-surface rotation invariants can assert that DRC's view
+/// of a pad is the same physical rectangle as
+/// [`crate::geometry::pad_world_position`] plus the composed rotation — the
+/// agreement nothing checked when the KiCad importer double-counted footprint
+/// rotation and invented 648 phantom violations on the CM5 fixture.
+pub fn connectivity_pad_geoms(pcb: &Pcb) -> Vec<((String, String), CopperGeom)> {
+    build_conn_nodes(pcb)
+        .into_iter()
+        .filter_map(|n| match (n.pad, n.geom) {
+            (Some(key), NodeGeom::Copper(g)) => Some((key, g)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Geometry of a connectivity node.
 enum NodeGeom {
     /// Copper segment / disc / rect (trace, via, pad).
