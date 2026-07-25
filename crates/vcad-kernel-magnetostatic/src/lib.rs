@@ -66,11 +66,13 @@
 
 pub mod filament;
 pub mod iron;
+pub mod machine;
 pub mod magnet;
 pub mod vec3;
 
 pub use filament::{Filament, Segment};
 pub use iron::IronStack;
+pub use machine::{harmonics, peak_to_peak, Machine, Phase, TorqueAudit};
 pub use magnet::{MagnetRing, Polarity, PrismMagnet};
 pub use vec3::Vec3;
 

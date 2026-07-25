@@ -62,7 +62,15 @@ impl Segment {
         let n1 = r1.norm();
         let n2 = r2.norm();
         let perp = (r1 - tangent * t1).norm();
-        Some(SegmentGeometry { tangent, r1, n1, n2, t1, t2, perp })
+        Some(SegmentGeometry {
+            tangent,
+            r1,
+            n1,
+            n2,
+            t1,
+            t2,
+            perp,
+        })
     }
 
     /// Magnetic flux density at `p`, tesla.
@@ -180,12 +188,22 @@ pub struct Filament {
 impl Filament {
     /// A closed loop through `points`.
     pub fn closed_loop(points: Vec<Vec3>, current_a: f64, wire_radius_m: f64) -> Self {
-        Self { points, current_a, wire_radius_m, closed: true }
+        Self {
+            points,
+            current_a,
+            wire_radius_m,
+            closed: true,
+        }
     }
 
     /// An open path through `points`.
     pub fn open_path(points: Vec<Vec3>, current_a: f64, wire_radius_m: f64) -> Self {
-        Self { points, current_a, wire_radius_m, closed: false }
+        Self {
+            points,
+            current_a,
+            wire_radius_m,
+            closed: false,
+        }
     }
 
     /// Iterate the path's segments.
@@ -244,7 +262,23 @@ impl Filament {
     /// `λ = ∮A·dl`, evaluated with the midpoint rule on each segment. The
     /// external `a_field` must exclude this path's own contribution, or the
     /// result is self-inductance rather than mutual flux linkage.
+    ///
+    /// # Panics
+    ///
+    /// If the path is open. Flux linkage is only defined around a **closed**
+    /// circuit: `∮A·dl` is gauge-invariant and equals the enclosed flux, but the
+    /// open-path `∫A·dl` is neither — it changes under `A → A + ∇χ` while `B`
+    /// stays put, so it is not a physical quantity. An open spiral must be closed
+    /// through its return path, or modelled as concentric closed turns, before
+    /// its linkage means anything. This panics rather than returning a number
+    /// because the failure is otherwise silent: the value looks plausible and is
+    /// simply wrong, which is exactly how a torque constant gets mis-certified.
     pub fn flux_linkage<F: Fn(Vec3) -> Vec3>(&self, a_field: F) -> f64 {
+        assert!(
+            self.closed,
+            "flux_linkage requires a closed circuit; an open path's ∫A·dl is \
+             gauge-dependent and not a flux linkage"
+        );
         self.segments()
             .map(|s| {
                 let mid = (s.a + s.b) * 0.5;

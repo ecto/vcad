@@ -62,7 +62,10 @@ fn on_axis_loop_matches_the_closed_form() {
             b.z,
             expected
         );
-        assert!(b.x.abs().max(b.y.abs()) < 1e-9 * expected, "off-axis leakage at z={z}");
+        assert!(
+            b.x.abs().max(b.y.abs()) < 1e-9 * expected,
+            "off-axis leakage at z={z}"
+        );
     }
 }
 
@@ -72,7 +75,12 @@ fn off_axis_loop_matches_particle_crates_elliptic_integrals() {
     // elliptic integrals, written for a different crate and a different purpose.
     let r = 0.02;
     let i = 5.0;
-    let coil = RingCoil { radius_m: r, z_m: 0.0, ampere_turns: i, wire_radius_m: 0.0 };
+    let coil = RingCoil {
+        radius_m: r,
+        z_m: 0.0,
+        ampere_turns: i,
+        wire_radius_m: 0.0,
+    };
     let loop_ = ring_filament(r, 0.0, i, 4096);
 
     for &(rho, z) in &[

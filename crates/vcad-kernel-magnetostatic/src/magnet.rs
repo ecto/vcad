@@ -47,7 +47,7 @@ impl Polarity {
 
     /// Alternating polarity for pole index `k`.
     pub fn alternating(k: usize) -> Self {
-        if k % 2 == 0 {
+        if k.is_multiple_of(2) {
             Polarity::North
         } else {
             Polarity::South
@@ -187,7 +187,10 @@ impl MagnetRing {
 
     /// All bound-current loops for the ring.
     pub fn to_filaments(&self, n_axial: usize) -> Vec<Filament> {
-        self.magnets.iter().flat_map(|m| m.to_filaments(n_axial)).collect()
+        self.magnets
+            .iter()
+            .flat_map(|m| m.to_filaments(n_axial))
+            .collect()
     }
 
     /// The ring rotated about z by `angle` radians — the rotor position sweep.

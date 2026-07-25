@@ -135,7 +135,11 @@ fn two_plane_series_converges_for_a_balanced_rotor() {
     let probe = Vec3::new(0.0225, 0.0, 0.0045);
     let b_at = |depth: usize| -> Vec3 {
         let stack = IronStack::pair(0.0, 0.0056, depth);
-        rotor.iter().flat_map(|s| stack.expand(s)).map(|f| f.b_at(probe)).sum()
+        rotor
+            .iter()
+            .flat_map(|s| stack.expand(s))
+            .map(|f| f.b_at(probe))
+            .sum()
     };
     let shallow = b_at(8);
     let deep = b_at(IronStack::DEFAULT_REFLECTIONS);
@@ -176,7 +180,9 @@ fn two_planes_beat_one_which_beats_none() {
 
     let none = b_with_iron(&IronStack::none(), &src, probe).z.abs();
     let one = b_with_iron(&IronStack::single(0.0), &src, probe).z.abs();
-    let two = b_with_iron(&IronStack::pair(0.0, 0.0056, 12), &src, probe).z.abs();
+    let two = b_with_iron(&IronStack::pair(0.0, 0.0056, 12), &src, probe)
+        .z
+        .abs();
 
     assert!(none < one, "one plane must beat none: {none} vs {one}");
     assert!(one < two, "two planes must beat one: {one} vs {two}");
