@@ -185,6 +185,47 @@ impl Default for RouteOptions {
 /// bounds worst-case work on a genuinely over-constrained board.
 const MAX_RIPUP_ROUNDS: usize = 8;
 
+/// Wall-clock budget for one greedy-phase rip-up round. Rip-up is a *ratchet*:
+/// it rips real copper to free a corridor and re-routes the victims, so a
+/// round that runs long is a round grinding through victims it is about to
+/// fail to restore — the CM5 logs show 45-minute rounds ending with fewer
+/// connections placed than they started (536 -> 511), which keep-best then
+/// discards wholesale. The budget parks the remainder as pending instead: the
+/// same outcome the round was heading for, minutes rather than an hour later.
+const RIPUP_ROUND_BUDGET_MS: f64 = 300_000.0;
+
+/// Wall-clock budget for the deferred rescue [`arsenal_sweep`]. The arsenal is
+/// unbounded per connection (escape flow, coupled-pair phantom search, true
+/// shove); over a tail negotiation could not place, most of it fails slowly.
+const ARSENAL_SWEEP_BUDGET_MS: f64 = 300_000.0;
+
+/// Whether the GPU negotiator is armed for this process (charter M4:
+/// `--features gpu` plus `VCAD_GPU_NEGOTIATE=1`).
+fn gpu_negotiation_enabled() -> bool {
+    #[cfg(feature = "gpu")]
+    {
+        std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1")
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        false
+    }
+}
+
+/// Whether this board routes in the negotiation-first regime: GPU negotiation
+/// takes the unrouted tail before the sequential CPU rescue arsenal, which
+/// then fires once over its leftovers.
+///
+/// Ordering is board-regime-dependent (routerbench finding): on layer-rich
+/// boards negotiation-first replaced the ratchet outright (the CM5's
+/// 67-minute chain); on 2-3 layer boards its greedy priced commits consume
+/// scarce corridors the rescue arsenal spends more carefully (the VESC lost 4
+/// points to it). Pre-arsenal negotiation therefore requires >= 4 copper
+/// layers; thin boards negotiate after the arsenal, on its leftovers only.
+fn negotiate_first_regime(pcb: &Pcb) -> bool {
+    gpu_negotiation_enabled() && copper_layers(pcb).len() >= 4
+}
+
 /// History cost (mm-equivalent) deposited on a contested corridor per
 /// negotiation round. A gentle, accumulating bias: enough that a flexible net
 /// with another way around bows out of a repeatedly-contested band, but small
@@ -320,7 +361,21 @@ pub fn route_all_with_opts(
     // copper that blocked them, so flexible nets bow out of the contested band.
     // We keep the best pass (most connections placed) ever seen.
     let mut cong = Congestion::new(&pcb.outline.vertices);
-    let rounds = opts.effective_rounds();
+    // In the negotiation-first regime round 0 already *is* a negotiated pass:
+    // the GPU negotiator works the tail globally inside it, with the rescue
+    // arsenal and the fine-pitch retry behind it. The incremental CPU rounds
+    // that follow are the same ratchet done worse, and every one of them
+    // measured in this regime ended below round 0 and was discarded by
+    // keep-best — 335s + 183s on the full CM5, 231s + 130s on its 250-net
+    // subset, for no connection kept. Round 0 also already carries the
+    // last-round fine-retry that the trailing "polish" round exists to
+    // guarantee, so stopping here forfeits nothing it could have added. Every
+    // other regime keeps the full ladder.
+    let rounds = if negotiate_first_regime(pcb) {
+        1
+    } else {
+        opts.effective_rounds()
+    };
     let mut best: Option<Pass> = None;
     // How many rounds each net has gone unrouted — its negotiation priority.
     let mut fail_count: BTreeMap<String, usize> = BTreeMap::new();
@@ -338,11 +393,15 @@ pub fn route_all_with_opts(
     // retry (observed on the corridor benchmark: 4 rounds routed 16/24 where
     // 1 round routed 18/24).
     let mut polish = false;
+    // Wall-clock cost of round 0 — the budget the speculative rounds are sized
+    // against (see [`incremental_round`]).
+    let mut baseline_ms = 0.0f64;
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
         // history field are enhancement layers applied from round 1 onward.
         let use_push_shove = opts.use_push_shove && round > 0;
         let last_round_flag = polish || round + 1 == rounds;
+        let sw_round = Stopwatch::start();
         let (session, placed, pending) = if round == 0 {
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
@@ -391,8 +450,12 @@ pub fn route_all_with_opts(
                 last_round_flag,
                 &fail_count,
                 &mut round_cache,
+                baseline_ms,
             )
         };
+        if round == 0 {
+            baseline_ms = sw_round.ms();
+        }
 
         log::info!(
             "negotiation round {}/{rounds}: placed={} pending={} (push_shove={use_push_shove})",
@@ -1045,6 +1108,19 @@ fn route_pass(
         }
     }
 
+    let negotiate_first = negotiate_first_regime(pcb);
+    if gpu_negotiation_enabled() {
+        log::info!(
+            "gpu negotiation armed: {} copper layers -> {}",
+            copper_layers(pcb).len(),
+            if negotiate_first {
+                "negotiation-first (arsenal deferred to its leftovers)"
+            } else {
+                "thin board: arsenal first, negotiation on its leftovers"
+            }
+        );
+    }
+
     let unrouted_conns = route_batch(
         &mut session,
         pcb,
@@ -1055,9 +1131,19 @@ fn route_pass(
         use_push_shove,
         max_expansions,
         fine_retry,
-        true,
+        // Negotiation-first ordering: when negotiation takes the tail before
+        // the arsenal, the arsenal must NOT also fire per failed connection
+        // inside this batch loop. That inline call was the greedy phase's
+        // dominant cost — an escape/pair/shove chain re-solved sequentially,
+        // one connection at a time, for a tail negotiation clears in seconds.
+        // Failures fall straight through to negotiation here, and the arsenal
+        // fires once afterwards over its leftovers only (`arsenal_sweep`).
+        !negotiate_first,
         &mut fail_cache,
         &corridors,
+        // The opening greedy pass is the board's baseline result, not a
+        // speculative refinement — it is never cut short.
+        None,
     );
 
     // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
@@ -1066,22 +1152,32 @@ fn route_pass(
     // that failed in one round find a path once the board settles. Stop the
     // instant a round places nothing new, so a stuck board exits immediately.
     let mut pending = unrouted_conns;
-    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1).
-    // Ordering is board-regime-dependent (routerbench finding): on
-    // layer-rich boards negotiation-first replaced the ratchet outright
-    // (the CM5's 67-minute chain); on 2-3 layer boards its greedy priced
-    // commits consume scarce corridors the rescue arsenal spends more
-    // carefully (the VESC lost 4 points to it). Pre-arsenal negotiation
-    // therefore requires >= 4 copper layers; thin boards negotiate after
-    // the arsenal, on its leftovers only.
     #[cfg(feature = "gpu")]
-    let negotiation_enabled = std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1");
-    #[cfg(feature = "gpu")]
-    let negotiate_first = copper_layers(pcb).len() >= 4;
-    #[cfg(feature = "gpu")]
-    if negotiation_enabled && negotiate_first && !pending.is_empty() {
+    if negotiate_first && !pending.is_empty() {
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
+        // The deferred arsenal, now over negotiation's leftovers only.
+        pending = arsenal_sweep(
+            &mut session,
+            pcb,
+            width,
+            &mut placed,
+            pending,
+            cong,
+            use_push_shove,
+            max_expansions,
+            &mut fail_cache,
+        );
     }
+    // Rip-up's job — free a corridor for a connection that has none — is the
+    // job negotiation has just done, globally and in seconds. Once it has run
+    // first, the greedy phase's rip-up rounds have never been observed to pay
+    // for themselves on this regime: they cost ~45 minutes on the full CM5 and
+    // ~8 minutes on its 250-net subset, and BOTH ended with fewer connections
+    // placed than they started (536 -> 511; 382 -> 380), so keep-best threw
+    // the whole round away. Skip them here and let the negotiation loop's own
+    // budgeted, keep-best-guarded rounds be the ratchet. Every other regime —
+    // thin boards, GPU off, no `gpu` feature — keeps the full ladder.
+    let ripup_rounds = if negotiate_first { 0 } else { ripup_rounds };
     for _ in 0..ripup_rounds {
         if pending.is_empty() {
             break;
@@ -1104,7 +1200,7 @@ fn route_pass(
             use_push_shove,
             max_expansions,
             true,
-            None,
+            Some(RIPUP_ROUND_BUDGET_MS),
             &mut fail_cache,
             &corridors,
         );
@@ -1128,11 +1224,79 @@ fn route_pass(
     // Thin-board negotiation (see ordering note above): the arsenal has had
     // first claim; negotiation now works only its leftovers.
     #[cfg(feature = "gpu")]
-    if negotiation_enabled && !negotiate_first && !pending.is_empty() {
+    if gpu_negotiation_enabled() && !negotiate_first && !pending.is_empty() {
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
 
     (session, placed, pending)
+}
+
+/// The deferred rescue arsenal, run once over the connections GPU negotiation
+/// left behind.
+///
+/// Under negotiation-first ordering (see [`route_pass`]) the greedy batch
+/// routes search-only, so this is the single place the sequential arsenal —
+/// flow escape, coupled-pair phantom, true shove — fires during the greedy
+/// phase. Same rescues, same legality (everything still goes through
+/// [`try_route`]), applied to the tail negotiation could not clear instead of
+/// to every connection the speculative search missed.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+fn arsenal_sweep(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    placed: &mut Vec<Placed>,
+    pending: Vec<Conn>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fail_cache: &mut FailCache,
+) -> Vec<Conn> {
+    let sw = Stopwatch::start();
+    let total = pending.len();
+    let mut still: Vec<Conn> = Vec::new();
+    let mut rescued = 0usize;
+    let mut it = pending.into_iter();
+    for (net, from, to) in it.by_ref() {
+        if sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+            log::info!("arsenal sweep over budget — deferring remainder");
+            still.push((net, from, to));
+            break;
+        }
+        match try_route(
+            session,
+            pcb,
+            width,
+            &net,
+            from,
+            to,
+            placed,
+            cong,
+            use_push_shove,
+            max_expansions,
+            true,
+        ) {
+            Some(p) => {
+                fail_cache.remove(&conn_key(&net, from, to));
+                placed.push(p);
+                rescued += 1;
+            }
+            None => {
+                fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                still.push((net, from, to));
+            }
+        }
+    }
+    still.extend(it);
+    if total > 0 {
+        log::info!(
+            "arsenal sweep: {total} leftovers -> rescued {rescued}, still {} in {:.1}s",
+            still.len(),
+            sw.ms() / 1000.0,
+        );
+    }
+    still
 }
 
 /// One incremental negotiation round: clone the best pass, rip the placed
@@ -1152,6 +1316,7 @@ fn incremental_round(
     fine_retry: bool,
     fail_count: &BTreeMap<String, usize>,
     fail_cache: &mut FailCache,
+    baseline_ms: f64,
 ) -> Pass {
     let (mut session, mut placed, pending_base) = base.clone();
 
@@ -1174,10 +1339,17 @@ fn incremental_round(
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
-    // Flat 20-minute budget regardless of effort: scaling by expansion
-    // budget multiplied speculative-round cost right back up at high effort
-    // (effort 10 → 3.3h/round), exactly what the budget exists to prevent.
-    let budget_ms = 1_200_000.0;
+    // Budget = a quarter of what round 0 spent producing the whole baseline,
+    // floored at a minute and still capped at the historical 20. A round here
+    // refines a tail that is a few percent of the board, and keep-best throws
+    // it away unless it beats the snapshot — so it should cost a fraction of
+    // the baseline, not (as the flat 20-minute budget made it) several times
+    // more than the baseline it refines. The cap still bounds a board whose
+    // round 0 is genuinely slow, and the budget stays flat with respect to
+    // effort (scaling it by the expansion budget multiplied speculative-round
+    // cost right back up at high effort — effort 10 → 3.3h/round, exactly
+    // what the budget exists to prevent).
+    let budget_ms = (baseline_ms * 0.25).clamp(60_000.0, 1_200_000.0);
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -1197,10 +1369,11 @@ fn incremental_round(
         &HashMap::new(),
     );
     log::info!(
-        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s",
+        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s (budget {:.0}s)",
         placed.len(),
         pending.len(),
         sw.ms() / 1000.0,
+        budget_ms / 1000.0,
     );
 
     (session, placed, pending)
@@ -1229,6 +1402,7 @@ fn route_batch(
     rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+    deadline_ms: Option<f64>,
 ) -> Vec<Conn> {
     const MAX_COMMIT_RETRIES: usize = 3;
     let sw = Stopwatch::start();
@@ -1293,6 +1467,25 @@ fn route_batch(
     let mut conflicts = 0usize;
     let batch_size = rayon::current_num_threads().max(1) * 2;
     while !queue.is_empty() {
+        // Over-deadline: report the remaining queue unrouted rather than
+        // routing it. Every caller that passes a deadline already handles an
+        // unrouted connection — a stuck one stays pending, a ripped victim
+        // gets its original copper restored — so cutting the batch short
+        // costs attempts, never legality. Without this the enclosing budgets
+        // (rip-up rounds, speculative negotiation rounds, joint repair) were
+        // advisory only: they are checked between connections, and one
+        // connection's victim re-route is itself a whole batch, so a 92-second
+        // round measured 231 seconds.
+        if let Some(d) = deadline_ms {
+            if sw.ms() > d {
+                log::info!(
+                    "route_batch over {d:.0}ms budget — deferring {} conns",
+                    queue.len()
+                );
+                unrouted.extend(queue.drain(..).map(|(c, _)| c));
+                break;
+            }
+        }
         batches += 1;
         let sw_batch = Stopwatch::start();
         let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
@@ -2814,6 +3007,10 @@ fn ripup_pass(
             rescue,
             fail_cache,
             corridors,
+            // The victim re-route inherits what is left of the pass budget:
+            // it is a whole batch inside one connection's iteration, so
+            // leaving it unbounded is what made the budget advisory.
+            deadline_ms.map(|d| (d - sw_pass.ms()).max(0.0)),
         ));
     }
     still.extend(unrouted);
@@ -2839,6 +3036,7 @@ fn reroute_victims_with_restore(
     rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+    deadline_ms: Option<f64>,
 ) -> Vec<Conn> {
     let mut originals: HashMap<ConnKey, Placed> = victims
         .iter()
@@ -2859,6 +3057,7 @@ fn reroute_victims_with_restore(
         rescue,
         fail_cache,
         corridors,
+        deadline_ms,
     ) {
         let restored = originals
             .remove(&conn_key(&net, from, to))
@@ -3018,6 +3217,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
+                Some((round_budget_ms - sw_round.ms()).max(0.0)),
             );
             lost.extend(reroute_victims_with_restore(
                 session,
@@ -3031,6 +3231,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
+                Some((round_budget_ms - sw_round.ms()).max(0.0)),
             ));
             // Last resort for a small surviving clique: the COMPLETE window
             // router — either a joint routing the heuristics missed, or a
