@@ -1,5 +1,12 @@
 # M7 — universal pair coupling and the SI receipt
 
+> **Correction (2026-07-25).** The results below were measured against a DRC
+> baseline our own pad-rotation bug had inflated (PR #684), and the "40-net
+> subset — receipt Pass" headline does not reproduce. Corrected figures are in
+> [the correction section](#correction-2026-07-25--re-measured-after-the-pad-rotation-fix)
+> at the end; the numbers in the body are left as originally published so the
+> record shows what moved. Claims move only with runs; a correction is a run.
+
 Follow-on to [gpu-router-m6-results.md](gpu-router-m6-results.md), whose
 scoreboard closed with `receipt Pass | 1/4 HOLDS` and named the levers:
 coupled routing during construction, and reroute-then-descend for the
@@ -210,8 +217,124 @@ fixture. The import carries ~906 pad-level shorts, and every routed trace
 merges copper clusters, multiplying reported net-pair shorts — routing only 40
 nets adds ~409. Use the `Clearance` rule for attribution.
 
+## Correction (2026-07-25) — re-measured after the pad-rotation fix
+
+vcad's KiCad importer stored pad angles as read, but KiCad's pad angle is
+absolute (it includes the footprint's orientation) while eleven consumers
+compose `fp.rotation + pad.rotation`. Rotated fine-pitch packages therefore had
+**overlapping pads**, inflating the DRC baseline every attribution claim in this
+document is measured against. Fixed in PR #684; see
+[gpu-router-m6-results.md](gpu-router-m6-results.md#correction-2026-07-25--the-drc-baseline-was-inflated)
+for the full baseline correction.
+
+Everything below is re-measured on merged main with #684 in. DRC and SI are
+deterministic on a fixed board; every figure was run twice with identical
+results.
+
+### The 40-net subset was not a Pass
+
+The headline "40-net subset — receipt Pass (ALL HOLD)" is **withdrawn**. It also
+failed to reproduce on merged main *before* this fix (measured 2026-07-25:
+`worst_intra_pair_skew` 1.347mm against the 1.1mm bound, i.e. 3/4), so the
+original Pass was a property of that one branch state, not a reproducible
+result.
+
+| 40-net subset | published | corrected (2 runs, identical) |
+|---|---|---|
+| worst_group_skew | 0.000 HOLDS | 0.000 HOLDS |
+| **worst_intra_pair_skew** | **0.983 HOLDS** | **1.353 BROKEN** (bound 1.100) |
+| min_pair_coupled_fraction | 0.777 HOLDS | 0.582 HOLDS |
+| vias_per_si_net | 2.727 HOLDS | 2.474 HOLDS |
+| pair_impedance_correct_fraction | — | 0.000 HOLDS *(vacuous, see below)* |
+| **verdict** | **ALL HOLD** | **3 of 4** (4 of 5 counting the vacuous claim) |
+
+Routability is unchanged at 1.000 (4.7–5.1 s over two runs).
+
+**The claim that survives**: the finishing pass still introduces no clearance
+violations. Published as "the board's total `Clearance` count is identical with
+the finishing pass on and off (74)". The 74 was the inflated floor; corrected,
+the 40-net board scores `Clearance` **23** — *exactly* the stripped-fixture
+floor. Same finding, honest number.
+
+### The full board is 1 of 4, not 2 of 4
+
+Full-board route on the corrected importer, two runs: routability **0.994**
+both times, byte-identical board (3,791 segments / 895 vias) — the route is
+deterministic given the tree. Wall-clock 895.5 / 958.9 s.
+
+| full board | published (routed + si_finish) | corrected |
+|---|---|---|
+| worst_group_skew | 9.297 HOLDS | **8.397** HOLDS |
+| worst_intra_pair_skew | 37.853 BROKEN | **38.521** BROKEN |
+| min_pair_coupled_fraction | 0.000 BROKEN | **0.101** BROKEN |
+| **vias_per_si_net** | **2.766 HOLDS** | **3.128 BROKEN** (bound 3.000) |
+| pair_impedance_correct_fraction | — | 0.000 HOLDS *(vacuous, see below)* |
+| **verdict** | **2 of 4** | **1 of 4** (2 of 5 counting the vacuous claim) |
+
+`vias_per_si_net` crossed the bound: 294 vias over 94 routed SI nets. The board
+now routes more connections (0.994 vs 0.983) and pays for them in vias, so this
+claim broke as coverage improved — worth stating plainly rather than reporting
+only the routability gain.
+
+`min_pair_coupled_fraction` moved off exactly zero (0.101) because pair-first
+now couples **47** pairs in round 0, up from 43 — overlapping pads had been
+sealing the BGA fields pairs escape through. Still far under the 0.5 bound, and
+the short `/HS.*` pairs diagnosed above remain the pin.
+
+### DRC attribution, corrected
+
+| | published | corrected |
+|---|---|---|
+| stripped-fixture floor, `Clearance` | 74 | **23** |
+| our full board, `Clearance` | — | **173** |
+| **route-attributable `Clearance`** | claimed **0** | **150** |
+
+The note "the import carries ~906 pad-level shorts, and routing only 40 nets
+adds ~409" is corrected: the import carries **258** pad-level shorts, and the
+40-net route adds **27** (285 total). The *conclusion* is unchanged and still
+correct — `Short` counts are not route-attributable on this fixture, because
+every routed trace transitively merges same-net copper clusters. Use `Clearance`
+for attribution.
+
+### Re-verified against current main (#685, #687, #691)
+
+Main moved while this correction was being measured: #685 (Eagle `.brd` pad
+rotation), #687 (Gerber apertures turn with the pad), and #691 (per-layer
+controlled-impedance geometry). #691 rewrites `router/pair.rs` and adds a fifth
+SI claim, so the corrected figures were re-run against it rather than assumed
+still valid.
+
+**Nothing moved.** The stripped floor (311 / 23), our board's DRC (`Clearance`
+173), and the 40-net route (byte-identical board — 762 segments, 92 vias,
+receipt 1.353 / 0.582 / 2.474) all reproduce exactly. #691's per-layer widths
+are opt-in on `target_impedance`, which the CM5 fixture's classes do not
+declare, so the router's behaviour on this board is unchanged.
+
+The new `pair_impedance_correct_fraction` claim is therefore **vacuous here** —
+it reports `0.000` against a bound of `0.000` with the reason "no differential
+net class declares a target impedance — nothing to verify", and HOLDS trivially.
+The receipt is now 5 claims wide, so the raw fraction reads 2 of 5 on the full
+board and 4 of 5 on the subset. **Those are not improvements.** The honest
+counts against claims that actually verify something are unchanged: **1 of 4**
+and **3 of 4**.
+
+### The bounds are untouched, and still valid
+
+The human board's anchor re-measures **bit-identical** after the fix —
+9.756 / 1.074 / 0.857 / 2.265, ALL HOLD. Pad angles feed pad geometry, not
+trace lengths, so the calibration anchor is unaffected and the envelope
+argument stands. No bound was adjusted.
+
+### The open A/B is now closed on the honest baseline
+
+The "no new route-attributable DRC — router: **not A/B'd**" gap above is
+answered: against the corrected floor of 23, the router's own delta is
+**+150 `Clearance`**. That is the missing evidence, and it is not zero.
+
 ## Next
 
+0. Reduce the 150 route-attributable clearance violations — now measurable
+   against an honest floor, and the router's real debt.
 1. A short-pair path that keeps both legs on one layer without the lead inset
    — this alone unpins `min_pair_coupled_fraction` from zero.
 2. Higher-effort polish for the detour pairs, or catching them during
