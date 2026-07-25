@@ -3331,7 +3331,10 @@ mod tests {
         // Net B wants a buried via 0.5mm away on the bottom half: drills leave
         // a 0.5 - 0.2 - 0.2 = 0.1mm gap against the board's 0.5mm rule.
         let b = Vec2::new(25.5, 15.0);
-        let disc = CopperGeom::Disc { center: b, r: via_r };
+        let disc = CopperGeom::Disc {
+            center: b,
+            r: via_r,
+        };
         assert!(
             [PcbLayer::In2Cu, PcbLayer::BCu]
                 .iter()
