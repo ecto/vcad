@@ -215,13 +215,21 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
         let pads: Vec<Pad> = pkg_pads
             .iter()
             .map(|pp| {
-                // Element rotation (+ mirror = bottom side, x flips).
-                let mut p = pp.pos;
+                // Package pads live in the package's own frame, so their
+                // offsets and `rot` are ALREADY relative to the element —
+                // which is exactly what the IR stores. Composing the element
+                // rotation in here would double-count it: every consumer goes
+                // through `pad_world_position` (`fp + R(fp.rotation)·pad`) and
+                // `fp.rotation + pad.rotation`. Only the mirror is baked in,
+                // because the IR has no per-pad mirror flag: Eagle's `MRθ` is
+                // "mirror across Y, then rotate by θ", so M composes inside
+                // R(θ) and survives as x → -x, angle → -angle.
+                let mut local = pp.pos;
+                let mut pad_rot = pp.rot;
                 if mirrored {
-                    p.x = -p.x;
+                    local.x = -local.x;
+                    pad_rot = -pad_rot;
                 }
-                let (s, c) = rot.to_radians().sin_cos();
-                let local = Vec2::new(p.x * c - p.y * s, p.x * s + p.y * c);
                 let side = if mirrored {
                     PcbLayer::BCu
                 } else {
@@ -241,7 +249,7 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
                         }
                     },
                     position: local,
-                    rotation: pp.rot + rot,
+                    rotation: pad_rot,
                     drill: (!pp.smd).then_some(DrillSpec {
                         diameter: pp.drill,
                         oval: false,
@@ -417,5 +425,62 @@ mod tests {
         // Mirrored element lands on the back.
         assert!(!pcb.footprints[1].front);
         assert_eq!(pcb.footprints[1].pads[0].layers, vec![PcbLayer::BCu]);
+    }
+
+    /// Pad offsets and angles are stored RELATIVE to the footprint — the
+    /// element rotation lives on `Footprint::rotation` only. Composing it into
+    /// the pad (as `pp.rot + rot`, or by pre-rotating `pp.pos`) double-counts
+    /// it once every consumer applies `fp + R(fp.rotation)·pad`.
+    #[test]
+    fn pad_transform_is_relative_to_the_footprint() {
+        // 2×1 pads at ±0.5 in x, one of them turned 90° in the package frame.
+        let brd = r##"<?xml version="1.0"?>
+<eagle version="9.6.0"><drawing><board>
+<plain/>
+<libraries><library name="l">
+  <package name="P"><smd name="1" x="-0.5" y="0" dx="1.0" dy="0.5" layer="1"/>
+                    <smd name="2" x="0.5" y="0" dx="1.0" dy="0.5" layer="1" rot="R90"/></package>
+</library></libraries>
+<elements>
+  <element name="A" library="l" package="P" x="10" y="20" rot="R90"/>
+  <element name="B" library="l" package="P" x="30" y="40" rot="MR90"/>
+</elements>
+<signals/>
+</board></drawing></eagle>"##;
+        let pcb = parse_eagle_brd(brd).expect("parse");
+
+        let a = &pcb.footprints[0];
+        assert_eq!(a.rotation, 90.0);
+        // Unrotated package offsets survive verbatim…
+        assert_eq!(a.pads[0].position, Vec2::new(-0.5, 0.0));
+        assert_eq!(a.pads[1].position, Vec2::new(0.5, 0.0));
+        // …and pad angles are the package's own, not package + element.
+        assert_eq!(a.pads[0].rotation, 0.0);
+        assert_eq!(a.pads[1].rotation, 90.0);
+
+        // Round-trip through the canonical consumer transform: pad 1 of a
+        // 90°-rotated element sits directly "below" its origin, long axis
+        // now vertical (0° pad + 90° element).
+        let w = |p: &Pad| {
+            let (s, c) = a.rotation.to_radians().sin_cos();
+            Vec2::new(
+                a.position.x + p.position.x * c - p.position.y * s,
+                a.position.y + p.position.x * s + p.position.y * c,
+            )
+        };
+        let (p0, p1) = (w(&a.pads[0]), w(&a.pads[1]));
+        assert!((p0 - Vec2::new(10.0, 19.5)).length() < 1e-9, "{p0:?}");
+        assert!((p1 - Vec2::new(10.0, 20.5)).length() < 1e-9, "{p1:?}");
+        // Long axes stay 1.0 apart on a 1.0×0.5 pad ⇒ edges touch, never overlap.
+        assert!((p1 - p0).length() >= 1.0 - 1e-9);
+
+        // Mirrored: x flips in the package frame, angle negates, rotation is
+        // still just the element's.
+        let b = &pcb.footprints[1];
+        assert!(!b.front);
+        assert_eq!(b.rotation, 90.0);
+        assert_eq!(b.pads[0].position, Vec2::new(0.5, 0.0));
+        assert_eq!(b.pads[1].position, Vec2::new(-0.5, 0.0));
+        assert_eq!(b.pads[1].rotation, -90.0);
     }
 }
