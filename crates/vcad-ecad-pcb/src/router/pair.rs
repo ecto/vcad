@@ -287,8 +287,21 @@ pub(super) fn try_route_pair_reason(
     let mid_to = Vec2::new((to.x + p_to.x) / 2.0, (to.y + p_to.y) / 2.0);
     let span = dist(mid_from, mid_to);
     let lead = (fat_w + clearance + w).min(span * 0.25);
-    if span < 4.0 * lead.max(0.1) {
+    // Below SHORT_PAIR_SPAN_MM the lead inset is the whole problem: a ~1.8mm
+    // pad-to-pad pair keeps only ~0.9mm of searchable centerline, both ladders
+    // fail, and the pair falls back to two singles whose legs land on
+    // DIFFERENT layers — scoring coupled_fraction exactly 0.0 and pinning the
+    // receipt's pair claim at zero however well the rest of the board routes
+    // (M7: the `/HS.*` group). Such a pair does not need a search at all; it
+    // needs the straight centerline it was always going to have. Route it
+    // directly below, so only spans too long for that path still bail here.
+    if span < 4.0 * lead.max(0.1) && span > SHORT_PAIR_SPAN_MM {
         log::debug!("pair: {net}/{partner}: span {span:.2}mm too short for coupled routing");
+        return Err(PairBail::SpanTooShort);
+    }
+    if span < 2.0 * half_sep {
+        // Degenerate: the twin legs would be further apart than the span.
+        log::debug!("pair: {net}/{partner}: span {span:.2}mm below one pair separation");
         return Err(PairBail::SpanTooShort);
     }
     let dir = {
@@ -361,6 +374,30 @@ pub(super) fn try_route_pair_reason(
     // how a human escapes a BGA with a pair: singles in the field, coupled
     // in the open.
     let budget = max_expansions.max(100_000);
+    // Short pairs first: a straight, lead-free centerline on a layer all four
+    // pads share. Exact and probe-validated, so it costs four point probes
+    // rather than a maze search, and it keeps both legs on ONE layer — which
+    // is what `coupled_fraction` measures.
+    let direct = if span <= SHORT_PAIR_SPAN_MM {
+        direct_centerline(
+            session,
+            pcb,
+            net,
+            &partner,
+            (mid_from, mid_to),
+            [from, to, p_from, p_to],
+            half_sep,
+            via_d / 2.0,
+            clearance,
+            w,
+            &copper,
+        )
+    } else {
+        None
+    };
+    if direct.is_some() {
+        log::debug!("pair: {net}/{partner}: short span {span:.2}mm — direct coupled centerline");
+    }
     let mut found = None;
     let usable_span = span - 2.0 * lead;
     // MEASURED neck-down (census 18). The fixed table below guesses how far
@@ -433,6 +470,9 @@ pub(super) fn try_route_pair_reason(
         (16.0, 16.0),
     ]);
     for (r_from, r_to) in rungs {
+        if direct.is_some() {
+            break;
+        }
         let usable = span - 2.0 * lead;
         if r_from + r_to >= usable - 1.0 {
             continue;
@@ -492,7 +532,7 @@ pub(super) fn try_route_pair_reason(
     // the amount of neck-down is measured rather than drawn from a 15-rung
     // table. Widths descend so a wider (better-coupled) corridor always wins
     // when one exists; the best trimmed run across the ladder is kept.
-    let mut center: Option<Centerline> = found.map(|r| r.segments);
+    let mut center: Option<Centerline> = direct.or_else(|| found.map(|r| r.segments));
     if center.is_none() {
         // Minimum worthwhile coupling: below this the pair is better off as
         // two singles, so we fall through rather than commit a token stub.
@@ -911,6 +951,81 @@ fn longest_coupled_window(
 /// ±`via_off` perpendicular at each layer transition (two drills per centerline
 /// via, one per leg) and connector jogs where the via offset exceeds the leg
 /// offset. Leg A is the +offset side, leg B the −offset side.
+/// Spans at or below this route as short pairs: one straight centerline, no
+/// lead inset, no search. Above it the phantom corridor is the right tool.
+const SHORT_PAIR_SPAN_MM: f64 = 4.0;
+
+/// A straight, lead-free centerline for a short pair, on the best layer that
+/// admits both offset legs.
+///
+/// Layer order prefers the layers all four pads share, so the pair needs no
+/// vias at all (which is also what keeps `vias_per_si_net` low); the rest of
+/// the stack follows as a fallback for pads on different layers.
+///
+/// The returned centerline is a *proposal*: both legs are probed here only to
+/// choose the layer. The authoritative check is the same `validate_and_commit`
+/// every other centerline goes through — this path adds no way to commit
+/// copper the oracle has not seen.
+#[allow(clippy::too_many_arguments)]
+fn direct_centerline(
+    session: &RouteSession,
+    pcb: &Pcb,
+    net: &str,
+    partner: &str,
+    (mid_from, mid_to): (Vec2, Vec2),
+    pads: [Vec2; 4],
+    half_sep: f64,
+    via_r: f64,
+    clearance: f64,
+    w: f64,
+    copper: &[PcbLayer],
+) -> Option<Centerline> {
+    let [from, to, p_from, p_to] = pads;
+    let pad_layers = [
+        pad_layers_at(pcb, net, from),
+        pad_layers_at(pcb, net, to),
+        pad_layers_at(pcb, partner, p_from),
+        pad_layers_at(pcb, partner, p_to),
+    ];
+    let shared = |l: PcbLayer| pad_layers.iter().all(|ls| ls.is_empty() || ls.contains(&l));
+    let order = copper
+        .iter()
+        .filter(|&&l| shared(l))
+        .chain(copper.iter().filter(|&&l| !shared(l)));
+
+    for &layer in order {
+        let center: Centerline = vec![(mid_from, mid_to, layer)];
+        let Some((leg_a, leg_b)) = realize_legs(&center, half_sep, half_sep, via_r, clearance, w)
+        else {
+            continue;
+        };
+        // Each leg must be legal for ONE of the two nets — the assignment
+        // itself is decided downstream by connector length.
+        let leg_legal = |leg: &Leg, as_net: &str| {
+            leg.segments.iter().all(|&(a, b, l)| {
+                session
+                    .probe(
+                        &CopperGeom::Segment {
+                            a,
+                            b,
+                            half_w: w / 2.0,
+                        },
+                        l,
+                        as_net,
+                        clearance,
+                    )
+                    .legal
+            })
+        };
+        let straight = leg_legal(&leg_a, net) && leg_legal(&leg_b, partner);
+        let crossed = leg_legal(&leg_a, partner) && leg_legal(&leg_b, net);
+        if straight || crossed {
+            return Some(center);
+        }
+    }
+    None
+}
+
 fn realize_legs(
     center: &[(Vec2, Vec2, PcbLayer)],
     half_sep: f64,
@@ -1759,6 +1874,74 @@ mod tests {
             .net_class_assignments
             .insert("DIFF".into(), vec!["/ETH.2_P".into(), "/ETH.2_N".into()]);
         pcb
+    }
+
+    /// A pair whose pads sit ~2 mm apart — too short for a lead-inset phantom
+    /// centerline, which is exactly the `/HS.*` case that pinned the SI
+    /// receipt's `min_pair_coupled_fraction` at 0.000: routed as two singles
+    /// the legs land on different layers and score zero coupling however well
+    /// the rest of the board routes.
+    #[test]
+    fn routes_short_span_pair_coupled_on_one_layer() {
+        let mut pcb = pair_board();
+        // Move the far connector to 2 mm from the near one.
+        pcb.footprints[1].position = Vec2::new(7.0, 15.0);
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let mut placed = Vec::new();
+        let (p, n) = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(7.0, 15.325),
+            &mut placed,
+            &cong,
+            200_000,
+        )
+        .expect("a 2mm pad-to-pad pair must still route coupled");
+        assert!(!p.segments.is_empty() && !n.segments.is_empty());
+        // The point of the short-pair path: both legs on ONE layer, which is
+        // what `si_claims::coupled_fraction` measures (it only counts twin
+        // copper on the SAME layer).
+        let layers = |pl: &Placed| -> Vec<PcbLayer> {
+            let mut ls: Vec<_> = pl.segments.iter().map(|(_, _, l)| *l).collect();
+            ls.sort_by_key(|l| format!("{l:?}"));
+            ls.dedup();
+            ls
+        };
+        assert_eq!(
+            layers(&p),
+            layers(&n),
+            "short pair legs must share their layer, else coupled_fraction is 0"
+        );
+        // And the coupled run is measurable, not a token stub.
+        let frac = crate::router::si_claims::coupled_fraction(
+            &{
+                let mut b = pcb.clone();
+                for pl in [&p, &n] {
+                    for (a, e, l) in &pl.segments {
+                        b.traces.push(Trace {
+                            start: *a,
+                            end: *e,
+                            width: pl.width,
+                            layer: *l,
+                            net: pl.net.clone(),
+                            source: None,
+                        });
+                    }
+                }
+                b
+            },
+            "/ETH.2_P",
+            "/ETH.2_N",
+            0.45 + 0.1,
+        );
+        assert!(
+            frac >= 0.5,
+            "short pair should be at least half coupled, got {frac}"
+        );
     }
 
     #[test]
