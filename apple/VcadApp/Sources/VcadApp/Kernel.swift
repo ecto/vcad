@@ -1,5 +1,7 @@
 import RealityKit
+#if canImport(AppKit)
 import AppKit
+#endif
 import simd
 import Metal
 import CVcadFFI

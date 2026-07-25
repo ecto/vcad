@@ -4,3 +4,9 @@ VcadApp/.build/
 VcadApp/dist/
 # Prebuilt Rust static lib — regenerate with VcadApp/build-ffi.sh (kept out of git: ~140MB)
 VcadApp/Libs/
+
+# visionOS target — same story (SwiftPM + xcodebuild output, hand-assembled
+# .app, and the visionOS-sim Rust staticlib from VcadVision/build-ffi.sh).
+VcadVision/.build/
+VcadVision/dist/
+VcadVision/Libs/

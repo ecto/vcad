@@ -204,7 +204,7 @@ struct CommandBar: View {
             .animation(.smooth(duration: 0.24), value: engine.phase)
             .animation(.snappy(duration: 0.2), value: focused)
             .background(shortcutButton)
-            .onExitCommand { engine.dismissError(); focused = false }
+            .onEscape { engine.dismissError(); focused = false }
             .onChange(of: engine.focusRequested) { _, req in
                 if req { focused = true; engine.focusRequested = false }
             }
@@ -287,5 +287,18 @@ struct KeycapView: View {
             .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+    }
+}
+
+
+extension View {
+    /// onExitCommand is unavailable on visionOS; escape handling is a
+    /// keyboard concept the shared composer only needs on the mac.
+    @ViewBuilder func onEscape(perform action: @escaping () -> Void) -> some View {
+        #if os(macOS)
+        onExitCommand(perform: action)
+        #else
+        self
+        #endif
     }
 }

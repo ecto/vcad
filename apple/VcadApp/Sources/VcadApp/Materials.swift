@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 
 // The material palette, ported from the web app's `data/materials.ts` (31+
 // real-world PBR presets). A part's render color resolves in this order:
