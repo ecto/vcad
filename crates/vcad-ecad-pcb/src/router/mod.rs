@@ -133,7 +133,11 @@ fn bump_away(
     // 2·(hypot(L/3, h) − L/3), which for a 17mm run at 1.2mm amplitude is
     // 0.19mm, nowhere near a 1.3mm deficit. Cells sized to the amplitude keep
     // each bump's aspect ratio steep, where the length actually comes from.
-    let cell = (3.0 * amplitude).max(1.0);
+    // Cell length is tied to the amplitude, not a fixed 1mm: a routed run is a
+    // polyline of SHORT segments (a maze staircase), so a coarse cell fits no
+    // bumps at all on most of them and the compensator reports "cannot reach"
+    // on runs with plenty of copper to work with.
+    let cell = (3.0 * amplitude).max(0.5);
     let third = cell / 3.0;
     let gain_per_cell = 2.0 * ((third * third + amplitude * amplitude).sqrt() - third);
     if gain_per_cell < 1e-3 {
@@ -160,10 +164,13 @@ fn bump_away(
             -1.0
         };
         let off = nrm.scale(sign * amplitude);
-        // Leave the last partial cell alone so the bumps stay clear of the
-        // segment's endpoints (vias, corners, pad breakouts).
-        let cells = ((len / cell).floor() as usize).saturating_sub(1);
-        let mut t = cell * 0.5;
+        // Keep a quarter-cell margin at each end so bumps stay clear of the
+        // segment's endpoints (vias, corners, pad breakouts), then fit as many
+        // whole cells as the remainder allows.
+        let margin = cell * 0.25;
+        let usable = len - 2.0 * margin;
+        let cells = (usable / cell).floor().max(0.0) as usize;
+        let mut t = margin;
         for _ in 0..cells {
             if added >= deficit {
                 break;
@@ -341,8 +348,11 @@ fn compensate_run(pcb: &Pcb, net: &str, twin_net: &str, deficit: f64) -> Option<
                 }
             }
             if !twin.is_empty() {
-                if let Some(bumped) = bump_away(&points, &twin, deficit, amp) {
-                    candidates.push(bumped);
+                match bump_away(&points, &twin, deficit, amp) {
+                    Some(bumped) => candidates.push(bumped),
+                    None => log::trace!(
+                        "compensate {net}: {layer:?} w={width} amp={amp:.3} run={run_len:.2} — bumps cannot reach {deficit:.3}mm"
+                    ),
                 }
             }
             for tuned in candidates {
@@ -361,6 +371,9 @@ fn compensate_run(pcb: &Pcb, net: &str, twin_net: &str, deficit: f64) -> Option<
                     .legal
             });
             if !legal {
+                log::trace!(
+                    "compensate {net}: {layer:?} w={width} amp={amp:.3} candidate illegal"
+                );
                 continue;
             }
             let mut work = pcb.clone();

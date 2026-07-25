@@ -639,7 +639,21 @@ pub(super) fn try_route_pair_reason(
         let pad_layers = pad_layers_at(pcb, net, from);
         let hop_ok = pad_layers.is_empty() || pad_layers.contains(&to_layer);
         if hop_ok && dist(from, to) <= nw * 2.0 {
-            return Some((vec![(from, to, to_layer)], vec![]));
+            // PROBE the hop before taking it. This shortcut used to emit
+            // copper unchecked, which is the one path in this stage that
+            // bypasses the oracle — and it shows up as intra-pair clearance
+            // violations, because both twins take their own unchecked hop at
+            // opposite ends of the same gap (CM5: /USB3-1.DP to /USB3-1.DM at
+            // 0.058mm against a 0.080mm base clearance). Fall through to the
+            // maze when the straight line is not legal.
+            let hop = CopperGeom::Segment {
+                a: from,
+                b: to,
+                half_w: nw / 2.0,
+            };
+            if session.probe(&hop, to_layer, net, session.clearance_for(net)).legal {
+                return Some((vec![(from, to, to_layer)], vec![]));
+            }
         }
         let margin = 4.0 + w;
         let window = (
@@ -1524,6 +1538,50 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                         source: None,
                     });
                 }
+            }
+            // Final fail-closed gate on the assembled board, judged by the
+            // DRC rather than the session probe.
+            //
+            // The stages above each probe their own copper as they place it,
+            // but `work` is an ASSEMBLY — the pair's legs, its four breakout
+            // connectors, and every displaced single re-routed around it —
+            // and nothing re-checks the whole. Worse, the incremental probe
+            // and the DRC do not agree at mitred pair corners: the probe let
+            // through legs 0.191mm apart that the DRC rejects against the
+            // 0.245mm pair-gap rule. The DRC is the standard the receipt is
+            // judged by, so gate on the DRC, restricted to the pair's own
+            // bounding box to keep it affordable. Measured on the CM5 subset:
+            // routed board 0 intra-pair violations, polished board 3.
+            let (mut lo_b, mut hi_b) = (
+                Vec2::new(f64::INFINITY, f64::INFINITY),
+                Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+            );
+            for t in work.traces.iter().filter(|t| &t.net == pn || &t.net == nn) {
+                for p in [t.start, t.end] {
+                    lo_b.x = lo_b.x.min(p.x - 1.0);
+                    lo_b.y = lo_b.y.min(p.y - 1.0);
+                    hi_b.x = hi_b.x.max(p.x + 1.0);
+                    hi_b.y = hi_b.y.max(p.y + 1.0);
+                }
+            }
+            let hard_here = |b: &Pcb| -> usize {
+                if !lo_b.x.is_finite() {
+                    return 0;
+                }
+                crate::drc::check_drc_in_region(b, lo_b, hi_b)
+                    .iter()
+                    .filter(|v| {
+                        matches!(
+                            v.rule,
+                            crate::drc::DrcRuleType::Clearance | crate::drc::DrcRuleType::Short
+                        ) && matches!(v.severity, crate::drc::DrcSeverity::Error)
+                    })
+                    .count()
+            };
+            let pair_legal = hard_here(&work) <= hard_here(pcb);
+            if !pair_legal {
+                log::debug!("pair-polish: {pn} assembled board is illegal — reverting");
+                continue;
             }
             *pcb = work;
             polished += 1;
