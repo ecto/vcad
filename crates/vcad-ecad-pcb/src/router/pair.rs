@@ -784,56 +784,57 @@ pub(super) fn try_route_pair_reason(
             thin_width: nw,
         }
     };
-    // Connectors, all four against both committed legs. Committed as thin
-    // copper directly into each leg's Placed (stubs channel).
+    // Connectors, all four against both committed legs. Every one of them goes
+    // through `validate_and_commit` — the same exact oracle the legs use — and
+    // its output is merged into the leg's `Placed` (copper on the stubs
+    // channel, vias on `via_pts`).
+    //
+    // This used to hand-roll `session.commit` for the connector's segments and
+    // push its VIAS straight onto `pl.via_pts` without committing them at all.
+    // Those vias were real: they were written onto the output board like any
+    // other. But the session never learned about them, so no later route could
+    // be refused for crossing one — the oracle cannot decline copper it has
+    // never been shown. On a full CM5 route that was 61 of the 72 exact
+    // (0.000mm) cross-net overlaps: foreign traces driven clean through a pair
+    // connector's via barrel, every offending via on a `_P`/`_N` net.
     let attach = |session: &mut RouteSession,
+                  placed: &[Placed],
                   pl: &mut Placed,
                   leg: &Leg,
                   pad_a: Vec2,
                   pad_b: Vec2|
      -> bool {
         let net = pl.net.clone();
-        let Some((head, hv)) = connect(session, &net, pad_a, leg.first, leg.first_layer, leg)
-        else {
-            log::debug!("pair-connector: {net} head failed");
-            return false;
-        };
-        for (a, b, l) in &head {
-            let id = crate::spatial::CopperElement {
-                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
-                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
-                net: net.clone(),
-                layer: *l,
-                geom: CopperGeom::Segment {
-                    a: *a,
-                    b: *b,
-                    half_w: nw / 2.0,
-                },
+        for (pad, end, end_layer, which) in [
+            (pad_a, leg.first, leg.first_layer, "head"),
+            (pad_b, leg.last, leg.last_layer, "tail"),
+        ] {
+            let Some((copper, vias)) = connect(session, &net, pad, end, end_layer, leg) else {
+                log::debug!("pair-connector: {net} {which} failed");
+                return false;
             };
-            pl.spans.push(session.commit(id));
-            pl.stubs.push((*a, *b, *l));
-        }
-        pl.via_pts.extend(hv);
-        let Some((tail, tv)) = connect(session, &net, pad_b, leg.last, leg.last_layer, leg) else {
-            log::debug!("pair-connector: {net} tail failed");
-            return false;
-        };
-        for (a, b, l) in &tail {
-            let id = crate::spatial::CopperElement {
-                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
-                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
+            // Same-net context for the commit's via-reuse test: the leg's own
+            // vias live on `pl`, which is not in `placed` yet.
+            let mut ctx: Vec<Placed> = placed.iter().filter(|p| p.net == net).cloned().collect();
+            ctx.push(pl.clone());
+            let cand = Candidate {
                 net: net.clone(),
-                layer: *l,
-                geom: CopperGeom::Segment {
-                    a: *a,
-                    b: *b,
-                    half_w: nw / 2.0,
-                },
+                from: pad,
+                to: end,
+                width: nw,
+                segments: vec![],
+                vias,
+                thin_segments: copper,
+                thin_width: nw,
             };
-            pl.spans.push(session.commit(id));
-            pl.stubs.push((*a, *b, *l));
+            let Some(p) = validate_and_commit(session, pcb, cand, &ctx) else {
+                log::debug!("pair-connector: {net} {which} failed validation");
+                return false;
+            };
+            pl.spans.extend(p.spans);
+            pl.stubs.extend(p.stubs);
+            pl.via_pts.extend(p.via_pts);
         }
-        pl.via_pts.extend(tv);
         true
     };
     // Connector retreat. A coupled corridor can be perfectly good and still be
@@ -900,8 +901,8 @@ pub(super) fn try_route_pair_reason(
             last_bail = PairBail::LegValidation;
             continue;
         };
-        if attach(session, &mut placed_mine, &mine, from, to)
-            && attach(session, &mut placed_theirs, &theirs, p_from, p_to)
+        if attach(session, placed, &mut placed_mine, &mine, from, to)
+            && attach(session, placed, &mut placed_theirs, &theirs, p_from, p_to)
         {
             if r_from + r_to > 0.0 {
                 log::debug!(
@@ -2093,6 +2094,86 @@ mod tests {
                     pl.net
                 );
             }
+        }
+    }
+
+    /// Every via a pair route REPORTS must be a via the session KNOWS about.
+    ///
+    /// The four pad connectors are maze routes, and when the pads sit on a
+    /// layer the coupled legs don't use, each connector carries a via to get
+    /// there. Those vias are written onto the output board like any other — so
+    /// if the session never receives them, the oracle cannot refuse a later
+    /// route that drives straight through the barrel. It is not a near-miss:
+    /// the copper physically overlaps at 0.000mm, and no probe was ever wrong,
+    /// because no probe was ever asked.
+    #[test]
+    fn pair_connector_vias_are_visible_to_the_oracle() {
+        let mut pcb = pair_board();
+        // Put all four pads on BCu only, so the FCu coupled legs can only be
+        // reached through a connector via.
+        for f in &mut pcb.footprints {
+            for p in &mut f.pads {
+                p.layers = vec![PcbLayer::BCu];
+            }
+        }
+        // ...and wall BCu off mid-board so the coupled run has to live on FCu.
+        pcb.traces.push(vcad_ir::ecad::Trace {
+            start: Vec2::new(25.0, 0.0),
+            end: Vec2::new(25.0, 30.0),
+            width: 1.0,
+            layer: PcbLayer::BCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let mut placed = Vec::new();
+        let Some((p, n)) = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.0, 15.325),
+            &mut placed,
+            &cong,
+            200_000,
+        ) else {
+            panic!("pair with BCu pads must still route");
+        };
+        let vias: Vec<_> = p.via_pts.iter().chain(n.via_pts.iter()).collect();
+        assert!(
+            !vias.is_empty(),
+            "fixture is vacuous: the connectors placed no vias"
+        );
+        let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+        for &&(pt, la, lb) in &vias {
+            for layer in [la, lb] {
+                let pr = session.probe(
+                    &crate::spatial::CopperGeom::Disc {
+                        center: pt,
+                        r: via_r,
+                    },
+                    layer,
+                    "SOME-OTHER-NET",
+                    pcb.rules.default_rules.clearance,
+                );
+                assert!(
+                    !pr.legal,
+                    "via at ({:.3},{:.3}) on {layer:?} is reported on the board but \
+                     absent from the session — a foreign net can be routed through it",
+                    pt.x, pt.y
+                );
+            }
+        }
+        // And the drill barrel likewise: hole-to-hole must see it.
+        for &&(pt, _, _) in &vias {
+            assert!(
+                !session.probe_via_drill(pt, "SOME-OTHER-NET").legal,
+                "via drill at ({:.3},{:.3}) is absent from the session's hole census",
+                pt.x,
+                pt.y
+            );
         }
     }
 

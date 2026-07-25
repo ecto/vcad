@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-router-pair-connector-vias",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Autoroute no longer routes traces through diff-pair vias",
+  "summary": "Differential-pair breakout vias were written onto the board but never registered with the router's clearance oracle, so later nets were routed straight through the barrel.",
+  "features": ["pcb", "routing", "drc"],
+  "mcpTools": ["route_nets", "route_diff_pair", "run_drc"]
+}
