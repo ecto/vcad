@@ -38,6 +38,9 @@ use std::collections::BTreeSet;
 use vcad_ir::ecad::{CopperSource, Pcb, PcbLayer, Trace, Via};
 use vcad_ir::Vec2;
 
+use crate::session::RouteSession;
+use crate::spatial::CopperGeom;
+
 use super::auto::{copper_layers, RoutedTrace, RoutedVia};
 use crate::drc::{
     analyze_net_continuity, check_drc_in_region, dangling_copper_mask, DrcRuleType, DrcViolation,
@@ -238,6 +241,17 @@ fn d2(a: Vec2, b: Vec2) -> f64 {
 /// the union of the cluster's layer spans; traces that ended on a dropped via
 /// are reconnected to the survivor with a short same-net jog on their own
 /// layer. Returns the number of vias removed.
+///
+/// Both of those moves place copper that the router's oracle never saw. The
+/// widened span puts a barrel on layers the original via did not occupy, and
+/// the jog is a brand new trace; the old justification ("the jog stays inside
+/// copper the via already claimed") only holds on the layers the via already
+/// claimed. So both are probed here against the candidate board, and a cluster
+/// whose merge would land on foreign copper is left alone — its vias stay
+/// hole-to-hole illegal and the fail-closed demotion below strips the net,
+/// which is the honest outcome. Unchecked, this was the second source of exact
+/// 0.000mm overlaps on a full CM5 route: foreign traces sitting inside a
+/// merged via's newly-claimed inner-layer pad.
 fn merge_same_net_vias(
     pcb: &Pcb,
     traces: &mut Vec<RoutedTrace>,
@@ -249,6 +263,35 @@ fn merge_same_net_vias(
     let min_spacing = pcb.rules.hole_to_hole;
     let stack = copper_layers(pcb);
     let layer_idx = |l: PcbLayer| stack.iter().position(|&s| s == l).unwrap_or(0);
+    // The oracle for this stage: the board as the caller will actually commit
+    // it. Same-net copper is excluded by the probe, so a cluster is judged
+    // purely on the foreign copper it would newly touch — but only on copper
+    // that will still be there. At this point the output still carries the
+    // speculative emitters' debris (abandoned fan-out stubs, escape vias for
+    // routes rip-up replaced: on the CM5, 1855 dead traces), which
+    // `prune_dangling` deletes moments later. Judging against phantom
+    // obstacles refused every merge on the board and left the duplicate vias
+    // for the demotion pass to strip.
+    let session = {
+        let mut cand = candidate_pcb(pcb, traces, vias);
+        let (keep_trace, keep_via) = dangling_copper_mask(&cand);
+        // Only the NEW copper may be dropped — `candidate_pcb` appends it after
+        // the board's own, which is never pruned and stays an obstacle here.
+        let (t0, v0) = (pcb.traces.len(), pcb.vias.len());
+        let mut ti = 0;
+        cand.traces.retain(|_| {
+            let k = ti < t0 || keep_trace[ti];
+            ti += 1;
+            k
+        });
+        let mut vi = 0;
+        cand.vias.retain(|_| {
+            let k = vi < v0 || keep_via[vi];
+            vi += 1;
+            k
+        });
+        RouteSession::from_pcb(&cand)
+    };
 
     // Union-find over the new vias: same net + illegal hole spacing → cluster.
     let mut parent: Vec<usize> = (0..vias.len()).collect();
@@ -300,61 +343,130 @@ fn merge_same_net_vias(
         let cx = members.iter().map(|&i| vias[i].position.x).sum::<f64>() / n;
         let cy = members.iter().map(|&i| vias[i].position.y).sum::<f64>() / n;
         let centroid = Vec2::new(cx, cy);
-        let &keep = members
-            .iter()
-            .min_by(|&&a, &&b| {
-                d2(vias[a].position, centroid)
-                    .partial_cmp(&d2(vias[b].position, centroid))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .expect("cluster is non-empty");
-
+        // Survivor preference: nearest the centroid. The legality gate below
+        // can veto a survivor (its widened barrel or a reconnect jog would
+        // land on foreign copper), and a different member of the same cluster
+        // often passes — so this is an ordering, not a single choice.
+        let mut order: Vec<usize> = members.clone();
+        order.sort_by(|&a, &b| {
+            d2(vias[a].position, centroid)
+                .partial_cmp(&d2(vias[b].position, centroid))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         // Union of layer spans, in stackup order.
-        let lo = members
+        let lo_all = members
             .iter()
             .map(|&i| layer_idx(vias[i].start_layer))
             .min()
             .unwrap_or(0);
-        let hi = members
+        let hi_all = members
             .iter()
             .map(|&i| layer_idx(vias[i].end_layer))
             .max()
             .unwrap_or(stack.len().saturating_sub(1));
-        let keep_pos = vias[keep].position;
-        vias[keep].start_layer = stack[lo];
-        vias[keep].end_layer = stack[hi];
 
-        for &i in members {
-            if i == keep {
+        let mut chosen: Option<(usize, Vec<RoutedTrace>)> = None;
+        for &keep in &order {
+            let (lo, hi) = (lo_all, hi_all);
+            let keep_pos = vias[keep].position;
+            let net = vias[keep].net.clone();
+            let clr = session.clearance_for(&net);
+            let (via_d, _) = via_geom_for(pcb, &net);
+            // Layers the survivor would newly occupy: everything in the union span
+            // outside its own original span.
+            let (own_lo, own_hi) = {
+                let (a, b) = (
+                    layer_idx(vias[keep].start_layer),
+                    layer_idx(vias[keep].end_layer),
+                );
+                (a.min(b), a.max(b))
+            };
+            let disc = CopperGeom::Disc {
+                center: keep_pos,
+                r: via_d / 2.0,
+            };
+            let span_ok = (lo..=hi)
+                .filter(|&li| li < own_lo || li > own_hi)
+                .all(|li| session.probe(&disc, stack[li], &net, clr).legal);
+            if !span_ok {
+                log::debug!(
+                    "legalize: not merging {net} via cluster at ({:.3},{:.3}) — the widened \
+                 barrel would land on foreign copper",
+                    keep_pos.x,
+                    keep_pos.y
+                );
                 continue;
             }
-            drop.insert(i);
-            let gone = vias[i].position;
-            if d2(gone, keep_pos).sqrt() <= POS_EPS {
-                continue; // exact duplicate — nothing to reconnect
+
+            // Same for the reconnect jogs: build them first, probe them all, and
+            // only then commit the cluster.
+            let mut cluster_jogs: Vec<RoutedTrace> = Vec::new();
+            let mut jog_ok = true;
+            for &i in members {
+                if i == keep {
+                    continue;
+                }
+                let gone = vias[i].position;
+                if d2(gone, keep_pos).sqrt() <= POS_EPS {
+                    continue;
+                }
+                let mut jogged: BTreeSet<usize> = BTreeSet::new();
+                for t in traces.iter() {
+                    if t.net != vias[i].net {
+                        continue;
+                    }
+                    if d2(t.start, gone).sqrt() > POS_EPS && d2(t.end, gone).sqrt() > POS_EPS {
+                        continue;
+                    }
+                    let li = layer_idx(t.layer);
+                    if jogged.insert(li) {
+                        cluster_jogs.push(RoutedTrace {
+                            start: gone,
+                            end: keep_pos,
+                            width: t.width,
+                            layer: t.layer,
+                            net: t.net.clone(),
+                        });
+                    }
+                }
             }
-            // Reconnect: every new trace that ended on the dropped via gets a
-            // same-net jog from the old via position to the survivor, on the
-            // trace's own layer. The holes overlapped, so the jog is shorter
-            // than a via pad — it stays inside copper the via already claimed.
-            let mut jogged: BTreeSet<usize> = BTreeSet::new();
-            for t in traces.iter() {
-                if t.net != vias[i].net {
-                    continue;
+            for j in &cluster_jogs {
+                let g = CopperGeom::Segment {
+                    a: j.start,
+                    b: j.end,
+                    half_w: j.width / 2.0,
+                };
+                if !session
+                    .probe(&g, j.layer, &j.net, session.clearance_for(&j.net))
+                    .legal
+                {
+                    jog_ok = false;
+                    break;
                 }
-                if d2(t.start, gone).sqrt() > POS_EPS && d2(t.end, gone).sqrt() > POS_EPS {
-                    continue;
-                }
-                let li = layer_idx(t.layer);
-                if jogged.insert(li) {
-                    connectors.push(RoutedTrace {
-                        start: gone,
-                        end: keep_pos,
-                        width: t.width,
-                        layer: t.layer,
-                        net: t.net.clone(),
-                    });
-                }
+            }
+            if !jog_ok {
+                log::debug!(
+                    "legalize: not merging {net} via cluster at ({:.3},{:.3}) — a reconnect \
+                 jog would cross foreign copper",
+                    keep_pos.x,
+                    keep_pos.y
+                );
+                continue;
+            }
+
+            chosen = Some((keep, cluster_jogs));
+            break;
+        }
+        let Some((keep, cluster_jogs)) = chosen else {
+            continue;
+        };
+        vias[keep].start_layer = stack[lo_all];
+        vias[keep].end_layer = stack[hi_all];
+        connectors.extend(cluster_jogs);
+
+        for &i in members {
+            if i != keep {
+                drop.insert(i);
             }
         }
     }
@@ -657,6 +769,60 @@ mod tests {
             .filter(|v| v.rule == DrcRuleType::HoleToHole)
             .collect();
         assert!(h2h.is_empty(), "merge must clear HoleToHole, got {h2h:?}");
+    }
+
+    /// A merge that would drive copper through another net is refused, and the
+    /// still-illegal cluster is then stripped fail-closed rather than returned.
+    ///
+    /// The reconnect jog used to be emitted unconditionally on the theory that
+    /// it "stays inside copper the via already claimed" — which says nothing
+    /// about what else is on that layer. Here a foreign trace sits between the
+    /// two drills, so the jog would cross it at 0.000mm. Both vias carry BCu
+    /// copper, so neither can be the survivor — whichever is kept, the jog
+    /// that reconnects the other runs along the blocked layer.
+    #[test]
+    fn merge_refused_when_the_reconnect_jog_would_short() {
+        let mut pcb = board();
+        // Foreign BOARD copper straight across the jog's path on BCu. It has to
+        // be board copper: new copper with no pad anchor is dead by
+        // construction and the prune deletes it, so the gate rightly ignores it.
+        pcb.traces.push(Trace {
+            start: Vec2::new(10.15, 8.0),
+            end: Vec2::new(10.15, 12.0),
+            width: 0.25,
+            layer: PcbLayer::BCu,
+            net: "B".into(),
+            source: None,
+        });
+        let mut traces = vec![
+            rtrace((5.0, 10.0), (10.0, 10.0), "A", PcbLayer::BCu),
+            rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::BCu),
+        ];
+        let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.3, 10.0, "A")];
+        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
+        assert_eq!(report.merged_vias, 0, "the merge must be refused");
+        assert!(
+            !traces.iter().any(|t| t.net == "A"
+                && t.layer == PcbLayer::BCu
+                && (t.start - Vec2::new(10.15, 10.0)).length() < 0.2
+                && (t.end - Vec2::new(10.15, 10.0)).length() < 0.2),
+            "no jog may be emitted across the foreign trace"
+        );
+        // Fail-closed: the cluster is still hole-to-hole illegal, so the DRC
+        // loop strips A rather than returning an unmanufacturable board.
+        assert_eq!(report.demoted.len(), 1);
+        assert_eq!(report.demoted[0].0, "A");
+        let candidate = candidate_pcb(&pcb, &traces, &vias);
+        let hard: Vec<_> = crate::drc::check_drc(&candidate)
+            .into_iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    DrcRuleType::HoleToHole | DrcRuleType::Clearance | DrcRuleType::Short
+                )
+            })
+            .collect();
+        assert!(hard.is_empty(), "output must be clean, got {hard:?}");
     }
 
     /// Different-net vias can't merge: the net whose via is illegally close to

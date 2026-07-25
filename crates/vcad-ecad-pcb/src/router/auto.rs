@@ -701,6 +701,11 @@ pub fn route_all_with_opts(
         }
     }
 
+    // Invariant audit over everything this pass is about to emit — placed
+    // routes plus the plane stitching — against the settled session.
+    audit_placed(&session, pcb, &placed);
+    audit_stitch(&session, pcb, &stitch, width);
+
     // Flatten the placed connections into the result.
     let mut traces = Vec::new();
     let mut vias = Vec::new();
@@ -1385,7 +1390,132 @@ fn route_pass(
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
 
+    audit_placed(&session, pcb, &placed);
     (session, placed, pending)
+}
+
+/// Invariant audit (`VCAD_ROUTE_AUDIT=1`): every piece of copper the pass
+/// reports must still be legal against the session it lives in.
+///
+/// The probe skips same-net elements, so a `Placed` element probed against the
+/// live session is judged purely on its foreign neighbours — exactly the
+/// contract "no path may commit copper the exact oracle has not accepted
+/// against the state it will actually live in". Anything logged here is a
+/// commit path that skipped the oracle, or copper that is on the board but not
+/// in the session; the kind (`segment` / `stub` / `via`) names the stage.
+fn audit_placed(session: &RouteSession, pcb: &Pcb, placed: &[Placed]) {
+    if std::env::var("VCAD_ROUTE_AUDIT").as_deref() != Ok("1") {
+        return;
+    }
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let copper = copper_layers(pcb);
+    let mut bad = 0usize;
+    let mut report = |kind: &str, net: &str, at: Vec2, pr: &crate::session::ProbeResult| {
+        if pr.legal {
+            return;
+        }
+        bad += 1;
+        log::warn!(
+            "AUDIT {kind} {net} at ({:.3},{:.3}) illegal: {:.3}mm to {}",
+            at.x,
+            at.y,
+            pr.min_clearance,
+            pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+        );
+    };
+    for pl in placed {
+        let clr = session.clearance_for(&pl.net);
+        for &(a, b, l) in &pl.segments {
+            let g = CopperGeom::Segment {
+                a,
+                b,
+                half_w: pl.width / 2.0,
+            };
+            report("segment", &pl.net, a, &session.probe(&g, l, &pl.net, clr));
+        }
+        for &(a, b, l) in &pl.stubs {
+            let g = CopperGeom::Segment {
+                a,
+                b,
+                half_w: pl.stub_width / 2.0,
+            };
+            report("stub", &pl.net, a, &session.probe(&g, l, &pl.net, clr));
+        }
+        for &(p, la, lb) in &pl.via_pts {
+            let g = CopperGeom::Disc {
+                center: p,
+                r: via_r,
+            };
+            let (ia, ib) = (
+                copper.iter().position(|&l| l == la).unwrap_or(0),
+                copper
+                    .iter()
+                    .position(|&l| l == lb)
+                    .unwrap_or(copper.len().saturating_sub(1)),
+            );
+            for &l in &copper[ia.min(ib)..=ia.max(ib)] {
+                report("via", &pl.net, p, &session.probe(&g, l, &pl.net, clr));
+            }
+        }
+    }
+    log::info!(
+        "AUDIT: {bad} illegal element(s) across {} routes",
+        placed.len()
+    );
+}
+
+/// The stitching half of [`audit_placed`]: plane-stitch stubs and vias are
+/// emitted alongside the placed routes and must clear foreign copper too.
+fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) {
+    if std::env::var("VCAD_ROUTE_AUDIT").as_deref() != Ok("1") {
+        return;
+    }
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let copper = copper_layers(pcb);
+    let mut bad = 0usize;
+    for (a, b, net, l) in &stitch.stubs {
+        let g = CopperGeom::Segment {
+            a: *a,
+            b: *b,
+            half_w: session.width_for(net, width) / 2.0,
+        };
+        let pr = session.probe(&g, *l, net, session.clearance_for(net));
+        if !pr.legal {
+            bad += 1;
+            log::warn!(
+                "AUDIT stitch-stub {net} at ({:.3},{:.3}) illegal: {:.3}mm to {}",
+                a.x,
+                a.y,
+                pr.min_clearance,
+                pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+            );
+        }
+    }
+    for (p, net) in &stitch.vias {
+        let g = CopperGeom::Disc {
+            center: *p,
+            r: via_r,
+        };
+        for &l in &copper {
+            let pr = session.probe(&g, l, net, session.clearance_for(net));
+            if !pr.legal {
+                bad += 1;
+                log::warn!(
+                    "AUDIT stitch-via {net} at ({:.3},{:.3}) {l:?} illegal: {:.3}mm to {}",
+                    p.x,
+                    p.y,
+                    pr.min_clearance,
+                    pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+                );
+                break;
+            }
+        }
+    }
+    log::info!(
+        "AUDIT stitch: {bad} illegal element(s) across {} stubs / {} vias",
+        stitch.stubs.len(),
+        stitch.vias.len()
+    );
 }
 
 /// The deferred rescue arsenal, run once over the connections GPU negotiation

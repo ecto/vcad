@@ -242,6 +242,13 @@ fn main() {
             source: None,
         });
     }
+    // Stage bisection: dump the board as route_all left it, before si_finish
+    // rewrites any of it.
+    if let Ok(p) = std::env::var("VCAD_DUMP_PRESI") {
+        std::fs::write(&p, serde_json::to_string(&pcb).expect("serialize board"))
+            .expect("write pre-si board json");
+        eprintln!("wrote pre-si board {p}");
+    }
     if std::env::var("VCAD_SI_FINISH").as_deref() != Ok("0") {
         let t1 = Instant::now();
         let fin = vcad_ecad_pcb::router::si_finish(&mut pcb, 2_000_000, 2000);
