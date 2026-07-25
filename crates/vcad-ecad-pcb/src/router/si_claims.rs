@@ -40,6 +40,19 @@ pub struct SiBounds {
     pub min_coupled_fraction: f64,
     /// Max vias per SI net, averaged.
     pub max_vias_per_si_net: f64,
+    /// Min required fraction of classed pair copper whose width is
+    /// impedance-correct for the layer it sits on (0..1).
+    #[serde(default)]
+    pub min_impedance_correct_fraction: f64,
+    /// Tolerance, in percent, within which a width counts as hitting its
+    /// class's target impedance. ±10% is the usual fab spec.
+    #[serde(default = "default_impedance_tol_pct")]
+    pub impedance_tol_pct: f64,
+}
+
+/// Default impedance tolerance (percent) for [`SiBounds`].
+fn default_impedance_tol_pct() -> f64 {
+    10.0
 }
 
 impl Default for SiBounds {
@@ -55,6 +68,11 @@ impl Default for SiBounds {
             min_coupled_fraction: 0.5,
             // Human: 222 vias / 98 SI nets ≈ 2.3.
             max_vias_per_si_net: 3.0,
+            // No floor by default: a board that declares no target impedance
+            // must not fail an SI claim set for it, and one that does declare
+            // a target should set this deliberately.
+            min_impedance_correct_fraction: 0.0,
+            impedance_tol_pct: default_impedance_tol_pct(),
         }
     }
 }
@@ -137,6 +155,97 @@ pub fn coupled_fraction(pcb: &Pcb, p_net: &str, n_net: &str, max_sep: f64) -> f6
     }
 }
 
+/// Fraction of routed differential-pair copper that sits on a layer where its
+/// net class's geometry is impedance-correct for that layer.
+///
+/// The claim is emitted whether or not it can be verified; when it cannot, it
+/// carries `basis: "unverified"` and the reason, so a receipt reader never has
+/// to infer silence.
+fn impedance_claim(pcb: &Pcb, classifier: &NetClassifier, bounds: &SiBounds) -> Claim {
+    use crate::impedance::{diff_impedance, layer_em};
+
+    let unverified = |note: String| Claim {
+        name: "pair_impedance_correct_fraction".into(),
+        value: 0.0,
+        unit: "1".into(),
+        bound: 0.0,
+        holds: true,
+        basis: "unverified".into(),
+        note,
+    };
+
+    // Every diff-pair leg's class, keyed by net.
+    let class_of = |net: &str| {
+        pcb.rules.class_rules.iter().find(|c| {
+            c.diff_pair_gap.is_some()
+                && pcb
+                    .rules
+                    .net_class_assignments
+                    .get(&c.name)
+                    .is_some_and(|nets| nets.iter().any(|n| n == net))
+        })
+    };
+    let si_nets: Vec<&String> = classifier.pairs.iter().flat_map(|(p, n)| [p, n]).collect();
+    if !si_nets
+        .iter()
+        .any(|n| class_of(n).is_some_and(|c| c.target_diff_impedance.is_some()))
+    {
+        return unverified(
+            "no differential net class declares a target impedance — nothing to verify".into(),
+        );
+    }
+    if pcb
+        .stackup
+        .layers
+        .iter()
+        .all(|l| l.dielectric_thickness.is_none() || l.dielectric_er.is_none())
+    {
+        return unverified(
+            "stackup carries no dielectric thickness/er — impedance cannot be solved".into(),
+        );
+    }
+
+    let (mut correct, mut total) = (0.0f64, 0.0f64);
+    let mut unsolvable = 0.0f64;
+    for t in &pcb.traces {
+        let Some(class) = class_of(&t.net) else {
+            continue;
+        };
+        let (Some(target), Some(gap)) = (class.target_diff_impedance, class.diff_pair_gap) else {
+            continue;
+        };
+        let len = seg_len(t.start, t.end);
+        total += len;
+        let Some(em) = layer_em(&pcb.stackup, t.layer) else {
+            unsolvable += len;
+            continue;
+        };
+        let z = diff_impedance(&em, t.width, gap);
+        if ((z - target) / target).abs() <= bounds.impedance_tol_pct / 100.0 {
+            correct += len;
+        }
+    }
+    if total <= 0.0 {
+        return unverified("no routed copper on an impedance-controlled class".into());
+    }
+    let frac = correct / total;
+    Claim {
+        name: "pair_impedance_correct_fraction".into(),
+        value: frac,
+        unit: "1".into(),
+        bound: bounds.min_impedance_correct_fraction,
+        holds: frac >= bounds.min_impedance_correct_fraction,
+        basis: "verified".into(),
+        note: format!(
+            "fraction of {total:.0}mm of classed pair copper whose width hits its class target \
+             within ±{:.0}% for the layer it is on (IPC-2141 microstrip/stripline, adjacent \
+             copper layer taken as reference plane); {unsolvable:.0}mm on layers the stackup \
+             cannot solve counted as incorrect; crosstalk and eye NOT modeled",
+            bounds.impedance_tol_pct
+        ),
+    }
+}
+
 /// Measure the board against `bounds` and emit the claim set.
 pub fn si_claims(pcb: &Pcb, classifier: &NetClassifier, bounds: &SiBounds) -> SiClaimSet {
     let mut claims = Vec::new();
@@ -210,9 +319,18 @@ pub fn si_claims(pcb: &Pcb, classifier: &NetClassifier, bounds: &SiBounds) -> Si
         holds: worst_coupled >= bounds.min_coupled_fraction,
         basis: "verified".into(),
         note: "fraction of P length with same-layer N copper within 1.75x pitch; \
-               impedance NOT verified by this claim"
+               impedance is a separate claim (pair_impedance_correct_fraction)"
             .into(),
     });
+
+    // Impedance: what fraction of routed pair copper sits on a layer where the
+    // class's geometry actually hits its target impedance for THAT layer
+    // (microstrip on the outers, stripline on the inners)?
+    //
+    // Fail closed: with no declared target, or a stackup that cannot be solved,
+    // this reports `basis: "unverified"` against a zero bound — it says out
+    // loud that nothing was checked instead of passing a claim it never made.
+    claims.push(impedance_claim(pcb, classifier, bounds));
 
     // Vias per SI net.
     let si_nets: Vec<&String> = classifier.pairs.iter().flat_map(|(p, n)| [p, n]).collect();

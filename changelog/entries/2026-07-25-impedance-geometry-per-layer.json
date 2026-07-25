@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-impedance-geometry-per-layer",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "feat",
+  "title": "Controlled-impedance geometry solved per layer",
+  "summary": "A net class can declare a target impedance and vcad derives the trace and diff-pair width per layer from the board stackup — microstrip on the outers, stripline on the inners — with the router preferring layers where the geometry is impedance-correct.",
+  "features": ["pcb", "autorouter", "diff-pairs", "signal-integrity", "stackup"],
+  "mcpTools": ["route_nets", "set_design_rules", "set_stackup", "calc_impedance", "build_receipt"]
+}

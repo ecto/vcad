@@ -136,6 +136,12 @@ pub fn apply_classes(pcb: &mut Pcb, classifier: &NetClassifier) {
         via_drill: d.via_drill,
         diff_pair_gap: Some(dp_gap),
         diff_pair_width: Some(dp_width),
+        // Impedance targets are carried through from the board's default rules
+        // when it declares them; they are never invented here. Absent a target,
+        // the per-layer impedance solver stays inert and the declared geometry
+        // routes on every layer exactly as before.
+        target_impedance: d.target_impedance,
+        target_diff_impedance: d.target_diff_impedance,
     };
     match pcb
         .rules
