@@ -32,6 +32,22 @@ struct DrillHit {
 /// Returns a `BTreeMap` so tools are ordered by ascending diameter. The key is
 /// the diameter in mm rounded to 4 decimal places (encoded as an integer in
 /// units of 0.0001 mm for exact comparison).
+///
+/// # Rotation
+///
+/// A drill hit is a POSITION only, so the correct transform is the footprint
+/// rotation alone — `fp.position + R(fp.rotation)·pad.position`, matching
+/// `vcad_ecad_pcb::geometry::pad_world_position`. `pad.rotation` orients the
+/// pad's *copper* within the land pattern and must not move its hole; adding
+/// it here would displace every drill on a footprint with rotated pads.
+/// Pinned by `drill_position_uses_footprint_rotation_only`.
+///
+/// Known gap (not a rotation defect): `DrillSpec::oval` / `oval_height` are
+/// ignored, so a slot is emitted as a single round hit at its nominal
+/// diameter rather than a routed G85 slot. A slot's axis WOULD need the full
+/// `fp.rotation + pad.rotation`. The KiCad importer does populate these
+/// fields, but the CM5 fixture contains no oval drills, and emitting G85 is a
+/// format change rather than a transform fix — tracked separately.
 fn collect_holes(pcb: &Pcb) -> BTreeMap<i64, Vec<DrillHit>> {
     let mut holes: BTreeMap<i64, Vec<DrillHit>> = BTreeMap::new();
 
@@ -230,6 +246,47 @@ mod tests {
             zones: vec![],
             keepouts: vec![],
             net_ties: vec![],
+        }
+    }
+
+    /// A drill hit is a position, so only the FOOTPRINT rotation places it.
+    /// `pad.rotation` turns the pad's copper within the land pattern and must
+    /// leave the hole where it is — the same relative-vs-absolute distinction
+    /// that produced 648 phantom DRC violations when the KiCad importer got it
+    /// backwards. Here: a pad 5mm out on local +X, footprint turned 90°, must
+    /// land at +5mm in Y regardless of what the pad's own angle says.
+    #[test]
+    fn drill_position_uses_footprint_rotation_only() {
+        let mut pcb = test_pcb();
+        pcb.footprints.truncate(1);
+        pcb.vias.clear(); // isolate the footprint's own hole
+        let fp = &mut pcb.footprints[0];
+        fp.position = Vec2::new(10.0, 20.0);
+        fp.rotation = 90.0;
+        fp.pads.truncate(1);
+        fp.pads[0].position = Vec2::new(5.0, 0.0);
+        fp.pads[0].rotation = 0.0;
+
+        let holes = collect_holes(&pcb);
+        let baseline: Vec<(f64, f64)> = holes
+            .values()
+            .flatten()
+            .map(|h| (h.x, h.y))
+            .collect();
+        assert_eq!(baseline.len(), 1);
+        // 90° about the footprint origin: (5, 0) -> (0, 5).
+        assert!((baseline[0].0 - 10.0).abs() < 1e-9, "x {}", baseline[0].0);
+        assert!((baseline[0].1 - 25.0).abs() < 1e-9, "y {}", baseline[0].1);
+
+        // Turning the pad itself must not move the hole at all.
+        for r in [37.0, 90.0, -90.0, 180.0] {
+            pcb.footprints[0].pads[0].rotation = r;
+            let moved: Vec<(f64, f64)> = collect_holes(&pcb)
+                .values()
+                .flatten()
+                .map(|h| (h.x, h.y))
+                .collect();
+            assert_eq!(moved, baseline, "pad.rotation {r} displaced the drill");
         }
     }
 

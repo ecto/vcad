@@ -1541,10 +1541,15 @@ fn footprint_component_world_bbox(fp: &vcad_ir::ecad::Footprint) -> Option<(f64,
     let mut max_y = f64::NEG_INFINITY;
     for pad in &fp.pads {
         let (pw, ph) = pad_extent(&pad.shape);
-        min_x = min_x.min(pad.position.x - pw / 2.0);
-        max_x = max_x.max(pad.position.x + pw / 2.0);
-        min_y = min_y.min(pad.position.y - ph / 2.0);
-        max_y = max_y.max(pad.position.y + ph / 2.0);
+        // `pad.rotation` is relative to the footprint, so it applies inside
+        // this local frame: a 90°-rotated 0.25 x 0.875 pad is 0.875 wide, not
+        // 0.25. Ignoring it under-sizes the component box for every rotated
+        // land pattern (QFN thermal tabs, rotated connector pins).
+        let (hw, hh) = rotated_half_extent(pw, ph, pad.rotation);
+        min_x = min_x.min(pad.position.x - hw);
+        max_x = max_x.max(pad.position.x + hw);
+        min_y = min_y.min(pad.position.y - hh);
+        max_y = max_y.max(pad.position.y + hh);
     }
     let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
     let mut wmin_x = f64::INFINITY;
@@ -1565,6 +1570,18 @@ fn footprint_component_world_bbox(fp: &vcad_ir::ecad::Footprint) -> Option<(f64,
         wmax_y = wmax_y.max(wy);
     }
     Some((wmin_x, wmin_y, wmax_x, wmax_y))
+}
+
+/// Axis-aligned half-extents of a `w` x `h` rectangle turned by `deg`.
+fn rotated_half_extent(w: f64, h: f64, deg: f64) -> (f64, f64) {
+    if deg == 0.0 {
+        return (w / 2.0, h / 2.0);
+    }
+    let (s, c) = deg.to_radians().sin_cos();
+    (
+        (w * c.abs() + h * s.abs()) / 2.0,
+        (w * s.abs() + h * c.abs()) / 2.0,
+    )
 }
 
 fn pad_extent(shape: &PadShape) -> (f64, f64) {
@@ -2349,6 +2366,45 @@ mod tests {
         assert!((max_y - min_y - 3.0).abs() < 1e-9);
         assert!(((min_x + max_x) / 2.0 - 10.0).abs() < 1e-9);
         assert!(((min_y + max_y) / 2.0 - 5.0).abs() < 1e-9);
+    }
+
+    /// `pad.rotation` is RELATIVE to the footprint, so it turns the pad inside
+    /// the land pattern and changes the component box's local extents. Dropping
+    /// it under-sized the box for every rotated pad — the same class of bug as
+    /// the KiCad importer's absolute-vs-relative mix-up.
+    #[test]
+    fn component_bbox_honours_pad_rotation() {
+        let mut fp = two_pad_footprint(0.0);
+        // Turn both 1.0 x 1.4 pads 90° in the footprint frame: each becomes
+        // 1.4 wide x 1.0 tall, so the pattern grows in X and shrinks in Y.
+        for p in &mut fp.pads {
+            p.rotation = 90.0;
+        }
+        let (min_x, min_y, max_x, max_y) = footprint_component_world_bbox(&fp).unwrap();
+        // Pads at x = ±1.0, each now 1.4 wide → span 2.0 + 1.4 = 3.4.
+        assert!(
+            (max_x - min_x - 3.4).abs() < 1e-9,
+            "width {}",
+            max_x - min_x
+        );
+        assert!(
+            (max_y - min_y - 1.0).abs() < 1e-9,
+            "height {}",
+            max_y - min_y
+        );
+    }
+
+    /// Footprint and pad rotation compose: turning the whole footprint 90°
+    /// on top of 90° pads swaps the axes of the result above.
+    #[test]
+    fn component_bbox_composes_footprint_and_pad_rotation() {
+        let mut fp = two_pad_footprint(90.0);
+        for p in &mut fp.pads {
+            p.rotation = 90.0;
+        }
+        let (min_x, min_y, max_x, max_y) = footprint_component_world_bbox(&fp).unwrap();
+        assert!((max_x - min_x - 1.0).abs() < 1e-9);
+        assert!((max_y - min_y - 3.4).abs() < 1e-9);
     }
 
     #[test]
