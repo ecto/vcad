@@ -10200,6 +10200,72 @@
     }
   },
   {
+    "name": "fab_prep",
+    "title": "Fab Prep",
+    "description": "Take a routed board to fab-ready in one call, and return the DRC-delta receipt that says what was actually achieved. Runs the whole pipeline: optional rule calibration (opt-in, every change logged with its derivation), the verdict ladder over unrouted connections (each ends Routed / ProvedInfeasible / honest-unknown), then a strip-and-re-route fix loop until the violations the ROUTING is answerable for reach zero, then a dangling-copper prune. Mutates the session document. THE RECEIPT IS THE POINT: on an imported fixture absolute zero is not achievable — the same board stripped of all routing already violates its own rules — so the report always gives BOTH numbers (stripped-board baseline and finished board) and charges only the difference to the router. Fails closed: a loop that does not converge returns `converged:false` with the remaining offenders and does not pretend otherwise, and `export_gerber`'s clean-DRC gate still stands — this is the supported way to GET clean, not a way around it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline vcad IR Document (legacy stateless flow). Prefer document_id."
+        },
+        "calibrate_rules": {
+          "type": "boolean",
+          "description": "Derive and apply design-rule calibration from the board's OWN declared via classes and pre-existing footprint holes (default FALSE). Imported boards routinely carry global minima that forbid the via class they themselves declare — e.g. a 0.21/0.12mm class under a 0.2mm minDrill, which flags every via on the board. Calibration only ever relaxes a rule to the point where the board's own GIVEN geometry stops being illegal, is floored at laser-microvia limits, and records every change with its derivation in the receipt. Off by default because silently relaxing DRC rules to make a board pass is how an unbuildable board ships."
+        },
+        "route_remaining": {
+          "type": "boolean",
+          "description": "Route or certify the connections the board arrived without, before the fix loop (default TRUE). Each unrouted connection ends as Routed, ProvedInfeasible (with a bottleneck-cut certificate), or an honest unknown — never silently dropped."
+        },
+        "max_rounds": {
+          "type": "number",
+          "description": "Maximum strip-and-re-route rounds (default 8). Each round censuses the violations the ROUTING is answerable for, strips those nets, and hands them back to the session-probed router."
+        },
+        "budget": {
+          "type": "number",
+          "description": "Per-cluster search budget in node expansions for the complete router (default 5,000,000). Lower is faster and yields more honest unknowns."
+        },
+        "max_cluster": {
+          "type": "number",
+          "description": "Maximum connections coalesced into one joint search window (default 6)."
+        },
+        "prune_dangling": {
+          "type": "boolean",
+          "description": "Remove copper that reaches no pad or pour of its net before the final DRC (default TRUE)."
+        },
+        "accept_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "DRC rule names whose route-attributable violations are ACCEPTED rather than fixed (e.g. [\"MinTraceWidth\"]). Real fab packages ship with real, named exceptions; the difference between that and a footgun is whether the exception is written down. Waived violations are still counted, still listed, and the waiver is named in the receipt — it stops blocking the verdict, it does not hide anything. An unrecognised rule name refuses the run rather than silently accepting nothing."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Compute the receipt without writing the fixed board back to the session."
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
     "name": "validate_for_fab",
     "title": "Validate for Fab",
     "description": "The single 'is this board ready to fabricate?' oracle. Runs the whole readiness gate in one call and returns ONE structured verdict: DRC (fail-closed — a board that won't parse is 'unverifiable', never clean), renderability, Gerber-exportability (attempts serialization; names the exact failing field when it can't), unsupported features, the precise blockers, and suggested fixes. Read-only. Use before export_gerber / quote_manufacturing to know — not guess — whether the board is shippable.",

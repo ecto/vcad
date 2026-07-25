@@ -1,6 +1,7 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import RealityKit
-import ScreenCaptureKit
 import SwiftUI
 
 // Release-to-desktop: RealityView's drawable on macOS always clears opaque, so
@@ -35,10 +36,6 @@ final class ReleaseWindowController {
     /// Sketch mode is modal: the overlay owns the mouse everywhere, so clicks
     /// land on the sketch plane instead of falling through to the desktop.
     var sketchModal = false
-    /// Image-based lighting built from a snapshot of the desktop *behind* this
-    /// window, so the chrome parts reflect the actual desktop rather than an
-    /// invisible studio skybox. Rebuilt on show and whenever geometry rebuilds.
-    var desktopEnvironment: EnvironmentResource?
     /// Chrome regions (tool windows, pill) in overlay view coords (top-left
     /// origin), reported by SwiftUI — the overlay owns the mouse over these.
     var chromeRects: [String: CGRect] = [:]
@@ -59,7 +56,6 @@ final class ReleaseWindowController {
         w.makeKeyAndOrderFront(nil)
         window = w
         mainWindow?.orderOut(nil)
-        refreshDesktopEnvironment()
 
         let update: () -> Void = { [weak self] in self?.updatePassThrough() }
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { _ in
@@ -71,6 +67,33 @@ final class ReleaseWindowController {
         } as Any)
         updatePassThrough()
     }
+
+    /// Where a part sits on screen, in overlay view coords (top-left origin).
+    /// Used to float the Object Inspector next to whatever it's inspecting.
+    /// Projected by hand rather than through `ARView.project`, which answers nil
+    /// for a scene camera that isn't the AR session's.
+    func viewPoint(forPart i: Int, from camera: SIMD3<Float>, lookAt: SIMD3<Float>) -> CGPoint? {
+        guard let ar = arView, let centering = centeringEntity,
+              let e = centering.findEntity(named: "part\(i)") else { return nil }
+        let size = ar.bounds.size
+        guard size.width > 0, size.height > 0 else { return nil }
+
+        let fwd = normalize(lookAt - camera)
+        let right = normalize(cross(fwd, SIMD3<Float>(0, 1, 0)))
+        let up = cross(right, fwd)
+        let v = e.visualBounds(relativeTo: nil).center - camera
+        let z = dot(v, fwd)
+        guard z > 0.0001 else { return nil }                 // behind the camera
+        let tanHalf = tan(Float(60) / 2 * .pi / 180)         // PerspectiveCamera default FOV
+        let aspect = Float(size.width / size.height)
+        let ndcX = (dot(v, right) / z) / (tanHalf * aspect)
+        let ndcY = (dot(v, up) / z) / tanHalf
+        return CGPoint(x: CGFloat(ndcX * 0.5 + 0.5) * size.width,
+                       y: CGFloat(0.5 - ndcY * 0.5) * size.height)
+    }
+
+    /// Overlay size, for clamping floating chrome on screen.
+    var overlaySize: CGSize { arView?.bounds.size ?? .zero }
 
     /// Own the mouse over geometry or chrome; pass everything else through.
     /// Never flips mid-drag (the orbit would be dropped half-way).
@@ -97,76 +120,12 @@ final class ReleaseWindowController {
         centeringEntity = nil
         sketchModal = false
         chromeRects = [:]
-        desktopEnvironment = nil
         window?.orderOut(nil)
         window = nil
         mainWindow?.makeKeyAndOrderFront(nil)
         mainWindow = nil
     }
 
-    /// Snapshot the screen *excluding* our transparent window (so the parts
-    /// aren't fed back into their own reflection) and bake it into an
-    /// equirectangular IBL. ScreenCaptureKit is async and needs Screen
-    /// Recording permission — the first release prompts for it; until granted
-    /// the capture returns nil and the chrome just falls back to default
-    /// lighting. Once the bake lands it's applied to the live ARView directly.
-    func refreshDesktopEnvironment() {
-        guard let w = window else { return }
-        let id = CGWindowID(w.windowNumber)
-        Task { @MainActor in
-            guard let shot = await Self.captureDesktop(excludingWindowID: id),
-                  let env = Self.equirectEnvironment(from: shot) else { return }
-            desktopEnvironment = env
-            if let ar = arView, !(arView?.scene.anchors.isEmpty ?? true) {
-                ar.environment.lighting.resource = env
-            }
-        }
-    }
-
-    private static func captureDesktop(excludingWindowID id: CGWindowID) async -> CGImage? {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true),
-              let display = content.displays.first else { return nil }
-        let excluded = content.windows.filter { $0.windowID == id }
-        let filter = SCContentFilter(display: display, excludingWindows: excluded)
-        let cfg = SCStreamConfiguration()
-        cfg.width = display.width
-        cfg.height = display.height
-        cfg.showsCursor = false
-        return try? await SCScreenshotManager.captureImage(
-            contentFilter: filter, configuration: cfg)
-    }
-
-    /// Wrap a flat desktop snapshot into a 2:1 equirectangular environment.
-    /// The desktop is drawn full-bleed (it's the whole visible surround) and a
-    /// vertical tonal gradient is multiplied over it — bright at the horizon,
-    /// falling off toward zenith/nadir — so reflective edges still catch a
-    /// readable highlight line instead of a flat wash, and the overall level is
-    /// pulled down so bright wallpapers don't blow out the chrome.
-    private static func equirectEnvironment(from desktop: CGImage) -> EnvironmentResource? {
-        let w = 2048, h = 1024
-        let cs = CGColorSpaceCreateDeviceRGB()
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
-                                  bytesPerRow: 0, space: cs,
-                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
-        let fw = CGFloat(w), fh = CGFloat(h)
-        ctx.draw(desktop, in: CGRect(x: 0, y: 0, width: fw, height: fh))
-
-        // Pull the level down and shape it: a soft horizon-bright band keeps the
-        // metal from reading as a mirror of a too-bright screen.
-        ctx.setBlendMode(.multiply)
-        let tone = CGGradient(colorsSpace: cs, colors: [
-            CGColor(gray: 0.25, alpha: 1),   // nadir
-            CGColor(gray: 0.72, alpha: 1),
-            CGColor(gray: 0.85, alpha: 1),   // horizon — brightest
-            CGColor(gray: 0.72, alpha: 1),
-            CGColor(gray: 0.30, alpha: 1),   // zenith
-        ] as CFArray, locations: [0, 0.34, 0.5, 0.66, 1])!
-        ctx.drawLinearGradient(tone, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: fh), options: [])
-
-        guard let img = ctx.makeImage() else { return nil }
-        return try? EnvironmentResource(equirectangular: img)
-    }
 }
 
 extension ReleaseWindowController {
@@ -205,6 +164,10 @@ struct ChromeRegion: ViewModifier {
 struct ReleasedOverlayView: View {
     @Bindable var model: EditorModel
     @Bindable var intent: IntentEngine
+    /// Bumped once after the ARView exists so the inspector can re-place itself
+    /// against the built scene — the first body pass runs before it does, and a
+    /// static scene never re-renders on its own.
+    @State private var layoutTick = 0
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -242,8 +205,6 @@ struct ReleasedOverlayView: View {
             VStack(alignment: .leading, spacing: 12) {
                 ComponentPaletteWindow(model: model)
                     .modifier(ChromeRegion(key: "palette"))
-                ObjectInspectorWindow(model: model)
-                    .modifier(ChromeRegion(key: "inspector"))
                 ScrollView {
                     FeatureTreeView(model: model)
                 }
@@ -253,6 +214,14 @@ struct ReleasedOverlayView: View {
                 .modifier(ChromeRegion(key: "tree"))
             }
             .padding(16)
+            // The Object Inspector floats beside whatever it inspects: it
+            // tracks the selected part's projected screen position (and so
+            // follows it through orbits and drags), parking under the palette
+            // when nothing is selected.
+            ObjectInspectorWindow(model: model)
+                .modifier(ChromeRegion(key: "inspector"))
+                .offset(x: inspectorOrigin.x, y: inspectorOrigin.y)
+                .animation(Motion.smooth, value: model.selectedPartIndex)
         }
         .overlay(alignment: .topTrailing) {
             ReleaseReturnPill(model: model)
@@ -296,6 +265,14 @@ struct ReleasedOverlayView: View {
             .animation(Motion.smooth, value: model.timeline == nil)
             .animation(Motion.panel, value: model.sketching)
         }
+        .task {
+            // A few settling passes: the scene builds (and can rebuild from a
+            // document load) over the first moments after the overlay appears.
+            for _ in 0..<12 {
+                try? await Task.sleep(for: .milliseconds(150))
+                layoutTick += 1
+            }
+        }
         .onChange(of: model.sketching) { _, on in
             // Sketch is modal over the desktop: own the mouse everywhere while
             // drawing, hand non-chrome/non-part mouse back when done.
@@ -305,6 +282,28 @@ struct ReleasedOverlayView: View {
         .onChange(of: model.sketchDirty) { _, dirty in
             if dirty { refreshSketchInk() }
         }
+    }
+
+    /// Top-left origin for the floating Object Inspector: just right of the
+    /// selected part's projected center, clamped inside the overlay. With no
+    /// selection it parks under the Component Palette.
+    private var inspectorOrigin: CGPoint {
+        _ = layoutTick
+        let ctl = ReleaseWindowController.shared
+        let size = ctl.chromeRects["inspector"]?.size ?? CGSize(width: 320, height: 260)
+        let bounds = ctl.overlaySize
+        let parked = CGPoint(x: 16, y: (ctl.chromeRects["palette"]?.maxY ?? 140) + 12)
+        guard let pi = model.selectedPartIndex, bounds.width > 0,
+              let p = ctl.viewPoint(forPart: pi, from: model.cameraPosition,
+                                    lookAt: model.panOffset) else { return parked }
+        let gap: CGFloat = 28
+        // Prefer the right of the part; flip to its left when that would run
+        // off the edge.
+        var x = p.x + gap
+        if x + size.width + 16 > bounds.width { x = p.x - gap - size.width }
+        let y = p.y - size.height / 2
+        return CGPoint(x: min(max(16, x), max(16, bounds.width - size.width - 16)),
+                       y: min(max(16, y), max(16, bounds.height - size.height - 16)))
     }
 
     /// Screen point → kernel-space ray, through the ARView's native ray and
@@ -462,6 +461,7 @@ struct ReleasedARView: NSViewRepresentable {
         let anchor = AnchorEntity(world: .zero)
         let camera = PerspectiveCamera()
         anchor.addChild(camera)
+        addLightRig(to: anchor)
         ar.scene.addAnchor(anchor)
         context.coordinator.anchor = anchor
         context.coordinator.camera = camera
@@ -471,19 +471,31 @@ struct ReleasedARView: NSViewRepresentable {
         return ar
     }
 
-    /// Reflect the real desktop: use the snapshot-derived IBL as the scene
-    /// lighting (zebra still wins when curvature analysis is on). The desktop
-    /// bake is built once on show and reused — re-baking the cubemap on every
-    /// geometry edit would stutter, and the desktop is static while you model.
-    /// Re-entering release mode re-snapshots (hide() clears the bake).
+    /// The studio's key/rim/fill rig. The studio environment is a deliberately
+    /// dark reflection probe — without these lights the floating parts read as
+    /// black silhouettes over the desktop.
+    private func addLightRig(to anchor: AnchorEntity) {
+        let key = DirectionalLight()
+        key.light.intensity = 2300
+        key.look(at: .zero, from: [0.7, 1.1, 0.85], relativeTo: nil)
+        anchor.addChild(key)
+
+        let rim = DirectionalLight()
+        rim.light.intensity = 1900
+        rim.look(at: .zero, from: [-0.9, 0.35, -1.0], relativeTo: nil)
+        anchor.addChild(rim)
+
+        let fill = DirectionalLight()
+        fill.light.intensity = 900
+        fill.look(at: .zero, from: [-0.2, 0.5, 1.2], relativeTo: nil)
+        anchor.addChild(fill)
+    }
+
+    /// Same IBL as the studio (zebra wins when curvature analysis is on) — the
+    /// background stays clear, so only the lighting comes from the environment.
     private func applyLighting(_ ar: ARView) {
-        if model.zebraMode {
-            ar.environment.lighting.resource = ViewportView.zebraEnvironment
-        } else {
-            let ctl = ReleaseWindowController.shared
-            if ctl.desktopEnvironment == nil { ctl.refreshDesktopEnvironment() }
-            ar.environment.lighting.resource = ctl.desktopEnvironment
-        }
+        ar.environment.lighting.resource =
+            model.zebraMode ? ViewportView.zebraEnvironment : ViewportView.studioEnvironment
     }
 
     func updateNSView(_ ar: ARView, context: Context) {

@@ -341,6 +341,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     annotations: RW,
     outputSchema: objectOut({ export_kicad: { type: "object" } }),
   },
+  fab_prep: { title: "Fab Prep", annotations: RW },
   validate_for_fab: { title: "Validate for Fab", annotations: RO },
   calc_impedance: { title: "Calc Impedance", annotations: RO },
   size_impedance: { title: "Size Impedance", annotations: RO },

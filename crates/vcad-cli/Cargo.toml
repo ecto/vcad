@@ -28,6 +28,11 @@ vcad-kernel-physics = { path = "../vcad-kernel-physics" }
 vcad-kernel-cam = { path = "../vcad-kernel-cam" }
 vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace" }
 vcad-kernel-tessellate = { workspace = true }
+vcad-ecad-fabprep = { workspace = true }
+# fab-prep runs for minutes on a dense board and narrates its rounds through
+# `log`; without a subscriber the terminal shows nothing until it finishes.
+env_logger = "0.11"
+vcad-render = { path = "../vcad-render", default-features = false }
 vcad-slicer = { path = "../vcad-slicer" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
 vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }

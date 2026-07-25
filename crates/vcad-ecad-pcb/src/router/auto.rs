@@ -21,7 +21,9 @@ use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, Rats
 use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
-use super::complete::{route_window_complete, CompleteOutcome};
+use super::complete::{
+    path_vias, route_window_complete_pinned, CompleteOutcome, ViaClass, WindowBudget,
+};
 use super::congestion::Congestion;
 use super::escape;
 use super::global::plan_with_scarcity;
@@ -137,6 +139,14 @@ pub struct RouteOptions {
     /// trade completion for speed. Legality is never affected — effort buys
     /// more attempts, not looser rules.
     pub effort: f64,
+    /// Drop the router's own dead copper before returning: new traces and vias
+    /// whose galvanic island holds no pad and no pour fragment (the same
+    /// islands DRC reports as "copper only, no pads" — see
+    /// [`crate::drc::prune_dangling_copper`]). On by default: a fresh route
+    /// should never emit copper connected to nothing. Turn it off only to
+    /// inspect the raw emitter output; it removes nothing electrically live, so
+    /// routability and the routed/unrouted split read the same either way.
+    pub prune_dangling_copper: bool,
 }
 
 impl RouteOptions {
@@ -176,6 +186,7 @@ impl Default for RouteOptions {
             use_push_shove: true,
             effort: 1.0,
             priority_nets: Vec::new(),
+            prune_dangling_copper: true,
         }
     }
 }
@@ -184,6 +195,47 @@ impl Default for RouteOptions {
 /// The loop also stops the instant a round places nothing new, so this only
 /// bounds worst-case work on a genuinely over-constrained board.
 const MAX_RIPUP_ROUNDS: usize = 8;
+
+/// Wall-clock budget for one greedy-phase rip-up round. Rip-up is a *ratchet*:
+/// it rips real copper to free a corridor and re-routes the victims, so a
+/// round that runs long is a round grinding through victims it is about to
+/// fail to restore — the CM5 logs show 45-minute rounds ending with fewer
+/// connections placed than they started (536 -> 511), which keep-best then
+/// discards wholesale. The budget parks the remainder as pending instead: the
+/// same outcome the round was heading for, minutes rather than an hour later.
+const RIPUP_ROUND_BUDGET_MS: f64 = 300_000.0;
+
+/// Wall-clock budget for the deferred rescue [`arsenal_sweep`]. The arsenal is
+/// unbounded per connection (escape flow, coupled-pair phantom search, true
+/// shove); over a tail negotiation could not place, most of it fails slowly.
+const ARSENAL_SWEEP_BUDGET_MS: f64 = 300_000.0;
+
+/// Whether the GPU negotiator is armed for this process (charter M4:
+/// `--features gpu` plus `VCAD_GPU_NEGOTIATE=1`).
+fn gpu_negotiation_enabled() -> bool {
+    #[cfg(feature = "gpu")]
+    {
+        std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1")
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        false
+    }
+}
+
+/// Whether this board routes in the negotiation-first regime: GPU negotiation
+/// takes the unrouted tail before the sequential CPU rescue arsenal, which
+/// then fires once over its leftovers.
+///
+/// Ordering is board-regime-dependent (routerbench finding): on layer-rich
+/// boards negotiation-first replaced the ratchet outright (the CM5's
+/// 67-minute chain); on 2-3 layer boards its greedy priced commits consume
+/// scarce corridors the rescue arsenal spends more carefully (the VESC lost 4
+/// points to it). Pre-arsenal negotiation therefore requires >= 4 copper
+/// layers; thin boards negotiate after the arsenal, on its leftovers only.
+fn negotiate_first_regime(pcb: &Pcb) -> bool {
+    gpu_negotiation_enabled() && copper_layers(pcb).len() >= 4
+}
 
 /// History cost (mm-equivalent) deposited on a contested corridor per
 /// negotiation round. A gentle, accumulating bias: enough that a flexible net
@@ -320,7 +372,21 @@ pub fn route_all_with_opts(
     // copper that blocked them, so flexible nets bow out of the contested band.
     // We keep the best pass (most connections placed) ever seen.
     let mut cong = Congestion::new(&pcb.outline.vertices);
-    let rounds = opts.effective_rounds();
+    // In the negotiation-first regime round 0 already *is* a negotiated pass:
+    // the GPU negotiator works the tail globally inside it, with the rescue
+    // arsenal and the fine-pitch retry behind it. The incremental CPU rounds
+    // that follow are the same ratchet done worse, and every one of them
+    // measured in this regime ended below round 0 and was discarded by
+    // keep-best — 335s + 183s on the full CM5, 231s + 130s on its 250-net
+    // subset, for no connection kept. Round 0 also already carries the
+    // last-round fine-retry that the trailing "polish" round exists to
+    // guarantee, so stopping here forfeits nothing it could have added. Every
+    // other regime keeps the full ladder.
+    let rounds = if negotiate_first_regime(pcb) {
+        1
+    } else {
+        opts.effective_rounds()
+    };
     let mut best: Option<Pass> = None;
     // How many rounds each net has gone unrouted — its negotiation priority.
     let mut fail_count: BTreeMap<String, usize> = BTreeMap::new();
@@ -338,11 +404,15 @@ pub fn route_all_with_opts(
     // retry (observed on the corridor benchmark: 4 rounds routed 16/24 where
     // 1 round routed 18/24).
     let mut polish = false;
+    // Wall-clock cost of round 0 — the budget the speculative rounds are sized
+    // against (see [`incremental_round`]).
+    let mut baseline_ms = 0.0f64;
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
         // history field are enhancement layers applied from round 1 onward.
         let use_push_shove = opts.use_push_shove && round > 0;
         let last_round_flag = polish || round + 1 == rounds;
+        let sw_round = Stopwatch::start();
         let (session, placed, pending) = if round == 0 {
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
@@ -391,8 +461,12 @@ pub fn route_all_with_opts(
                 last_round_flag,
                 &fail_count,
                 &mut round_cache,
+                baseline_ms,
             )
         };
+        if round == 0 {
+            baseline_ms = sw_round.ms();
+        }
 
         log::info!(
             "negotiation round {}/{rounds}: placed={} pending={} (push_shove={use_push_shove})",
@@ -633,6 +707,39 @@ pub fn route_all_with_opts(
         );
     }
 
+    // Dangling-copper prune: the last word on the copper this pass emits. The
+    // speculative emitters (fan-out escape vias, stubs whose route rip-up later
+    // replaced, stitching vias for a plane that never materialized) leave
+    // islands touching no pad and no pour — DRC's "copper only, no pads". They
+    // are electrically dead by construction, so removing them changes nothing
+    // the result reports: every placed connection runs pad to pad and lives in
+    // a pad-anchored island, so `still_unrouted` (and the routability and
+    // diagnostics derived from it below) is unaffected. Runs after legalization
+    // so the returned copper is final — nothing downstream can revive an island.
+    // The `session` is not consulted again after this point and does not escape
+    // the function, so there is no session state left to keep in step.
+    let mut pruned_out: Vec<(String, Vec2)> = Vec::new();
+    if opts.prune_dangling_copper {
+        let before = net_copper_anchors(&traces, &vias);
+        let (dead_traces, dead_vias) = super::legalize::prune_dangling(pcb, &mut traces, &mut vias);
+        if dead_traces > 0 || dead_vias > 0 {
+            log::info!(
+                "dangling-copper prune: removed {dead_traces} dead traces, {dead_vias} dead vias \
+                 ({} traces, {} vias remain)",
+                traces.len(),
+                vias.len(),
+            );
+            // Enforce the invariant rather than only asserting it in prose: a
+            // net whose copper is *entirely* gone was not routed by this pass,
+            // whatever `placed` recorded, so it is reported unrouted below.
+            let after = net_copper_anchors(&traces, &vias);
+            pruned_out = before
+                .into_iter()
+                .filter(|(net, _)| !after.contains_key(net))
+                .collect();
+        }
+    }
+
     // Diagnose every signal connection the router could not close: which nets
     // block it, where, and which layer/via might help. Computed against the
     // final settled session so the blocker set reflects the real obstruction.
@@ -649,6 +756,27 @@ pub fn route_all_with_opts(
     for (net, pad_pt) in &stitch.failed_pads {
         unrouted.insert(net.clone());
         diagnostics.push(diagnose_stitch_failure(net, *pad_pt));
+    }
+    // A net the prune emptied out placed nothing that survives: report it
+    // unrouted rather than claim a route with no copper behind it.
+    for (net, at) in &pruned_out {
+        unrouted.insert(net.clone());
+        diagnostics.push(UnroutedDiagnostic {
+            net: net.clone(),
+            from: *at,
+            to: *at,
+            blocking_nets: Vec::new(),
+            region_min: *at,
+            region_max: *at,
+            suggested_layer: None,
+            suggested_via: None,
+            reason: format!(
+                "every piece of copper this pass placed for '{net}' was electrically \
+                 dead (its island reached no pad and no pour) and was pruned near \
+                 ({:.2}, {:.2})",
+                at.x, at.y
+            ),
+        });
     }
     // A net demoted by legalization had all its new copper stripped: report it
     // unrouted with the offending position rather than return illegal copper.
@@ -692,6 +820,20 @@ pub fn route_all_with_opts(
         diagnostics,
         routability,
     }
+}
+
+/// One representative position per net that owns copper in the router's output
+/// — the census the dangling-copper prune is checked against, so a net that
+/// loses *all* its copper can be named (and located) in a diagnostic.
+fn net_copper_anchors(traces: &[RoutedTrace], vias: &[RoutedVia]) -> BTreeMap<String, Vec2> {
+    let mut out = BTreeMap::new();
+    for t in traces {
+        out.entry(t.net.clone()).or_insert(t.start);
+    }
+    for v in vias {
+        out.entry(v.net.clone()).or_insert(v.position);
+    }
+    out
 }
 
 /// Build a diagnostic for a signal connection the router could not close.
@@ -1045,6 +1187,19 @@ fn route_pass(
         }
     }
 
+    let negotiate_first = negotiate_first_regime(pcb);
+    if gpu_negotiation_enabled() {
+        log::info!(
+            "gpu negotiation armed: {} copper layers -> {}",
+            copper_layers(pcb).len(),
+            if negotiate_first {
+                "negotiation-first (arsenal deferred to its leftovers)"
+            } else {
+                "thin board: arsenal first, negotiation on its leftovers"
+            }
+        );
+    }
+
     let unrouted_conns = route_batch(
         &mut session,
         pcb,
@@ -1055,9 +1210,19 @@ fn route_pass(
         use_push_shove,
         max_expansions,
         fine_retry,
-        true,
+        // Negotiation-first ordering: when negotiation takes the tail before
+        // the arsenal, the arsenal must NOT also fire per failed connection
+        // inside this batch loop. That inline call was the greedy phase's
+        // dominant cost — an escape/pair/shove chain re-solved sequentially,
+        // one connection at a time, for a tail negotiation clears in seconds.
+        // Failures fall straight through to negotiation here, and the arsenal
+        // fires once afterwards over its leftovers only (`arsenal_sweep`).
+        !negotiate_first,
         &mut fail_cache,
         &corridors,
+        // The opening greedy pass is the board's baseline result, not a
+        // speculative refinement — it is never cut short.
+        None,
     );
 
     // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
@@ -1066,22 +1231,32 @@ fn route_pass(
     // that failed in one round find a path once the board settles. Stop the
     // instant a round places nothing new, so a stuck board exits immediately.
     let mut pending = unrouted_conns;
-    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1).
-    // Ordering is board-regime-dependent (routerbench finding): on
-    // layer-rich boards negotiation-first replaced the ratchet outright
-    // (the CM5's 67-minute chain); on 2-3 layer boards its greedy priced
-    // commits consume scarce corridors the rescue arsenal spends more
-    // carefully (the VESC lost 4 points to it). Pre-arsenal negotiation
-    // therefore requires >= 4 copper layers; thin boards negotiate after
-    // the arsenal, on its leftovers only.
     #[cfg(feature = "gpu")]
-    let negotiation_enabled = std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1");
-    #[cfg(feature = "gpu")]
-    let negotiate_first = copper_layers(pcb).len() >= 4;
-    #[cfg(feature = "gpu")]
-    if negotiation_enabled && negotiate_first && !pending.is_empty() {
+    if negotiate_first && !pending.is_empty() {
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
+        // The deferred arsenal, now over negotiation's leftovers only.
+        pending = arsenal_sweep(
+            &mut session,
+            pcb,
+            width,
+            &mut placed,
+            pending,
+            cong,
+            use_push_shove,
+            max_expansions,
+            &mut fail_cache,
+        );
     }
+    // Rip-up's job — free a corridor for a connection that has none — is the
+    // job negotiation has just done, globally and in seconds. Once it has run
+    // first, the greedy phase's rip-up rounds have never been observed to pay
+    // for themselves on this regime: they cost ~45 minutes on the full CM5 and
+    // ~8 minutes on its 250-net subset, and BOTH ended with fewer connections
+    // placed than they started (536 -> 511; 382 -> 380), so keep-best threw
+    // the whole round away. Skip them here and let the negotiation loop's own
+    // budgeted, keep-best-guarded rounds be the ratchet. Every other regime —
+    // thin boards, GPU off, no `gpu` feature — keeps the full ladder.
+    let ripup_rounds = if negotiate_first { 0 } else { ripup_rounds };
     for _ in 0..ripup_rounds {
         if pending.is_empty() {
             break;
@@ -1104,7 +1279,7 @@ fn route_pass(
             use_push_shove,
             max_expansions,
             true,
-            None,
+            Some(RIPUP_ROUND_BUDGET_MS),
             &mut fail_cache,
             &corridors,
         );
@@ -1128,11 +1303,79 @@ fn route_pass(
     // Thin-board negotiation (see ordering note above): the arsenal has had
     // first claim; negotiation now works only its leftovers.
     #[cfg(feature = "gpu")]
-    if negotiation_enabled && !negotiate_first && !pending.is_empty() {
+    if gpu_negotiation_enabled() && !negotiate_first && !pending.is_empty() {
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
 
     (session, placed, pending)
+}
+
+/// The deferred rescue arsenal, run once over the connections GPU negotiation
+/// left behind.
+///
+/// Under negotiation-first ordering (see [`route_pass`]) the greedy batch
+/// routes search-only, so this is the single place the sequential arsenal —
+/// flow escape, coupled-pair phantom, true shove — fires during the greedy
+/// phase. Same rescues, same legality (everything still goes through
+/// [`try_route`]), applied to the tail negotiation could not clear instead of
+/// to every connection the speculative search missed.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+fn arsenal_sweep(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    placed: &mut Vec<Placed>,
+    pending: Vec<Conn>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fail_cache: &mut FailCache,
+) -> Vec<Conn> {
+    let sw = Stopwatch::start();
+    let total = pending.len();
+    let mut still: Vec<Conn> = Vec::new();
+    let mut rescued = 0usize;
+    let mut it = pending.into_iter();
+    for (net, from, to) in it.by_ref() {
+        if sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+            log::info!("arsenal sweep over budget — deferring remainder");
+            still.push((net, from, to));
+            break;
+        }
+        match try_route(
+            session,
+            pcb,
+            width,
+            &net,
+            from,
+            to,
+            placed,
+            cong,
+            use_push_shove,
+            max_expansions,
+            true,
+        ) {
+            Some(p) => {
+                fail_cache.remove(&conn_key(&net, from, to));
+                placed.push(p);
+                rescued += 1;
+            }
+            None => {
+                fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                still.push((net, from, to));
+            }
+        }
+    }
+    still.extend(it);
+    if total > 0 {
+        log::info!(
+            "arsenal sweep: {total} leftovers -> rescued {rescued}, still {} in {:.1}s",
+            still.len(),
+            sw.ms() / 1000.0,
+        );
+    }
+    still
 }
 
 /// One incremental negotiation round: clone the best pass, rip the placed
@@ -1152,6 +1395,7 @@ fn incremental_round(
     fine_retry: bool,
     fail_count: &BTreeMap<String, usize>,
     fail_cache: &mut FailCache,
+    baseline_ms: f64,
 ) -> Pass {
     let (mut session, mut placed, pending_base) = base.clone();
 
@@ -1174,10 +1418,17 @@ fn incremental_round(
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
-    // Flat 20-minute budget regardless of effort: scaling by expansion
-    // budget multiplied speculative-round cost right back up at high effort
-    // (effort 10 → 3.3h/round), exactly what the budget exists to prevent.
-    let budget_ms = 1_200_000.0;
+    // Budget = a quarter of what round 0 spent producing the whole baseline,
+    // floored at a minute and still capped at the historical 20. A round here
+    // refines a tail that is a few percent of the board, and keep-best throws
+    // it away unless it beats the snapshot — so it should cost a fraction of
+    // the baseline, not (as the flat 20-minute budget made it) several times
+    // more than the baseline it refines. The cap still bounds a board whose
+    // round 0 is genuinely slow, and the budget stays flat with respect to
+    // effort (scaling it by the expansion budget multiplied speculative-round
+    // cost right back up at high effort — effort 10 → 3.3h/round, exactly
+    // what the budget exists to prevent).
+    let budget_ms = (baseline_ms * 0.25).clamp(60_000.0, 1_200_000.0);
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -1197,10 +1448,11 @@ fn incremental_round(
         &HashMap::new(),
     );
     log::info!(
-        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s",
+        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s (budget {:.0}s)",
         placed.len(),
         pending.len(),
         sw.ms() / 1000.0,
+        budget_ms / 1000.0,
     );
 
     (session, placed, pending)
@@ -1229,6 +1481,7 @@ fn route_batch(
     rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+    deadline_ms: Option<f64>,
 ) -> Vec<Conn> {
     const MAX_COMMIT_RETRIES: usize = 3;
     let sw = Stopwatch::start();
@@ -1293,6 +1546,25 @@ fn route_batch(
     let mut conflicts = 0usize;
     let batch_size = rayon::current_num_threads().max(1) * 2;
     while !queue.is_empty() {
+        // Over-deadline: report the remaining queue unrouted rather than
+        // routing it. Every caller that passes a deadline already handles an
+        // unrouted connection — a stuck one stays pending, a ripped victim
+        // gets its original copper restored — so cutting the batch short
+        // costs attempts, never legality. Without this the enclosing budgets
+        // (rip-up rounds, speculative negotiation rounds, joint repair) were
+        // advisory only: they are checked between connections, and one
+        // connection's victim re-route is itself a whole batch, so a 92-second
+        // round measured 231 seconds.
+        if let Some(d) = deadline_ms {
+            if sw.ms() > d {
+                log::info!(
+                    "route_batch over {d:.0}ms budget — deferring {} conns",
+                    queue.len()
+                );
+                unrouted.extend(queue.drain(..).map(|(c, _)| c));
+                break;
+            }
+        }
         batches += 1;
         let sw_batch = Stopwatch::start();
         let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
@@ -2814,6 +3086,10 @@ fn ripup_pass(
             rescue,
             fail_cache,
             corridors,
+            // The victim re-route inherits what is left of the pass budget:
+            // it is a whole batch inside one connection's iteration, so
+            // leaving it unbounded is what made the budget advisory.
+            deadline_ms.map(|d| (d - sw_pass.ms()).max(0.0)),
         ));
     }
     still.extend(unrouted);
@@ -2839,6 +3115,7 @@ fn reroute_victims_with_restore(
     rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+    deadline_ms: Option<f64>,
 ) -> Vec<Conn> {
     let mut originals: HashMap<ConnKey, Placed> = victims
         .iter()
@@ -2859,6 +3136,7 @@ fn reroute_victims_with_restore(
         rescue,
         fail_cache,
         corridors,
+        deadline_ms,
     ) {
         let restored = originals
             .remove(&conn_key(&net, from, to))
@@ -3018,6 +3296,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
+                Some((round_budget_ms - sw_round.ms()).max(0.0)),
             );
             lost.extend(reroute_victims_with_restore(
                 session,
@@ -3031,6 +3310,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
+                Some((round_budget_ms - sw_round.ms()).max(0.0)),
             ));
             // Last resort for a small surviving clique: the COMPLETE window
             // router — either a joint routing the heuristics missed, or a
@@ -3044,35 +3324,52 @@ fn joint_window_repair(
                     // DFS budget-caps honestly (BudgetExhausted, never a fake
                     // proof) if 10 layers is too much for exhaustion.
                     let cl: Vec<PcbLayer> = copper;
-                    match route_window_complete(
+                    // Search at the WIDEST width any of these nets will commit
+                    // at, not the board default. `validate_and_commit` below
+                    // commits each net at `width_for(net, width)`; a corridor
+                    // found at the default is rejected there the moment an
+                    // SI-class net needs more copper than the search assumed —
+                    // the connection is lost to a mismatch, not to the board.
+                    let search_width = lost
+                        .iter()
+                        .map(|c| session.width_for(&c.0, width))
+                        .fold(width, f64::max);
+                    // Hand the router the via geometry this loop actually
+                    // commits, so its legality model is the commit rule rather
+                    // than a heuristic: the pad is probed at its real size and
+                    // the drill is checked against hole-to-hole, which no
+                    // layer-scoped copper probe can see.
+                    let via_class = ViaClass {
+                        pad_diameter: pcb.rules.default_rules.via_diameter,
+                        drill: pcb.rules.default_rules.via_drill,
+                    };
+                    match route_window_complete_pinned(
                         session,
                         (Vec2::new(gw.0[0], gw.0[1]), Vec2::new(gw.1[0], gw.1[1])),
                         &cl,
                         &lost,
-                        width,
-                        pcb.rules.default_rules.via_diameter / 2.0,
-                        2_000_000,
+                        // Terminals unconstrained: unlike the CM5 verdict driver
+                        // this loop has no pad-layer map for `lost`, so stubs
+                        // may still surface off the pad's own layer here.
+                        &[],
+                        search_width,
+                        Some(via_class),
+                        WindowBudget::new(2_000_000),
                     ) {
                         CompleteOutcome::Routed(paths) => {
                             let mut still_lost = Vec::new();
-                            for (conn, path) in lost.drain(..).zip(paths) {
-                                // The router already replayed the window's
-                                // paths in order: a path it flags illegal
-                                // pinches a clustermate the coarse grid could
-                                // not see, and only that path is dropped.
-                                if !path.legal {
-                                    still_lost.push(conn);
-                                    continue;
-                                }
+                            for (conn, segs) in lost.drain(..).zip(paths) {
+                                let vias = path_vias(&segs);
+                                let commit_width = session.width_for(&conn.0, width);
                                 let cand = Candidate {
                                     thin_segments: vec![],
-                                    thin_width: path.width,
+                                    thin_width: commit_width,
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
-                                    width: path.width,
-                                    segments: path.segments,
-                                    vias: path.vias,
+                                    width: commit_width,
+                                    segments: segs,
+                                    vias,
                                 };
                                 match validate_and_commit(session, pcb, cand, placed) {
                                     Some(p) => {
@@ -3804,6 +4101,61 @@ mod tests {
         );
     }
 
+    /// The dangling-copper invariant: nothing route_all returns may be
+    /// electrically dead. Runs the same every-emitter fixture through the
+    /// pruner's own oracle — after applying the result, no trace and no via is
+    /// left in an island that reaches neither a pad nor a pour.
+    #[test]
+    fn autoroute_returns_no_dangling_copper() {
+        let pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    5.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    45.0,
+                    25.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, -2.0, "C")],
+                ),
+                fp(
+                    "U3",
+                    45.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "B"), pad("2", 0.0, 2.0, "C")],
+                ),
+                fp("U4", 8.0, 25.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U5", 25.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U6", 42.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+
+        let r = route_all(&pcb0, 0.25, &[]);
+        assert!(!r.traces.is_empty(), "fixture must actually route");
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let (traces_before, vias_before) = (pcb.traces.len(), pcb.vias.len());
+        let (dead_t, dead_v) = crate::drc::prune_dangling_copper(&mut pcb);
+        assert_eq!(
+            (dead_t, dead_v),
+            (0, 0),
+            "route_all left {dead_t}/{traces_before} dead traces and \
+             {dead_v}/{vias_before} dead vias behind"
+        );
+
+        // And the prune must not have starved a net it reports as routed.
+        for net in &r.routed_nets {
+            assert!(
+                r.traces.iter().any(|t| &t.net == net) || r.vias.iter().any(|v| &v.net == net),
+                "net '{net}' is reported routed but owns no copper"
+            );
+        }
+    }
+
     #[test]
     fn stitches_power_pads_to_inner_planes() {
         // GND plane on In1Cu, V3V3 plane on In2Cu; SMD power pads on FCu. Without
@@ -4155,6 +4507,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                prune_dangling_copper: true,
             },
         );
         assert_eq!(
@@ -4193,6 +4546,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                prune_dangling_copper: true,
             },
         );
         // The shipped default: negotiated congestion + validated push-shove.
@@ -4286,6 +4640,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                prune_dangling_copper: true,
             },
         );
         let default = route_all(&pcb, 0.25, &[]);
