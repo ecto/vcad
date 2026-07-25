@@ -257,8 +257,9 @@ floor. Same finding, honest number.
 
 ### The full board is 1 of 4, not 2 of 4
 
-Full-board run on the corrected importer: routability **0.994** in **958.9 s**,
-3,791 segments / 895 vias.
+Full-board route on the corrected importer, two runs: routability **0.994**
+both times, byte-identical board (3,791 segments / 895 vias) — the route is
+deterministic given the tree. Wall-clock 895.5 / 958.9 s.
 
 | full board | published (routed + si_finish) | corrected |
 |---|---|---|

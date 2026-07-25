@@ -153,8 +153,10 @@ that part of the argument stands — but the number was wrong.
 
 ### Our board, re-routed clean
 
-Full-board run on the corrected importer: **routability 0.994** in **958.9 s**,
-3,791 segments / 895 vias, 0.31× human via count.
+Full-board route on the corrected importer, **two runs**: **routability 0.994**
+both times, producing a byte-identical board (3,791 segments / 895 vias,
+5,301 mm copper, 380 routed / 28 unrouted), 0.31× human via count. The route is
+deterministic given the tree; only wall-clock varies (958.9 s and 895.5 s).
 
 | | published | corrected |
 |---|---|---|
@@ -179,13 +181,23 @@ argument it supports survive this correction intact.
 
 | stage | before | now |
 |---|---|---|
-| route | 113 min (pre-GPU-fix) | **958.9 s ≈ 16.0 min** |
-| full chain (route + si_finish) | 2 h 51 m → 67 min | **1,634 s ≈ 27.2 min** |
+| route | 113 min (pre-GPU-fix) | **895.5 / 958.9 s ≈ 14.9–16.0 min** (2 runs) |
+| full chain (route + si_finish) | 2 h 51 m → 67 min | **1,634 s ≈ 27.2 min** (1 run) |
 
-The M6 scoreboard row `< 30 min chain | 2 h 51 m` is **closed**. Note this run
-shared the machine with another full-board route (load average 23.4), so the
-wall-clock is if anything pessimistic — contention only inflates it, and the
-target is met regardless.
+The M6 scoreboard row `< 30 min chain | 2 h 51 m` is **closed**.
+
+Two honesty notes on these timings, since a prior version of this document
+published a single lucky run as typical:
+
+- Both runs shared the machine with another session's full-board route (load
+  average 23.4). Contention only inflates wall-clock, so the `<30 min`
+  conclusion holds a fortiori — but neither number is a clean solo measurement.
+- The chain figure rests on **one** complete run, not two. The second attempt's
+  route stage finished normally (895.5 s, identical board) but its `si_finish`
+  stage was truncated when the machine's disk filled, so its 1,288 s is not a
+  valid chain sample and is not averaged in. The route-stage spread above is
+  from two complete runs; the chain number needs a second clean run to earn the
+  same standing.
 
 The pad fix also helped routing directly: pair-first now lands **47** pairs
 coupled in round 0, up from the published 43. Overlapping pads had been sealing
