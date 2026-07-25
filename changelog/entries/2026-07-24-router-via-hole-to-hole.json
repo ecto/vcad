@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-via-hole-to-hole",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "fix",
+  "title": "Autorouter enforces via hole-to-hole spacing",
+  "summary": "route_nets' legality oracle now indexes drilled holes independently of copper, so two vias whose layer spans don't overlap can no longer be placed with colliding drills — the hole-to-hole rule is enforced at probe time, not found by a later DRC.",
+  "features": ["pcb", "autorouter", "drc"],
+  "mcpTools": ["route_nets", "run_drc", "validate_for_fab"]
+}

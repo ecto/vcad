@@ -274,12 +274,15 @@ pub fn route_window_complete(
         } else {
             // Via edge: disc on both spanned (adjacent) layers.
             debug_assert_eq!(ca, cb);
+            let center = grid.world(ca);
             let disc = CopperGeom::Disc {
-                center: grid.world(ca),
+                center,
                 r: via_r,
             };
             conns.iter().zip(&clearances).all(|((net, _, _), &clr)| {
-                session.probe(&disc, layers[la], net, clr).legal
+                // Drill barrels ignore layer spans — check the hole rule too.
+                session.probe_via_hole(center, net).legal
+                    && session.probe(&disc, layers[la], net, clr).legal
                     && session.probe(&disc, layers[lb], net, clr).legal
             })
         };

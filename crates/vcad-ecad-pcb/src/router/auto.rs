@@ -1873,6 +1873,20 @@ pub(super) fn validate_and_commit(
         if reused {
             continue;
         }
+        // Drilled barrels collide regardless of layer span — the copper probes
+        // below only compare vias that share a layer, so a blind/buried pair on
+        // disjoint spans would otherwise sail through.
+        let hp = session.probe_via_hole(p, net);
+        if !hp.legal {
+            log::debug!(
+                "validate: {net} via ({:.3},{:.3}) hole-to-hole illegal — {} at {:.3}mm",
+                p.x,
+                p.y,
+                hp.blocker.as_ref().map(|b| b.1.as_str()).unwrap_or("?"),
+                hp.min_gap
+            );
+            return None;
+        }
         let disc = CopperGeom::Disc {
             center: p,
             r: via_r,
@@ -2395,9 +2409,12 @@ fn escape_endpoint(
             center: p,
             r: via_r,
         };
-        copper
-            .iter()
-            .all(|&l| session.probe(&disc, l, net, clearance).legal)
+        // The drilled barrel first: cheap, and layer-independent (copper
+        // probes can't see a hole conflict across disjoint layer spans).
+        session.probe_via_hole(p, net).legal
+            && copper
+                .iter()
+                .all(|&l| session.probe(&disc, l, net, clearance).legal)
     };
     // A coincident same-net via already on the board — reuse it rather than
     // stacking a second drill at the same spot.
@@ -2518,7 +2535,9 @@ fn commit_stub(
     commit_seg(session, net, a, b, hw, layer)
 }
 
-/// Commit a via as a disc on every copper layer it spans (a through via).
+/// Commit a via as a disc on every copper layer it spans (a through via),
+/// plus its drilled barrel — which is layer-independent, so a later via on a
+/// disjoint layer span still sees it in [`RouteSession::probe_hole`].
 pub(super) fn commit_via(
     session: &mut RouteSession,
     net: &str,
@@ -2527,6 +2546,8 @@ pub(super) fn commit_via(
     copper: &[PcbLayer],
     spans: &mut Vec<SpanId>,
 ) {
+    let drill = session.via_drill_for(net);
+    spans.push(session.commit_hole(p, drill, net));
     for &l in copper {
         spans.push(session.commit(CopperElement {
             min: [p.x - via_r, p.y - via_r],
@@ -3261,6 +3282,114 @@ mod tests {
             keepouts: vec![],
             net_ties: vec![],
         }
+    }
+
+    /// The same board with a four-layer stackup, so two vias can occupy
+    /// *disjoint* copper layer spans.
+    fn board_4layer() -> Pcb {
+        let mut pcb = board(vec![]);
+        pcb.stackup.layers = [
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In2Cu,
+            PcbLayer::BCu,
+        ]
+        .into_iter()
+        .map(|layer| StackupLayer {
+            layer,
+            copper_thickness: Some(0.035),
+            dielectric_thickness: Some(0.5),
+            dielectric_er: Some(4.5),
+            material: Some("FR4".into()),
+        })
+        .collect();
+        pcb
+    }
+
+    #[test]
+    fn via_refused_when_drills_collide_across_disjoint_layer_spans() {
+        // The hole class the CM5 fab campaign found: two vias whose layer
+        // spans do not overlap share no copper layer, so every clearance probe
+        // passes — while their DRILLS physically collide.
+        let pcb = board_4layer();
+        let mut session = RouteSession::from_pcb(&pcb);
+        let via_r = pcb.rules.default_rules.via_diameter / 2.0; // 0.4mm
+        let drill = pcb.rules.default_rules.via_drill; // 0.4mm
+
+        // Net A takes a blind via on the top half of the stack.
+        let a = Vec2::new(25.0, 15.0);
+        let mut spans = Vec::new();
+        commit_via(
+            &mut session,
+            "A",
+            a,
+            via_r,
+            &[PcbLayer::FCu, PcbLayer::In1Cu],
+            &mut spans,
+        );
+
+        // Net B wants a buried via 0.5mm away on the bottom half: drills leave
+        // a 0.5 - 0.2 - 0.2 = 0.1mm gap against the board's 0.5mm rule.
+        let b = Vec2::new(25.5, 15.0);
+        let disc = CopperGeom::Disc { center: b, r: via_r };
+        assert!(
+            [PcbLayer::In2Cu, PcbLayer::BCu]
+                .iter()
+                .all(|&l| session.probe(&disc, l, "B", 0.2).legal),
+            "copper probes must see no conflict — that is the hole in the oracle"
+        );
+        let hp = session.probe_via_hole(b, "B");
+        assert!(!hp.legal, "0.1mm hole gap must violate the 0.5mm rule");
+        assert!((hp.min_gap - 0.1).abs() < 1e-9, "gap was {}", hp.min_gap);
+        assert_eq!(hp.blocker.map(|(_, n)| n).as_deref(), Some("A"));
+
+        // The commit gate must refuse the placement, mutating nothing.
+        let cand = |p: Vec2| Candidate {
+            net: "B".into(),
+            from: p,
+            to: p,
+            width: 0.25,
+            segments: vec![],
+            vias: vec![(p, PcbLayer::In2Cu, PcbLayer::BCu)],
+            thin_segments: vec![],
+            thin_width: 0.25,
+        };
+        let before = session.len();
+        assert!(
+            validate_and_commit(&mut session, &pcb, cand(b), &[]).is_none(),
+            "a via whose drill collides across disjoint layer spans must be refused"
+        );
+        assert_eq!(session.len(), before, "a refused via commits nothing");
+
+        // Clear of the rule (1.0mm apart → 0.6mm gap): accepted, proving the
+        // refusal above is the hole rule and not a blanket ban.
+        let far = Vec2::new(26.0, 15.0);
+        assert!(session.probe_via_hole(far, "B").legal);
+        assert!(validate_and_commit(&mut session, &pcb, cand(far), &[]).is_some());
+
+        // And the whole thing agrees with the DRC: drop both vias on the board
+        // at the illegal spacing and the real checker flags HoleToHole.
+        let mut judged = pcb.clone();
+        for (p, net, s, e) in [
+            (a, "A", PcbLayer::FCu, PcbLayer::In1Cu),
+            (b, "B", PcbLayer::In2Cu, PcbLayer::BCu),
+        ] {
+            judged.vias.push(Via {
+                position: p,
+                diameter: via_r * 2.0,
+                drill,
+                start_layer: s,
+                end_layer: e,
+                net: net.into(),
+                source: None,
+            });
+        }
+        assert!(
+            check_drc(&judged)
+                .iter()
+                .any(|v| v.rule == crate::DrcRuleType::HoleToHole),
+            "the DRC must flag exactly what the session now refuses"
+        );
     }
 
     /// Apply the router's output to the board (as the MCP tool does).

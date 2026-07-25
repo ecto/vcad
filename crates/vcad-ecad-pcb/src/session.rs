@@ -16,6 +16,13 @@
 //! - [`RouteSession::remove`] — rip a span back out (tombstone + lazy compaction)
 //!   so rip-up-and-reroute is O(drop) rather than a full index rebuild.
 //!
+//! Copper is not the whole legality story: a *drilled hole* obeys a rule that
+//! has nothing to do with layers. [`RouteSession::probe_hole`] /
+//! [`RouteSession::commit_hole`] maintain a second index over via barrels and
+//! through-hole pad drills, so two blind/buried vias on disjoint layer spans —
+//! which share no copper element and therefore never meet in `probe` — still
+//! have to keep `rules.hole_to_hole` apart.
+//!
 //! This is the structural inversion the router rests on: clearance becomes a
 //! constraint consulted *during* the search, not a violation detected after it.
 
@@ -72,6 +79,46 @@ pub struct Blocker {
     pub layer: PcbLayer,
     /// True edge-to-edge distance to the candidate (mm).
     pub distance: f64,
+}
+
+/// A drilled hole (a via barrel or a through-hole pad) indexed for the
+/// hole-to-hole rule.
+///
+/// Holes live in their own index because the rule they obey is *mechanical*,
+/// not electrical: a drill bit does not care which copper layers the via
+/// spans. Two blind/buried vias on disjoint layer spans share no copper
+/// element and so never meet in [`RouteSession::probe`], yet their barrels
+/// can still collide.
+#[derive(Debug, Clone)]
+struct SessionHole {
+    id: SpanId,
+    center: Vec2,
+    /// Drill *radius* (mm).
+    radius: f64,
+    net: String,
+}
+
+impl RTreeObject for SessionHole {
+    type Envelope = AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_corners(
+            [self.center.x - self.radius, self.center.y - self.radius],
+            [self.center.x + self.radius, self.center.y + self.radius],
+        )
+    }
+}
+
+/// Outcome of probing a candidate drilled hole against the session.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoleProbeResult {
+    /// True when every other-net hole keeps the `hole_to_hole` rule.
+    pub legal: bool,
+    /// Smallest edge-to-edge gap to any other-net hole (mm), i.e. center
+    /// distance minus both drill radii. `f64::INFINITY` when nothing is near.
+    pub min_gap: f64,
+    /// The closest offending hole's span and net, when illegal.
+    pub blocker: Option<(SpanId, String)>,
 }
 
 /// Outcome of probing a candidate geometry against the session.
@@ -166,6 +213,24 @@ pub struct RouteSession {
     /// so a wide net's clearance is never missed when it exceeds the candidate's.
     max_clearance: f64,
     net_width: HashMap<String, f64>,
+    /// Drilled holes (vias + through-hole pads), indexed independently of
+    /// copper — see [`SessionHole`]. Ids share `live` with copper spans, so
+    /// [`RouteSession::remove`] rips a via's barrel out with its copper.
+    holes: RTree<SessionHole>,
+    /// True at ids that name a hole rather than a copper span (parallel to
+    /// `live`), so `remove` knows which index to compact.
+    is_hole: Vec<bool>,
+    /// Count of tombstoned-but-not-yet-compacted holes.
+    holes_dead: usize,
+    /// `rules.hole_to_hole` — minimum edge-to-edge drill spacing (mm).
+    hole_to_hole: f64,
+    /// Largest drill radius any hole has (or any net class can mint), so the
+    /// hole broadphase always reaches far enough.
+    max_hole_radius: f64,
+    /// net → via drill diameter from its net class (mirrors how a routed via
+    /// is sized when it is written back to the board).
+    net_via_drill: HashMap<String, f64>,
+    default_via_drill: f64,
     /// Per-span bboxes (parallel to `live`), so a remove can stamp the dirty
     /// grid without consulting the tree.
     bounds: Vec<[f64; 4]>,
@@ -236,11 +301,46 @@ impl RouteSession {
             edge_ring(cutout);
         }
         let elems = elems;
-        let live = vec![true; elems.len()];
-        let bounds: Vec<[f64; 4]> = elems
+        let mut live = vec![true; elems.len()];
+        let mut is_hole = vec![false; elems.len()];
+        let mut bounds: Vec<[f64; 4]> = elems
             .iter()
             .map(|e| [e.min[0], e.min[1], e.max[0], e.max[1]])
             .collect();
+
+        // Every drilled hole already on the board: via barrels (whatever their
+        // layer span) and through-hole pad drills. Ids continue the span space.
+        let mut holes: Vec<SessionHole> = Vec::new();
+        let mut push_hole = |center: Vec2, radius: f64, net: String| {
+            let id = live.len();
+            live.push(true);
+            is_hole.push(true);
+            bounds.push([
+                center.x - radius,
+                center.y - radius,
+                center.x + radius,
+                center.y + radius,
+            ]);
+            holes.push(SessionHole {
+                id,
+                center,
+                radius,
+                net,
+            });
+        };
+        for via in &pcb.vias {
+            push_hole(via.position, via.drill / 2.0, via.net.clone());
+        }
+        for fp in &pcb.footprints {
+            for pad in &fp.pads {
+                let Some(drill) = &pad.drill else { continue };
+                push_hole(
+                    crate::geometry::pad_world_position(fp, pad),
+                    drill.diameter / 2.0,
+                    pad.net.clone().unwrap_or_default(),
+                );
+            }
+        }
         // Dirty grid over the board outline ∪ existing copper, with margin.
         let mut lo = [f64::INFINITY; 2];
         let mut hi = [f64::NEG_INFINITY; 2];
@@ -272,6 +372,26 @@ impl RouteSession {
             .values()
             .copied()
             .fold(default_clearance, f64::max);
+        // net → via drill from its class, mirroring how the router's vias are
+        // sized on write-back (see `router::legalize::via_geom_for`).
+        let default_via_drill = pcb.rules.default_rules.via_drill;
+        let mut net_via_drill: HashMap<String, f64> = HashMap::new();
+        for (class, nets) in &pcb.rules.net_class_assignments {
+            let Some(c) = pcb.rules.class_rules.iter().find(|c| c.name == *class) else {
+                continue;
+            };
+            for n in nets {
+                net_via_drill.insert(n.clone(), c.via_drill);
+            }
+        }
+        // Broadphase reach: the biggest drill radius any existing hole has or
+        // any net class can mint.
+        let max_hole_radius = net_via_drill
+            .values()
+            .chain(std::iter::once(&default_via_drill))
+            .map(|d| d / 2.0)
+            .chain(holes.iter().map(|h| h.radius))
+            .fold(0.0_f64, f64::max);
         Self {
             tree: RTree::bulk_load(session_elems),
             live,
@@ -289,6 +409,13 @@ impl RouteSession {
             default_clearance,
             max_clearance,
             net_width: build_net_trace_width_map(pcb),
+            holes: RTree::bulk_load(holes),
+            is_hole,
+            holes_dead: 0,
+            hole_to_hole: pcb.rules.hole_to_hole,
+            max_hole_radius,
+            net_via_drill,
+            default_via_drill,
             bounds,
             dirty,
             change_epoch: 0,
@@ -322,7 +449,8 @@ impl RouteSession {
         self.net_width.get(net).copied().unwrap_or(fallback)
     }
 
-    /// Number of live (non-tombstoned) copper spans.
+    /// Number of live (non-tombstoned) spans — copper elements and drilled
+    /// holes alike.
     pub fn len(&self) -> usize {
         self.live.iter().filter(|&&l| l).count()
     }
@@ -336,6 +464,7 @@ impl RouteSession {
     pub fn commit(&mut self, elem: CopperElement) -> SpanId {
         let id = self.live.len();
         self.live.push(true);
+        self.is_hole.push(false);
         let bbox = [elem.min[0], elem.min[1], elem.max[0], elem.max[1]];
         self.bounds.push(bbox);
         self.change_epoch += 1;
@@ -353,13 +482,20 @@ impl RouteSession {
             return false;
         }
         self.live[id] = false;
-        self.dead += 1;
         let b = self.bounds[id];
         self.change_epoch += 1;
         self.dirty
             .mark([b[0], b[1]], [b[2], b[3]], self.change_epoch);
-        if self.dead * 2 > self.tree.size() {
-            self.compact();
+        if self.is_hole[id] {
+            self.holes_dead += 1;
+            if self.holes_dead * 2 > self.holes.size() {
+                self.compact_holes();
+            }
+        } else {
+            self.dead += 1;
+            if self.dead * 2 > self.tree.size() {
+                self.compact();
+            }
         }
         true
     }
@@ -370,6 +506,104 @@ impl RouteSession {
         let kept: Vec<SessionElement> = self.tree.iter().filter(|e| live[e.id]).cloned().collect();
         self.tree = RTree::bulk_load(kept);
         self.dead = 0;
+    }
+
+    /// Rebuild the hole index without tombstoned holes. Ids are preserved.
+    fn compact_holes(&mut self) {
+        let live = &self.live;
+        let kept: Vec<SessionHole> = self.holes.iter().filter(|h| live[h.id]).cloned().collect();
+        self.holes = RTree::bulk_load(kept);
+        self.holes_dead = 0;
+    }
+
+    /// The drill diameter (mm) a via on `net` gets from its net class — the
+    /// same size [`crate::router`] writes back to the board.
+    pub fn via_drill_for(&self, net: &str) -> f64 {
+        self.net_via_drill
+            .get(net)
+            .copied()
+            .unwrap_or(self.default_via_drill)
+    }
+
+    /// Commit a drilled hole (a via barrel) at `center` with drill diameter
+    /// `drill` on `net`, returning its [`SpanId`]. Remove it with
+    /// [`RouteSession::remove`] like any other span.
+    pub fn commit_hole(&mut self, center: Vec2, drill: f64, net: &str) -> SpanId {
+        let id = self.live.len();
+        let radius = drill / 2.0;
+        self.live.push(true);
+        self.is_hole.push(true);
+        let bbox = [
+            center.x - radius,
+            center.y - radius,
+            center.x + radius,
+            center.y + radius,
+        ];
+        self.bounds.push(bbox);
+        self.change_epoch += 1;
+        self.dirty
+            .mark([bbox[0], bbox[1]], [bbox[2], bbox[3]], self.change_epoch);
+        self.max_hole_radius = self.max_hole_radius.max(radius);
+        self.holes.insert(SessionHole {
+            id,
+            center,
+            radius,
+            net: net.to_string(),
+        });
+        id
+    }
+
+    /// Probe a candidate drilled hole (drill diameter `drill`, mm) at `center`
+    /// on `net` against every live hole of a *different* net — vias and
+    /// through-hole pads alike — **regardless of layer span**.
+    ///
+    /// Mirrors [`crate::drc`]'s `check_hole_to_hole` exactly: a pair is illegal
+    /// when `center_dist - r_a - r_b < rules.hole_to_hole - 1e-6`. Blind and
+    /// buried vias on disjoint spans share no copper layer, so
+    /// [`RouteSession::probe`] never compares them — this is the check that
+    /// keeps their barrels from colliding.
+    ///
+    /// Same-net holes are not blockers here: coincident same-net via drills are
+    /// the merge case, resolved by the router's post-route legalization rather
+    /// than by refusing the placement. Net ties are *not* exempt — a tie is an
+    /// electrical exemption and drills are mechanical, exactly as the DRC pass
+    /// treats them.
+    pub fn probe_hole(&self, center: Vec2, drill: f64, net: &str) -> HoleProbeResult {
+        let r = drill / 2.0;
+        let reach = r + self.hole_to_hole + self.max_hole_radius;
+        let lo = [center.x - reach, center.y - reach];
+        let hi = [center.x + reach, center.y + reach];
+
+        let mut min_gap = f64::INFINITY;
+        let mut blocker = None;
+        for h in self
+            .holes
+            .locate_in_envelope_intersecting(&AABB::from_corners(lo, hi))
+        {
+            if !self.live[h.id] || h.net == net {
+                continue;
+            }
+            let (dx, dy) = (center.x - h.center.x, center.y - h.center.y);
+            let gap = (dx * dx + dy * dy).sqrt() - r - h.radius;
+            if gap < min_gap {
+                min_gap = gap;
+                blocker = Some((h.id, h.net.clone()));
+            }
+        }
+        // `>=` rather than the DRC's negated `<`: min_gap is INFINITY when
+        // nothing is near, never NaN, so the two agree on every real input.
+        let legal = min_gap >= self.hole_to_hole - 1e-6;
+        HoleProbeResult {
+            legal,
+            min_gap,
+            blocker: if legal { None } else { blocker },
+        }
+    }
+
+    /// [`RouteSession::probe_hole`] for a via on `net`, sized from its net
+    /// class — the shape every via-placement site in the router uses.
+    pub fn probe_via_hole(&self, center: Vec2, net: &str) -> HoleProbeResult {
+        self.probe_hole(center, self.via_drill_for(net), net)
     }
 
     /// Axis-aligned bounding boxes (`(min, max)` corners) of every live copper
@@ -822,6 +1056,70 @@ mod tests {
         // AGND is tied to GND board-wide, so an overlap is not a violation.
         let r = session.probe(&seg(50.0, 0.125), PcbLayer::FCu, "AGND", 0.2);
         assert!(r.legal, "net-tied copper must be exempt");
+    }
+
+    #[test]
+    fn hole_probe_mirrors_drc_and_ignores_layer_span() {
+        // rules().hole_to_hole is 0.5 and the default via drill 0.4: two vias
+        // 0.7mm apart leave a 0.3mm gap — illegal on any pair of layer spans.
+        let mut session = RouteSession::from_pcb(&empty_pcb());
+        let a = Vec2::new(50.0, 50.0);
+        let id = session.commit_hole(a, 0.4, "A");
+
+        let near = Vec2::new(50.7, 50.0);
+        let r = session.probe_hole(near, 0.4, "B");
+        assert!(!r.legal);
+        assert!((r.min_gap - 0.3).abs() < 1e-9, "gap was {}", r.min_gap);
+        assert_eq!(r.blocker.map(|(_, n)| n).as_deref(), Some("A"));
+
+        // Exactly at the rule (0.9mm centers → 0.5mm gap): legal.
+        assert!(session.probe_hole(Vec2::new(50.9, 50.0), 0.4, "B").legal);
+        // Same net is never a blocker — coincident same-net drills are the
+        // router's merge case, not a placement refusal.
+        assert!(session.probe_hole(near, 0.4, "A").legal);
+
+        // Rip-up frees the hole again, so re-routing can reuse the spot.
+        assert!(session.remove(id));
+        assert!(session.probe_hole(near, 0.4, "B").legal);
+    }
+
+    #[test]
+    fn hole_probe_sees_through_hole_pads() {
+        // A drilled pad is a hole like any other: the DRC compares vias
+        // against pad drills, so the router's oracle must too.
+        let mut pcb = empty_pcb();
+        pcb.footprints.push(Footprint {
+            reference: "J1".into(),
+            value: "conn".into(),
+            footprint_name: "TH".into(),
+            position: Vec2::new(50.0, 50.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![Pad {
+                number: "1".into(),
+                pad_type: PadType::THT,
+                shape: PadShape::Circle { diameter: 1.6 },
+                position: Vec2::new(0.0, 0.0),
+                rotation: 0.0,
+                drill: Some(DrillSpec {
+                    diameter: 1.0,
+                    oval: false,
+                    oval_height: None,
+                }),
+                net: Some("VCC".into()),
+                layers: vec![PcbLayer::FCu],
+            }],
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        // 1.0mm from the pad center: gap = 1.0 - 0.5 - 0.2 = 0.3 < 0.5.
+        assert!(!session.probe_hole(Vec2::new(51.0, 50.0), 0.4, "SIG").legal);
+        // 1.3mm away: gap = 0.6 — clear.
+        assert!(session.probe_hole(Vec2::new(51.3, 50.0), 0.4, "SIG").legal);
+        // Same net as the pad: not a blocker.
+        assert!(session.probe_hole(Vec2::new(51.0, 50.0), 0.4, "VCC").legal);
     }
 
     #[test]

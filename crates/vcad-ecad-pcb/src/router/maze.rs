@@ -15,8 +15,9 @@
 //! layer-aware [`route_net_maze3d`], whose A* runs over `(x, y, layer)` with
 //! via transitions as costed edges — the search *chooses* where to change
 //! layers instead of being handed a layer by the caller. Via legality is
-//! probed on every copper layer the (through) via spans, so a 3D route is as
-//! DRC-clean as a 2D one.
+//! probed on every copper layer the via spans, plus the drill barrel against
+//! every other-net hole regardless of span, so a 3D route is as DRC-clean as
+//! a 2D one.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -276,9 +277,13 @@ pub fn route_net_maze3d(
             center: p,
             r: via_r,
         };
-        layers[a.min(b)..=a.max(b)]
-            .iter()
-            .all(|&l| session.probe(&disc, l, net, clearance).legal)
+        // The drill barrel is layer-independent: a blind/buried via must keep
+        // the hole-to-hole rule against every other-net hole on the board, not
+        // just the ones sharing its copper layers.
+        session.probe_via_hole(p, net).legal
+            && layers[a.min(b)..=a.max(b)]
+                .iter()
+                .all(|&l| session.probe(&disc, l, net, clearance).legal)
     };
     let cong = congestion.filter(|c| !c.is_flat());
     let node_cost =

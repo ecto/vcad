@@ -1113,7 +1113,15 @@ mod tests {
                 }],
                 net_class_assignments: Default::default(),
                 edge_clearance: 0.5,
-                hole_to_hole: 0.5,
+                // A pair transitions layers by dropping the two legs' vias
+                // side by side, so the rule has to admit the pitch the pair
+                // itself declares: legs sit gap + width = 0.45mm apart, and
+                // two 0.2mm drills there leave a 0.25mm hole gap. A 0.5mm
+                // rule would make *every* transition on this board
+                // unmanufacturable — the router now refuses those at probe
+                // time instead of emitting them (see
+                // `RouteSession::probe_hole`).
+                hole_to_hole: 0.2,
                 min_annular_ring: 0.15,
                 min_drill: 0.2,
             },
@@ -1366,6 +1374,24 @@ mod tests {
             worst >= clearance - 1e-9,
             "twin edge clearance {worst:.3}mm < {clearance}"
         );
+        assert_twin_holes_clear(&pcb, &mine, &theirs);
+    }
+
+    /// The twins' via DRILLS must keep the board's hole-to-hole rule — the
+    /// check that has no copper-layer counterpart when the two vias land on
+    /// disjoint layer spans.
+    fn assert_twin_holes_clear(pcb: &Pcb, mine: &Placed, theirs: &Placed) {
+        let r = pcb.rules.default_rules.via_drill / 2.0;
+        for &(p, _, _) in &mine.via_pts {
+            for &(q, _, _) in &theirs.via_pts {
+                let gap = dist(p, q) - 2.0 * r;
+                assert!(
+                    gap >= pcb.rules.hole_to_hole - 1e-6,
+                    "twin via hole gap {gap:.3}mm < {}",
+                    pcb.rules.hole_to_hole
+                );
+            }
+        }
     }
 
     /// Twin-clearance check shared by the transition repros, using the
@@ -1468,6 +1494,7 @@ mod tests {
         );
         let (mine, theirs) = r.expect("pair must route the L across the wall");
         assert_twin_clear(&mine, &theirs, 0.15);
+        assert_twin_holes_clear(&pcb, &mine, &theirs);
     }
 
     /// Probe-level contract: with a declared pair class, leg-width copper of
