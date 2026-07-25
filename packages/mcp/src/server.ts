@@ -539,6 +539,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "run_erc",
   "export_gerber",
   "export_kicad",
+  "fab_prep",
   "validate_for_fab",
   "calc_impedance",
   "size_impedance",

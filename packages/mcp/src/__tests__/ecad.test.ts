@@ -12,6 +12,7 @@ import {
   exportGerber,
   exportKicad,
   validateForFab,
+  fabPrep,
   calcImpedance,
   sizeImpedance,
   sizePdn,
@@ -1614,6 +1615,80 @@ describe("ecad session flow", () => {
     expect(v.gerber_exportable.ok).toBe(true);
     expect(v.blockers).toHaveLength(0);
     expect(v.unverifiable).toHaveLength(0);
+  });
+
+  it("fab_prep reports both numbers and points at export_gerber when clean", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+
+    const r = out(await fabPrep({ document_id: id }));
+    expect(r.success).toBe(true);
+    expect(r.converged).toBe(true);
+    // The whole point of the receipt: never one number. Both the
+    // stripped-board baseline and the finished board are reported, and only
+    // the difference is charged to the router.
+    expect(r.drc_delta.baseline_total).toBeTypeOf("number");
+    expect(r.drc_delta.final_total).toBeTypeOf("number");
+    expect(r.drc_delta.route_attributable_blocking).toBe(0);
+    expect(r.drc_delta.baseline_note).toContain("stripped");
+    expect(r.headline).toContain("stripped of all routing");
+    expect(r.next_action).toContain("export_gerber");
+    // fab_prep is the way to GET clean, so the gate it feeds must now pass.
+    expect(out(await exportGerber({ document_id: id })).success).toBe(true);
+  });
+
+  it("fab_prep logs every rule calibration with its derivation, and does nothing unasked", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    // Declare a via class the board's own global minimum forbids.
+    out(
+      await setDesignRules({
+        document_id: id,
+        via_diameter: 0.21,
+        via_drill: 0.12,
+        min_drill: 0.2,
+        min_annular_ring: 0.15,
+      }),
+    );
+
+    const off = out(await fabPrep({ document_id: id, dry_run: true }));
+    expect(off.calibration.requested).toBe(false);
+    expect(off.calibration.applied).toHaveLength(0);
+
+    const on = out(await fabPrep({ document_id: id, calibrate_rules: true, dry_run: true }));
+    expect(on.calibration.requested).toBe(true);
+    const drill = on.calibration.applied.find((c: { rule: string }) => c.rule === "minDrill");
+    expect(drill).toBeDefined();
+    expect(drill.declared).toBeCloseTo(0.2);
+    expect(drill.calibrated).toBeCloseTo(0.12);
+    expect(drill.justification).toContain("via class");
+  });
+
+  it("fab_prep refuses a waiver naming a rule that does not exist", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+
+    const r = out(await fabPrep({ document_id: id, accept_rules: ["MinTraceWidht"] }));
+    expect(r.converged).toBe(false);
+    expect(r.blocker).toContain("MinTraceWidht");
   });
 
   it("validate_for_fab blocks a dirty board and names the DRC errors", async () => {

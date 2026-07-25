@@ -372,6 +372,11 @@ phyz-based articulated physics via `vcad-kernel-physics`:
 vcad export input.vcad output.stl   # Export to STL/GLB/STEP
 vcad import-step input.step out.vcad
 vcad info input.vcad                # Show document info
+
+# Routed board → complete fab package + DRC-delta receipt, in one command.
+# Calibration is opt-in and logged; the loop fails closed (exit 1, no
+# fabrication files) if route-attributable violations don't reach zero.
+vcad fab-prep routed.pcb.json -o out/ --calibrate-rules
 ```
 
 **Static SVG renderer:** [`vcad-render`](crates/vcad-render) projects a `.vcad` to a drafting-style isometric SVG. Used by the mecheval leaderboard, but standalone — handy for docs, marketing, and README diagrams.
@@ -391,6 +396,12 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `topology_optimize` — SIMP topology optimization: stiffest material layout
   for given loads/supports inside a box envelope or an existing part's volume;
   result lands in the document as a frozen mesh part
+- `fab_prep` — routed board → fab-ready, in one call: opt-in (logged) rule
+  calibration, verdict ladder, strip-and-re-route fix loop, dangling-copper
+  prune. Returns a DRC-delta receipt reporting route-attributable violations
+  against the SAME board stripped of all routing — absolute zero is not
+  achievable on an imported fixture, so both numbers are always given. Fails
+  closed; `export_gerber`'s clean-DRC gate still stands
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading
   oracle; the benchmark harness excludes these during scored runs)

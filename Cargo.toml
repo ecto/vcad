@@ -75,6 +75,7 @@ members = [
     "crates/vcad-ecad-verify",
     "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
+    "crates/vcad-ecad-fabprep",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
@@ -171,6 +172,7 @@ default-members = [
     "crates/vcad-ecad-verify",
     "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
+    "crates/vcad-ecad-fabprep",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
@@ -287,6 +289,7 @@ vcad-ecad-pcb = { path = "crates/vcad-ecad-pcb", version = "0.9.4" }
 vcad-ecad-verify = { path = "crates/vcad-ecad-verify", version = "0.9.4" }
 vcad-ecad-source = { path = "crates/vcad-ecad-source", version = "0.9.4" }
 vcad-ecad-export = { path = "crates/vcad-ecad-export", version = "0.9.4" }
+vcad-ecad-fabprep = { path = "crates/vcad-ecad-fabprep", version = "0.9.4" }
 vcad-ecad-sim = { path = "crates/vcad-ecad-sim", version = "0.9.4" }
 vcad-ecad-diff = { path = "crates/vcad-ecad-diff", version = "0.9.4" }
 nom = "7"
