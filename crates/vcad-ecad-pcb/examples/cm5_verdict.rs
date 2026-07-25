@@ -545,10 +545,11 @@ impl Driver {
                     .probe(&CopperGeom::Disc { center: p, r: via_r }, layer, net, clr)
                     .legal
             })
-            // Hole-to-hole is layer- and net-agnostic, so the copper probe
-            // above cannot see it: two vias on disjoint layer spans share no
-            // layer yet still collide in the drill file.
-            && self.session.probe_drill(p, via_drill).legal
+            // Hole-to-hole is layer-agnostic, so the copper probe above cannot
+            // see it: two vias on disjoint layer spans share no layer yet still
+            // collide in the drill file. The probe compares net-agnostically
+            // (only a coincident same-net barrel is exempt), matching the DRC.
+            && self.session.probe_hole(p, via_drill, net).legal
             // ...and two vias of THIS path must clear each other, which the
             // session cannot judge until they are committed.
             && vias.iter().all(|&(q, _, _)| {
@@ -594,7 +595,7 @@ impl Driver {
                     },
                 });
             }
-            self.session.commit_drill(p, via_drill);
+            self.session.commit_hole(p, via_drill, net);
             self.pcb.vias.push(vcad_ir::ecad::Via {
                 position: p,
                 diameter: via_d,

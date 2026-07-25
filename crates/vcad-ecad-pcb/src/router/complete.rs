@@ -290,9 +290,19 @@ pub fn route_window_complete_pinned(
         .max(0.11)
         .max(via.map_or(0.0, |v| v.pad_diameter / 2.0));
     let via_drill = via.map(|v| v.drill);
-    // Every layer change the router emits must also clear existing *holes*.
-    let barrel_ok =
-        |center: Vec2| -> bool { via_drill.is_none_or(|d| session.probe_drill(center, d).legal) };
+    // Every layer change the router emits must also clear existing *holes* —
+    // the layer-independent check no per-layer copper probe below can make. The
+    // barrel is decided jointly for the window's `conns`, so it must keep the
+    // hole rule for each of them (same-net exemptions differ by net, so the
+    // strictest — legal for every conn — is the sound choice). When the caller
+    // pins a `ViaClass` its drill is the exact size written back to the board;
+    // otherwise the barrel is sized from each net's class, as the router does.
+    let barrel_ok = |center: Vec2| -> bool {
+        conns.iter().all(|(net, _, _)| match via_drill {
+            Some(d) => session.probe_hole(center, d, net).legal,
+            None => session.probe_via_hole(center, net).legal,
+        })
+    };
 
     // --- Free-node raster (fixed copper only) ----------------------------
     // A node is free iff a zero-length capsule (trace centre) at the cell
@@ -549,6 +559,9 @@ pub fn route_window_complete_pinned(
                 center: grid.world(ca),
                 r: via_r,
             };
+            // Drill barrels ignore layer spans, so `barrel_ok` checks the
+            // hole-to-hole rule against every other hole on the board — the
+            // check no per-layer copper probe below can make.
             barrel_ok(grid.world(ca))
                 && conns.iter().zip(&clearances).all(|((net, _, _), &clr)| {
                     session.probe(&disc, layers[la], net, clr).legal
