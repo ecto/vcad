@@ -331,7 +331,23 @@ strip = true
 [profile.dev.package.vcad-kernel-fea]
 opt-level = 3
 
+# The sibling repos (phyz, tang) depend on each other through crates.io
+# versions, and phyz redirects tang to its own sibling checkout with a
+# `[patch.crates-io]` of its own. Cargo only honours the patch table of the
+# workspace ROOT being built, so when vcad builds phyz as a path dependency
+# phyz's patch is ignored and its `tang-expr = "0.1.0"` resolves from the
+# registry — while vcad's own tang comes from `../tang`. Two tangs in one
+# graph, and the published tang-expr is older than the tang it must satisfy:
+#
+#   error[E0277]: the trait bound `ExprId: Scalar` is not satisfied
+#     --> phyz/crates/phyz-diff/src/symbolic.rs:234
+#
+# Mirroring phyz's patch here unifies every tang reference in the graph on
+# the sibling checkout, which is the source of truth for both repos anyway.
+[patch.crates-io]
+tang = { path = "../tang/crates/tang" }
+tang-la = { path = "../tang/crates/tang-la" }
+tang-expr = { path = "../tang/crates/tang-expr" }
 # clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
 # vendored copy adds the missing libc++ link arms. Identical source otherwise.
-[patch.crates-io]
 clipper-sys = { path = "third_party/clipper-sys" }
