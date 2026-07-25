@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-router-clears-same-net-bypasses",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Autorouter clears every same-net bypass it creates",
+  "summary": "Post-route legalization repaired at most four violations per run and judged the board before dead copper was pruned; a path's own vias were never checked against each other.",
+  "features": ["pcb", "routing", "drc", "fab"],
+  "mcpTools": ["route_nets", "fab_prep", "run_drc"]
+}

@@ -528,6 +528,36 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
             over += 1;
             continue;
         }
+        // The probe above cannot see this: it judges each segment against a
+        // board with that net's *own* copper removed, so a meander that folds
+        // back against the trace it came from reads as perfectly legal. It is
+        // a same-net bypass, and a meander is precisely the shape that makes
+        // one — a serpentine packed into the space beside its own run. Judged
+        // by the DRC, non-regressively and over the pair's own region only, so
+        // an inherited bypass elsewhere never blocks a good meander.
+        let bypasses = |b: &Pcb, lo: Vec2, hi: Vec2| -> usize {
+            crate::drc::check_drc_in_region(b, lo, hi)
+                .iter()
+                .filter(|v| v.rule == crate::drc::DrcRuleType::SameNetBypass)
+                .count()
+        };
+        let (mut lo, mut hi) = (
+            Vec2::new(f64::INFINITY, f64::INFINITY),
+            Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+        );
+        for t in work.traces.iter().filter(|t| t.net == *pn || t.net == *nn) {
+            for p in [t.start, t.end] {
+                lo.x = lo.x.min(p.x - 1.0);
+                lo.y = lo.y.min(p.y - 1.0);
+                hi.x = hi.x.max(p.x + 1.0);
+                hi.y = hi.y.max(p.y + 1.0);
+            }
+        }
+        if lo.x.is_finite() && bypasses(&work, lo, hi) > bypasses(pcb, lo, hi) {
+            log::debug!("si-finish: {pn} meander rejected — it bypasses its own net");
+            over += 1;
+            continue;
+        }
         *pcb = work;
         fixed += 1;
         log::info!("si-finish: meandered {pn} skew {before:.3} -> {after:.3} mm");
@@ -601,6 +631,17 @@ pub fn si_finish(pcb: &mut Pcb, expansions: usize, descent_iters: usize) -> SiFi
             "si-finish: pruned {dead_traces} dead traces, {dead_vias} dead vias left by the \
              rip-and-reroute stages"
         );
+    }
+    // And the other half of that invariant. The rip-and-reroute stages can lay
+    // a re-routed pair against its own net's copper, and the prune above
+    // *lengthens* every conductor chain it shortens debris off — either one
+    // creates a same-net bypass after `route_all`'s legalization has had its
+    // say. On the full CM5 this is the difference between 8 bypasses in the
+    // fabrication package and none. Fail-closed by construction: a segment goes
+    // only when the continuity oracle proves the net does not need it.
+    let repaired = legalize::repair_same_net_bypass(pcb);
+    if repaired > 0 {
+        log::info!("si-finish: cleared {repaired} same-net bypass segment(s)");
     }
     SiFinishReport {
         polished,

@@ -4,8 +4,10 @@ import {
   SupabaseSessionStore,
   AnonSupabaseSessionStore,
   InMemorySessionStore,
+  FileSessionStore,
   createSessionStore,
   setSessionFetch,
+  isSessionStoreDurable,
 } from "../session-store.js";
 import {
   documents,
@@ -329,18 +331,48 @@ describe("createSessionStore factory", () => {
     expect(createSessionStore(null)).toBeInstanceOf(AnonSupabaseSessionStore);
   });
 
-  it("returns in-memory without a user AND no keys (stdio/local)", () => {
+  // Local runs default to the DISK store, not pure memory: an agent can spend
+  // 30+ turns building an assembly, and a process restart used to vaporize it.
+  it("returns the file store without a user AND no keys (stdio/local)", () => {
     delete process.env.SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-    expect(createSessionStore(null)).toBeInstanceOf(InMemorySessionStore);
+    expect(createSessionStore(null)).toBeInstanceOf(FileSessionStore);
   });
 
-  it("returns in-memory with a user but no service-role key", () => {
+  it("returns the file store with a user but no service-role key", () => {
     process.env.SUPABASE_URL = "https://supa.test";
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     expect(
       createSessionStore({ sub: "user-me", email: "a@b.c" }),
-    ).toBeInstanceOf(InMemorySessionStore);
+    ).toBeInstanceOf(FileSessionStore);
+  });
+
+  it("falls back to in-memory when disk sessions are opted out", () => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    process.env.VCAD_MCP_DISK_SESSIONS = "0";
+    try {
+      expect(createSessionStore(null)).toBeInstanceOf(InMemorySessionStore);
+    } finally {
+      delete process.env.VCAD_MCP_DISK_SESSIONS;
+    }
+  });
+
+  // A serverless instance's filesystem is ephemeral and unshared, so a file
+  // store there would report durable:true while providing none — strictly
+  // worse than the loud non-durable warning.
+  it("never uses the file store on a production deploy", () => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const prevEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      expect(createSessionStore(null)).toBeInstanceOf(InMemorySessionStore);
+      expect(isSessionStoreDurable()).toBe(false);
+    } finally {
+      if (prevEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevEnv;
+    }
   });
 
   it("returns the Supabase store with a user + url + key", () => {

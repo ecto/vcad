@@ -65,7 +65,7 @@ describe("PCB GLB preview", () => {
     out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
     out(await routeNets({ document_id: id }));
 
-    const b64 = await generateGlbPreview(getSession(id), engine);
+    const b64 = (await generateGlbPreview(getSession(id), engine))?.glb ?? null;
     expect(b64).toBeTruthy();
     const gltf = parseGlbJson(b64!);
 
@@ -111,7 +111,7 @@ describe("PCB GLB preview", () => {
     const id = created.document_id;
     out(await placeComponents({ document_id: id, board_width: 30, board_height: 30 }));
 
-    const b64 = await generateGlbPreview(getSession(id), engine);
+    const b64 = (await generateGlbPreview(getSession(id), engine))?.glb ?? null;
     expect(b64).toBeTruthy();
     const gltf = parseGlbJson(b64!);
     const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
@@ -139,7 +139,7 @@ describe("PCB GLB preview", () => {
       },
     } as unknown as Engine;
 
-    const b64 = await generateGlbPreview(getSession(id), throwingEngine);
+    const b64 = (await generateGlbPreview(getSession(id), throwingEngine))?.glb ?? null;
     expect(b64).toBeTruthy();
     const gltf = parseGlbJson(b64!);
     expect(gltf.meshes.length).toBeGreaterThan(0);

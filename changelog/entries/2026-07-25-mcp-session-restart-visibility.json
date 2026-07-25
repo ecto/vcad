@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-mcp-session-restart-visibility",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "MCP sessions survive restarts, and announce it when they can't",
+  "summary": "Local MCP sessions now persist to disk, a lost session says so instead of looking like a typo or a broken renderer, and every result carries a restart signal.",
+  "features": ["mcp", "sessions", "durability", "preview"],
+  "mcpTools": ["open_document", "server_info", "get_preview_glb", "checkpoint_document"]
+}

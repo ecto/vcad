@@ -217,7 +217,10 @@ export async function handleLiveRequest(
       text(res, 503, "geometry engine unavailable");
       return true;
     }
-    const b64 = await generateGlbPreview(doc, engine);
+    // Full fidelity: this route streams the GLB over a real HTTP body, so it
+    // has none of the JSON-RPC result ceiling the tool paths are budgeted for.
+    const built = await generateGlbPreview(doc, engine, null);
+    const b64 = built?.glb;
     if (!b64) {
       text(res, 404, "no previewable geometry");
       return true;

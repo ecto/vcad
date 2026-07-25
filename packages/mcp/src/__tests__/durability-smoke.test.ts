@@ -97,6 +97,9 @@ const ENV_KEYS = [
   "SUPABASE_SERVICE_ROLE_KEY",
   "VERCEL_ENV",
   "NODE_ENV",
+  // Local runs now persist sessions to disk by default, so the tests that
+  // model the HOSTED "no durable store" hazard must opt out of it explicitly.
+  "VCAD_MCP_DISK_SESSIONS",
 ] as const;
 
 describe("session durability self-report", () => {
@@ -116,6 +119,10 @@ describe("session durability self-report", () => {
   });
 
   it("isSessionStoreDurable mirrors the createSessionStore env check", () => {
+    // A local run is durable via the disk store even with no Supabase env.
+    expect(isSessionStoreDurable()).toBe(true);
+    // Opted out of disk sessions → genuinely nothing survives a restart.
+    process.env.VCAD_MCP_DISK_SESSIONS = "0";
     expect(isSessionStoreDurable()).toBe(false);
     process.env.SUPABASE_URL = "https://supa.test";
     expect(isSessionStoreDurable()).toBe(false); // url alone isn't enough
@@ -136,6 +143,15 @@ describe("session durability self-report", () => {
   });
 
   it("sessionStoreInfo reports durable:false / in-memory without the key", () => {
+    // Local default: disk-backed, and it names the directory so an operator
+    // can find (or clear) the persisted sessions.
+    expect(sessionStoreInfo()).toEqual({
+      durable: true,
+      session_store: "file",
+      production: false,
+      session_dir: expect.any(String),
+    });
+    process.env.VCAD_MCP_DISK_SESSIONS = "0";
     expect(sessionStoreInfo()).toEqual({
       durable: false,
       session_store: "in-memory",
@@ -228,6 +244,9 @@ describe("deploy smoke: a session survives a redeploy", () => {
   it("NEGATIVE CONTROL: without the service-role key the doc is LOST on redeploy", async () => {
     delete process.env.SUPABASE_SERVICE_ROLE_KEY; // the prod-incident condition
     process.env.SUPABASE_URL = "https://supa.test";
+    // The hazard being modelled is a HOSTED instance with no durable backend;
+    // the local disk store would otherwise rescue the doc and mask it.
+    process.env.VCAD_MCP_DISK_SESSIONS = "0";
     installFake();
 
     const a = await connect(engine, USER);

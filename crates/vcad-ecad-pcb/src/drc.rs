@@ -3,7 +3,7 @@
 //! Validates a PCB layout against its design rules and reports violations.
 //! Uses the spatial index from [`crate::spatial`] for efficient proximity queries.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use vcad_ir::ecad::{Footprint, FootprintGraphic, Pad, PadShape, PadType, Pcb, PcbLayer};
 use vcad_ir::Vec2;
@@ -1753,6 +1753,32 @@ fn split_pour_islands(rings: &[Vec<Vec2>]) -> Vec<Vec<Vec<Vec2>>> {
     islands
 }
 
+/// The `Short` message for a canonically-ordered net pair.
+///
+/// The nets are spelled in the SAME order the dedupe key uses, and that is
+/// load-bearing rather than cosmetic. A short is deduplicated by
+/// `pair_key` (sorted), but it can be emitted from either of two places —
+/// a direct contact in pass 1, or any of several components in pass 2 — and
+/// pass 2 walks a `HashMap`, whose iteration order is randomly seeded per
+/// instance. Spelling the message from the raw `(na, nb)` at whichever site
+/// won the race therefore made the message text unstable: the same physical
+/// short read `nets 'A' and 'B'` on one run and `nets 'B' and 'A'` on the next.
+///
+/// Downstream that is not a cosmetic wobble. `vcad-ecad-fabprep` attributes
+/// shorts to the router by SET DIFFERENCE over (rule, position, message), so an
+/// orientation flip presents one short as simultaneously removed and added —
+/// a violation the router is then charged for and asked to fix by stripping the
+/// net. Measured on the CM5 fixture: two `check_drc` calls on the byte-identical
+/// board disagreed on 12 of 285 shorts, every one of them a pure order flip,
+/// and the resulting phantom attributions drove fab-prep's fix loop to strip 97
+/// nets it could not re-route.
+fn short_message(key: &(String, String)) -> String {
+    format!(
+        "Short: nets '{}' and '{}' are connected by copper",
+        key.0, key.1
+    )
+}
+
 /// Emit a `Short` violation for unintentional cross-net copper contact.
 ///
 /// Two passes:
@@ -1804,12 +1830,13 @@ fn detect_shorts(
         direct.insert((root, pair_key(na, nb)));
         let covering = net_ties.covering_group_ids(na, nb, c.at);
         if covering.is_empty() {
-            if seen_pairs.insert(pair_key(na, nb)) {
+            let key = pair_key(na, nb);
+            if seen_pairs.insert(key.clone()) {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Short,
                     severity: DrcSeverity::Error,
                     position: c.at,
-                    message: format!("Short: nets '{}' and '{}' are connected by copper", na, nb),
+                    message: short_message(&key),
                     actual: 0.0,
                     required: 0.0,
                     provenance: DrcProvenance::Routing,
@@ -1825,7 +1852,14 @@ fn detect_shorts(
     }
 
     // Gather declared nets per component, with a representative position.
-    let mut comp_nets: HashMap<usize, Vec<(String, Vec2)>> = HashMap::new();
+    //
+    // Keyed in sorted component order for the same reason `short_message`
+    // canonicalizes its nets: one pair can be reportable from several
+    // components, `seen_pairs` lets only the first through, and the reported
+    // POSITION is that component's representative. Walking a `HashMap` here
+    // made the position — and therefore fab-prep's set-difference identity —
+    // depend on random hash seeding.
+    let mut comp_nets: BTreeMap<usize, Vec<(String, Vec2)>> = BTreeMap::new();
     for (i, node) in nodes.iter().enumerate() {
         if node.net.is_empty() {
             continue;
@@ -1864,14 +1898,14 @@ fn detect_shorts(
                 if shared_anchor {
                     continue;
                 }
-                if !seen_pairs.insert(key) {
+                if !seen_pairs.insert(key.clone()) {
                     continue;
                 }
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Short,
                     severity: DrcSeverity::Error,
                     position: *pa,
-                    message: format!("Short: nets '{}' and '{}' are connected by copper", na, nb),
+                    message: short_message(&key),
                     actual: 0.0,
                     required: 0.0,
                     provenance: DrcProvenance::Routing,
@@ -3344,6 +3378,91 @@ mod tests {
                 "via through a foreign plane must not short (clearance={clr}): {:?}",
                 shorts
             );
+        }
+    }
+
+    /// A short names its two nets in canonical (sorted) order, NOT in the order
+    /// the contact happened to be discovered.
+    ///
+    /// This is the identity a consumer differences on. `vcad-ecad-fabprep`
+    /// attributes shorts to the router by set difference over
+    /// (rule, position, message), so a message that spells the same pair
+    /// `'Z' and 'A'` on one run and `'A' and 'Z'` on the next reads as one
+    /// short removed plus one short added — a violation the router is charged
+    /// for and told to fix by stripping the net. Measured on the CM5 fixture:
+    /// two `check_drc` calls on the byte-identical board disagreed on 12 of its
+    /// 285 shorts, every one a pure order flip.
+    #[test]
+    fn short_names_its_nets_in_canonical_order() {
+        // Two overlapping copper elements whose nets are in DESCENDING order of
+        // discovery: the trace of net 'Z' is indexed before the trace of 'A'.
+        let mut pcb = clean_pcb();
+        for net in ["Z", "A"] {
+            pcb.nets.push(Net {
+                id: net.to_string(),
+                name: net.to_string(),
+            });
+            pcb.traces.push(Trace {
+                start: Vec2::new(60.0, 20.0),
+                end: Vec2::new(60.0, 30.0),
+                width: 0.25,
+                layer: PcbLayer::FCu,
+                net: net.to_string(),
+                source: None,
+            });
+        }
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert_eq!(shorts.len(), 1, "expected exactly one short: {shorts:?}");
+        assert_eq!(
+            shorts[0].message, "Short: nets 'A' and 'Z' are connected by copper",
+            "the message must be spelled in sorted net order, not discovery order"
+        );
+    }
+
+    /// The whole `Short` set — message AND position — is reproducible across
+    /// repeated runs on an unchanged board. The pass-2 component walk used to
+    /// be a `HashMap`, whose per-instance random seeding let the reported
+    /// position hop between components of a multi-net short.
+    #[test]
+    fn short_set_is_reproducible_across_runs() {
+        let mut pcb = clean_pcb();
+        // Four nets fused into one blob by mutually overlapping copper, so the
+        // component carries every pair and pass 2 has real work to do.
+        for (i, net) in ["D", "C", "B", "A"].iter().enumerate() {
+            pcb.nets.push(Net {
+                id: net.to_string(),
+                name: net.to_string(),
+            });
+            pcb.traces.push(Trace {
+                start: Vec2::new(50.0 + i as f64 * 0.1, 20.0),
+                end: Vec2::new(50.0 + i as f64 * 0.1, 30.0),
+                width: 0.5,
+                layer: PcbLayer::FCu,
+                net: net.to_string(),
+                source: None,
+            });
+        }
+        let run = || -> Vec<(String, String)> {
+            let mut v: Vec<(String, String)> = check_drc(&pcb)
+                .into_iter()
+                .filter(|v| v.rule == DrcRuleType::Short)
+                .map(|v| {
+                    (
+                        v.message,
+                        format!("{:.4},{:.4}", v.position.x, v.position.y),
+                    )
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let first = run();
+        assert!(!first.is_empty(), "the fixture must actually short");
+        for _ in 0..25 {
+            assert_eq!(run(), first, "the short set must not vary between runs");
         }
     }
 

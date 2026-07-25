@@ -29,9 +29,11 @@ import {
   dropSession,
   runInSessionScope,
   recordHistorySnapshot,
+  currentBootToken,
+  durabilityWarning,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
-import { previewVersion, previewGlbFor } from "./tools/preview.js";
+import { previewVersion, previewGlbFor, PREVIEW_MAX_BASE64 } from "./tools/preview.js";
 import {
   createSessionStore,
   createSessionEventStore,
@@ -39,6 +41,7 @@ import {
   createPackStore,
   sessionStoreInfo,
   warnIfSessionStoreNotDurable,
+  isSessionStoreDurable,
 } from "./session-store.js";
 // Re-exported so the Vercel entry (services/mcp/entry.ts) and standalone
 // /health (http.ts) report the same durability state as server_info.
@@ -587,6 +590,8 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
     "",
+    "",
+    "Sessions and server restarts: a `document_id` is a handle to server-side state, NOT storage. If ANY preview goes dark, a widget stops updating, or a call fails with an unknown `document_id`, check `server_info` FIRST — a low `uptime_s` or a changed `instance_id` means the SERVER RESTARTED and the feature is fine. That is the fastest way to tell a restart from a bug, and it should be the first check for any preview-shaped complaint. On a restart every live document_id dies at once, so previously-working widgets all go dark together — that is not a renderer bug. When `server_info` reports `durable:false`, sessions are in-memory only and cannot be recovered: keep the authoring source (your `create_cad_loon` call or record of edits) so a document can be rebuilt, and snapshot long-lived work with `checkpoint_document` / `save_document`. Every tool result also carries `_meta['io.vcad/build']` with `boot_token` + `instance_id`, so a changed value flags a restart without polling.",
     "",
     "Physics/RL workflow: `create_robot_env` (or `batch_create_envs`) → `gym_reset` → `gym_step` → `gym_close`. Both env creators are session-first like everything else: pass the `document_id` of the open assembly — never re-send its IR. `create_robot_env` binds the env to that same session, so a `document_id` env and the document you keep editing can't drift apart; inline `document` IR stays available as the stateless fallback (it mints a NEW session, returned as `document_id`) and passing both is refused. `env_id` drives gym_step/gym_reset/gym_observe/gym_close; `document_id` is what the replay viewer, `get_preview_glb`, and the other session tools bind to. Observations come back both as bare positional arrays and keyed by id (`joints[i] = {id, position, velocity}`, `end_effectors[i] = {id, pose}`) — read the keyed views and no ordering has to be remembered.",
     "",
@@ -1305,6 +1310,13 @@ export async function createServer(
           uptime_s: info.uptime_s,
           expected_build_sha,
           is_stale,
+          // Restart detection without polling: boot_token changes iff the
+          // process serving these calls restarted, and session_durable says
+          // whether that restart cost the caller their open documents. A
+          // client that remembers the last pair learns about a restart on the
+          // very next call, instead of when a dead document_id finally fails.
+          boot_token: currentBootToken(),
+          session_durable: isSessionStoreDurable(),
         },
       };
     } catch {
@@ -1478,6 +1490,14 @@ export async function createServer(
       // (import_step / create_cad_loon) aren't double-registered.
       if (!result.isError && def?.behavior.writesDoc) {
         const writtenId = effectiveDocId(result, args);
+        // A tool that just MINTED a session (returned an id the caller didn't
+        // pass in) is the one moment an agent can still act on the storage
+        // contract — before 30 turns of work depend on a handle that a restart
+        // will silently invalidate. Say it once per session, in a
+        // model-visible text block; no-op when the store is durable.
+        if (writtenId && writtenId !== incomingId) {
+          noteSessionDurability(result, writtenId);
+        }
         if (writtenId) {
           try {
             await persistSession(sessionStore, writtenId);
@@ -1547,7 +1567,10 @@ export async function createServer(
  * loses the entire payload — it must keep the full text result.
  */
 export function slimPreviewForInlineUi(
-  result: { content: Array<{ type: string; text: string }> },
+  result: {
+    content: Array<{ type: string; text: string }>;
+    structuredContent?: Record<string, unknown>;
+  },
   docId: string,
   toolName: string,
   clientHasInlineUi: boolean,
@@ -1598,6 +1621,19 @@ export function slimPreviewForInlineUi(
     { type: "text", text: summary },
     { type: "text", text: JSON.stringify({ document_id: docId, ...keep }) },
   ];
+  // attachPreviewHandle folded the FULL body into structuredContent (so a
+  // host that renders structured data can't miss a deliverable). When we
+  // slim the text, the structured payload has to shed the same bulk or the
+  // spill this function exists to prevent just moves to the other field.
+  // The two renderings stay equivalent — both are now the slim stub.
+  if (result.structuredContent) {
+    const { document_id, document_version } = result.structuredContent;
+    result.structuredContent = {
+      ...keep,
+      document_id: document_id ?? docId,
+      ...(document_version !== undefined ? { document_version } : {}),
+    };
+  }
 }
 
 /** Fields that must never be slimmed away: success/fault verdicts the caller
@@ -1620,6 +1656,18 @@ const SLIM_PRESERVED_FIELDS = [
  * id, as a small JSON text block too. Cursor has known gaps forwarding
  * structuredContent to widgets, and the id is useful to agents anyway
  * (it opens the result up for follow-up mutations).
+ *
+ * `structuredContent` MUST stay a SUPERSET of the text payload, never a
+ * lossy stub. Field report (2026-07-25): `sheet_metal_unfold` returned the
+ * full flat pattern + DXF in `content`, but the only structured payload was
+ * `{document_id, document_version}` — and a host that renders
+ * structuredContent when present (in preference to the text blocks) showed
+ * the caller exactly that stub. The tool's entire deliverable, the only
+ * route from a vcad sheet-metal part to a cuttable flat file, silently
+ * vanished on the way out. Every geometry tool carried the same hazard.
+ * So: fold the handler's own JSON body into the structured payload, with
+ * the preview handle merged ON TOP (the ids are ours to define). The two
+ * renderings are then equivalent and the failure mode is "kept too much".
  */
 function attachPreviewHandle(
   result: {
@@ -1630,6 +1678,7 @@ function attachPreviewHandle(
   toolName?: string,
 ): void {
   const structured: Record<string, unknown> = {
+    ...jsonBodyOf(result.content),
     ...result.structuredContent,
     document_id: docId,
   };
@@ -1656,6 +1705,33 @@ function attachPreviewHandle(
 }
 
 /**
+ * Merge every text block that parses as a JSON *object* into one record —
+ * the handler's own return body, as structured data. Non-JSON prose blocks
+ * and JSON arrays/scalars have no field names to merge and are skipped;
+ * they still ride in `content` untouched. First writer wins, so a handler's
+ * primary body isn't overwritten by a trailing annotation block.
+ */
+function jsonBodyOf(
+  content: Array<{ type: string; text: string }>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const block of content) {
+    if (block.type !== "text") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(block.text);
+    } catch {
+      continue; // prose block — nothing to merge
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (body[k] === undefined) body[k] = v;
+    }
+  }
+  return body;
+}
+
+/**
  * Does this session document contain a PCB (a `PcbBoard` root or the legacy
  * bare `doc.pcb`)? Gates the inline `_meta` preview attach for non-mount PCB
  * mutators — board-only documents have no CAD part scene, so the widget's
@@ -1675,9 +1751,15 @@ function sessionHasPcb(docId: string): boolean {
 }
 
 /** Upper bound for a preview GLB riding inline in a mount result's `_meta`.
- *  Matches the artifact-offload text ethos: big geometry goes through the
- *  fetch path; this fast path is for the common small-to-medium part. */
-const INLINE_PREVIEW_MAX_BASE64 = 1_500_000;
+ *
+ *  Re-exported from the preview module so the inline attach and the viewer's
+ *  `get_preview_glb` fallback share ONE ceiling. They used to be unrelated:
+ *  this cap made oversized documents fall through to a fetch path with no
+ *  limit of its own, which then blew the transport's result ceiling — so
+ *  everything above the cap was guaranteed to fail. `previewGlbFor` now fits
+ *  the payload to this budget, so being over it is a degraded preview, not a
+ *  missing one. */
+const INLINE_PREVIEW_MAX_BASE64 = PREVIEW_MAX_BASE64;
 
 /**
  * Attach a ready-to-render preview GLB to a mount-tool result's `_meta`
@@ -1696,7 +1778,8 @@ export async function attachInlinePreview(
 ): Promise<void> {
   try {
     const preview = await previewGlbFor(getSession(docId), engine);
-    if (!preview || preview.glb.length > INLINE_PREVIEW_MAX_BASE64) return;
+    if (!preview || preview.oversize) return;
+    if (preview.glb.length > INLINE_PREVIEW_MAX_BASE64) return;
     result._meta = {
       ...result._meta,
       "vcad.io/preview": {
@@ -1704,6 +1787,7 @@ export async function attachInlinePreview(
         glb: preview.glb,
         version: preview.version,
         ...(preview.mode ? { mode: preview.mode } : {}),
+        ...(preview.degraded ? { degraded: true } : {}),
       },
     };
   } catch {
@@ -1788,6 +1872,28 @@ function resolvePreviewDocumentId(
  * does NOT call resolvePreviewDocumentId, which registers a fresh session for
  * import_step / create_cad_loon and would double-mint here.
  */
+/** Sessions already warned about non-durability, so a long build gets the
+ *  notice once rather than on every mint. Capped so it can't grow unbounded on
+ *  a long-lived instance. */
+const durabilityWarned = new Set<string>();
+
+/**
+ * Append the non-durable-storage warning to a session-minting tool result.
+ * Model-visible by design (a text block, not `_meta`): the whole point is that
+ * the AGENT learns it must keep the authoring source. No-op when the store is
+ * durable, or when this session was already warned about.
+ */
+function noteSessionDurability(result: ToolResult, documentId: string): void {
+  const warning = durabilityWarning();
+  if (!warning || durabilityWarned.has(documentId)) return;
+  if (durabilityWarned.size > 1000) durabilityWarned.clear();
+  durabilityWarned.add(documentId);
+  result.content = [
+    ...(result.content ?? []),
+    { type: "text", text: JSON.stringify({ durability: warning }) },
+  ];
+}
+
 function effectiveDocId(
   result: {
     content: Array<{ type: string; text: string }>;

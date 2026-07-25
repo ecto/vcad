@@ -885,6 +885,8 @@ type InlineMetaPreview = {
   glb?: string;
   version?: string;
   mode?: string;
+  /** Server decimated the geometry to fit the payload budget. */
+  degraded?: boolean;
 };
 
 function findMetaPreview(result: ToolResultLike): InlineMetaPreview | null {
@@ -988,12 +990,51 @@ function findPreviewMode(result: ToolResultLike): string | null {
   return hit?.mode ?? null;
 }
 
+/** A named preview failure from the server (currently `preview_too_large`) —
+ *  as opposed to a bare empty result or a transport error. */
+function findPreviewError(
+  result: ToolResultLike,
+): { error: string; detail?: string } | null {
+  const hit = findPayload<{ error?: string; detail?: string }>(
+    result,
+    (o) => typeof o.error === "string" && "_vcad_glb" in o,
+  );
+  return hit?.error ? { error: hit.error, detail: hit.detail } : null;
+}
+
+/** Did the server decimate this preview to fit its payload budget? */
+function findPreviewDegraded(result: ToolResultLike): boolean {
+  return Boolean(
+    findPayload<{ degraded?: boolean }>(result, (o) => o.degraded === true),
+  );
+}
+
 /**
  * Fetch a document's GLB via the app-only preview tool and render it in
  * place. Records the version token so the self-refresh poll knows the
  * current state and only re-fetches when it actually changes. Shared by the
  * tool-result handler (mount tools) and the poll loop (data-tool mutations).
  */
+/**
+ * Turn a failed `get_preview_glb` into a status line that explains WHY the
+ * viewport went dark. The server distinguishes "lost to a restart" from "no
+ * such id" in its error text, so key off that rather than guessing: a restart
+ * is unrecoverable for this widget (re-run the authoring call), while any other
+ * error is worth reporting verbatim-ish.
+ */
+function sessionLostStatus(result: ToolResultLike): string {
+  const text = (result?.content ?? [])
+    .map((b) => (b?.type === "text" ? b.text ?? "" : ""))
+    .join(" ");
+  if (/SESSION LOST TO A SERVER RESTART/i.test(text)) {
+    return "session lost (server restarted) — re-run the last authoring call";
+  }
+  if (/Unknown document_id/i.test(text)) {
+    return "session no longer on the server — re-run the last authoring call";
+  }
+  return "preview unavailable (server error)";
+}
+
 async function fetchAndRenderGlb(
   docId: string,
   changed: PartsChanged | null,
@@ -1010,13 +1051,37 @@ async function fetchAndRenderGlb(
   })) as ToolResultLike;
   const glb = findInlineGlb(previewResult);
   if (!glb) {
+    // Three distinct outcomes, three distinct messages — "preview unavailable"
+    // on its own names no cause and leaves nothing to act on.
+    const named = findPreviewError(previewResult);
+    if (named) {
+      // Server declined to send a payload it knows the transport would drop.
+      setStatus("model too large for inline preview", "error");
+      errEl.textContent = named.detail ?? named.error;
+      // The deep link is the working escape hatch for exactly this case.
+      openBtn.style.display = "inline-flex";
+      return;
+    }
     // An error result (e.g. the session isn't resident on the instance that
     // answered) is not the same as an empty document — say so instead of
     // masquerading as "no geometry".
+    //
+    // Name the CAUSE, not just the symptom. When a non-durable server restarts,
+    // every mounted widget in the transcript goes dark at the same moment —
+    // including ones that rendered fine minutes earlier — which reads exactly
+    // like a broken renderer. "preview unavailable" sent people to debug the
+    // viewer; the server tells us the session is gone, so say that and give
+    // the remedy. (The inline `_meta` GLB can't rescue this: it only covers
+    // first paint on mount tools.)
     setStatus(
-      previewResult?.isError ? "preview unavailable" : "no geometry to preview",
+      previewResult?.isError
+        ? sessionLostStatus(previewResult)
+        : "no geometry to preview",
       "idle",
     );
+    if (previewResult?.isError) {
+      errEl.textContent = "session not resolvable on this server instance";
+    }
     return;
   }
   const ver = findPreviewVersion(previewResult);
@@ -1025,6 +1090,11 @@ async function fetchAndRenderGlb(
   const isInstancesGlb =
     wantInstances && findPreviewMode(previewResult) === "instances";
   renderGlbForDoc(glb, docId, changed, isInstancesGlb);
+  // Say so when the server decimated to fit the payload budget — a preview
+  // that silently isn't the geometry you authored is worse than a slow one.
+  if (findPreviewDegraded(previewResult)) {
+    docLabelEl.textContent = `${docId} · reduced detail`;
+  }
 }
 
 /** Capture VCode IR text for the "Open in vcad.io" button. */
@@ -2381,6 +2451,7 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
         false,
         metaPreview.version ?? null,
       );
+      if (metaPreview.degraded) docLabelEl.textContent = `${docId} · reduced detail`;
       return;
     } catch (e) {
       // Corrupt inline payload (e.g. bad base64) — fall through to the
@@ -2409,8 +2480,12 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     await fetchAndRenderGlb(docId, changed);
   } catch (e) {
     console.error("[vcad-viewer] preview fetch failed:", e);
-    setStatus("preview unavailable", "error");
+    // The size case is handled server-side (fetchAndRenderGlb reports it by
+    // name); reaching here means the CALL itself failed — say that, and keep
+    // the deep link as the escape hatch.
+    setStatus("preview fetch failed", "error");
     errEl.textContent = e instanceof Error ? e.message : String(e);
+    openBtn.style.display = "inline-flex";
   }
 }
 

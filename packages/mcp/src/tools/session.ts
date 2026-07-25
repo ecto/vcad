@@ -16,7 +16,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveWithinRoot } from "./safe-path.js";
 import { storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes } from "./remote.js";
-import type { SessionStore } from "../session-store.js";
+import {
+  isSessionStoreDurable,
+  sessionStoreInfo,
+  type SessionStore,
+} from "../session-store.js";
 import type { AuthUser } from "../oauth.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import {
@@ -26,6 +30,7 @@ import {
   getSession,
   clearHistory,
   setSessionScopeProvider,
+  setDurabilityProbe,
 } from "./session-core.js";
 
 // The browser-safe core of the session layer (document cache, ids, undo
@@ -47,8 +52,38 @@ export {
   getLastChanged,
   recordTriangles,
   getLastTriangles,
+  currentBootToken,
+  sessionIdBootToken,
+  isForeignSessionId,
+  unknownSessionMessage,
   type DocInputCtx,
 } from "./session-core.js";
+
+/**
+ * Warning attached to every result that MINTS a session, when this server's
+ * sessions won't survive a restart.
+ *
+ * WHY it goes on the mint result rather than only in `server_info`: an agent
+ * learns it needed `checkpoint_document` only when a later call fails with a
+ * dead id, by which point the work is already gone. Stating the storage
+ * contract at the moment the handle is issued is what lets an agent decide to
+ * keep the authoring source instead of treating the server as storage. Returns
+ * undefined (field omitted) when the store IS durable, so the happy path stays
+ * quiet.
+ */
+export function durabilityWarning(): string | undefined {
+  if (isSessionStoreDurable()) return undefined;
+  return (
+    "NON-DURABLE SESSION: this server keeps documents IN MEMORY ONLY — a " +
+    "restart destroys this document_id and everything built under it, with no " +
+    "other warning. Keep the authoring source (the create_cad_loon call, or " +
+    "your own record of the edits) so the document can be rebuilt, and " +
+    "snapshot long-lived work with checkpoint_document / save_document. To " +
+    "make sessions durable: unset VCAD_MCP_DISK_SESSIONS=0 for local runs " +
+    "(sessions then persist under ~/.vcad/mcp-sessions), or set SUPABASE_URL " +
+    "+ SUPABASE_SERVICE_ROLE_KEY on a hosted deploy."
+  );
+}
 
 // ─── Per-connection scoping (Node-only: AsyncLocalStorage) ────────────────────
 //
@@ -64,6 +99,12 @@ const sessionScope = new AsyncLocalStorage<{
 }>();
 
 setSessionScopeProvider(() => sessionScope.getStore()?.documents ?? null);
+
+// Teach the browser-safe core whether this deployment's sessions survive a
+// restart, so `getSession`'s miss message can tell "lost to a restart, re-author
+// it" from "not found in the durable store". Reads process env, hence the
+// Node-side injection.
+setDurabilityProbe(isSessionStoreDurable);
 
 /**
  * Run `fn` with an isolated per-connection session cache when `user` is signed
@@ -165,6 +206,7 @@ export function openDocument(args: Record<string, unknown>): {
             "For a live view that stays open while we work, offer the user " +
             "a shareable watch link (share_session) or a vcad.io deep link " +
             "(open_in_browser).",
+          ...(durabilityWarning() ? { durability: durabilityWarning() } : {}),
         }),
       },
     ],

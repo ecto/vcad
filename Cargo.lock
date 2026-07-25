@@ -4040,6 +4040,7 @@ dependencies = [
  "phyz-collision",
  "phyz-math",
  "phyz-model",
+ "phyz-rigid",
 ]
 
 [[package]]

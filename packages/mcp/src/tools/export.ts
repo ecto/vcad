@@ -6,6 +6,7 @@ import type { Engine } from "@vcad/engine";
 import { writeFileSync } from "node:fs";
 import { toStlBytes } from "../export/stl.js";
 import { toGlbBytes } from "../export/glb.js";
+import { sceneExportUnits } from "../export/scene-units.js";
 import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment, maxInlineExportBytes } from "./remote.js";
 import { storeArtifact } from "./artifact-store.js";
@@ -131,11 +132,36 @@ export function exportCad(
     });
   }
 
-  // Evaluate the document to get meshes
+  // Evaluate the document to get meshes. Both document shapes export: scene
+  // roots (`doc.roots`) AND assembly instances (`partDefs` + `instances`,
+  // placed by the joint tree) — an assembly-authored document has no roots at
+  // all, which is normal, not an error.
   const scene = engine.evaluate(ir);
+  const units = sceneExportUnits(scene);
 
-  if (scene.parts.length === 0) {
-    throw new Error("Document has no parts to export");
+  if (units.length === 0) {
+    const failures = scene.failures ?? [];
+    if (failures.length > 0) {
+      throw new Error(
+        "Nothing to export: every feature failed to evaluate — " +
+          failures.map((f) => `${f.scope}: ${f.error}`).join("; ") +
+          ". Fix the failing feature with `update`, then re-export.",
+      );
+    }
+    throw new Error(
+      "Nothing to export: the document defines no geometry — it has no scene " +
+        "roots (doc.roots) and no assembly instances. Add a part with " +
+        "`create_cad_loon` / `create`, then re-export.",
+    );
+  }
+
+  const triangles = units.reduce((n, u) => n + u.mesh.indices.length / 3, 0);
+  if (triangles === 0) {
+    throw new Error(
+      `Nothing to export: ${units.length} part(s) evaluated but produced zero ` +
+        "triangles (empty geometry — e.g. a boolean that removed everything). " +
+        "Check the shape with `render_view`, then fix it with `update`.",
+    );
   }
 
   // Determine format from extension
@@ -155,7 +181,10 @@ export function exportCad(
 
   return deliver(filename, bytes, {
     format: ext,
-    parts: scene.parts.length,
+    parts: units.length,
+    ...(scene.instances && scene.instances.length > 0
+      ? { instances: scene.instances.length }
+      : {}),
   });
 }
 

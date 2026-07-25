@@ -5,7 +5,8 @@
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
 //!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
 //!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
-//!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
+//!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <N|WxH>] [--fill <frac>] [--quality <1-100>]
+//!   vcad-render <path.vcad> -o out.png [--auto-aspect] [--trim [--trim-margin <px>]]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
 //!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
@@ -32,6 +33,12 @@
 //! bounding box instead of the whole document. `--section` renders a cutaway:
 //! the half of the model on the camera's side of the plane is removed and the
 //! exposed cut faces are cross-hatched.
+//!
+//! Raster framing: `--size` takes `N` (square) or `WxH`, `--auto-aspect`
+//! fits the canvas to the subject's projected aspect ratio, and `--trim`
+//! crops the output to the drawn content (exact on PNG, whose background is
+//! transparent). Together they keep a tall or wide part from rendering as a
+//! thin ribbon of content in a mostly empty square.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -46,6 +53,37 @@ use vcad_render::{
 /// Larger than the single-view raster default: a sheet holds four views
 /// plus a title block, so it needs the room.
 const SHEET_DEFAULT_WIDTH_PX: u32 = 1600;
+
+/// `--size` value: `N` for a square N×N canvas, or `WxH` for a canvas
+/// matched to the subject (a tall part in a square frame wastes most of its
+/// pixels on background).
+#[derive(Debug, Clone, Copy)]
+struct SizeArg {
+    width: u32,
+    height: Option<u32>,
+}
+
+impl FromStr for SizeArg {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let px = |t: &str| {
+            t.trim()
+                .parse::<u32>()
+                .map_err(|_| format!("--size expects `N` or `WxH`, got '{s}'"))
+        };
+        match s.split_once(['x', 'X']) {
+            Some((w, h)) => Ok(SizeArg {
+                width: px(w)?,
+                height: Some(px(h)?),
+            }),
+            None => Ok(SizeArg {
+                width: px(s)?,
+                height: None,
+            }),
+        }
+    }
+}
 
 /// Output format for a render. Single-file `-o` infers this from the output
 /// extension; batch mode takes it from `--format`.
@@ -186,11 +224,28 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Svg)]
     format: Format,
 
-    /// Raster canvas size in pixels (JPEG/PNG). Defaults to 1024 for JPEG
-    /// and 4096 for PNG when unset; with `--sheet`, the overall sheet width
-    /// (default 1600).
+    /// Raster canvas size in pixels (JPEG/PNG): `N` for an N×N canvas or
+    /// `WxH` for a non-square one. Defaults to 1024 for JPEG and 4096 for
+    /// PNG when unset; with `--sheet`, the overall sheet width (default
+    /// 1600, height ignored).
     #[arg(long)]
-    size: Option<u32>,
+    size: Option<SizeArg>,
+
+    /// Fit the canvas to the subject's projected aspect ratio instead of
+    /// padding a square: the long screen axis keeps `--size` pixels and the
+    /// short axis shrinks to match. Ignored when `--size WxH` is explicit.
+    #[arg(long)]
+    auto_aspect: bool,
+
+    /// Crop raster output to the drawn content's bounding box. Exact for
+    /// PNG (transparent background); on JPEG the background is opaque, so
+    /// the crop simply removes empty vellum.
+    #[arg(long)]
+    trim: bool,
+
+    /// Pixels of margin to keep around the content when `--trim` is set.
+    #[arg(long, default_value_t = 0, requires = "trim")]
+    trim_margin: u32,
 
     /// Fraction of the canvas the part's long axis fills (JPEG/PNG only).
     #[arg(long, default_value_t = 0.6)]
@@ -211,6 +266,13 @@ impl Cli {
     /// The effective view: explicit `--azimuth`/`--elevation` compose into
     /// an orbit camera (unspecified angle defaults to 0°) and override
     /// `--view`.
+    /// Sheet width in pixels: `--size`'s width component, or the default.
+    /// A `WxH` size contributes only its width — a sheet's height follows
+    /// from its layout.
+    fn sheet_width_px(&self) -> u32 {
+        self.size.map_or(SHEET_DEFAULT_WIDTH_PX, |s| s.width)
+    }
+
     fn effective_view(&self) -> View {
         if self.azimuth.is_some() || self.elevation.is_some() {
             View::Orbit {
@@ -264,7 +326,13 @@ impl Cli {
 fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
     vcad_render::RasterOptions {
         view: cli.effective_view(),
-        size_px: cli.size.unwrap_or(if png { 4096 } else { 1024 }),
+        size_px: cli
+            .size
+            .map(|s| s.width)
+            .unwrap_or(if png { 4096 } else { 1024 }),
+        height_px: cli.size.and_then(|s| s.height),
+        auto_aspect: cli.auto_aspect,
+        trim_margin_px: cli.trim.then_some(cli.trim_margin),
         fill_frac: cli.fill,
         quality: cli.quality,
         focus: cli.focus.clone(),
@@ -329,7 +397,7 @@ fn render_sheet_jpeg(raw: &str, input: &Path, cli: &Cli) -> Result<Vec<u8>, Stri
     vcad_render::sheet::render_sheet_jpeg_str(
         raw,
         &vcad_render::sheet::SheetRasterOptions {
-            width_px: cli.size.unwrap_or(SHEET_DEFAULT_WIDTH_PX),
+            width_px: cli.sheet_width_px(),
             quality: cli.quality,
             title: sheet_title(input),
         },
@@ -358,7 +426,7 @@ fn render_sheet_one(
             let svg = vcad_render::sheet::render_sheet_svg_str(
                 raw,
                 &vcad_render::sheet::SheetOptions {
-                    width_px: cli.size.unwrap_or(SHEET_DEFAULT_WIDTH_PX) as f64,
+                    width_px: cli.sheet_width_px() as f64,
                     title: sheet_title(input),
                 },
             )?;
