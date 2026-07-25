@@ -144,6 +144,26 @@ verdict: ALL HOLD
 Zero intra-pair DRC violations, and the board's total `Clearance` count is
 identical with the finishing pass on and off (74) — the pass introduces none.
 
+### 250-net board — 2 of 4, and the important control
+
+```
+worst_group_skew           9.158 mm  <= 10.0   HOLDS
+worst_intra_pair_skew     37.525 mm  <=  1.1   BROKEN
+min_pair_coupled_fraction  0.000     >=  0.5   BROKEN
+vias_per_si_net            2.405     <=  3.0   HOLDS
+```
+
+This run is what stops the 40-net result from being over-read. Routability
+0.957, 36 pairs measured, 17 of 37 re-coupled by polish — and the *same* two
+blocker groups as the full board, with `/ETH.3_P` the worst pair on both
+(37.5mm here, 37.9mm there).
+
+So the 40-net Pass reflects an **uncongested** board rather than a solved
+pipeline: `polish_pairs` can rip and re-route a pair freely when there is
+space, and its success rate falls as congestion rises. The finishing pass is
+sound and non-regressive at every size; what does not yet scale is its ability
+to *land* a re-route on a full board.
+
 ### Full board — still 2 of 4
 
 Full route: 2h41m, routability 0.983, 393/408 nets, 830 vias (0.29x human).
@@ -182,7 +202,7 @@ run at 0.276mm/mm.
 | target | measured | named closer |
 |---|---|---|
 | receipt Pass on the full board | 2/4 HOLDS | Two specific groups, above. Short pairs need a coupled path that does not inset a lead — the phantom is the wrong tool below ~4mm span. The detour pairs need polish to succeed under full-board congestion, i.e. a wider corridor rip or a higher-effort re-route. |
-| receipt Pass on a subset | ✅ ALL HOLD | 40-net board, end to end through `cm5_bench`. |
+| receipt Pass on a subset | ✅ ALL HOLD | 40-net board, end to end through `cm5_bench` — but see the 250-net control above: that Pass reflects an uncongested board, not a solved pipeline. |
 | no new route-attributable DRC | finisher: proven (74 → 74). router: **not A/B'd** | The pre-change full-board baseline was not kept, so the routing stage's own delta is unmeasured. A clean pre/post full-board pair is the missing evidence. |
 
 Note on DRC accounting: `Short` counts are **not** route-attributable on this
@@ -195,5 +215,10 @@ nets adds ~409. Use the `Clearance` rule for attribution.
 1. A short-pair path that keeps both legs on one layer without the lead inset
    — this alone unpins `min_pair_coupled_fraction` from zero.
 2. Higher-effort polish for the detour pairs, or catching them during
-   construction so no leg ever takes the detour.
-3. The clean pre/post full-board DRC A/B.
+   construction so no leg ever takes the detour. `/ETH.3_P` is the worst pair
+   on both the 250-net and full boards, so it is a stable, reproducible
+   target rather than a full-board-only artifact.
+3. Polish's success rate under congestion is the scaling limit: it works on
+   an open board and fails on a full one. Wider corridor rip, or ordering
+   polish before the board fills.
+4. The clean pre/post full-board DRC A/B.
