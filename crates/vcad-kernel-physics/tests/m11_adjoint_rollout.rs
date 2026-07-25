@@ -133,6 +133,9 @@ fn pendulum_model(props: &[BodyMassProps]) -> Model {
         axis: Vec3::new(1.0, 0.0, 0.0),
         damping: 0.0,
         limits: None,
+        // See m11_contact_gradient: defaults are neutral for this pendulum,
+        // so the finite-difference comparison is unaffected.
+        ..Default::default()
     };
     ModelBuilder::new()
         .gravity(Vec3::new(0.0, -9.81, 0.0))
