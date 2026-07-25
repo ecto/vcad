@@ -445,7 +445,10 @@ mod tests {
             &FabPrepOptions {
                 route_remaining: false,
                 prune_dangling: false,
-                max_rounds: 1,
+                // No rounds: the strip-and-re-route loop must not be given a
+                // chance to replace the short with an honest unroutable, so
+                // the geometric offender is what the report has to name.
+                max_rounds: 0,
                 ..Default::default()
             },
         )

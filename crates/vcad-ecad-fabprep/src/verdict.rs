@@ -10,10 +10,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use vcad_ecad_pcb::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet};
-use vcad_ecad_pcb::router::complete::{route_window_complete, CompleteOutcome};
+use vcad_ecad_pcb::router::classes::via_geom_for;
+use vcad_ecad_pcb::router::complete::{
+    path_vias, route_window_complete_pinned, CompleteOutcome, ViaClass, WindowBudget,
+};
 use vcad_ecad_pcb::session::RouteSession;
 use vcad_ecad_pcb::spatial::{CopperElement, CopperGeom};
-use vcad_ir::ecad::{Pcb, Trace, Via};
+use vcad_ir::ecad::{Pcb, PcbLayer, Trace, Via};
 use vcad_ir::Vec2;
 
 /// Search knobs for one pass of the ladder.
@@ -174,13 +177,30 @@ pub fn route_remaining(pcb: &mut Pcb, opts: VerdictOptions) -> VerdictSummary {
             .iter()
             .map(|(n, _, _)| net_width.get(n).copied().unwrap_or(width))
             .fold(width, f64::max);
-        match route_window_complete(
+        // Hand the router the via geometry the commit below actually writes, so
+        // its grid pitch carries the hole-to-hole floor and its barrels are
+        // drill-probed in-search. Without it the search spaces vias by copper
+        // clearance alone and proposes paths the fail-closed commit has to
+        // throw away as unknowns.
+        let via_class = conns.iter().map(|(n, _, _)| via_geom_for(pcb, n)).fold(
+            (
+                pcb.rules.default_rules.via_diameter,
+                pcb.rules.default_rules.via_drill,
+            ),
+            |(ad, adr), (d, dr)| (ad.max(d), adr.max(dr)),
+        );
+        match route_window_complete_pinned(
             &session,
             (*lo, *hi),
             &layers,
             conns,
+            &[],
             cluster_width,
-            opts.budget,
+            Some(ViaClass {
+                pad_diameter: via_class.0,
+                drill: via_class.1,
+            }),
+            WindowBudget::new(opts.budget),
         ) {
             CompleteOutcome::Routed(paths) => {
                 // Probe-then-commit PER PATH, in order. Cluster paths are
@@ -198,7 +218,7 @@ pub fn route_remaining(pcb: &mut Pcb, opts: VerdictOptions) -> VerdictSummary {
                             half_w: w / 2.0,
                         };
                         session.probe(&g, l, net, session.clearance_for(net)).legal
-                    });
+                    }) && vias_legal(pcb, &session, net, path);
                     if !legal {
                         summary.unknown += 1;
                         continue;
@@ -224,6 +244,78 @@ pub fn route_remaining(pcb: &mut Pcb, opts: VerdictOptions) -> VerdictSummary {
         }
     }
     summary
+}
+
+/// The copper layers a barrel from `start` to `end` occupies, in stackup
+/// order — endpoints *and* every interior layer.
+///
+/// A barrel is a hole through all of them: probing or committing only the two
+/// endpoint layers leaves the interior invisible to the oracle, and a later
+/// path is then routed straight through the barrel on an inner layer (measured
+/// on the CM5: two 0.000mm shorts, both a FCu..In2Cu barrel against an In1Cu
+/// trace).
+fn spanned_layers(pcb: &Pcb, start: PcbLayer, end: PcbLayer) -> Vec<PcbLayer> {
+    let mut out: Vec<PcbLayer> = pcb
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper() && l.spanned_by(start, end))
+        .collect();
+    for endpoint in [start, end] {
+        if !out.contains(&endpoint) {
+            out.push(endpoint);
+        }
+    }
+    out
+}
+
+/// Fail-closed via legality for a candidate path, against the session as it
+/// stands (clustermates already committed).
+///
+/// Two rules the segment probe structurally cannot answer, and which
+/// `commit_path` used to commit blind:
+///
+/// * the barrel's annulus must clear foreign copper on **every** layer it
+///   spans, not just its endpoints;
+/// * the *drill* must keep `hole_to_hole` from every other hole on the board —
+///   layer- and net-agnostic, so two vias whose copper never meets still
+///   collide in the drill file. The window router spaces vias inside ONE
+///   window by a drill-aware grid pitch; nothing spaced them against the vias
+///   of earlier windows, earlier rounds, or the arriving board (measured on the
+///   CM5: four hole-to-hole violations, every one of them copper-legal and
+///   drill-illegal — the 0.29..0.37mm window between the two rules).
+fn vias_legal(
+    pcb: &Pcb,
+    session: &RouteSession,
+    net: &str,
+    path: &[(Vec2, Vec2, PcbLayer)],
+) -> bool {
+    let (via_d, via_drill) = via_geom_for(pcb, net);
+    let clearance = session.clearance_for(net);
+    let vias = path_vias(path);
+    vias.iter().all(|&(p, l0, l1)| {
+        if !session.probe_via_drill(p, net).legal {
+            return false;
+        }
+        // The path's own barrels must clear each other too — the session
+        // cannot judge them until they are committed.
+        let self_clear = vias.iter().all(|&(q, _, _)| {
+            let (dx, dy) = (q.x - p.x, q.y - p.y);
+            dx.abs() + dy.abs() < 1e-9
+                || (dx * dx + dy * dy).sqrt() - via_drill >= pcb.rules.hole_to_hole - 1e-6
+        });
+        if !self_clear {
+            return false;
+        }
+        let disc = CopperGeom::Disc {
+            center: p,
+            r: via_d / 2.0,
+        };
+        spanned_layers(pcb, l0, l1)
+            .into_iter()
+            .all(|l| session.probe(&disc, l, net, clearance).legal)
+    })
 }
 
 /// Commit one accepted path to both the legality oracle and the board.
@@ -255,32 +347,34 @@ fn commit_path(
             source: None,
         });
     }
-    // A layer change between consecutive segments that share an endpoint is a
-    // via at that point.
-    for pair in path.windows(2) {
-        let (_, b0, l0) = pair[0];
-        let (a1, _, l1) = pair[1];
-        if l0 != l1 && (b0.x - a1.x).abs() < 1e-9 && (b0.y - a1.y).abs() < 1e-9 {
-            let r = pcb.rules.default_rules.via_diameter / 2.0;
-            for layer in [l0, l1] {
-                session.commit(CopperElement {
-                    min: [b0.x - r, b0.y - r],
-                    max: [b0.x + r, b0.y + r],
-                    net: net.to_string(),
-                    layer,
-                    geom: CopperGeom::Disc { center: b0, r },
-                });
-            }
-            pcb.vias.push(Via {
-                position: b0,
-                diameter: pcb.rules.default_rules.via_diameter,
-                drill: pcb.rules.default_rules.via_drill,
-                start_layer: l0,
-                end_layer: l1,
+    // Layer changes are barrels. `path_vias` merges a multi-step transition at
+    // one point into a single barrel — two stacked vias at the same position
+    // are a hole-to-hole violation against each other.
+    let (via_d, via_drill) = via_geom_for(pcb, net);
+    let r = via_d / 2.0;
+    for (p, l0, l1) in path_vias(path) {
+        // Copper on every spanned layer, and the drill in the hole index, so
+        // the next path sees the whole barrel — both the annulus it must clear
+        // and the hole it must keep `hole_to_hole` from.
+        for layer in spanned_layers(pcb, l0, l1) {
+            session.commit(CopperElement {
+                min: [p.x - r, p.y - r],
+                max: [p.x + r, p.y + r],
                 net: net.to_string(),
-                source: None,
+                layer,
+                geom: CopperGeom::Disc { center: p, r },
             });
         }
+        session.commit_drill(p, via_drill);
+        pcb.vias.push(Via {
+            position: p,
+            diameter: via_d,
+            drill: via_drill,
+            start_layer: l0,
+            end_layer: l1,
+            net: net.to_string(),
+            source: None,
+        });
     }
 }
 
@@ -379,5 +473,157 @@ mod tests {
         });
         let nets = nets_with_copper(&pcb);
         assert!(nets.contains("A") && nets.contains("B"));
+    }
+
+    /// A four-layer board, so a FCu..In2Cu barrel has an interior layer that a
+    /// two-endpoint model cannot see.
+    fn four_layer_board() -> Pcb {
+        let mut pcb = test_board();
+        pcb.stackup.layers = [
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In2Cu,
+            PcbLayer::BCu,
+        ]
+        .into_iter()
+        .map(|layer| vcad_ir::ecad::StackupLayer {
+            layer,
+            copper_thickness: Some(0.035),
+            dielectric_thickness: Some(0.2),
+            dielectric_er: Some(4.5),
+            material: Some("FR4".into()),
+        })
+        .collect();
+        pcb
+    }
+
+    /// A two-step path FCu -> In2Cu through (5,5): one barrel, spanning In1Cu.
+    fn transition_path() -> Vec<(Vec2, Vec2, PcbLayer)> {
+        vec![
+            (Vec2::new(3.0, 5.0), Vec2::new(5.0, 5.0), PcbLayer::FCu),
+            (Vec2::new(5.0, 5.0), Vec2::new(7.0, 5.0), PcbLayer::In2Cu),
+        ]
+    }
+
+    #[test]
+    fn barrel_spans_interior_layers() {
+        let pcb = four_layer_board();
+        assert_eq!(
+            spanned_layers(&pcb, PcbLayer::FCu, PcbLayer::In2Cu),
+            vec![PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::In2Cu],
+        );
+        // Order-insensitive: the router emits (start, end) in path order.
+        assert_eq!(
+            spanned_layers(&pcb, PcbLayer::In2Cu, PcbLayer::FCu),
+            vec![PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::In2Cu],
+        );
+    }
+
+    /// A barrel overlapping foreign copper on an INTERIOR layer of its span
+    /// must be refused. Committing only the endpoint layers is how two 0.000mm
+    /// shorts reached the CM5 fab package: FCu..In2Cu barrels with an In1Cu
+    /// trace driven through them.
+    #[test]
+    fn via_over_interior_layer_copper_is_refused() {
+        let mut pcb = four_layer_board();
+        let clear = RouteSession::from_pcb(&pcb);
+        assert!(vias_legal(&pcb, &clear, "A", &transition_path()));
+
+        pcb.traces.push(Trace {
+            start: Vec2::new(5.0, 4.0),
+            end: Vec2::new(5.0, 6.0),
+            width: 0.2,
+            layer: PcbLayer::In1Cu,
+            net: "VICTIM".into(),
+            source: None,
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        assert!(
+            !vias_legal(&pcb, &session, "A", &transition_path()),
+            "a barrel straight through an interior-layer foreign trace must be illegal"
+        );
+    }
+
+    /// Hole-to-hole is a drill rule: two vias whose copper never shares a layer
+    /// still collide in the drill file. The copper probe cannot see it, so the
+    /// commit gate has to probe the drill index — the four CM5 hole-to-hole
+    /// violations were all copper-legal.
+    #[test]
+    fn via_too_close_to_an_existing_hole_is_refused() {
+        let mut pcb = four_layer_board();
+        // Copper-legal by a mile (disjoint layers: In3Cu is not even in the
+        // stackup used here), drill-illegal: centres 0.5mm, drills 0.3 → 0.2mm
+        // hole-to-hole against a 0.25mm rule.
+        pcb.vias.push(Via {
+            position: Vec2::new(5.5, 5.0),
+            diameter: 0.6,
+            drill: 0.3,
+            start_layer: PcbLayer::In2Cu,
+            end_layer: PcbLayer::BCu,
+            net: "OTHER".into(),
+            source: None,
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        assert!(session
+            .probe(
+                &CopperGeom::Disc {
+                    center: Vec2::new(5.0, 5.0),
+                    r: 0.3,
+                },
+                PcbLayer::FCu,
+                "A",
+                0.2,
+            )
+            .legal);
+        assert!(
+            !vias_legal(&pcb, &session, "A", &transition_path()),
+            "a barrel 0.20mm hole-to-hole from an existing via must be illegal"
+        );
+    }
+
+    /// Two barrels of ONE path have to clear each other, which the session
+    /// cannot judge until they are committed.
+    #[test]
+    fn two_barrels_of_one_path_must_clear_each_other() {
+        let pcb = four_layer_board();
+        let session = RouteSession::from_pcb(&pcb);
+        let path = vec![
+            (Vec2::new(3.0, 5.0), Vec2::new(5.0, 5.0), PcbLayer::FCu),
+            (Vec2::new(5.0, 5.0), Vec2::new(5.4, 5.0), PcbLayer::In2Cu),
+            (Vec2::new(5.4, 5.0), Vec2::new(7.0, 5.0), PcbLayer::FCu),
+        ];
+        assert!(
+            !vias_legal(&pcb, &session, "A", &path),
+            "two barrels 0.10mm hole-to-hole apart must be illegal"
+        );
+    }
+
+    /// The commit indexes the whole barrel — every spanned layer's copper AND
+    /// the drill — so the next path sees it.
+    #[test]
+    fn commit_indexes_barrel_copper_and_drill() {
+        let mut pcb = four_layer_board();
+        let mut session = RouteSession::from_pcb(&pcb);
+        commit_path(&mut pcb, &mut session, "A", 0.2, &transition_path());
+        assert_eq!(pcb.vias.len(), 1);
+        assert_eq!(pcb.vias[0].position, Vec2::new(5.0, 5.0));
+        // Interior layer now blocked for a foreign net...
+        assert!(!session
+            .probe(
+                &CopperGeom::Segment {
+                    a: Vec2::new(5.0, 4.0),
+                    b: Vec2::new(5.0, 6.0),
+                    half_w: 0.1,
+                },
+                PcbLayer::In1Cu,
+                "VICTIM",
+                0.2,
+            )
+            .legal);
+        // ...and the drill is in the hole index.
+        assert!(!session.probe_drill(Vec2::new(5.5, 5.0), 0.3).legal);
+        // A second path through the same spot is now refused rather than
+        // stacking a coincident drill.
+        assert!(!vias_legal(&pcb, &session, "B", &transition_path()));
     }
 }
