@@ -245,7 +245,8 @@ result.
 | **worst_intra_pair_skew** | **0.983 HOLDS** | **1.353 BROKEN** (bound 1.100) |
 | min_pair_coupled_fraction | 0.777 HOLDS | 0.582 HOLDS |
 | vias_per_si_net | 2.727 HOLDS | 2.474 HOLDS |
-| **verdict** | **ALL HOLD** | **3 of 4** |
+| pair_impedance_correct_fraction | — | 0.000 HOLDS *(vacuous, see below)* |
+| **verdict** | **ALL HOLD** | **3 of 4** (4 of 5 counting the vacuous claim) |
 
 Routability is unchanged at 1.000 (4.7–5.1 s over two runs).
 
@@ -267,7 +268,8 @@ deterministic given the tree. Wall-clock 895.5 / 958.9 s.
 | worst_intra_pair_skew | 37.853 BROKEN | **38.521** BROKEN |
 | min_pair_coupled_fraction | 0.000 BROKEN | **0.101** BROKEN |
 | **vias_per_si_net** | **2.766 HOLDS** | **3.128 BROKEN** (bound 3.000) |
-| **verdict** | **2 of 4** | **1 of 4** |
+| pair_impedance_correct_fraction | — | 0.000 HOLDS *(vacuous, see below)* |
+| **verdict** | **2 of 4** | **1 of 4** (2 of 5 counting the vacuous claim) |
 
 `vias_per_si_net` crossed the bound: 294 vias over 94 routed SI nets. The board
 now routes more connections (0.994 vs 0.983) and pays for them in vias, so this
@@ -293,6 +295,28 @@ adds ~409" is corrected: the import carries **258** pad-level shorts, and the
 correct — `Short` counts are not route-attributable on this fixture, because
 every routed trace transitively merges same-net copper clusters. Use `Clearance`
 for attribution.
+
+### Re-verified against current main (#685, #687, #691)
+
+Main moved while this correction was being measured: #685 (Eagle `.brd` pad
+rotation), #687 (Gerber apertures turn with the pad), and #691 (per-layer
+controlled-impedance geometry). #691 rewrites `router/pair.rs` and adds a fifth
+SI claim, so the corrected figures were re-run against it rather than assumed
+still valid.
+
+**Nothing moved.** The stripped floor (311 / 23), our board's DRC (`Clearance`
+173), and the 40-net route (byte-identical board — 762 segments, 92 vias,
+receipt 1.353 / 0.582 / 2.474) all reproduce exactly. #691's per-layer widths
+are opt-in on `target_impedance`, which the CM5 fixture's classes do not
+declare, so the router's behaviour on this board is unchanged.
+
+The new `pair_impedance_correct_fraction` claim is therefore **vacuous here** —
+it reports `0.000` against a bound of `0.000` with the reason "no differential
+net class declares a target impedance — nothing to verify", and HOLDS trivially.
+The receipt is now 5 claims wide, so the raw fraction reads 2 of 5 on the full
+board and 4 of 5 on the subset. **Those are not improvements.** The honest
+counts against claims that actually verify something are unchanged: **1 of 4**
+and **3 of 4**.
 
 ### The bounds are untouched, and still valid
 
