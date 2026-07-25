@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine, resolveFootprint, parseKicadPcb } from "@vcad/engine";
-import type { Document, Pcb, SchematicSheet, Vec2 } from "@vcad/ir";
+import type { Document, Footprint, Pad, Pcb, SchematicSheet, Vec2 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import {
   createSchematic,
@@ -14,6 +14,8 @@ import {
   validateForFab,
   fabPrep,
   calcImpedance,
+  computeUtilization,
+  localCourtyardAabb,
   sizeImpedance,
   sizePdn,
   calcCoil,
@@ -6227,5 +6229,97 @@ describe("diff_stripline model consistency (calc_impedance vs size_impedance)", 
     expect(kStrip).toBeCloseTo(1 - 0.347 * Math.exp(-2.9), 2);
     // Stripline couples less at the same spacing — the pair sits closer to 2·Z0.
     expect(kStrip).toBeGreaterThan(kMicro);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pad-rotation audit: board utilization
+// ---------------------------------------------------------------------------
+
+describe("computeUtilization rotation handling", () => {
+  const sq = (x: number, y: number) => ({ x, y });
+  const board = [sq(0, 0), sq(50, 0), sq(50, 50), sq(0, 50)];
+
+  /** One footprint, one 4mm x 1mm pad at the origin of its land pattern. */
+  const fp = (rotation: number, padRotation: number): Footprint =>
+    ({
+      reference: "U1",
+      value: "x",
+      footprint_name: "fp",
+      position: sq(25, 25),
+      rotation,
+      front: true,
+      pads: [
+        {
+          number: "1",
+          position: sq(0, 0),
+          rotation: padRotation,
+          shape: { type: "Rect", width: 4, height: 1 },
+          layers: ["FCu"],
+          pad_type: "SMD",
+        },
+      ],
+      graphics: [],
+      properties: {},
+    }) as unknown as Footprint;
+
+  const bbox = (f: Footprint) =>
+    computeUtilization([f], board, undefined, "polygon", 0, 0, 0.2)!
+      .bounding_box;
+
+  it("measures an unrotated pad along its own axes", () => {
+    const b = bbox(fp(0, 0));
+    expect(b.w).toBeCloseTo(4, 6);
+    expect(b.h).toBeCloseTo(1, 6);
+  });
+
+  // pad.rotation is RELATIVE to the footprint: it turns the pad inside the
+  // land pattern, swapping the local extents. Previously ignored.
+  it("honours pad rotation relative to the footprint", () => {
+    const b = bbox(fp(0, 90));
+    expect(b.w).toBeCloseTo(1, 6);
+    expect(b.h).toBeCloseTo(4, 6);
+  });
+
+  // fp.rotation turns the whole land pattern into the board frame. The local
+  // box was previously translated by fp.position with no rotation at all.
+  it("honours footprint rotation", () => {
+    const b = bbox(fp(90, 0));
+    expect(b.w).toBeCloseTo(1, 6);
+    expect(b.h).toBeCloseTo(4, 6);
+  });
+
+  // The two compose: 90 + 90 = 180, back to the original axes.
+  it("composes footprint and pad rotation", () => {
+    const b = bbox(fp(90, 90));
+    expect(b.w).toBeCloseTo(4, 6);
+    expect(b.h).toBeCloseTo(1, 6);
+  });
+});
+
+describe("localCourtyardAabb rotation handling", () => {
+  const pad = (rotation: number) =>
+    ({
+      number: "1",
+      position: { x: 0, y: 0 },
+      rotation,
+      shape: { type: "Rect", width: 4, height: 1 },
+      layers: ["FCu"],
+      pad_type: "SMD",
+    }) as unknown as Pad;
+
+  // The pad fallback runs when a footprint has no FCrtYd/BCrtYd rect. It is
+  // the footprint-LOCAL frame, so pad.rotation (relative to the footprint)
+  // applies here; fp.rotation is applied later by boardCourtyardAabb.
+  it("measures an unrotated pad along its own axes", () => {
+    const b = localCourtyardAabb([pad(0)], [])!;
+    expect(b.max.x - b.min.x).toBeCloseTo(4, 6);
+    expect(b.max.y - b.min.y).toBeCloseTo(1, 6);
+  });
+
+  it("honours pad rotation in the pad fallback", () => {
+    const b = localCourtyardAabb([pad(90)], [])!;
+    expect(b.max.x - b.min.x).toBeCloseTo(1, 6);
+    expect(b.max.y - b.min.y).toBeCloseTo(4, 6);
   });
 });

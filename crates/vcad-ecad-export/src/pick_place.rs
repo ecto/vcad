@@ -11,6 +11,28 @@ use vcad_ir::ecad::*;
 ///
 /// Writes a CSV with columns: `Ref`, `Value`, `Package`, `PosX`, `PosY`,
 /// `Rotation`, `Side`. All coordinates are in millimetres, rotation in degrees.
+///
+/// # Rotation convention
+///
+/// `Rotation` is the component's ABSOLUTE placement angle in the board frame —
+/// `fp.rotation` verbatim, with no per-pad term and no bottom-side negation.
+/// That is exactly what KiCad's own `.pos` exporter emits: verified against
+/// `kicad-cli pcb export pos` on the 421-component CM5 fixture, where
+/// `Rot - at_angle == 0` for all 115 top-side AND all 306 bottom-side parts.
+/// See `pick_place_rotation_matches_kicad_export`.
+///
+/// Pads' own `pad.rotation` is deliberately absent: it is relative to the
+/// footprint and describes pad *copper* orientation within the land pattern,
+/// not how the machine turns the part. Adding it here would mis-place every
+/// component whose land pattern contains a rotated pad.
+///
+/// `PosX`/`PosY` are `fp.position` verbatim, i.e. vcad's board frame — the
+/// same frame the Gerber and Excellon writers emit, so this file registers
+/// against vcad's own fab output. Note that vcad ingests KiCad's Y without
+/// negating it, while KiCad's `.pos` writes `PosY = -at.y`; so for a board
+/// imported from KiCad this column is the negation of KiCad's. That Y-sign
+/// convention is pipeline-wide (Gerber, Excellon, render all share it), not a
+/// pick-and-place bug, and is out of scope here.
 pub fn write_pick_place<W: Write>(writer: &mut W, pcb: &Pcb) -> Result<(), std::io::Error> {
     writeln!(writer, "Ref,Value,Package,PosX,PosY,Rotation,Side")?;
 
@@ -225,6 +247,118 @@ mod tests {
             r1_line.contains("10.0000,20.0000"),
             "R1 coordinates should be 10.0000,20.0000"
         );
+    }
+
+    /// Five real CM5 footprints (`.scratch/CM5RevEng.kicad_pcb`), spanning
+    /// both board sides and four distinct non-zero angles, checked against
+    /// KiCad's OWN pick-and-place export:
+    ///
+    /// ```text
+    /// kicad-cli pcb export pos --format csv --units mm --side both \
+    ///     -o cm5_kicad.pos.csv .scratch/CM5RevEng.kicad_pcb
+    /// ```
+    ///
+    /// KiCad 9.0.3 emitted (Ref, PosX, PosY, Rot, Side):
+    ///
+    /// ```text
+    /// C69  131.905000  -67.375000    45.000000  bottom
+    /// J3   124.965000  -62.910000   180.000000  bottom
+    /// R38  145.046450  -76.675000   -90.000000  bottom
+    /// L1   105.390000  -83.730000    90.000000  top
+    /// C1   107.400000  -67.130000    45.000000  top
+    /// ```
+    ///
+    /// The IR values below are what `parse_kicad_pcb` produces for those
+    /// footprints (KiCad's `(at x y a)` verbatim). The fixture is inlined
+    /// rather than read from `.scratch/`, which is gitignored and 12 MB.
+    ///
+    /// This pins the two claims that matter for an assembly machine: the
+    /// rotation column is the component's absolute angle and agrees with
+    /// KiCad bit-for-bit on both sides (no bottom-side negation, no per-pad
+    /// term), and X agrees directly while Y differs by the documented,
+    /// pipeline-wide sign convention.
+    #[test]
+    fn pick_place_rotation_matches_kicad_export() {
+        // (ref, ir_x, ir_y, ir_rotation, front) — straight from the .kicad_pcb.
+        let cm5: [(&str, f64, f64, f64, bool); 5] = [
+            ("C69", 131.905, 67.375, 45.0, false),
+            ("J3", 124.965, 62.910, 180.0, false),
+            ("R38", 145.046_45, 76.675, -90.0, false),
+            ("L1", 105.390, 83.730, 90.0, true),
+            ("C1", 107.400, 67.130, 45.0, true),
+        ];
+        // KiCad's own .pos rows: (ref, PosX, PosY, Rot, Side).
+        let kicad: [(&str, f64, f64, f64, &str); 5] = [
+            ("C69", 131.905, -67.375, 45.0, "Bottom"),
+            ("J3", 124.965, -62.910, 180.0, "Bottom"),
+            ("R38", 145.046_45, -76.675, -90.0, "Bottom"),
+            ("L1", 105.390, -83.730, 90.0, "Top"),
+            ("C1", 107.400, -67.130, 45.0, "Top"),
+        ];
+
+        let mut pcb = test_pcb();
+        pcb.footprints = cm5
+            .iter()
+            .map(|&(reference, x, y, rotation, front)| Footprint {
+                reference: reference.into(),
+                value: "x".into(),
+                footprint_name: "fp".into(),
+                position: Vec2::new(x, y),
+                rotation,
+                front,
+                // A land pattern whose pads carry their own (relative)
+                // rotation: it must NOT leak into the placement angle.
+                pads: vec![Pad {
+                    number: "1".into(),
+                    position: Vec2::new(0.5, 0.0),
+                    rotation: 37.0,
+                    shape: PadShape::Rect {
+                        width: 0.6,
+                        height: 0.3,
+                    },
+                    layers: vec![PcbLayer::FCu],
+                    net: None,
+                    pad_type: PadType::SMD,
+                    drill: None,
+                }],
+                graphics: vec![],
+                model_3d: None,
+                properties: Default::default(),
+            })
+            .collect();
+
+        let mut buf = Vec::new();
+        write_pick_place(&mut buf, &pcb).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        for &(reference, kx, ky, krot, kside) in &kicad {
+            let line = output
+                .lines()
+                .find(|l| l.starts_with(&format!("{reference},")))
+                .unwrap_or_else(|| panic!("no row for {reference}"));
+            let f: Vec<&str> = line.split(',').collect();
+            let (px, py, rot, side) = (
+                f[3].parse::<f64>().unwrap(),
+                f[4].parse::<f64>().unwrap(),
+                f[5].parse::<f64>().unwrap(),
+                f[6],
+            );
+
+            // The acceptance criterion: rotation matches KiCad exactly.
+            assert!(
+                (rot - krot).abs() < 1e-9,
+                "{reference}: rotation {rot} != KiCad {krot}"
+            );
+            assert_eq!(side, kside, "{reference}: side");
+            // Position tolerance is the CSV's own 4-decimal quantum (0.1 µm,
+            // vs KiCad's 6) — orders of magnitude below placement accuracy.
+            assert!((px - kx).abs() < 1e-4, "{reference}: PosX {px} != {kx}");
+            // Y: vcad's board frame is KiCad's negated (documented above).
+            assert!(
+                (py + ky).abs() < 1e-4,
+                "{reference}: PosY {py} should be -({ky})"
+            );
+        }
     }
 
     #[test]

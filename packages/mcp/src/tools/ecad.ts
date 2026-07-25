@@ -2894,11 +2894,25 @@ export async function placeComponents(args: Record<string, unknown>) {
 }
 
 /**
- * Axis-aligned half-extents (mm) of a single pad in footprint-local coords.
- * Mirrors the placer's keep-out sizing but keeps x/y separate for a tight
- * bounding box. Pad rotation is ignored (consistent with the placer).
+ * Axis-aligned half-extents (mm) of a single pad in footprint-local coords,
+ * honouring `pad.rotation` — which is RELATIVE to the footprint, so it turns
+ * the pad inside the land pattern. A 90°-rotated 0.25 x 0.875 pad is 0.875
+ * wide, not 0.25; ignoring it under-sizes every rotated land pattern.
  */
-function padHalfExtents(shape: Pad["shape"]): { hx: number; hy: number } {
+function padHalfExtents(
+  shape: Pad["shape"],
+  rotationDeg = 0,
+): { hx: number; hy: number } {
+  const { hx, hy } = padHalfExtentsLocal(shape);
+  if (!rotationDeg) return { hx, hy };
+  const r = (rotationDeg * Math.PI) / 180;
+  const c = Math.abs(Math.cos(r));
+  const s = Math.abs(Math.sin(r));
+  return { hx: hx * c + hy * s, hy: hx * s + hy * c };
+}
+
+/** Unrotated axis-aligned half-extents of a pad shape. */
+function padHalfExtentsLocal(shape: Pad["shape"]): { hx: number; hy: number } {
   switch (shape.type) {
     case "Circle":
       return { hx: shape.diameter / 2, hy: shape.diameter / 2 };
@@ -2927,8 +2941,11 @@ function padHalfExtents(shape: Pad["shape"]): { hx: number; hy: number } {
  * engine-resolved, or generic placeholder). The suggested outline keeps the
  * board's current shape and honors `edge_margin`. Returns undefined when
  * there's nothing to measure (no pads, or a degenerate board area).
+ *
+ * Exported for tests — `pad.rotation` / `fp.rotation` handling is pinned by
+ * `utilization honours pad and footprint rotation`.
  */
-function computeUtilization(
+export function computeUtilization(
   footprints: Footprint[],
   vertices: Vec2[],
   cutouts: Vec2[][] | undefined,
@@ -2958,7 +2975,7 @@ function computeUtilization(
     let lMaxX = -Infinity;
     let lMaxY = -Infinity;
     for (const pad of fp.pads) {
-      const { hx, hy } = padHalfExtents(pad.shape);
+      const { hx, hy } = padHalfExtents(pad.shape, pad.rotation ?? 0);
       lMinX = Math.min(lMinX, pad.position.x - hx);
       lMaxX = Math.max(lMaxX, pad.position.x + hx);
       lMinY = Math.min(lMinY, pad.position.y - hy);
@@ -2966,10 +2983,26 @@ function computeUtilization(
     }
     if (!Number.isFinite(lMinX)) continue; // padless footprint — skip
     componentArea += (lMaxX - lMinX) * (lMaxY - lMinY);
-    occMinX = Math.min(occMinX, fp.position.x + lMinX);
-    occMaxX = Math.max(occMaxX, fp.position.x + lMaxX);
-    occMinY = Math.min(occMinY, fp.position.y + lMinY);
-    occMaxY = Math.max(occMaxY, fp.position.y + lMaxY);
+    // The local box lives in the footprint's UNROTATED frame, so rotate its
+    // corners by fp.rotation before unioning into the board-frame extent —
+    // the same transform as pad_world_position. Adding fp.position without
+    // this measured a 90°-turned connector along the wrong axis.
+    const ang = ((fp.rotation ?? 0) * Math.PI) / 180;
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    for (const [lx, ly] of [
+      [lMinX, lMinY],
+      [lMinX, lMaxY],
+      [lMaxX, lMinY],
+      [lMaxX, lMaxY],
+    ]) {
+      const wx = fp.position.x + lx * ca - ly * sa;
+      const wy = fp.position.y + lx * sa + ly * ca;
+      occMinX = Math.min(occMinX, wx);
+      occMaxX = Math.max(occMaxX, wx);
+      occMinY = Math.min(occMinY, wy);
+      occMaxY = Math.max(occMaxY, wy);
+    }
   }
 
   // Usable board area = outer polygon minus cutouts (shoelace, sign-agnostic).
@@ -7914,8 +7947,9 @@ export function getPadPositions(args: Record<string, unknown>) {
 // ============================================================================
 
 /** Local-frame courtyard AABB of a footprint: prefer an explicit courtyard
- *  graphic (FCrtYd/BCrtYd rect), else the pad bounding box. Null when empty. */
-function localCourtyardAabb(
+ *  graphic (FCrtYd/BCrtYd rect), else the pad bounding box. Null when empty.
+ *  Exported for tests — the pad fallback must honour `pad.rotation`. */
+export function localCourtyardAabb(
   pads: Pad[],
   graphics: Footprint["graphics"],
 ): { min: Vec2; max: Vec2 } | null {
@@ -7928,25 +7962,17 @@ function localCourtyardAabb(
     }
   }
   // Fall back to the pad bounding box (half-extent of each pad's copper).
+  // `padHalfExtents` applies `pad.rotation`, which is RELATIVE to the
+  // footprint and so belongs in this local frame — a rotated pad widens the
+  // land pattern along the other axis. It also handles Custom polygons, which
+  // the old inline helper flattened to a 0.5mm stub.
   if (pads.length === 0) return null;
-  const half = (shape: Pad["shape"]): { hx: number; hy: number } => {
-    switch (shape.type) {
-      case "Circle":
-        return { hx: shape.diameter / 2, hy: shape.diameter / 2 };
-      case "Rect":
-      case "Oval":
-      case "RoundRect":
-        return { hx: shape.width / 2, hy: shape.height / 2 };
-      default:
-        return { hx: 0.5, hy: 0.5 };
-    }
-  };
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
     maxY = -Infinity;
   for (const p of pads) {
-    const { hx, hy } = half(p.shape);
+    const { hx, hy } = padHalfExtents(p.shape, p.rotation ?? 0);
     minX = Math.min(minX, p.position.x - hx);
     minY = Math.min(minY, p.position.y - hy);
     maxX = Math.max(maxX, p.position.x + hx);
