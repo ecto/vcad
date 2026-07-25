@@ -994,6 +994,26 @@ function findPreviewMode(result: ToolResultLike): string | null {
  * current state and only re-fetches when it actually changes. Shared by the
  * tool-result handler (mount tools) and the poll loop (data-tool mutations).
  */
+/**
+ * Turn a failed `get_preview_glb` into a status line that explains WHY the
+ * viewport went dark. The server distinguishes "lost to a restart" from "no
+ * such id" in its error text, so key off that rather than guessing: a restart
+ * is unrecoverable for this widget (re-run the authoring call), while any other
+ * error is worth reporting verbatim-ish.
+ */
+function sessionLostStatus(result: ToolResultLike): string {
+  const text = (result?.content ?? [])
+    .map((b) => (b?.type === "text" ? b.text ?? "" : ""))
+    .join(" ");
+  if (/SESSION LOST TO A SERVER RESTART/i.test(text)) {
+    return "session lost (server restarted) — re-run the last authoring call";
+  }
+  if (/Unknown document_id/i.test(text)) {
+    return "session no longer on the server — re-run the last authoring call";
+  }
+  return "preview unavailable (server error)";
+}
+
 async function fetchAndRenderGlb(
   docId: string,
   changed: PartsChanged | null,
@@ -1013,8 +1033,18 @@ async function fetchAndRenderGlb(
     // An error result (e.g. the session isn't resident on the instance that
     // answered) is not the same as an empty document — say so instead of
     // masquerading as "no geometry".
+    //
+    // Name the CAUSE, not just the symptom. When a non-durable server restarts,
+    // every mounted widget in the transcript goes dark at the same moment —
+    // including ones that rendered fine minutes earlier — which reads exactly
+    // like a broken renderer. "preview unavailable" sent people to debug the
+    // viewer; the server tells us the session is gone, so say that and give
+    // the remedy. (The inline `_meta` GLB can't rescue this: it only covers
+    // first paint on mount tools.)
     setStatus(
-      previewResult?.isError ? "preview unavailable" : "no geometry to preview",
+      previewResult?.isError
+        ? sessionLostStatus(previewResult)
+        : "no geometry to preview",
       "idle",
     );
     return;

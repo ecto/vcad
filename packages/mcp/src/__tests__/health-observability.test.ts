@@ -3,6 +3,7 @@ import { Engine } from "@vcad/engine";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer, getBuildInfo } from "../server.js";
+import { currentBootToken } from "../tools/session.js";
 import {
   computeStaleness,
   getExpectedBuildSha,
@@ -179,6 +180,26 @@ describe("tool results carry build identity in _meta (end-to-end)", () => {
     expect(meta.version_full).toBe(info.version_full);
     expect(typeof meta.uptime_s).toBe("number");
     expect(typeof meta.is_stale).toBe("boolean");
+
+    await client.close();
+    await server.close();
+  });
+
+  // Restart detection without polling: a client that remembers boot_token
+  // learns the server restarted (and whether that cost it its open documents)
+  // on the very next call — instead of when a dead document_id finally fails
+  // many turns later.
+  it("stamps the restart signal (boot_token + session_durable) on every result", async () => {
+    const { client, server } = await connect();
+    const res = await client.callTool({ name: "open_document", arguments: {} });
+
+    const meta = buildMetaOf(res);
+    expect(meta.boot_token).toBe(currentBootToken());
+    expect(typeof meta.session_durable).toBe("boolean");
+    // Stable within a process — a CHANGE is the signal, so it must not be
+    // re-randomized per call.
+    const again = await client.callTool({ name: "server_info", arguments: {} });
+    expect(buildMetaOf(again).boot_token).toBe(meta.boot_token);
 
     await client.close();
     await server.close();

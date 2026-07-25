@@ -17,6 +17,9 @@
  * in-memory impl reproduces today's behavior exactly.
  */
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import nodePath from "node:path";
+import os from "node:os";
 import type { Document } from "@vcad/ir";
 import type { AuthUser } from "./oauth.js";
 
@@ -54,6 +57,102 @@ export class InMemorySessionStore implements SessionStore {
   async drop(): Promise<void> {
     /* nothing durable to forget */
   }
+}
+
+/**
+ * Disk-backed store for LOCAL runs (stdio / `npx @vcad/mcp` / a dev server on a
+ * developer's machine). One JSON file per session under the session directory.
+ *
+ * WHY this is the local default: an agent can spend 30+ turns authoring an
+ * assembly, and a process restart under it used to vaporize the work with no
+ * signal. The Supabase store fixes that for hosted deploys, but local runs have
+ * no Supabase env and fell all the way back to in-memory. A file per session is
+ * the cheapest thing that survives a restart, needs no configuration, and keeps
+ * the same load/save/drop contract — so the existing hydrate-on-miss dispatch
+ * path rehydrates a local session exactly like a cloud one.
+ *
+ * Deliberately NOT used on a production/serverless deploy: a function instance's
+ * filesystem is ephemeral and unshared, so a file store there would report
+ * durable:true while providing none — strictly worse than the loud warning.
+ *
+ * Best-effort throughout, mirroring the Supabase stores: a read failure is a
+ * miss (the warm cache still serves), a write failure is logged and never turns
+ * a successful tool call into an error.
+ */
+export class FileSessionStore implements SessionStore {
+  readonly scope = "capability" as const;
+  constructor(private dir: string) {}
+
+  /** Session ids are `doc_<n>_<base64url>`; anything else can't have been
+   *  minted by us, and must never be able to escape the session directory. */
+  private pathFor(documentId: string): string | null {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(documentId)) return null;
+    return nodePath.join(this.dir, `${documentId}.json`);
+  }
+
+  async load(documentId: string): Promise<Document | null> {
+    const file = this.pathFor(documentId);
+    if (!file) return null;
+    try {
+      const raw = await fs.readFile(file, "utf8");
+      return unwrapDocument(JSON.parse(raw) as unknown);
+    } catch (err) {
+      // ENOENT is the ordinary miss — only log something unexpected.
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        console.error("[session-store] file load failed:", err);
+      }
+      return null;
+    }
+  }
+
+  async save(documentId: string, doc: Document): Promise<void> {
+    const file = this.pathFor(documentId);
+    if (!file) return;
+    try {
+      await fs.mkdir(this.dir, { recursive: true });
+      // Write-then-rename: a crash mid-write leaves the previous good snapshot
+      // rather than a truncated file that would fail to parse on rehydrate.
+      const tmp = `${file}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(doc), "utf8");
+      await fs.rename(tmp, file);
+    } catch (err) {
+      console.error("[session-store] file save failed:", err);
+    }
+  }
+
+  async drop(documentId: string): Promise<void> {
+    const file = this.pathFor(documentId);
+    if (!file) return;
+    try {
+      await fs.rm(file, { force: true });
+    } catch (err) {
+      console.error("[session-store] file drop failed:", err);
+    }
+  }
+}
+
+/** Where local sessions persist: `VCAD_MCP_SESSION_DIR`, else
+ *  `~/.vcad/mcp-sessions`. */
+export function sessionDir(): string {
+  return (
+    process.env.VCAD_MCP_SESSION_DIR ||
+    nodePath.join(os.homedir(), ".vcad", "mcp-sessions")
+  );
+}
+
+/**
+ * True when local runs should persist sessions to disk: not a hosted
+ * production deploy, no Supabase env (which takes precedence), and not
+ * explicitly opted out with `VCAD_MCP_DISK_SESSIONS=0`.
+ */
+export function useFileSessionStore(): boolean {
+  if (/^(0|false|off)$/i.test(process.env.VCAD_MCP_DISK_SESSIONS || "")) {
+    return false;
+  }
+  if (isProductionDeploy()) return false;
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  return !(url && key);
 }
 
 /**
@@ -361,7 +460,10 @@ function unwrapDocument(content: unknown): Document | null {
 export function isSessionStoreDurable(): boolean {
   const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  return !!(url && key);
+  if (url && key) return true;
+  // A local run persists to disk, which survives the restart this flag exists
+  // to warn about. (Never true on a serverless deploy — see useFileSessionStore.)
+  return useFileSessionStore();
 }
 
 /** True on a hosted production deploy: Vercel prod (`VERCEL_ENV=production`) or
@@ -379,14 +481,29 @@ export function isProductionDeploy(): boolean {
  *  condition is observable over the wire without reading logs. */
 export function sessionStoreInfo(): {
   durable: boolean;
-  session_store: "supabase" | "in-memory";
+  session_store: "supabase" | "file" | "in-memory";
   production: boolean;
+  /** Where file-backed sessions live — only set for the "file" store, so an
+   *  operator can find (or clear) them. */
+  session_dir?: string;
 } {
-  const durable = isSessionStoreDurable();
+  const supabase = !!(
+    (process.env.SUPABASE_URL || "").replace(/\/+$/, "") &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+  if (supabase) {
+    return {
+      durable: true,
+      session_store: "supabase",
+      production: isProductionDeploy(),
+    };
+  }
+  const file = useFileSessionStore();
   return {
-    durable,
-    session_store: durable ? "supabase" : "in-memory",
+    durable: file,
+    session_store: file ? "file" : "in-memory",
     production: isProductionDeploy(),
+    ...(file ? { session_dir: sessionDir() } : {}),
   };
 }
 
@@ -424,6 +541,9 @@ export function createSessionStore(user: AuthUser | null): SessionStore {
       ? new SupabaseSessionStore({ supabaseUrl: url, serviceRoleKey: key, userId: user.sub })
       : new AnonSupabaseSessionStore({ supabaseUrl: url, serviceRoleKey: key });
   }
+  // Local run: persist to disk so a restart doesn't vaporize an in-progress
+  // build. Opt out with VCAD_MCP_DISK_SESSIONS=0 for the old pure-memory mode.
+  if (useFileSessionStore()) return new FileSessionStore(sessionDir());
   return new InMemorySessionStore();
 }
 
