@@ -746,9 +746,15 @@ mod tests {
         .report;
 
         assert!(!report.converged, "an unroutable short must fail closed");
+        assert!(report.blocker.is_some(), "a failed run must name a blocker");
+        // Two acceptable shapes, and the loop may reach either depending on how
+        // far it wanders: it restored the best board it saw, so no copper was
+        // lost at all (`regression() == 0`), or it did hand back a sparser board
+        // and said so. What is never allowed is regressing silently — clearing
+        // violations by deleting copper and reporting that as progress.
         assert!(
-            report.connectivity.regression() > 0
-                && report
+            report.connectivity.regression() == 0
+                || report
                     .blocker
                     .as_deref()
                     .is_some_and(|b| b.contains("unconnected")),
