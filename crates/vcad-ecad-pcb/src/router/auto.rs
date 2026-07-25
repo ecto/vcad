@@ -14,9 +14,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer};
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Zone};
 use vcad_ir::Vec2;
 
+use crate::pour_synth::{synthesize_pours, PourPolicy};
 use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, RatsnestLine};
 use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
@@ -108,6 +109,12 @@ pub struct RouteAllResult {
     /// Overall routability in `[0, 1]`: the fraction of attempted connections
     /// that were routed. `1.0` means a fully-routed board.
     pub routability: f64,
+    /// Copper pours synthesized for high-current nets (see
+    /// [`crate::pour_synth`]). **Callers must add these to the board along with
+    /// the traces and vias**: the routing above assumes them — a poured net is
+    /// carried by its plane, so its pads were stitched to the plane instead of
+    /// traced to each other. Empty when nothing was synthesized.
+    pub zones: Vec<Zone>,
 }
 
 /// Knobs for [`route_all_with_opts`].
@@ -147,6 +154,12 @@ pub struct RouteOptions {
     /// inspect the raw emitter output; it removes nothing electrically live, so
     /// routability and the routed/unrouted split read the same either way.
     pub prune_dangling_copper: bool,
+    /// Copper-pour synthesis policy: which nets get a plane instead of traces
+    /// (see [`crate::pour_synth`]). Synthesized zones come back in
+    /// [`RouteAllResult::zones`] and the caller must add them to the board —
+    /// the routing assumes them. Set `enabled: false` to route a board exactly
+    /// as it was authored.
+    pub pour_policy: PourPolicy,
 }
 
 impl RouteOptions {
@@ -187,6 +200,7 @@ impl Default for RouteOptions {
             effort: 1.0,
             priority_nets: Vec::new(),
             prune_dangling_copper: true,
+            pour_policy: PourPolicy::default(),
         }
     }
 }
@@ -236,6 +250,10 @@ fn gpu_negotiation_enabled() -> bool {
 fn negotiate_first_regime(pcb: &Pcb) -> bool {
     gpu_negotiation_enabled() && copper_layers(pcb).len() >= 4
 }
+
+/// Same-net landing points the plane-stitch maze rescue will try, nearest
+/// first, before reporting a pad unstitchable.
+const PLANE_RESCUE_TARGETS: usize = 8;
 
 /// History cost (mm-equivalent) deposited on a contested corridor per
 /// negotiation round. A gentle, accumulating bias: enough that a flexible net
@@ -334,6 +352,32 @@ pub fn route_all_with_opts(
     nets_filter: &[String],
     opts: &RouteOptions,
 ) -> RouteAllResult {
+    // Synthesize copper pours for the high-current nets before anything reads
+    // the board's zones. A synthesized plane changes the routing problem exactly
+    // as a hand-authored one does — its net is carried by the plane, not by
+    // pad-to-pad traces — so it has to be in place before the ratsnest is taken.
+    // Nets that already own a pour are left alone, so this complements existing
+    // zones rather than duplicating them.
+    let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
+    let poured_board;
+    let pcb = if synthesized.is_empty() {
+        pcb
+    } else {
+        log::info!(
+            "pour synthesis: {} zone(s) across {} net(s)",
+            synthesized.len(),
+            synthesized
+                .iter()
+                .map(|z| z.net.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+        );
+        let mut p = pcb.clone();
+        p.zones.extend(synthesized.iter().cloned());
+        poured_board = p;
+        &poured_board
+    };
+
     let netlist = netlist_from_pads(pcb);
     let mut rats = compute_ratsnest(pcb, &netlist);
 
@@ -535,9 +579,12 @@ pub fn route_all_with_opts(
     // its own layer — get a dog-bone escape via to the back copper. This only
     // *adds* copper for already-unrouted nets, so it can't disturb the routes
     // rip-up settled; a connection it still can't route stays unrouted.
+    // Holes already drilled in the board — consulted before every escape /
+    // stitch via so none of them lands hole-to-hole illegal.
+    let holes = board_holes(pcb);
     let mut still_unrouted = Vec::new();
     for (net, from, to) in pending {
-        match try_route_fanout(&mut session, pcb, width, &net, from, to, &placed) {
+        match try_route_fanout(&mut session, pcb, width, &net, from, to, &placed, &holes) {
             Some(p) => placed.push(p),
             None => still_unrouted.push((net, from, to)),
         }
@@ -561,7 +608,27 @@ pub fn route_all_with_opts(
     // Stitch the planed nets' pads down to their planes (issue #289 part 2).
     // Runs after signal routing so each stitching via avoids the routed copper
     // and is probed on every copper layer it spans before being committed.
-    let mut stitch = stitch_planes(&mut session, pcb, &planes, nets_filter, &placed, width);
+    let mut stitch = stitch_planes(
+        &mut session,
+        pcb,
+        &planes,
+        nets_filter,
+        &placed,
+        width,
+        &holes,
+    );
+    {
+        let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        for (_, n) in &stitch.vias {
+            per_net.entry(n.as_str()).or_default().0 += 1;
+        }
+        for (n, _) in &stitch.failed_pads {
+            per_net.entry(n.as_str()).or_default().1 += 1;
+        }
+        for (n, (vias, failed)) in &per_net {
+            log::info!("plane stitch {n}: {vias} via(s), {failed} pad(s) unstitched");
+        }
+    }
 
     // Maze rescue for pads the radial dog-bone couldn't escape (issue: a
     // fine-pitch pad boxed in by already-routed copper has no *straight*
@@ -606,7 +673,10 @@ pub fn route_all_with_opts(
         targets.retain(|t| dist(*t, pad_pt) > 1e-6);
         targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
         let mut rescued = false;
-        for t in targets.into_iter().take(3) {
+        // A plane offers many galvanically equivalent landing points; the three
+        // nearest are often all boxed in by the same local congestion, so give
+        // the search a wider set before declaring the pad unstitchable.
+        for t in targets.into_iter().take(PLANE_RESCUE_TARGETS) {
             if let Some(p) = try_route(
                 &mut session,
                 pcb,
@@ -697,12 +767,19 @@ pub fn route_all_with_opts(
     // copper is still hole-to-hole illegal. Enforces the invariant that an
     // autoroute pass never returns HoleToHole or SameNetBypass violations of
     // its own making.
-    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias);
-    if legal.merged_vias > 0 || legal.pruned_traces > 0 || !legal.demoted.is_empty() {
+    let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _)| *p).collect();
+    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias, &stitch_via_pts);
+    if legal.merged_vias > 0
+        || legal.pruned_traces > 0
+        || !legal.demoted.is_empty()
+        || !legal.dropped_stitches.is_empty()
+    {
         log::info!(
-            "post-route legalization: merged {} vias, pruned {} traces, demoted {} nets",
+            "post-route legalization: merged {} vias, pruned {} traces, dropped {} stitch vias, \
+             demoted {} nets",
             legal.merged_vias,
             legal.pruned_traces,
+            legal.dropped_stitches.len(),
             legal.demoted.len(),
         );
     }
@@ -819,6 +896,7 @@ pub fn route_all_with_opts(
         unrouted_nets: unrouted.into_iter().collect(),
         diagnostics,
         routability,
+        zones: synthesized,
     }
 }
 
@@ -2522,6 +2600,7 @@ fn try_push_shove(
 /// maze can't connect them — so it either commits a fully clearance-legal route
 /// or mutates nothing. Because it only ever *adds* copper for an
 /// already-unrouted net, running it never disturbs the routes rip-up settled.
+#[allow(clippy::too_many_arguments)]
 fn try_route_fanout(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -2530,6 +2609,7 @@ fn try_route_fanout(
     from: Vec2,
     to: Vec2,
     placed: &[Placed],
+    holes: &[Hole],
 ) -> Option<Placed> {
     let w = session.width_for(net, width);
     let hw = w / 2.0;
@@ -2555,6 +2635,7 @@ fn try_route_fanout(
         &via_pts,
         &mut spans,
         false,
+        holes,
     ) {
         Some(e) => e,
         None => {
@@ -2583,6 +2664,7 @@ fn try_route_fanout(
         &via_pts,
         &mut spans,
         false,
+        holes,
     ) {
         Some(e) => e,
         None => {
@@ -2675,10 +2757,36 @@ fn escape_endpoint(
     extra_vias: &[Vec2],
     spans: &mut Vec<SpanId>,
     force_fanout: bool,
+    holes: &[Hole],
 ) -> Option<Escape> {
     let hw = w / 2.0;
 
+    // Hole-to-hole legality against every drill already on the board and every
+    // via this pass has placed. Checked *here*, at placement, so the dog-bone
+    // ring search simply steps out to a drillable spot — rather than committing
+    // an illegal drill and leaving post-route legalization to strip the net's
+    // whole set of stitches to get rid of it.
+    let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+    let min_hole_gap = pcb.rules.hole_to_hole;
+    let hole_legal = |p: Vec2| -> bool {
+        let clears = |other: Vec2, r: f64| {
+            let d = dist(p, other);
+            // A coincident drill is the reuse case, decided by `reused` above;
+            // it is never a second hole, so it is not a conflict here.
+            d < 0.05 || d - drill_r - r >= min_hole_gap - 1e-6
+        };
+        holes.iter().all(|&(c, r)| clears(c, r))
+            && placed
+                .iter()
+                .flat_map(|pl| pl.via_pts.iter().map(|&(vp, _, _)| vp))
+                .chain(extra_vias.iter().copied())
+                .all(|vp| clears(vp, drill_r))
+    };
+
     let via_legal = |session: &RouteSession, p: Vec2| -> bool {
+        if !hole_legal(p) {
+            return false;
+        }
         let disc = CopperGeom::Disc {
             center: p,
             r: via_r,
@@ -2843,6 +2951,38 @@ fn rollback(session: &mut RouteSession, spans: &[SpanId]) {
     }
 }
 
+/// A drilled hole as `(center, radius)` — the geometry the hole-to-hole rule
+/// judges. Radius, not diameter, so the edge gap is `dist - ra - rb`.
+pub(super) type Hole = (Vec2, f64);
+
+/// Every hole already drilled in the board: existing vias and every pad with a
+/// drill. Built once per routing call and consulted before a new via is placed,
+/// so an escape/stitch via never lands hole-to-hole illegal in the first place.
+///
+/// Without this the router placed the via wherever copper clearance allowed and
+/// left [`super::legalize`] to clean up — and its only lever is to strip the
+/// offending net's new copper entirely. For a plane-stitched power net that is
+/// catastrophic: one bad drill on a moteus GND pad cost all 43 of that net's
+/// stitching vias, leaving the pour connected to nothing.
+fn board_holes(pcb: &Pcb) -> Vec<Hole> {
+    let mut holes: Vec<Hole> = pcb
+        .vias
+        .iter()
+        .map(|v| (v.position, v.drill / 2.0))
+        .collect();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if let Some(drill) = &pad.drill {
+                holes.push((
+                    crate::geometry::pad_world_position(fp, pad),
+                    drill.diameter / 2.0,
+                ));
+            }
+        }
+    }
+    holes
+}
+
 /// Copper layers present in the stackup, top → bottom (FCu/BCu fallback).
 pub(super) fn copper_layers(pcb: &Pcb) -> Vec<PcbLayer> {
     let v: Vec<PcbLayer> = pcb
@@ -2906,6 +3046,7 @@ fn stitch_planes(
     nets_filter: &[String],
     placed: &[Placed],
     width: f64,
+    holes: &[Hole],
 ) -> Stitch {
     let mut out = Stitch {
         stubs: Vec::new(),
@@ -2918,6 +3059,13 @@ fn stitch_planes(
     }
     let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let copper = copper_layers(pcb);
+    // Drilled holes, growing as this pass places stitches. Stitch vias must
+    // clear each other's drills too — and *across* nets, where the same-net
+    // `extra` reuse list below cannot see them. A GND stitch landing hole-to-hole
+    // illegal against a +3V3 stitch is exactly the kind of single bad drill that
+    // used to cost the whole net its stitching in post-route legalization.
+    let mut holes: Vec<Hole> = holes.to_vec();
+    let drill_r = pcb.rules.default_rules.via_drill / 2.0;
 
     for fp in &pcb.footprints {
         for pad in &fp.pads {
@@ -2961,7 +3109,7 @@ fn stitch_planes(
             let mut spans: Vec<SpanId> = Vec::new();
             match escape_endpoint(
                 session, pcb, net, pad_pt, pad_layer, w, clearance, via_r, &copper, placed, &extra,
-                &mut spans, fine_pitch,
+                &mut spans, fine_pitch, &holes,
             ) {
                 Some(e) => {
                     if let Some((a, b)) = e.stub {
@@ -2969,6 +3117,7 @@ fn stitch_planes(
                     }
                     if let Some(v) = e.via {
                         out.vias.push((v, net.clone()));
+                        holes.push((v, drill_r));
                     }
                     out.nets.insert(net.clone());
                     // spans stay committed — the stitching copper is part of the board.
@@ -4645,7 +4794,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
-                prune_dangling_copper: true,
+                ..Default::default()
             },
         );
         assert_eq!(
@@ -4684,7 +4833,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
-                prune_dangling_copper: true,
+                ..Default::default()
             },
         );
         // The shipped default: negotiated congestion + validated push-shove.
@@ -4778,7 +4927,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
-                prune_dangling_copper: true,
+                ..Default::default()
             },
         );
         let default = route_all(&pcb, 0.25, &[]);

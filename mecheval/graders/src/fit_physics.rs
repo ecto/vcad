@@ -52,6 +52,14 @@
 use crate::blob::CheckOutcome;
 use crate::fit::HostGeometry;
 use phyz::collision::{epa_penetration_rot, gjk_distance_rot, sweep_and_prune, Collision, AABB};
+// phyz 0.3 deprecates the penalty solver in favour of the convex solve
+// (`assemble` + `solve_contacts`), which couples contacts through the
+// Delassus operator instead of treating each in isolation. That is a
+// different contact model, not a drop-in rename: switching it would move
+// every drift number this grader measures and silently re-grade the mecheval
+// F-suite. Kept deliberately on the penalty path until that migration is done
+// and re-baselined against the task tolerances.
+#[allow(deprecated)]
 use phyz::contact::contact_forces_implicit;
 use phyz::math::{Mat3, SpatialInertia, SpatialTransform, SpatialVec, Vec3};
 use phyz::model::ModelBuilder;
@@ -234,6 +242,7 @@ pub fn check_pull_force(
 /// for `duration_sec`, return the accessory's world-frame translation
 /// magnitude in meters. `external_world_force_n` is an optional constant
 /// force on the accessory, expressed in world frame, in newtons.
+#[allow(deprecated)]
 fn simulate_drop(
     candidate: &Solid,
     host: &HostGeometry,

@@ -24,6 +24,14 @@
 //! invariant they enforce together: an autoroute pass on a clean placement
 //! never introduces `HoleToHole` or `SameNetBypass` violations of its own
 //! making, and never returns copper connected to nothing.
+//!
+//! Demotion is per *net*, which is the right granularity for a routed net whose
+//! copper is one connected path — but not for a plane-stitched power net, whose
+//! copper is dozens of independent pad→plane vias. There, one bad drill would
+//! strip every stitch and leave the pour connected to nothing (measured on the
+//! moteus fixture: a single hole conflict cost all 32 GND stitches). A stitch
+//! via is therefore dropped on its own, taking only its dog-bone stub with it;
+//! the pad it served is then honestly reported by the DRC's `UnstitchedPad`.
 
 use std::collections::BTreeSet;
 
@@ -54,6 +62,9 @@ pub(super) struct LegalizeReport {
     /// hole-to-hole illegal after merging (fail-closed: better unrouted than
     /// unmanufacturable). Each entry carries the position of the offending via.
     pub demoted: Vec<(String, Vec2)>,
+    /// Plane-stitch vias dropped individually (with their dog-bone stub) rather
+    /// than demoting the whole net. Each entry is the via position.
+    pub dropped_stitches: Vec<Vec2>,
 }
 
 /// Legalize the router's flattened output in place. See the module docs.
@@ -61,6 +72,7 @@ pub(super) fn legalize(
     pcb: &Pcb,
     traces: &mut Vec<RoutedTrace>,
     vias: &mut Vec<RoutedVia>,
+    stitch_vias: &[Vec2],
 ) -> LegalizeReport {
     let mut report = LegalizeReport::default();
     if traces.is_empty() && vias.is_empty() {
@@ -84,10 +96,22 @@ pub(super) fn legalize(
                 DrcRuleType::HoleToHole => {
                     // Only act when one of the holes is a via we placed; a
                     // pad-vs-pad conflict is the placement's, not ours.
-                    let Some(net) = new_via_net_at_holes(v, vias) else {
+                    let Some(idx) = new_via_at_holes(v, vias) else {
                         continue;
                     };
-                    demote_net(&net, v.position, traces, vias, &mut report);
+                    // A plane stitch is an independent pad→plane connection:
+                    // drop just that via (and its dog-bone stub) so the net's
+                    // other stitches survive. Anything else is part of a routed
+                    // path, where half a path is worse than none.
+                    if stitch_vias
+                        .iter()
+                        .any(|p| d2(*p, vias[idx].position) <= POS_EPS * POS_EPS)
+                    {
+                        drop_stitch_via(idx, traces, vias, &mut report);
+                    } else {
+                        let net = vias[idx].net.clone();
+                        demote_net(&net, v.position, traces, vias, &mut report);
+                    }
                     progressed = true;
                     break; // copper changed — re-judge from scratch
                 }
@@ -398,16 +422,34 @@ fn new_copper_bbox(traces: &[RoutedTrace], vias: &[RoutedVia]) -> (Vec2, Vec2) {
 /// two hole centers, so membership is tested against both actual hole centers
 /// via the message-independent geometry: a new via whose center is within its
 /// pad diameter of the reported midpoint and whose hole pair distance matches.
-fn new_via_net_at_holes(v: &DrcViolation, vias: &[RoutedVia]) -> Option<String> {
+fn new_via_at_holes(v: &DrcViolation, vias: &[RoutedVia]) -> Option<usize> {
     // The midpoint sits between the two holes; each hole center is within
     // (center distance)/2 of it. Center distance = actual + r_a + r_b, and all
     // router drills are sub-millimeter, so a generous radius bound suffices.
     let reach = (v.actual.abs() + 2.0).max(2.0);
     vias.iter()
-        .filter(|via| d2(via.position, v.position).sqrt() <= reach)
-        .map(|via| (d2(via.position, v.position).sqrt(), via.net.clone()))
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(_, net)| net)
+        .enumerate()
+        .filter(|(_, via)| d2(via.position, v.position).sqrt() <= reach)
+        .min_by(|a, b| d2(a.1.position, v.position).total_cmp(&d2(b.1.position, v.position)))
+        .map(|(i, _)| i)
+}
+
+/// Drop one plane-stitch via and the dog-bone stub that fed it: any same-net
+/// trace with an endpoint on the via is that stub, and without the via it is
+/// copper leading nowhere.
+fn drop_stitch_via(
+    idx: usize,
+    traces: &mut Vec<RoutedTrace>,
+    vias: &mut Vec<RoutedVia>,
+    report: &mut LegalizeReport,
+) {
+    let via = vias.remove(idx);
+    traces.retain(|t| {
+        t.net != via.net
+            || (d2(t.start, via.position) > POS_EPS * POS_EPS
+                && d2(t.end, via.position) > POS_EPS * POS_EPS)
+    });
+    report.dropped_stitches.push(via.position);
 }
 
 /// Fail-closed: strip every piece of new copper on `net` and record the
@@ -569,7 +611,7 @@ mod tests {
         let pcb = board();
         let mut traces = vec![rtrace((5.0, 5.0), (10.0, 10.0), "A", PcbLayer::FCu)];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.0, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
         assert_eq!(report.merged_vias, 1);
         assert_eq!(vias.len(), 1);
         assert!(report.demoted.is_empty());
@@ -586,7 +628,7 @@ mod tests {
             rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::BCu),
         ];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
         assert_eq!(report.merged_vias, 1);
         assert_eq!(vias.len(), 1);
         // The BCu trace's end at the dropped via must still reach the survivor:
@@ -624,7 +666,7 @@ mod tests {
         });
         let mut traces = vec![rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::FCu)];
         let mut vias = vec![rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
         assert_eq!(report.demoted.len(), 1);
         assert_eq!(report.demoted[0].0, "A");
         assert!(vias.is_empty() && traces.is_empty());
@@ -718,6 +760,54 @@ mod tests {
         assert_eq!((traces.len(), vias.len()), (2, 1));
     }
 
+    /// A plane-stitch via that lands hole-to-hole illegal is dropped on its own
+    /// — one bad drill must not cost a poured net every other stitch it has.
+    #[test]
+    fn illegal_plane_stitch_is_dropped_without_demoting_the_net() {
+        let mut pcb = board();
+        pcb.vias.push(Via {
+            position: Vec2::new(10.0, 10.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "B".into(),
+            source: Some(CopperSource::Manual),
+        });
+        // Three GND plane stitches; only the first conflicts with the fixed
+        // hole above, and it carries a dog-bone stub.
+        let bad = Vec2::new(10.3, 10.0);
+        let mut vias = vec![
+            rvia(bad.x, bad.y, "GND"),
+            rvia(30.0, 10.0, "GND"),
+            rvia(30.0, 20.0, "GND"),
+        ];
+        let mut traces = vec![rtrace((9.0, 10.0), (bad.x, bad.y), "GND", PcbLayer::FCu)];
+        let stitches = vec![bad, Vec2::new(30.0, 10.0), Vec2::new(30.0, 20.0)];
+        let report = legalize(&pcb, &mut traces, &mut vias, &stitches);
+
+        assert!(
+            report.demoted.is_empty(),
+            "the net must survive: {report:?}"
+        );
+        assert_eq!(report.dropped_stitches.len(), 1);
+        assert_eq!(vias.len(), 2, "the other two stitches are kept");
+        assert!(
+            vias.iter().all(|v| d2(v.position, bad) > POS_EPS * POS_EPS),
+            "the offending via is gone"
+        );
+        assert!(traces.is_empty(), "its dog-bone stub goes with it");
+
+        // And the result really is hole-to-hole clean.
+        let candidate = candidate_pcb(&pcb, &traces, &vias);
+        assert!(
+            !crate::drc::check_drc(&candidate)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::HoleToHole),
+            "legalized output must be hole-to-hole clean"
+        );
+    }
+
     /// A redundant same-net segment that brushes distant copper of its own net
     /// (SameNetBypass) is pruned when the net stays connected without it.
     #[test]
@@ -745,7 +835,7 @@ mod tests {
             rtrace((8.0, 10.0), (5.0, 10.0), "A", PcbLayer::FCu),
         ];
         let mut vias = vec![];
-        let report = legalize(&pcb, &mut traces, &mut vias);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
         assert!(report.pruned_traces >= 1, "the noodle must be pruned");
         // The result must be bypass-free.
         let candidate = candidate_pcb(&pcb, &traces, &vias);

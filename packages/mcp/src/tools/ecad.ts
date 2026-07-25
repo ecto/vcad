@@ -3322,6 +3322,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   let tracesRemoved = 0;
   let viasRemoved = 0;
+  let zonesAdded = 0;
   if (targetNets.size > 0) {
     const beforeT = pcb.traces.length;
     const beforeV = pcb.vias.length;
@@ -3398,6 +3399,14 @@ export async function routeNets(args: Record<string, unknown>) {
   };
 
   const applyRoute = (result: Awaited<ReturnType<typeof routeAll>>) => {
+    // Synthesized copper pours first. The routing that follows *assumes* them:
+    // a poured net is carried by its plane, so the kernel stitched its pads to
+    // the plane instead of tracing them to each other. Dropping them here would
+    // leave those nets connected to nothing.
+    for (const z of result.zones ?? []) {
+      pcb.zones.push(structuredClone(z));
+      zonesAdded++;
+    }
     for (const t of result.traces) {
       pcb.traces.push({
         start: { x: t.start.x, y: t.start.y },
@@ -3674,6 +3683,9 @@ export async function routeNets(args: Record<string, unknown>) {
           nets_routed: routedNets.size,
           routability,
           traces_added: tracesAdded,
+          // Copper pours the router synthesized for high-current nets: those
+          // nets are now carried by a plane and stitched to it, not traced.
+          ...(zonesAdded > 0 ? { zones_added: zonesAdded } : {}),
           // Copper hygiene: re-routing rips the prior route up first, so a
           // re-route reports both what it removed and what it laid — `added`
           // alone reads like monotonic growth even when copper is being

@@ -144,6 +144,13 @@ fn main() {
     );
 
     let width = pcb.rules.default_rules.trace_width;
+    // VCAD_POUR_SYNTH=0 routes the board exactly as authored — the A/B control
+    // for what copper-pour synthesis is worth on a given fixture.
+    let mut pour_policy = vcad_ecad_pcb::pour_synth::PourPolicy::default();
+    if std::env::var("VCAD_POUR_SYNTH").is_ok_and(|v| v == "0") {
+        pour_policy.enabled = false;
+        println!("pours: synthesis DISABLED (VCAD_POUR_SYNTH=0)");
+    }
     let t0 = Instant::now();
     let r = route_all_with_opts(
         &pcb,
@@ -152,6 +159,7 @@ fn main() {
         &RouteOptions {
             effort,
             priority_nets: priority.clone(),
+            pour_policy,
             ..Default::default()
         },
     );
@@ -167,6 +175,22 @@ fn main() {
         r.routed_nets.len(),
         r.unrouted_nets.len(),
     );
+    if !r.zones.is_empty() {
+        let mut by_net: BTreeMap<&str, usize> = BTreeMap::new();
+        for z in &r.zones {
+            *by_net.entry(z.net.as_str()).or_default() += 1;
+        }
+        println!(
+            "pours: {} synthesized zone(s) over {} net(s): {}",
+            r.zones.len(),
+            by_net.len(),
+            by_net
+                .iter()
+                .map(|(n, c)| format!("{n}x{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     println!(
         "score: routability {:.3}, via ratio {:.2}x human, length ratio {:.2}x human, {:.1}s",
         r.routability,
@@ -191,6 +215,12 @@ fn main() {
     // oracle-gated, so this can only improve the pair claims — and it runs
     // here, inside the route, so a *freshly routed* board is the one the
     // receipt is measured on.
+    //
+    // Synthesized pours go on first: the routing above assumes them (a poured
+    // net is carried by its plane, so its pads were stitched rather than traced
+    // to each other), and the SI pass reroutes against this board, so it has to
+    // see the planes too.
+    pcb.zones.extend(r.zones.iter().cloned());
     for t in &r.traces {
         pcb.traces.push(Trace {
             start: t.start,
