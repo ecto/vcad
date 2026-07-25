@@ -97,6 +97,9 @@ fn m2_harmonic_angles_match_fd() {
         triples: vec![(1, 0, 2)],
         k: 3.0,
         theta0: 1.4, // deliberately far from the actual angle for a strong signal
+        // phyz-md grew per-triple (k, theta0) overrides; empty keeps the
+        // uniform pair above, which is what this FD gate exercises.
+        per_angle: Vec::new(),
     };
     let rep = fd::check_forces(&angles, &sys, 1e-6);
     assert!(rep.max_abs_error < 1e-5, "angle FD mismatch {rep:?}");
