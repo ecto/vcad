@@ -64,12 +64,18 @@ pub struct IronStack {
 impl IronStack {
     /// No iron — the pure free-space case.
     pub fn none() -> Self {
-        Self { planes_z: Vec::new(), max_reflections: 0 }
+        Self {
+            planes_z: Vec::new(),
+            max_reflections: 0,
+        }
     }
 
     /// A single back-iron plane at `z_m`.
     pub fn single(z_m: f64) -> Self {
-        Self { planes_z: vec![z_m], max_reflections: 1 }
+        Self {
+            planes_z: vec![z_m],
+            max_reflections: 1,
+        }
     }
 
     /// Two parallel planes — the usual rotor/stator back-iron sandwich.
@@ -81,7 +87,10 @@ impl IronStack {
     /// confirm the achieved truncation with [`IronStack::tail_fraction`].
     pub fn pair(z_a: f64, z_b: f64, max_reflections: usize) -> Self {
         assert!(z_a != z_b, "iron planes must be distinct");
-        Self { planes_z: vec![z_a, z_b], max_reflections: max_reflections.max(1) }
+        Self {
+            planes_z: vec![z_a, z_b],
+            max_reflections: max_reflections.max(1),
+        }
     }
 
     /// Reflection depth that converges a balanced multi-pole rotor to ~1e-4.
