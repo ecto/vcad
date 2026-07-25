@@ -647,11 +647,27 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
         reference = footprint_name.clone();
     }
 
-    // Parse pads
+    // Parse pads.
+    //
+    // KiCad stores a pad's angle ABSOLUTELY — it already includes the
+    // footprint's orientation (rotate a footprint 90 degrees and every pad's
+    // `(at x y a)` becomes `a + 90`; measured across this repo's CM5 fixture:
+    // fp_rot -90 -> pad_rot 270 on 798 pads, 45 -> 45, 90 -> 90, 135 -> 135).
+    // vcad's IR stores it RELATIVE to the footprint, because every consumer
+    // (DRC, the router's spatial index, DFM, pour synthesis, render, the 3D
+    // mesh) composes `fp.rotation + pad.rotation`. Storing the absolute angle
+    // double-counted the footprint rotation on every rotated part: a QFN's
+    // 0.25 x 0.875mm pads at 0.5mm pitch came out rotated 90 degrees off, so
+    // neighbouring pads OVERLAPPED — phantom shorts in DRC and a pin field the
+    // router could not escape.
     let pads: Vec<Pad> = node
         .find_all("pad")
         .iter()
         .filter_map(|p| parse_pad(p, net_map))
+        .map(|mut pad| {
+            pad.rotation = normalize_deg(pad.rotation - rotation);
+            pad
+        })
         .collect();
 
     // Parse graphics (fp_line, fp_circle, fp_rect, fp_arc)
@@ -709,6 +725,16 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
 // ---------------------------------------------------------------------------
 // Pad
 // ---------------------------------------------------------------------------
+
+/// Fold an angle in degrees into `[0, 360)`.
+fn normalize_deg(a: f64) -> f64 {
+    let r = a % 360.0;
+    if r < 0.0 {
+        r + 360.0
+    } else {
+        r
+    }
+}
 
 fn parse_pad(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Pad> {
     let children = node.children()?;

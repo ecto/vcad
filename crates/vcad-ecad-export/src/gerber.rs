@@ -40,12 +40,45 @@ fn fmt_coord(val: i64) -> String {
 // Aperture helpers
 // ---------------------------------------------------------------------------
 
+/// Angles within this many degrees of a quadrant are treated as exactly on it.
+///
+/// Pad angles arrive from KiCad as decimal degrees (`90`, `-90`, `45`), so the
+/// only error to absorb is float formatting, not real off-axis intent.
+const ANGLE_EPS_DEG: f64 = 1e-6;
+
 /// Aperture shape used in the aperture definition table.
+///
+/// `Rect`/`Oval` are the axis-aligned standard apertures; `RotRect`/`RotOval`
+/// carry an off-axis rotation and are emitted as aperture macros (`%AM`). A
+/// rotation that is a multiple of 90° never reaches the macro forms — see
+/// [`ApertureShape::rect`] and [`ApertureShape::oval`], which fold it into a
+/// width/height swap, which is exact and keeps the aperture table small.
 #[derive(Debug, Clone, PartialEq)]
 enum ApertureShape {
-    Circle { diameter: f64 },
-    Rect { width: f64, height: f64 },
-    Oval { width: f64, height: f64 },
+    Circle {
+        diameter: f64,
+    },
+    Rect {
+        width: f64,
+        height: f64,
+    },
+    Oval {
+        width: f64,
+        height: f64,
+    },
+    /// Rectangle rotated `angle` degrees CCW about its centre.
+    RotRect {
+        width: f64,
+        height: f64,
+        angle: f64,
+    },
+    /// Obround rotated `angle` degrees CCW about its centre. `length` is the
+    /// long extent (along the unrotated X axis), `girth` the short one.
+    RotOval {
+        length: f64,
+        girth: f64,
+        angle: f64,
+    },
 }
 
 /// Unique key for de-duplicating apertures.
@@ -53,25 +86,170 @@ enum ApertureShape {
 struct ApertureKey {
     /// Discriminant tag.
     kind: &'static str,
-    /// Dimensions encoded as integer nanometres for exact hashing.
-    dims: [i64; 2],
+    /// Dimensions encoded as integer nanometres for exact hashing, plus the
+    /// rotation in micro-degrees. Two pads that differ only in rotation must
+    /// land on different keys, or they collapse into one wrongly-turned
+    /// aperture.
+    dims: [i64; 3],
+}
+
+/// Encode an angle in micro-degrees for exact hashing.
+fn angle_key(deg: f64) -> i64 {
+    (deg * 1_000_000.0).round() as i64
+}
+
+/// Reduce an angle to `[0, period)`.
+fn norm_angle(deg: f64, period: f64) -> f64 {
+    let a = deg % period;
+    let a = if a < 0.0 { a + period } else { a };
+    // Snap a hair below the period back to zero (e.g. 179.9999999 -> 0).
+    if (a - period).abs() < ANGLE_EPS_DEG {
+        0.0
+    } else {
+        a
+    }
 }
 
 impl ApertureShape {
+    /// Build a rectangular aperture rotated `angle` degrees CCW.
+    ///
+    /// A rectangle is 180°-symmetric, so the angle reduces mod 180; 0° and 90°
+    /// then collapse to a plain `R` aperture (with the sides swapped at 90°).
+    fn rect(width: f64, height: f64, angle: f64) -> Self {
+        let a = norm_angle(angle, 180.0);
+        if a < ANGLE_EPS_DEG {
+            ApertureShape::Rect { width, height }
+        } else if (a - 90.0).abs() < ANGLE_EPS_DEG {
+            ApertureShape::Rect {
+                width: height,
+                height: width,
+            }
+        } else {
+            ApertureShape::RotRect {
+                width,
+                height,
+                angle: a,
+            }
+        }
+    }
+
+    /// Build an obround aperture rotated `angle` degrees CCW.
+    ///
+    /// Normalised so the long axis is X at angle 0; a square obround is a
+    /// circle and rotation-invariant.
+    fn oval(width: f64, height: f64, angle: f64) -> Self {
+        // Put the long extent on X, folding a vertical obround into a
+        // horizontal one turned 90°.
+        let (length, girth, angle) = if width >= height {
+            (width, height, angle)
+        } else {
+            (height, width, angle + 90.0)
+        };
+        if (length - girth).abs() < 1e-9 {
+            return ApertureShape::Circle { diameter: girth };
+        }
+        let a = norm_angle(angle, 180.0);
+        if a < ANGLE_EPS_DEG {
+            ApertureShape::Oval {
+                width: length,
+                height: girth,
+            }
+        } else if (a - 90.0).abs() < ANGLE_EPS_DEG {
+            ApertureShape::Oval {
+                width: girth,
+                height: length,
+            }
+        } else {
+            ApertureShape::RotOval {
+                length,
+                girth,
+                angle: a,
+            }
+        }
+    }
+
     fn key(&self) -> ApertureKey {
         match self {
             ApertureShape::Circle { diameter } => ApertureKey {
                 kind: "C",
-                dims: [mm_to_coord(*diameter), 0],
+                dims: [mm_to_coord(*diameter), 0, 0],
             },
             ApertureShape::Rect { width, height } => ApertureKey {
                 kind: "R",
-                dims: [mm_to_coord(*width), mm_to_coord(*height)],
+                dims: [mm_to_coord(*width), mm_to_coord(*height), 0],
             },
             ApertureShape::Oval { width, height } => ApertureKey {
                 kind: "O",
-                dims: [mm_to_coord(*width), mm_to_coord(*height)],
+                dims: [mm_to_coord(*width), mm_to_coord(*height), 0],
             },
+            ApertureShape::RotRect {
+                width,
+                height,
+                angle,
+            } => ApertureKey {
+                kind: "RR",
+                dims: [mm_to_coord(*width), mm_to_coord(*height), angle_key(*angle)],
+            },
+            ApertureShape::RotOval {
+                length,
+                girth,
+                angle,
+            } => ApertureKey {
+                kind: "RO",
+                dims: [mm_to_coord(*length), mm_to_coord(*girth), angle_key(*angle)],
+            },
+        }
+    }
+
+    /// Name of the aperture macro backing this shape, if it needs one.
+    fn macro_name(&self, code: u32) -> Option<String> {
+        match self {
+            ApertureShape::RotRect { .. } => Some(format!("VCADRR{code}")),
+            ApertureShape::RotOval { .. } => Some(format!("VCADRO{code}")),
+            _ => None,
+        }
+    }
+
+    /// The `%AM...*%` macro body for this shape, if it needs one.
+    ///
+    /// Follows what KiCad emits for off-axis pads: primitive 21 (centre line —
+    /// a rectangle with a rotation parameter) for the body, and primitive 1
+    /// (circle) for an obround's end caps. One macro per distinct
+    /// (shape, angle) with literal numbers — no macro parameters, so there is
+    /// nothing for a downstream CAM tool to get wrong. Cap centres are
+    /// pre-rotated here rather than passed through the circle primitive's
+    /// rotation parameter, which older CAM tools do not accept.
+    fn macro_definition(&self, code: u32) -> Option<String> {
+        let name = self.macro_name(code)?;
+        match self {
+            ApertureShape::RotRect {
+                width,
+                height,
+                angle,
+            } => Some(format!(
+                "%AM{name}*\n21,1,{width:.6},{height:.6},0,0,{angle:.6}*%"
+            )),
+            ApertureShape::RotOval {
+                length,
+                girth,
+                angle,
+            } => {
+                // Body: a (length - girth) x girth bar, plus a circle of
+                // diameter `girth` at each end, all turned by `angle`.
+                let bar = length - girth;
+                let off = bar / 2.0;
+                let (s, c) = angle.to_radians().sin_cos();
+                let (cx, cy) = (off * c, off * s);
+                Some(format!(
+                    "%AM{name}*\n\
+                     21,1,{bar:.6},{girth:.6},0,0,{angle:.6}*\n\
+                     1,1,{girth:.6},{cx:.6},{cy:.6}*\n\
+                     1,1,{girth:.6},{nx:.6},{ny:.6}*%",
+                    nx = -cx,
+                    ny = -cy
+                ))
+            }
+            _ => None,
         }
     }
 
@@ -85,6 +263,10 @@ impl ApertureShape {
             }
             ApertureShape::Oval { width, height } => {
                 format!("%ADD{code}O,{width:.6}X{height:.6}*%")
+            }
+            ApertureShape::RotRect { .. } | ApertureShape::RotOval { .. } => {
+                let name = self.macro_name(code).expect("rotated shape has a macro");
+                format!("%ADD{code}{name}*%")
             }
         }
     }
@@ -119,10 +301,16 @@ impl ApertureTable {
         code
     }
 
-    /// Write all `%ADD...` definitions.
+    /// Write all aperture macros and `%ADD...` definitions.
+    ///
+    /// A macro must be defined before the `%ADD` that instantiates it, so each
+    /// shape emits its `%AM` immediately ahead of its own `%ADD`.
     fn write_definitions<W: Write>(&self, w: &mut W) -> Result<(), std::io::Error> {
         for (i, shape) in self.shapes.iter().enumerate() {
             let code = 10 + i as u32;
+            if let Some(mac) = shape.macro_definition(code) {
+                writeln!(w, "{mac}")?;
+            }
             writeln!(w, "{}", shape.definition(code))?;
         }
         Ok(())
@@ -217,24 +405,24 @@ fn resolve_pads_on_layer(footprint: &Footprint, layer: PcbLayer) -> Vec<Absolute
             let x = footprint.position.x + lx;
             let y = footprint.position.y + ly;
 
+            // The aperture turns with the footprint AND with the pad's own
+            // angle. vcad's IR stores the pad angle RELATIVE to its
+            // footprint, so the effective board-frame angle is the sum.
+            // Without this, every non-square pad on a rotated footprint was
+            // flashed axis-aligned — a 0.25 x 0.875mm QFN pad on a 90°-turned
+            // part came out 0.25mm wide, overlapping its neighbours.
+            let angle = footprint.rotation + pad.rotation;
+
             let shape = match &pad.shape {
+                // A circle is rotation-invariant.
                 PadShape::Circle { diameter } => ApertureShape::Circle {
                     diameter: *diameter,
                 },
-                PadShape::Rect { width, height } => ApertureShape::Rect {
-                    width: *width,
-                    height: *height,
-                },
-                PadShape::Oval { width, height } => ApertureShape::Oval {
-                    width: *width,
-                    height: *height,
-                },
+                PadShape::Rect { width, height } => ApertureShape::rect(*width, *height, angle),
+                PadShape::Oval { width, height } => ApertureShape::oval(*width, *height, angle),
                 PadShape::RoundRect { width, height, .. } => {
                     // Approximate round-rect as rectangle in Gerber output.
-                    ApertureShape::Rect {
-                        width: *width,
-                        height: *height,
-                    }
+                    ApertureShape::rect(*width, *height, angle)
                 }
                 PadShape::Custom { .. } => {
                     // Custom pads are not directly representable as standard
@@ -945,6 +1133,180 @@ mod tests {
 
         // Should have at least one %ADD aperture definition.
         assert!(output.contains("%ADD10"), "missing aperture definition");
+    }
+
+    /// A PCB carrying one rectangular pad, on a footprint turned `fp_rot`
+    /// with the pad itself turned `pad_rot` relative to it.
+    fn rotated_pad_pcb(fp_rot: f64, pad_rot: f64, shape: PadShape) -> Pcb {
+        let mut pcb = test_pcb();
+        let fp = &mut pcb.footprints[0];
+        fp.rotation = fp_rot;
+        fp.pads.truncate(1);
+        fp.pads[0].shape = shape;
+        fp.pads[0].rotation = pad_rot;
+        pcb
+    }
+
+    /// The long axis of a rectangular pad must follow the footprint round.
+    ///
+    /// A 0.25 x 0.875mm QFN pad on a 90°-rotated part is 0.875mm wide on the
+    /// board, not 0.25mm. Before apertures carried a rotation, every such pad
+    /// was flashed axis-aligned and overlapped its neighbours.
+    #[test]
+    fn rect_pad_on_rotated_footprint_swaps_axes() {
+        let shape = PadShape::Rect {
+            width: 0.25,
+            height: 0.875,
+        };
+
+        let mut buf = Vec::new();
+        write_gerber_layer(
+            &mut buf,
+            &rotated_pad_pcb(0.0, 0.0, shape.clone()),
+            PcbLayer::FCu,
+        )
+        .unwrap();
+        let unrotated = String::from_utf8(buf).unwrap();
+        assert!(
+            unrotated.contains("R,0.250000X0.875000"),
+            "unrotated pad should stay 0.25 wide:\n{unrotated}"
+        );
+
+        for (fp_rot, pad_rot) in [(90.0, 0.0), (0.0, 90.0), (45.0, 45.0), (-90.0, 0.0)] {
+            let mut buf = Vec::new();
+            write_gerber_layer(
+                &mut buf,
+                &rotated_pad_pcb(fp_rot, pad_rot, shape.clone()),
+                PcbLayer::FCu,
+            )
+            .unwrap();
+            let out = String::from_utf8(buf).unwrap();
+            assert!(
+                out.contains("R,0.875000X0.250000"),
+                "fp {fp_rot}° + pad {pad_rot}° should put the long axis on X:\n{out}"
+            );
+        }
+    }
+
+    /// An off-quadrant angle needs an aperture macro, not an axis-aligned box.
+    #[test]
+    fn rect_pad_at_45_degrees_emits_rotated_macro() {
+        let pcb = rotated_pad_pcb(
+            45.0,
+            0.0,
+            PadShape::Rect {
+                width: 0.25,
+                height: 0.875,
+            },
+        );
+        let mut buf = Vec::new();
+        write_gerber_layer(&mut buf, &pcb, PcbLayer::FCu).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+
+        // Primitive 21 (centre line) carries the rotation; the macro must be
+        // defined before the %ADD that instantiates it.
+        let mac = out
+            .find("%AMVCADRR")
+            .unwrap_or_else(|| panic!("missing rotated-rect macro:\n{out}"));
+        assert!(
+            out.contains("21,1,0.250000,0.875000,0,0,45.000000*%"),
+            "macro body should be a 45°-turned centre line:\n{out}"
+        );
+        let name_start = mac + "%AM".len();
+        let name: String = out[name_start..]
+            .chars()
+            .take_while(|c| *c != '*')
+            .collect();
+        let add = out
+            .find(&format!("{name}*%"))
+            .filter(|&i| i > mac)
+            .unwrap_or_else(|| panic!("macro {name} never instantiated by an %ADD:\n{out}"));
+        assert!(add > mac, "%ADD must follow its %AM");
+        assert!(
+            !out.contains("%ADD10R,"),
+            "45° pad must not degrade to an axis-aligned rect:\n{out}"
+        );
+    }
+
+    /// Two pads differing only in rotation must not share an aperture.
+    #[test]
+    fn aperture_dedup_separates_rotations() {
+        let mut table = ApertureTable::new();
+        let a = table.register(ApertureShape::rect(0.25, 0.875, 0.0));
+        let b = table.register(ApertureShape::rect(0.25, 0.875, 90.0));
+        let c = table.register(ApertureShape::rect(0.25, 0.875, 45.0));
+        let d = table.register(ApertureShape::rect(0.25, 0.875, 135.0));
+        assert_ne!(a, b, "0° and 90° are different apertures");
+        assert_ne!(c, d, "45° and 135° are different apertures");
+        assert_ne!(a, c);
+
+        // ...but the same rotation, however it is spelled, still dedups.
+        assert_eq!(a, table.register(ApertureShape::rect(0.25, 0.875, 180.0)));
+        assert_eq!(b, table.register(ApertureShape::rect(0.25, 0.875, -90.0)));
+        assert_eq!(c, table.register(ApertureShape::rect(0.25, 0.875, 225.0)));
+    }
+
+    /// A rotated obround keeps its end caps on the long axis.
+    #[test]
+    fn oval_pad_rotation() {
+        // 90° folds into a plain O aperture with the sides swapped.
+        assert_eq!(
+            ApertureShape::oval(2.0, 1.0, 90.0),
+            ApertureShape::Oval {
+                width: 1.0,
+                height: 2.0
+            }
+        );
+        // A vertical obround is a horizontal one turned 90°, so -90 (i.e. 90)
+        // lands back on the horizontal form.
+        assert_eq!(
+            ApertureShape::oval(1.0, 2.0, 90.0),
+            ApertureShape::Oval {
+                width: 2.0,
+                height: 1.0
+            }
+        );
+        // Square obround == circle, rotation-invariant.
+        assert_eq!(
+            ApertureShape::oval(1.0, 1.0, 37.0),
+            ApertureShape::Circle { diameter: 1.0 }
+        );
+
+        // 45°: bar of (2.0 - 1.0) x 1.0 turned 45°, caps at ±(0.5cos45,
+        // 0.5sin45) = ±(0.353553, 0.353553).
+        let shape = ApertureShape::oval(2.0, 1.0, 45.0);
+        let body = shape
+            .macro_definition(11)
+            .expect("rotated oval needs a macro");
+        assert!(
+            body.contains("21,1,1.000000,1.000000,0,0,45.000000*"),
+            "bar primitive wrong:\n{body}"
+        );
+        assert!(
+            body.contains("1,1,1.000000,0.353553,0.353553*"),
+            "cap centre should be pre-rotated onto the long axis:\n{body}"
+        );
+        assert!(
+            body.contains("1,1,1.000000,-0.353553,-0.353553*"),
+            "opposite cap missing:\n{body}"
+        );
+    }
+
+    /// RoundRect still degrades to a rect — but a rotated one.
+    #[test]
+    fn roundrect_pad_rotates() {
+        let shape = PadShape::RoundRect {
+            width: 0.25,
+            height: 0.875,
+            corner_ratio: 0.25,
+        };
+        let mut buf = Vec::new();
+        write_gerber_layer(&mut buf, &rotated_pad_pcb(90.0, 0.0, shape), PcbLayer::FCu).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(
+            out.contains("R,0.875000X0.250000"),
+            "rotated roundrect should swap axes:\n{out}"
+        );
     }
 
     #[test]

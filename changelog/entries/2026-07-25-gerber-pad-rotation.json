@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-gerber-pad-rotation",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Gerber export honours pad rotation",
+  "summary": "Pads on rotated footprints are exported with the correct orientation; previously every non-square pad was flashed axis-aligned, shorting fine-pitch packages.",
+  "features": ["pcb", "gerber", "fabrication"],
+  "mcpTools": ["export_gerber", "fab_prep"]
+}
