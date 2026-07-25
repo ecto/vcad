@@ -740,7 +740,26 @@ fn write_arc(e: &mut Emitter, a: &TraceArc, nets: &NetTable) {
 
 fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
     let uuid = e.uuid();
-    e.line(1, "(via");
+    // KiCad reads a via's span as (outer, inner) in stack order; handed the
+    // pair reversed it falls back to a through-hole, which shorts every layer
+    // the via was never meant to touch.
+    let (top, bottom) = if v.start_layer.copper_position().unwrap_or(0)
+        <= v.end_layer.copper_position().unwrap_or(u8::MAX)
+    {
+        (v.start_layer, v.end_layer)
+    } else {
+        (v.end_layer, v.start_layer)
+    };
+    // The type token comes immediately after `via`; without it KiCad treats
+    // any via as through-hole regardless of its layer pair. KiCad's only
+    // non-through tokens are `blind` (its BLIND_BURIED type, covering both
+    // blind and buried) and `micro` — `buried` is not a token and makes the
+    // board fail to load outright.
+    if top == PcbLayer::FCu && bottom == PcbLayer::BCu {
+        e.line(1, "(via");
+    } else {
+        e.line(1, "(via blind");
+    }
     e.line(
         2,
         &format!("(at {} {})", num(v.position.x), num(v.position.y)),
@@ -749,11 +768,7 @@ fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
     e.line(2, &format!("(drill {})", num(v.drill)));
     e.line(
         2,
-        &format!(
-            "(layers {} {})",
-            q(layer_name(v.start_layer)),
-            q(layer_name(v.end_layer))
-        ),
+        &format!("(layers {} {})", q(layer_name(top)), q(layer_name(bottom))),
     );
     e.line(2, &format!("(net {})", nets.id(&v.net)));
     e.line(2, &format!("(uuid {})", q(&uuid)));
@@ -3997,5 +4012,56 @@ mod tests {
             !text.contains("endpoint_off_grid"),
             "four-edge symbol put a connection point off the KiCad grid:\n{text}"
         );
+    }
+
+    /// A blind or buried via must keep its span through the KiCad writer.
+    ///
+    /// Written as a bare `(via ... (layers "F.Cu" "B.Cu"))` — or with the
+    /// endpoints handed over reversed — KiCad reads it as a through-hole, and
+    /// the via shorts every layer it was never meant to touch.
+    #[test]
+    fn buried_via_keeps_its_span_and_type() {
+        let mut pcb = sample_pcb();
+        pcb.vias[0].start_layer = PcbLayer::In2Cu;
+        pcb.vias[0].end_layer = PcbLayer::In1Cu;
+
+        let text = write_kicad_pcb(&pcb);
+        assert!(
+            text.contains("(via blind"),
+            "buried via not typed — KiCad will drill it through:\n{text}"
+        );
+        assert!(
+            text.contains("(layers \"In1.Cu\" \"In2.Cu\")"),
+            "via span not written outer-first:\n{text}"
+        );
+        assert!(
+            !text.contains("(layers \"F.Cu\" \"B.Cu\")"),
+            "buried via written as a full-stack span:\n{text}"
+        );
+
+        let reparsed = crate::kicad_pcb::parse_kicad_pcb(&text).expect("re-parse");
+        assert_eq!(reparsed.vias.len(), 1);
+        assert_eq!(reparsed.vias[0].start_layer, PcbLayer::In1Cu);
+        assert_eq!(reparsed.vias[0].end_layer, PcbLayer::In2Cu);
+    }
+
+    /// A via that touches an outer layer but not both is blind, not buried.
+    #[test]
+    fn blind_via_is_typed_blind() {
+        let mut pcb = sample_pcb();
+        pcb.vias[0].start_layer = PcbLayer::In1Cu;
+        pcb.vias[0].end_layer = PcbLayer::FCu;
+
+        let text = write_kicad_pcb(&pcb);
+        assert!(text.contains("(via blind"), "blind via not typed:\n{text}");
+        assert!(text.contains("(layers \"F.Cu\" \"In1.Cu\")"));
+    }
+
+    /// A genuine through via stays untyped and full-stack.
+    #[test]
+    fn through_via_stays_untyped() {
+        let text = write_kicad_pcb(&sample_pcb());
+        assert!(!text.contains("(via blind"));
+        assert!(text.contains("(layers \"F.Cu\" \"B.Cu\")"));
     }
 }

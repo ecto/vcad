@@ -127,14 +127,17 @@ pub fn write_fab_package(
         written.push(write(dir, name, content)?);
     }
 
-    let mut drill = Vec::new();
-    vcad_ecad_export::excellon::write_excellon(&mut drill, pcb).map_err(|e| {
+    // One drill file per via span — blind and buried vias are drilled
+    // separately from the through-holes.
+    let drills = vcad_ecad_export::excellon::generate_drill_files(pcb).map_err(|e| {
         PackageError::Serialize {
-            what: "drill.drl".into(),
+            what: "drill files".into(),
             message: e.to_string(),
         }
     })?;
-    written.push(write(dir, "drill.drl", &drill)?);
+    for (name, content) in &drills {
+        written.push(write(dir, name, content.as_bytes())?);
+    }
 
     written.push(write(
         dir,
@@ -211,6 +214,52 @@ mod tests {
         assert!(
             written.iter().any(|w| w.ends_with(".gbr")),
             "no gerbers written: {written:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Blind and buried vias are drilled in separate operations from the
+    /// through-holes, so the package carries one drill file per span. Merged
+    /// into a single `drill.drl`, a blind via is fabricated as a through-hole
+    /// and shorts every layer it crosses.
+    #[test]
+    fn blind_and_buried_vias_get_their_own_drill_files() {
+        let mut pcb = test_board();
+        with_smd_pad(&mut pcb, "R1", "1", 2.0, 2.0, "A");
+        with_smd_pad(&mut pcb, "R1", "2", 8.0, 2.0, "A");
+        with_trace(&mut pcb, "A", 2.0, 2.0, 8.0, 2.0);
+        pcb.vias.push(vcad_ir::ecad::Via {
+            position: vcad_ir::Vec2::new(5.0, 2.0),
+            diameter: 0.4,
+            drill: 0.2,
+            start_layer: vcad_ir::ecad::PcbLayer::FCu,
+            end_layer: vcad_ir::ecad::PcbLayer::In1Cu,
+            net: "A".into(),
+            source: None,
+        });
+        let outcome = run_fab_prep(
+            &mut pcb,
+            &FabPrepOptions {
+                route_remaining: false,
+                prune_dangling: false,
+                ..Default::default()
+            },
+        );
+
+        let dir = tmpdir("spans");
+        let written = write_fab_package(&dir, &pcb, &outcome, None).expect("package");
+        assert!(
+            written.iter().any(|w| w == "drill.drl"),
+            "through-hole drill file missing: {written:?}"
+        );
+        assert!(
+            written.iter().any(|w| w == "drill-F_Cu-In1_Cu.drl"),
+            "blind via span has no drill file of its own: {written:?}"
+        );
+        let through = std::fs::read_to_string(dir.join("drill.drl")).unwrap();
+        assert!(
+            !through.contains("X5.0000Y2.0000"),
+            "blind via drilled as a through-hole:\n{through}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

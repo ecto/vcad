@@ -30,9 +30,11 @@ fn main() {
     }
     println!("gerbers: {} files", gerbers.len());
 
-    let mut drill = Vec::new();
-    vcad_ecad_export::excellon::write_excellon(&mut drill, &pcb).expect("excellon");
-    fs::write(out.join("drill.drl"), &drill).expect("write drill");
+    let drills = vcad_ecad_export::excellon::generate_drill_files(&pcb).expect("excellon");
+    for (name, content) in &drills {
+        fs::write(out.join(name), content).expect("write drill");
+    }
+    println!("drill files: {} spans", drills.len());
 
     fs::write(
         out.join("board.kicad_pcb"),

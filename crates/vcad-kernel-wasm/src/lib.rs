@@ -6466,13 +6466,11 @@ mod ecad_wasm {
                 .iter()
                 .any(|fp| fp.pads.iter().any(|p| p.drill.is_some()));
         if has_holes {
-            let mut buf = Vec::new();
-            vcad_ecad_export::write_excellon(&mut buf, &pcb)
-                .map_err(|e| JsError::new(&e.to_string()))?;
-            files.push(FabFile {
-                name: "drill.drl".into(),
-                content: String::from_utf8_lossy(&buf).into_owned(),
-            });
+            for (name, content) in vcad_ecad_export::excellon::generate_drill_files(&pcb)
+                .map_err(|e| JsError::new(&e.to_string()))?
+            {
+                files.push(FabFile { name, content });
+            }
         }
 
         let mut buf = Vec::new();

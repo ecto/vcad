@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-via-layer-spans-in-fab-export",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Fab export honors blind and buried via spans",
+  "summary": "Gerber, Excellon and KiCad exports flashed and drilled every via on every copper layer, shorting any board with blind or buried vias.",
+  "features": ["pcb", "fabrication", "gerber", "excellon", "kicad"],
+  "mcpTools": ["export_gerber", "export_kicad", "fab_prep", "validate_for_fab"]
+}

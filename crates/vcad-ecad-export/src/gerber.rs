@@ -522,9 +522,14 @@ pub fn write_gerber_layer<W: Write>(
         }
     }
 
-    // 2) Via pads on copper layers.
+    // 2) Via pads — only on the copper layers the via actually spans. A blind
+    //    or buried via flashed outside its span is copper the board does not
+    //    have, and shorts whatever runs under it.
     if layer.is_copper() {
         for via in &pcb.vias {
+            if !layer.spanned_by(via.start_layer, via.end_layer) {
+                continue;
+            }
             let dcode = apertures.register(ApertureShape::Circle {
                 diameter: via.diameter,
             });
@@ -1525,6 +1530,87 @@ mod tests {
                 "{name}: missing format spec"
             );
             assert!(content.contains("M02*"), "{name}: missing end-of-file");
+        }
+    }
+
+    /// A board whose only via is buried between two inner layers, placed
+    /// somewhere no pad or trace reaches so its flash is unmistakable.
+    fn buried_via_pcb() -> Pcb {
+        let mut pcb = test_pcb();
+        pcb.footprints.clear();
+        pcb.zones.clear();
+        pcb.traces.clear();
+        pcb.vias = vec![Via {
+            position: Vec2::new(30.0, 20.0),
+            diameter: 0.8,
+            drill: 0.3,
+            start_layer: PcbLayer::In2Cu,
+            end_layer: PcbLayer::In1Cu,
+            net: "1".into(),
+            source: None,
+        }];
+        pcb
+    }
+
+    /// A blind or buried via must not put copper on layers outside its span.
+    ///
+    /// Flashing every via on every copper layer is a dead short: on the CM5
+    /// fixture a via spanning In2.Cu–In1.Cu landed on In4.Cu 0.006mm from a
+    /// track on a different net.
+    #[test]
+    fn buried_via_flashes_only_within_its_span() {
+        let pcb = buried_via_pcb();
+        let via_x = mm_to_coord(30.0);
+        let via_y = mm_to_coord(20.0);
+        let expected = format!("X{via_x}Y{via_y}D03*");
+
+        for layer in [PcbLayer::In1Cu, PcbLayer::In2Cu] {
+            let mut buf = Vec::new();
+            write_gerber_layer(&mut buf, &pcb, layer).unwrap();
+            let output = String::from_utf8(buf).unwrap();
+            assert!(
+                output.contains(&expected),
+                "{layer:?} is inside the via's span but has no via flash"
+            );
+        }
+
+        for layer in [
+            PcbLayer::FCu,
+            PcbLayer::BCu,
+            PcbLayer::In3Cu,
+            PcbLayer::In4Cu,
+        ] {
+            let mut buf = Vec::new();
+            write_gerber_layer(&mut buf, &pcb, layer).unwrap();
+            let output = String::from_utf8(buf).unwrap();
+            assert!(
+                !output.contains(&expected),
+                "{layer:?} is outside the In2.Cu–In1.Cu span but carries the via's pad"
+            );
+        }
+    }
+
+    /// A genuine through-hole via still reaches every copper layer.
+    #[test]
+    fn through_via_flashes_on_all_copper_layers() {
+        let mut pcb = buried_via_pcb();
+        pcb.vias[0].start_layer = PcbLayer::FCu;
+        pcb.vias[0].end_layer = PcbLayer::BCu;
+        let expected = format!("X{}Y{}D03*", mm_to_coord(30.0), mm_to_coord(20.0));
+
+        for layer in [
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In4Cu,
+            PcbLayer::BCu,
+        ] {
+            let mut buf = Vec::new();
+            write_gerber_layer(&mut buf, &pcb, layer).unwrap();
+            let output = String::from_utf8(buf).unwrap();
+            assert!(
+                output.contains(&expected),
+                "{layer:?} is inside a through via's span but has no via flash"
+            );
         }
     }
 }
