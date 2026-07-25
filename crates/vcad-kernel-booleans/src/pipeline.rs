@@ -153,7 +153,13 @@ fn apply_splits_to_solid(
     segments: u32,
     #[allow(unused_variables)] solid_name: &str,
 ) {
-    for (face_id, split_list) in splits {
+    // Deterministic order: the splits are applied in sequence and each
+    // one reshapes the face the next one sees, so iterating the HashMap
+    // directly made the same boolean return a different solid (and a
+    // different volume) run to run.
+    let mut ordered: Vec<(FaceId, FaceSplits)> = splits.into_iter().collect();
+    ordered.sort_by_key(|(fid, _)| *fid);
+    for (face_id, split_list) in ordered {
         let mut current_faces = vec![face_id];
         for (curve, _entry, _exit) in split_list {
             let mut new_faces = Vec::new();

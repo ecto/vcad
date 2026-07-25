@@ -299,7 +299,12 @@ fn copy_faces(
 
     // Now link twins for half-edges that were twins in the source
     // This preserves topology for edges that are fully within the copied faces
-    for (src_he, tgt_he) in &he_map {
+    // Sorted: twin linking is first-come-wins (the guards below skip a
+    // half-edge that already has a twin), so HashMap order would decide
+    // which pairing survives — and with it the whole sewn result.
+    let mut he_pairs: Vec<_> = he_map.iter().collect();
+    he_pairs.sort_by_key(|(he, _)| **he);
+    for (src_he, tgt_he) in he_pairs {
         // Skip if already has twin (might have been set by repair)
         if target_topo.half_edges[*tgt_he].twin.is_some() {
             continue;

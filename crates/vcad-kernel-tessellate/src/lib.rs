@@ -2646,7 +2646,8 @@ fn tessellate_cylindrical_face(
         .as_any()
         .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
     {
-        if let Some(mesh) = tessellate_ruled_two_chain(cyl, &verts, reversed) {
+        let target_segments = params.circle_segments_for_radius(cyl.radius.abs().max(1e-6));
+        if let Some(mesh) = tessellate_ruled_two_chain(cyl, &verts, reversed, target_segments) {
             return mesh;
         }
         // Narrow boolean leftovers (corner slivers a fraction of a degree
@@ -2907,15 +2908,52 @@ fn tessellate_cylindrical_face(
 
     let mut mesh = TriangleMesh::new();
 
-    // Generate grid of vertices using surface.evaluate. Each row shares
-    // its u-schedule with the face's outer loop boundary, so adjacent
-    // cap/lateral faces produce coincident seam vertices (welded away by
-    // `weld_coincident_vertices` in `tessellate_brep`).
-    for j in 0..=n_height {
-        let v = v_min + height * (j as f64 / n_height as f64);
-        for u_raw in &u_samples {
-            // Normalize u to [0, 2π) for surface evaluation
-            let u_eval = u_raw.rem_euclid(2.0 * PI);
+    // Per-column v schedule. Every column carries the uniform rows; a
+    // column that a loop vertex sits on also carries that vertex's v.
+    // Booleans push the vertices they mint on a neighboring face onto
+    // this face's rails (T-junction conformity). A rail is a straight
+    // ruling of the cylinder, so those points are exactly on the
+    // surface — but a uniform grid skips them and leaves a crack against
+    // the neighbor face that does carry them.
+    let base_rows: Vec<f64> = (0..=n_height)
+        .map(|j| v_min + height * (j as f64 / n_height as f64))
+        .collect();
+    let mut columns: Vec<Vec<f64>> = vec![base_rows; u_samples.len()];
+    let v_tol = (height.abs() * 1e-9).max(1e-9);
+    if let Some(cyl) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+    {
+        let ref_dir = cyl.ref_dir.as_ref();
+        let y_dir = cyl.axis.as_ref().cross(ref_dir);
+        for pt in &verts {
+            let d = *pt - cyl.center;
+            let v = d.dot(cyl.axis.as_ref());
+            if v <= v_min + v_tol || v >= v_max - v_tol {
+                continue;
+            }
+            let u = d.dot(y_dir).atan2(d.dot(ref_dir)).rem_euclid(2.0 * PI);
+            for (i, u_raw) in u_samples.iter().enumerate() {
+                let du = (u - u_raw.rem_euclid(2.0 * PI)).abs();
+                if du.min(2.0 * PI - du) < 1e-6 {
+                    columns[i].push(v);
+                    break;
+                }
+            }
+        }
+        for col in columns.iter_mut() {
+            col.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            col.dedup_by(|a, b| (*a - *b).abs() <= v_tol);
+        }
+    }
+
+    // Generate vertices column by column, recording each column's start.
+    let mut col_start: Vec<u32> = Vec::with_capacity(u_samples.len());
+    for (i, u_raw) in u_samples.iter().enumerate() {
+        col_start.push((mesh.vertices.len() / 3) as u32);
+        // Normalize u to [0, 2π) for surface evaluation
+        let u_eval = u_raw.rem_euclid(2.0 * PI);
+        for &v in &columns[i] {
             let uv = Point2::new(u_eval, v);
             let pt = surface.evaluate(uv);
             let normal = *surface.normal(uv);
@@ -2931,21 +2969,33 @@ fn tessellate_cylindrical_face(
         }
     }
 
-    // Generate triangles
-    let stride = (effective_n_circ + 1) as u32;
-    for j in 0..n_height {
-        for i in 0..effective_n_circ {
-            let bl = j as u32 * stride + i as u32;
-            let br = bl + 1;
-            let tl = bl + stride;
-            let tr = tl + 1;
-
-            if reversed {
-                mesh.indices.extend_from_slice(&[bl, tl, br]);
-                mesh.indices.extend_from_slice(&[br, tl, tr]);
+    // Stitch consecutive columns as a triangle strip walked by v, so
+    // columns with different row counts still mesh without cracks.
+    for i in 0..effective_n_circ {
+        let (a, b) = (&columns[i], &columns[i + 1]);
+        let (sa, sb) = (col_start[i], col_start[i + 1]);
+        let (mut ia, mut ib) = (0usize, 0usize);
+        while ia + 1 < a.len() || ib + 1 < b.len() {
+            let advance_a = if ia + 1 >= a.len() {
+                false
+            } else if ib + 1 >= b.len() {
+                true
             } else {
-                mesh.indices.extend_from_slice(&[bl, br, tl]);
-                mesh.indices.extend_from_slice(&[br, tr, tl]);
+                a[ia + 1] <= b[ib + 1]
+            };
+            let (t0, t1, t2) = if advance_a {
+                let t = (sa + ia as u32, sb + ib as u32, sa + ia as u32 + 1);
+                ia += 1;
+                t
+            } else {
+                let t = (sb + ib as u32, sb + ib as u32 + 1, sa + ia as u32);
+                ib += 1;
+                t
+            };
+            if reversed {
+                mesh.indices.extend_from_slice(&[t0, t2, t1]);
+            } else {
+                mesh.indices.extend_from_slice(&[t0, t1, t2]);
             }
         }
     }
@@ -3084,6 +3134,7 @@ fn tessellate_ruled_two_chain(
     cyl: &vcad_kernel_geom::CylinderSurface,
     verts: &[Point3],
     reversed: bool,
+    target_segments: u32,
 ) -> Option<TriangleMesh> {
     let l = verts.len();
     if l < 4 {
@@ -3208,6 +3259,25 @@ fn tessellate_ruled_two_chain(
     grid.extend(chain_b.iter().map(|p| p.0));
     grid.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
     grid.dedup_by(|x, y| (*x - *y).abs() < RUN_EPS);
+
+    // This path reuses the loop's own samples verbatim, which is right
+    // only when the loop already carries them at tessellation density.
+    // A boolean that splits a neighboring face pushes its new vertices
+    // onto this face's END COLUMN; those repeat the rail's last u, so
+    // they collapse under the dedup above and the strip can end up a
+    // single flat quad spanning the whole blend — the arc gone, the
+    // volume with it. Such a loop goes to the grid path, which anchors
+    // columns on the arc, subdivides to density, and splits the end
+    // columns at their own loop vertices. A miter-trimmed blend (the
+    // reason this path exists) has no repeated u and is unaffected.
+    let repeats_u = |c: &[(f64, f64)]| c.windows(2).any(|w| (w[1].0 - w[0].0).abs() <= RUN_EPS);
+    if repeats_u(&chain_a) || repeats_u(&chain_b) {
+        let span_total = (grid[grid.len() - 1] - grid[0]).abs();
+        let needed = ((target_segments.max(3) as f64) * span_total / (2.0 * PI)).ceil() as usize;
+        if grid.len() - 1 < needed.div_ceil(2) {
+            return None;
+        }
+    }
 
     let mut mesh = TriangleMesh::new();
     let radial_normal = |p: &Point3| -> Vec3 {

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-shell-and-booleans-on-filleted-solids",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Shelling and cutting a filleted solid no longer leaks",
+  "summary": "Hollowing a filleted part scattered its cavity and a pocket cut collapsed the neighboring blends flat; both are now exact and watertight, and the kernel is reproducible run to run.",
+  "features": ["kernel", "fillet", "shell", "booleans", "tessellation"],
+  "mcpTools": ["create_cad_loon", "inspect_cad", "export_cad"]
+}

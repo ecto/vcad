@@ -1,0 +1,6 @@
+; Pocket cut into a filleted box's flat top, far from every blend. The
+; cut splits the top face and pushes the new vertices onto the adjacent
+; blends' end rulings; dropping them collapsed those blends flat.
+[let pocket [translate 40.0 40.0 90.0 [cube 20.0 20.0 20.0]]]
+[let body [difference pocket [fillet 12.0 [cube 100.0 100.0 100.0]]]]
+#[body [difference pocket [cube 100.0 100.0 100.0]]]

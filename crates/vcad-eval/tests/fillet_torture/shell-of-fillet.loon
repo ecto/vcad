@@ -1,0 +1,5 @@
+; Hollow a filleted box: the shell's inner surface is the fillet's
+; blends offset inward. Sampling those offsets at a fixed surface
+; parameter instead of at the vertex used to scatter the cavity.
+[let body [shell 2.0 [fillet 12.0 [cube 100.0 100.0 100.0]]]]
+#[body [shell 2.0 [cube 100.0 100.0 100.0]]]

@@ -285,6 +285,46 @@ pub fn shell_brep_analytical(
     })
 }
 
+/// Outward normal of `surface` at the 3D point `p`.
+///
+/// The analytic surfaces all have a closed-form normal at a point, so no
+/// parameter inversion is needed: a plane's is constant, a cylinder's is
+/// radial from its axis, a sphere's is radial from its center, a torus's
+/// is radial from the tube centerline. Anything else falls back to the
+/// surface's normal at the start of its domain.
+fn surface_normal_at(surface: &dyn Surface, p: Point3) -> Vec3 {
+    use vcad_kernel_geom::{CylinderSurface, SphereSurface, TorusSurface};
+
+    let any = surface.as_any();
+    if let Some(cyl) = any.downcast_ref::<CylinderSurface>() {
+        let axis = *cyl.axis.as_ref();
+        let d = p - cyl.center;
+        let radial = d - axis * d.dot(axis);
+        if radial.norm() > 1e-12 {
+            return radial.normalize() * cyl.radius.signum();
+        }
+    } else if let Some(sph) = any.downcast_ref::<SphereSurface>() {
+        let d = p - sph.center;
+        if d.norm() > 1e-12 {
+            return d.normalize() * sph.radius.signum();
+        }
+    } else if let Some(tor) = any.downcast_ref::<TorusSurface>() {
+        let axis = *tor.axis.as_ref();
+        let d = p - tor.center;
+        let radial = d - axis * d.dot(axis);
+        if radial.norm() > 1e-12 {
+            let tube_center = tor.center + radial.normalize() * tor.major_radius;
+            let n = p - tube_center;
+            if n.norm() > 1e-12 {
+                return n.normalize() * tor.minor_radius.signum();
+            }
+        }
+    }
+    *surface
+        .normal(vcad_kernel_math::Point2::new(0.0, 0.0))
+        .as_ref()
+}
+
 /// Compute the offset position for a vertex given the surrounding offset surfaces.
 ///
 /// For vertices at the intersection of 3 planar faces, solves the 3-plane
@@ -316,15 +356,19 @@ fn compute_offset_vertex(
                 if let Some(face_id) = topo.loops[loop_id].face {
                     let face = &topo.faces[face_id];
                     let surface = &geom.surfaces[face.surface_index];
-                    // Get the surface normal at the vertex position
-                    // For planes this is constant; for curved surfaces we approximate
-                    let uv = vcad_kernel_math::Point2::new(0.0, 0.0);
-                    let n = surface.normal(uv);
+                    // Get the surface normal at the vertex position. For a
+                    // curved face the normal varies over the surface, so
+                    // sampling it at a fixed parameter (uv = 0,0) points
+                    // somewhere else entirely — that put every inner vertex
+                    // of a filleted solid in the wrong place, so the inner
+                    // faces no longer met their own offset surfaces and the
+                    // cavity tessellated full of holes.
+                    let n = surface_normal_at(surface.as_ref(), pos);
                     let sign = match face.orientation {
                         Orientation::Forward => 1.0,
                         Orientation::Reversed => -1.0,
                     };
-                    normals.push(sign * n.as_ref());
+                    normals.push(sign * n);
                 }
             }
             // Move to next half-edge around vertex

@@ -70,6 +70,7 @@ const BASELINE: &[(&str, Outcome)] = &[
     ("hole-difference", Outcome::NoOp), // inner loops: documented fail-soft
     ("lens-spheres", Outcome::NoOp),
     ("notch-difference", Outcome::NoOp),
+    ("pocket-in-fillet", Outcome::Success),
     ("prism3-fillet", Outcome::Success),
     ("radius-exceeds", Outcome::NoOp), // infeasible: refusal/no-op is correct
     ("radius-half", Outcome::NoOp),    // borderline: opposite insets collapse
@@ -77,6 +78,7 @@ const BASELINE: &[(&str, Outcome)] = &[
     ("refillet-larger", Outcome::Success),
     ("seam-tee", Outcome::NoOp),
     ("seam-union-cubes", Outcome::NoOp),
+    ("shell-of-fillet", Outcome::Success),
     ("slot-extrude", Outcome::NoOp),
     ("sphere-box", Outcome::NoOp),
     ("thin-slab", Outcome::Success),
