@@ -1,5 +1,11 @@
 # GPU Router M6 — first end-to-end results
 
+> **Correction (2026-07-25).** Every DRC figure in this document was computed
+> against a baseline a geometry bug had inflated, and the SI comparison table
+> understated our own delta as a result. See
+> [the correction section](#correction-2026-07-25--the-drc-baseline-was-inflated)
+> at the end. Claims move only with runs; a correction is a run.
+
 Companion to [gpu-router-m0.md](gpu-router-m0.md) (the charter). This is the
 first measured run of the complete chain on the CM5 benchmark
 (schlae/cm5-reveng: 10 copper layers, 436 nets, 3,037 pads, human-routed
@@ -99,9 +105,96 @@ toward 30 min (~40–60 min of wall-clock) and possibly a quality gain.
 (Competitor rows are qualitative — none publish CM5-class results; that is
 the point of the row.)
 
+## Correction (2026-07-25) — the DRC baseline was inflated
+
+Every DRC number published above and in
+[gpu-router-m7-pair-si.md](gpu-router-m7-pair-si.md) was measured against a
+stripped-fixture baseline that one of our own bugs had inflated.
+
+**The bug.** KiCad stores a pad's angle as an **absolute** value — it already
+includes the footprint's orientation. vcad's importer stored that raw value
+while eleven consumers compose `fp.rotation + pad.rotation`, double-counting the
+footprint rotation on every rotated part. On fine-pitch rotated packages the
+neighbouring pads **overlapped**, manufacturing phantom shorts and clearance
+violations out of thin air. Fixed in PR #684.
+
+**Why it mattered more than a normal measurement error.** The phantom violations
+landed in the *baseline*, and the baseline is the denominator of every
+route-attributable claim. A bigger floor makes our delta look smaller, so the
+error flattered us in every published comparison — the direction that most needs
+correcting.
+
+Re-measured from scratch on merged main with #684 in. DRC and SI are
+deterministic given a fixed board file, and every figure below was run twice
+with **identical** results; the route stage is the only stochastic step and is
+reported with its spread.
+
+### The baseline itself
+
+| stripped fixture, all copper removed | before | after |
+|---|---|---|
+| short/clearance | 980 | **311** |
+| `Clearance` | 74 | **23** |
+| `Short` | ~906 | **258** |
+
+**648 violations this project attributed to the reverse-engineered source were
+ours.**
+
+### The human production board
+
+| | before | after |
+|---|---|---|
+| total violations | 16,485 | **14,104** |
+| short/clearance | — | **6,994** |
+
+The repeated "the production board scores 16,485 violations under these rules"
+line was itself inflated by 2,381. The board is still far outside our rule set —
+that part of the argument stands — but the number was wrong.
+
+### Our board, re-routed clean
+
+Full-board run on the corrected importer: **routability 0.994** in **958.9 s**,
+3,791 segments / 895 vias, 0.31× human via count.
+
+| | published | corrected |
+|---|---|---|
+| `Clearance` | 74 (claimed = the floor) | **173** |
+| floor | 74 | **23** |
+| **route-attributable `Clearance`** | **0** | **150** |
+
+**"Route-attributable violations: ZERO" was false.** It read `74 − 74 = 0`
+because the inflated floor happened to equal what our board scored. The honest
+figure is 150 against a floor of 23.
+
+### What did *not* move
+
+The receipt bounds are untouched, and they remain a valid envelope: the human
+board's anchor re-measures **bit-identical** after the fix —
+`worst_group_skew 9.756`, `worst_intra_pair_skew 1.074`,
+`min_pair_coupled_fraction 0.857`, `vias_per_si_net 2.265`, **ALL HOLD**. Pad
+angles feed pad geometry, not trace lengths, so the calibration anchor and the
+argument it supports survive this correction intact.
+
+### The <30 min chain target is met
+
+| stage | before | now |
+|---|---|---|
+| route | 113 min (pre-GPU-fix) | **958.9 s ≈ 16.0 min** |
+| full chain (route + si_finish) | 2 h 51 m → 67 min | **1,634 s ≈ 27.2 min** |
+
+The M6 scoreboard row `< 30 min chain | 2 h 51 m` is **closed**. Note this run
+shared the machine with another full-board route (load average 23.4), so the
+wall-clock is if anything pessimistic — contention only inflates it, and the
+target is met regardless.
+
+The pad fix also helped routing directly: pair-first now lands **47** pairs
+coupled in round 0, up from the published 43. Overlapping pads had been sealing
+the BGA fields that pairs escape through.
+
 ## Next
 
-1. Wire M4 negotiation into the route/ratchet stages (the <30 min path).
+1. ~~Wire M4 negotiation into the route/ratchet stages (the <30 min path).~~ —
+   done; the chain is 27.2 min, see the correction section above.
 2. ~~Reroute-then-descend for extreme-skew pairs; descent for the rest.~~ —
    done, see [gpu-router-m7-pair-si.md](gpu-router-m7-pair-si.md). Coupled
    construction went 17 → 39 of 49 pairs (the phantom centerline had been
