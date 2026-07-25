@@ -133,8 +133,8 @@ fn pendulum_model(props: &[BodyMassProps]) -> Model {
         axis: Vec3::new(1.0, 0.0, 0.0),
         damping: 0.0,
         limits: None,
-        // See m11_contact_gradient: defaults are neutral for this pendulum,
-        // so the finite-difference comparison is unaffected.
+        // phyz's Joint grew limit stiffness/damping, armature, spring, and
+        // friction-loss fields; this pendulum wants all of them neutral.
         ..Default::default()
     };
     ModelBuilder::new()
