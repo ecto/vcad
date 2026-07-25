@@ -1544,7 +1544,10 @@ export async function createServer(
  * loses the entire payload — it must keep the full text result.
  */
 export function slimPreviewForInlineUi(
-  result: { content: Array<{ type: string; text: string }> },
+  result: {
+    content: Array<{ type: string; text: string }>;
+    structuredContent?: Record<string, unknown>;
+  },
   docId: string,
   toolName: string,
   clientHasInlineUi: boolean,
@@ -1595,6 +1598,19 @@ export function slimPreviewForInlineUi(
     { type: "text", text: summary },
     { type: "text", text: JSON.stringify({ document_id: docId, ...keep }) },
   ];
+  // attachPreviewHandle folded the FULL body into structuredContent (so a
+  // host that renders structured data can't miss a deliverable). When we
+  // slim the text, the structured payload has to shed the same bulk or the
+  // spill this function exists to prevent just moves to the other field.
+  // The two renderings stay equivalent — both are now the slim stub.
+  if (result.structuredContent) {
+    const { document_id, document_version } = result.structuredContent;
+    result.structuredContent = {
+      ...keep,
+      document_id: document_id ?? docId,
+      ...(document_version !== undefined ? { document_version } : {}),
+    };
+  }
 }
 
 /** Fields that must never be slimmed away: success/fault verdicts the caller
@@ -1617,6 +1633,18 @@ const SLIM_PRESERVED_FIELDS = [
  * id, as a small JSON text block too. Cursor has known gaps forwarding
  * structuredContent to widgets, and the id is useful to agents anyway
  * (it opens the result up for follow-up mutations).
+ *
+ * `structuredContent` MUST stay a SUPERSET of the text payload, never a
+ * lossy stub. Field report (2026-07-25): `sheet_metal_unfold` returned the
+ * full flat pattern + DXF in `content`, but the only structured payload was
+ * `{document_id, document_version}` — and a host that renders
+ * structuredContent when present (in preference to the text blocks) showed
+ * the caller exactly that stub. The tool's entire deliverable, the only
+ * route from a vcad sheet-metal part to a cuttable flat file, silently
+ * vanished on the way out. Every geometry tool carried the same hazard.
+ * So: fold the handler's own JSON body into the structured payload, with
+ * the preview handle merged ON TOP (the ids are ours to define). The two
+ * renderings are then equivalent and the failure mode is "kept too much".
  */
 function attachPreviewHandle(
   result: {
@@ -1627,6 +1655,7 @@ function attachPreviewHandle(
   toolName?: string,
 ): void {
   const structured: Record<string, unknown> = {
+    ...jsonBodyOf(result.content),
     ...result.structuredContent,
     document_id: docId,
   };
@@ -1650,6 +1679,33 @@ function attachPreviewHandle(
       text: JSON.stringify({ document_id: docId }),
     });
   }
+}
+
+/**
+ * Merge every text block that parses as a JSON *object* into one record —
+ * the handler's own return body, as structured data. Non-JSON prose blocks
+ * and JSON arrays/scalars have no field names to merge and are skipped;
+ * they still ride in `content` untouched. First writer wins, so a handler's
+ * primary body isn't overwritten by a trailing annotation block.
+ */
+function jsonBodyOf(
+  content: Array<{ type: string; text: string }>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const block of content) {
+    if (block.type !== "text") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(block.text);
+    } catch {
+      continue; // prose block — nothing to merge
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (body[k] === undefined) body[k] = v;
+    }
+  }
+  return body;
 }
 
 /**
