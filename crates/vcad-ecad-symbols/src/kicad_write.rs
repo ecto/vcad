@@ -607,12 +607,24 @@ fn write_pad(e: &mut Emitter, pad: &Pad, fp: &Footprint, nets: &NetTable) {
         2,
         &format!("(pad {} {} {}", q(&pad.number), type_str, shape_str),
     );
-    let at = if pad.rotation != 0.0 {
+    // KiCad's pad angle is ABSOLUTE (it includes the footprint's orientation);
+    // vcad's IR keeps it relative to the footprint, so compose on the way out.
+    // The reader performs the inverse, and `pad_rotation_round_trips` pins the
+    // pair together.
+    let abs_rot = {
+        let r = (fp.rotation + pad.rotation) % 360.0;
+        if r < 0.0 {
+            r + 360.0
+        } else {
+            r
+        }
+    };
+    let at = if abs_rot != 0.0 {
         format!(
             "(at {} {} {})",
             num(pad.position.x),
             num(pad.position.y),
-            num(pad.rotation)
+            num(abs_rot)
         )
     } else {
         format!("(at {} {})", num(pad.position.x), num(pad.position.y))
@@ -2526,6 +2538,39 @@ mod tests {
 
         // Exporting the re-imported board yields byte-identical output (fixpoint).
         assert_eq!(exported, write_kicad_pcb(&pcb2));
+    }
+
+    /// KiCad's pad angle is absolute (it includes the footprint's rotation);
+    /// vcad's IR keeps it relative, because every geometry consumer composes
+    /// `fp.rotation + pad.rotation`. Writer and reader must be exact inverses,
+    /// or a rotated footprint's non-square pads come out turned by the
+    /// footprint's own angle — which on a 0.5mm-pitch QFN makes neighbouring
+    /// pads OVERLAP (this was real: it produced hundreds of phantom DRC shorts
+    /// on the CM5 fixture and a pin field the router could not escape).
+    #[test]
+    fn pad_rotation_round_trips_through_footprint_rotation() {
+        let mut pcb = sample_pcb();
+        pcb.footprints[0].rotation = 90.0;
+        pcb.footprints[0].pads[0].rotation = 0.0;
+        pcb.footprints[0].pads[1].rotation = 45.0;
+
+        let text = write_kicad_pcb(&pcb);
+        // On the wire the angles are absolute: 90 and 135.
+        assert!(
+            text.contains(" 90)"),
+            "absolute pad angle 90 must be emitted"
+        );
+        assert!(
+            text.contains(" 135)"),
+            "absolute pad angle 45+90=135 must be emitted"
+        );
+
+        let back = crate::parse_kicad_pcb(&text).expect("re-parse");
+        let fp = &back.footprints[0];
+        assert_eq!(fp.rotation, 90.0);
+        // ...and relative again in the IR.
+        assert!((fp.pads[0].rotation - 0.0).abs() < 1e-6);
+        assert!((fp.pads[1].rotation - 45.0).abs() < 1e-6);
     }
 
     #[test]
