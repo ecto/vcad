@@ -137,7 +137,14 @@ fn bump_away(
     // polyline of SHORT segments (a maze staircase), so a coarse cell fits no
     // bumps at all on most of them and the compensator reports "cannot reach"
     // on runs with plenty of copper to work with.
-    let cell = (3.0 * amplitude).max(0.5);
+    // Cell length tracks the amplitude, which makes the length a run can
+    // absorb independent of amplitude: gain per cell is 2·(hypot(cell/3, h) −
+    // cell/3) = 0.83·h at cell = 3h, over a cell of 3h, so a run yields about
+    // 0.28mm per mm whatever h is. Small bumps are therefore strictly better
+    // — same capacity, less coupling lost and less chance of hitting a
+    // neighbour — which is why the ladder below climbs instead of descending.
+    // The floor keeps the serpentine from becoming too fine to fabricate.
+    let cell = (3.0 * amplitude).max(0.3);
     let third = cell / 3.0;
     let gain_per_cell = 2.0 * ((third * third + amplitude * amplitude).sqrt() - third);
     if gain_per_cell < 1e-3 {
@@ -315,21 +322,22 @@ fn compensate_run(pcb: &Pcb, net: &str, twin_net: &str, deficit: f64) -> Option<
         // it cost 0.777 -> 0.252 on the subset board. Breakout copper is
         // uncoupled already and keeps the generous amplitude.
         let is_leg = (width - leg_w).abs() < 0.01;
-        let mut amplitude = if is_leg {
+        let cap = if is_leg {
             ((max_sep - pair_pitch) * 0.7).max(0.05)
         } else {
             1.2
         };
-        for _ in 0..6 {
+        // Climb: smallest disruption that works wins.
+        let ladder: [f64; 6] = [0.06, 0.10, 0.16, 0.24, 0.4, 1.2];
+        for &rung_amp in ladder.iter() {
+            let amp = rung_amp.min(cap);
             let params = LengthTuneParams {
                 target_length: run_len + deficit,
-                max_amplitude: amplitude,
+                max_amplitude: amp,
                 spacing: 0.5,
                 style: MeanderStyle::Trombone,
             };
             let meanders = generate_meanders_checked(&points, &params, clearance, &obstacles);
-            let amp = amplitude;
-            amplitude *= 0.75;
             // Two candidate shapes per amplitude: the generic meander, and —
             // for coupled legs, where the generic one bends into the twin —
             // bumps that bulge away from it.
