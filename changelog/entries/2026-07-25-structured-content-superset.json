@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-structured-content-superset",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "MCP results no longer drop a tool's deliverable",
+  "summary": "structuredContent was only the {document_id, document_version} preview handle, so hosts that render it hid real payloads — sheet_metal_unfold's flat pattern and DXF among them.",
+  "features": ["mcp", "sheet-metal"],
+  "mcpTools": ["sheet_metal_unfold", "sheet_metal_create"]
+}
