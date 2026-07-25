@@ -62,7 +62,7 @@ physics = ["dep:vcad-kernel-physics"]
 atoms = ["dep:vcad-kernel-atoms", "vcad-kernel-atoms/wasm"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode", "dep:vcad-slicer-bambu"]
 cam = ["dep:vcad-kernel-cam"]
-ecad = ["dep:vcad-design-constraints", "dep:vcad-ecad-pcb", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]
+ecad = ["dep:vcad-design-constraints", "dep:vcad-ecad-pcb", "dep:vcad-ecad-fabprep", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]
 embroidery = ["dep:vcad-embroidery", "dep:vcad-embroidery-pes", "dep:vcad-embroidery-dst"]
 ts-rs = ["dep:ts-rs"]
 
@@ -122,6 +122,14 @@ optional = true
 [dependencies.vcad-ecad-pcb]
 path = "../vcad-ecad-pcb"
 optional = true
+
+[dependencies.vcad-ecad-fabprep]
+path = "../vcad-ecad-fabprep"
+optional = true
+# The kernel runs the pipeline and hands the fixed board back to the session;
+# writing files is `export_gerber`'s job, so the exporters stay out of the wasm
+# bundle.
+default-features = false
 
 [dependencies.vcad-ecad-schematic]
 path = "../vcad-ecad-schematic"

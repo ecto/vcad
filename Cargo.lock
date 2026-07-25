@@ -6883,6 +6883,7 @@ dependencies = [
  "axum",
  "clap",
  "crossterm",
+ "env_logger",
  "futures-util",
  "libc",
  "rustyline",
@@ -6897,6 +6898,7 @@ dependencies = [
  "vcad-chat",
  "vcad-crdt",
  "vcad-diff",
+ "vcad-ecad-fabprep",
  "vcad-eval",
  "vcad-i18n",
  "vcad-ir",
@@ -6908,6 +6910,7 @@ dependencies = [
  "vcad-kernel-sketch",
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
+ "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",
@@ -6994,6 +6997,20 @@ version = "0.9.4"
 dependencies = [
  "thiserror 2.0.18",
  "vcad-ecad-pcb",
+ "vcad-ir",
+]
+
+[[package]]
+name = "vcad-ecad-fabprep"
+version = "0.9.4"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "vcad-ecad-export",
+ "vcad-ecad-pcb",
+ "vcad-ecad-symbols",
  "vcad-ir",
 ]
 
@@ -7740,6 +7757,7 @@ dependencies = [
  "vcad-design-constraints",
  "vcad-diff",
  "vcad-ecad-export",
+ "vcad-ecad-fabprep",
  "vcad-ecad-parts",
  "vcad-ecad-pcb",
  "vcad-ecad-schematic",

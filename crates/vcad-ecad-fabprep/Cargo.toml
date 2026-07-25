@@ -1,0 +1,26 @@
+[package]
+name = "vcad-ecad-fabprep"
+description = "Reproducible PCB fab preparation: rule calibration, DRC fix loop, dangling-copper prune, and the DRC-delta receipt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
+vcad-ecad-export = { workspace = true, optional = true }
+vcad-ecad-symbols = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = "0.4"
+
+[features]
+default = ["package"]
+# Writing a fabrication package to disk. Off in the WASM kernel, which runs the
+# pipeline and hands the fixed board back to the session — file export there is
+# `export_gerber`'s job, and pulling the exporters in would grow the bundle for
+# nothing.
+package = ["dep:vcad-ecad-export", "dep:vcad-ecad-symbols"]

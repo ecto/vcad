@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-fab-prep-drc-delta-receipt",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "feat",
+  "title": "One-command fab prep with a DRC-delta receipt",
+  "summary": "vcad fab-prep (and the fab_prep MCP tool) takes a routed board to a complete Gerber package in one call: opt-in logged rule calibration, verdict ladder, strip-and-re-route fix loop, dangling-copper prune, and a receipt that separates route-attributable violations from the board's own baseline.",
+  "features": ["pcb", "drc", "autorouter", "fabrication", "cli"],
+  "mcpTools": ["fab_prep", "validate_for_fab", "export_gerber"]
+}

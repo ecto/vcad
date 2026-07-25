@@ -6028,6 +6028,48 @@ mod ecad_wasm {
         Ok(prof.pack_toml().to_string())
     }
 
+    /// Run the whole fab-preparation pipeline on a board and return the fixed
+    /// board plus its DRC-delta receipt.
+    ///
+    /// Optionally calibrates the board's design rules from its own declared via
+    /// classes (logged, never silent), routes or certifies the connections it
+    /// arrived without, then loops — census the violations the *routing* is
+    /// answerable for, strip their nets, re-route through the session-probed
+    /// ladder — until that number is zero. Prunes dangling copper last.
+    ///
+    /// The receipt reports route-attributable violations against the same board
+    /// stripped of all routing, because on an imported fixture absolute zero is
+    /// not achievable and reporting one number would be reporting the wrong
+    /// thing. A run that does not converge comes back with `converged: false`
+    /// and the remaining offenders — it is the caller's job not to ship it.
+    ///
+    /// # Arguments
+    /// * `pcb_json` — JSON-serialized `Pcb`
+    /// * `options_json` — JSON-serialized `FabPrepOptions` (`null`/empty = defaults)
+    ///
+    /// # Returns
+    /// `{ report, pcb }` — the receipt, and the board to write back.
+    #[wasm_bindgen(js_name = ecadFabPrep)]
+    pub fn ecad_fab_prep(pcb_json: &str, options_json: Option<String>) -> Result<JsValue, JsError> {
+        let mut pcb: Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let opts: vcad_ecad_fabprep::FabPrepOptions = match options_json.as_deref() {
+            None | Some("") | Some("null") => Default::default(),
+            Some(json) => serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?,
+        };
+        let outcome = vcad_ecad_fabprep::run_fab_prep(&mut pcb, &opts);
+        #[derive(serde::Serialize)]
+        struct Out<'a> {
+            report: &'a vcad_ecad_fabprep::FabPrepReport,
+            pcb: &'a Pcb,
+        }
+        serde_wasm_bindgen::to_value(&Out {
+            report: &outcome.report,
+            pcb: &pcb,
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Audit one net's routing without mutating anything: length, via/layer
     /// count, the closest approach to other-net copper (via the router oracle),
     /// and any clearance/short/unconnected DRC issues it's involved in. The
