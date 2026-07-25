@@ -713,6 +713,66 @@ pub fn route_net_push_shove(
 }
 
 #[cfg(test)]
+mod compensation_tests {
+    use super::*;
+
+    /// A run's compensation capacity is set by its LENGTH, not by how many
+    /// vertices it happens to have.
+    ///
+    /// This is the property that decides whether `worst_intra_pair_skew` can
+    /// be closed at all. A routed leg is a simplified maze staircase, so the
+    /// same 20mm of copper arrives as either a couple of long segments or
+    /// forty short ones; tiling bumps per segment made capacity track the
+    /// vertex count and left real runs unable to absorb ~1mm deficits. Both
+    /// shapes must now absorb the same deficit, and the added length must
+    /// match the analytic 2·(√2−1)/3 ≈ 0.276mm per mm.
+    #[test]
+    fn bump_capacity_follows_run_length_not_vertex_count() {
+        let twin = [(Vec2::new(0.0, -0.45), Vec2::new(20.0, -0.45))];
+        let len = |p: &[Vec2]| -> f64 { p.windows(2).map(|w| (w[1] - w[0]).length()).sum() };
+
+        // Same 20mm path, two segments vs forty.
+        let coarse = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(20.0, 0.0)];
+        let fine: Vec<Vec2> = (0..=40).map(|i| Vec2::new(i as f64 * 0.5, 0.0)).collect();
+
+        for (name, run) in [("coarse", &coarse), ("fine", &fine)] {
+            let out = bump_away(run, &twin, 2.0, 0.06)
+                .unwrap_or_else(|| panic!("{name} run must absorb 2mm over 20mm of copper"));
+            let added = len(&out) - len(run);
+            assert!(
+                added >= 2.0 * 0.6,
+                "{name}: added only {added:.3}mm of a 2mm deficit"
+            );
+            // Endpoints pinned.
+            assert_eq!(out[0], run[0]);
+            assert_eq!(*out.last().unwrap(), *run.last().unwrap());
+            // Every bump goes AWAY from the twin (which sits at y = -0.45).
+            assert!(
+                out.iter().all(|p| p.y >= -1e-9),
+                "{name}: a bump crossed toward the twin"
+            );
+        }
+
+        // Capacity is independent of amplitude: a 10x smaller bump over the
+        // same run still reaches the same deficit.
+        assert!(
+            bump_away(&fine, &twin, 2.0, 0.6).is_some(),
+            "large amplitude must also reach"
+        );
+    }
+
+    /// Nothing is emitted when the run genuinely cannot absorb the deficit —
+    /// the caller relies on `None` to fall through to another run rather than
+    /// commit a partial fix that just moves the skew around.
+    #[test]
+    fn bump_refuses_when_run_is_too_short() {
+        let twin = [(Vec2::new(0.0, -0.45), Vec2::new(2.0, -0.45))];
+        let short = vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0)];
+        assert!(bump_away(&short, &twin, 5.0, 0.06).is_none());
+    }
+}
+
+#[cfg(test)]
 mod pcb_route_tests {
     use super::*;
     use vcad_ir::ecad::*;
