@@ -124,7 +124,13 @@ pub fn make_cube(sx: f64, sy: f64, sz: f64) -> BRepSolid {
 
     // Pair twin half-edges (each edge only once)
     let mut paired = std::collections::HashSet::new();
-    for &(v_from, v_to) in he_map.keys() {
+    // Sorted: edge ids are assigned in this loop's order, and callers
+    // (the fillet's edge extraction, then every boolean whose split
+    // order follows face ids) inherit it — a HashMap walk made the same
+    // primitive produce a differently-ordered B-rep on every run.
+    let mut he_keys: Vec<_> = he_map.keys().copied().collect();
+    he_keys.sort();
+    for (v_from, v_to) in he_keys {
         if paired.contains(&(v_to, v_from)) {
             continue;
         }
@@ -236,7 +242,13 @@ pub fn make_wedge(sx: f64, sy: f64, sz: f64) -> BRepSolid {
 
     // Pair twin half-edges.
     let mut paired = std::collections::HashSet::new();
-    for &(v_from, v_to) in he_map.keys() {
+    // Sorted: edge ids are assigned in this loop's order, and callers
+    // (the fillet's edge extraction, then every boolean whose split
+    // order follows face ids) inherit it — a HashMap walk made the same
+    // primitive produce a differently-ordered B-rep on every run.
+    let mut he_keys: Vec<_> = he_map.keys().copied().collect();
+    he_keys.sort();
+    for (v_from, v_to) in he_keys {
         if paired.contains(&(v_to, v_from)) {
             continue;
         }
@@ -367,7 +379,13 @@ pub fn make_prism(sides: u32, circumradius: f64, height: f64) -> BRepSolid {
 
     // Pair twin half-edges.
     let mut paired = std::collections::HashSet::new();
-    for &(v_from, v_to) in he_map.keys() {
+    // Sorted: edge ids are assigned in this loop's order, and callers
+    // (the fillet's edge extraction, then every boolean whose split
+    // order follows face ids) inherit it — a HashMap walk made the same
+    // primitive produce a differently-ordered B-rep on every run.
+    let mut he_keys: Vec<_> = he_map.keys().copied().collect();
+    he_keys.sort();
+    for (v_from, v_to) in he_keys {
         if paired.contains(&(v_to, v_from)) {
             continue;
         }

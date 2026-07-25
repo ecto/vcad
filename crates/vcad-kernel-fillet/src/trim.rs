@@ -313,7 +313,13 @@ pub(crate) fn build_vertex_faces(
             *cache.entry(key).or_insert_with(|| topo.add_vertex(pos))
         };
 
-    for (&v_id, v_edges) in vertex_edges {
+    // Sorted: HashMap order decided which corner blend got which FaceId,
+    // so the same fillet produced a differently-ordered B-rep from run to
+    // run — and every downstream boolean, whose split order follows face
+    // ids, then returned a different solid.
+    let mut corners: Vec<_> = vertex_edges.iter().collect();
+    corners.sort_by_key(|(a, _)| **a);
+    for (&v_id, v_edges) in corners {
         if v_edges.len() < 3 {
             continue;
         }

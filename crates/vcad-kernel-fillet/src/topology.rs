@@ -148,6 +148,12 @@ pub(crate) fn extract_edges(brep: &BRepSolid) -> Vec<EdgeInfo> {
         }
     }
 
+    // Sorted by endpoints: the edge arena's order reflects however the
+    // input solid happened to pair its twins (a HashMap walk, in the
+    // primitives), so leaving it alone made the fillet emit its blend
+    // faces in a different order each run — and every boolean on the
+    // result, whose split order follows face ids, drifted with it.
+    edges.sort_by_key(|x| (x.v_start, x.v_end));
     edges
 }
 
