@@ -208,6 +208,7 @@ phyz = { path = "../phyz/crates/phyz", version = "0.3" }
 phyz-gpu = { path = "../phyz/crates/phyz-gpu", version = "0.1" }
 phyz-model = { path = "../phyz/crates/phyz-model", version = "0.1" }
 phyz-math = { path = "../phyz/crates/phyz-math", version = "0.1" }
+phyz-md = { path = "../phyz/crates/phyz-md", version = "0.1" }
 slotmap = "1"
 anyhow = "1"
 toml = "0.8"
