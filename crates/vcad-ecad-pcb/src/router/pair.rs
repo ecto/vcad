@@ -82,6 +82,40 @@ pub(crate) fn pair_partner(net: &str) -> Option<String> {
     None
 }
 
+/// Tolerance on the class's target impedance, in percent, within which a layer
+/// counts as impedance-correct for the declared geometry. ±10% is the usual
+/// fab spec for a controlled-impedance layer.
+const IMPEDANCE_TOL_PCT: f64 = 10.0;
+
+/// The diff-pair net class `net` belongs to, if any.
+fn diff_class_of<'a>(pcb: &'a Pcb, net: &str) -> Option<&'a vcad_ir::ecad::NetClassRules> {
+    pcb.rules.class_rules.iter().find(|class| {
+        class.diff_pair_gap.is_some()
+            && pcb
+                .rules
+                .net_class_assignments
+                .get(&class.name)
+                .is_some_and(|nets| nets.iter().any(|n| n == net))
+    })
+}
+
+/// Copper layers on which `net`'s class geometry is impedance-correct.
+///
+/// `None` — the common case — means "no preference": the class declares no
+/// target impedance, the stackup cannot be solved, no layer qualifies, or
+/// every available layer does. The caller then searches the full stack exactly
+/// as it always has.
+fn preferred_layers(pcb: &Pcb, net: &str, copper: &[PcbLayer]) -> Option<Vec<PcbLayer>> {
+    let class = diff_class_of(pcb, net)?;
+    let ok = crate::impedance::impedance_correct_layers(pcb, class, IMPEDANCE_TOL_PCT)?;
+    let pref: Vec<PcbLayer> = copper.iter().copied().filter(|l| ok.contains(l)).collect();
+    // Only a proper, non-empty subset is worth a separate pass.
+    if pref.is_empty() || pref.len() == copper.len() {
+        return None;
+    }
+    Some(pref)
+}
+
 /// The pair's leg width and gap: from a declared diff-pair net class containing
 /// `net` when one exists, else the session width and `clearance · 1.5`.
 fn pair_geometry(session: &RouteSession, pcb: &Pcb, net: &str, width: f64) -> (f64, f64) {
@@ -361,7 +395,27 @@ pub(super) fn try_route_pair_reason(
     // how a human escapes a BGA with a pair: singles in the field, coupled
     // in the open.
     let budget = max_expansions.max(100_000);
-    let mut found = None;
+    // Impedance-preferred layers (see [`crate::impedance`]). The pair commits
+    // to ONE leg width for its whole run, so on the layers where that width is
+    // not the impedance-correct one the trace is the wrong width. Until a leg
+    // can change width at its transition vias, the honest lever is preference:
+    // search first restricted to the layers where the class's declared
+    // geometry does hit its target impedance, and fall back to the full stack
+    // when no path exists there. Routability is unchanged — the fallback pass
+    // is the search that used to run — and a board that declares no target
+    // impedance (or whose stackup cannot be solved) takes the single-pass path
+    // exactly as before.
+    let search_sets: Vec<Vec<PcbLayer>> = match preferred_layers(pcb, net, &copper) {
+        Some(pref) => {
+            log::debug!(
+                "pair: {net}: impedance-preferred layers {pref:?} of {} copper layers",
+                copper.len()
+            );
+            vec![pref, copper.clone()]
+        }
+        None => vec![copper.clone()],
+    };
+    let mut center: Option<Centerline> = None;
     let usable_span = span - 2.0 * lead;
     // MEASURED neck-down (census 18). The fixed table below guesses how far
     // to retreat; on the CM5 that guess is the single dominant bail — 23 of
@@ -432,91 +486,32 @@ pub(super) fn try_route_pair_reason(
         (12.0, 12.0),
         (16.0, 16.0),
     ]);
-    for (r_from, r_to) in rungs {
-        let usable = span - 2.0 * lead;
-        if r_from + r_to >= usable - 1.0 {
-            continue;
-        }
-        let s_pt = start + dir.scale(r_from);
-        let e_pt = end - dir.scale(r_to);
-        // Endpoint layers: the WHOLE stack, not just the outer layer. A pair
-        // escaping a BGA goes down a via and couples on an inner layer under
-        // the field, where there are no pads at all — that is how the human
-        // board does it. Pinning the phantom's ends to FCu instead forced the
-        // coupled run to begin inside the pin field, where no fat capsule can
-        // ever sit; the pad connectors already route across the full stack to
-        // reach `leg.first_layer`, so this costs nothing and matches them.
-        let r = route_net_maze3d(
-            session,
-            &pcb.outline.vertices,
-            &copper,
-            net,
-            s_pt,
-            &copper,
-            e_pt,
-            &copper,
-            fat_w,
-            via_d,
-            Some(cong),
-            budget,
-            1.0,
-            None,
-            &[],
-            &[],
-            true,
-        );
-        if r.success && !r.segments.is_empty() {
-            if r_from + r_to > 0.0 {
-                log::debug!(
-                    "pair: {net}/{partner}: coupled after {r_from}/{r_to}mm neck-down retreat"
-                );
-            }
-            found = Some(r);
-            break;
-        }
-    }
-    // Ladder 2 — narrow centerline with a MEASURED coupled window.
-    //
-    // The bail census says the fat search above is the dominant failure mode
-    // by an order of magnitude (CM5: 28 of 32 bails, and 48 of 56 in a full
-    // route). The reason is structural, not budgetary: the phantom is
-    // `2w + gap` = 0.66mm wide, and the channels between 0.4mm-pitch BGA pads
-    // are single-track. No retreat rung helps when BOTH ends sit in pin
-    // fields, because the ladder is *guessing* how far to neck down.
-    //
-    // So: search a NARROWER centerline — one that threads what a single
-    // thread — then discover the coupled extent instead of guessing it. Offset
-    // the centerline into two legs, probe both legs per centerline segment,
-    // and keep the longest contiguous window where both are legal. That window
-    // is the real coupled run; the pad connectors cover the necked ends, and
-    // the amount of neck-down is measured rather than drawn from a 15-rung
-    // table. Widths descend so a wider (better-coupled) corridor always wins
-    // when one exists; the best trimmed run across the ladder is kept.
-    let mut center: Option<Centerline> = found.map(|r| r.segments);
-    if center.is_none() {
-        // Minimum worthwhile coupling: below this the pair is better off as
-        // two singles, so we fall through rather than commit a token stub.
-        let min_coupled = (0.5 * span).max(1.0);
-        let mut best: Option<(f64, Centerline)> = None;
-        for cw in [
-            0.75 * fat_w,
-            0.5 * fat_w,
-            w,
-            pcb.rules.default_rules.trace_width,
-        ] {
-            if cw < pcb.rules.default_rules.trace_width - 1e-9 {
+    for search in &search_sets {
+        let mut found = None;
+        for (r_from, r_to) in rungs.iter().copied() {
+            let usable = span - 2.0 * lead;
+            if r_from + r_to >= usable - 1.0 {
                 continue;
             }
+            let s_pt = start + dir.scale(r_from);
+            let e_pt = end - dir.scale(r_to);
+            // Endpoint layers: the WHOLE stack, not just the outer layer. A pair
+            // escaping a BGA goes down a via and couples on an inner layer under
+            // the field, where there are no pads at all — that is how the human
+            // board does it. Pinning the phantom's ends to FCu instead forced the
+            // coupled run to begin inside the pin field, where no fat capsule can
+            // ever sit; the pad connectors already route across the full stack to
+            // reach `leg.first_layer`, so this costs nothing and matches them.
             let r = route_net_maze3d(
                 session,
                 &pcb.outline.vertices,
-                &copper,
+                search,
                 net,
-                start,
-                &copper,
-                end,
-                &copper,
-                cw,
+                s_pt,
+                search,
+                e_pt,
+                search,
+                fat_w,
                 via_d,
                 Some(cong),
                 budget,
@@ -526,58 +521,126 @@ pub(super) fn try_route_pair_reason(
                 &[],
                 true,
             );
-            if !r.success || r.segments.is_empty() {
-                if cw <= pcb.rules.default_rules.trace_width + 1e-9 {
-                    // Endpoint diagnosis: a search that fails even at single
-                    // width on every layer is usually an illegal endpoint, not
-                    // a blocked corridor.
-                    let probe_pt = |p: Vec2| -> usize {
-                        copper
-                            .iter()
-                            .filter(|&&l| {
-                                session
-                                    .probe(
-                                        &CopperGeom::Segment {
-                                            a: p,
-                                            b: p,
-                                            half_w: cw / 2.0,
-                                        },
-                                        l,
-                                        net,
-                                        clearance,
-                                    )
-                                    .legal
-                            })
-                            .count()
-                    };
+            if r.success && !r.segments.is_empty() {
+                if r_from + r_to > 0.0 {
                     log::debug!(
-                        "pair: {net}/{partner}: narrow search failed at w={cw}; start legal on {}/{} layers, end on {}/{}",
-                        probe_pt(start),
-                        copper.len(),
-                        probe_pt(end),
-                        copper.len()
+                        "pair: {net}/{partner}: coupled after {r_from}/{r_to}mm neck-down retreat"
                     );
                 }
-                continue;
-            }
-            let Some((i, j)) = longest_coupled_window(session, &r.segments, net, half_sep, w)
-            else {
-                continue;
-            };
-            let win = &r.segments[i..=j];
-            let len: f64 = win.iter().map(|&(a, b, _)| dist(a, b)).sum();
-            if len < min_coupled {
-                continue;
-            }
-            if best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
-                best = Some((len, win.to_vec()));
+                found = Some(r);
+                break;
             }
         }
-        if let Some((len, win)) = best {
-            log::debug!(
+        // Ladder 2 — narrow centerline with a MEASURED coupled window.
+        //
+        // The bail census says the fat search above is the dominant failure mode
+        // by an order of magnitude (CM5: 28 of 32 bails, and 48 of 56 in a full
+        // route). The reason is structural, not budgetary: the phantom is
+        // `2w + gap` = 0.66mm wide, and the channels between 0.4mm-pitch BGA pads
+        // are single-track. No retreat rung helps when BOTH ends sit in pin
+        // fields, because the ladder is *guessing* how far to neck down.
+        //
+        // So: search a NARROWER centerline — one that threads what a single
+        // thread — then discover the coupled extent instead of guessing it. Offset
+        // the centerline into two legs, probe both legs per centerline segment,
+        // and keep the longest contiguous window where both are legal. That window
+        // is the real coupled run; the pad connectors cover the necked ends, and
+        // the amount of neck-down is measured rather than drawn from a 15-rung
+        // table. Widths descend so a wider (better-coupled) corridor always wins
+        // when one exists; the best trimmed run across the ladder is kept.
+        if let Some(r) = found {
+            center = Some(r.segments);
+            break;
+        }
+        {
+            // Minimum worthwhile coupling: below this the pair is better off as
+            // two singles, so we fall through rather than commit a token stub.
+            let min_coupled = (0.5 * span).max(1.0);
+            let mut best: Option<(f64, Centerline)> = None;
+            for cw in [
+                0.75 * fat_w,
+                0.5 * fat_w,
+                w,
+                pcb.rules.default_rules.trace_width,
+            ] {
+                if cw < pcb.rules.default_rules.trace_width - 1e-9 {
+                    continue;
+                }
+                let r = route_net_maze3d(
+                    session,
+                    &pcb.outline.vertices,
+                    search,
+                    net,
+                    start,
+                    search,
+                    end,
+                    search,
+                    cw,
+                    via_d,
+                    Some(cong),
+                    budget,
+                    1.0,
+                    None,
+                    &[],
+                    &[],
+                    true,
+                );
+                if !r.success || r.segments.is_empty() {
+                    if cw <= pcb.rules.default_rules.trace_width + 1e-9 {
+                        // Endpoint diagnosis: a search that fails even at single
+                        // width on every layer is usually an illegal endpoint, not
+                        // a blocked corridor.
+                        let probe_pt = |p: Vec2| -> usize {
+                            search
+                                .iter()
+                                .filter(|&&l| {
+                                    session
+                                        .probe(
+                                            &CopperGeom::Segment {
+                                                a: p,
+                                                b: p,
+                                                half_w: cw / 2.0,
+                                            },
+                                            l,
+                                            net,
+                                            clearance,
+                                        )
+                                        .legal
+                                })
+                                .count()
+                        };
+                        log::debug!(
+                        "pair: {net}/{partner}: narrow search failed at w={cw}; start legal on {}/{} layers, end on {}/{}",
+                        probe_pt(start),
+                        search.len(),
+                        probe_pt(end),
+                        search.len()
+                    );
+                    }
+                    continue;
+                }
+                let Some((i, j)) = longest_coupled_window(session, &r.segments, net, half_sep, w)
+                else {
+                    continue;
+                };
+                let win = &r.segments[i..=j];
+                let len: f64 = win.iter().map(|&(a, b, _)| dist(a, b)).sum();
+                if len < min_coupled {
+                    continue;
+                }
+                if best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
+                    best = Some((len, win.to_vec()));
+                }
+            }
+            if let Some((len, win)) = best {
+                log::debug!(
                 "pair: {net}/{partner}: narrow centerline coupled {len:.1}mm of {span:.1}mm span"
             );
-            center = Some(win);
+                center = Some(win);
+            }
+        }
+        if center.is_some() {
+            break;
         }
     }
     let Some(center) = center else {
@@ -1704,6 +1767,8 @@ mod tests {
                     via_drill: 0.2,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![NetClassRules {
                     name: "DIFF".into(),
@@ -1713,6 +1778,8 @@ mod tests {
                     via_drill: 0.2,
                     diff_pair_gap: Some(0.25),
                     diff_pair_width: Some(0.2),
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 }],
                 net_class_assignments: Default::default(),
                 edge_clearance: 0.5,

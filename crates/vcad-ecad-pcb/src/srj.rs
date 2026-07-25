@@ -252,6 +252,8 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Pcb {
                 via_drill: (w).max(0.3),
                 diff_pair_gap: None,
                 diff_pair_width: None,
+                target_impedance: None,
+                target_diff_impedance: None,
             },
             class_rules: vec![],
             net_class_assignments: Default::default(),

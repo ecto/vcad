@@ -13,6 +13,7 @@
 //! - [`drc`] -- Design rule checking engine (board vs. its own declared rules)
 //! - [`dfm`] -- Design-for-Manufacturing checks (board vs. a fab-house profile)
 //! - [`spatial`] -- R-tree spatial index for copper elements
+//! - [`impedance`] -- Per-layer controlled-impedance geometry from the stackup
 
 pub mod component_mesh;
 pub mod copper_pour;
@@ -20,6 +21,7 @@ pub mod critique;
 pub mod dfm;
 pub mod drc;
 pub mod geometry;
+pub mod impedance;
 pub mod pour_synth;
 pub mod ratsnest;
 pub mod router;

@@ -432,30 +432,117 @@ fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
     // Sort: FCu first, then inner, then BCu
     copper_layers.sort_by_key(|l| l.copper_position().unwrap_or(u8::MAX));
 
-    let thickness = root
-        .find("general")
-        .and_then(|g| child_f64(g, "thickness"))
-        .unwrap_or(1.6);
-    let n = copper_layers.len();
-    let diel = if n > 1 {
-        thickness / (n - 1) as f64
-    } else {
-        thickness
-    };
+    // The real thing, when the board carries it: `(setup (stackup ...))` lists
+    // every physical layer top to bottom — copper with its thickness, and the
+    // prepreg/core between them with thickness, material and epsilon_r.
+    // Impedance work needs those actual numbers, so prefer them.
+    if let Some(real) = parse_declared_stackup(root, &copper_layers) {
+        return real;
+    }
 
+    // No declared stackup. Copper thickness stays at the 1oz default every
+    // downstream consumer of copper weight already assumed; the dielectric is
+    // left EMPTY rather than filled with board-thickness/(n-1) at er 4.5. That
+    // synthetic dielectric read like measured data to anything downstream —
+    // and the impedance solver must fail closed on a board that does not
+    // declare its stackup, not solve against an invented one.
     let layers: Vec<StackupLayer> = copper_layers
         .iter()
-        .enumerate()
-        .map(|(i, &layer)| StackupLayer {
+        .map(|&layer| StackupLayer {
             layer,
             copper_thickness: Some(0.035),
-            dielectric_thickness: if i > 0 { Some(diel) } else { None },
-            dielectric_er: if i > 0 { Some(4.5) } else { None },
-            material: if i > 0 { Some("FR4".to_string()) } else { None },
+            dielectric_thickness: None,
+            dielectric_er: None,
+            material: None,
         })
         .collect();
 
     LayerStackup { layers }
+}
+
+/// Read `(setup (stackup ...))` into per-copper-layer physical data.
+///
+/// Each [`StackupLayer`] carries the dielectric *below* it (toward the next
+/// copper layer down); the bottom copper layer carries none. Where KiCad splits
+/// the space between two copper layers into several prepreg/core sub-layers,
+/// thicknesses add and `er` is thickness-weighted.
+///
+/// Returns `None` when there is no stackup section, or when it does not cover
+/// the board's copper layers — a partially-invented stackup is worse than none.
+fn parse_declared_stackup(root: &SExpr<'_>, copper: &[PcbLayer]) -> Option<LayerStackup> {
+    let stackup = root.find("setup")?.find("stackup")?;
+    let entries = stackup.children()?;
+
+    let mut out: Vec<StackupLayer> = Vec::new();
+    let mut pending: Option<(PcbLayer, Option<f64>)> = None; // (layer, copper thickness)
+    let mut diel_t = 0.0_f64;
+    let mut diel_er_t = 0.0_f64; // thickness-weighted er accumulator
+    let mut saw_diel = false;
+    let mut saw_er = false;
+
+    for e in entries.iter().skip(1) {
+        if e.tag_name() != Some("layer") {
+            continue;
+        }
+        let name = e.children().and_then(|c| c.get(1)).and_then(|v| v.as_str());
+        let ty = e
+            .find("type")
+            .and_then(|n| n.children())
+            .and_then(|c| c.get(1))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let thickness = child_f64(e, "thickness");
+
+        if ty == "copper" {
+            let Some(layer) = name.and_then(parse_layer).filter(|l| l.is_copper()) else {
+                continue;
+            };
+            // Close out the previous copper layer with the dielectric that ran
+            // between it and this one.
+            if let Some((prev, cu_t)) = pending.take() {
+                out.push(StackupLayer {
+                    layer: prev,
+                    copper_thickness: cu_t,
+                    dielectric_thickness: (saw_diel && diel_t > 0.0).then_some(diel_t),
+                    dielectric_er: (saw_er && diel_t > 0.0).then(|| diel_er_t / diel_t),
+                    material: saw_diel.then(|| "dielectric".to_string()),
+                });
+            }
+            pending = Some((layer, thickness));
+            diel_t = 0.0;
+            diel_er_t = 0.0;
+            saw_diel = false;
+            saw_er = false;
+        } else if matches!(ty, "prepreg" | "core" | "dielectric") {
+            // Only dielectric *between* two copper layers counts.
+            let Some(t) = thickness else { continue };
+            if pending.is_some() {
+                diel_t += t;
+                saw_diel = true;
+                // Thickness without an epsilon_r leaves the stack only
+                // partially characterised: the geometry is recorded, the `er`
+                // is not invented, and the impedance layer fails closed on it.
+                if let Some(er) = child_f64(e, "epsilon_r") {
+                    diel_er_t += t * er;
+                    saw_er = true;
+                }
+            }
+        }
+    }
+    if let Some((last, cu_t)) = pending {
+        out.push(StackupLayer {
+            layer: last,
+            copper_thickness: cu_t,
+            dielectric_thickness: None,
+            dielectric_er: None,
+            material: None,
+        });
+    }
+
+    if out.len() < 2 || out.len() != copper.len() {
+        return None;
+    }
+    Some(LayerStackup { layers: out })
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +580,8 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
             via_drill,
             diff_pair_gap: None,
             diff_pair_width: None,
+            target_impedance: None,
+            target_diff_impedance: None,
         },
         class_rules: vec![],
         net_class_assignments: HashMap::new(),
