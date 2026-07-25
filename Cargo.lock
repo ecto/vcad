@@ -4015,15 +4015,48 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.0"
+version = "0.3.1"
+dependencies = [
+ "phyz-collision",
+ "phyz-contact",
+ "phyz-diff",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
+]
+
+[[package]]
+name = "phyz-collision"
+version = "0.3.1"
 dependencies = [
  "phyz-math",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-contact"
+version = "0.3.1"
+dependencies = [
+ "phyz-collision",
+ "phyz-math",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-diff"
+version = "0.3.1"
+dependencies = [
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
  "tang",
+ "tang-expr",
+ "tang-la",
 ]
 
 [[package]]
 name = "phyz-gpu"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
@@ -4036,7 +4069,7 @@ dependencies = [
 
 [[package]]
 name = "phyz-math"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "tang",
  "tang-la",
@@ -4044,21 +4077,25 @@ dependencies = [
 
 [[package]]
 name = "phyz-md"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "phyz-math",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_distr",
+ "rayon",
 ]
 
 [[package]]
 name = "phyz-model"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "phyz-math",
 ]
 
 [[package]]
 name = "phyz-rigid"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "phyz-math",
  "phyz-model",
@@ -4512,6 +4549,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]

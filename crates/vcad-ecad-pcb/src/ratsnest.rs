@@ -207,6 +207,8 @@ mod tests {
                     via_drill: 0.4,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![],
                 net_class_assignments: Default::default(),
