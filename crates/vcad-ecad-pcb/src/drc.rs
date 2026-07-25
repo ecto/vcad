@@ -2447,13 +2447,14 @@ fn build_connectivity(pcb: &Pcb) -> (Vec<ConnNode>, Dsu) {
     (nodes, dsu)
 }
 
-/// Remove dangling copper: board-level traces and vias whose galvanic island
-/// touches no pad and no pour fragment of their net — copper connected to
-/// nothing, left behind by rip-up/restore cycles. Uses the same connectivity
-/// model as DRC's island detection, so exactly the islands DRC reports as
-/// "copper only, no pads" are removed. Returns `(traces_removed,
-/// vias_removed)`.
-pub fn prune_dangling_copper(pcb: &mut Pcb) -> (usize, usize) {
+/// Per-trace and per-via keep flags for [`prune_dangling_copper`]: `false`
+/// marks copper whose galvanic island holds no pad and no pour fragment —
+/// electrically dead. Indices line up with `pcb.traces` and `pcb.vias`.
+///
+/// Split out from the pruner so a caller that owns only *part* of a board's
+/// copper (the autorouter, judging the candidate board it is about to return)
+/// can drop its own dead pieces without touching copper it did not place.
+pub(crate) fn dangling_copper_mask(pcb: &Pcb) -> (Vec<bool>, Vec<bool>) {
     let (nodes, mut dsu) = build_connectivity(pcb);
     // Node order in build_conn_nodes: traces, then vias, then pads/pours.
     let n_traces = pcb.traces.len();
@@ -2475,6 +2476,20 @@ pub fn prune_dangling_copper(pcb: &mut Pcb) -> (usize, usize) {
     let keep_via: Vec<bool> = (0..n_vias)
         .map(|i| anchored.contains(&dsu.find(n_traces + i)))
         .collect();
+    (keep_trace, keep_via)
+}
+
+/// Remove dangling copper: board-level traces and vias whose galvanic island
+/// touches no pad and no pour fragment of their net — copper connected to
+/// nothing, left behind by rip-up/restore cycles. Uses the same connectivity
+/// model as DRC's island detection, so exactly the islands DRC reports as
+/// "copper only, no pads" are removed. Returns `(traces_removed,
+/// vias_removed)`.
+///
+/// Galvanic islands are disjoint by construction, so dropping a whole unanchored
+/// island can never disconnect copper that stays — one pass reaches the fixpoint.
+pub fn prune_dangling_copper(pcb: &mut Pcb) -> (usize, usize) {
+    let (keep_trace, keep_via) = dangling_copper_mask(pcb);
 
     let mut ti = 0;
     pcb.traces.retain(|_| {

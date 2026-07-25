@@ -4,8 +4,7 @@
 //! The autorouter composes copper from several independent emitters (maze
 //! routes, fan-out rescue vias, plane stitching, joint repair). Each emitter is
 //! probed against the board, but their *combined* output can still contain
-//! illegal copper of the router's own making — the two recurring field
-//! failures:
+//! copper no one would ship — the three recurring field failures:
 //!
 //! 1. **Duplicate / overlapping vias** — two emitters drop a via for the same
 //!    net at (nearly) the same spot, and the drills intersect: a `HoleToHole`
@@ -13,14 +12,18 @@
 //! 2. **Same-net bypass noodles** — a route brushes its own net's copper far
 //!    from any intended junction, short-circuiting the conductor between the
 //!    touch points: a `SameNetBypass` DRC warning.
+//! 3. **Dangling copper** — traces and vias whose island reaches no pad and no
+//!    pour, stranded by rip-up/restore: `NetIslands`, "copper only, no pads".
 //!
 //! [`legalize`] runs after routing settles and before the result is returned:
 //! it merges same-net vias whose holes are hole-to-hole illegal (reconnecting
 //! their traces), prunes redundant self-touching trace segments while a
 //! continuity oracle proves the net stays connected, and finally demotes —
-//! fail-closed — any net whose new copper is still hole-to-hole illegal. The
-//! invariant it enforces: an autoroute pass on a clean placement never
-//! introduces `HoleToHole` or `SameNetBypass` violations of its own making.
+//! fail-closed — any net whose new copper is still hole-to-hole illegal.
+//! [`prune_dangling`] then gets the last word, dropping the dead islands. The
+//! invariant they enforce together: an autoroute pass on a clean placement
+//! never introduces `HoleToHole` or `SameNetBypass` violations of its own
+//! making, and never returns copper connected to nothing.
 
 use std::collections::BTreeSet;
 
@@ -28,7 +31,9 @@ use vcad_ir::ecad::{CopperSource, Pcb, PcbLayer, Trace, Via};
 use vcad_ir::Vec2;
 
 use super::auto::{copper_layers, RoutedTrace, RoutedVia};
-use crate::drc::{analyze_net_continuity, check_drc_in_region, DrcRuleType, DrcViolation};
+use crate::drc::{
+    analyze_net_continuity, check_drc_in_region, dangling_copper_mask, DrcRuleType, DrcViolation,
+};
 
 /// Two points closer than this are the same routing coordinate.
 const POS_EPS: f64 = 1e-4;
@@ -106,6 +111,63 @@ pub(super) fn legalize(
         }
     }
     report
+}
+
+/// Drop the router's own dead copper: new traces and vias whose galvanic
+/// island on the candidate board holds no pad and no pour fragment.
+///
+/// The debris comes from the emitters that add copper speculatively — dog-bone
+/// escape vias for a connection rip-up later abandoned, fan-out stubs whose
+/// route was replaced, stitching vias whose plane never materialized — and it
+/// shows up in DRC as `NetIslands` "copper only, no pads" (4185 traces and 130
+/// vias on one CM5 pass, 172 island violations down to 18 once removed).
+///
+/// Soundness — this can only remove electrically dead copper:
+///
+/// * Islands are *maximal* connected components, so they are disjoint. Deleting
+///   an entire unanchored island cannot disconnect anything that stays, and the
+///   single pass is already the fixpoint.
+/// * Every connection the router counts as placed runs pad to pad, so its
+///   copper lives in a pad-anchored island and is kept. `routability`, the
+///   routed/unrouted net split, and the `pending` diagnostics therefore mean
+///   exactly what they meant before the prune.
+/// * Only *new* copper is dropped. Board copper — including anything the caller
+///   placed by hand — is judged (it anchors islands) but never removed, which is
+///   also what keeps the arc blind spot harmless: connectivity does not model
+///   `trace_arcs`, but the router emits none and never deletes the board's.
+///
+/// Returns `(traces_removed, vias_removed)`.
+pub(super) fn prune_dangling(
+    pcb: &Pcb,
+    traces: &mut Vec<RoutedTrace>,
+    vias: &mut Vec<RoutedVia>,
+) -> (usize, usize) {
+    if traces.is_empty() && vias.is_empty() {
+        return (0, 0);
+    }
+    // Judge the board as the caller will commit it: `candidate_pcb` appends the
+    // new copper after the existing copper, so the new traces occupy
+    // `pcb.traces.len()..` of the mask and the new vias `pcb.vias.len()..`.
+    let candidate = candidate_pcb(pcb, traces, vias);
+    let (keep_trace, keep_via) = dangling_copper_mask(&candidate);
+    let (t0, v0) = (pcb.traces.len(), pcb.vias.len());
+
+    let mut ti = 0;
+    traces.retain(|_| {
+        let k = keep_trace[t0 + ti];
+        ti += 1;
+        k
+    });
+    let mut vi = 0;
+    vias.retain(|_| {
+        let k = keep_via[v0 + vi];
+        vi += 1;
+        k
+    });
+    (
+        keep_trace[t0..].iter().filter(|k| !**k).count(),
+        keep_via[v0..].iter().filter(|k| !**k).count(),
+    )
 }
 
 /// Quantized position, as a set key for the unfixable-violation cache.
@@ -566,6 +628,94 @@ mod tests {
         assert_eq!(report.demoted.len(), 1);
         assert_eq!(report.demoted[0].0, "A");
         assert!(vias.is_empty() && traces.is_empty());
+    }
+
+    /// A board with two pads on net A and a trace running between them, plus a
+    /// floating stub the router left behind somewhere else on the same net.
+    fn board_with_pads() -> Pcb {
+        let mut pcb = board();
+        let pad = |x: f64, y: f64, num: &str, net: &str| Footprint {
+            reference: format!("U{num}"),
+            value: String::new(),
+            footprint_name: "test".into(),
+            position: Vec2::new(x, y),
+            rotation: 0.0,
+            front: true,
+            pads: vec![Pad {
+                number: num.into(),
+                pad_type: PadType::SMD,
+                shape: PadShape::Rect {
+                    width: 1.0,
+                    height: 1.0,
+                },
+                position: Vec2::new(0.0, 0.0),
+                rotation: 0.0,
+                drill: None,
+                layers: vec![PcbLayer::FCu],
+                net: Some(net.into()),
+            }],
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        };
+        pcb.footprints.push(pad(5.0, 5.0, "1", "A"));
+        pcb.footprints.push(pad(20.0, 5.0, "2", "A"));
+        pcb
+    }
+
+    /// Copper that reaches a pad stays; a floating island of the same net —
+    /// trace plus the via that hangs off it — is removed.
+    #[test]
+    fn dangling_island_pruned_live_copper_kept() {
+        let pcb = board_with_pads();
+        let mut traces = vec![
+            // Pad-to-pad: the live route.
+            rtrace((5.0, 5.0), (20.0, 5.0), "A", PcbLayer::FCu),
+            // Orphan: touches neither pad nor pour.
+            rtrace((5.0, 20.0), (12.0, 20.0), "A", PcbLayer::FCu),
+        ];
+        let mut vias = vec![rvia(12.0, 20.0, "A")];
+        let (dead_t, dead_v) = prune_dangling(&pcb, &mut traces, &mut vias);
+        assert_eq!((dead_t, dead_v), (1, 1));
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].start, Vec2::new(5.0, 5.0));
+        assert!(vias.is_empty());
+    }
+
+    /// The prune only judges the router's own copper: board traces stay even
+    /// when they are the dangling ones.
+    #[test]
+    fn existing_board_copper_never_pruned() {
+        let mut pcb = board_with_pads();
+        pcb.traces.push(Trace {
+            start: Vec2::new(5.0, 20.0),
+            end: Vec2::new(12.0, 20.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "A".into(),
+            source: Some(CopperSource::Manual),
+        });
+        let mut traces = vec![rtrace((5.0, 5.0), (20.0, 5.0), "A", PcbLayer::FCu)];
+        let mut vias = vec![];
+        let (dead_t, dead_v) = prune_dangling(&pcb, &mut traces, &mut vias);
+        assert_eq!((dead_t, dead_v), (0, 0));
+        assert_eq!(traces.len(), 1);
+        assert_eq!(pcb.traces.len(), 1, "board copper is judged, never removed");
+    }
+
+    /// A chain of new copper is kept as a whole when any link reaches a pad —
+    /// the island is the unit, not the individual segment.
+    #[test]
+    fn chained_copper_anchored_through_via_kept() {
+        let pcb = board_with_pads();
+        let mut traces = vec![
+            rtrace((5.0, 5.0), (10.0, 5.0), "A", PcbLayer::FCu),
+            rtrace((10.0, 5.0), (20.0, 5.0), "A", PcbLayer::BCu),
+        ];
+        let mut vias = vec![rvia(10.0, 5.0, "A")];
+        let (dead_t, dead_v) = prune_dangling(&pcb, &mut traces, &mut vias);
+        assert_eq!((dead_t, dead_v), (0, 0));
+        assert_eq!((traces.len(), vias.len()), (2, 1));
     }
 
     /// A redundant same-net segment that brushes distant copper of its own net
