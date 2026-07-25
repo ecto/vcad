@@ -4635,6 +4635,44 @@ export function ecadExportFab(pcb_json) {
 }
 
 /**
+ * Run the whole fab-preparation pipeline on a board and return the fixed
+ * board plus its DRC-delta receipt.
+ *
+ * Optionally calibrates the board's design rules from its own declared via
+ * classes (logged, never silent), routes or certifies the connections it
+ * arrived without, then loops — census the violations the *routing* is
+ * answerable for, strip their nets, re-route through the session-probed
+ * ladder — until that number is zero. Prunes dangling copper last.
+ *
+ * The receipt reports route-attributable violations against the same board
+ * stripped of all routing, because on an imported fixture absolute zero is
+ * not achievable and reporting one number would be reporting the wrong
+ * thing. A run that does not converge comes back with `converged: false`
+ * and the remaining offenders — it is the caller's job not to ship it.
+ *
+ * # Arguments
+ * * `pcb_json` — JSON-serialized `Pcb`
+ * * `options_json` — JSON-serialized `FabPrepOptions` (`null`/empty = defaults)
+ *
+ * # Returns
+ * `{ report, pcb }` — the receipt, and the board to write back.
+ * @param {string} pcb_json
+ * @param {string | null} [options_json]
+ * @returns {any}
+ */
+export function ecadFabPrep(pcb_json, options_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadFabPrep(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Fill copper pour zones on the PCB.
  *
  * # Arguments
@@ -10068,12 +10106,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3719, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3720, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3728, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3729, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3744, function: Function { arguments: [Externref], shim_idx: 3745, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3753, function: Function { arguments: [Externref], shim_idx: 3754, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

@@ -1810,6 +1810,31 @@ export function ecadEvaluateMotor(spec_json: string): any;
 export function ecadExportFab(pcb_json: string): any;
 
 /**
+ * Run the whole fab-preparation pipeline on a board and return the fixed
+ * board plus its DRC-delta receipt.
+ *
+ * Optionally calibrates the board's design rules from its own declared via
+ * classes (logged, never silent), routes or certifies the connections it
+ * arrived without, then loops — census the violations the *routing* is
+ * answerable for, strip their nets, re-route through the session-probed
+ * ladder — until that number is zero. Prunes dangling copper last.
+ *
+ * The receipt reports route-attributable violations against the same board
+ * stripped of all routing, because on an imported fixture absolute zero is
+ * not achievable and reporting one number would be reporting the wrong
+ * thing. A run that does not converge comes back with `converged: false`
+ * and the remaining offenders — it is the caller's job not to ship it.
+ *
+ * # Arguments
+ * * `pcb_json` — JSON-serialized `Pcb`
+ * * `options_json` — JSON-serialized `FabPrepOptions` (`null`/empty = defaults)
+ *
+ * # Returns
+ * `{ report, pcb }` — the receipt, and the board to write back.
+ */
+export function ecadFabPrep(pcb_json: string, options_json?: string | null): any;
+
+/**
  * Fill copper pour zones on the PCB.
  *
  * # Arguments
@@ -3349,16 +3374,6 @@ export interface InitOutput {
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly getCompiledModule: () => any;
-    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
-    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
-    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
-    readonly wasmkeybindings_new: () => number;
-    readonly wasmkeybindings_resetAll: (a: number) => void;
-    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
-    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
     readonly checkDesignConstraints: (a: number, b: number) => [number, number, number, number];
     readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
@@ -3460,6 +3475,7 @@ export interface InitOutput {
     readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
     readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
     readonly ecadExportFab: (a: number, b: number) => [number, number, number];
+    readonly ecadFabPrep: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly ecadFillZones: (a: number, b: number) => [number, number, number];
     readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
     readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
@@ -3578,6 +3594,16 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
+    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
+    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
+    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
+    readonly wasmkeybindings_new: () => number;
+    readonly wasmkeybindings_resetAll: (a: number) => void;
+    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
+    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
