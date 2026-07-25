@@ -365,7 +365,8 @@ impl RouteSession {
             .chain(std::iter::once(&default_via_drill))
             .map(|d| d / 2.0)
             .chain(drills.iter().map(|d| d.radius))
-            .fold(0.0_f64, f64::max);        let pair_nets: std::collections::HashSet<String> = crate::drc::diff_pairs(pcb)
+            .fold(0.0_f64, f64::max);
+        let pair_nets: std::collections::HashSet<String> = crate::drc::diff_pairs(pcb)
             .into_iter()
             .flat_map(|dp| [dp.net_p, dp.net_n])
             .collect();
