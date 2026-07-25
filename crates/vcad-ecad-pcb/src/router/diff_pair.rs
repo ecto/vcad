@@ -365,6 +365,8 @@ mod tests {
                     via_drill: 0.4,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![NetClassRules {
                     name: "USB".into(),
@@ -374,6 +376,8 @@ mod tests {
                     via_drill: 0.4,
                     diff_pair_gap: Some(0.15),
                     diff_pair_width: Some(0.2),
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 }],
                 net_class_assignments: Default::default(),
                 edge_clearance: 0.5,
