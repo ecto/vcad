@@ -128,41 +128,46 @@ fn bump_away(
             .fold(f64::INFINITY, f64::min)
     };
 
-    // Bumps are TILED along each segment, not one per segment. A single bump
-    // on a long straight adds almost nothing — its gain is
-    // 2·(hypot(L/3, h) − L/3), which for a 17mm run at 1.2mm amplitude is
-    // 0.19mm, nowhere near a 1.3mm deficit. Cells sized to the amplitude keep
-    // each bump's aspect ratio steep, where the length actually comes from.
-    // Cell length is tied to the amplitude, not a fixed 1mm: a routed run is a
-    // polyline of SHORT segments (a maze staircase), so a coarse cell fits no
-    // bumps at all on most of them and the compensator reports "cannot reach"
-    // on runs with plenty of copper to work with.
-    // Cell length tracks the amplitude, which makes the length a run can
-    // absorb independent of amplitude: gain per cell is 2·(hypot(cell/3, h) −
-    // cell/3) = 0.83·h at cell = 3h, over a cell of 3h, so a run yields about
-    // 0.28mm per mm whatever h is. Small bumps are therefore strictly better
-    // — same capacity, less coupling lost and less chance of hitting a
-    // neighbour — which is why the ladder below climbs instead of descending.
-    // The floor keeps the serpentine from becoming too fine to fabricate.
+    // Bumps are tiled by ARCLENGTH, not per segment.
+    //
+    // A routed leg is a polyline of many short segments (a simplified maze
+    // staircase, ~0.45mm a side). Tiling per segment caps the achievable
+    // length at one small cell per segment — measured, that is ~0.03mm per
+    // segment, so a 10.66mm run reported "cannot reach 1.312mm" despite
+    // having ample copper. Resampling the path at a fixed arclength step
+    // decouples the pattern from the original vertices and restores the true
+    // capacity, which is 2·(√2 − 1)/3 ≈ 0.276mm of added length per mm of run
+    // at cell = 3·amplitude — and, notably, independent of amplitude.
     let cell = (3.0 * amplitude).max(0.3);
-    let third = cell / 3.0;
-    let gain_per_cell = 2.0 * ((third * third + amplitude * amplitude).sqrt() - third);
-    if gain_per_cell < 1e-3 {
+    let step = cell / 3.0;
+    let gain_per_cell = 2.0 * ((step * step + amplitude * amplitude).sqrt() - step);
+    if gain_per_cell < 1e-4 {
         return None;
     }
-    let mut out: Vec<Vec2> = Vec::with_capacity(points.len() * 4);
+    let total: f64 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    if total < 2.0 * cell {
+        return None;
+    }
+    // Only rework the prefix needed to absorb the deficit (plus margin); the
+    // rest of the run keeps its original vertices, so the trace count stays
+    // bounded.
+    let need_len = (deficit / (gain_per_cell / cell) * 1.25).min(total);
+
+    let mut out: Vec<Vec2> = vec![points[0]];
     let mut added = 0.0f64;
+    let mut travelled = 0.0f64;
+    let mut phase = 0usize; // 0 = on path, 1 and 2 = offset (one cell = 3 steps)
+    let mut carry = 0.0f64; // distance already consumed inside the current segment
+
     for w in points.windows(2) {
         let (a, b) = (w[0], w[1]);
-        out.push(a);
         let len = (b - a).length();
-        if added >= deficit || len < cell {
+        if len < 1e-9 {
             continue;
         }
         let dir = (b - a).scale(1.0 / len);
         let nrm = Vec2::new(-dir.y, dir.x);
-        // Bulge to whichever side is farther from the twin. The twin runs
-        // parallel to the whole segment, so one decision per segment holds.
+        // Bulge to whichever side is farther from the twin.
         let mid = a + dir.scale(len / 2.0);
         let sign = if twin_dist(mid + nrm.scale(amplitude)) >= twin_dist(mid - nrm.scale(amplitude))
         {
@@ -171,21 +176,31 @@ fn bump_away(
             -1.0
         };
         let off = nrm.scale(sign * amplitude);
-        // Keep a quarter-cell margin at each end so bumps stay clear of the
-        // segment's endpoints (vias, corners, pad breakouts), then fit as many
-        // whole cells as the remainder allows.
-        let margin = cell * 0.25;
-        let usable = len - 2.0 * margin;
-        let cells = (usable / cell).floor().max(0.0) as usize;
-        let mut t = margin;
-        for _ in 0..cells {
-            if added >= deficit {
+
+        let mut t = carry;
+        while t < len {
+            if travelled + (t - carry) >= need_len || added >= deficit {
                 break;
             }
-            out.push(a + dir.scale(t + third) + off);
-            out.push(a + dir.scale(t + 2.0 * third) + off);
-            added += gain_per_cell;
-            t += cell;
+            let p = a + dir.scale(t);
+            if phase == 0 {
+                out.push(p);
+            } else {
+                out.push(p + off);
+                if phase == 2 {
+                    added += gain_per_cell;
+                }
+            }
+            phase = (phase + 1) % 3;
+            t += step;
+        }
+        travelled += len - carry;
+        carry = (t - len).max(0.0);
+        // Land back on the path at the vertex before moving on.
+        if added >= deficit || travelled >= need_len {
+            out.push(b);
+            phase = 0;
+            carry = 0.0;
         }
     }
     out.push(*points.last().unwrap());
