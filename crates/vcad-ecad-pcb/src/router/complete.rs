@@ -178,6 +178,33 @@ pub enum CompleteOutcome {
     BudgetExhausted,
 }
 
+/// The real vias of a [`CompleteOutcome::Routed`] path: one barrel per run of
+/// layer changes at a shared point, as `(center, top, bottom)`.
+///
+/// A path that steps F.Cu → In1 → In2 at one point is ONE barrel spanning
+/// F.Cu → In2, not two. Reading the transitions off `windows(2)` without
+/// merging them emits coincident vias, which stacks drills at zero spacing and
+/// fails hole-to-hole against itself — a "routed" path that cannot commit. The
+/// coincidence test also guards the other direction: consecutive segments on
+/// different layers whose endpoints do *not* meet are not a via at all.
+pub fn path_vias(path: &[(Vec2, Vec2, PcbLayer)]) -> Vec<(Vec2, PcbLayer, PcbLayer)> {
+    let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
+    for w in path.windows(2) {
+        let (_, b0, l0) = w[0];
+        let (a1, _, l1) = w[1];
+        if l0 == l1 || dist(b0, a1) > 1e-9 {
+            continue;
+        }
+        match vias.last_mut() {
+            // Same point, and the previous barrel ends where this one starts:
+            // extend it rather than opening a second one.
+            Some((p, _, end)) if dist(*p, b0) < 1e-9 && *end == l0 => *end = l1,
+            _ => vias.push((b0, l0, l1)),
+        }
+    }
+    vias
+}
+
 /// Decide joint routability of `conns` inside `window`.
 ///
 /// * `window` — `(lo, hi)` corners of the search rectangle (board mm). Must
@@ -1870,5 +1897,51 @@ mod tests {
         };
         assert_connected(&conns, &routed);
         assert_probe_legal(&session, &conns, &routed, 0.25);
+    }
+
+    #[test]
+    fn a_run_of_layer_changes_at_one_point_is_one_barrel() {
+        // F.Cu -> In1 -> In2 without moving: one barrel spanning F.Cu -> In2.
+        // Reading the transitions off `windows(2)` unmerged yields two
+        // coincident vias, which stacks drills at zero spacing and fails
+        // hole-to-hole against itself — a "routed" path that cannot commit.
+        let p = Vec2::new(5.0, 5.0);
+        let path = vec![
+            (Vec2::new(0.0, 5.0), p, PcbLayer::FCu),
+            (p, p, PcbLayer::In1Cu),
+            (p, Vec2::new(10.0, 5.0), PcbLayer::In2Cu),
+        ];
+        assert_eq!(
+            path_vias(&path),
+            vec![(p, PcbLayer::FCu, PcbLayer::In2Cu)],
+            "a run of transitions at one point must merge into a single barrel"
+        );
+    }
+
+    #[test]
+    fn separate_layer_changes_stay_separate_barrels() {
+        // Two transitions at *different* points are two real vias, and a layer
+        // change across a gap (endpoints not coincident) is no via at all.
+        let (p, q) = (Vec2::new(5.0, 5.0), Vec2::new(9.0, 5.0));
+        let path = vec![
+            (Vec2::new(0.0, 5.0), p, PcbLayer::FCu),
+            (p, q, PcbLayer::In1Cu),
+            (q, Vec2::new(14.0, 5.0), PcbLayer::FCu),
+        ];
+        assert_eq!(
+            path_vias(&path),
+            vec![
+                (p, PcbLayer::FCu, PcbLayer::In1Cu),
+                (q, PcbLayer::In1Cu, PcbLayer::FCu),
+            ]
+        );
+        let disjoint = vec![
+            (Vec2::new(0.0, 5.0), p, PcbLayer::FCu),
+            (Vec2::new(20.0, 5.0), Vec2::new(30.0, 5.0), PcbLayer::In1Cu),
+        ];
+        assert!(
+            path_vias(&disjoint).is_empty(),
+            "a layer change whose endpoints do not meet is not a via"
+        );
     }
 }

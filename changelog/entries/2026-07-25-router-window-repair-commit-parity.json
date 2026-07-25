@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-router-window-repair-commit-parity",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Autoroute keeps window-repaired connections it used to drop",
+  "summary": "The last-resort window repair now searches at the widest net-class width, merges stacked via barrels, and probes real drills, so routings it finds survive the commit.",
+  "features": ["pcb", "routing", "drc"],
+  "mcpTools": ["route_nets", "run_drc"]
+}

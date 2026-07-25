@@ -21,7 +21,9 @@ use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, Rats
 use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
-use super::complete::{route_window_complete, CompleteOutcome};
+use super::complete::{
+    path_vias, route_window_complete_pinned, CompleteOutcome, ViaClass, WindowBudget,
+};
 use super::congestion::Congestion;
 use super::escape;
 use super::global::plan_with_scarcity;
@@ -3345,32 +3347,50 @@ fn joint_window_repair(
                     // DFS budget-caps honestly (BudgetExhausted, never a fake
                     // proof) if 10 layers is too much for exhaustion.
                     let cl: Vec<PcbLayer> = copper;
-                    match route_window_complete(
+                    // Search at the WIDEST width any of these nets will commit
+                    // at, not the board default. `validate_and_commit` below
+                    // commits each net at `width_for(net, width)`; a corridor
+                    // found at the default is rejected there the moment an
+                    // SI-class net needs more copper than the search assumed —
+                    // the connection is lost to a mismatch, not to the board.
+                    let search_width = lost
+                        .iter()
+                        .map(|c| session.width_for(&c.0, width))
+                        .fold(width, f64::max);
+                    // Hand the router the via geometry this loop actually
+                    // commits, so its legality model is the commit rule rather
+                    // than a heuristic: the pad is probed at its real size and
+                    // the drill is checked against hole-to-hole, which no
+                    // layer-scoped copper probe can see.
+                    let via_class = ViaClass {
+                        pad_diameter: pcb.rules.default_rules.via_diameter,
+                        drill: pcb.rules.default_rules.via_drill,
+                    };
+                    match route_window_complete_pinned(
                         session,
                         (Vec2::new(gw.0[0], gw.0[1]), Vec2::new(gw.1[0], gw.1[1])),
                         &cl,
                         &lost,
-                        width,
-                        2_000_000,
+                        // Terminals unconstrained: unlike the CM5 verdict driver
+                        // this loop has no pad-layer map for `lost`, so stubs
+                        // may still surface off the pad's own layer here.
+                        &[],
+                        search_width,
+                        Some(via_class),
+                        WindowBudget::new(2_000_000),
                     ) {
                         CompleteOutcome::Routed(paths) => {
                             let mut still_lost = Vec::new();
                             for (conn, segs) in lost.drain(..).zip(paths) {
-                                // Vias sit at shared endpoints of consecutive
-                                // segments on different layers (adjacent span).
-                                let mut vias = Vec::new();
-                                for w2 in segs.windows(2) {
-                                    if w2[0].2 != w2[1].2 {
-                                        vias.push((w2[0].1, w2[0].2, w2[1].2));
-                                    }
-                                }
+                                let vias = path_vias(&segs);
+                                let commit_width = session.width_for(&conn.0, width);
                                 let cand = Candidate {
                                     thin_segments: vec![],
-                                    thin_width: session.width_for(&conn.0, width),
+                                    thin_width: commit_width,
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
-                                    width: session.width_for(&conn.0, width),
+                                    width: commit_width,
                                     segments: segs,
                                     vias,
                                 };
