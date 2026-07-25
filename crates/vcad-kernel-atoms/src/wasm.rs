@@ -93,6 +93,9 @@ fn bonds_at_current_geometry(sys: &AtomSystem, k: f64) -> HarmonicBonds {
         k,
         r0: 0.0,
         per_bond,
+        // phyz-md grew per-bond force constants; empty keeps every bond on the
+        // uniform `k` (its `compute_all` falls back to `self.k` per bond).
+        per_bond_k: Vec::new(),
     }
 }
 

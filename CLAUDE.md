@@ -10,20 +10,36 @@ vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onsha
 
 ## Prerequisites
 
-vcad depends on the `tang` math workspace at a **sibling path** (`../tang`). Clone it
-next to vcad before running `cargo build`:
+vcad depends on the `tang` math workspace and the `phyz` physics workspace at
+**sibling paths** (`../tang`, `../phyz`). Clone both next to vcad before running
+`cargo build` — a default build fails without either (`vcad-kernel-physics` and
+`vcad-sim` are in default-members, and `vcad-kernel-wasm`'s default `physics`
+feature pulls phyz in too):
 
 ```bash
 git clone git@github.com:ecto/tang.git ../tang
+git clone git@github.com:ecto/phyz.git ../phyz
 ```
 
 Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
-`../tang/crates/*`.
+`../tang/crates/*`; `vcad-kernel-physics` and `vcad-sim` point at
+`../../../phyz/crates/*` (i.e. `../phyz` relative to the repo root).
 
 **Fresh worktrees** (`.claude/worktrees/*`) start with no `node_modules` — run `npm ci`
 before any npm/tauri command. Tauri needs the `cargo-tauri` binary (installed globally
 via `cargo install tauri-cli`); the npm scripts invoke it as `cargo tauri`, so no local
 `tauri` on PATH is required.
+
+Worktree roots live at `.claude/worktrees/<name>`, so the sibling path deps
+resolve to `.claude/worktrees/tang` and `.claude/worktrees/phyz`. Symlinks
+inside `.claude/worktrees/` make this work (`tang -> /Users/cam/Developer/tang`,
+`phyz -> /Users/cam/Developer/phyz`); they must exist — or be created — before
+`cargo` commands will build from a worktree (run from the **main** checkout):
+
+```bash
+ln -sfn "$(cd .. && pwd)/tang" .claude/worktrees/tang
+ln -sfn "$(cd .. && pwd)/phyz" .claude/worktrees/phyz
+```
 
 After `npm ci`, the app imports from `@vcad/core`, `@vcad/engine`, `@vcad/ir`, `@vcad/mcp`
 which all resolve to `dist/index.js` — so workspace packages must be built before
@@ -356,6 +372,11 @@ phyz-based articulated physics via `vcad-kernel-physics`:
 vcad export input.vcad output.stl   # Export to STL/GLB/STEP
 vcad import-step input.step out.vcad
 vcad info input.vcad                # Show document info
+
+# Routed board → complete fab package + DRC-delta receipt, in one command.
+# Calibration is opt-in and logged; the loop fails closed (exit 1, no
+# fabrication files) if route-attributable violations don't reach zero.
+vcad fab-prep routed.pcb.json -o out/ --calibrate-rules
 ```
 
 **Static SVG renderer:** [`vcad-render`](crates/vcad-render) projects a `.vcad` to a drafting-style isometric SVG. Used by the mecheval leaderboard, but standalone — handy for docs, marketing, and README diagrams.
@@ -375,6 +396,12 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `topology_optimize` — SIMP topology optimization: stiffest material layout
   for given loads/supports inside a box envelope or an existing part's volume;
   result lands in the document as a frozen mesh part
+- `fab_prep` — routed board → fab-ready, in one call: opt-in (logged) rule
+  calibration, verdict ladder, strip-and-re-route fix loop, dangling-copper
+  prune. Returns a DRC-delta receipt reporting route-attributable violations
+  against the SAME board stripped of all routing — absolute zero is not
+  achievable on an imported fixture, so both numbers are always given. Fails
+  closed; `export_gerber`'s clean-DRC gate still stands
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading
   oracle; the benchmark harness excludes these during scored runs)

@@ -14,14 +14,17 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer};
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Zone};
 use vcad_ir::Vec2;
 
+use crate::pour_synth::{synthesize_pours, PourPolicy};
 use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet, RatsnestLine};
 use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
-use super::complete::{route_window_complete, CompleteOutcome};
+use super::complete::{
+    path_vias, route_window_complete_pinned, CompleteOutcome, ViaClass, WindowBudget,
+};
 use super::congestion::Congestion;
 use super::escape;
 use super::global::plan_with_scarcity;
@@ -106,6 +109,12 @@ pub struct RouteAllResult {
     /// Overall routability in `[0, 1]`: the fraction of attempted connections
     /// that were routed. `1.0` means a fully-routed board.
     pub routability: f64,
+    /// Copper pours synthesized for high-current nets (see
+    /// [`crate::pour_synth`]). **Callers must add these to the board along with
+    /// the traces and vias**: the routing above assumes them — a poured net is
+    /// carried by its plane, so its pads were stitched to the plane instead of
+    /// traced to each other. Empty when nothing was synthesized.
+    pub zones: Vec<Zone>,
 }
 
 /// Knobs for [`route_all_with_opts`].
@@ -137,6 +146,20 @@ pub struct RouteOptions {
     /// trade completion for speed. Legality is never affected — effort buys
     /// more attempts, not looser rules.
     pub effort: f64,
+    /// Drop the router's own dead copper before returning: new traces and vias
+    /// whose galvanic island holds no pad and no pour fragment (the same
+    /// islands DRC reports as "copper only, no pads" — see
+    /// [`crate::drc::prune_dangling_copper`]). On by default: a fresh route
+    /// should never emit copper connected to nothing. Turn it off only to
+    /// inspect the raw emitter output; it removes nothing electrically live, so
+    /// routability and the routed/unrouted split read the same either way.
+    pub prune_dangling_copper: bool,
+    /// Copper-pour synthesis policy: which nets get a plane instead of traces
+    /// (see [`crate::pour_synth`]). Synthesized zones come back in
+    /// [`RouteAllResult::zones`] and the caller must add them to the board —
+    /// the routing assumes them. Set `enabled: false` to route a board exactly
+    /// as it was authored.
+    pub pour_policy: PourPolicy,
 }
 
 impl RouteOptions {
@@ -176,6 +199,8 @@ impl Default for RouteOptions {
             use_push_shove: true,
             effort: 1.0,
             priority_nets: Vec::new(),
+            prune_dangling_copper: true,
+            pour_policy: PourPolicy::default(),
         }
     }
 }
@@ -184,6 +209,51 @@ impl Default for RouteOptions {
 /// The loop also stops the instant a round places nothing new, so this only
 /// bounds worst-case work on a genuinely over-constrained board.
 const MAX_RIPUP_ROUNDS: usize = 8;
+
+/// Wall-clock budget for one greedy-phase rip-up round. Rip-up is a *ratchet*:
+/// it rips real copper to free a corridor and re-routes the victims, so a
+/// round that runs long is a round grinding through victims it is about to
+/// fail to restore — the CM5 logs show 45-minute rounds ending with fewer
+/// connections placed than they started (536 -> 511), which keep-best then
+/// discards wholesale. The budget parks the remainder as pending instead: the
+/// same outcome the round was heading for, minutes rather than an hour later.
+const RIPUP_ROUND_BUDGET_MS: f64 = 300_000.0;
+
+/// Wall-clock budget for the deferred rescue [`arsenal_sweep`]. The arsenal is
+/// unbounded per connection (escape flow, coupled-pair phantom search, true
+/// shove); over a tail negotiation could not place, most of it fails slowly.
+const ARSENAL_SWEEP_BUDGET_MS: f64 = 300_000.0;
+
+/// Whether the GPU negotiator is armed for this process (charter M4:
+/// `--features gpu` plus `VCAD_GPU_NEGOTIATE=1`).
+fn gpu_negotiation_enabled() -> bool {
+    #[cfg(feature = "gpu")]
+    {
+        std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1")
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        false
+    }
+}
+
+/// Whether this board routes in the negotiation-first regime: GPU negotiation
+/// takes the unrouted tail before the sequential CPU rescue arsenal, which
+/// then fires once over its leftovers.
+///
+/// Ordering is board-regime-dependent (routerbench finding): on layer-rich
+/// boards negotiation-first replaced the ratchet outright (the CM5's
+/// 67-minute chain); on 2-3 layer boards its greedy priced commits consume
+/// scarce corridors the rescue arsenal spends more carefully (the VESC lost 4
+/// points to it). Pre-arsenal negotiation therefore requires >= 4 copper
+/// layers; thin boards negotiate after the arsenal, on its leftovers only.
+fn negotiate_first_regime(pcb: &Pcb) -> bool {
+    gpu_negotiation_enabled() && copper_layers(pcb).len() >= 4
+}
+
+/// Same-net landing points the plane-stitch maze rescue will try, nearest
+/// first, before reporting a pad unstitchable.
+const PLANE_RESCUE_TARGETS: usize = 8;
 
 /// History cost (mm-equivalent) deposited on a contested corridor per
 /// negotiation round. A gentle, accumulating bias: enough that a flexible net
@@ -282,6 +352,32 @@ pub fn route_all_with_opts(
     nets_filter: &[String],
     opts: &RouteOptions,
 ) -> RouteAllResult {
+    // Synthesize copper pours for the high-current nets before anything reads
+    // the board's zones. A synthesized plane changes the routing problem exactly
+    // as a hand-authored one does — its net is carried by the plane, not by
+    // pad-to-pad traces — so it has to be in place before the ratsnest is taken.
+    // Nets that already own a pour are left alone, so this complements existing
+    // zones rather than duplicating them.
+    let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
+    let poured_board;
+    let pcb = if synthesized.is_empty() {
+        pcb
+    } else {
+        log::info!(
+            "pour synthesis: {} zone(s) across {} net(s)",
+            synthesized.len(),
+            synthesized
+                .iter()
+                .map(|z| z.net.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+        );
+        let mut p = pcb.clone();
+        p.zones.extend(synthesized.iter().cloned());
+        poured_board = p;
+        &poured_board
+    };
+
     let netlist = netlist_from_pads(pcb);
     let mut rats = compute_ratsnest(pcb, &netlist);
 
@@ -320,7 +416,21 @@ pub fn route_all_with_opts(
     // copper that blocked them, so flexible nets bow out of the contested band.
     // We keep the best pass (most connections placed) ever seen.
     let mut cong = Congestion::new(&pcb.outline.vertices);
-    let rounds = opts.effective_rounds();
+    // In the negotiation-first regime round 0 already *is* a negotiated pass:
+    // the GPU negotiator works the tail globally inside it, with the rescue
+    // arsenal and the fine-pitch retry behind it. The incremental CPU rounds
+    // that follow are the same ratchet done worse, and every one of them
+    // measured in this regime ended below round 0 and was discarded by
+    // keep-best — 335s + 183s on the full CM5, 231s + 130s on its 250-net
+    // subset, for no connection kept. Round 0 also already carries the
+    // last-round fine-retry that the trailing "polish" round exists to
+    // guarantee, so stopping here forfeits nothing it could have added. Every
+    // other regime keeps the full ladder.
+    let rounds = if negotiate_first_regime(pcb) {
+        1
+    } else {
+        opts.effective_rounds()
+    };
     let mut best: Option<Pass> = None;
     // How many rounds each net has gone unrouted — its negotiation priority.
     let mut fail_count: BTreeMap<String, usize> = BTreeMap::new();
@@ -338,11 +448,15 @@ pub fn route_all_with_opts(
     // retry (observed on the corridor benchmark: 4 rounds routed 16/24 where
     // 1 round routed 18/24).
     let mut polish = false;
+    // Wall-clock cost of round 0 — the budget the speculative rounds are sized
+    // against (see [`incremental_round`]).
+    let mut baseline_ms = 0.0f64;
     for round in 0..rounds {
         // Round 0 is the pure baseline (no push-shove); the fallback and the
         // history field are enhancement layers applied from round 1 onward.
         let use_push_shove = opts.use_push_shove && round > 0;
         let last_round_flag = polish || round + 1 == rounds;
+        let sw_round = Stopwatch::start();
         let (session, placed, pending) = if round == 0 {
             // Full pass, longest connections first: the historical baseline.
             let mut ordered = rats.clone();
@@ -391,8 +505,12 @@ pub fn route_all_with_opts(
                 last_round_flag,
                 &fail_count,
                 &mut round_cache,
+                baseline_ms,
             )
         };
+        if round == 0 {
+            baseline_ms = sw_round.ms();
+        }
 
         log::info!(
             "negotiation round {}/{rounds}: placed={} pending={} (push_shove={use_push_shove})",
@@ -461,9 +579,12 @@ pub fn route_all_with_opts(
     // its own layer — get a dog-bone escape via to the back copper. This only
     // *adds* copper for already-unrouted nets, so it can't disturb the routes
     // rip-up settled; a connection it still can't route stays unrouted.
+    // Holes already drilled in the board — consulted before every escape /
+    // stitch via so none of them lands hole-to-hole illegal.
+    let holes = board_holes(pcb);
     let mut still_unrouted = Vec::new();
     for (net, from, to) in pending {
-        match try_route_fanout(&mut session, pcb, width, &net, from, to, &placed) {
+        match try_route_fanout(&mut session, pcb, width, &net, from, to, &placed, &holes) {
             Some(p) => placed.push(p),
             None => still_unrouted.push((net, from, to)),
         }
@@ -487,7 +608,27 @@ pub fn route_all_with_opts(
     // Stitch the planed nets' pads down to their planes (issue #289 part 2).
     // Runs after signal routing so each stitching via avoids the routed copper
     // and is probed on every copper layer it spans before being committed.
-    let mut stitch = stitch_planes(&mut session, pcb, &planes, nets_filter, &placed, width);
+    let mut stitch = stitch_planes(
+        &mut session,
+        pcb,
+        &planes,
+        nets_filter,
+        &placed,
+        width,
+        &holes,
+    );
+    {
+        let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        for (_, n) in &stitch.vias {
+            per_net.entry(n.as_str()).or_default().0 += 1;
+        }
+        for (n, _) in &stitch.failed_pads {
+            per_net.entry(n.as_str()).or_default().1 += 1;
+        }
+        for (n, (vias, failed)) in &per_net {
+            log::info!("plane stitch {n}: {vias} via(s), {failed} pad(s) unstitched");
+        }
+    }
 
     // Maze rescue for pads the radial dog-bone couldn't escape (issue: a
     // fine-pitch pad boxed in by already-routed copper has no *straight*
@@ -532,7 +673,10 @@ pub fn route_all_with_opts(
         targets.retain(|t| dist(*t, pad_pt) > 1e-6);
         targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
         let mut rescued = false;
-        for t in targets.into_iter().take(3) {
+        // A plane offers many galvanically equivalent landing points; the three
+        // nearest are often all boxed in by the same local congestion, so give
+        // the search a wider set before declaring the pad unstitchable.
+        for t in targets.into_iter().take(PLANE_RESCUE_TARGETS) {
             if let Some(p) = try_route(
                 &mut session,
                 pcb,
@@ -556,6 +700,11 @@ pub fn route_all_with_opts(
             stitch.failed_pads.push((net, pad_pt));
         }
     }
+
+    // Invariant audit over everything this pass is about to emit — placed
+    // routes plus the plane stitching — against the settled session.
+    audit_placed(&session, pcb, &placed);
+    audit_stitch(&session, pcb, &stitch, width);
 
     // Flatten the placed connections into the result.
     let mut traces = Vec::new();
@@ -623,14 +772,54 @@ pub fn route_all_with_opts(
     // copper is still hole-to-hole illegal. Enforces the invariant that an
     // autoroute pass never returns HoleToHole or SameNetBypass violations of
     // its own making.
-    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias);
-    if legal.merged_vias > 0 || legal.pruned_traces > 0 || !legal.demoted.is_empty() {
+    let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _)| *p).collect();
+    let legal = super::legalize::legalize(pcb, &mut traces, &mut vias, &stitch_via_pts);
+    if legal.merged_vias > 0
+        || legal.pruned_traces > 0
+        || !legal.demoted.is_empty()
+        || !legal.dropped_stitches.is_empty()
+    {
         log::info!(
-            "post-route legalization: merged {} vias, pruned {} traces, demoted {} nets",
+            "post-route legalization: merged {} vias, pruned {} traces, dropped {} stitch vias, \
+             demoted {} nets",
             legal.merged_vias,
             legal.pruned_traces,
+            legal.dropped_stitches.len(),
             legal.demoted.len(),
         );
+    }
+
+    // Dangling-copper prune: the last word on the copper this pass emits. The
+    // speculative emitters (fan-out escape vias, stubs whose route rip-up later
+    // replaced, stitching vias for a plane that never materialized) leave
+    // islands touching no pad and no pour — DRC's "copper only, no pads". They
+    // are electrically dead by construction, so removing them changes nothing
+    // the result reports: every placed connection runs pad to pad and lives in
+    // a pad-anchored island, so `still_unrouted` (and the routability and
+    // diagnostics derived from it below) is unaffected. Runs after legalization
+    // so the returned copper is final — nothing downstream can revive an island.
+    // The `session` is not consulted again after this point and does not escape
+    // the function, so there is no session state left to keep in step.
+    let mut pruned_out: Vec<(String, Vec2)> = Vec::new();
+    if opts.prune_dangling_copper {
+        let before = net_copper_anchors(&traces, &vias);
+        let (dead_traces, dead_vias) = super::legalize::prune_dangling(pcb, &mut traces, &mut vias);
+        if dead_traces > 0 || dead_vias > 0 {
+            log::info!(
+                "dangling-copper prune: removed {dead_traces} dead traces, {dead_vias} dead vias \
+                 ({} traces, {} vias remain)",
+                traces.len(),
+                vias.len(),
+            );
+            // Enforce the invariant rather than only asserting it in prose: a
+            // net whose copper is *entirely* gone was not routed by this pass,
+            // whatever `placed` recorded, so it is reported unrouted below.
+            let after = net_copper_anchors(&traces, &vias);
+            pruned_out = before
+                .into_iter()
+                .filter(|(net, _)| !after.contains_key(net))
+                .collect();
+        }
     }
 
     // Diagnose every signal connection the router could not close: which nets
@@ -649,6 +838,27 @@ pub fn route_all_with_opts(
     for (net, pad_pt) in &stitch.failed_pads {
         unrouted.insert(net.clone());
         diagnostics.push(diagnose_stitch_failure(net, *pad_pt));
+    }
+    // A net the prune emptied out placed nothing that survives: report it
+    // unrouted rather than claim a route with no copper behind it.
+    for (net, at) in &pruned_out {
+        unrouted.insert(net.clone());
+        diagnostics.push(UnroutedDiagnostic {
+            net: net.clone(),
+            from: *at,
+            to: *at,
+            blocking_nets: Vec::new(),
+            region_min: *at,
+            region_max: *at,
+            suggested_layer: None,
+            suggested_via: None,
+            reason: format!(
+                "every piece of copper this pass placed for '{net}' was electrically \
+                 dead (its island reached no pad and no pour) and was pruned near \
+                 ({:.2}, {:.2})",
+                at.x, at.y
+            ),
+        });
     }
     // A net demoted by legalization had all its new copper stripped: report it
     // unrouted with the offending position rather than return illegal copper.
@@ -691,7 +901,22 @@ pub fn route_all_with_opts(
         unrouted_nets: unrouted.into_iter().collect(),
         diagnostics,
         routability,
+        zones: synthesized,
     }
+}
+
+/// One representative position per net that owns copper in the router's output
+/// — the census the dangling-copper prune is checked against, so a net that
+/// loses *all* its copper can be named (and located) in a diagnostic.
+fn net_copper_anchors(traces: &[RoutedTrace], vias: &[RoutedVia]) -> BTreeMap<String, Vec2> {
+    let mut out = BTreeMap::new();
+    for t in traces {
+        out.entry(t.net.clone()).or_insert(t.start);
+    }
+    for v in vias {
+        out.entry(v.net.clone()).or_insert(v.position);
+    }
+    out
 }
 
 /// Build a diagnostic for a signal connection the router could not close.
@@ -1045,6 +1270,19 @@ fn route_pass(
         }
     }
 
+    let negotiate_first = negotiate_first_regime(pcb);
+    if gpu_negotiation_enabled() {
+        log::info!(
+            "gpu negotiation armed: {} copper layers -> {}",
+            copper_layers(pcb).len(),
+            if negotiate_first {
+                "negotiation-first (arsenal deferred to its leftovers)"
+            } else {
+                "thin board: arsenal first, negotiation on its leftovers"
+            }
+        );
+    }
+
     let unrouted_conns = route_batch(
         &mut session,
         pcb,
@@ -1055,9 +1293,19 @@ fn route_pass(
         use_push_shove,
         max_expansions,
         fine_retry,
-        true,
+        // Negotiation-first ordering: when negotiation takes the tail before
+        // the arsenal, the arsenal must NOT also fire per failed connection
+        // inside this batch loop. That inline call was the greedy phase's
+        // dominant cost — an escape/pair/shove chain re-solved sequentially,
+        // one connection at a time, for a tail negotiation clears in seconds.
+        // Failures fall straight through to negotiation here, and the arsenal
+        // fires once afterwards over its leftovers only (`arsenal_sweep`).
+        !negotiate_first,
         &mut fail_cache,
         &corridors,
+        // The opening greedy pass is the board's baseline result, not a
+        // speculative refinement — it is never cut short.
+        None,
     );
 
     // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
@@ -1066,26 +1314,42 @@ fn route_pass(
     // that failed in one round find a path once the board settles. Stop the
     // instant a round places nothing new, so a stuck board exits immediately.
     let mut pending = unrouted_conns;
-    // GPU negotiation (charter M4, `--features gpu` + VCAD_GPU_NEGOTIATE=1).
-    // Ordering is board-regime-dependent (routerbench finding): on
-    // layer-rich boards negotiation-first replaced the ratchet outright
-    // (the CM5's 67-minute chain); on 2-3 layer boards its greedy priced
-    // commits consume scarce corridors the rescue arsenal spends more
-    // carefully (the VESC lost 4 points to it). Pre-arsenal negotiation
-    // therefore requires >= 4 copper layers; thin boards negotiate after
-    // the arsenal, on its leftovers only.
     #[cfg(feature = "gpu")]
-    let negotiation_enabled = std::env::var("VCAD_GPU_NEGOTIATE").as_deref() == Ok("1");
-    #[cfg(feature = "gpu")]
-    let negotiate_first = copper_layers(pcb).len() >= 4;
-    #[cfg(feature = "gpu")]
-    if negotiation_enabled && negotiate_first && !pending.is_empty() {
+    if negotiate_first && !pending.is_empty() {
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
+        // The deferred arsenal, now over negotiation's leftovers only.
+        pending = arsenal_sweep(
+            &mut session,
+            pcb,
+            width,
+            &mut placed,
+            pending,
+            cong,
+            use_push_shove,
+            max_expansions,
+            &mut fail_cache,
+        );
     }
+    // Rip-up's job — free a corridor for a connection that has none — is the
+    // job negotiation has just done, globally and in seconds. Once it has run
+    // first, the greedy phase's rip-up rounds have never been observed to pay
+    // for themselves on this regime: they cost ~45 minutes on the full CM5 and
+    // ~8 minutes on its 250-net subset, and BOTH ended with fewer connections
+    // placed than they started (536 -> 511; 382 -> 380), so keep-best threw
+    // the whole round away. Skip them here and let the negotiation loop's own
+    // budgeted, keep-best-guarded rounds be the ratchet. Every other regime —
+    // thin boards, GPU off, no `gpu` feature — keeps the full ladder.
+    let ripup_rounds = if negotiate_first { 0 } else { ripup_rounds };
     for _ in 0..ripup_rounds {
         if pending.is_empty() {
             break;
         }
+        // Keep-best: a rip-up round can end with FEWER placed connections
+        // than it started (it rips victims it then fails to restore — the
+        // CM5 logs show 504 -> 489 over a 46-minute round). The negotiation
+        // loop above snapshots and discards regressing rounds; this loop
+        // must too, or one bad round permanently costs the board copper.
+        let snapshot = (session.clone(), placed.clone(), pending.clone());
         let placed_before = placed.len();
         let sw_rip = Stopwatch::start();
         pending = ripup_pass(
@@ -1098,7 +1362,7 @@ fn route_pass(
             use_push_shove,
             max_expansions,
             true,
-            None,
+            Some(RIPUP_ROUND_BUDGET_MS),
             &mut fail_cache,
             &corridors,
         );
@@ -1109,7 +1373,12 @@ fn route_pass(
             pending.len(),
             sw_rip.ms() / 1000.0,
         );
-        if placed.len() <= placed_before {
+        if placed.len() < placed_before {
+            log::info!("ripup round regressed — restoring pre-round snapshot");
+            (session, placed, pending) = snapshot;
+            break;
+        }
+        if placed.len() == placed_before {
             break;
         }
     }
@@ -1117,11 +1386,204 @@ fn route_pass(
     // Thin-board negotiation (see ordering note above): the arsenal has had
     // first claim; negotiation now works only its leftovers.
     #[cfg(feature = "gpu")]
-    if negotiation_enabled && !negotiate_first && !pending.is_empty() {
+    if gpu_negotiation_enabled() && !negotiate_first && !pending.is_empty() {
         pending = gpu_negotiate_rounds(&mut session, pcb, &mut placed, pending, width);
     }
 
+    audit_placed(&session, pcb, &placed);
     (session, placed, pending)
+}
+
+/// Invariant audit (`VCAD_ROUTE_AUDIT=1`): every piece of copper the pass
+/// reports must still be legal against the session it lives in.
+///
+/// The probe skips same-net elements, so a `Placed` element probed against the
+/// live session is judged purely on its foreign neighbours — exactly the
+/// contract "no path may commit copper the exact oracle has not accepted
+/// against the state it will actually live in". Anything logged here is a
+/// commit path that skipped the oracle, or copper that is on the board but not
+/// in the session; the kind (`segment` / `stub` / `via`) names the stage.
+fn audit_placed(session: &RouteSession, pcb: &Pcb, placed: &[Placed]) {
+    if std::env::var("VCAD_ROUTE_AUDIT").as_deref() != Ok("1") {
+        return;
+    }
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let copper = copper_layers(pcb);
+    let mut bad = 0usize;
+    let mut report = |kind: &str, net: &str, at: Vec2, pr: &crate::session::ProbeResult| {
+        if pr.legal {
+            return;
+        }
+        bad += 1;
+        log::warn!(
+            "AUDIT {kind} {net} at ({:.3},{:.3}) illegal: {:.3}mm to {}",
+            at.x,
+            at.y,
+            pr.min_clearance,
+            pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+        );
+    };
+    for pl in placed {
+        let clr = session.clearance_for(&pl.net);
+        for &(a, b, l) in &pl.segments {
+            let g = CopperGeom::Segment {
+                a,
+                b,
+                half_w: pl.width / 2.0,
+            };
+            report("segment", &pl.net, a, &session.probe(&g, l, &pl.net, clr));
+        }
+        for &(a, b, l) in &pl.stubs {
+            let g = CopperGeom::Segment {
+                a,
+                b,
+                half_w: pl.stub_width / 2.0,
+            };
+            report("stub", &pl.net, a, &session.probe(&g, l, &pl.net, clr));
+        }
+        for &(p, la, lb) in &pl.via_pts {
+            let g = CopperGeom::Disc {
+                center: p,
+                r: via_r,
+            };
+            let (ia, ib) = (
+                copper.iter().position(|&l| l == la).unwrap_or(0),
+                copper
+                    .iter()
+                    .position(|&l| l == lb)
+                    .unwrap_or(copper.len().saturating_sub(1)),
+            );
+            for &l in &copper[ia.min(ib)..=ia.max(ib)] {
+                report("via", &pl.net, p, &session.probe(&g, l, &pl.net, clr));
+            }
+        }
+    }
+    log::info!(
+        "AUDIT: {bad} illegal element(s) across {} routes",
+        placed.len()
+    );
+}
+
+/// The stitching half of [`audit_placed`]: plane-stitch stubs and vias are
+/// emitted alongside the placed routes and must clear foreign copper too.
+fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) {
+    if std::env::var("VCAD_ROUTE_AUDIT").as_deref() != Ok("1") {
+        return;
+    }
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let copper = copper_layers(pcb);
+    let mut bad = 0usize;
+    for (a, b, net, l) in &stitch.stubs {
+        let g = CopperGeom::Segment {
+            a: *a,
+            b: *b,
+            half_w: session.width_for(net, width) / 2.0,
+        };
+        let pr = session.probe(&g, *l, net, session.clearance_for(net));
+        if !pr.legal {
+            bad += 1;
+            log::warn!(
+                "AUDIT stitch-stub {net} at ({:.3},{:.3}) illegal: {:.3}mm to {}",
+                a.x,
+                a.y,
+                pr.min_clearance,
+                pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+            );
+        }
+    }
+    for (p, net) in &stitch.vias {
+        let g = CopperGeom::Disc {
+            center: *p,
+            r: via_r,
+        };
+        for &l in &copper {
+            let pr = session.probe(&g, l, net, session.clearance_for(net));
+            if !pr.legal {
+                bad += 1;
+                log::warn!(
+                    "AUDIT stitch-via {net} at ({:.3},{:.3}) {l:?} illegal: {:.3}mm to {}",
+                    p.x,
+                    p.y,
+                    pr.min_clearance,
+                    pr.blockers.first().map(|b| b.net.as_str()).unwrap_or("?"),
+                );
+                break;
+            }
+        }
+    }
+    log::info!(
+        "AUDIT stitch: {bad} illegal element(s) across {} stubs / {} vias",
+        stitch.stubs.len(),
+        stitch.vias.len()
+    );
+}
+
+/// The deferred rescue arsenal, run once over the connections GPU negotiation
+/// left behind.
+///
+/// Under negotiation-first ordering (see [`route_pass`]) the greedy batch
+/// routes search-only, so this is the single place the sequential arsenal —
+/// flow escape, coupled-pair phantom, true shove — fires during the greedy
+/// phase. Same rescues, same legality (everything still goes through
+/// [`try_route`]), applied to the tail negotiation could not clear instead of
+/// to every connection the speculative search missed.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+fn arsenal_sweep(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    placed: &mut Vec<Placed>,
+    pending: Vec<Conn>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fail_cache: &mut FailCache,
+) -> Vec<Conn> {
+    let sw = Stopwatch::start();
+    let total = pending.len();
+    let mut still: Vec<Conn> = Vec::new();
+    let mut rescued = 0usize;
+    let mut it = pending.into_iter();
+    for (net, from, to) in it.by_ref() {
+        if sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+            log::info!("arsenal sweep over budget — deferring remainder");
+            still.push((net, from, to));
+            break;
+        }
+        match try_route(
+            session,
+            pcb,
+            width,
+            &net,
+            from,
+            to,
+            placed,
+            cong,
+            use_push_shove,
+            max_expansions,
+            true,
+        ) {
+            Some(p) => {
+                fail_cache.remove(&conn_key(&net, from, to));
+                placed.push(p);
+                rescued += 1;
+            }
+            None => {
+                fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                still.push((net, from, to));
+            }
+        }
+    }
+    still.extend(it);
+    if total > 0 {
+        log::info!(
+            "arsenal sweep: {total} leftovers -> rescued {rescued}, still {} in {:.1}s",
+            still.len(),
+            sw.ms() / 1000.0,
+        );
+    }
+    still
 }
 
 /// One incremental negotiation round: clone the best pass, rip the placed
@@ -1141,6 +1603,7 @@ fn incremental_round(
     fine_retry: bool,
     fail_count: &BTreeMap<String, usize>,
     fail_cache: &mut FailCache,
+    baseline_ms: f64,
 ) -> Pass {
     let (mut session, mut placed, pending_base) = base.clone();
 
@@ -1163,10 +1626,17 @@ fn incremental_round(
     // Search-only (no rescue arsenal) and hard-budgeted: this round is
     // speculative — keep-best discards it unless it beats the snapshot, so
     // it must be cheap. The arsenal fires where results stick.
-    // Flat 20-minute budget regardless of effort: scaling by expansion
-    // budget multiplied speculative-round cost right back up at high effort
-    // (effort 10 → 3.3h/round), exactly what the budget exists to prevent.
-    let budget_ms = 1_200_000.0;
+    // Budget = a quarter of what round 0 spent producing the whole baseline,
+    // floored at a minute and still capped at the historical 20. A round here
+    // refines a tail that is a few percent of the board, and keep-best throws
+    // it away unless it beats the snapshot — so it should cost a fraction of
+    // the baseline, not (as the flat 20-minute budget made it) several times
+    // more than the baseline it refines. The cap still bounds a board whose
+    // round 0 is genuinely slow, and the budget stays flat with respect to
+    // effort (scaling it by the expansion budget multiplied speculative-round
+    // cost right back up at high effort — effort 10 → 3.3h/round, exactly
+    // what the budget exists to prevent).
+    let budget_ms = (baseline_ms * 0.25).clamp(60_000.0, 1_200_000.0);
     let pending = ripup_pass(
         &mut session,
         pcb,
@@ -1186,10 +1656,11 @@ fn incremental_round(
         &HashMap::new(),
     );
     log::info!(
-        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s",
+        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s (budget {:.0}s)",
         placed.len(),
         pending.len(),
         sw.ms() / 1000.0,
+        budget_ms / 1000.0,
     );
 
     (session, placed, pending)
@@ -1218,6 +1689,7 @@ fn route_batch(
     rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+    deadline_ms: Option<f64>,
 ) -> Vec<Conn> {
     const MAX_COMMIT_RETRIES: usize = 3;
     let sw = Stopwatch::start();
@@ -1282,6 +1754,25 @@ fn route_batch(
     let mut conflicts = 0usize;
     let batch_size = rayon::current_num_threads().max(1) * 2;
     while !queue.is_empty() {
+        // Over-deadline: report the remaining queue unrouted rather than
+        // routing it. Every caller that passes a deadline already handles an
+        // unrouted connection — a stuck one stays pending, a ripped victim
+        // gets its original copper restored — so cutting the batch short
+        // costs attempts, never legality. Without this the enclosing budgets
+        // (rip-up rounds, speculative negotiation rounds, joint repair) were
+        // advisory only: they are checked between connections, and one
+        // connection's victim re-route is itself a whole batch, so a 92-second
+        // round measured 231 seconds.
+        if let Some(d) = deadline_ms {
+            if sw.ms() > d {
+                log::info!(
+                    "route_batch over {d:.0}ms budget — deferring {} conns",
+                    queue.len()
+                );
+                unrouted.extend(queue.drain(..).map(|(c, _)| c));
+                break;
+            }
+        }
         batches += 1;
         let sw_batch = Stopwatch::start();
         let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
@@ -1862,6 +2353,22 @@ pub(super) fn validate_and_commit(
         if reused {
             continue;
         }
+        // Drilled barrels collide regardless of layer span — the copper probes
+        // below only compare vias that share a layer, so a blind/buried pair on
+        // disjoint spans would otherwise sail through.
+        let hp = session.probe_via_drill(p, net);
+        if !hp.legal {
+            let near = hp.nearest.unwrap_or(p);
+            log::debug!(
+                "validate: {net} via ({:.3},{:.3}) hole-to-hole illegal — nearest hole ({:.3},{:.3}) at {:.3}mm",
+                p.x,
+                p.y,
+                near.x,
+                near.y,
+                hp.min_spacing
+            );
+            return None;
+        }
         let disc = CopperGeom::Disc {
             center: p,
             r: via_r,
@@ -2223,6 +2730,7 @@ fn try_push_shove(
 /// maze can't connect them — so it either commits a fully clearance-legal route
 /// or mutates nothing. Because it only ever *adds* copper for an
 /// already-unrouted net, running it never disturbs the routes rip-up settled.
+#[allow(clippy::too_many_arguments)]
 fn try_route_fanout(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -2231,6 +2739,7 @@ fn try_route_fanout(
     from: Vec2,
     to: Vec2,
     placed: &[Placed],
+    holes: &[Hole],
 ) -> Option<Placed> {
     let w = session.width_for(net, width);
     let hw = w / 2.0;
@@ -2256,6 +2765,7 @@ fn try_route_fanout(
         &via_pts,
         &mut spans,
         false,
+        holes,
     ) {
         Some(e) => e,
         None => {
@@ -2284,6 +2794,7 @@ fn try_route_fanout(
         &via_pts,
         &mut spans,
         false,
+        holes,
     ) {
         Some(e) => e,
         None => {
@@ -2376,17 +2887,46 @@ fn escape_endpoint(
     extra_vias: &[Vec2],
     spans: &mut Vec<SpanId>,
     force_fanout: bool,
+    holes: &[Hole],
 ) -> Option<Escape> {
     let hw = w / 2.0;
 
+    // Hole-to-hole legality against every drill already on the board and every
+    // via this pass has placed. Checked *here*, at placement, so the dog-bone
+    // ring search simply steps out to a drillable spot — rather than committing
+    // an illegal drill and leaving post-route legalization to strip the net's
+    // whole set of stitches to get rid of it.
+    let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+    let min_hole_gap = pcb.rules.hole_to_hole;
+    let hole_legal = |p: Vec2| -> bool {
+        let clears = |other: Vec2, r: f64| {
+            let d = dist(p, other);
+            // A coincident drill is the reuse case, decided by `reused` above;
+            // it is never a second hole, so it is not a conflict here.
+            d < 0.05 || d - drill_r - r >= min_hole_gap - 1e-6
+        };
+        holes.iter().all(|&(c, r)| clears(c, r))
+            && placed
+                .iter()
+                .flat_map(|pl| pl.via_pts.iter().map(|&(vp, _, _)| vp))
+                .chain(extra_vias.iter().copied())
+                .all(|vp| clears(vp, drill_r))
+    };
+
     let via_legal = |session: &RouteSession, p: Vec2| -> bool {
+        if !hole_legal(p) {
+            return false;
+        }
         let disc = CopperGeom::Disc {
             center: p,
             r: via_r,
         };
-        copper
-            .iter()
-            .all(|&l| session.probe(&disc, l, net, clearance).legal)
+        // The drilled barrel first: cheap, and layer-independent (copper
+        // probes can't see a hole conflict across disjoint layer spans).
+        session.probe_via_drill(p, net).legal
+            && copper
+                .iter()
+                .all(|&l| session.probe(&disc, l, net, clearance).legal)
     };
     // A coincident same-net via already on the board — reuse it rather than
     // stacking a second drill at the same spot.
@@ -2507,7 +3047,9 @@ fn commit_stub(
     commit_seg(session, net, a, b, hw, layer)
 }
 
-/// Commit a via as a disc on every copper layer it spans (a through via).
+/// Commit a via as a disc on every copper layer it spans (a through via),
+/// plus its drilled barrel — which is layer-independent, so a later via on a
+/// disjoint layer span still sees it in [`RouteSession::probe_hole`].
 pub(super) fn commit_via(
     session: &mut RouteSession,
     net: &str,
@@ -2516,6 +3058,8 @@ pub(super) fn commit_via(
     copper: &[PcbLayer],
     spans: &mut Vec<SpanId>,
 ) {
+    let drill = session.via_drill_for(net);
+    spans.push(session.commit_drill(p, drill));
     for &l in copper {
         spans.push(session.commit(CopperElement {
             min: [p.x - via_r, p.y - via_r],
@@ -2535,6 +3079,38 @@ fn rollback(session: &mut RouteSession, spans: &[SpanId]) {
     for &s in spans {
         session.remove(s);
     }
+}
+
+/// A drilled hole as `(center, radius)` — the geometry the hole-to-hole rule
+/// judges. Radius, not diameter, so the edge gap is `dist - ra - rb`.
+pub(super) type Hole = (Vec2, f64);
+
+/// Every hole already drilled in the board: existing vias and every pad with a
+/// drill. Built once per routing call and consulted before a new via is placed,
+/// so an escape/stitch via never lands hole-to-hole illegal in the first place.
+///
+/// Without this the router placed the via wherever copper clearance allowed and
+/// left [`super::legalize`] to clean up — and its only lever is to strip the
+/// offending net's new copper entirely. For a plane-stitched power net that is
+/// catastrophic: one bad drill on a moteus GND pad cost all 43 of that net's
+/// stitching vias, leaving the pour connected to nothing.
+fn board_holes(pcb: &Pcb) -> Vec<Hole> {
+    let mut holes: Vec<Hole> = pcb
+        .vias
+        .iter()
+        .map(|v| (v.position, v.drill / 2.0))
+        .collect();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if let Some(drill) = &pad.drill {
+                holes.push((
+                    crate::geometry::pad_world_position(fp, pad),
+                    drill.diameter / 2.0,
+                ));
+            }
+        }
+    }
+    holes
 }
 
 /// Copper layers present in the stackup, top → bottom (FCu/BCu fallback).
@@ -2600,6 +3176,7 @@ fn stitch_planes(
     nets_filter: &[String],
     placed: &[Placed],
     width: f64,
+    holes: &[Hole],
 ) -> Stitch {
     let mut out = Stitch {
         stubs: Vec::new(),
@@ -2612,6 +3189,13 @@ fn stitch_planes(
     }
     let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let copper = copper_layers(pcb);
+    // Drilled holes, growing as this pass places stitches. Stitch vias must
+    // clear each other's drills too — and *across* nets, where the same-net
+    // `extra` reuse list below cannot see them. A GND stitch landing hole-to-hole
+    // illegal against a +3V3 stitch is exactly the kind of single bad drill that
+    // used to cost the whole net its stitching in post-route legalization.
+    let mut holes: Vec<Hole> = holes.to_vec();
+    let drill_r = pcb.rules.default_rules.via_drill / 2.0;
 
     for fp in &pcb.footprints {
         for pad in &fp.pads {
@@ -2655,7 +3239,7 @@ fn stitch_planes(
             let mut spans: Vec<SpanId> = Vec::new();
             match escape_endpoint(
                 session, pcb, net, pad_pt, pad_layer, w, clearance, via_r, &copper, placed, &extra,
-                &mut spans, fine_pitch,
+                &mut spans, fine_pitch, &holes,
             ) {
                 Some(e) => {
                     if let Some((a, b)) = e.stub {
@@ -2663,6 +3247,7 @@ fn stitch_planes(
                     }
                     if let Some(v) = e.via {
                         out.vias.push((v, net.clone()));
+                        holes.push((v, drill_r));
                     }
                     out.nets.insert(net.clone());
                     // spans stay committed — the stitching copper is part of the board.
@@ -2803,6 +3388,10 @@ fn ripup_pass(
             rescue,
             fail_cache,
             corridors,
+            // The victim re-route inherits what is left of the pass budget:
+            // it is a whole batch inside one connection's iteration, so
+            // leaving it unbounded is what made the budget advisory.
+            deadline_ms.map(|d| (d - sw_pass.ms()).max(0.0)),
         ));
     }
     still.extend(unrouted);
@@ -2828,6 +3417,7 @@ fn reroute_victims_with_restore(
     rescue: bool,
     fail_cache: &mut FailCache,
     corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+    deadline_ms: Option<f64>,
 ) -> Vec<Conn> {
     let mut originals: HashMap<ConnKey, Placed> = victims
         .iter()
@@ -2848,6 +3438,7 @@ fn reroute_victims_with_restore(
         rescue,
         fail_cache,
         corridors,
+        deadline_ms,
     ) {
         let restored = originals
             .remove(&conn_key(&net, from, to))
@@ -3007,6 +3598,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
+                Some((round_budget_ms - sw_round.ms()).max(0.0)),
             );
             lost.extend(reroute_victims_with_restore(
                 session,
@@ -3020,6 +3612,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
+                Some((round_budget_ms - sw_round.ms()).max(0.0)),
             ));
             // Last resort for a small surviving clique: the COMPLETE window
             // router — either a joint routing the heuristics missed, or a
@@ -3033,32 +3626,50 @@ fn joint_window_repair(
                     // DFS budget-caps honestly (BudgetExhausted, never a fake
                     // proof) if 10 layers is too much for exhaustion.
                     let cl: Vec<PcbLayer> = copper;
-                    match route_window_complete(
+                    // Search at the WIDEST width any of these nets will commit
+                    // at, not the board default. `validate_and_commit` below
+                    // commits each net at `width_for(net, width)`; a corridor
+                    // found at the default is rejected there the moment an
+                    // SI-class net needs more copper than the search assumed —
+                    // the connection is lost to a mismatch, not to the board.
+                    let search_width = lost
+                        .iter()
+                        .map(|c| session.width_for(&c.0, width))
+                        .fold(width, f64::max);
+                    // Hand the router the via geometry this loop actually
+                    // commits, so its legality model is the commit rule rather
+                    // than a heuristic: the pad is probed at its real size and
+                    // the drill is checked against hole-to-hole, which no
+                    // layer-scoped copper probe can see.
+                    let via_class = ViaClass {
+                        pad_diameter: pcb.rules.default_rules.via_diameter,
+                        drill: pcb.rules.default_rules.via_drill,
+                    };
+                    match route_window_complete_pinned(
                         session,
                         (Vec2::new(gw.0[0], gw.0[1]), Vec2::new(gw.1[0], gw.1[1])),
                         &cl,
                         &lost,
-                        width,
-                        2_000_000,
+                        // Terminals unconstrained: unlike the CM5 verdict driver
+                        // this loop has no pad-layer map for `lost`, so stubs
+                        // may still surface off the pad's own layer here.
+                        &[],
+                        search_width,
+                        Some(via_class),
+                        WindowBudget::new(2_000_000),
                     ) {
                         CompleteOutcome::Routed(paths) => {
                             let mut still_lost = Vec::new();
                             for (conn, segs) in lost.drain(..).zip(paths) {
-                                // Vias sit at shared endpoints of consecutive
-                                // segments on different layers (adjacent span).
-                                let mut vias = Vec::new();
-                                for w2 in segs.windows(2) {
-                                    if w2[0].2 != w2[1].2 {
-                                        vias.push((w2[0].1, w2[0].2, w2[1].2));
-                                    }
-                                }
+                                let vias = path_vias(&segs);
+                                let commit_width = session.width_for(&conn.0, width);
                                 let cand = Candidate {
                                     thin_segments: vec![],
-                                    thin_width: session.width_for(&conn.0, width),
+                                    thin_width: commit_width,
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
-                                    width: session.width_for(&conn.0, width),
+                                    width: commit_width,
                                     segments: segs,
                                     vias,
                                 };
@@ -3234,6 +3845,8 @@ mod tests {
                     via_drill: 0.4,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![],
                 net_class_assignments: Default::default(),
@@ -3250,6 +3863,121 @@ mod tests {
             keepouts: vec![],
             net_ties: vec![],
         }
+    }
+
+    /// The same board with a four-layer stackup, so two vias can occupy
+    /// *disjoint* copper layer spans.
+    fn board_4layer() -> Pcb {
+        let mut pcb = board(vec![]);
+        pcb.stackup.layers = [
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In2Cu,
+            PcbLayer::BCu,
+        ]
+        .into_iter()
+        .map(|layer| StackupLayer {
+            layer,
+            copper_thickness: Some(0.035),
+            dielectric_thickness: Some(0.5),
+            dielectric_er: Some(4.5),
+            material: Some("FR4".into()),
+        })
+        .collect();
+        pcb
+    }
+
+    #[test]
+    fn via_refused_when_drills_collide_across_disjoint_layer_spans() {
+        // The hole class the CM5 fab campaign found: two vias whose layer
+        // spans do not overlap share no copper layer, so every clearance probe
+        // passes — while their DRILLS physically collide.
+        let pcb = board_4layer();
+        let mut session = RouteSession::from_pcb(&pcb);
+        let via_r = pcb.rules.default_rules.via_diameter / 2.0; // 0.4mm
+        let drill = pcb.rules.default_rules.via_drill; // 0.4mm
+
+        // Net A takes a blind via on the top half of the stack.
+        let a = Vec2::new(25.0, 15.0);
+        let mut spans = Vec::new();
+        commit_via(
+            &mut session,
+            "A",
+            a,
+            via_r,
+            &[PcbLayer::FCu, PcbLayer::In1Cu],
+            &mut spans,
+        );
+
+        // Net B wants a buried via 0.5mm away on the bottom half: drills leave
+        // a 0.5 - 0.2 - 0.2 = 0.1mm gap against the board's 0.5mm rule.
+        let b = Vec2::new(25.5, 15.0);
+        let disc = CopperGeom::Disc {
+            center: b,
+            r: via_r,
+        };
+        assert!(
+            [PcbLayer::In2Cu, PcbLayer::BCu]
+                .iter()
+                .all(|&l| session.probe(&disc, l, "B", 0.2).legal),
+            "copper probes must see no conflict — that is the hole in the oracle"
+        );
+        let hp = session.probe_via_drill(b, "B");
+        assert!(!hp.legal, "0.1mm hole gap must violate the 0.5mm rule");
+        assert!(
+            (hp.min_spacing - 0.1).abs() < 1e-9,
+            "spacing was {}",
+            hp.min_spacing
+        );
+        assert_eq!(hp.nearest, Some(a), "the A via is the offending hole");
+
+        // The commit gate must refuse the placement, mutating nothing.
+        let cand = |p: Vec2| Candidate {
+            net: "B".into(),
+            from: p,
+            to: p,
+            width: 0.25,
+            segments: vec![],
+            vias: vec![(p, PcbLayer::In2Cu, PcbLayer::BCu)],
+            thin_segments: vec![],
+            thin_width: 0.25,
+        };
+        let before = session.len();
+        assert!(
+            validate_and_commit(&mut session, &pcb, cand(b), &[]).is_none(),
+            "a via whose drill collides across disjoint layer spans must be refused"
+        );
+        assert_eq!(session.len(), before, "a refused via commits nothing");
+
+        // Clear of the rule (1.0mm apart → 0.6mm gap): accepted, proving the
+        // refusal above is the hole rule and not a blanket ban.
+        let far = Vec2::new(26.0, 15.0);
+        assert!(session.probe_via_drill(far, "B").legal);
+        assert!(validate_and_commit(&mut session, &pcb, cand(far), &[]).is_some());
+
+        // And the whole thing agrees with the DRC: drop both vias on the board
+        // at the illegal spacing and the real checker flags HoleToHole.
+        let mut judged = pcb.clone();
+        for (p, net, s, e) in [
+            (a, "A", PcbLayer::FCu, PcbLayer::In1Cu),
+            (b, "B", PcbLayer::In2Cu, PcbLayer::BCu),
+        ] {
+            judged.vias.push(Via {
+                position: p,
+                diameter: via_r * 2.0,
+                drill,
+                start_layer: s,
+                end_layer: e,
+                net: net.into(),
+                source: None,
+            });
+        }
+        assert!(
+            check_drc(&judged)
+                .iter()
+                .any(|v| v.rule == crate::DrcRuleType::HoleToHole),
+            "the DRC must flag exactly what the session now refuses"
+        );
     }
 
     /// Apply the router's output to the board (as the MCP tool does).
@@ -3560,6 +4288,8 @@ mod tests {
             via_drill: 0.4,
             diff_pair_gap: None,
             diff_pair_width: None,
+            target_impedance: None,
+            target_diff_impedance: None,
         });
         pcb.rules
             .net_class_assignments
@@ -3790,6 +4520,61 @@ mod tests {
             "autoroute introduced illegal copper: {:?}",
             introduced.iter().map(|v| &v.message).collect::<Vec<_>>()
         );
+    }
+
+    /// The dangling-copper invariant: nothing route_all returns may be
+    /// electrically dead. Runs the same every-emitter fixture through the
+    /// pruner's own oracle — after applying the result, no trace and no via is
+    /// left in an island that reaches neither a pad nor a pour.
+    #[test]
+    fn autoroute_returns_no_dangling_copper() {
+        let pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    5.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    45.0,
+                    25.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, -2.0, "C")],
+                ),
+                fp(
+                    "U3",
+                    45.0,
+                    5.0,
+                    vec![pad("1", 0.0, 0.0, "B"), pad("2", 0.0, 2.0, "C")],
+                ),
+                fp("U4", 8.0, 25.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U5", 25.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U6", 42.0, 15.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+
+        let r = route_all(&pcb0, 0.25, &[]);
+        assert!(!r.traces.is_empty(), "fixture must actually route");
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let (traces_before, vias_before) = (pcb.traces.len(), pcb.vias.len());
+        let (dead_t, dead_v) = crate::drc::prune_dangling_copper(&mut pcb);
+        assert_eq!(
+            (dead_t, dead_v),
+            (0, 0),
+            "route_all left {dead_t}/{traces_before} dead traces and \
+             {dead_v}/{vias_before} dead vias behind"
+        );
+
+        // And the prune must not have starved a net it reports as routed.
+        for net in &r.routed_nets {
+            assert!(
+                r.traces.iter().any(|t| &t.net == net) || r.vias.iter().any(|v| &v.net == net),
+                "net '{net}' is reported routed but owns no copper"
+            );
+        }
     }
 
     #[test]
@@ -4143,6 +4928,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                ..Default::default()
             },
         );
         assert_eq!(
@@ -4181,6 +4967,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                ..Default::default()
             },
         );
         // The shipped default: negotiated congestion + validated push-shove.
@@ -4274,6 +5061,7 @@ mod tests {
                 use_push_shove: false,
                 effort: 1.0,
                 priority_nets: Vec::new(),
+                ..Default::default()
             },
         );
         let default = route_all(&pcb, 0.25, &[]);
@@ -4569,6 +5357,8 @@ mod tests {
             via_drill: 0.4,
             diff_pair_gap: None,
             diff_pair_width: None,
+            target_impedance: None,
+            target_diff_impedance: None,
         });
         pcb.rules
             .net_class_assignments

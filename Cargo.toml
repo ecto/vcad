@@ -34,6 +34,7 @@ members = [
     "crates/vcad-kernel-magnetostatic",
     "crates/vcad-kernel-enclosure",
     "crates/vcad-kernel-orbit",
+    "crates/vcad-kernel-qcd",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -55,6 +56,7 @@ members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-thermal",
+    "crates/vcad-kernel-flow",
     "crates/vcad-kernel-fea",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
@@ -74,6 +76,7 @@ members = [
     "crates/vcad-ecad-verify",
     "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
+    "crates/vcad-ecad-fabprep",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
@@ -130,6 +133,7 @@ default-members = [
     "crates/vcad-kernel-magnetostatic",
     "crates/vcad-kernel-enclosure",
     "crates/vcad-kernel-orbit",
+    "crates/vcad-kernel-qcd",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -150,6 +154,7 @@ default-members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-thermal",
+    "crates/vcad-kernel-flow",
     "crates/vcad-kernel-fea",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
@@ -169,6 +174,7 @@ default-members = [
     "crates/vcad-ecad-verify",
     "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
+    "crates/vcad-ecad-fabprep",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
@@ -202,6 +208,13 @@ thiserror = "2"
 tang = { path = "../tang/crates/tang", version = "0.2" }
 tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
 tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
+# phyz moved every crate onto its workspace version (0.3.1); the sub-crates
+# are no longer independently 0.1.x.
+phyz = { path = "../phyz/crates/phyz", version = "0.3" }
+phyz-gpu = { path = "../phyz/crates/phyz-gpu", version = "0.3" }
+phyz-model = { path = "../phyz/crates/phyz-model", version = "0.3" }
+phyz-math = { path = "../phyz/crates/phyz-math", version = "0.3" }
+phyz-md = { path = "../phyz/crates/phyz-md", version = "0.3" }
 slotmap = "1"
 anyhow = "1"
 toml = "0.8"
@@ -242,6 +255,7 @@ vcad-kernel-em = { path = "crates/vcad-kernel-em", version = "0.9.4" }
 vcad-kernel-magnetostatic = { path = "crates/vcad-kernel-magnetostatic", version = "0.9.4" }
 vcad-kernel-enclosure = { path = "crates/vcad-kernel-enclosure", version = "0.9.4" }
 vcad-kernel-orbit = { path = "crates/vcad-kernel-orbit", version = "0.9.4" }
+vcad-kernel-qcd = { path = "crates/vcad-kernel-qcd", version = "0.9.4" }
 vcad-kernel-drafting = { path = "crates/vcad-kernel-drafting", version = "0.9.4" }
 vcad-kernel-gpu = { path = "crates/vcad-kernel-gpu", version = "0.9.4" }
 vcad-kernel-raytrace = { path = "crates/vcad-kernel-raytrace", version = "0.9.4" }
@@ -262,6 +276,7 @@ vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim", version = "0.9.4"
 vcad-kernel-topopt = { path = "crates/vcad-kernel-topopt", version = "0.9.4" }
 vcad-kernel-photonics = { path = "crates/vcad-kernel-photonics", version = "0.9.4" }
 vcad-kernel-thermal = { path = "crates/vcad-kernel-thermal", version = "0.9.4" }
+vcad-kernel-flow = { path = "crates/vcad-kernel-flow", version = "0.9.4" }
 vcad-kernel-fea = { path = "crates/vcad-kernel-fea", version = "0.9.4" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text", version = "0.9.4" }
 vcad-crdt = { path = "crates/vcad-crdt", version = "0.9.4" }
@@ -277,6 +292,7 @@ vcad-ecad-pcb = { path = "crates/vcad-ecad-pcb", version = "0.9.4" }
 vcad-ecad-verify = { path = "crates/vcad-ecad-verify", version = "0.9.4" }
 vcad-ecad-source = { path = "crates/vcad-ecad-source", version = "0.9.4" }
 vcad-ecad-export = { path = "crates/vcad-ecad-export", version = "0.9.4" }
+vcad-ecad-fabprep = { path = "crates/vcad-ecad-fabprep", version = "0.9.4" }
 vcad-ecad-sim = { path = "crates/vcad-ecad-sim", version = "0.9.4" }
 vcad-ecad-diff = { path = "crates/vcad-ecad-diff", version = "0.9.4" }
 nom = "7"
@@ -320,3 +336,24 @@ strip = true
 # unoptimized they take minutes, optimized seconds.
 [profile.dev.package.vcad-kernel-fea]
 opt-level = 3
+
+# The sibling repos (phyz, tang) depend on each other through crates.io
+# versions, and phyz redirects tang to its own sibling checkout with a
+# `[patch.crates-io]` of its own. Cargo only honours the patch table of the
+# workspace ROOT being built, so when vcad builds phyz as a path dependency
+# phyz's patch is ignored and its `tang-expr = "0.1.0"` resolves from the
+# registry — while vcad's own tang comes from `../tang`. Two tangs in one
+# graph, and the published tang-expr is older than the tang it must satisfy:
+#
+#   error[E0277]: the trait bound `ExprId: Scalar` is not satisfied
+#     --> phyz/crates/phyz-diff/src/symbolic.rs:234
+#
+# Mirroring phyz's patch here unifies every tang reference in the graph on
+# the sibling checkout, which is the source of truth for both repos anyway.
+[patch.crates-io]
+tang = { path = "../tang/crates/tang" }
+tang-la = { path = "../tang/crates/tang-la" }
+tang-expr = { path = "../tang/crates/tang-expr" }
+# clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
+# vendored copy adds the missing libc++ link arms. Identical source otherwise.
+clipper-sys = { path = "third_party/clipper-sys" }

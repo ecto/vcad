@@ -48,8 +48,8 @@ mod world;
 pub use diff::{
     contact_rollout_gradient, nominal_mass_props, rollout_gradient, rollout_gradient_adjoint,
     rollout_gradient_via_density, rollout_gradient_with_anchors, rollout_gradient_with_surface,
-    surface_gradient, AdjointRolloutSpec, AnchorFdSteps, BodyMassProps, ContactConfig, DiffBody,
-    MassPropFdSteps, SurfaceTerm,
+    surface_gradient, AnchorFdSteps, BodyMassProps, ContactConfig, DiffBody, MassPropFdSteps,
+    SurfaceTerm,
 };
 pub use error::PhysicsError;
 pub use gym::{Action, Observation, RobotEnv};

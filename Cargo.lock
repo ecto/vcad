@@ -792,8 +792,6 @@ dependencies = [
 [[package]]
 name = "clipper-sys"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc6bccb550d47c390af7a601bee66a74fd3a01163feb85442021096f5533d2e5"
 dependencies = [
  "cc",
 ]
@@ -3221,7 +3219,7 @@ name = "mecheval-grader"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "phyz",
+ "phyz 0.3.0",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4019,17 +4017,58 @@ dependencies = [
 name = "phyz"
 version = "0.3.0"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.1.0",
  "tang",
 ]
 
 [[package]]
+name = "phyz"
+version = "0.3.1"
+dependencies = [
+ "phyz-collision",
+ "phyz-contact",
+ "phyz-diff",
+ "phyz-math 0.3.1",
+ "phyz-model",
+ "phyz-rigid",
+]
+
+[[package]]
+name = "phyz-collision"
+version = "0.3.1"
+dependencies = [
+ "phyz-math 0.3.1",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-contact"
+version = "0.3.1"
+dependencies = [
+ "phyz-collision",
+ "phyz-math 0.3.1",
+ "phyz-model",
+]
+
+[[package]]
+name = "phyz-diff"
+version = "0.3.1"
+dependencies = [
+ "phyz-math 0.3.1",
+ "phyz-model",
+ "phyz-rigid",
+ "tang",
+ "tang-expr",
+ "tang-la",
+]
+
+[[package]]
 name = "phyz-gpu"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
  "phyz-rigid",
  "pollster",
@@ -4045,17 +4084,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "phyz-model"
-version = "0.1.0"
+name = "phyz-math"
+version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "tang",
+ "tang-la",
+]
+
+[[package]]
+name = "phyz-md"
+version = "0.3.1"
+dependencies = [
+ "phyz-math 0.3.1",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_distr",
+ "rayon",
+]
+
+[[package]]
+name = "phyz-model"
+version = "0.3.1"
+dependencies = [
+ "phyz-math 0.3.1",
 ]
 
 [[package]]
 name = "phyz-rigid"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
 ]
 
@@ -4507,6 +4565,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -5694,6 +5762,7 @@ name = "tang"
 version = "0.2.0"
 dependencies = [
  "paste",
+ "robust",
 ]
 
 [[package]]
@@ -6875,6 +6944,7 @@ dependencies = [
  "axum",
  "clap",
  "crossterm",
+ "env_logger",
  "futures-util",
  "libc",
  "rustyline",
@@ -6889,6 +6959,7 @@ dependencies = [
  "vcad-chat",
  "vcad-crdt",
  "vcad-diff",
+ "vcad-ecad-fabprep",
  "vcad-eval",
  "vcad-i18n",
  "vcad-ir",
@@ -6900,6 +6971,7 @@ dependencies = [
  "vcad-kernel-sketch",
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
+ "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",
@@ -6990,6 +7062,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ecad-fabprep"
+version = "0.9.4"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "vcad-ecad-export",
+ "vcad-ecad-pcb",
+ "vcad-ecad-symbols",
+ "vcad-ir",
+]
+
+[[package]]
 name = "vcad-ecad-package"
 version = "0.9.4"
 dependencies = [
@@ -7019,6 +7105,7 @@ dependencies = [
  "tang-expr",
  "thiserror 2.0.18",
  "toml 0.8.23",
+ "vcad-ecad-export",
  "vcad-ecad-package",
  "vcad-ecad-sim",
  "vcad-ecad-symbols",
@@ -7193,6 +7280,7 @@ dependencies = [
  "vcad-kernel-enclosure",
  "vcad-kernel-fea",
  "vcad-kernel-fillet",
+ "vcad-kernel-flow",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-naming",
@@ -7200,6 +7288,7 @@ dependencies = [
  "vcad-kernel-particle",
  "vcad-kernel-photonics",
  "vcad-kernel-primitives",
+ "vcad-kernel-qcd",
  "vcad-kernel-sheet",
  "vcad-kernel-shell",
  "vcad-kernel-sketch",
@@ -7236,6 +7325,7 @@ dependencies = [
 name = "vcad-kernel-atoms"
 version = "0.9.4"
 dependencies = [
+ "phyz-md",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -7396,6 +7486,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-flow"
+version = "0.9.4"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "serde",
+ "serde_json",
+ "vcad-kernel-gpu",
+ "vcad-kernel-thermal",
+ "vcad-receipt",
+ "wgpu",
+]
+
+[[package]]
 name = "vcad-kernel-geom"
 version = "0.9.4"
 dependencies = [
@@ -7430,7 +7534,6 @@ dependencies = [
 name = "vcad-kernel-math"
 version = "0.9.4"
 dependencies = [
- "robust",
  "tang",
 ]
 
@@ -7507,7 +7610,7 @@ dependencies = [
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
- "phyz",
+ "phyz 0.3.1",
  "serde",
  "serde_json",
  "stl_io",
@@ -7531,6 +7634,14 @@ dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-topo",
+]
+
+[[package]]
+name = "vcad-kernel-qcd"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7716,6 +7827,7 @@ dependencies = [
  "vcad-design-constraints",
  "vcad-diff",
  "vcad-ecad-export",
+ "vcad-ecad-fabprep",
  "vcad-ecad-parts",
  "vcad-ecad-pcb",
  "vcad-ecad-schematic",
@@ -7815,9 +7927,9 @@ dependencies = [
 name = "vcad-sim"
 version = "0.9.4"
 dependencies = [
- "phyz",
+ "phyz 0.3.1",
  "phyz-gpu",
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
  "serde",
  "thiserror 2.0.18",

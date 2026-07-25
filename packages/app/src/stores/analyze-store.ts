@@ -38,8 +38,13 @@ export type StudyClaimStatus =
   | "unverifiable"
   | "error";
 
-/** Which scalar field is painted on the mesh. */
-export type FieldKind = "displacement" | "vonMises";
+/**
+ * Which scalar field is painted on the mesh. `velocity` and `pressure`
+ * are flow fields (vcad-kernel-flow simulate_flow / GPU preview
+ * lattice); they ride the same per-vertex color path as the FEA
+ * overlays.
+ */
+export type FieldKind = "displacement" | "vonMises" | "velocity" | "pressure";
 
 export interface StudyRun {
   status: "idle" | "running" | "done" | "error";

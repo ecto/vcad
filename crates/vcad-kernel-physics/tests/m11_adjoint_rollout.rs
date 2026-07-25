@@ -25,9 +25,10 @@ use phyz::math::{DVec, SpatialTransform, Vec3};
 use phyz::{Joint, JointType, Model, ModelBuilder};
 use vcad_kernel_diff::{ParamSeeding, SurfaceSeed};
 use vcad_kernel_geom::CylinderSurface;
+use vcad_kernel_physics::diff::interop::AdjointRolloutSpec;
 use vcad_kernel_physics::{
-    nominal_mass_props, rollout_gradient, rollout_gradient_adjoint, AdjointRolloutSpec,
-    BodyMassProps, DiffBody, MassPropFdSteps,
+    nominal_mass_props, rollout_gradient, rollout_gradient_adjoint, BodyMassProps, DiffBody,
+    MassPropFdSteps,
 };
 use vcad_kernel_primitives::{make_cylinder, BRepSolid};
 use vcad_kernel_tessellate::TessellationParams;
@@ -132,6 +133,9 @@ fn pendulum_model(props: &[BodyMassProps]) -> Model {
         axis: Vec3::new(1.0, 0.0, 0.0),
         damping: 0.0,
         limits: None,
+        // phyz's Joint grew limit stiffness/damping, armature, spring, and
+        // friction-loss fields; this pendulum wants all of them neutral.
+        ..Default::default()
     };
     ModelBuilder::new()
         .gravity(Vec3::new(0.0, -9.81, 0.0))

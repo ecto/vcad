@@ -1,6 +1,8 @@
 import SwiftUI
 import RealityKit
+#if canImport(AppKit)
 import AppKit
+#endif
 import simd
 import CVcadFFI
 
@@ -216,9 +218,11 @@ final class EditorModel {
     var modifierValue: Double = 3.0 {
         didSet {
             if source.isSandbox { parameterDirty = true }
+            #if os(macOS)
             if Int(modifierValue.rounded()) != Int(oldValue.rounded()) {
                 NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
             }
+            #endif
         }
     }
 
@@ -425,7 +429,11 @@ final class EditorModel {
     var raytraceEnabled = false
     /// The latest completed ray-traced frame, shown as an overlay once the
     /// camera settles. Cleared by any camera/geometry/parameter change.
+    /// (macOS-only: the overlay composites over a fixed orbit camera, which a
+    /// visionOS volume doesn't have.)
+    #if os(macOS)
     var raytraceImage: NSImage?
+    #endif
     /// Monotonic token so a stale in-flight render can't overwrite a newer one.
     @ObservationIgnored var raytraceToken = 0
 
@@ -443,6 +451,7 @@ final class EditorModel {
         return (toKernel(cameraPosition), toKernel(panOffset))
     }
 
+    #if os(macOS)
     /// Async ray-traced still: gathers the doc bytes, camera, and part colors
     /// on the main actor, then runs the blocking tracer on a background
     /// thread. Returns nil when there is no evaluable document.
@@ -511,6 +520,7 @@ final class EditorModel {
         image.addRepresentation(rep)
         return image
     }
+    #endif
 
     var usesDocumentTree: Bool { documentGraph != nil && !featureNodes.isEmpty }
 
@@ -1401,6 +1411,7 @@ final class EditorModel {
     // field's own Esc-cancel still works). Returns the event so other handlers
     // still see it.
     nonisolated(unsafe) private var keyMonitor: Any?
+    #if os(macOS)
     func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -1426,8 +1437,11 @@ final class EditorModel {
         }
     }
 
+    #endif
+
     // Two-finger / wheel scroll → zoom. Installed once when the viewport appears.
     nonisolated(unsafe) private var scrollMonitor: Any?
+    #if os(macOS)
     func installScrollZoom() {
         guard scrollMonitor == nil else { return }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
@@ -1442,6 +1456,7 @@ final class EditorModel {
             return event
         }
     }
+    #endif
 
     // MARK: cross-domain slice — the gripper
     // One `connector_x` couples the enclosure cutout (mechanical) + the board
@@ -1458,8 +1473,10 @@ final class EditorModel {
         if let d = gripperDoc { vcad_doc_free(d) }
         if let s = residentAssemblyScene { vcad_scene_free(s) }
         playbackTimer?.invalidate()
+        #if os(macOS)
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        #endif
         spinTimer?.invalidate()
     }
 
@@ -1518,13 +1535,17 @@ final class EditorModel {
         let tick = Int(clamped.rounded())
         if tick != lastConnectorTick {
             lastConnectorTick = tick
+            #if os(macOS)
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+            #endif
         }
         let ok = connectorOK
         if ok != lastConnectorOK {
             lastConnectorOK = ok
             if !ok {
+                #if os(macOS)
                 NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+                #endif
                 chime.play(.warning)
             } else {
                 chime.play(.solved)

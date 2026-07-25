@@ -81,10 +81,30 @@ fn fill_zone(pcb: &Pcb, zone: &Zone) -> FilledZone {
         poly2d::difference(&[subject], &clips)
     };
 
+    // Orphan removal: a fill can be cut by other-net copper into pieces, and a
+    // piece that reaches none of its own net's copper is floating metal — it
+    // carries no current, it is a DRC `NetIslands` error, and every EDA tool
+    // drops it before plotting. Keep the largest piece unconditionally, so a
+    // zone poured before its net has been routed or stitched still renders as
+    // the plane the designer drew.
+    let anchors = same_net_anchors(pcb, zone);
+    let biggest = filled
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+        .map(|(i, _)| i);
+
     // Emit outer + hole rings, dropping copper islands below the minimum area.
     let mut polygons = Vec::new();
-    for poly in &filled {
+    for (i, poly) in filled.iter().enumerate() {
         if zone.min_area > 0.0 && poly.area() < zone.min_area {
+            continue;
+        }
+        if Some(i) != biggest
+            && !anchors
+                .iter()
+                .any(|&a| poly2d::contains_point(poly, Point2::new(a.x, a.y)))
+        {
             continue;
         }
         polygons.push(pts_to_ring(&poly.outer));
@@ -98,6 +118,44 @@ fn fill_zone(pcb: &Pcb, zone: &Zone) -> FilledZone {
         net: zone.net.clone(),
         layer: zone.layer,
     }
+}
+
+/// Points where the zone's own net has copper that the pour can flood into: its
+/// pads on this layer, its vias (a via floods every layer it spans), and its
+/// traces on this layer — sampled along their length, since a trace can cross an
+/// island without either endpoint being inside it.
+///
+/// A filled island containing none of these reaches nothing.
+fn same_net_anchors(pcb: &Pcb, zone: &Zone) -> Vec<Vec2> {
+    /// Spacing (mm) at which a same-net trace is sampled for anchor points.
+    const TRACE_SAMPLE_MM: f64 = 1.0;
+
+    let mut pts = Vec::new();
+    for footprint in &pcb.footprints {
+        for pad in &footprint.pads {
+            if pad.net.as_deref() == Some(zone.net.as_str()) && pad.layers.contains(&zone.layer) {
+                pts.push(crate::geometry::pad_world_position(footprint, pad));
+            }
+        }
+    }
+    for via in &pcb.vias {
+        if via.net == zone.net {
+            pts.push(via.position);
+        }
+    }
+    for trace in &pcb.traces {
+        if trace.net != zone.net || trace.layer != zone.layer {
+            continue;
+        }
+        let (dx, dy) = (trace.end.x - trace.start.x, trace.end.y - trace.start.y);
+        let len = (dx * dx + dy * dy).sqrt();
+        let steps = (len / TRACE_SAMPLE_MM).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            let t = k as f64 / steps as f64;
+            pts.push(Vec2::new(trace.start.x + dx * t, trace.start.y + dy * t));
+        }
+    }
+    pts
 }
 
 /// Build the set of clearance regions to subtract from a zone's pour.
@@ -227,16 +285,16 @@ fn thermal_relief_regions(
 
 // --- polygon construction helpers ------------------------------------------
 
-fn ring_to_pts(ring: &[Vec2]) -> Vec<Point2> {
+pub(crate) fn ring_to_pts(ring: &[Vec2]) -> Vec<Point2> {
     ring.iter().map(|v| Point2::new(v.x, v.y)).collect()
 }
 
-fn pts_to_ring(ring: &[Point2]) -> Vec<Vec2> {
+pub(crate) fn pts_to_ring(ring: &[Point2]) -> Vec<Vec2> {
     ring.iter().map(|p| Vec2::new(p.x, p.y)).collect()
 }
 
 /// Force a ring counter-clockwise (poly2d outer-ring convention).
-fn ccw(mut ring: Vec<Point2>) -> Vec<Point2> {
+pub(crate) fn ccw(mut ring: Vec<Point2>) -> Vec<Point2> {
     if poly2d::signed_area_f(&ring) < 0.0 {
         ring.reverse();
     }
@@ -244,7 +302,7 @@ fn ccw(mut ring: Vec<Point2>) -> Vec<Point2> {
 }
 
 /// Force a ring clockwise (poly2d hole-ring convention).
-fn cw(mut ring: Vec<Point2>) -> Vec<Point2> {
+pub(crate) fn cw(mut ring: Vec<Point2>) -> Vec<Point2> {
     if poly2d::signed_area_f(&ring) > 0.0 {
         ring.reverse();
     }
@@ -252,7 +310,7 @@ fn cw(mut ring: Vec<Point2>) -> Vec<Point2> {
 }
 
 /// A regular polygon approximating a disc of radius `r` about `c`.
-fn circle_poly(c: Vec2, r: f64) -> Poly {
+pub(crate) fn circle_poly(c: Vec2, r: f64) -> Poly {
     let mut pts = Vec::with_capacity(CIRCLE_SEG);
     for i in 0..CIRCLE_SEG {
         let a = std::f64::consts::TAU * (i as f64) / (CIRCLE_SEG as f64);
@@ -263,7 +321,7 @@ fn circle_poly(c: Vec2, r: f64) -> Poly {
 
 /// A capsule (stadium) — the Minkowski sum of segment `a`–`b` with a disc of
 /// radius `r` — approximated with `CAP_SEG`-segment semicircular caps.
-fn capsule_poly(a: Vec2, b: Vec2, r: f64) -> Poly {
+pub(crate) fn capsule_poly(a: Vec2, b: Vec2, r: f64) -> Poly {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let len = (dx * dx + dy * dy).sqrt();
     if len < 1e-9 {
@@ -305,7 +363,7 @@ fn oriented_rect_poly(center: Vec2, hw: f64, hh: f64, ang: f64) -> Poly {
 }
 
 /// Get the half-width and half-height of a pad's bounding box.
-fn pad_half_extents(pad: &Pad) -> (f64, f64) {
+pub(crate) fn pad_half_extents(pad: &Pad) -> (f64, f64) {
     match &pad.shape {
         PadShape::Circle { diameter } => {
             let r = diameter / 2.0;
@@ -384,6 +442,8 @@ mod tests {
                     via_drill: 0.4,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![],
                 net_class_assignments: std::collections::HashMap::new(),
@@ -523,6 +583,71 @@ mod tests {
         assert_eq!(filled[0].layer, PcbLayer::FCu);
         assert!(!filled[0].polygons.is_empty());
         assert_eq!(filled[0].polygons[0].len(), 4); // zone outline
+    }
+
+    #[test]
+    fn orphan_island_is_dropped_but_the_plane_survives() {
+        // An other-net trace slices the GND pour clean across, leaving two
+        // pieces. Only the lower one carries a GND pad; the upper one reaches
+        // nothing and must not ship as floating copper.
+        let mut pcb = test_pcb();
+        pcb.traces[0] = Trace {
+            start: Vec2::new(-1.0, 25.0),
+            end: Vec2::new(51.0, 25.0),
+            width: 0.5,
+            layer: PcbLayer::FCu,
+            net: "1".to_string(),
+            source: None,
+        };
+        pcb.footprints.push(gnd_pad_at(Vec2::new(25.0, 10.0)));
+
+        let filled = fill_zones(&pcb);
+        let area = area_of(&filled[0]);
+        // The lower piece is ~50 x 24.4 (minus the pad's thermal relief); the
+        // orphan upper piece is ~50 x 14.4 and must be gone.
+        assert!(
+            (1200.0..1230.0).contains(&area),
+            "only the pad-bearing piece should remain, got {area} mm^2"
+        );
+
+        // With no pad at all, the pour still renders: the largest piece is kept
+        // rather than the zone vanishing from the Gerber.
+        pcb.footprints.clear();
+        let bare = area_of(&fill_zones(&pcb)[0]);
+        assert!(
+            (1200.0..1240.0).contains(&bare),
+            "a zone with no same-net copper keeps its largest piece, got {bare} mm^2"
+        );
+    }
+
+    #[test]
+    fn a_trace_crossing_an_island_anchors_it() {
+        // The pour is cut in two and the *upper* piece carries no pad — but a
+        // same-net trace crosses it, so it is connected copper, not an orphan.
+        let mut pcb = test_pcb();
+        pcb.traces[0] = Trace {
+            start: Vec2::new(-1.0, 25.0),
+            end: Vec2::new(51.0, 25.0),
+            width: 0.5,
+            layer: PcbLayer::FCu,
+            net: "1".to_string(),
+            source: None,
+        };
+        pcb.footprints.push(gnd_pad_at(Vec2::new(25.0, 10.0)));
+        // A GND trace across the upper piece, both endpoints inside it.
+        pcb.traces.push(Trace {
+            start: Vec2::new(5.0, 32.0),
+            end: Vec2::new(45.0, 32.0),
+            width: 0.5,
+            layer: PcbLayer::FCu,
+            net: "2".to_string(),
+            source: None,
+        });
+        let area = area_of(&fill_zones(&pcb)[0]);
+        assert!(
+            area > 1800.0,
+            "both pieces are anchored and should survive, got {area} mm^2"
+        );
     }
 
     #[test]

@@ -274,7 +274,15 @@ pub async fn distance_fields_batch_async(
     let bind_ab = bind(&dist_a, &dist_b);
     let bind_ba = bind(&dist_b, &dist_a);
 
+    // Metal/wgpu cap each dispatch dimension at 65535 workgroups; a
+    // full-board batch exceeds that in one dimension (observed 129052 —
+    // the dispatch poisoned the encoder and silently killed the GPU path
+    // for the rest of the run). Split over a 2D grid; the shader flattens
+    // (x, y) back to the linear index via num_workgroups.
     let groups = ((n * total) as u32).div_ceil(256);
+    let max_dim = ctx.device.limits().max_compute_workgroups_per_dimension;
+    let groups_x = groups.min(max_dim);
+    let groups_y = groups.div_ceil(groups_x);
     // Worst-case sweep bound: longest shortest path < total nodes.
     let max_sweeps = 4 * (nx + ny + nl);
     let mut sweeps_done = 0usize;
@@ -294,7 +302,7 @@ pub async fn distance_fields_batch_async(
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, if current_is_a { &bind_ab } else { &bind_ba }, &[]);
-            pass.dispatch_workgroups(groups, 1, 1);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
             drop(pass);
             current_is_a = !current_is_a;
             sweeps_done += 1;

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-drill-aware-vias-pad-layer-stubs",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "fix",
+  "title": "Router vias clear drills; stubs leave pads on the pad's layer",
+  "summary": "The routing oracle now checks hole-to-hole spacing across layer spans (two vias on disjoint spans no longer collide in the drill file), probes a via barrel on every layer it spans, and can pin a connection's terminals so stubs leave a pad on a layer the pad is actually on instead of floating on an inner layer.",
+  "features": ["pcb", "autorouter", "drc"],
+  "mcpTools": ["route_nets", "run_drc", "validate_for_fab"]
+}

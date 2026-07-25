@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-lattice-gauge-mcp",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "feat",
+  "title": "Lattice gauge theory simulation",
+  "summary": "New simulate_lattice_gauge tool: quenched SU(2)/SU(3) Monte Carlo — confinement, string tension, deconfinement, flux tubes and instantons, with jackknife error bars on every number.",
+  "features": ["simulation", "physics"],
+  "mcpTools": ["simulate_lattice_gauge"]
+}

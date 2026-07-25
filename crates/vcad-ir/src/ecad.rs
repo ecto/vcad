@@ -504,6 +504,26 @@ pub struct NetClassRules {
     #[serde(rename = "diffPairWidth", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(rename = "diffPairWidth", optional))]
     pub diff_pair_width: Option<f64>,
+    /// Target single-ended characteristic impedance in ohms.
+    ///
+    /// When set — and when the stackup carries the dielectric data needed to
+    /// solve — the trace width that hits this impedance is derived *per layer*
+    /// (microstrip on the outers, stripline on the inners), rather than reusing
+    /// [`Self::trace_width`] on every layer. Absent the data, the declared
+    /// width stands and the impedance is reported unverified.
+    #[serde(rename = "targetImpedance", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "targetImpedance", optional))]
+    pub target_impedance: Option<f64>,
+    /// Target differential impedance in ohms (e.g. 90 for USB, 100 for PCIe).
+    ///
+    /// Same contract as [`Self::target_impedance`], solving the pair leg width
+    /// at the class's declared [`Self::diff_pair_gap`].
+    #[serde(
+        rename = "targetDiffImpedance",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "targetDiffImpedance", optional))]
+    pub target_diff_impedance: Option<f64>,
 }
 
 /// Board-level design rules.
@@ -1084,6 +1104,8 @@ mod tests {
                     via_drill: 0.4,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![],
                 net_class_assignments: std::collections::HashMap::new(),

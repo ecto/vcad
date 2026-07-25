@@ -9,9 +9,11 @@
 //! - [`router`] -- Trace routing algorithms (grid, push-and-shove, diff pair, length tuning)
 //! - [`session`] -- Incremental routing session: the in-loop legality oracle
 //! - [`copper_pour`] -- Zone fill algorithm
+//! - [`pour_synth`] -- Copper-pour synthesis: which nets deserve a plane, and its outline
 //! - [`drc`] -- Design rule checking engine (board vs. its own declared rules)
 //! - [`dfm`] -- Design-for-Manufacturing checks (board vs. a fab-house profile)
 //! - [`spatial`] -- R-tree spatial index for copper elements
+//! - [`impedance`] -- Per-layer controlled-impedance geometry from the stackup
 
 pub mod component_mesh;
 pub mod copper_pour;
@@ -19,6 +21,8 @@ pub mod critique;
 pub mod dfm;
 pub mod drc;
 pub mod geometry;
+pub mod impedance;
+pub mod pour_synth;
 pub mod ratsnest;
 pub mod router;
 pub mod session;
@@ -32,6 +36,10 @@ pub use dfm::{check_dfm, PcbDfmReport, PcbDfmRuleResult, PcbFabProfile, PcbRuleP
 pub use drc::{
     analyze_net_continuity, analyze_power_integrity, check_drc, is_power_net, DrcRuleType,
     DrcSeverity, DrcViolation, NetContinuity, NetIsland,
+};
+pub use pour_synth::{
+    decide_pours, ipc2221_current_a, ipc2221_width_mm, synthesize_pours, PourCandidate, PourPolicy,
+    PourReason,
 };
 pub use router::grid::GridRouter;
 pub use session::{Blocker, ProbeResult, RouteSession, SpanId};

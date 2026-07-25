@@ -23,7 +23,13 @@ fn main() {
     let mut shown: BTreeMap<String, usize> = BTreeMap::new();
     for v in &violations {
         *by_rule.entry(format!("{:?}", v.rule)).or_default() += 1;
-        if matches!(v.rule, DrcRuleType::Short | DrcRuleType::Clearance) {
+        if matches!(
+            v.rule,
+            DrcRuleType::Short
+                | DrcRuleType::Clearance
+                | DrcRuleType::MinTraceWidth
+                | DrcRuleType::NetIslands
+        ) {
             hard += 1;
             let show = focus
                 .as_deref()

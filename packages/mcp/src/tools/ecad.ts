@@ -61,6 +61,7 @@ import {
   exportKicadSch,
   tryExportFabFiles,
   tryRunDrc,
+  runFabPrep as kernelRunFabPrep,
   tryPcbPreviewMeshes,
   resolveFootprint,
   generateNetlist,
@@ -84,7 +85,7 @@ import {
   verifyReceipt as kernelVerifyReceipt,
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
-import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
+import type { Engine, NetlistResult, TriangleMesh, NetContinuity, FabPrepReport } from "@vcad/engine";
 import {
   registerSession,
   getSession,
@@ -1111,6 +1112,76 @@ export const validateForFabSchema = {
   type: "object" as const,
   properties: {
     ...docInputProperties,
+  },
+  required: [],
+};
+
+/** JSON Schema for fab_prep tool. */
+export const fabPrepSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    calibrate_rules: {
+      type: "boolean" as const,
+      description:
+        "Derive and apply design-rule calibration from the board's OWN declared " +
+        "via classes and pre-existing footprint holes (default FALSE). Imported " +
+        "boards routinely carry global minima that forbid the via class they " +
+        "themselves declare — e.g. a 0.21/0.12mm class under a 0.2mm minDrill, " +
+        "which flags every via on the board. Calibration only ever relaxes a rule " +
+        "to the point where the board's own GIVEN geometry stops being illegal, " +
+        "is floored at laser-microvia limits, and records every change with its " +
+        "derivation in the receipt. Off by default because silently relaxing DRC " +
+        "rules to make a board pass is how an unbuildable board ships.",
+    },
+    route_remaining: {
+      type: "boolean" as const,
+      description:
+        "Route or certify the connections the board arrived without, before the " +
+        "fix loop (default TRUE). Each unrouted connection ends as Routed, " +
+        "ProvedInfeasible (with a bottleneck-cut certificate), or an honest " +
+        "unknown — never silently dropped.",
+    },
+    max_rounds: {
+      type: "number" as const,
+      description:
+        "Maximum strip-and-re-route rounds (default 8). Each round censuses the " +
+        "violations the ROUTING is answerable for, strips those nets, and hands " +
+        "them back to the session-probed router.",
+    },
+    budget: {
+      type: "number" as const,
+      description:
+        "Per-cluster search budget in node expansions for the complete router " +
+        "(default 5,000,000). Lower is faster and yields more honest unknowns.",
+    },
+    max_cluster: {
+      type: "number" as const,
+      description: "Maximum connections coalesced into one joint search window (default 6).",
+    },
+    prune_dangling: {
+      type: "boolean" as const,
+      description:
+        "Remove copper that reaches no pad or pour of its net before the final " +
+        "DRC (default TRUE).",
+    },
+    accept_rules: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "DRC rule names whose route-attributable violations are ACCEPTED rather " +
+        'than fixed (e.g. ["MinTraceWidth"]). Real fab packages ship with real, ' +
+        "named exceptions; the difference between that and a footgun is whether " +
+        "the exception is written down. Waived violations are still counted, " +
+        "still listed, and the waiver is named in the receipt — it stops blocking " +
+        "the verdict, it does not hide anything. An unrecognised rule name " +
+        "refuses the run rather than silently accepting nothing.",
+    },
+    dry_run: {
+      type: "boolean" as const,
+      description:
+        "Compute the receipt without writing the fixed board back to the session.",
+    },
   },
   required: [],
 };
@@ -3251,6 +3322,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   let tracesRemoved = 0;
   let viasRemoved = 0;
+  let zonesAdded = 0;
   if (targetNets.size > 0) {
     const beforeT = pcb.traces.length;
     const beforeV = pcb.vias.length;
@@ -3327,6 +3399,14 @@ export async function routeNets(args: Record<string, unknown>) {
   };
 
   const applyRoute = (result: Awaited<ReturnType<typeof routeAll>>) => {
+    // Synthesized copper pours first. The routing that follows *assumes* them:
+    // a poured net is carried by its plane, so the kernel stitched its pads to
+    // the plane instead of tracing them to each other. Dropping them here would
+    // leave those nets connected to nothing.
+    for (const z of result.zones ?? []) {
+      pcb.zones.push(structuredClone(z));
+      zonesAdded++;
+    }
     for (const t of result.traces) {
       pcb.traces.push({
         start: { x: t.start.x, y: t.start.y },
@@ -3603,6 +3683,9 @@ export async function routeNets(args: Record<string, unknown>) {
           nets_routed: routedNets.size,
           routability,
           traces_added: tracesAdded,
+          // Copper pours the router synthesized for high-current nets: those
+          // nets are now carried by a plane and stitched to it, not traced.
+          ...(zonesAdded > 0 ? { zones_added: zonesAdded } : {}),
           // Copper hygiene: re-routing rips the prior route up first, so a
           // re-route reports both what it removed and what it laid — `added`
           // alone reads like monotonic growth even when copper is being
@@ -5530,6 +5613,128 @@ function detectUnsupportedFeatures(pcb: Pcb): UnsupportedFeature[] {
  * Fail-closed throughout: a board that can't be parsed/serialized is reported
  * `unverifiable` (never silently "clean" or "ready").
  */
+/**
+ * Get a routed board fab-ready in one call, and return the DRC-delta receipt
+ * that says what was actually achieved.
+ *
+ * Runs the whole pipeline in the kernel: optional (logged) rule calibration,
+ * the verdict ladder over unrouted connections, the strip-and-re-route fix loop,
+ * the dangling-copper prune. Mutates the session document with the fixed board.
+ *
+ * The receipt is the point. On an imported fixture "zero DRC violations" is not
+ * achievable, so the report never gives one number — it gives the pair: the same
+ * board with all routing stripped (the floor the board arrived with) and the
+ * finished board, with the difference charged to the routing. A run that cannot
+ * drive that difference to zero comes back `converged: false` with the remaining
+ * offenders named, and `export_gerber`'s clean-DRC gate still stands: this is the
+ * supported way to GET clean, never a way around the gate.
+ */
+export async function fabPrep(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  // Fail closed: every claim this tool makes is a DRC claim, so without the
+  // kernel there is nothing to say and guessing would be worse than refusing.
+  if (!(await isEcadAvailable())) {
+    return ecadError(
+      "fab_prep requires the kernel DRC/routing engine (ECAD WASM unavailable) — refusing to " +
+        "report an unverifiable fab-readiness verdict",
+    );
+  }
+
+  const dryRun = Boolean(args.dry_run);
+  const options = {
+    calibrate_rules: Boolean(args.calibrate_rules),
+    route_remaining: args.route_remaining === undefined ? true : Boolean(args.route_remaining),
+    prune_dangling: args.prune_dangling === undefined ? true : Boolean(args.prune_dangling),
+    max_rounds: Math.max(0, Math.round(Number(args.max_rounds ?? 8))),
+    accept_rules: Array.isArray(args.accept_rules) ? (args.accept_rules as string[]) : [],
+    verdict: {
+      budget: Math.max(1, Math.round(Number(args.budget ?? 5_000_000))),
+      max_cluster: Math.max(1, Math.round(Number(args.max_cluster ?? 6))),
+    },
+  };
+
+  const out = await kernelRunFabPrep(pcb, options);
+  if (!out.ok) {
+    return ecadError(`fab_prep could not run: ${out.message}`);
+  }
+  const { report, pcb: fixed } = out.value;
+
+  if (!dryRun) {
+    // The kernel returns a whole board; copy the copper it changed back onto the
+    // session's board rather than swapping the object, so anything else holding
+    // a reference to it (preview, receipts) sees the update.
+    pcb.traces = fixed.traces;
+    pcb.traceArcs = fixed.traceArcs;
+    pcb.vias = fixed.vias;
+    pcb.rules = fixed.rules;
+  }
+
+  const payload = {
+    success: true,
+    ...(dryRun ? { dry_run: true } : {}),
+    converged: report.converged,
+    ...(report.blocker ? { blocker: report.blocker } : {}),
+    headline: fabPrepHeadline(report),
+    // Both numbers, always. A caller that sees only one of them is being told
+    // something other than what this run established.
+    drc_delta: {
+      baseline_total: report.delta.baseline_total,
+      final_total: report.delta.final_total,
+      route_attributable_total: report.delta.route_attributable_total,
+      route_attributable_blocking: report.delta.route_attributable_fixable,
+      route_attributable_accepted: report.delta.route_attributable_accepted,
+      by_rule: report.delta.rules,
+      baseline_note:
+        "baseline = this same board with every trace and via stripped, checked under the same " +
+        "rules. It is not zero on an imported fixture and is not supposed to be; the router is " +
+        "answerable for the difference, not the total.",
+    },
+    connectivity: report.connectivity,
+    ...(report.accepted_rules.length > 0 ? { accepted_rules: report.accepted_rules } : {}),
+    calibration: {
+      requested: report.calibration_requested,
+      applied: report.calibration.applied,
+      refused: report.calibration.refused,
+    },
+    initial_verdict: report.initial_verdict,
+    rounds: report.rounds,
+    pruned: { traces: report.pruned_traces, vias: report.pruned_vias },
+    // Cap the offender list: a non-converging run on a dense board can name
+    // thousands, and the full list lives in the board's own DRC.
+    offenders: report.delta.offenders.slice(0, 25),
+    offender_count: report.delta.offenders.length,
+    next_action: report.converged
+      ? "export_gerber (the clean-DRC gate will now pass)"
+      : "resolve the offenders above (fix_drc / route_nets / set_placement), then re-run fab_prep",
+    ...docResultPayload(ctx),
+  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+}
+
+/** One-sentence statement of what a fab-prep run established. */
+function fabPrepHeadline(report: FabPrepReport): string {
+  if (!report.converged) {
+    return (
+      `NOT FAB-READY — ${report.delta.route_attributable_fixable} route-attributable ` +
+      `violation(s) remain (${report.blocker ?? "loop did not converge"})`
+    );
+  }
+  const waived =
+    report.delta.route_attributable_accepted > 0
+      ? `, ${report.delta.route_attributable_accepted} waived under ${report.accepted_rules.join("+")}`
+      : "";
+  return (
+    `zero route-attributable violations${waived} — ${report.delta.final_total} on the finished ` +
+    `board, ${report.delta.baseline_total} on the same board stripped of all routing`
+  );
+}
+
 export async function validateForFab(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
@@ -14321,6 +14526,29 @@ export const toolDefs: ToolDef[] = [
     inputSchema: exportKicadSchema,
     handler: (a) => exportKicad(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({}),
+  },
+  {
+    name: "fab_prep",
+    pack: "ecad",
+    description:
+      "Take a routed board to fab-ready in one call, and return the DRC-delta " +
+      "receipt that says what was actually achieved. Runs the whole pipeline: " +
+      "optional rule calibration (opt-in, every change logged with its " +
+      "derivation), the verdict ladder over unrouted connections (each ends " +
+      "Routed / ProvedInfeasible / honest-unknown), then a strip-and-re-route " +
+      "fix loop until the violations the ROUTING is answerable for reach zero, " +
+      "then a dangling-copper prune. Mutates the session document. " +
+      "THE RECEIPT IS THE POINT: on an imported fixture absolute zero is not " +
+      "achievable — the same board stripped of all routing already violates its " +
+      "own rules — so the report always gives BOTH numbers (stripped-board " +
+      "baseline and finished board) and charges only the difference to the " +
+      "router. Fails closed: a loop that does not converge returns " +
+      "`converged:false` with the remaining offenders and does not pretend " +
+      "otherwise, and `export_gerber`'s clean-DRC gate still stands — this is " +
+      "the supported way to GET clean, not a way around it.",
+    inputSchema: fabPrepSchema,
+    handler: (a) => fabPrep(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
   {
     name: "validate_for_fab",

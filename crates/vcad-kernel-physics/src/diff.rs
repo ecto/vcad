@@ -736,48 +736,66 @@ pub fn rollout_gradient_via_density(
 // Adjoint-backed rollout gradients (phyz trajectory adjoint for ∂J/∂p)
 // ---------------------------------------------------------------------------
 
-/// A structured, adjoint-differentiable rollout description.
+/// Low-level phyz interop — the one place `phyz` types cross the crate's
+/// public surface.
 ///
-/// [`rollout_gradient`] takes an opaque closure and therefore has to probe
-/// `∂J/∂p` by finite differences (~20 re-simulations per body). This spec
-/// exposes the rollout's structure — model builder, initial state, open-loop
-/// control schedule, final-state objective with its analytic gradient — so
-/// the phyz **trajectory adjoint** ([`phyz::diff`]) can compute `∂J/∂p`
-/// exactly in one backward pass.
-///
-/// # Contract
-///
-/// - `build_model` must install body `i`'s inertia **exactly as**
-///   `props[i].to_spatial_inertia()` — i.e. in the CAD body frame. Mounting
-///   (rotating/offsetting the body relative to its joint) belongs in the
-///   joint's `parent_to_joint` and `axis`, *not* in a transformed inertia;
-///   a transformed inertia would silently decouple `∂J/∂p` from the seam's
-///   `dp/dθ`. Violations are detected and panic.
-/// - Joints: single-DOF (revolute/prismatic) + fixed, like phyz's adjoint.
-/// - `ctrl` is open-loop: it must not read the state.
-/// - The rollout the adjoint differentiates is phyz's semi-implicit Euler
-///   (`v' = v + dt·qdd`, `q' = q + dt·v'`) — the same integrator the m8
-///   test rollouts hand-roll, so the FD path and the adjoint path price the
-///   same trajectory.
-#[allow(clippy::type_complexity)]
-pub struct AdjointRolloutSpec<'a> {
-    /// Build the (contact-free unless used via
-    /// [`contact_rollout_gradient`]) phyz model at the given mass
-    /// properties. See the type-level contract.
-    pub build_model: Box<dyn Fn(&[BodyMassProps]) -> phyz::Model + 'a>,
-    /// Initial joint positions (length `nq`).
-    pub q0: Vec<f64>,
-    /// Initial joint velocities (length `nv`).
-    pub v0: Vec<f64>,
-    /// Number of integration steps.
-    pub steps: usize,
-    /// Open-loop control at step `t` (length `nv`).
-    pub ctrl: Box<dyn Fn(usize) -> phyz::math::DVec + 'a>,
-    /// Final-state objective `J = g(q_T, v_T)`.
-    pub objective_value: Box<dyn Fn(&[f64], &[f64]) -> f64 + 'a>,
-    /// Analytic objective gradient `(∂g/∂q_T, ∂g/∂v_T)`.
-    pub objective_gradient: Box<dyn Fn(&[f64], &[f64]) -> (Vec<f64>, Vec<f64>) + 'a>,
+/// vcad-kernel-physics otherwise wraps phyz completely (no phyz types in
+/// public APIs). The adjoint-backed gradients are the exception: callers
+/// describe the rollout by *building a phyz model themselves*, so
+/// [`AdjointRolloutSpec`](interop::AdjointRolloutSpec) necessarily carries
+/// `phyz::Model` / `phyz::math::DVec`. Anything imported from here couples
+/// your code to phyz's API; the wrapped entry points
+/// ([`rollout_gradient_adjoint`], [`contact_rollout_gradient`]) are the
+/// supported surface.
+pub mod interop {
+    use super::BodyMassProps;
+
+    /// A structured, adjoint-differentiable rollout description.
+    ///
+    /// [`rollout_gradient`](super::rollout_gradient) takes an opaque closure
+    /// and therefore has to probe
+    /// `∂J/∂p` by finite differences (~20 re-simulations per body). This spec
+    /// exposes the rollout's structure — model builder, initial state, open-loop
+    /// control schedule, final-state objective with its analytic gradient — so
+    /// the phyz **trajectory adjoint** ([`phyz::diff`]) can compute `∂J/∂p`
+    /// exactly in one backward pass.
+    ///
+    /// # Contract
+    ///
+    /// - `build_model` must install body `i`'s inertia **exactly as**
+    ///   `props[i].to_spatial_inertia()` — i.e. in the CAD body frame. Mounting
+    ///   (rotating/offsetting the body relative to its joint) belongs in the
+    ///   joint's `parent_to_joint` and `axis`, *not* in a transformed inertia;
+    ///   a transformed inertia would silently decouple `∂J/∂p` from the seam's
+    ///   `dp/dθ`. Violations are detected and panic.
+    /// - Joints: single-DOF (revolute/prismatic) + fixed, like phyz's adjoint.
+    /// - `ctrl` is open-loop: it must not read the state.
+    /// - The rollout the adjoint differentiates is phyz's semi-implicit Euler
+    ///   (`v' = v + dt·qdd`, `q' = q + dt·v'`) — the same integrator the m8
+    ///   test rollouts hand-roll, so the FD path and the adjoint path price the
+    ///   same trajectory.
+    #[allow(clippy::type_complexity)]
+    pub struct AdjointRolloutSpec<'a> {
+        /// Build the (contact-free unless used via
+        /// [`super::contact_rollout_gradient`]) phyz model at the given mass
+        /// properties. See the type-level contract.
+        pub build_model: Box<dyn Fn(&[BodyMassProps]) -> phyz::Model + 'a>,
+        /// Initial joint positions (length `nq`).
+        pub q0: Vec<f64>,
+        /// Initial joint velocities (length `nv`).
+        pub v0: Vec<f64>,
+        /// Number of integration steps.
+        pub steps: usize,
+        /// Open-loop control at step `t` (length `nv`).
+        pub ctrl: Box<dyn Fn(usize) -> phyz::math::DVec + 'a>,
+        /// Final-state objective `J = g(q_T, v_T)`.
+        pub objective_value: Box<dyn Fn(&[f64], &[f64]) -> f64 + 'a>,
+        /// Analytic objective gradient `(∂g/∂q_T, ∂g/∂v_T)`.
+        pub objective_gradient: Box<dyn Fn(&[f64], &[f64]) -> (Vec<f64>, Vec<f64>) + 'a>,
+    }
 }
+
+use interop::AdjointRolloutSpec;
 
 /// Check the [`AdjointRolloutSpec::build_model`] contract: the model's body
 /// inertias must be the props verbatim (CAD body frame, no mount transform

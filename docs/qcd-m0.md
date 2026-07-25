@@ -1,0 +1,132 @@
+# Lattice gauge theory M0–M3: pure-gauge Monte Carlo, SU(2) and SU(3)
+
+`vcad-kernel-qcd` brings the vcad solver zoo to the strong interaction: a
+laptop-scale lattice gauge theory kernel that computes **confinement from
+first principles** — the plaquette, Wilson loops, the area law, and (via
+Creutz ratios) the string tension that makes pulling two color charges
+apart cost linear energy. It follows the same discipline as every other
+solver crate in the repo: deterministic runs, an error bar on every
+number, fail-closed claims, and honesty bounds stated on results rather
+than in a README three repos away.
+
+Why it belongs in vcad at all: unlike thermal/EM/tolerance, nothing here
+feeds back into a manufacturable part. It is a **credibility and
+visualization flagship** — the M2 flux-tube seam ("drag two quarks apart
+in the viewport and watch the chromoelectric tube stretch") is a demo no
+CAD tool and few physics tools have, and the claim machinery shows the
+receipt system carrying genuinely hard statistics (Monte Carlo with
+autocorrelations, not just FV residuals).
+
+## What M0 ships
+
+Crate `crates/vcad-kernel-qcd`, dependency-free except `serde`:
+
+- **`su2`** — SU(2) in the quaternion parameterization `U = a₀ + i a·σ`.
+  No complex matrices exist anywhere; unitarity is a normalization.
+- **`lattice`** — link variables on a periodic 4D hypercubic lattice
+  (flat `Vec`, `4·site + μ` indexing), staple sums, average plaquette,
+  planar Wilson loops `W(r,t)` averaged over all sites and planes.
+- **`update`** — Kennedy–Pendleton heatbath (exact local conditional,
+  rejection-sampled) + microcanonical overrelaxation `U → Ā†U†Ā†`,
+  interleaved. Deterministic per seed (bundled xoshiro256++, same recipe
+  as the neutronics crate).
+- **`stats`** — binned jackknife. `Estimate {mean, err, n_bins,
+  bin_size}` is the only way an observable leaves the crate.
+- **`spec`** — `SimSpec` → `run()` → `SimResult`, serde end to end (the
+  future `simulate_lattice_gauge` MCP seam). Fail-closed validation: no
+  thermalization, statistics too starved for ≥ 2 jackknife bins,
+  degenerate extents (< 2), or Wilson loops big enough to wrap the
+  lattice are all rejected before a single sweep runs.
+- **`receipt`** — `vcad.qcd-claims/1`: plaquette, Wilson-loop, and
+  Creutz-ratio claims. Fail-closed: < 5 jackknife bins mints nothing; a
+  degenerate error bar mints nothing; Creutz ratios are only emitted
+  when all four constituent loops are ≥ 3σ from zero (the log of a
+  statistically-zero number is not a measurement). Every claim carries
+  the caveat list in the same JSON object. Claims are `basis: predicted`
+  and cap at **Provisional** — registration in `crates/vcad-receipt` +
+  the MCP surface is the flagged follow-up, same staging as the particle
+  and neutronics families.
+
+## Validation oracles (in CI)
+
+- Strong coupling: ⟨P⟩ = β/4 − β³/96 + O(β⁵) at β = 0.75 on 6⁴.
+- Weak coupling: ⟨P⟩ = 1 − 3/(4β) + O(1/β²) at β = 8 on 6⁴.
+- ⟨P⟩(β) strictly monotone across β ∈ {0.5, 1.5, 2.5, 4.0}.
+- Hot start and cold start thermalize to the same ⟨P⟩ (β = 2).
+- `W(1,1) ≡ ⟨P⟩` exactly; area-law ordering `W(1,1) > W(1,2) > W(2,2) > 0`
+  in the confined phase.
+- Overrelaxation preserves the local action to 1e−10; the
+  Kennedy–Pendleton sampler matches direct quadrature of its target
+  density; staple/plaquette consistency (`Σ Re Tr(U·A) = 4·Σ Re Tr U_p`);
+  jackknife matches the naive error on iid data and scales as 1/√N.
+
+All tests are seeded and deterministic; the full suite runs in ~4 s in
+debug.
+
+## Honesty bounds (M0, stated on every claim)
+
+- Quenched pure gauge (SU(2) or SU(3)) — no dynamical fermions. Nothing
+  here is a number about physical QCD; the claims are about the lattice
+  model and say so.
+- The clover topological charge is the naive operator: near-integer
+  after cooling, UV-noise-dominated raw; SU(2) only.
+- The flux-tube 3D excess profile needs ensembles beyond CI scale for
+  pointwise significance; CI asserts the pair-correlator decay, and the
+  profile ships with per-displacement jackknife errors so consumers see
+  exactly what is and is not resolved.
+- Lattice units at fixed coupling: no continuum extrapolation, no scale
+  setting.
+- Finite volume, no infinite-volume extrapolation.
+- Jackknife errors correct autocorrelation only up to the bin size.
+
+## The ladder
+
+- **M0** — SU(2) heatbath+OR, plaquette + Wilson loops, jackknife,
+  claims. ✅
+- **M1** — string tension. ✅ APE spatial smearing (`smear`),
+  spatial×temporal Wilson loops (`measure_temporal_loops`), Creutz
+  ratios and the effective static potential in `analysis`
+  (`creutz_ratios`, `static_potential`, `fit_cornell` — Cornell form
+  V = c − a/r + σr), `string_tension` and `static_potential_r*`
+  claims. Oracles: strong-coupling χ(2,2) and V(1) against the exact
+  σa² = −ln(β/4) limit at β = 1.2; smearing lifts W(2,2) on the same
+  ensemble without moving V(1).
+- **M2** — the visualization seam. ✅ `fields::FieldSnapshot`
+  (action-density per site + complex Polyakov field per spatial site,
+  row-major serde vectors ready for the viewport), cooling sweeps,
+  naive clover topological charge (SU(2); near-integer after cooling,
+  honesty-bounded as a viz/instanton tool, not a susceptibility
+  measurement), and `FluxTubeAccumulator` — the static-pair
+  (Polyakov-pair ⊗ action-density) connected 3D profile behind the
+  "drag the quarks apart" demo. Oracle: the pair correlator ⟨ℓℓ̄⟩(R)
+  decays with separation in the confined phase (the free energy
+  rises), asserted at R = 1 vs 2 on 6³×4 at β = 2.2.
+- **M3** — SU(3) + deconfinement. ✅ `Su3` (3×3 complex, quaternion-
+  free API parity via the `GaugeGroup` trait), Cabibbo–Marinari
+  heatbath/overrelaxation/cooling through the three SU(2) subgroups,
+  Gram–Schmidt reunitarization with det = +1 exactly. `Gauge::Su3` in
+  the spec dispatches the same pipeline. Oracles: SU(3) strong
+  (⟨P⟩ = β/18) and weak (⟨P⟩ = 1 − 2/β) coupling expansions; the
+  deconfinement transition bracketed in both groups via ⟨|L|⟩ at
+  N_t = 2 (SU(2): β = 1.3 vs 2.5 around β_c ≈ 1.88; SU(3): β = 4.0 vs
+  6.5 around β_c ≈ 5.1).
+- **M4+** (stretch, unpromised) — GPU sweeps via `vcad-kernel-gpu`
+  (checkerboard update parallelism), glueball 0⁺⁺ correlators, Wilson
+  fermions on tiny lattices, β_c scans as measured physics. Dynamical
+  QCD at physical parameters is permanently out of scope — that is
+  supercomputer territory and the docs say so rather than pretend
+  otherwise.
+
+## References
+
+- M. Creutz, *Monte Carlo study of quantized SU(2) gauge theory*,
+  Phys. Rev. D 21, 2308 (1980).
+- N. Cabibbo, E. Marinari, *A new method for updating SU(N) matrices in
+  computer simulations of gauge theories*, Phys. Lett. B 119, 387
+  (1982).
+- M. Albanese et al. (APE Collaboration), *Glueball masses and string
+  tension in lattice QCD*, Phys. Lett. B 192, 163 (1987).
+- A. D. Kennedy, B. J. Pendleton, *Improved heatbath method for Monte
+  Carlo calculations in lattice gauge theories*, Phys. Lett. B 156, 393
+  (1985).
+- K. G. Wilson, *Confinement of quarks*, Phys. Rev. D 10, 2445 (1974).

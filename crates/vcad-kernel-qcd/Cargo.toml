@@ -1,0 +1,13 @@
+[package]
+name = "vcad-kernel-qcd"
+description = "Lattice gauge theory (M0): SU(2) pure-gauge Wilson action on a 4D periodic lattice — heatbath + overrelaxation Monte Carlo, plaquette and Wilson-loop observables with jackknife errors, fail-closed predicted claims"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

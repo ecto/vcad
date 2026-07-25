@@ -2457,7 +2457,24 @@ diffPairGap?: number,
 /**
  * Differential pair trace width in mm.
  */
-diffPairWidth?: number, };
+diffPairWidth?: number, 
+/**
+ * Target single-ended characteristic impedance in ohms.
+ *
+ * When set — and when the stackup carries the dielectric data needed to
+ * solve — the trace width that hits this impedance is derived *per layer*
+ * (microstrip on the outers, stripline on the inners), rather than reusing
+ * [`Self::trace_width`] on every layer. Absent the data, the declared
+ * width stands and the impedance is reported unverified.
+ */
+targetImpedance?: number, 
+/**
+ * Target differential impedance in ohms (e.g. 90 for USB, 100 for PCIe).
+ *
+ * Same contract as [`Self::target_impedance`], solving the pair leg width
+ * at the class's declared [`Self::diff_pair_gap`].
+ */
+targetDiffImpedance?: number, };
 
 /**
  * An intentional connection between two or more otherwise-distinct nets

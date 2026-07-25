@@ -26,6 +26,14 @@ use super::maze::route_net_maze3d;
 /// - a bare polarity token after a final `.`: `/X.P` ↔ `/X.N`
 /// - DDR true/complement `_C` ↔ `_T` tokens, as a suffix or mid-name
 ///   (`DQS1_C_B` ↔ `DQS1_T_B`, `CK_C` ↔ `CK_T`)
+/// - the USB `DP` ↔ `DM` (and `D+` ↔ `D-`) convention, which is not a
+///   symmetric suffix: `/USB3-0.DP` ↔ `/USB3-0.DM`
+///
+/// This is the single source of truth for pair membership — [`super::classes`]
+/// builds the diff-pair class from it, and this stage routes what that class
+/// declares. When the two disagreed, the classifier put USB pairs in the class
+/// and this function then reported `NoPartnerName`, so every USB pair fell
+/// straight through to independent single routing (CM5 census: 3 pairs).
 ///
 /// Returns `None` for names with no polarity marker (`GND`, `/GPIO4`).
 pub(crate) fn pair_partner(net: &str) -> Option<String> {
@@ -62,7 +70,50 @@ pub(crate) fn pair_partner(net: &str) -> Option<String> {
             }
         }
     }
+    // USB `DP`/`DM` (and `D+`/`D-`). Require a separator before the token so
+    // e.g. "LDP" or a net literally named "DP" does not match.
+    for (a, b) in [("DP", "DM"), ("DM", "DP"), ("D+", "D-"), ("D-", "D+")] {
+        if let Some(base) = net.strip_suffix(a) {
+            if base.ends_with('.') || base.ends_with('_') || base.ends_with('-') {
+                return Some(format!("{base}{b}"));
+            }
+        }
+    }
     None
+}
+
+/// Tolerance on the class's target impedance, in percent, within which a layer
+/// counts as impedance-correct for the declared geometry. ±10% is the usual
+/// fab spec for a controlled-impedance layer.
+const IMPEDANCE_TOL_PCT: f64 = 10.0;
+
+/// The diff-pair net class `net` belongs to, if any.
+fn diff_class_of<'a>(pcb: &'a Pcb, net: &str) -> Option<&'a vcad_ir::ecad::NetClassRules> {
+    pcb.rules.class_rules.iter().find(|class| {
+        class.diff_pair_gap.is_some()
+            && pcb
+                .rules
+                .net_class_assignments
+                .get(&class.name)
+                .is_some_and(|nets| nets.iter().any(|n| n == net))
+    })
+}
+
+/// Copper layers on which `net`'s class geometry is impedance-correct.
+///
+/// `None` — the common case — means "no preference": the class declares no
+/// target impedance, the stackup cannot be solved, no layer qualifies, or
+/// every available layer does. The caller then searches the full stack exactly
+/// as it always has.
+fn preferred_layers(pcb: &Pcb, net: &str, copper: &[PcbLayer]) -> Option<Vec<PcbLayer>> {
+    let class = diff_class_of(pcb, net)?;
+    let ok = crate::impedance::impedance_correct_layers(pcb, class, IMPEDANCE_TOL_PCT)?;
+    let pref: Vec<PcbLayer> = copper.iter().copied().filter(|l| ok.contains(l)).collect();
+    // Only a proper, non-empty subset is worth a separate pass.
+    if pref.is_empty() || pref.len() == copper.len() {
+        return None;
+    }
+    Some(pref)
 }
 
 /// The pair's leg width and gap: from a declared diff-pair net class containing
@@ -98,12 +149,84 @@ fn pads_of_net(pcb: &Pcb, net: &str) -> Vec<Vec2> {
     out
 }
 
+/// The copper layers the `net` pad at `pos` actually occupies.
+///
+/// A pad connector may only *leave* the pad on a layer the pad is on: a
+/// connector that starts at the pad's XY on some other layer never touches
+/// it electrically, and no clearance check catches that (the copper is
+/// same-net, so the probe is happy). This mattered little while coupled legs
+/// always began on the outer layer; once they may begin anywhere in the
+/// stack, an unconstrained connector start silently disconnects the net.
+fn pad_layers_at(pcb: &Pcb, net: &str, pos: Vec2) -> Vec<PcbLayer> {
+    let mut best: Option<(f64, Vec<PcbLayer>)> = None;
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if pad.net.as_deref() != Some(net) {
+                continue;
+            }
+            let d = dist(crate::geometry::pad_world_position(fp, pad), pos);
+            if best.as_ref().map(|(bd, _)| d < *bd).unwrap_or(true) {
+                best = Some((d, pad.layers.clone()));
+            }
+        }
+    }
+    best.map(|(_, l)| l).unwrap_or_default()
+}
+
 /// The pad of `pads` nearest to `p`.
 fn nearest_pad(pads: &[Vec2], p: Vec2) -> Option<Vec2> {
     pads.iter()
         .copied()
         .min_by(|a, b| dist(*a, p).partial_cmp(&dist(*b, p)).unwrap())
 }
+
+/// Why a coupled-pair attempt gave up.
+///
+/// The bail census — histogram these across a board's pairs, kill the
+/// dominant mode, re-census — is the method that has driven this stage's
+/// coupled fraction up (censuses 9-17 are quoted throughout this file). The
+/// reasons are typed rather than log-only so the census is a measurement,
+/// not a grep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PairBail {
+    /// The net name carries no polarity marker — not a pair at all.
+    NoPartnerName,
+    /// The partner name resolves but no pad on the board carries it.
+    PartnerNoPads,
+    /// Both partner endpoints snap to the same pad.
+    PartnerEndpointsCollapse,
+    /// The span is too short to fit leads plus a coupled run.
+    SpanTooShort,
+    /// The phantom fat-trace centerline search failed on every retreat rung.
+    CenterlineSearch,
+    /// The centerline could not be offset into two legs (degenerate,
+    /// interior cusp, or the in-line via gate).
+    DegenerateCenterline,
+    /// A realized leg failed the exact oracle.
+    LegValidation,
+    /// A pad connector (breakout stub) could not reach its leg.
+    Connector,
+}
+
+impl PairBail {
+    /// Short stable slug for census tables.
+    pub fn slug(self) -> &'static str {
+        match self {
+            PairBail::NoPartnerName => "no-partner-name",
+            PairBail::PartnerNoPads => "partner-no-pads",
+            PairBail::PartnerEndpointsCollapse => "partner-endpoints-collapse",
+            PairBail::SpanTooShort => "span-too-short",
+            PairBail::CenterlineSearch => "centerline-search",
+            PairBail::DegenerateCenterline => "degenerate-centerline",
+            PairBail::LegValidation => "leg-validation",
+            PairBail::Connector => "connector",
+        }
+    }
+}
+
+/// A polyline of routed copper: each segment with the layer it sits on.
+/// Used for the phantom centerline before it is offset into two legs.
+type Centerline = Vec<(Vec2, Vec2, PcbLayer)>;
 
 /// One realized leg of the pair: its segments, vias, and endpoints.
 struct Leg {
@@ -136,19 +259,46 @@ pub(super) fn try_route_pair(
     cong: &Congestion,
     max_expansions: usize,
 ) -> Option<(Placed, Placed)> {
-    let partner = pair_partner(net)?;
+    try_route_pair_reason(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        placed,
+        cong,
+        max_expansions,
+    )
+    .ok()
+}
+
+/// [`try_route_pair`] reporting *why* it gave up — the census entry point.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_route_pair_reason(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    placed: &mut Vec<Placed>,
+    cong: &Congestion,
+    max_expansions: usize,
+) -> Result<(Placed, Placed), PairBail> {
+    let partner = pair_partner(net).ok_or(PairBail::NoPartnerName)?;
     let partner_pads = pads_of_net(pcb, &partner);
     if partner_pads.is_empty() {
         log::debug!("pair: {net} has partner name {partner} but no pads on board");
-        return None;
+        return Err(PairBail::PartnerNoPads);
     }
     // MST-similar partner endpoints: the partner pads nearest to this
     // connection's own endpoints. They must be two distinct pads.
-    let p_from = nearest_pad(&partner_pads, from)?;
-    let p_to = nearest_pad(&partner_pads, to)?;
+    let p_from = nearest_pad(&partner_pads, from).ok_or(PairBail::PartnerNoPads)?;
+    let p_to = nearest_pad(&partner_pads, to).ok_or(PairBail::PartnerNoPads)?;
     if dist(p_from, p_to) < 1e-6 {
         log::debug!("pair: {net}/{partner}: partner endpoints collapse to one pad — bailing");
-        return None;
+        return Err(PairBail::PartnerEndpointsCollapse);
     }
 
     let (w, gap) = pair_geometry(session, pcb, net, width);
@@ -163,7 +313,6 @@ pub(super) fn try_route_pair(
     let voff_max = via_off.max(via_d / 2.0 + 1.5 * clearance + w / 2.0 - half_sep);
     let fat_w = (2.0 * w + gap).max(2.0 * (voff_max + via_d / 2.0));
     let copper = copper_layers(pcb);
-    let first_layer = *copper.first().unwrap_or(&PcbLayer::FCu);
 
     // Centerline endpoints: the midpoints, pushed toward each other by a lead
     // so the fat phantom clears the four pads (the pads are other-net copper
@@ -172,9 +321,22 @@ pub(super) fn try_route_pair(
     let mid_to = Vec2::new((to.x + p_to.x) / 2.0, (to.y + p_to.y) / 2.0);
     let span = dist(mid_from, mid_to);
     let lead = (fat_w + clearance + w).min(span * 0.25);
-    if span < 4.0 * lead.max(0.1) {
+    // Below SHORT_PAIR_SPAN_MM the lead inset is the whole problem: a ~1.8mm
+    // pad-to-pad pair keeps only ~0.9mm of searchable centerline, both ladders
+    // fail, and the pair falls back to two singles whose legs land on
+    // DIFFERENT layers — scoring coupled_fraction exactly 0.0 and pinning the
+    // receipt's pair claim at zero however well the rest of the board routes
+    // (M7: the `/HS.*` group). Such a pair does not need a search at all; it
+    // needs the straight centerline it was always going to have. Route it
+    // directly below, so only spans too long for that path still bail here.
+    if span < 4.0 * lead.max(0.1) && span > SHORT_PAIR_SPAN_MM {
         log::debug!("pair: {net}/{partner}: span {span:.2}mm too short for coupled routing");
-        return None;
+        return Err(PairBail::SpanTooShort);
+    }
+    if span < 2.0 * half_sep {
+        // Degenerate: the twin legs would be further apart than the span.
+        log::debug!("pair: {net}/{partner}: span {span:.2}mm below one pair separation");
+        return Err(PairBail::SpanTooShort);
     }
     let dir = {
         let d = mid_to - mid_from;
@@ -246,11 +408,107 @@ pub(super) fn try_route_pair(
     // how a human escapes a BGA with a pair: singles in the field, coupled
     // in the open.
     let budget = max_expansions.max(100_000);
-    let mut found = None;
-    // Asymmetric ladder: most pairs have only ONE end in a pin field, so
-    // necking both ends symmetrically wastes coupled length and misses the
-    // cases where only one side needs the retreat.
-    for (r_from, r_to) in [
+    // Short pairs first: a straight, lead-free centerline on a layer all four
+    // pads share. Exact and probe-validated, so it costs four point probes
+    // rather than a maze search, and it keeps both legs on ONE layer — which
+    // is what `coupled_fraction` measures.
+    let direct = if span <= SHORT_PAIR_SPAN_MM {
+        direct_centerline(
+            session,
+            pcb,
+            net,
+            &partner,
+            (mid_from, mid_to),
+            [from, to, p_from, p_to],
+            half_sep,
+            via_d / 2.0,
+            clearance,
+            w,
+            &copper,
+        )
+    } else {
+        None
+    };
+    if direct.is_some() {
+        log::debug!("pair: {net}/{partner}: short span {span:.2}mm — direct coupled centerline");
+    }
+    // Impedance-preferred layers (see [`crate::impedance`]). The pair commits
+    // to ONE leg width for its whole run, so on the layers where that width is
+    // not the impedance-correct one the trace is the wrong width. Until a leg
+    // can change width at its transition vias, the honest lever is preference:
+    // search first restricted to the layers where the class's declared
+    // geometry does hit its target impedance, and fall back to the full stack
+    // when no path exists there. Routability is unchanged — the fallback pass
+    // is the search that used to run — and a board that declares no target
+    // impedance (or whose stackup cannot be solved) takes the single-pass path
+    // exactly as before.
+    let search_sets: Vec<Vec<PcbLayer>> = match preferred_layers(pcb, net, &copper) {
+        Some(pref) => {
+            log::debug!(
+                "pair: {net}: impedance-preferred layers {pref:?} of {} copper layers",
+                copper.len()
+            );
+            vec![pref, copper.clone()]
+        }
+        None => vec![copper.clone()],
+    };
+    // The direct short-span centerline, when it exists, is already exact and
+    // single-layer — no ladder, and no layer preference to apply.
+    let mut center: Option<Centerline> = direct;
+    let usable_span = span - 2.0 * lead;
+    // MEASURED neck-down (census 18). The fixed table below guesses how far
+    // to retreat; on the CM5 that guess is the single dominant bail — 23 of
+    // 27 remaining failures — because a pair born at the centre of a large
+    // BGA needs more retreat than the table's largest rung that still fits
+    // the span. Probe instead: walk each end inward until a fat capsule is
+    // actually legal somewhere in the stack, and start the ladder there. This
+    // costs point probes, not searches, and it is exact — no capsule fits
+    // before that point, so every rung the table spends below it is wasted.
+    let fat_legal_at = |p: Vec2| -> bool {
+        copper.iter().any(|&l| {
+            session
+                .probe(
+                    &CopperGeom::Segment {
+                        a: p,
+                        b: p,
+                        half_w: fat_w / 2.0,
+                    },
+                    l,
+                    net,
+                    clearance,
+                )
+                .legal
+        })
+    };
+    let measure_inset = |from_start: bool| -> f64 {
+        let limit = (usable_span * 0.45).max(0.0);
+        let mut r = 0.0;
+        while r <= limit {
+            let p = if from_start {
+                start + dir.scale(r)
+            } else {
+                end - dir.scale(r)
+            };
+            if fat_legal_at(p) {
+                return r;
+            }
+            r += 0.5;
+        }
+        0.0
+    };
+    let (m_from, m_to) = (measure_inset(true), measure_inset(false));
+    if m_from > 0.0 || m_to > 0.0 {
+        log::debug!("pair: {net}/{partner}: measured neck-down {m_from:.1}/{m_to:.1}mm");
+    }
+    // Measured rungs first (they are the only ones that can succeed at all
+    // near a dense field), then escalating slack around them, then the
+    // original asymmetric table as a backstop for the cases the point probe
+    // clears but the corridor does not.
+    let mut rungs: Vec<(f64, f64)> = Vec::new();
+    for extra in [0.0, 1.0, 2.0, 4.0, 8.0] {
+        rungs.push((m_from + extra, m_to + extra));
+    }
+    rungs.extend([
         (0.0, 0.0),
         (1.0, 0.0),
         (0.0, 1.0),
@@ -266,69 +524,182 @@ pub(super) fn try_route_pair(
         (8.0, 8.0),
         (12.0, 12.0),
         (16.0, 16.0),
-    ] {
-        let usable = span - 2.0 * lead;
-        if r_from + r_to >= usable - 1.0 {
-            continue;
+    ]);
+    for search in &search_sets {
+        if center.is_some() {
+            break;
         }
-        let s_pt = start + dir.scale(r_from);
-        let e_pt = end - dir.scale(r_to);
-        let r = route_net_maze3d(
-            session,
-            &pcb.outline.vertices,
-            &copper,
-            net,
-            s_pt,
-            &[first_layer],
-            e_pt,
-            &[first_layer],
-            fat_w,
-            via_d,
-            Some(cong),
-            budget,
-            1.0,
-            None,
-            &[],
-            &[],
-            true,
-        );
-        if r.success && !r.segments.is_empty() {
-            if r_from + r_to > 0.0 {
-                log::debug!(
-                    "pair: {net}/{partner}: coupled after {r_from}/{r_to}mm neck-down retreat"
-                );
+        let mut found = None;
+        for (r_from, r_to) in rungs.iter().copied() {
+            let usable = span - 2.0 * lead;
+            if r_from + r_to >= usable - 1.0 {
+                continue;
             }
-            found = Some(r);
+            let s_pt = start + dir.scale(r_from);
+            let e_pt = end - dir.scale(r_to);
+            // Endpoint layers: the WHOLE stack, not just the outer layer. A pair
+            // escaping a BGA goes down a via and couples on an inner layer under
+            // the field, where there are no pads at all — that is how the human
+            // board does it. Pinning the phantom's ends to FCu instead forced the
+            // coupled run to begin inside the pin field, where no fat capsule can
+            // ever sit; the pad connectors already route across the full stack to
+            // reach `leg.first_layer`, so this costs nothing and matches them.
+            let r = route_net_maze3d(
+                session,
+                &pcb.outline.vertices,
+                search,
+                net,
+                s_pt,
+                search,
+                e_pt,
+                search,
+                fat_w,
+                via_d,
+                Some(cong),
+                budget,
+                1.0,
+                None,
+                &[],
+                &[],
+                true,
+            );
+            if r.success && !r.segments.is_empty() {
+                if r_from + r_to > 0.0 {
+                    log::debug!(
+                        "pair: {net}/{partner}: coupled after {r_from}/{r_to}mm neck-down retreat"
+                    );
+                }
+                found = Some(r);
+                break;
+            }
+        }
+        // Ladder 2 — narrow centerline with a MEASURED coupled window.
+        //
+        // The bail census says the fat search above is the dominant failure mode
+        // by an order of magnitude (CM5: 28 of 32 bails, and 48 of 56 in a full
+        // route). The reason is structural, not budgetary: the phantom is
+        // `2w + gap` = 0.66mm wide, and the channels between 0.4mm-pitch BGA pads
+        // are single-track. No retreat rung helps when BOTH ends sit in pin
+        // fields, because the ladder is *guessing* how far to neck down.
+        //
+        // So: search a NARROWER centerline — one that threads what a single
+        // thread — then discover the coupled extent instead of guessing it. Offset
+        // the centerline into two legs, probe both legs per centerline segment,
+        // and keep the longest contiguous window where both are legal. That window
+        // is the real coupled run; the pad connectors cover the necked ends, and
+        // the amount of neck-down is measured rather than drawn from a 15-rung
+        // table. Widths descend so a wider (better-coupled) corridor always wins
+        // when one exists; the best trimmed run across the ladder is kept.
+        if let Some(r) = found {
+            center = Some(r.segments);
+            break;
+        }
+        {
+            // Minimum worthwhile coupling: below this the pair is better off as
+            // two singles, so we fall through rather than commit a token stub.
+            let min_coupled = (0.5 * span).max(1.0);
+            let mut best: Option<(f64, Centerline)> = None;
+            for cw in [
+                0.75 * fat_w,
+                0.5 * fat_w,
+                w,
+                pcb.rules.default_rules.trace_width,
+            ] {
+                if cw < pcb.rules.default_rules.trace_width - 1e-9 {
+                    continue;
+                }
+                let r = route_net_maze3d(
+                    session,
+                    &pcb.outline.vertices,
+                    search,
+                    net,
+                    start,
+                    search,
+                    end,
+                    search,
+                    cw,
+                    via_d,
+                    Some(cong),
+                    budget,
+                    1.0,
+                    None,
+                    &[],
+                    &[],
+                    true,
+                );
+                if !r.success || r.segments.is_empty() {
+                    if cw <= pcb.rules.default_rules.trace_width + 1e-9 {
+                        // Endpoint diagnosis: a search that fails even at single
+                        // width on every layer is usually an illegal endpoint, not
+                        // a blocked corridor.
+                        let probe_pt = |p: Vec2| -> usize {
+                            search
+                                .iter()
+                                .filter(|&&l| {
+                                    session
+                                        .probe(
+                                            &CopperGeom::Segment {
+                                                a: p,
+                                                b: p,
+                                                half_w: cw / 2.0,
+                                            },
+                                            l,
+                                            net,
+                                            clearance,
+                                        )
+                                        .legal
+                                })
+                                .count()
+                        };
+                        log::debug!(
+                        "pair: {net}/{partner}: narrow search failed at w={cw}; start legal on {}/{} layers, end on {}/{}",
+                        probe_pt(start),
+                        search.len(),
+                        probe_pt(end),
+                        search.len()
+                    );
+                    }
+                    continue;
+                }
+                let Some((i, j)) = longest_coupled_window(session, &r.segments, net, half_sep, w)
+                else {
+                    continue;
+                };
+                let win = &r.segments[i..=j];
+                let len: f64 = win.iter().map(|&(a, b, _)| dist(a, b)).sum();
+                if len < min_coupled {
+                    continue;
+                }
+                if best.as_ref().map(|(bl, _)| len > *bl).unwrap_or(true) {
+                    best = Some((len, win.to_vec()));
+                }
+            }
+            if let Some((len, win)) = best {
+                log::debug!(
+                "pair: {net}/{partner}: narrow centerline coupled {len:.1}mm of {span:.1}mm span"
+            );
+                center = Some(win);
+            }
+        }
+        if center.is_some() {
             break;
         }
     }
-    let Some(r) = found else {
+    let Some(center) = center else {
         log::debug!("pair: {net}/{partner}: phantom centerline search failed");
         restore(session, placed, ripped);
-        return None;
+        return Err(PairBail::CenterlineSearch);
     };
-
-    // Realize the two legs from the centerline.
-    let (leg_a, leg_b) =
-        match realize_legs(&r.segments, half_sep, via_off, via_d / 2.0, clearance, w) {
-            Some(l) => l,
-            None => {
-                log::debug!("pair: {net}/{partner}: degenerate centerline — bailing");
-                restore(session, placed, ripped);
-                return None;
-            }
-        };
 
     // Leg → net assignment: the one whose pad connectors are shortest (the
     // non-crossing assignment — crossing connectors are strictly longer).
+    //
+    // Scoring these two choices on PREDICTED intra-pair skew instead was
+    // tried and measured worse (subset board: 1.499mm -> 2.100mm worst skew).
+    // The prediction has to model the connectors as straight stubs, but they
+    // are maze routes that detour around whatever is in the way, so the
+    // ranking it produces is mostly noise.
     let cost = |leg: &Leg, s: Vec2, e: Vec2| dist(s, leg.first) + dist(e, leg.last);
-    let a_mine = cost(&leg_a, from, to) + cost(&leg_b, p_from, p_to)
-        <= cost(&leg_b, from, to) + cost(&leg_a, p_from, p_to);
-    let (mine, theirs) = if a_mine {
-        (leg_a, leg_b)
-    } else {
-        (leg_b, leg_a)
-    };
 
     // Connector from a pad to a leg end: straight when short, maze-routed at
     // single width when the crow-flight would thread a pin field (the second
@@ -349,14 +720,31 @@ pub(super) fn try_route_pair(
         if dist(from, to) <= 1e-9 {
             return Some((vec![], vec![]));
         }
-        if dist(from, to) <= nw * 2.0 {
-            return Some((vec![(from, to, to_layer)], vec![]));
+        // Straight-hop shortcut, but ONLY when the leg's layer is a layer the
+        // pad is on — otherwise this emits a short segment that starts at the
+        // pad's XY on a layer the pad does not occupy and connects nothing.
+        let pad_layers = pad_layers_at(pcb, net, from);
+        let hop_ok = pad_layers.is_empty() || pad_layers.contains(&to_layer);
+        if hop_ok && dist(from, to) <= nw * 2.0 {
+            // PROBE the hop before taking it. This shortcut used to emit
+            // copper unchecked, which is the one path in this stage that
+            // bypasses the oracle — and it shows up as intra-pair clearance
+            // violations, because both twins take their own unchecked hop at
+            // opposite ends of the same gap (CM5: /USB3-1.DP to /USB3-1.DM at
+            // 0.058mm against a 0.080mm base clearance). Fall through to the
+            // maze when the straight line is not legal.
+            let hop = CopperGeom::Segment {
+                a: from,
+                b: to,
+                half_w: nw / 2.0,
+            };
+            if session
+                .probe(&hop, to_layer, net, session.clearance_for(net))
+                .legal
+            {
+                return Some((vec![(from, to, to_layer)], vec![]));
+            }
         }
-        let margin = 4.0 + w;
-        let window = (
-            Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
-            Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
-        );
         // Multi-goal attachment: the connector may terminate anywhere along
         // the leg's copper, not only at its endpoint — an offset leg end can
         // sit against a neighbouring pad where no legal approach exists.
@@ -376,39 +764,73 @@ pub(super) fn try_route_pair(
                 )
             })
             .collect();
-        let r = route_net_maze3d(
-            session,
-            &pcb.outline.vertices,
-            &copper,
-            net,
-            from,
-            &copper,
-            to,
-            &[to_layer],
-            nw,
-            via_d,
-            Some(cong),
-            120_000,
-            0.5,
-            Some(window),
-            &goals,
-            &[],
-            true,
-        );
-        if r.success {
-            Some((r.segments, r.vias))
-        } else {
-            log::debug!(
-                "pair-connector: {net} {:.2}mm ({:.2},{:.2})->({:.2},{:.2}) layer {:?} failed",
-                dist(from, to),
-                from.x,
-                from.y,
-                to.x,
-                to.y,
-                to_layer
+        // Leave the pad only on a layer the pad is actually on; a via in the
+        // connector carries it to the leg's layer.
+        let from_layers: Vec<PcbLayer> = {
+            let on_board: Vec<PcbLayer> = pad_layers
+                .iter()
+                .copied()
+                .filter(|l| copper.contains(l))
+                .collect();
+            if on_board.is_empty() {
+                copper.clone()
+            } else {
+                on_board
+            }
+        };
+        // Escalating window. The hop itself is sub-millimetre, but its LENGTH
+        // is the wrong scale to size the search by: a pad inside a fine-pitch
+        // field can only reach another layer by escaping the field laterally
+        // first and dropping its via outside — the channels between 1.37mm
+        // pads on a 1.7mm pitch are 0.33mm, wide enough for the 0.08mm neck
+        // but not for a 0.21mm via plus clearance. A window drawn 4mm around
+        // a 0.8mm hop cannot contain that detour, so the connector failed
+        // while a perfectly good coupled corridor sat 0.8mm away (CM5: the
+        // last five pairs, all of them `/ETH.*` and `/PCIe.*` at U4).
+        for margin in [4.0 + w, 10.0 + w, 20.0 + w] {
+            let window = (
+                Vec2::new(from.x.min(to.x) - margin, from.y.min(to.y) - margin),
+                Vec2::new(from.x.max(to.x) + margin, from.y.max(to.y) + margin),
             );
-            None
+            let r = route_net_maze3d(
+                session,
+                &pcb.outline.vertices,
+                &copper,
+                net,
+                from,
+                &from_layers,
+                to,
+                &[to_layer],
+                nw,
+                via_d,
+                Some(cong),
+                120_000,
+                0.5,
+                Some(window),
+                &goals,
+                &[],
+                true,
+            );
+            if r.success {
+                if margin > 4.0 + w + 1e-9 {
+                    log::debug!(
+                        "pair-connector: {net} reached at {margin:.0}mm window ({:.2}mm hop)",
+                        dist(from, to)
+                    );
+                }
+                return Some((r.segments, r.vias));
+            }
         }
+        log::debug!(
+            "pair-connector: {net} {:.2}mm ({:.2},{:.2})->({:.2},{:.2}) layer {:?} failed",
+            dist(from, to),
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            to_layer
+        );
+        None
     };
     // Ordering (census 9's lesson): commit BOTH legs first — they are
     // parallel and disjoint by construction — then route the four pad
@@ -427,108 +849,335 @@ pub(super) fn try_route_pair(
             thin_width: nw,
         }
     };
-    let Some(mut placed_mine) =
-        validate_and_commit(session, pcb, leg_cand(&mine, net, from, to), placed)
-    else {
-        log::debug!("pair: {net}/{partner}: leg 1 failed validation");
-        restore(session, placed, ripped);
-        return None;
-    };
-    let Some(mut placed_theirs) = validate_and_commit(
-        session,
-        pcb,
-        leg_cand(&theirs, &partner, p_from, p_to),
-        placed,
-    ) else {
-        log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
-        for &sp in &placed_mine.spans {
-            session.remove(sp);
-        }
-        restore(session, placed, ripped);
-        return None;
-    };
-    // Connectors, all four against both committed legs. Committed as thin
-    // copper directly into each leg's Placed (stubs channel).
-    let rollback_all = |session: &mut RouteSession,
-                        placed: &mut Vec<Placed>,
-                        a: &Placed,
-                        b: &Placed,
-                        ripped: Vec<Placed>| {
-        for &sp in a.spans.iter().chain(b.spans.iter()) {
-            session.remove(sp);
-        }
-        restore(session, placed, ripped);
-    };
+    // Connectors, all four against both committed legs. Every one of them goes
+    // through `validate_and_commit` — the same exact oracle the legs use — and
+    // its output is merged into the leg's `Placed` (copper on the stubs
+    // channel, vias on `via_pts`).
+    //
+    // This used to hand-roll `session.commit` for the connector's segments and
+    // push its VIAS straight onto `pl.via_pts` without committing them at all.
+    // Those vias were real: they were written onto the output board like any
+    // other. But the session never learned about them, so no later route could
+    // be refused for crossing one — the oracle cannot decline copper it has
+    // never been shown. On a full CM5 route that was 61 of the 72 exact
+    // (0.000mm) cross-net overlaps: foreign traces driven clean through a pair
+    // connector's via barrel, every offending via on a `_P`/`_N` net.
     let attach = |session: &mut RouteSession,
+                  placed: &[Placed],
                   pl: &mut Placed,
                   leg: &Leg,
                   pad_a: Vec2,
                   pad_b: Vec2|
      -> bool {
         let net = pl.net.clone();
-        let Some((head, hv)) = connect(session, &net, pad_a, leg.first, leg.first_layer, leg)
-        else {
-            log::debug!("pair-connector: {net} head failed");
-            return false;
-        };
-        for (a, b, l) in &head {
-            let id = crate::spatial::CopperElement {
-                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
-                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
-                net: net.clone(),
-                layer: *l,
-                geom: CopperGeom::Segment {
-                    a: *a,
-                    b: *b,
-                    half_w: nw / 2.0,
-                },
+        for (pad, end, end_layer, which) in [
+            (pad_a, leg.first, leg.first_layer, "head"),
+            (pad_b, leg.last, leg.last_layer, "tail"),
+        ] {
+            let Some((copper, vias)) = connect(session, &net, pad, end, end_layer, leg) else {
+                log::debug!("pair-connector: {net} {which} failed");
+                return false;
             };
-            pl.spans.push(session.commit(id));
-            pl.stubs.push((*a, *b, *l));
-        }
-        pl.via_pts.extend(hv);
-        let Some((tail, tv)) = connect(session, &net, pad_b, leg.last, leg.last_layer, leg) else {
-            log::debug!("pair-connector: {net} tail failed");
-            return false;
-        };
-        for (a, b, l) in &tail {
-            let id = crate::spatial::CopperElement {
-                min: [a.x.min(b.x) - nw, a.y.min(b.y) - nw],
-                max: [a.x.max(b.x) + nw, a.y.max(b.y) + nw],
+            // Same-net context for the commit's via-reuse test: the leg's own
+            // vias live on `pl`, which is not in `placed` yet.
+            let mut ctx: Vec<Placed> = placed.iter().filter(|p| p.net == net).cloned().collect();
+            ctx.push(pl.clone());
+            let cand = Candidate {
                 net: net.clone(),
-                layer: *l,
-                geom: CopperGeom::Segment {
-                    a: *a,
-                    b: *b,
-                    half_w: nw / 2.0,
-                },
+                from: pad,
+                to: end,
+                width: nw,
+                segments: vec![],
+                vias,
+                thin_segments: copper,
+                thin_width: nw,
             };
-            pl.spans.push(session.commit(id));
-            pl.stubs.push((*a, *b, *l));
+            let Some(p) = validate_and_commit(session, pcb, cand, &ctx) else {
+                log::debug!("pair-connector: {net} {which} failed validation");
+                return false;
+            };
+            pl.spans.extend(p.spans);
+            pl.stubs.extend(p.stubs);
+            pl.via_pts.extend(p.via_pts);
         }
-        pl.via_pts.extend(tv);
         true
     };
-    if !attach(session, &mut placed_mine, &mine, from, to)
-        || !attach(session, &mut placed_theirs, &theirs, p_from, p_to)
-    {
-        rollback_all(session, placed, &placed_mine, &placed_theirs, ripped);
-        return None;
+    // Connector retreat. A coupled corridor can be perfectly good and still be
+    // unreachable: the leg end lands inside a through-hole field on a deep
+    // inner layer, and the sub-millimetre hop from the pad to it has no legal
+    // path (CM5 census: every remaining bail was a *head* connector of 0.6-1.2mm
+    // into In4Cu/BCu/In8Cu under the 100-pin connector). Giving up there throws
+    // away the whole coupled run over its last half-millimetre.
+    //
+    // So trim the centerline back from the end that failed and try again: a
+    // shorter coupled run whose ends sit in open copper, with slightly longer
+    // neck-down connectors covering the difference. Rungs are asymmetric
+    // because the two ends fail independently, and each is small next to the
+    // spans this rescues (0.6-3mm off a 21-33mm pair).
+    const RETREAT_RUNGS: [(f64, f64); 7] = [
+        (0.0, 0.0),
+        (0.6, 0.0),
+        (0.0, 0.6),
+        (1.5, 0.0),
+        (0.0, 1.5),
+        (1.5, 1.5),
+        (3.0, 3.0),
+    ];
+    let mut outcome: Option<(Placed, Placed, f64)> = None;
+    let mut last_bail = PairBail::Connector;
+    for (r_from, r_to) in RETREAT_RUNGS {
+        let Some(center_t) = trim_centerline(&center, r_from, r_to) else {
+            continue;
+        };
+        let Some((leg_a, leg_b)) =
+            realize_legs(&center_t, half_sep, via_off, via_d / 2.0, clearance, w)
+        else {
+            last_bail = PairBail::DegenerateCenterline;
+            continue;
+        };
+        let a_mine = cost(&leg_a, from, to) + cost(&leg_b, p_from, p_to)
+            <= cost(&leg_b, from, to) + cost(&leg_a, p_from, p_to);
+        let (mine, theirs) = if a_mine {
+            (leg_a, leg_b)
+        } else {
+            (leg_b, leg_a)
+        };
+        // Ordering (census 9's lesson): commit BOTH legs first — they are
+        // parallel and disjoint by construction — then route the four pad
+        // connectors against the complete picture, so no connector can cut the
+        // coupled corridor before the other leg exists.
+        let Some(mut placed_mine) =
+            validate_and_commit(session, pcb, leg_cand(&mine, net, from, to), placed)
+        else {
+            log::debug!("pair: {net}/{partner}: leg 1 failed validation");
+            last_bail = PairBail::LegValidation;
+            continue;
+        };
+        let Some(mut placed_theirs) = validate_and_commit(
+            session,
+            pcb,
+            leg_cand(&theirs, &partner, p_from, p_to),
+            placed,
+        ) else {
+            log::debug!("pair: {net}/{partner}: leg 2 failed validation — rolled back leg 1");
+            for &sp in &placed_mine.spans {
+                session.remove(sp);
+            }
+            last_bail = PairBail::LegValidation;
+            continue;
+        };
+        if attach(session, placed, &mut placed_mine, &mine, from, to)
+            && attach(session, placed, &mut placed_theirs, &theirs, p_from, p_to)
+        {
+            if r_from + r_to > 0.0 {
+                log::debug!(
+                    "pair: {net}/{partner}: connectors reached after {r_from}/{r_to}mm retreat"
+                );
+            }
+            let len: f64 = center_t.iter().map(|(a, b, _)| dist(*a, *b)).sum();
+            outcome = Some((placed_mine, placed_theirs, len));
+            break;
+        }
+        // Connectors failed: drop this attempt's copper (keeping the ripped
+        // partner routes for the next rung) and retreat further.
+        for &sp in placed_mine.spans.iter().chain(placed_theirs.spans.iter()) {
+            session.remove(sp);
+        }
+        last_bail = PairBail::Connector;
     }
+    let Some((placed_mine, placed_theirs, center_len)) = outcome else {
+        restore(session, placed, ripped);
+        return Err(last_bail);
+    };
 
-    let center_len: f64 = r.segments.iter().map(|(a, b, _)| dist(*a, *b)).sum();
     log::info!(
         "pair: routed {net} + {partner} coupled (centerline {:.1}mm, {} via pair(s), w={w} gap={gap})",
         center_len,
         placed_mine.via_pts.len(),
     );
-    Some((placed_mine, placed_theirs))
+    Ok((placed_mine, placed_theirs))
+}
+
+/// Shorten a centerline by `r_from` millimetres at its start and `r_to` at its
+/// end, measured along the polyline. Returns `None` if the trim would leave
+/// less than a via pitch of coupled run — at that point the pair is better off
+/// as two singles than as a token stub.
+fn trim_centerline(center: &Centerline, r_from: f64, r_to: f64) -> Option<Centerline> {
+    if r_from <= 0.0 && r_to <= 0.0 {
+        return Some(center.clone());
+    }
+    let total: f64 = center.iter().map(|(a, b, _)| dist(*a, *b)).sum();
+    const MIN_COUPLED_MM: f64 = 1.0;
+    if total - r_from - r_to < MIN_COUPLED_MM {
+        return None;
+    }
+    let mut out: Centerline = Vec::new();
+    let mut walked = 0.0;
+    for &(a, b, l) in center {
+        let seg = dist(a, b);
+        if seg < 1e-9 {
+            continue;
+        }
+        let (s0, s1) = (walked, walked + seg);
+        walked = s1;
+        // Clip this segment to the surviving [r_from, total - r_to] interval.
+        let lo = r_from.max(s0);
+        let hi = (total - r_to).min(s1);
+        if hi - lo < 1e-9 {
+            continue;
+        }
+        let dir = (b - a).scale(1.0 / seg);
+        out.push((a + dir.scale(lo - s0), a + dir.scale(hi - s0), l));
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// The longest contiguous run of `center` (as an inclusive segment index
+/// range) over which BOTH offset legs probe legal at the pair's leg width.
+///
+/// This is what makes a narrow centerline usable: the search finds a path a
+/// single-width trace fits, and this measures how much of that path actually
+/// has room for the full coupled pair. Segments whose offsets collide with
+/// pads or foreign copper — the pin-field breakout at each end — fall outside
+/// the window and become neck-down connectors.
+fn longest_coupled_window(
+    session: &RouteSession,
+    center: &[(Vec2, Vec2, PcbLayer)],
+    net: &str,
+    half_sep: f64,
+    w: f64,
+) -> Option<(usize, usize)> {
+    let clearance = session.clearance_for(net);
+    let legal = |k: usize| -> bool {
+        let (a, b, layer) = center[k];
+        let d = b - a;
+        let len = dist(a, b);
+        if len < 1e-9 {
+            return false;
+        }
+        // Perpendicular offset of this segment, both sides.
+        let nrm = Vec2::new(-d.y / len, d.x / len);
+        [half_sep, -half_sep].iter().all(|&off| {
+            let o = nrm.scale(off);
+            let geom = CopperGeom::Segment {
+                a: a + o,
+                b: b + o,
+                half_w: w / 2.0,
+            };
+            session.probe(&geom, layer, net, clearance).legal
+        })
+    };
+    let (mut best, mut run_start): (Option<(usize, usize)>, Option<usize>) = (None, None);
+    for k in 0..center.len() {
+        if legal(k) {
+            run_start.get_or_insert(k);
+        } else if let Some(s) = run_start.take() {
+            let cand = (s, k - 1);
+            if best
+                .map(|(bs, be)| cand.1 - cand.0 > be - bs)
+                .unwrap_or(true)
+            {
+                best = Some(cand);
+            }
+        }
+    }
+    if let Some(s) = run_start {
+        let cand = (s, center.len() - 1);
+        if best
+            .map(|(bs, be)| cand.1 - cand.0 > be - bs)
+            .unwrap_or(true)
+        {
+            best = Some(cand);
+        }
+    }
+    // A single segment cannot carry a coupled run through realize_legs
+    // (which needs at least two points per layer run after simplification).
+    best.filter(|(s, e)| e > s)
 }
 
 /// Offset the centerline into two legs at ±`half_sep`, with per-leg vias offset
 /// ±`via_off` perpendicular at each layer transition (two drills per centerline
 /// via, one per leg) and connector jogs where the via offset exceeds the leg
 /// offset. Leg A is the +offset side, leg B the −offset side.
+/// Spans at or below this route as short pairs: one straight centerline, no
+/// lead inset, no search. Above it the phantom corridor is the right tool.
+const SHORT_PAIR_SPAN_MM: f64 = 4.0;
+
+/// A straight, lead-free centerline for a short pair, on the best layer that
+/// admits both offset legs.
+///
+/// Layer order prefers the layers all four pads share, so the pair needs no
+/// vias at all (which is also what keeps `vias_per_si_net` low); the rest of
+/// the stack follows as a fallback for pads on different layers.
+///
+/// The returned centerline is a *proposal*: both legs are probed here only to
+/// choose the layer. The authoritative check is the same `validate_and_commit`
+/// every other centerline goes through — this path adds no way to commit
+/// copper the oracle has not seen.
+#[allow(clippy::too_many_arguments)]
+fn direct_centerline(
+    session: &RouteSession,
+    pcb: &Pcb,
+    net: &str,
+    partner: &str,
+    (mid_from, mid_to): (Vec2, Vec2),
+    pads: [Vec2; 4],
+    half_sep: f64,
+    via_r: f64,
+    clearance: f64,
+    w: f64,
+    copper: &[PcbLayer],
+) -> Option<Centerline> {
+    let [from, to, p_from, p_to] = pads;
+    let pad_layers = [
+        pad_layers_at(pcb, net, from),
+        pad_layers_at(pcb, net, to),
+        pad_layers_at(pcb, partner, p_from),
+        pad_layers_at(pcb, partner, p_to),
+    ];
+    let shared = |l: PcbLayer| pad_layers.iter().all(|ls| ls.is_empty() || ls.contains(&l));
+    let order = copper
+        .iter()
+        .filter(|&&l| shared(l))
+        .chain(copper.iter().filter(|&&l| !shared(l)));
+
+    for &layer in order {
+        let center: Centerline = vec![(mid_from, mid_to, layer)];
+        let Some((leg_a, leg_b)) = realize_legs(&center, half_sep, half_sep, via_r, clearance, w)
+        else {
+            continue;
+        };
+        // Each leg must be legal for ONE of the two nets — the assignment
+        // itself is decided downstream by connector length.
+        let leg_legal = |leg: &Leg, as_net: &str| {
+            leg.segments.iter().all(|&(a, b, l)| {
+                session
+                    .probe(
+                        &CopperGeom::Segment {
+                            a,
+                            b,
+                            half_w: w / 2.0,
+                        },
+                        l,
+                        as_net,
+                        clearance,
+                    )
+                    .legal
+            })
+        };
+        let straight = leg_legal(&leg_a, net) && leg_legal(&leg_b, partner);
+        let crossed = leg_legal(&leg_a, partner) && leg_legal(&leg_b, net);
+        if straight || crossed {
+            return Some(center);
+        }
+    }
+    None
+}
+
 fn realize_legs(
     center: &[(Vec2, Vec2, PcbLayer)],
     half_sep: f64,
@@ -719,6 +1368,174 @@ fn realize_legs(
         })
     };
     Some((leg(1.0)?, leg(-1.0)?))
+}
+
+/// One pair's outcome in a [`census_pairs`] run.
+#[derive(Debug, Clone)]
+pub struct PairCensusRow {
+    /// Positive leg net name.
+    pub net_p: String,
+    /// Negative leg net name.
+    pub net_n: String,
+    /// Crow-flight distance between the P net's two farthest pads (mm).
+    pub span_mm: f64,
+    /// `None` when the pair routed coupled, else why it bailed.
+    pub bail: Option<PairBail>,
+    /// Coupled fraction the committed copper achieved (successes only) —
+    /// the quantity `min_pair_coupled_fraction` actually judges. A pair can
+    /// route "coupled" and still score badly here when a long neck-down
+    /// retreat leaves most of its length in uncoupled breakout stubs.
+    pub coupled_fraction: f64,
+}
+
+/// Census of a board's coupled-pair construction.
+#[derive(Debug, Clone, Default)]
+pub struct PairCensus {
+    /// Per-pair outcomes, in attempt order.
+    pub rows: Vec<PairCensusRow>,
+}
+
+impl PairCensus {
+    /// Pairs that routed coupled.
+    pub fn coupled(&self) -> usize {
+        self.rows.iter().filter(|r| r.bail.is_none()).count()
+    }
+    /// Pairs that routed coupled AND cleared `min_frac` coupled fraction —
+    /// the count that actually helps the receipt claim.
+    pub fn coupled_above(&self, min_frac: f64) -> usize {
+        self.rows
+            .iter()
+            .filter(|r| r.bail.is_none() && r.coupled_fraction >= min_frac)
+            .count()
+    }
+    /// Bail histogram, most frequent first.
+    pub fn histogram(&self) -> Vec<(PairBail, usize)> {
+        let mut counts: std::collections::BTreeMap<PairBail, usize> = Default::default();
+        for r in &self.rows {
+            if let Some(b) = r.bail {
+                *counts.entry(b).or_default() += 1;
+            }
+        }
+        let mut v: Vec<(PairBail, usize)> = counts.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v
+    }
+}
+
+/// Run the pair-first stage in isolation on `pcb` with all routed copper
+/// stripped, and report why each classified pair did or did not construct
+/// coupled.
+///
+/// This is the fast development loop behind lever 1: the full board takes
+/// hours to route, but the pair stage sees a near-empty board in round 0
+/// anyway, so censusing it standalone measures the same thing in seconds —
+/// and isolates *geometry and logic* failures from congestion (on an empty
+/// board, congestion is not the explanation).
+pub fn census_pairs(pcb: &Pcb, max_expansions: usize) -> PairCensus {
+    let mut board = pcb.clone();
+    board.traces.clear();
+    board.trace_arcs.clear();
+    board.vias.clear();
+
+    let nets: Vec<String> = {
+        let mut v: std::collections::BTreeSet<String> = Default::default();
+        for f in &board.footprints {
+            for pad in &f.pads {
+                if let Some(n) = &pad.net {
+                    if !n.is_empty() {
+                        v.insert(n.clone());
+                    }
+                }
+            }
+        }
+        v.into_iter().collect()
+    };
+    let classifier = super::classes::classify_nets(&nets);
+    super::classes::apply_classes(&mut board, &classifier);
+    let width = board.rules.default_rules.trace_width;
+
+    let mut session = RouteSession::from_pcb(&board);
+    let mut placed: Vec<Placed> = Vec::new();
+    let cong = Congestion::new(&board.outline.vertices);
+    let mut census = PairCensus::default();
+
+    for (pn, nn) in &classifier.pairs {
+        let p_pads = pads_of_net(&board, pn);
+        if p_pads.len() < 2 {
+            continue;
+        }
+        // MST endpoints: the two farthest pads of the P net (the same
+        // endpoints polish_pairs uses).
+        let (mut from, mut to, mut best) = (p_pads[0], p_pads[0], -1.0);
+        for i in 0..p_pads.len() {
+            for j in i + 1..p_pads.len() {
+                let d = dist(p_pads[i], p_pads[j]);
+                if d > best {
+                    best = d;
+                    from = p_pads[i];
+                    to = p_pads[j];
+                }
+            }
+        }
+        let before = placed.len();
+        let outcome = try_route_pair_reason(
+            &mut session,
+            &board,
+            width,
+            pn,
+            from,
+            to,
+            &mut placed,
+            &cong,
+            max_expansions,
+        );
+        let (bail, frac) = match outcome {
+            Ok((mine, theirs)) => {
+                // Measure the committed copper the way the receipt does.
+                let (w, gap) = pair_geometry(&session, &board, pn, width);
+                let mut probe = board.clone();
+                for pl in [&mine, &theirs] {
+                    for &(a, b, l) in &pl.segments {
+                        probe.traces.push(Trace {
+                            start: a,
+                            end: b,
+                            width: pl.width,
+                            layer: l,
+                            net: pl.net.clone(),
+                            source: None,
+                        });
+                    }
+                    for &(a, b, l) in &pl.stubs {
+                        probe.traces.push(Trace {
+                            start: a,
+                            end: b,
+                            width: pl.stub_width,
+                            layer: l,
+                            net: pl.net.clone(),
+                            source: None,
+                        });
+                    }
+                }
+                let f =
+                    crate::router::si_claims::coupled_fraction(&probe, pn, nn, (w + gap) * 1.75);
+                placed.push(mine);
+                placed.push(theirs);
+                (None, f)
+            }
+            Err(b) => {
+                debug_assert_eq!(placed.len(), before, "failed pair must commit nothing");
+                (Some(b), 0.0)
+            }
+        };
+        census.rows.push(PairCensusRow {
+            net_p: pn.clone(),
+            net_n: nn.clone(),
+            span_mm: best,
+            bail,
+            coupled_fraction: frac,
+        });
+    }
+    census
 }
 
 /// Pair polish: on a FINISHED board, rip each still-uncoupled pair and
@@ -993,6 +1810,50 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                     });
                 }
             }
+            // Final fail-closed gate on the assembled board, judged by the
+            // DRC rather than the session probe.
+            //
+            // The stages above each probe their own copper as they place it,
+            // but `work` is an ASSEMBLY — the pair's legs, its four breakout
+            // connectors, and every displaced single re-routed around it —
+            // and nothing re-checks the whole. Worse, the incremental probe
+            // and the DRC do not agree at mitred pair corners: the probe let
+            // through legs 0.191mm apart that the DRC rejects against the
+            // 0.245mm pair-gap rule. The DRC is the standard the receipt is
+            // judged by, so gate on the DRC, restricted to the pair's own
+            // bounding box to keep it affordable. Measured on the CM5 subset:
+            // routed board 0 intra-pair violations, polished board 3.
+            let (mut lo_b, mut hi_b) = (
+                Vec2::new(f64::INFINITY, f64::INFINITY),
+                Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+            );
+            for t in work.traces.iter().filter(|t| &t.net == pn || &t.net == nn) {
+                for p in [t.start, t.end] {
+                    lo_b.x = lo_b.x.min(p.x - 1.0);
+                    lo_b.y = lo_b.y.min(p.y - 1.0);
+                    hi_b.x = hi_b.x.max(p.x + 1.0);
+                    hi_b.y = hi_b.y.max(p.y + 1.0);
+                }
+            }
+            let hard_here = |b: &Pcb| -> usize {
+                if !lo_b.x.is_finite() {
+                    return 0;
+                }
+                crate::drc::check_drc_in_region(b, lo_b, hi_b)
+                    .iter()
+                    .filter(|v| {
+                        matches!(
+                            v.rule,
+                            crate::drc::DrcRuleType::Clearance | crate::drc::DrcRuleType::Short
+                        ) && matches!(v.severity, crate::drc::DrcSeverity::Error)
+                    })
+                    .count()
+            };
+            let pair_legal = hard_here(&work) <= hard_here(pcb);
+            if !pair_legal {
+                log::debug!("pair-polish: {pn} assembled board is illegal — reverting");
+                continue;
+            }
             *pcb = work;
             polished += 1;
             log::info!("pair-polish: {pn} + {nn} now coupled");
@@ -1023,6 +1884,15 @@ mod tests {
         );
         assert_eq!(pair_partner("USB_D_P").as_deref(), Some("USB_D_N"));
         assert_eq!(pair_partner("CK_C").as_deref(), Some("CK_T"));
+        // USB DP/DM: the classifier declares these as pairs, so this must
+        // agree or every USB pair falls through to independent singles.
+        assert_eq!(pair_partner("/USB3-0.DP").as_deref(), Some("/USB3-0.DM"));
+        assert_eq!(pair_partner("/USB3-0.DM").as_deref(), Some("/USB3-0.DP"));
+        assert_eq!(pair_partner("/USBC.DP").as_deref(), Some("/USBC.DM"));
+        assert_eq!(pair_partner("USB_D+").as_deref(), Some("USB_D-"));
+        // Separator required: a name merely ENDING in "DP" is not a pair.
+        assert_eq!(pair_partner("LDP"), None);
+        assert_eq!(pair_partner("DP"), None);
         // Negatives: no polarity marker.
         assert_eq!(pair_partner("GND"), None);
         assert_eq!(pair_partner("/GPIO4"), None);
@@ -1101,6 +1971,8 @@ mod tests {
                     via_drill: 0.2,
                     diff_pair_gap: None,
                     diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 },
                 class_rules: vec![NetClassRules {
                     name: "DIFF".into(),
@@ -1110,10 +1982,20 @@ mod tests {
                     via_drill: 0.2,
                     diff_pair_gap: Some(0.25),
                     diff_pair_width: Some(0.2),
+                    target_impedance: None,
+                    target_diff_impedance: None,
                 }],
                 net_class_assignments: Default::default(),
                 edge_clearance: 0.5,
-                hole_to_hole: 0.5,
+                // A pair transitions layers by dropping the two legs' vias
+                // side by side, so the rule has to admit the pitch the pair
+                // itself declares: legs sit gap + width = 0.45mm apart, and
+                // two 0.2mm drills there leave a 0.25mm hole gap. A 0.5mm
+                // rule would make *every* transition on this board
+                // unmanufacturable — the router now refuses those at probe
+                // time instead of emitting them (see
+                // `RouteSession::probe_hole`).
+                hole_to_hole: 0.2,
                 min_annular_ring: 0.15,
                 min_drill: 0.2,
             },
@@ -1148,6 +2030,74 @@ mod tests {
             .net_class_assignments
             .insert("DIFF".into(), vec!["/ETH.2_P".into(), "/ETH.2_N".into()]);
         pcb
+    }
+
+    /// A pair whose pads sit ~2 mm apart — too short for a lead-inset phantom
+    /// centerline, which is exactly the `/HS.*` case that pinned the SI
+    /// receipt's `min_pair_coupled_fraction` at 0.000: routed as two singles
+    /// the legs land on different layers and score zero coupling however well
+    /// the rest of the board routes.
+    #[test]
+    fn routes_short_span_pair_coupled_on_one_layer() {
+        let mut pcb = pair_board();
+        // Move the far connector to 2 mm from the near one.
+        pcb.footprints[1].position = Vec2::new(7.0, 15.0);
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let mut placed = Vec::new();
+        let (p, n) = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(7.0, 15.325),
+            &mut placed,
+            &cong,
+            200_000,
+        )
+        .expect("a 2mm pad-to-pad pair must still route coupled");
+        assert!(!p.segments.is_empty() && !n.segments.is_empty());
+        // The point of the short-pair path: both legs on ONE layer, which is
+        // what `si_claims::coupled_fraction` measures (it only counts twin
+        // copper on the SAME layer).
+        let layers = |pl: &Placed| -> Vec<PcbLayer> {
+            let mut ls: Vec<_> = pl.segments.iter().map(|(_, _, l)| *l).collect();
+            ls.sort_by_key(|l| format!("{l:?}"));
+            ls.dedup();
+            ls
+        };
+        assert_eq!(
+            layers(&p),
+            layers(&n),
+            "short pair legs must share their layer, else coupled_fraction is 0"
+        );
+        // And the coupled run is measurable, not a token stub.
+        let frac = crate::router::si_claims::coupled_fraction(
+            &{
+                let mut b = pcb.clone();
+                for pl in [&p, &n] {
+                    for (a, e, l) in &pl.segments {
+                        b.traces.push(Trace {
+                            start: *a,
+                            end: *e,
+                            width: pl.width,
+                            layer: *l,
+                            net: pl.net.clone(),
+                            source: None,
+                        });
+                    }
+                }
+                b
+            },
+            "/ETH.2_P",
+            "/ETH.2_N",
+            0.45 + 0.1,
+        );
+        assert!(
+            frac >= 0.5,
+            "short pair should be at least half coupled, got {frac}"
+        );
     }
 
     #[test]
@@ -1213,6 +2163,86 @@ mod tests {
                     pl.net
                 );
             }
+        }
+    }
+
+    /// Every via a pair route REPORTS must be a via the session KNOWS about.
+    ///
+    /// The four pad connectors are maze routes, and when the pads sit on a
+    /// layer the coupled legs don't use, each connector carries a via to get
+    /// there. Those vias are written onto the output board like any other — so
+    /// if the session never receives them, the oracle cannot refuse a later
+    /// route that drives straight through the barrel. It is not a near-miss:
+    /// the copper physically overlaps at 0.000mm, and no probe was ever wrong,
+    /// because no probe was ever asked.
+    #[test]
+    fn pair_connector_vias_are_visible_to_the_oracle() {
+        let mut pcb = pair_board();
+        // Put all four pads on BCu only, so the FCu coupled legs can only be
+        // reached through a connector via.
+        for f in &mut pcb.footprints {
+            for p in &mut f.pads {
+                p.layers = vec![PcbLayer::BCu];
+            }
+        }
+        // ...and wall BCu off mid-board so the coupled run has to live on FCu.
+        pcb.traces.push(vcad_ir::ecad::Trace {
+            start: Vec2::new(25.0, 0.0),
+            end: Vec2::new(25.0, 30.0),
+            width: 1.0,
+            layer: PcbLayer::BCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let mut placed = Vec::new();
+        let Some((p, n)) = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.0, 15.325),
+            &mut placed,
+            &cong,
+            200_000,
+        ) else {
+            panic!("pair with BCu pads must still route");
+        };
+        let vias: Vec<_> = p.via_pts.iter().chain(n.via_pts.iter()).collect();
+        assert!(
+            !vias.is_empty(),
+            "fixture is vacuous: the connectors placed no vias"
+        );
+        let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+        for &&(pt, la, lb) in &vias {
+            for layer in [la, lb] {
+                let pr = session.probe(
+                    &crate::spatial::CopperGeom::Disc {
+                        center: pt,
+                        r: via_r,
+                    },
+                    layer,
+                    "SOME-OTHER-NET",
+                    pcb.rules.default_rules.clearance,
+                );
+                assert!(
+                    !pr.legal,
+                    "via at ({:.3},{:.3}) on {layer:?} is reported on the board but \
+                     absent from the session — a foreign net can be routed through it",
+                    pt.x, pt.y
+                );
+            }
+        }
+        // And the drill barrel likewise: hole-to-hole must see it.
+        for &&(pt, _, _) in &vias {
+            assert!(
+                !session.probe_via_drill(pt, "SOME-OTHER-NET").legal,
+                "via drill at ({:.3},{:.3}) is absent from the session's hole census",
+                pt.x,
+                pt.y
+            );
         }
     }
 
@@ -1366,6 +2396,24 @@ mod tests {
             worst >= clearance - 1e-9,
             "twin edge clearance {worst:.3}mm < {clearance}"
         );
+        assert_twin_holes_clear(&pcb, &mine, &theirs);
+    }
+
+    /// The twins' via DRILLS must keep the board's hole-to-hole rule — the
+    /// check that has no copper-layer counterpart when the two vias land on
+    /// disjoint layer spans.
+    fn assert_twin_holes_clear(pcb: &Pcb, mine: &Placed, theirs: &Placed) {
+        let r = pcb.rules.default_rules.via_drill / 2.0;
+        for &(p, _, _) in &mine.via_pts {
+            for &(q, _, _) in &theirs.via_pts {
+                let gap = dist(p, q) - 2.0 * r;
+                assert!(
+                    gap >= pcb.rules.hole_to_hole - 1e-6,
+                    "twin via hole gap {gap:.3}mm < {}",
+                    pcb.rules.hole_to_hole
+                );
+            }
+        }
     }
 
     /// Twin-clearance check shared by the transition repros, using the
@@ -1431,6 +2479,143 @@ mod tests {
         );
     }
 
+    /// The SI finishing pass is non-regressive and stays DRC-clean.
+    ///
+    /// `si_finish` rewrites committed copper (polish rips and re-routes whole
+    /// pairs; descent moves polyline interiors), so its contract is the one
+    /// thing every caller relies on: it may improve the pair claims or do
+    /// nothing, but it must never leave the board worse or dirtier than it
+    /// found it. Both stages are individually oracle-gated — this pins the
+    /// composition.
+    #[test]
+    fn si_finish_is_non_regressive_and_drc_clean() {
+        use super::super::auto::{route_all_with_opts, RouteOptions};
+        let mut pcb = pair_board();
+        let r = route_all_with_opts(&pcb, 0.25, &[], &RouteOptions::default());
+        assert_eq!(r.unrouted_nets.len(), 0, "both legs must route");
+        for t in &r.traces {
+            pcb.traces.push(Trace {
+                start: t.start,
+                end: t.end,
+                width: t.width,
+                layer: t.layer,
+                net: t.net.clone(),
+                source: None,
+            });
+        }
+        for v in &r.vias {
+            pcb.vias.push(Via {
+                position: v.position,
+                diameter: pcb.rules.default_rules.via_diameter,
+                drill: pcb.rules.default_rules.via_drill,
+                start_layer: v.start_layer,
+                end_layer: v.end_layer,
+                net: v.net.clone(),
+                source: None,
+            });
+        }
+        let clearance_errs = |p: &Pcb| -> usize {
+            crate::drc::check_drc(p)
+                .iter()
+                .filter(|v| {
+                    matches!(v.rule, crate::drc::DrcRuleType::Clearance)
+                        && matches!(v.severity, crate::drc::DrcSeverity::Error)
+                })
+                .count()
+        };
+        let before_errs = clearance_errs(&pcb);
+        let frac = |p: &Pcb| {
+            crate::router::si_claims::coupled_fraction(p, "/ETH.2_P", "/ETH.2_N", 0.45 * 1.75)
+        };
+        let before_frac = frac(&pcb);
+        let before_skew = {
+            let lp = super::super::length_match::net_routed_length(&pcb, "/ETH.2_P");
+            let ln = super::super::length_match::net_routed_length(&pcb, "/ETH.2_N");
+            (lp - ln).abs()
+        };
+
+        crate::router::si_finish(&mut pcb, 200_000, 500);
+
+        assert!(
+            clearance_errs(&pcb) <= before_errs,
+            "si_finish introduced clearance violations"
+        );
+        assert!(
+            frac(&pcb) >= before_frac - 1e-9,
+            "coupled fraction regressed: {before_frac:.3} -> {:.3}",
+            frac(&pcb)
+        );
+        let after_skew = {
+            let lp = super::super::length_match::net_routed_length(&pcb, "/ETH.2_P");
+            let ln = super::super::length_match::net_routed_length(&pcb, "/ETH.2_N");
+            (lp - ln).abs()
+        };
+        assert!(
+            after_skew <= before_skew + 1e-6,
+            "intra-pair skew regressed: {before_skew:.3} -> {after_skew:.3}"
+        );
+    }
+
+    /// Connectivity contract: every pad of the pair must be left on a layer
+    /// that pad is actually on.
+    ///
+    /// Coupled legs may begin anywhere in the stack (that is how a pair
+    /// escapes a BGA — down a via, coupled on an inner layer under the
+    /// field). The pad connectors therefore have to carry the layer change
+    /// themselves. Nothing else catches a miss: copper starting at the pad's
+    /// XY on the wrong layer is same-net, so the clearance probe is perfectly
+    /// happy while the net is electrically open.
+    #[test]
+    fn pair_connectors_leave_pads_on_pad_layers() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let mut pcb = pair_board();
+        // Wall across FCu forces the coupled run onto BCu, so the legs no
+        // longer start on the pads' own layer.
+        pcb.traces.push(Trace {
+            start: Vec2::new(25.0, 0.0),
+            end: Vec2::new(25.0, 30.0),
+            width: 0.4,
+            layer: PcbLayer::FCu,
+            net: "WALL".into(),
+            source: None,
+        });
+        let mut session = RouteSession::from_pcb(&pcb);
+        let mut placed: Vec<Placed> = Vec::new();
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let (mine, theirs) = try_route_pair(
+            &mut session,
+            &pcb,
+            0.25,
+            "/ETH.2_P",
+            Vec2::new(5.0, 15.325),
+            Vec2::new(45.0, 15.325),
+            &mut placed,
+            &cong,
+            400_000,
+        )
+        .expect("pair must route across the FCu wall");
+
+        for pl in [&mine, &theirs] {
+            let pads = pads_of_net(&pcb, &pl.net);
+            assert!(!pads.is_empty());
+            // All copper this net committed, with its layer.
+            let copper: Vec<(Vec2, Vec2, PcbLayer)> =
+                pl.segments.iter().chain(pl.stubs.iter()).copied().collect();
+            for pad in pads {
+                let pad_layers = pad_layers_at(&pcb, &pl.net, pad);
+                let touched = copper.iter().any(|&(a, b, l)| {
+                    pad_layers.contains(&l) && (dist(a, pad) < 1e-6 || dist(b, pad) < 1e-6)
+                });
+                assert!(
+                    touched,
+                    "{}: pad ({:.3},{:.3}) is not left on any of its own layers {:?} — \
+                     the net is electrically open there",
+                    pl.net, pad.x, pad.y, pad_layers
+                );
+            }
+        }
+    }
+
     /// Corner transition: walls force the pair through a via field at an
     /// L-turn — the corner-normal rotation case the straight-wall repro
     /// cannot exercise.
@@ -1468,6 +2653,7 @@ mod tests {
         );
         let (mine, theirs) = r.expect("pair must route the L across the wall");
         assert_twin_clear(&mine, &theirs, 0.15);
+        assert_twin_holes_clear(&pcb, &mine, &theirs);
     }
 
     /// Probe-level contract: with a declared pair class, leg-width copper of

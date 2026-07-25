@@ -4635,6 +4635,44 @@ export function ecadExportFab(pcb_json) {
 }
 
 /**
+ * Run the whole fab-preparation pipeline on a board and return the fixed
+ * board plus its DRC-delta receipt.
+ *
+ * Optionally calibrates the board's design rules from its own declared via
+ * classes (logged, never silent), routes or certifies the connections it
+ * arrived without, then loops — census the violations the *routing* is
+ * answerable for, strip their nets, re-route through the session-probed
+ * ladder — until that number is zero. Prunes dangling copper last.
+ *
+ * The receipt reports route-attributable violations against the same board
+ * stripped of all routing, because on an imported fixture absolute zero is
+ * not achievable and reporting one number would be reporting the wrong
+ * thing. A run that does not converge comes back with `converged: false`
+ * and the remaining offenders — it is the caller's job not to ship it.
+ *
+ * # Arguments
+ * * `pcb_json` — JSON-serialized `Pcb`
+ * * `options_json` — JSON-serialized `FabPrepOptions` (`null`/empty = defaults)
+ *
+ * # Returns
+ * `{ report, pcb }` — the receipt, and the board to write back.
+ * @param {string} pcb_json
+ * @param {string | null} [options_json]
+ * @returns {any}
+ */
+export function ecadFabPrep(pcb_json, options_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadFabPrep(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Fill copper pour zones on the PCB.
  *
  * # Arguments
@@ -4973,10 +5011,16 @@ export function ecadResolvePartDef(name, footprint) {
  * growing route session, with PathFinder-style negotiated congestion layered
  * over the bounded rip-up, retrying on the back layer with transition vias
  * that are probed on both layers before being committed. Returns
- * `{ traces, vias, routed_nets, unrouted_nets, diagnostics, routability }`;
- * every returned trace and via is clearance-legal, or the net is reported
- * unrouted (with a diagnostic naming the blockers, the congested region, and
- * a suggested layer/via) — the router never emits copper that shorts.
+ * `{ traces, vias, zones, routed_nets, unrouted_nets, diagnostics,
+ * routability }`; every returned trace and via is clearance-legal, or the
+ * net is reported unrouted (with a diagnostic naming the blockers, the
+ * congested region, and a suggested layer/via) — the router never emits
+ * copper that shorts.
+ *
+ * `zones` are copper pours synthesized for high-current nets. **They must be
+ * added to the board along with the traces and vias**: a poured net is
+ * carried by its plane, so the router stitched its pads to the plane instead
+ * of tracing them to each other.
  * @param {string} pcb_json
  * @param {number} width
  * @param {string} nets_filter_json
@@ -6273,6 +6317,27 @@ export function isSlicerAvailable() {
 }
 
 /**
+ * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson action):
+ * plaquette, Wilson loops, string tension (Creutz ratios + static
+ * potential + Cornell fit), Polyakov deconfinement order parameter,
+ * flux-tube profile, and rendering field snapshots — every observable a
+ * binned-jackknife mean ± error, deterministic per seed.
+ *
+ * `spec_json` is a `vcad_kernel_qcd::spec::SimSpec`.
+ * @param {string} spec_json
+ * @returns {any}
+ */
+export function latticeGaugeSimulate(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.latticeGaugeSimulate(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
  * `WasmClearance`). Operates on already-placed geometry, so callers can
  * measure between any two evaluated parts (or merged part groups) without
@@ -7512,6 +7577,32 @@ export function sheetMetalSequence(chain_json) {
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
+}
+
+/**
+ * Steady laminar flow solve (D3Q19 BGK lattice Boltzmann): pressure drop,
+ * flow rates, mass audit, optional thermal pickup, and predicted claims.
+ * The per-voxel velocity/pressure/temperature fields are only returned
+ * when `include_fields` is true — summarize by default, the fields are
+ * grid-sized.
+ *
+ * `spec_json` is a `vcad_kernel_flow::spec::FlowSpec`, `options_json` a
+ * `vcad_kernel_flow::solve::SolveOptions` (empty or `{}` for defaults).
+ * @param {string} spec_json
+ * @param {string} options_json
+ * @param {boolean} include_fields
+ * @returns {any}
+ */
+export function simulateFlow(spec_json, options_json, include_fields) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.simulateFlow(ptr0, len0, ptr1, len1, include_fields);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -10021,12 +10112,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3687, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3688, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3728, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3729, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3712, function: Function { arguments: [Externref], shim_idx: 3713, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3753, function: Function { arguments: [Externref], shim_idx: 3754, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

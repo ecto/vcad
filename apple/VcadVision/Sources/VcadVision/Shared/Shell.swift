@@ -1,0 +1,1 @@
+../../../../VcadApp/Sources/VcadApp/Shell.swift

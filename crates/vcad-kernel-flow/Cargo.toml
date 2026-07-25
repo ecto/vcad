@@ -1,0 +1,22 @@
+[package]
+name = "vcad-kernel-flow"
+description = "Internal-flow CFD on voxel grids: D3Q19 lattice-Boltzmann field solver cross-checked by lumped duct-loss oracles, fail-closed Reynolds envelope"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+vcad-receipt = { workspace = true }
+vcad-kernel-thermal = { workspace = true }
+vcad-kernel-gpu = { workspace = true, optional = true }
+wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+
+[features]
+gpu = ["dep:vcad-kernel-gpu", "dep:wgpu", "dep:bytemuck", "dep:pollster"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

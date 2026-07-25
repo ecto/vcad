@@ -4111,6 +4111,339 @@
     }
   },
   {
+    "name": "simulate_flow",
+    "title": "Simulate Flow",
+    "description": "Steady laminar CFD on a voxel grid: D3Q19 BGK lattice Boltzmann with half-way bounce-back walls, velocity inlets, pressure outlets, and an optional advected temperature field (isothermal walls, Boussinesq buoyancy). Returns pressure drop, inlet/outlet flow rates, the mass-balance audit, max speed, and thermal pickup — as data plus `vcad.flow-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until hardware is measured. Laminar only: fail-closed gates at Re <= 2300, the stable tau window, and Ra <= 1e8; weakly compressible (pressure noise O(Ma^2)); walls are voxel staircases. Per-voxel velocity/pressure/temperature fields are only returned with `include_fields: true` — they are grid-sized (voxel cap 2M). Steadiness is detected, not assumed: a run that never goes steady is an error, not a result.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "origin_mm",
+            "size_mm",
+            "divisions"
+          ],
+          "description": "Voxelized flow domain: an axis-aligned box discretized into cubic voxels (`size_mm[a]/divisions[a]` must agree across axes), painted with regions in order (`background` first, then `regions`). Units mm / kg / m / s / Pa / degC.",
+          "properties": {
+            "origin_mm": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "size_mm": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              }
+            },
+            "divisions": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "Voxel counts per axis (voxels must come out cubic; the cost knob)."
+            },
+            "background": {
+              "type": "string",
+              "enum": [
+                "solid",
+                "fluid"
+              ],
+              "description": "What unpainted voxels are. Default solid."
+            },
+            "regions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "shape",
+                  "role"
+                ],
+                "properties": {
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Region shape: `{\"type\":\"Box\",\"min_mm\":[..],\"size_mm\":[..]}` or `{\"type\":\"Tube\",\"axis\":\"Z\",\"center_mm\":[..2],\"span_mm\":[..2],\"outer_radius_mm\":..,\"inner_radius_mm\":..}`.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "Box",
+                          "Tube"
+                        ]
+                      },
+                      "min_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "size_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "axis": {
+                        "type": "string",
+                        "enum": [
+                          "X",
+                          "Y",
+                          "Z"
+                        ]
+                      },
+                      "center_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "span_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "outer_radius_mm": {
+                        "type": "number"
+                      },
+                      "inner_radius_mm": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "solid",
+                      "fluid",
+                      "inlet",
+                      "outlet"
+                    ]
+                  }
+                }
+              },
+              "description": "Painted in order; later regions override earlier ones. Inlet and outlet patches must sit on the domain boundary."
+            },
+            "fluid": {
+              "type": "object",
+              "properties": {
+                "density_kg_m3": {
+                  "type": "number"
+                },
+                "viscosity_pa_s": {
+                  "type": "number"
+                }
+              },
+              "description": "Fluid properties. Default water (998, 1.002e-3)."
+            },
+            "inlet_velocity_m_s": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "Plug-flow inlet velocity vector, m/s."
+            },
+            "outlet_gauge_pa": {
+              "type": "number",
+              "description": "Outlet gauge pressure, Pa. Default 0."
+            },
+            "body_force_n_m3": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "Volumetric body force, N/m^3 (periodic channel drive; needs `options.u_ref_m_s`)."
+            },
+            "periodic": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "boolean"
+              },
+              "description": "Per-axis periodic boundaries."
+            },
+            "re_envelope": {
+              "type": "number",
+              "description": "Reynolds gate: the solve refuses Re above this (laminar only). Default 2300."
+            },
+            "thermal": {
+              "type": "object",
+              "properties": {
+                "inlet_temp_c": {
+                  "type": "number"
+                },
+                "initial_temp_c": {
+                  "type": "number"
+                },
+                "wall_temp_c": {
+                  "type": "number"
+                },
+                "diffusivity_m2_s": {
+                  "type": "number"
+                },
+                "heat_capacity_j_kg_k": {
+                  "type": "number"
+                },
+                "buoyancy": {
+                  "type": "object",
+                  "properties": {
+                    "beta_per_k": {
+                      "type": "number"
+                    },
+                    "t_ref_c": {
+                      "type": "number"
+                    },
+                    "gravity_m_s2": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "description": "Enable the advected temperature field (film-averaged conjugate seam; optional Boussinesq buoyancy, gated at Ra <= 1e8)."
+            },
+            "hot_walls": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "shape",
+                  "temp_c"
+                ],
+                "properties": {
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Region shape: `{\"type\":\"Box\",\"min_mm\":[..],\"size_mm\":[..]}` or `{\"type\":\"Tube\",\"axis\":\"Z\",\"center_mm\":[..2],\"span_mm\":[..2],\"outer_radius_mm\":..,\"inner_radius_mm\":..}`.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "Box",
+                          "Tube"
+                        ]
+                      },
+                      "min_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "size_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "axis": {
+                        "type": "string",
+                        "enum": [
+                          "X",
+                          "Y",
+                          "Z"
+                        ]
+                      },
+                      "center_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "span_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "type": "number"
+                        }
+                      },
+                      "outer_radius_mm": {
+                        "type": "number"
+                      },
+                      "inner_radius_mm": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "temp_c": {
+                    "type": "number"
+                  }
+                }
+              },
+              "description": "Isothermal wall patches (Dirichlet) for thermal runs, painted over solid voxels adjacent to fluid."
+            }
+          }
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "u_ref_m_s": {
+              "type": "number",
+              "description": "Reference speed for unit scaling, m/s. Defaults to the inlet speed; body-force-driven cases must supply it."
+            },
+            "max_steps": {
+              "type": "number",
+              "description": "Step budget before failing. Default 400000."
+            },
+            "check_every": {
+              "type": "number",
+              "description": "Steadiness check interval, steps. Default 200."
+            },
+            "steady_tol": {
+              "type": "number",
+              "description": "Relative L-inf velocity change per check. Default 1e-6."
+            },
+            "ramp_steps": {
+              "type": "number",
+              "description": "Inlet velocity ramp length, steps. Default 1000."
+            }
+          }
+        },
+        "include_fields": {
+          "type": "boolean",
+          "description": "Return the per-voxel velocity/pressure/temperature fields (grid-sized). Default false."
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "analyze_structure",
     "title": "Analyze Structure",
     "description": "Static structural FEA on a part's real geometry with fail-closed mesh-convergence gating: linear-tet fill of the tessellated interior at 2+ refinement levels, linear-elastic solve (PCG), returning max von Mises stress, max displacement, discretization-error estimates, and (with yield_strength_mpa) a safety factor — plus `vcad.fea-claims/1` and unified-receipt claims. If QoIs disagree across levels the verdict is Unverifiable and NO stress/displacement claim is emitted (raise resolution, or fillet the singular corner it points at). Claims carry basis \"predicted\" and roll up Provisional until hardware is load-tested. Scope: small-displacement linear elasticity, one isotropic material; no plasticity, buckling, contact, or dynamic loads; boundary is staircase-approximated at the lattice pitch. Use predict_physics for the fast coarse steering loop; use this for the audited answer.",
@@ -4404,6 +4737,127 @@
             "type": "number"
           },
           "description": "Bindings for named spec parameters, `{name: value}`."
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "simulate_lattice_gauge",
+    "title": "Simulate Lattice Gauge Theory",
+    "description": "Lattice gauge theory Monte Carlo (quenched Wilson action, SU(2) or SU(3)): confinement from first principles on a laptop-scale 4D lattice. Returns the average plaquette, Wilson loops, Creutz ratios + static potential + Cornell fit (the string tension sigma*a^2), the Polyakov deconfinement order parameter, and optionally viewport-ready field snapshots (action density, Polyakov field, cooled topological charge) and the static-pair flux-tube profile — every observable a binned-jackknife mean +- error, bit-deterministic per seed. Fail-closed: starved statistics refuse to mint vcad.qcd-claims/1 (raise measurement_sweeps); logs require loops resolved >= 3-sigma from zero. Honesty bounds ride every claim: quenched (no dynamical fermions), lattice units at fixed coupling (no continuum limit) — model physics, not physical-QCD numbers. Cost ~ volume x sweeps (x6 for SU(3)); 6^4 with 150 sweeps runs in seconds. Recipes: confinement demo = Su2, [6,6,6,4], beta 2.2, flux_tube {separation 2}; deconfinement = [6,6,6,2], measure_polyakov, beta scan across ~1.88 (Su2) / ~5.1 (Su3); instantons = Su2, beta 2.4, snapshot_cooling 30.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "dims",
+            "beta",
+            "thermalization_sweeps",
+            "measurement_sweeps",
+            "overrelax_per_heatbath",
+            "bin_size",
+            "max_wilson_extent",
+            "seed",
+            "hot_start"
+          ],
+          "description": "Lattice simulation spec. Deterministic per seed. Direction 3 is time — shorten it (e.g. [6,6,6,2]) for finite temperature / deconfinement studies.",
+          "properties": {
+            "gauge": {
+              "type": "string",
+              "enum": [
+                "Su2",
+                "Su3"
+              ],
+              "description": "Gauge group. Su2 (default): quaternion links, exact Kennedy-Pendleton heatbath, fastest. Su3: the real QCD gauge group, Cabibbo-Marinari updates, ~6x cost per link."
+            },
+            "dims": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 4,
+              "maxItems": 4,
+              "description": "Lattice extents [n0,n1,n2,n3], each >= 2. 4^4-8^4 are seconds-scale; 12^4+ is where the cost gate starts to bite."
+            },
+            "beta": {
+              "type": "number",
+              "description": "Inverse coupling beta = 2N/g^2 (Wilson action). SU(2): strong coupling < ~1.5, crossover ~2.2-2.5, weak > 4. SU(3): strong < ~4, deconfinement at N_t=2 near 5.1, weak > 7."
+            },
+            "thermalization_sweeps": {
+              "type": "number",
+              "description": "Discarded equilibration sweeps (>= 1). 50 is typical."
+            },
+            "measurement_sweeps": {
+              "type": "number",
+              "description": "Measured sweeps. Must give >= 2 full jackknife bins (>= 5 bins to mint claims). 100-200 is typical."
+            },
+            "overrelax_per_heatbath": {
+              "type": "number",
+              "description": "Overrelaxation sweeps interleaved per heatbath sweep (1-3 decorrelates much faster per unit work)."
+            },
+            "bin_size": {
+              "type": "number",
+              "description": "Jackknife bin size in measurements (10-20 typical)."
+            },
+            "max_wilson_extent": {
+              "type": "number",
+              "description": "Largest square Wilson loop W(r,t) to measure; 0 = plaquette only. Capped at half the smallest lattice extent."
+            },
+            "seed": {
+              "type": "number"
+            },
+            "hot_start": {
+              "type": "boolean",
+              "description": "Start from random links instead of cold (identity)."
+            },
+            "smear": {
+              "type": "object",
+              "required": [
+                "alpha",
+                "iterations"
+              ],
+              "description": "APE spatial smearing applied to a measurement copy before loop observables (lifts the string-tension signal at intermediate coupling; plaquette stays unsmeared). alpha 0.5, 2-3 iterations is customary.",
+              "properties": {
+                "alpha": {
+                  "type": "number"
+                },
+                "iterations": {
+                  "type": "number"
+                }
+              }
+            },
+            "measure_temporal_loops": {
+              "type": "boolean",
+              "description": "Also measure spatial x temporal Wilson loops and derive the static quark potential V(r) (+ Cornell fit when >= 3 points resolve)."
+            },
+            "measure_polyakov": {
+              "type": "boolean",
+              "description": "Measure <|L|>, the Polyakov-loop deconfinement order parameter (small = confined, O(1) = deconfined)."
+            },
+            "flux_tube": {
+              "type": "object",
+              "required": [
+                "separation"
+              ],
+              "description": "Measure the chromoelectric flux-tube profile between a static quark-antiquark pair at this separation (lattice units, spatial axis 0): the connected (Polyakov-pair x action-density) 3D excess field plus the pair correlator whose decay with separation IS confinement. Use a short time axis (N_t 2-4).",
+              "properties": {
+                "separation": {
+                  "type": "number"
+                }
+              }
+            },
+            "snapshot_cooling": {
+              "type": "number",
+              "description": "Export a rendering FieldSnapshot (action density per site + complex Polyakov field per spatial site) of the final configuration after this many cooling sweeps (0 = raw vacuum boil; 20-30 = classical lumps). SU(2) runs with cooling >= 1 also report the clover topological charge (near-integer = instanton content)."
+            }
+          }
         }
       },
       "required": [
@@ -9743,6 +10197,72 @@
     },
     "annotations": {
       "readOnlyHint": false
+    }
+  },
+  {
+    "name": "fab_prep",
+    "title": "Fab Prep",
+    "description": "Take a routed board to fab-ready in one call, and return the DRC-delta receipt that says what was actually achieved. Runs the whole pipeline: optional rule calibration (opt-in, every change logged with its derivation), the verdict ladder over unrouted connections (each ends Routed / ProvedInfeasible / honest-unknown), then a strip-and-re-route fix loop until the violations the ROUTING is answerable for reach zero, then a dangling-copper prune. Mutates the session document. THE RECEIPT IS THE POINT: on an imported fixture absolute zero is not achievable — the same board stripped of all routing already violates its own rules — so the report always gives BOTH numbers (stripped-board baseline and finished board) and charges only the difference to the router. Fails closed: a loop that does not converge returns `converged:false` with the remaining offenders and does not pretend otherwise, and `export_gerber`'s clean-DRC gate still stands — this is the supported way to GET clean, not a way around it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline vcad IR Document (legacy stateless flow). Prefer document_id."
+        },
+        "calibrate_rules": {
+          "type": "boolean",
+          "description": "Derive and apply design-rule calibration from the board's OWN declared via classes and pre-existing footprint holes (default FALSE). Imported boards routinely carry global minima that forbid the via class they themselves declare — e.g. a 0.21/0.12mm class under a 0.2mm minDrill, which flags every via on the board. Calibration only ever relaxes a rule to the point where the board's own GIVEN geometry stops being illegal, is floored at laser-microvia limits, and records every change with its derivation in the receipt. Off by default because silently relaxing DRC rules to make a board pass is how an unbuildable board ships."
+        },
+        "route_remaining": {
+          "type": "boolean",
+          "description": "Route or certify the connections the board arrived without, before the fix loop (default TRUE). Each unrouted connection ends as Routed, ProvedInfeasible (with a bottleneck-cut certificate), or an honest unknown — never silently dropped."
+        },
+        "max_rounds": {
+          "type": "number",
+          "description": "Maximum strip-and-re-route rounds (default 8). Each round censuses the violations the ROUTING is answerable for, strips those nets, and hands them back to the session-probed router."
+        },
+        "budget": {
+          "type": "number",
+          "description": "Per-cluster search budget in node expansions for the complete router (default 5,000,000). Lower is faster and yields more honest unknowns."
+        },
+        "max_cluster": {
+          "type": "number",
+          "description": "Maximum connections coalesced into one joint search window (default 6)."
+        },
+        "prune_dangling": {
+          "type": "boolean",
+          "description": "Remove copper that reaches no pad or pour of its net before the final DRC (default TRUE)."
+        },
+        "accept_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "DRC rule names whose route-attributable violations are ACCEPTED rather than fixed (e.g. [\"MinTraceWidth\"]). Real fab packages ship with real, named exceptions; the difference between that and a footgun is whether the exception is written down. Waived violations are still counted, still listed, and the waiver is named in the receipt — it stops blocking the verdict, it does not hide anything. An unrecognised rule name refuses the run rather than silently accepting nothing."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Compute the receipt without writing the fixed board back to the session."
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
