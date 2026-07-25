@@ -98,6 +98,9 @@ fn lying_cylinder_model(props: &[BodyMassProps]) -> Model {
         axis: Vec3::new(0.0, -1.0, 0.0),
         damping: 0.0,
         limits: None,
+        // phyz's Joint grew limit stiffness/damping, armature, spring, and
+        // friction-loss fields; this free roller wants all of them neutral.
+        ..Default::default()
     };
     ModelBuilder::new()
         .gravity(Vec3::new(0.0, 0.0, -9.81))
