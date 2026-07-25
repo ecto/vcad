@@ -5011,10 +5011,16 @@ export function ecadResolvePartDef(name, footprint) {
  * growing route session, with PathFinder-style negotiated congestion layered
  * over the bounded rip-up, retrying on the back layer with transition vias
  * that are probed on both layers before being committed. Returns
- * `{ traces, vias, routed_nets, unrouted_nets, diagnostics, routability }`;
- * every returned trace and via is clearance-legal, or the net is reported
- * unrouted (with a diagnostic naming the blockers, the congested region, and
- * a suggested layer/via) — the router never emits copper that shorts.
+ * `{ traces, vias, zones, routed_nets, unrouted_nets, diagnostics,
+ * routability }`; every returned trace and via is clearance-legal, or the
+ * net is reported unrouted (with a diagnostic naming the blockers, the
+ * congested region, and a suggested layer/via) — the router never emits
+ * copper that shorts.
+ *
+ * `zones` are copper pours synthesized for high-current nets. **They must be
+ * added to the board along with the traces and vias**: a poured net is
+ * carried by its plane, so the router stitched its pads to the plane instead
+ * of tracing them to each other.
  * @param {string} pcb_json
  * @param {number} width
  * @param {string} nets_filter_json
