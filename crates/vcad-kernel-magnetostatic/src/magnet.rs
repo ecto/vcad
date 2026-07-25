@@ -47,7 +47,7 @@ impl Polarity {
 
     /// Alternating polarity for pole index `k`.
     pub fn alternating(k: usize) -> Self {
-        if k % 2 == 0 {
+        if k.is_multiple_of(2) {
             Polarity::North
         } else {
             Polarity::South
