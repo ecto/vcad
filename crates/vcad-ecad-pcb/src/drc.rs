@@ -2447,6 +2447,53 @@ fn build_connectivity(pcb: &Pcb) -> (Vec<ConnNode>, Dsu) {
     (nodes, dsu)
 }
 
+/// Remove dangling copper: board-level traces and vias whose galvanic island
+/// touches no pad and no pour fragment of their net — copper connected to
+/// nothing, left behind by rip-up/restore cycles. Uses the same connectivity
+/// model as DRC's island detection, so exactly the islands DRC reports as
+/// "copper only, no pads" are removed. Returns `(traces_removed,
+/// vias_removed)`.
+pub fn prune_dangling_copper(pcb: &mut Pcb) -> (usize, usize) {
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    // Node order in build_conn_nodes: traces, then vias, then pads/pours.
+    let n_traces = pcb.traces.len();
+    let n_vias = pcb.vias.len();
+
+    // Component roots that are anchored: hold a pad or a pour fragment.
+    let mut anchored: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for (i, node) in nodes.iter().enumerate() {
+        let is_anchor = node.pad.is_some() || matches!(node.geom, NodeGeom::Pour(_));
+        if is_anchor {
+            let root = dsu.find(i);
+            anchored.insert(root);
+        }
+    }
+
+    let keep_trace: Vec<bool> = (0..n_traces)
+        .map(|i| anchored.contains(&dsu.find(i)))
+        .collect();
+    let keep_via: Vec<bool> = (0..n_vias)
+        .map(|i| anchored.contains(&dsu.find(n_traces + i)))
+        .collect();
+
+    let mut ti = 0;
+    pcb.traces.retain(|_| {
+        let k = keep_trace[ti];
+        ti += 1;
+        k
+    });
+    let mut vi = 0;
+    pcb.vias.retain(|_| {
+        let k = keep_via[vi];
+        vi += 1;
+        k
+    });
+    (
+        keep_trace.iter().filter(|k| !**k).count(),
+        keep_via.iter().filter(|k| !**k).count(),
+    )
+}
+
 /// A direct geometric touch between two connectivity nodes — one edge of the
 /// contact graph — with the approximate location where the copper meets.
 /// Cross-net edges are the candidate shorts (each judged against the net-tie
