@@ -6779,16 +6779,91 @@ export async function addCoil(
       if ("error" in lr) return fail(`layers entry: ${lr.error}`);
     }
     const stitchVias: Array<{ position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer }> = [];
-    const perLayerLen = segLength(pts);
+
+    // The stack is ONE continuous spiral in θ: the angle marches monotonically
+    // across every layer while the radius zigzags inner↔outer, with a stitch via
+    // at each turnaround. That constant angular sweep is the whole point — series
+    // current then circulates the same way on every layer, so their axial fields
+    // ADD. (Reusing one spiral on all layers instead makes current run outer→inner
+    // on even layers and inner→outer on odd ones through identical copper, which
+    // reverses the circulation each layer and cancels the stack out.)
+    //
+    // Consecutive layers also meet at exactly the same (r, θ) by construction, so
+    // the stitch vias land on a shared point without any extra alignment work.
+    const dTheta = sign * turns * 2 * Math.PI;
+    const spiralSteps = Math.max(2, Math.ceil(turns * segmentsPerTurn));
+
+    // Turnaround angles, staggered. Turnarounds at the same radius recur every
+    // two layers, and for an integer `turns` they would otherwise land on the
+    // identical spoke — stacking two vias in one hole. Fan each successive
+    // turnaround by `stagger` so same-radius holes clear each other; the binding
+    // case is the inner radius, where a given angle buys the least arc.
+    const drill = pcb.rules.defaultRules.viaDrill;
+    const holePitch = drill + 0.5 + 0.05; // hole-to-hole minimum, plus margin
+    const staggerR = Math.max(innerR, traceWidth);
+    const stagger = Math.min(Math.PI / 4, holePitch / (2 * staggerR));
+    // Boundary li sits between layer li and li+1; boundary -1 is the free start.
+    const boundary = (li: number) =>
+      li < 0 ? theta0 + dTheta : theta0 - li * dTheta - sign * (li + 1) * stagger;
+
+    const layerPts: Vec2[][] = [];
+    for (let li = 0; li < layersIn.length; li++) {
+      // Every layer sweeps the same way — that is what makes the fields add.
+      // Even layers run outer→inner, odd layers inner→outer.
+      const thetaFrom = boundary(li - 1);
+      const thetaTo = boundary(li);
+      const outward = li % 2 === 1;
+      const rFrom = outward ? innerR : outerR;
+      const rTo = outward ? outerR : innerR;
+      const lp: Vec2[] = [];
+      for (let s = 0; s <= spiralSteps; s++) {
+        const t = s / spiralSteps;
+        const theta = thetaFrom + t * (thetaTo - thetaFrom);
+        const r = rFrom + t * (rTo - rFrom);
+        const p = {
+          x: round3(center.x + r * Math.cos(theta)),
+          y: round3(center.y + r * Math.sin(theta)),
+        };
+        const prev = lp[lp.length - 1];
+        if (!prev || prev.x !== p.x || prev.y !== p.y) lp.push(p);
+      }
+      layerPts.push(lp);
+    }
+
+    // Tangential lead-out at each inner turnaround: with integer `turns` the
+    // inner and outer terminals share a spoke, so the stitch via would otherwise
+    // sit at the same angle as the outer endpoint (a same-net bypass-short
+    // hazard). Displace both sides of the turnaround to the same new point so the
+    // via still lands on shared copper.
+    if (innerLeadOut > 0) {
+      for (let li = 0; li + 1 < layersIn.length; li++) {
+        if (li % 2 !== 0) continue; // odd→even turnarounds are at the outer radius
+        const end = layerPts[li][layerPts[li].length - 1];
+        const thetaEnd = boundary(li);
+        // Continue along the direction of travel (the sweep runs by −dθ).
+        const tx = Math.sin(thetaEnd) * sign;
+        const ty = -Math.cos(thetaEnd) * sign;
+        const T = {
+          x: round3(end.x + tx * innerLeadOut),
+          y: round3(end.y + ty * innerLeadOut),
+        };
+        if (T.x !== end.x || T.y !== end.y) {
+          layerPts[li].push(T);
+          layerPts[li + 1].unshift(T);
+        }
+      }
+    }
+
     let totalLengthMm = 0;
     let totalTraces = 0;
     let totalResistance = 0;
     for (let li = 0; li < layersIn.length; li++) {
       const lyr = layersIn[li] as PcbLayer;
-      for (let i = 0; i + 1 < pts.length; i++) {
+      const lp = layerPts[li];
+      for (let i = 0; i + 1 < lp.length; i++) {
         pcb.traces.push({
-          start: pts[i],
-          end: pts[i + 1],
+          start: lp[i],
+          end: lp[i + 1],
           width: traceWidth,
           layer: lyr,
           net,
@@ -6796,14 +6871,15 @@ export async function addCoil(
         });
         totalTraces++;
       }
-      totalLengthMm += perLayerLen;
+      const layerLen = segLength(lp);
+      totalLengthMm += layerLen;
       const cuT =
         pcb.stackup.layers.find((s) => s.layer === lyr)?.copperThickness ?? 0.035;
-      totalResistance += (1.68e-5 * perLayerLen) / (traceWidth * cuT);
-      // Stitch to the next layer at an alternating terminal.
+      totalResistance += (1.68e-5 * layerLen) / (traceWidth * cuT);
+      // Stitch to the next layer at this layer's exit terminal, which is exactly
+      // where the next layer begins.
       if (li + 1 < layersIn.length) {
-        const atInner = li % 2 === 0;
-        const stitchPt = atInner ? pts[0] : pts[pts.length - 1];
+        const stitchPt = lp[lp.length - 1];
         pcb.vias.push({
           position: stitchPt,
           diameter: pcb.rules.defaultRules.viaDiameter,
@@ -6816,14 +6892,12 @@ export async function addCoil(
         stitchVias.push({ position: stitchPt, startLayer: lyr, endLayer: layersIn[li + 1] as PcbLayer });
       }
     }
-    // External terminals: layer[0] outer, and the last layer's free terminal
-    // (inner if an even number of stitches landed on the inner side). The last
-    // stitch (index n-2) is at inner when (n-2)%2===0 → last free end is outer;
-    // otherwise inner. Equivalently the last layer's free end is inner when
-    // (layersIn.length-1) is even.
-    const lastFreeInner = (layersIn.length - 1) % 2 === 0;
-    const terminalA = pts[pts.length - 1]; // layer[0] outer
-    const terminalB = lastFreeInner ? pts[0] : pts[pts.length - 1];
+    // External terminals: layer[0] starts at the outer radius; the last layer's
+    // free end is inner when the layer count is odd, outer when it is even.
+    const lastLp = layerPts[layerPts.length - 1];
+    const terminalA = layerPts[0][0]; // layer[0] outer
+    const terminalB = lastLp[lastLp.length - 1];
+    const lastFreeInner = layersIn.length % 2 === 1;
     return {
       content: [
         {
@@ -6836,15 +6910,17 @@ export async function addCoil(
             layers_used: layersIn,
             multilayer: true,
             note:
-              "Multilayer stacked coil: `layer` and inner_via/via_to_layer ignored; " +
-              "layers stitched with alternating inner/outer vias.",
+              "Multilayer stacked coil: `layer` and inner_via/via_to_layer ignored. " +
+              "One continuous spiral in angle across the stack — the radius zigzags " +
+              "inner↔outer with a stitch via at each turnaround — so every layer " +
+              "circulates the same way and their fields add.",
             total_traces: totalTraces,
             total_length_mm: Math.round(totalLengthMm * 100) / 100,
             total_resistance_ohms: Math.round(totalResistance * 1000) / 1000,
             stitch_vias: stitchVias,
             terminals: { a: terminalA, b: terminalB },
-            inner_endpoint: pts[0],
-            outer_endpoint: pts[pts.length - 1],
+            inner_endpoint: lastFreeInner ? terminalB : layerPts[0][layerPts[0].length - 1],
+            outer_endpoint: terminalA,
             ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
             ...docResultPayload(ctx),
           }),

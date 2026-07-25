@@ -31,6 +31,7 @@ members = [
     "crates/vcad-kernel-optics",
     "crates/vcad-kernel-acoustics",
     "crates/vcad-kernel-em",
+    "crates/vcad-kernel-magnetostatic",
     "crates/vcad-kernel-enclosure",
     "crates/vcad-kernel-orbit",
     "crates/vcad-kernel-wasm",
@@ -126,6 +127,7 @@ default-members = [
     "crates/vcad-kernel-optics",
     "crates/vcad-kernel-acoustics",
     "crates/vcad-kernel-em",
+    "crates/vcad-kernel-magnetostatic",
     "crates/vcad-kernel-enclosure",
     "crates/vcad-kernel-orbit",
     "crates/vcad-kernel-wasm",
@@ -237,6 +239,7 @@ vcad-kernel-particle = { path = "crates/vcad-kernel-particle", version = "0.9.4"
 vcad-kernel-optics = { path = "crates/vcad-kernel-optics", version = "0.9.4" }
 vcad-kernel-acoustics = { path = "crates/vcad-kernel-acoustics", version = "0.9.4" }
 vcad-kernel-em = { path = "crates/vcad-kernel-em", version = "0.9.4" }
+vcad-kernel-magnetostatic = { path = "crates/vcad-kernel-magnetostatic", version = "0.9.4" }
 vcad-kernel-enclosure = { path = "crates/vcad-kernel-enclosure", version = "0.9.4" }
 vcad-kernel-orbit = { path = "crates/vcad-kernel-orbit", version = "0.9.4" }
 vcad-kernel-drafting = { path = "crates/vcad-kernel-drafting", version = "0.9.4" }

@@ -4019,6 +4019,7 @@ dependencies = [
 name = "phyz"
 version = "0.3.0"
 dependencies = [
+ "phyz-math",
  "tang",
 ]
 
@@ -7414,6 +7415,15 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "wgpu",
+]
+
+[[package]]
+name = "vcad-kernel-magnetostatic"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-particle",
 ]
 
 [[package]]

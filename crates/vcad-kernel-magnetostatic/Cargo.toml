@@ -1,0 +1,14 @@
+[package]
+name = "vcad-kernel-magnetostatic"
+description = "Grid-free 3D magnetostatics for air-core machines: finite-segment Biot-Savart, magnets as equivalent surface currents, flux linkage and torque"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+vcad-kernel-particle = { workspace = true }

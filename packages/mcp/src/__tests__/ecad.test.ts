@@ -3461,7 +3461,7 @@ describe("add_coil lead-out and multilayer", () => {
     const fcu = b.traces.filter((t) => t.net === "PHA" && t.layer === "FCu").length;
     const bcu = b.traces.filter((t) => t.net === "PHA" && t.layer === "BCu").length;
     expect(fcu).toBeGreaterThan(0);
-    expect(bcu).toBe(fcu); // same geometry on both layers
+    expect(bcu).toBe(fcu); // one segment per layer per spiral sample
     const stitch = b.vias.find((v) => v.net === "PHA");
     expect(stitch).toBeDefined();
     expect(stitch!.startLayer).toBe("FCu");
@@ -3469,6 +3469,113 @@ describe("add_coil lead-out and multilayer", () => {
     // Total length is the sum across both layers.
     expect(res.total_length_mm).toBeCloseTo(res.total_length_mm, 3);
   });
+
+  /**
+   * Magnetic dipole moment of the series current path, in mm² (m_z / I).
+   *
+   * Chains each layer's traces into a polyline, orients it along the direction
+   * the series current actually flows (entering at `entry`), and accumulates the
+   * shoelace sum about `center`. A stacked coil is only useful if consecutive
+   * layers circulate the *same* way — if they alternate, their axial fields
+   * subtract and the stack does nothing.
+   */
+  function seriesDipoleMoment(
+    traces: Array<{ start: Vec2; end: Vec2; layer: string; net: string }>,
+    vias: Array<{ position: Vec2; startLayer: string; endLayer: string; net: string }>,
+    net: string,
+    layers: string[],
+    center: Vec2,
+    entry: Vec2,
+  ): { perLayer: number[]; total: number } {
+    const near = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y) < 1e-6;
+    const shoelace = (pts: Vec2[]) => {
+      let s = 0;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const x1 = pts[i].x - center.x,
+          y1 = pts[i].y - center.y;
+        const x2 = pts[i + 1].x - center.x,
+          y2 = pts[i + 1].y - center.y;
+        s += x1 * y2 - x2 * y1;
+      }
+      return s / 2;
+    };
+
+    const perLayer: number[] = [];
+    let cursor = entry;
+    for (let li = 0; li < layers.length; li++) {
+      const segs = traces.filter((t) => t.net === net && t.layer === layers[li]);
+      expect(segs.length).toBeGreaterThan(0);
+      // Traces are pushed contiguously, so the stored polyline is start→end.
+      const stored: Vec2[] = [segs[0].start, ...segs.map((s) => s.end)];
+      const head = stored[0];
+      const tail = stored[stored.length - 1];
+      // Current enters this layer at whichever endpoint the previous hop landed on.
+      const forward = near(head, cursor);
+      expect(forward || near(tail, cursor)).toBe(true);
+      const path = forward ? stored : [...stored].reverse();
+      perLayer.push(shoelace(path));
+      cursor = path[path.length - 1];
+      // Follow the stitch via to the next layer (it sits on the exit terminal).
+      if (li + 1 < layers.length) {
+        const v = vias.find(
+          (v) =>
+            v.net === net &&
+            v.startLayer === layers[li] &&
+            v.endLayer === layers[li + 1] &&
+            near(v.position, cursor),
+        );
+        expect(v, `stitch via from ${layers[li]} to ${layers[li + 1]} at the exit terminal`).toBeDefined();
+      }
+    }
+    return { perLayer, total: perLayer.reduce((a, b) => a + b, 0) };
+  }
+
+  // Top-down physical order. add_coil's COPPER_LAYERS tops out at 8 even though
+  // the IR enum carries In1Cu–In8Cu (10 copper layers).
+  const STACK_8 = ["FCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu", "BCu"];
+  for (const n of [2, 4, 8]) {
+    it(`a ${n}-layer stack adds its fields rather than cancelling, and fabricates`, async () => {
+      const id = await circleBoardSession();
+      const center = { x: 40, y: 40 };
+      const layers = n === 8 ? STACK_8 : [...STACK_8.slice(0, n - 1), "BCu"];
+      const res = out(
+        await addCoil({
+          document_id: id,
+          center,
+          turns: 3,
+          inner_radius: 5,
+          outer_radius: 12,
+          trace_width: 0.4,
+          clearance: 0.3,
+          net: "PHA",
+          layers,
+        }),
+      );
+      expect(res.success).toBe(true);
+      // A stack that cancels is useless; so is one that will not fabricate.
+      // (Turnarounds recur at the same radius every two layers, so an integer
+      // `turns` used to drop two vias in one hole.)
+      expect(res.drc_delta.clean).toBe(true);
+      expect(res.stitch_vias.length).toBe(n - 1);
+
+      const b = getPcbBoard(getSession(id));
+      const { perLayer, total } = seriesDipoleMoment(
+        b.traces as never,
+        b.vias as never,
+        "PHA",
+        layers,
+        center,
+        res.terminals.a as Vec2,
+      );
+
+      // Every layer must contribute with the same sign...
+      const s0 = Math.sign(perLayer[0]);
+      for (const m of perLayer) expect(Math.sign(m)).toBe(s0);
+      // ...so the stack's moment scales with layer count instead of cancelling.
+      const single = Math.abs(perLayer[0]);
+      expect(Math.abs(total)).toBeGreaterThan(0.9 * n * single);
+    });
+  }
 });
 
 describe("add_motor_winding", () => {
