@@ -34,9 +34,15 @@ import { behavior, type ToolDef } from "./tool-def.js";
 // content, so the cache is tenant-safe (two users with identical content get
 // identical bytes) and never serves stale geometry (any edit flips the hash).
 const GLB_CACHE_MAX = 16;
-const glbCache = new Map<string, string>();
+const glbCache = new Map<string, CachedGlb>();
 
-function glbCacheGet(key: string): string | undefined {
+interface CachedGlb {
+  glb: string;
+  degraded?: boolean;
+  oversize?: boolean;
+}
+
+function glbCacheGet(key: string): CachedGlb | undefined {
   const hit = glbCache.get(key);
   if (hit !== undefined) {
     // LRU touch: re-insert so the hottest entries survive eviction.
@@ -46,9 +52,9 @@ function glbCacheGet(key: string): string | undefined {
   return hit;
 }
 
-function glbCachePut(key: string, glb: string): void {
+function glbCachePut(key: string, value: CachedGlb): void {
   glbCache.delete(key);
-  glbCache.set(key, glb);
+  glbCache.set(key, value);
   while (glbCache.size > GLB_CACHE_MAX) {
     const oldest = glbCache.keys().next().value;
     if (oldest === undefined) break;
@@ -70,7 +76,26 @@ export interface PreviewGlb {
   glb: string;
   version: string;
   mode?: "instances";
+  /** The GLB was decimated to fit {@link PREVIEW_MAX_BASE64} — preview
+   *  fidelity, not export fidelity. */
+  degraded?: boolean;
+  /** Even after degradation the payload exceeds the budget. Callers must NOT
+   *  ship it through the JSON-RPC channel. */
+  oversize?: boolean;
 }
+
+/**
+ * Hard upper bound (in base64 chars) on ANY preview GLB leaving this server —
+ * the `_meta` inline attach AND the `get_preview_glb` fetch fallback alike.
+ *
+ * Both paths ride the same JSON-RPC transport, so they have the same ceiling;
+ * previously only the inline attach checked a limit, which meant every
+ * document above that limit silently fell through to a fetch path that was
+ * *guaranteed* to blow the host's result ceiling and surface as a bare
+ * "preview unavailable". A document over budget is now decimated until it
+ * fits (see {@link fitPreviewToBudget}) rather than being sent whole.
+ */
+export const PREVIEW_MAX_BASE64 = 1_500_000;
 
 /**
  * Build (or fetch from cache) the preview GLB for a document. Single shared
@@ -87,21 +112,31 @@ export async function previewGlbFor(
   if (instances) {
     const key = `${version}:instances`;
     const cached = glbCacheGet(key);
-    if (cached !== undefined) return { glb: cached, version, mode: "instances" };
+    if (cached !== undefined) {
+      return { ...cached, version, mode: "instances" };
+    }
     const instGlb = generateInstancesGlbPreview(doc, engine);
     if (instGlb) {
-      glbCachePut(key, instGlb);
-      return { glb: instGlb, version, mode: "instances" };
+      // Instances mode is NOT degraded: the glTF node layout (one node per
+      // instance, meshes shared by `meshKey`) is the replay's FK bind
+      // contract, and per-mesh decimation would desync shared meshes. An
+      // over-budget instances preview is reported as oversize instead.
+      const entry: CachedGlb = {
+        glb: instGlb,
+        oversize: instGlb.length > PREVIEW_MAX_BASE64 || undefined,
+      };
+      glbCachePut(key, entry);
+      return { ...entry, version, mode: "instances" };
     }
     // No instances — fall through to the parts preview (flag is safe on any doc).
   }
   const key = `${version}:parts`;
   const cached = glbCacheGet(key);
-  if (cached !== undefined) return { glb: cached, version };
-  const glb = await generateGlbPreview(doc, engine);
-  if (!glb) return null;
-  glbCachePut(key, glb);
-  return { glb, version };
+  if (cached !== undefined) return { ...cached, version };
+  const built = await generateGlbPreview(doc, engine);
+  if (!built) return null;
+  glbCachePut(key, built);
+  return { ...built, version };
 }
 
 /**
@@ -119,7 +154,11 @@ export async function previewGlbFor(
 export async function generateGlbPreview(
   doc: Document,
   engine: Engine,
-): Promise<string | null> {
+  /** Base64-char ceiling to fit the payload into, or `null` for full fidelity.
+   *  Tool results ride JSON-RPC and must be bounded; the plain-HTTP live route
+   *  serves bytes over a real HTTP body and passes `null`. */
+  budget: number | null = PREVIEW_MAX_BASE64,
+): Promise<CachedGlb | null> {
   // Part-identity node names let the viewer map a click back to a part_id
   // for selection context and "ask about this part".
   const labels = buildPartLabels(doc);
@@ -206,7 +245,213 @@ export async function generateGlbPreview(
   }
 
   if (meshes.length === 0) return null;
-  return uint8ArrayToBase64(buildGlb(meshes, "preview"));
+  return fitPreviewToBudget(meshes, budget);
+}
+
+// ─── Bounded preview payloads ────────────────────────────────────────────────
+//
+// A preview GLB is unbounded in principle: filleted mechanical parts inflate
+// triangle counts hard (a 31-part filleted assembly reaches ~81k triangles and
+// ~9 MB of base64), and the kernel tessellation is non-indexed, so the naive
+// payload is ~84 bytes per triangle. The transport ceiling doesn't care why —
+// it just drops the result. So the preview is fitted to the budget here, once,
+// on the single path both the inline attach and the fetch fallback share.
+//
+// Degradation is uniform vertex clustering (a grid over the scene bbox,
+// collapsing each cell's vertices to their centroid, dropping the triangles
+// that collapse). It's cheap, deterministic, and preserves per-part mesh
+// identity — node names, materials, and part→click mapping all survive, which
+// quadric decimation across merged meshes would not.
+
+/** Grid resolutions tried, coarsest-last. 256 barely changes a normal part;
+ *  4 flattens anything into a coarse blob. The ladder bottoms out rather than
+ *  running forever — below ~4 cells across the scene there is no shape left. */
+const DECIMATE_GRIDS = [256, 192, 128, 96, 64, 48, 32, 24, 16, 12, 8, 6, 4];
+
+/**
+ * Build the GLB for `meshes`, decimating progressively until the base64
+ * payload fits {@link PREVIEW_MAX_BASE64}. Documents under budget are built
+ * once and returned at full fidelity — degradation only ever kicks in above
+ * the ceiling, where the alternative is no preview at all.
+ */
+export function fitPreviewToBudget(
+  meshes: GlbMesh[],
+  budget: number | null = PREVIEW_MAX_BASE64,
+): CachedGlb {
+  const full = uint8ArrayToBase64(buildGlb(meshes, "preview"));
+  if (budget === null || full.length <= budget) return { glb: full };
+
+  const box = sceneBounds(meshes);
+  // Diagonal-relative cell size: scale-independent, so a 5 mm part and a
+  // 500 mm assembly degrade the same way.
+  const diag =
+    Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]) ||
+    1;
+
+  // Surface-ish scaling: clustered triangle count grows ~grid², so start near
+  // the resolution the required reduction implies instead of walking the whole
+  // ladder from 256 down (each rung costs a full pass over every vertex).
+  const startGrid = DECIMATE_GRIDS[0] * Math.sqrt(budget / full.length);
+  let best = full;
+  for (const grid of DECIMATE_GRIDS) {
+    if (grid > startGrid * 1.5) continue;
+    const cell = diag / grid;
+    const reduced = meshes.map((m) => decimateMesh(m, cell, box.min, grid));
+    if (reduced.every((m, i) => m.indices.length === meshes[i].indices.length)) {
+      continue; // grid too fine to change anything — skip the rebuild
+    }
+    // Skip the (expensive) serialize when the buffers alone already blow the
+    // budget — the GLB is strictly larger than its vertex/index data.
+    if (estimateBase64(reduced) > budget) continue;
+    const glb = uint8ArrayToBase64(buildGlb(reduced, "preview"));
+    best = glb;
+    if (glb.length <= budget) return { glb, degraded: true };
+  }
+  // Pathological input (e.g. millions of triangles spread so thin that even
+  // the coarsest grid keeps them distinct). Report it rather than shipping a
+  // payload we know the transport will drop.
+  return { glb: best, degraded: true, oversize: true };
+}
+
+/** Lower bound on the base64 length of the GLB these meshes would serialize
+ *  to: f32 positions + f32 normals + u32 indices, 4/3 base64 expansion. */
+function estimateBase64(meshes: GlbMesh[]): number {
+  let bytes = 0;
+  for (const m of meshes) {
+    bytes += m.positions.length * 4 + (m.normals?.length ?? 0) * 4 + m.indices.length * 4;
+  }
+  return Math.ceil((bytes * 4) / 3);
+}
+
+interface Bounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+function sceneBounds(meshes: GlbMesh[]): Bounds {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const m of meshes) {
+    const p = m.positions;
+    for (let i = 0; i + 2 < p.length; i += 3) {
+      for (let a = 0; a < 3; a++) {
+        const v = p[i + a];
+        if (v < min[a]) min[a] = v;
+        if (v > max[a]) max[a] = v;
+      }
+    }
+  }
+  for (let a = 0; a < 3; a++) {
+    if (!Number.isFinite(min[a])) {
+      min[a] = 0;
+      max[a] = 0;
+    }
+  }
+  return { min, max };
+}
+
+/**
+ * Collapse a mesh's vertices onto a uniform grid of `cell`-sized cubes anchored
+ * at `origin`, dropping triangles whose corners land in the same cell. Normals
+ * are recomputed area-weighted from the surviving triangles, so the result
+ * still shades — a decimated mesh carrying stale normals reads as corrupt.
+ */
+export function decimateMesh(
+  mesh: GlbMesh,
+  cell: number,
+  origin: [number, number, number],
+  /** Cells per axis across the scene — only used to pack the cell coordinates
+   *  into a collision-free integer key. Must bound the coordinates actually
+   *  produced by `cell`; a mesh reaching past it clamps into the edge cell. */
+  grid = 4096,
+): GlbMesh {
+  const pos = mesh.positions;
+  const idx = mesh.indices;
+  const vertCount = Math.floor(pos.length / 3);
+  if (cell <= 0 || vertCount === 0) return mesh;
+
+  // Cell key → new vertex index; accumulate centroids so the collapsed
+  // vertex sits on the surface rather than at a grid corner.
+  const cells = new Map<number, number>();
+  const remap = new Int32Array(vertCount);
+  const sums: number[] = [];
+  const counts: number[] = [];
+  const span = grid + 1;
+  const axis = (v: number, o: number): number =>
+    Math.min(span - 1, Math.max(0, Math.floor((v - o) / cell)));
+  for (let v = 0; v < vertCount; v++) {
+    const x = pos[v * 3];
+    const y = pos[v * 3 + 1];
+    const z = pos[v * 3 + 2];
+    const key =
+      (axis(x, origin[0]) * span + axis(y, origin[1])) * span + axis(z, origin[2]);
+    let ni = cells.get(key);
+    if (ni === undefined) {
+      ni = counts.length;
+      cells.set(key, ni);
+      sums.push(0, 0, 0);
+      counts.push(0);
+    }
+    sums[ni * 3] += x;
+    sums[ni * 3 + 1] += y;
+    sums[ni * 3 + 2] += z;
+    counts[ni] += 1;
+    remap[v] = ni;
+  }
+
+  const newPos = new Float32Array(counts.length * 3);
+  for (let i = 0; i < counts.length; i++) {
+    const n = counts[i] || 1;
+    newPos[i * 3] = sums[i * 3] / n;
+    newPos[i * 3 + 1] = sums[i * 3 + 1] / n;
+    newPos[i * 3 + 2] = sums[i * 3 + 2] / n;
+  }
+
+  const newIdx: number[] = [];
+  const newNormals = new Float32Array(counts.length * 3);
+  for (let t = 0; t + 2 < idx.length; t += 3) {
+    const a = remap[idx[t]];
+    const b = remap[idx[t + 1]];
+    const c = remap[idx[t + 2]];
+    if (a === b || b === c || a === c) continue; // collapsed to a sliver
+    newIdx.push(a, b, c);
+    // Area-weighted face normal (cross product magnitude IS 2×area).
+    const ux = newPos[b * 3] - newPos[a * 3];
+    const uy = newPos[b * 3 + 1] - newPos[a * 3 + 1];
+    const uz = newPos[b * 3 + 2] - newPos[a * 3 + 2];
+    const vx = newPos[c * 3] - newPos[a * 3];
+    const vy = newPos[c * 3 + 1] - newPos[a * 3 + 1];
+    const vz = newPos[c * 3 + 2] - newPos[a * 3 + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    for (const i of [a, b, c]) {
+      newNormals[i * 3] += nx;
+      newNormals[i * 3 + 1] += ny;
+      newNormals[i * 3 + 2] += nz;
+    }
+  }
+  if (newIdx.length === 0) return mesh; // fully collapsed — keep the original
+
+  for (let i = 0; i < counts.length; i++) {
+    const len = Math.hypot(
+      newNormals[i * 3],
+      newNormals[i * 3 + 1],
+      newNormals[i * 3 + 2],
+    );
+    if (len > 0) {
+      newNormals[i * 3] /= len;
+      newNormals[i * 3 + 1] /= len;
+      newNormals[i * 3 + 2] /= len;
+    }
+  }
+
+  return {
+    ...mesh,
+    positions: newPos,
+    indices: new Uint32Array(newIdx),
+    normals: newNormals,
+  };
 }
 
 /**
@@ -348,6 +593,27 @@ export async function getPreviewGlb(
   instances = false,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   const preview = await previewGlbFor(doc, engine, instances);
+  if (preview?.oversize) {
+    // Explicit, named failure instead of a payload the transport will drop
+    // and a viewer status that says only "preview unavailable".
+    const mb = (preview.glb.length / 1_000_000).toFixed(1);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            _vcad_glb: null,
+            version: preview.version,
+            error: "preview_too_large",
+            detail:
+              `Model too large for inline preview (${mb} MB of GLB, ` +
+              `budget ${(PREVIEW_MAX_BASE64 / 1_000_000).toFixed(1)} MB) — ` +
+              "open it in vcad.io or use export_cad for the full geometry.",
+          }),
+        },
+      ],
+    };
+  }
   if (preview) {
     return {
       content: [
@@ -357,6 +623,7 @@ export async function getPreviewGlb(
             _vcad_glb: preview.glb,
             version: preview.version,
             ...(preview.mode ? { mode: preview.mode } : {}),
+            ...(preview.degraded ? { degraded: true } : {}),
           }),
         },
       ],
