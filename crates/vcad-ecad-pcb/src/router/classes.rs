@@ -162,6 +162,28 @@ pub fn apply_classes(pcb: &mut Pcb, classifier: &NetClassifier) {
         .insert(DIFF_PAIR_CLASS.to_string(), members);
 }
 
+/// The `(pad_diameter, drill)` geometry a via on `net` gets from its net
+/// class, falling back to the board defaults.
+///
+/// One source of truth for every site that *writes* a via: the session's
+/// [`crate::session::RouteSession::via_drill_for`] sizes the drill it probes
+/// from the same class table, so a caller that probes with one and commits
+/// with the other would enforce hole-to-hole against a hole of the wrong size.
+pub fn via_geom_for(pcb: &Pcb, net: &str) -> (f64, f64) {
+    let rules = &pcb.rules;
+    for (class, nets) in &rules.net_class_assignments {
+        if nets.iter().any(|n| n == net) {
+            if let Some(c) = rules.class_rules.iter().find(|c| c.name == *class) {
+                return (c.via_diameter, c.via_drill);
+            }
+        }
+    }
+    (
+        rules.default_rules.via_diameter,
+        rules.default_rules.via_drill,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

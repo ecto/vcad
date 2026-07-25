@@ -214,22 +214,7 @@ fn pos_key(p: Vec2) -> (u64, u64) {
     )
 }
 
-/// Via pad/drill geometry for `net` from its net class, defaulting to the
-/// board's default rules (mirrors how the committed via is sized).
-fn via_geom_for(pcb: &Pcb, net: &str) -> (f64, f64) {
-    let rules = &pcb.rules;
-    for (class, nets) in &rules.net_class_assignments {
-        if nets.iter().any(|n| n == net) {
-            if let Some(c) = rules.class_rules.iter().find(|c| c.name == *class) {
-                return (c.via_diameter, c.via_drill);
-            }
-        }
-    }
-    (
-        rules.default_rules.via_diameter,
-        rules.default_rules.via_drill,
-    )
-}
+use super::classes::via_geom_for;
 
 fn d2(a: Vec2, b: Vec2) -> f64 {
     let (dx, dy) = (a.x - b.x, a.y - b.y);

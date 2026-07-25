@@ -628,8 +628,12 @@ mod tests {
             &FabPrepOptions {
                 route_remaining: false,
                 prune_dangling: false,
-                // One round is enough to prove the loop tried and stopped.
-                max_rounds: 1,
+                // No rounds: with nothing allowed to strip the crossing pair,
+                // the short survives and must be named. (Given a round, the
+                // loop strips both nets and the fail-closed commit gate
+                // refuses to re-route them into the same 0.3mm-drill
+                // congestion — an honest unroutable, tested separately.)
+                max_rounds: 0,
                 ..Default::default()
             },
         )
