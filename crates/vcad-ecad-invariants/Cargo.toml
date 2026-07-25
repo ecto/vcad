@@ -1,0 +1,15 @@
+[package]
+name = "vcad-ecad-invariants"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-surface geometry invariants for the ECAD pipeline: a rotated-footprint corpus and the assertions that every consumer sees the same physical pad."
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
+
+[dev-dependencies]
+vcad-ecad-export = { workspace = true }
+vcad-ecad-symbols = { workspace = true }
+vcad-render = { path = "../vcad-render", default-features = false }

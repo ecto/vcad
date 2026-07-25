@@ -703,6 +703,34 @@ fn draw_bore(out: &mut String, xf: &Xf, center: Vec2, drill: f64, p: &Palette) {
 }
 
 /// Build a rotated rectangle polygon (4 corners) centred at `origin`.
+/// Board-space centre and total rotation (degrees CCW) this renderer draws a
+/// pad at: the footprint origin plus the pad offset turned by the footprint
+/// angle, and `fp.rotation + pad.rotation`.
+pub fn pad_placement(fp: &vcad_ir::ecad::Footprint, pad: &Pad) -> (Vec2, f64) {
+    (
+        place(fp.position, fp.rotation, pad.position.x, pad.position.y),
+        fp.rotation + pad.rotation,
+    )
+}
+
+/// The four board-space corners of a non-circular pad as this renderer draws
+/// it, counter-clockwise from the local `(-w/2, -h/2)` corner.
+///
+/// Returns `None` for shapes with no rectangular extent (circle, custom).
+/// Exposed so the cross-surface rotation invariants can assert the SVG shows
+/// the same physical rectangle as DRC, the router index, and the Gerber.
+pub fn pad_world_quad(fp: &vcad_ir::ecad::Footprint, pad: &Pad) -> Option<[Vec2; 4]> {
+    let (origin, rot) = pad_placement(fp, pad);
+    let (w, h) = match &pad.shape {
+        PadShape::Rect { width, height }
+        | PadShape::Oval { width, height }
+        | PadShape::RoundRect { width, height, .. } => (*width, *height),
+        PadShape::Circle { .. } | PadShape::Custom { .. } => return None,
+    };
+    let p = rect_poly(origin, rot, w, h);
+    Some([p[0], p[1], p[2], p[3]])
+}
+
 fn rect_poly(origin: Vec2, rot: f64, w: f64, h: f64) -> Vec<Vec2> {
     let hw = w / 2.0;
     let hh = h / 2.0;
@@ -1258,8 +1286,7 @@ pub fn render_pcb_svg_opts(
         for pad in &fp.pads {
             let pad_layer = pad.layers.iter().copied().find(|l| want(*l));
             let Some(pl) = pad_layer else { continue };
-            let origin = place(fp.position, fp.rotation, pad.position.x, pad.position.y);
-            let total_rot = fp.rotation + pad.rotation;
+            let (origin, total_rot) = pad_placement(fp, pad);
             let matched = hl_on
                 && (hl.reference(&fp.reference)
                     || pad.net.as_deref().map(|n| hl.net(n)).unwrap_or(false));

@@ -7060,6 +7060,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ecad-invariants"
+version = "0.9.4"
+dependencies = [
+ "vcad-ecad-export",
+ "vcad-ecad-pcb",
+ "vcad-ecad-symbols",
+ "vcad-ir",
+ "vcad-render",
+]
+
+[[package]]
 name = "vcad-ecad-package"
 version = "0.9.4"
 dependencies = [
