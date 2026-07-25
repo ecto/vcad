@@ -62,7 +62,15 @@ impl Segment {
         let n1 = r1.norm();
         let n2 = r2.norm();
         let perp = (r1 - tangent * t1).norm();
-        Some(SegmentGeometry { tangent, r1, n1, n2, t1, t2, perp })
+        Some(SegmentGeometry {
+            tangent,
+            r1,
+            n1,
+            n2,
+            t1,
+            t2,
+            perp,
+        })
     }
 
     /// Magnetic flux density at `p`, tesla.
@@ -180,12 +188,22 @@ pub struct Filament {
 impl Filament {
     /// A closed loop through `points`.
     pub fn closed_loop(points: Vec<Vec3>, current_a: f64, wire_radius_m: f64) -> Self {
-        Self { points, current_a, wire_radius_m, closed: true }
+        Self {
+            points,
+            current_a,
+            wire_radius_m,
+            closed: true,
+        }
     }
 
     /// An open path through `points`.
     pub fn open_path(points: Vec<Vec3>, current_a: f64, wire_radius_m: f64) -> Self {
-        Self { points, current_a, wire_radius_m, closed: false }
+        Self {
+            points,
+            current_a,
+            wire_radius_m,
+            closed: false,
+        }
     }
 
     /// Iterate the path's segments.

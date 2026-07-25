@@ -48,7 +48,10 @@ fn disc_magnet_matches_the_closed_form_on_axis() {
             b.z,
             want
         );
-        assert!(b.x.abs().max(b.y.abs()) < 1e-6 * want.abs(), "off-axis leakage");
+        assert!(
+            b.x.abs().max(b.y.abs()) < 1e-6 * want.abs(),
+            "off-axis leakage"
+        );
     }
 }
 
