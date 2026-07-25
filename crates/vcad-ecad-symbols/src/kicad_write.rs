@@ -266,12 +266,16 @@ fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
     e.line(1, "(paper \"A4\")");
 
     write_layers(&mut e, pcb);
-    write_setup(&mut e);
+    write_setup(&mut e, pcb);
 
     // Nets
     for (idx, name) in &nets.ordered {
         e.line(1, &format!("(net {} {})", idx, q(name)));
     }
+
+    // Net classes — the rules the board was DRC'd against, so KiCad checks it
+    // against those and not its own defaults.
+    write_net_classes(&mut e, pcb);
 
     // Footprints
     for fp in &pcb.footprints {
@@ -356,11 +360,101 @@ fn write_layers(e: &mut Emitter, pcb: &Pcb) {
     e.line(1, ")");
 }
 
-fn write_setup(e: &mut Emitter) {
+/// Emit `(setup …)` including the board-level *design constraints*.
+///
+/// Without these, KiCad checks the board against its own factory defaults
+/// (0.1 mm annular ring, 0.3 mm hole, 0.5 mm via) rather than the rules the
+/// board was routed and DRC'd under — a 0.12/0.21 mm via class then reads as
+/// thousands of spurious violations, and any rule calibration applied during
+/// fab-prep is invisible in the file.
+///
+/// Only tokens KiCad 9's board parser actually accepts are emitted; the set
+/// below was verified empirically against `kicad-cli pcb drc` (a `clearance`
+/// or `edge_clearance` token in `(setup)`, for instance, makes KiCad 9 refuse
+/// to load the board at all). Clearance and per-net widths travel in the
+/// `(net_class …)` blocks instead; edge clearance, which has no board token,
+/// travels in the project file (see `write_kicad_pro`).
+fn write_setup(e: &mut Emitter, pcb: &Pcb) {
+    let r = &pcb.rules;
+    let d = &r.default_rules;
     e.line(1, "(setup");
     e.line(2, "(pad_to_mask_clearance 0)");
+    e.line(2, &format!("(trace_min {})", num(d.trace_width)));
+    e.line(2, &format!("(via_size {})", num(d.via_diameter)));
+    e.line(2, &format!("(via_drill {})", num(d.via_drill)));
+    e.line(2, &format!("(via_min_size {})", num(min_via_diameter(pcb))));
+    e.line(2, &format!("(via_min_drill {})", num(r.min_drill)));
+    e.line(2, &format!("(via_min_annulus {})", num(r.min_annular_ring)));
+    e.line(2, &format!("(hole_to_hole_min {})", num(r.hole_to_hole)));
     e.line(2, "(allow_soldermask_bridges_in_footprints no)");
     e.line(1, ")");
+}
+
+/// The smallest via diameter any class on the board declares — the board-wide
+/// `via_min_size` floor. Taking the *minimum* keeps a board whose fine class
+/// uses 0.21 mm vias legal even when the default class is 0.8 mm.
+fn min_via_diameter(pcb: &Pcb) -> f64 {
+    std::iter::once(&pcb.rules.default_rules)
+        .chain(pcb.rules.class_rules.iter())
+        .map(|c| c.via_diameter)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The smallest via drill any class declares, floored by the board's declared
+/// `minDrill` (a class may legitimately be looser than the fab's floor).
+fn min_via_drill(pcb: &Pcb) -> f64 {
+    std::iter::once(&pcb.rules.default_rules)
+        .chain(pcb.rules.class_rules.iter())
+        .map(|c| c.via_drill)
+        .fold(pcb.rules.min_drill, f64::min)
+}
+
+/// Emit one `(net_class …)` block per declared class, with the class's nets
+/// listed as `(add_net …)`. KiCad 9 still reads these from the board file, so
+/// clearance and per-class trace/via geometry travel with the board even when
+/// no project file accompanies it.
+fn write_net_classes(e: &mut Emitter, pcb: &Pcb) {
+    // net id → net name, so an assignment recorded by id resolves to the name
+    // KiCad indexes nets by. Entries that are already names pass through.
+    let by_id: BTreeMap<&str, &str> = pcb
+        .nets
+        .iter()
+        .map(|n| (n.id.as_str(), n.name.as_str()))
+        .collect();
+
+    for class in std::iter::once(&pcb.rules.default_rules).chain(pcb.rules.class_rules.iter()) {
+        let is_default = std::ptr::eq(class, &pcb.rules.default_rules);
+        e.line(1, &format!("(net_class {} \"\"", q(&class.name)));
+        e.line(2, &format!("(clearance {})", num(class.clearance)));
+        e.line(2, &format!("(trace_width {})", num(class.trace_width)));
+        e.line(2, &format!("(via_dia {})", num(class.via_diameter)));
+        e.line(2, &format!("(via_drill {})", num(class.via_drill)));
+        e.line(2, &format!("(uvia_dia {})", num(class.via_diameter)));
+        e.line(2, &format!("(uvia_drill {})", num(class.via_drill)));
+        if let Some(w) = class.diff_pair_width {
+            e.line(2, &format!("(diff_pair_width {})", num(w)));
+        }
+        if let Some(g) = class.diff_pair_gap {
+            e.line(2, &format!("(diff_pair_gap {})", num(g)));
+        }
+        if !is_default {
+            let mut names: Vec<&str> = pcb
+                .rules
+                .net_class_assignments
+                .get(&class.name)
+                .into_iter()
+                .flatten()
+                .map(|n| *by_id.get(n.as_str()).unwrap_or(&n.as_str()))
+                .filter(|n| !n.is_empty())
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            for n in names {
+                e.line(2, &format!("(add_net {})", q(n)));
+            }
+        }
+        e.line(1, ")");
+    }
 }
 
 fn write_outline(e: &mut Emitter, outline: &BoardOutline) {
@@ -2159,7 +2253,7 @@ pub fn write_kicad_project(sheet: &SchematicSheet, pcb: &Pcb, name: &str) -> Vec
     let sch_filename = format!("{}.kicad_sch", name);
     let (sch, links) = write_kicad_sch_impl(sheet, name, &sch_filename);
     let board = write_kicad_pcb_impl(pcb, Some(&links));
-    let pro = write_kicad_pro(name, &links.root_uuid);
+    let pro = write_kicad_pro(name, &links.root_uuid, pcb);
     vec![
         (format!("{}.kicad_pro", name), pro),
         (sch_filename, sch),
@@ -2169,7 +2263,81 @@ pub fn write_kicad_project(sheet: &SchematicSheet, pcb: &Pcb, name: &str) -> Vec
 
 /// Minimal valid KiCad 9 project JSON (`meta.version` 3), recording the
 /// schematic's root sheet uuid in `sheets` the way KiCad itself does.
-fn write_kicad_pro(name: &str, root_uuid: &str) -> String {
+///
+/// The board's design constraints and net classes are written here too. KiCad's
+/// GUI reads design settings from the project (the board's `(setup …)` /
+/// `(net_class …)` blocks are the standalone-board path), so a bundle whose
+/// project carried factory defaults would silently override the rules the board
+/// was checked against. `min_copper_edge_clearance` has no board token at all
+/// and only travels here.
+fn write_kicad_pro(name: &str, root_uuid: &str, pcb: &Pcb) -> String {
+    let r = &pcb.rules;
+    let rules = serde_json::json!({
+        "min_clearance": r.default_rules.clearance,
+        "min_track_width": r.default_rules.trace_width,
+        "min_via_diameter": min_via_diameter(pcb),
+        "min_through_hole_diameter": min_via_drill(pcb),
+        "min_via_annular_width": r.min_annular_ring,
+        "min_hole_to_hole": r.hole_to_hole,
+        "min_copper_edge_clearance": r.edge_clearance,
+    });
+    let by_id: BTreeMap<&str, &str> = pcb
+        .nets
+        .iter()
+        .map(|n| (n.id.as_str(), n.name.as_str()))
+        .collect();
+    let mut classes = Vec::new();
+    let mut patterns = Vec::new();
+    for class in std::iter::once(&r.default_rules).chain(r.class_rules.iter()) {
+        let mut c = serde_json::json!({
+            "name": class.name,
+            "clearance": class.clearance,
+            "track_width": class.trace_width,
+            "via_diameter": class.via_diameter,
+            "via_drill": class.via_drill,
+            "microvia_diameter": class.via_diameter,
+            "microvia_drill": class.via_drill,
+            "line_style": 0,
+            "pcb_color": "rgba(0, 0, 0, 0.000)",
+            "schematic_color": "rgba(0, 0, 0, 0.000)",
+            "wire_width": 6,
+            "bus_width": 12,
+        });
+        if let Some(w) = class.diff_pair_width {
+            c["diff_pair_width"] = serde_json::json!(w);
+        }
+        if let Some(g) = class.diff_pair_gap {
+            c["diff_pair_gap"] = serde_json::json!(g);
+        }
+        if std::ptr::eq(class, &r.default_rules) {
+            c["priority"] = serde_json::json!(2147483647u32);
+        } else {
+            let mut names: Vec<&str> = r
+                .net_class_assignments
+                .get(&class.name)
+                .into_iter()
+                .flatten()
+                .map(|n| *by_id.get(n.as_str()).unwrap_or(&n.as_str()))
+                .filter(|n| !n.is_empty())
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            for n in names {
+                patterns.push(serde_json::json!({ "netclass": class.name, "pattern": n }));
+            }
+        }
+        classes.push(c);
+    }
+    write_kicad_pro_json(name, root_uuid, rules, classes, patterns)
+}
+
+fn write_kicad_pro_json(
+    name: &str,
+    root_uuid: &str,
+    rules: serde_json::Value,
+    classes: Vec<serde_json::Value>,
+    netclass_patterns: Vec<serde_json::Value>,
+) -> String {
     let pro = serde_json::json!({
         "board": {
             "3dviewports": [],
@@ -2179,7 +2347,7 @@ fn write_kicad_pro(name: &str, root_uuid: &str) -> String {
                 "drc_exclusions": [],
                 "meta": { "version": 2 },
                 "rule_severities": {},
-                "rules": {},
+                "rules": rules,
                 "track_widths": [],
                 "via_dimensions": []
             },
@@ -2197,11 +2365,11 @@ fn write_kicad_pro(name: &str, root_uuid: &str) -> String {
             "version": 3
         },
         "net_settings": {
-            "classes": [],
+            "classes": classes,
             "meta": { "version": 4 },
             "net_colors": null,
             "netclass_assignments": null,
-            "netclass_patterns": []
+            "netclass_patterns": netclass_patterns
         },
         "pcbnew": {
             "last_paths": {
@@ -2540,6 +2708,136 @@ mod tests {
 
         // Exporting the re-imported board yields byte-identical output (fixpoint).
         assert_eq!(exported, write_kicad_pcb(&pcb2));
+    }
+
+    /// A board whose fab floors are *tighter* than KiCad's factory defaults —
+    /// the CM5 shape: 0.12 mm drills, 0.21 mm vias, 0.045 mm annular ring,
+    /// 0.08 mm clearance — plus a second net class, so class rules and their
+    /// net membership are exercised too.
+    fn fine_pitch_pcb() -> Pcb {
+        use vcad_ir::ecad::NetClassRules;
+        let mut pcb = sample_pcb();
+        let r = &mut pcb.rules;
+        r.default_rules.trace_width = 0.1;
+        r.default_rules.clearance = 0.08;
+        r.default_rules.via_diameter = 0.21;
+        r.default_rules.via_drill = 0.12;
+        r.min_drill = 0.12;
+        r.min_annular_ring = 0.045;
+        r.hole_to_hole = 0.2;
+        r.edge_clearance = 0.2;
+        r.class_rules = vec![NetClassRules {
+            name: "Power".into(),
+            trace_width: 0.4,
+            clearance: 0.15,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+            diff_pair_gap: Some(0.13),
+            diff_pair_width: Some(0.09),
+            target_impedance: None,
+            target_diff_impedance: None,
+        }];
+        r.net_class_assignments
+            .insert("Power".into(), vec!["GND".into()]);
+        for v in &mut pcb.vias {
+            v.diameter = 0.21;
+            v.drill = 0.12;
+        }
+        pcb
+    }
+
+    /// The rules a board was DRC'd against must travel *with* the board.
+    ///
+    /// Before this, `(setup …)` carried no design constraints and the file no
+    /// net classes at all, so KiCad checked every exported board against its
+    /// own factory defaults (0.1 mm annulus, 0.3 mm hole, 0.5 mm via, 0.2 mm
+    /// netclass clearance) — and any calibration applied during fab-prep was
+    /// invisible in the file. Re-importing shows the same, since our reader and
+    /// KiCad's read the same tokens.
+    #[test]
+    fn design_rules_round_trip_through_kicad_board() {
+        let pcb = fine_pitch_pcb();
+        let text = write_kicad_pcb(&pcb);
+        let back = parse_kicad_pcb(&text).expect("re-parse exported board");
+
+        let (a, b) = (&pcb.rules, &back.rules);
+        assert_eq!(b.default_rules.trace_width, a.default_rules.trace_width);
+        assert_eq!(b.default_rules.clearance, a.default_rules.clearance);
+        assert_eq!(b.default_rules.via_diameter, a.default_rules.via_diameter);
+        assert_eq!(b.default_rules.via_drill, a.default_rules.via_drill);
+        assert_eq!(b.min_drill, a.min_drill);
+        assert_eq!(b.min_annular_ring, a.min_annular_ring);
+        assert_eq!(b.hole_to_hole, a.hole_to_hole);
+
+        // Class overrides and their net membership survive too.
+        assert_eq!(b.class_rules.len(), 1);
+        let p = &b.class_rules[0];
+        assert_eq!(p.name, "Power");
+        assert_eq!(p.trace_width, 0.4);
+        assert_eq!(p.clearance, 0.15);
+        assert_eq!(p.via_diameter, 0.6);
+        assert_eq!(p.via_drill, 0.3);
+        assert_eq!(p.diff_pair_gap, Some(0.13));
+        assert_eq!(p.diff_pair_width, Some(0.09));
+        assert_eq!(
+            b.net_class_assignments.get("Power").map(|v| v.as_slice()),
+            Some(&["GND".to_string()][..])
+        );
+
+        // The rule text itself is a fixpoint: re-exporting the re-imported
+        // board emits the same (setup …) and (net_class …) blocks.
+        let text2 = write_kicad_pcb(&back);
+        let rules_text = |s: &str| {
+            s.lines()
+                .filter(|l| {
+                    let t = l.trim();
+                    t.starts_with('(')
+                        && (t.contains("min")
+                            || t.contains("clearance")
+                            || t.contains("net_class")
+                            || t.contains("trace_")
+                            || t.contains("via_")
+                            || t.contains("uvia_")
+                            || t.contains("diff_pair")
+                            || t.contains("add_net")
+                            || t.contains("hole_to_hole"))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(rules_text(&text), rules_text(&text2));
+    }
+
+    /// The project file in a bundle must carry the same constraints: KiCad's
+    /// GUI reads design settings from the project, so a project holding factory
+    /// defaults would override the board's own blocks.
+    #[test]
+    fn project_bundle_carries_board_design_rules() {
+        let files = write_kicad_project(&sample_sheet(), &fine_pitch_pcb(), "brd");
+        let pro = &files
+            .iter()
+            .find(|(n, _)| n.ends_with(".kicad_pro"))
+            .expect("project file")
+            .1;
+        let j: serde_json::Value = serde_json::from_str(pro).expect("project is JSON");
+        let rules = &j["board"]["design_settings"]["rules"];
+        assert_eq!(rules["min_clearance"], 0.08);
+        assert_eq!(rules["min_track_width"], 0.1);
+        assert_eq!(rules["min_via_diameter"], 0.21);
+        assert_eq!(rules["min_through_hole_diameter"], 0.12);
+        assert_eq!(rules["min_via_annular_width"], 0.045);
+        assert_eq!(rules["min_hole_to_hole"], 0.2);
+        assert_eq!(rules["min_copper_edge_clearance"], 0.2);
+
+        let classes = j["net_settings"]["classes"].as_array().expect("classes");
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0]["name"], "Default");
+        assert_eq!(classes[1]["name"], "Power");
+        assert_eq!(classes[1]["clearance"], 0.15);
+        assert_eq!(
+            j["net_settings"]["netclass_patterns"],
+            serde_json::json!([{ "netclass": "Power", "pattern": "GND" }])
+        );
     }
 
     /// KiCad's pad angle is absolute (it includes the footprint's rotation);
@@ -3996,6 +4294,111 @@ mod tests {
         assert!(
             !text.contains("endpoint_off_grid"),
             "four-edge symbol put a connection point off the KiCad grid:\n{text}"
+        );
+    }
+
+    /// Run `kicad-cli pcb drc` on `text` and return the violation type counts
+    /// KiCad itself reports.
+    fn kicad_drc_types(
+        cli: &std::path::Path,
+        subdir: &str,
+        text: &str,
+    ) -> std::collections::BTreeMap<String, usize> {
+        let dir = std::env::var("VCAD_KICAD_OUT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("vcad_kicad"))
+            .join(subdir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let board = dir.join("board.kicad_pcb");
+        std::fs::write(&board, text).unwrap();
+        let report = dir.join("drc.json");
+        let _ = std::fs::remove_file(&report);
+        let out = std::process::Command::new(cli)
+            .args(["pcb", "drc", "--format", "json", "--severity-all", "-o"])
+            .arg(&report)
+            .arg(&board)
+            .output()
+            .expect("run kicad-cli pcb drc");
+        let json = std::fs::read_to_string(&report).unwrap_or_else(|_| {
+            panic!(
+                "no DRC report produced (KiCad refused the board?): {}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        let v: serde_json::Value = serde_json::from_str(&json).expect("DRC report is JSON");
+        let mut counts = std::collections::BTreeMap::new();
+        for viol in v["violations"].as_array().into_iter().flatten() {
+            let t = viol["type"].as_str().unwrap_or("?").to_string();
+            *counts.entry(t).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// The claim that matters: KiCad must check an exported board against *the
+    /// board's own* rules, not its factory defaults.
+    ///
+    /// `fine_pitch_pcb` is legal under its declared rules (0.12 mm drill,
+    /// 0.21 mm via, 0.045 mm annulus, 0.08 mm clearance) and illegal under
+    /// KiCad's defaults (0.3 / 0.5 / 0.1 / 0.2). So this is a differential test:
+    /// as exported, KiCad reports none of those four violation types; with the
+    /// emitted constraints and net classes stripped out — exactly what the file
+    /// looked like before — the same board and the same KiCad report them.
+    #[test]
+    #[ignore = "requires kicad-cli (KiCad 9) — run with --ignored"]
+    fn kicad_checks_board_against_its_own_rules() {
+        let Some(cli) = kicad_cli() else {
+            eprintln!("SKIP: kicad-cli not found (PATH, $KICAD_CLI, or KiCad.app)");
+            return;
+        };
+        let rule_types = [
+            "annular_width",
+            "drill_out_of_range",
+            "via_diameter",
+            "clearance",
+        ];
+        let text = write_kicad_pcb(&fine_pitch_pcb());
+
+        let with_rules = kicad_drc_types(&cli, "drc_rules", &text);
+        for t in rule_types {
+            assert_eq!(
+                with_rules.get(t).copied().unwrap_or(0),
+                0,
+                "KiCad flagged {t} on a board legal under its own rules: {with_rules:?}"
+            );
+        }
+
+        // Negative control: strip the rules we emit and the violations return.
+        let stripped: String = {
+            let mut out = String::new();
+            let mut skip_class = false;
+            for line in text.lines() {
+                let t = line.trim();
+                if skip_class {
+                    if t == ")" {
+                        skip_class = false;
+                    }
+                    continue;
+                }
+                if t.starts_with("(net_class ") {
+                    skip_class = true;
+                    continue;
+                }
+                if t.starts_with("(via_min_") || t.starts_with("(hole_to_hole_min") {
+                    continue;
+                }
+                out.push_str(line);
+                out.push('\n');
+            }
+            out
+        };
+        let without = kicad_drc_types(&cli, "drc_norules", &stripped);
+        assert!(
+            rule_types
+                .iter()
+                .any(|t| without.get(*t).copied().unwrap_or(0) > 0),
+            "premise broken: the fixture is legal under KiCad defaults too, so \
+             this test proves nothing: {without:?}"
         );
     }
 }

@@ -554,6 +554,9 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     let mut clearance_val = 0.2;
     let mut via_diameter = 0.8;
     let mut via_drill = 0.4;
+    let mut hole_to_hole = 0.25;
+    let mut min_annular_ring = 0.13;
+    let mut min_drill = 0.2;
 
     if let Some(setup) = root.find("setup") {
         // KiCad 6+ stores rules in (setup ...)
@@ -569,26 +572,84 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
         if let Some(v) = child_f64(setup, "via_drill") {
             via_drill = v;
         }
+        // Board-level design constraints (the fab floors), as written by
+        // `crate::kicad_write::write_setup`.
+        if let Some(v) = child_f64(setup, "via_min_annulus") {
+            min_annular_ring = v;
+        }
+        if let Some(v) = child_f64(setup, "via_min_drill") {
+            min_drill = v;
+        }
+        if let Some(v) = child_f64(setup, "hole_to_hole_min") {
+            hole_to_hole = v;
+        }
     }
 
-    DesignRules {
-        default_rules: NetClassRules {
-            name: "Default".to_string(),
-            trace_width,
-            clearance: clearance_val,
-            via_diameter,
-            via_drill,
-            diff_pair_gap: None,
-            diff_pair_width: None,
+    // Net classes. The first `(net_class …)` named "Default" (or, absent one,
+    // the first block) supplies the default rules; the rest become class
+    // overrides with their `(add_net …)` members as assignments.
+    let blocks = root.find_all("net_class");
+    let mut class_rules: Vec<NetClassRules> = Vec::new();
+    let mut net_class_assignments: HashMap<String, Vec<String>> = HashMap::new();
+    let mut default_from_class: Option<NetClassRules> = None;
+    for (i, block) in blocks.iter().enumerate() {
+        let name = block
+            .children()
+            .and_then(|c| c.get(1))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let rules = NetClassRules {
+            name: name.clone(),
+            trace_width: child_f64(block, "trace_width").unwrap_or(trace_width),
+            clearance: child_f64(block, "clearance").unwrap_or(clearance_val),
+            via_diameter: child_f64(block, "via_dia").unwrap_or(via_diameter),
+            via_drill: child_f64(block, "via_drill").unwrap_or(via_drill),
+            diff_pair_gap: child_f64(block, "diff_pair_gap"),
+            diff_pair_width: child_f64(block, "diff_pair_width"),
             target_impedance: None,
             target_diff_impedance: None,
-        },
-        class_rules: vec![],
-        net_class_assignments: HashMap::new(),
+        };
+        let is_default = name == "Default" || (i == 0 && blocks.len() == 1);
+        if is_default && default_from_class.is_none() {
+            default_from_class = Some(rules);
+            continue;
+        }
+        let nets: Vec<String> = block
+            .find_all("add_net")
+            .into_iter()
+            .filter_map(|n| n.children()?.get(1)?.as_str().map(str::to_string))
+            .collect();
+        if !nets.is_empty() {
+            net_class_assignments.insert(name, nets);
+        }
+        class_rules.push(rules);
+    }
+
+    let default_rules = default_from_class.unwrap_or(NetClassRules {
+        name: "Default".to_string(),
+        trace_width,
+        clearance: clearance_val,
+        via_diameter,
+        via_drill,
+        diff_pair_gap: None,
+        diff_pair_width: None,
+        target_impedance: None,
+        target_diff_impedance: None,
+    });
+
+    DesignRules {
+        default_rules,
+        class_rules,
+        net_class_assignments,
+        // KiCad 9's board format has no edge-clearance token (`edge_clearance`
+        // in `(setup …)` makes it refuse the file), so this one constraint
+        // travels only in the project file and cannot round-trip through a
+        // board on its own.
         edge_clearance: 0.25,
-        hole_to_hole: 0.25,
-        min_annular_ring: 0.13,
-        min_drill: 0.2,
+        hole_to_hole,
+        min_annular_ring,
+        min_drill,
     }
 }
 
