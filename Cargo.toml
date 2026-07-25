@@ -305,3 +305,8 @@ strip = true
 # unoptimized they take minutes, optimized seconds.
 [profile.dev.package.vcad-kernel-fea]
 opt-level = 3
+
+# clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
+# vendored copy adds the missing libc++ link arms. Identical source otherwise.
+[patch.crates-io]
+clipper-sys = { path = "third_party/clipper-sys" }

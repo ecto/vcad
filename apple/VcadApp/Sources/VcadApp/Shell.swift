@@ -1,6 +1,8 @@
 import SwiftUI
 import RealityKit
+#if canImport(AppKit)
 import AppKit
+#endif
 import simd
 import CoreGraphics
 import UniformTypeIdentifiers
@@ -28,6 +30,7 @@ extension View {
     func glassCard(_ cornerRadius: CGFloat = 16) -> some View { modifier(GlassCard(cornerRadius: cornerRadius)) }
 }
 
+#if os(macOS)  // mac window root + document menu
 struct EditorView: View {
     @State private var model = EditorModel()
     @State private var intent = IntentEngine()
@@ -250,16 +253,19 @@ struct DocumentMenu: View {
     }
 
     private func openPanel() {
+        #if os(macOS)
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Open"
         if panel.runModal() == .OK, let url = panel.url { model.openDocument(url) }
+        #endif
     }
 }
 
 // MARK: top chrome — brand · centered identity + status · presence
+#endif  // os(macOS) — mac window root + document menu
 
 /// The leading wordmark.
 struct BrandMark: View {
@@ -271,6 +277,7 @@ struct BrandMark: View {
     }
 }
 
+#if os(macOS)
 /// Centered identity (the document menu) + a compact live status readout.
 struct IdentityStatusBar: View {
     @Bindable var model: EditorModel
@@ -282,6 +289,8 @@ struct IdentityStatusBar: View {
         }
     }
 }
+
+#endif
 
 /// kernel · tris · bounds · solve — the dense status, inline in the title bar.
 struct StatusStrip: View {
@@ -298,6 +307,7 @@ struct StatusStrip: View {
             Text(String(format: "%.0f×%.0f×%.0f", abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
             bar
             Text(String(format: "%.0f ms", model.solveMillis))
+            #if os(macOS)
             bar
             // Pixel-perfect mode: settle-triggered direct-BRep ray trace.
             Button {
@@ -309,6 +319,7 @@ struct StatusStrip: View {
             }
             .buttonStyle(.plain)
             .help("Ray-traced still when the camera settles — rays vs the exact BRep, no tessellation")
+            #endif
         }
         .font(.system(size: 11, design: .monospaced))
         .foregroundStyle(.secondary)
@@ -369,12 +380,14 @@ struct ComposerBar: View {
     }
 
     private func openPanel() {
+        #if os(macOS)
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Open"
         if panel.runModal() == .OK, let url = panel.url { model.openDocument(url) }
+        #endif
     }
 }
 
@@ -736,11 +749,15 @@ struct FeatureRowView: View {
         .onTapGesture {
             guard model.renamingFeatureID != node.id else { return }
             // ⌘-click a part row → toggle it in the multi-selection (for booleans).
+            #if os(macOS)
             if NSEvent.modifierFlags.contains(.command), let pi = node.partIndex {
                 model.toggleMultiSelect(part: pi, featureID: node.id)
             } else {
                 model.selectFeature(node.id)
             }
+            #else
+            model.selectFeature(node.id)
+            #endif
         }
         .contextMenu { menu }
     }
@@ -780,8 +797,12 @@ struct FeatureRowView: View {
         }
         Button { model.renamingFeatureID = node.id } label: { Label("Rename", systemImage: "pencil") }
         Button {
+            #if os(macOS)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(node.name, forType: .string)
+            #else
+            UIPasteboard.general.string = node.name
+            #endif
         } label: { Label("Copy Name", systemImage: "doc.on.doc") }
         if let pi = node.partIndex {
             Divider()
@@ -912,7 +933,7 @@ struct InspectorView: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Circle().fill(Color(nsColor: resolved.color)).frame(width: 11, height: 11)
+                    Circle().fill(Color(portedColor: resolved.color)).frame(width: 11, height: 11)
                         .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
                     Text(MaterialPreset.byKey(current)?.name ?? current.capitalized)
                         .font(.system(size: 12))
@@ -1053,7 +1074,11 @@ struct ScrubField: View {
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(base != nil ? Color.accentColor.opacity(0.6) : .white.opacity(0.10), lineWidth: 0.5))
             .contentShape(Rectangle())
-            .onHover { (($0 ? NSCursor.resizeLeftRight : NSCursor.arrow)).set() }
+            .onHover { hovering in
+                #if os(macOS)
+                (hovering ? NSCursor.resizeLeftRight : NSCursor.arrow).set()
+                #endif
+            }
             .help("Drag to scrub · double-click to type")
             .onTapGesture(count: 2) { typing = String(format: "%g", value) }
             .gesture(
@@ -1077,7 +1102,7 @@ struct ScrubField: View {
             .focused($focused)
             .onAppear { focused = true }
             .onSubmit { commit() }
-            .onExitCommand { typing = nil }
+            .onEscape { typing = nil }
             .onChange(of: focused) { _, now in if !now { commit() } }
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -1120,7 +1145,7 @@ struct RenameField: View {
             .focused($focused)
             .onAppear { focused = true }
             .onSubmit { commit(text) }
-            .onExitCommand { cancel() }
+            .onEscape { cancel() }
             .onChange(of: focused) { _, now in if !now { commit(text) } }
             .padding(.horizontal, 4).padding(.vertical, 1)
             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
@@ -1258,6 +1283,7 @@ struct PlaybackBar: View {
 
 /// Applies/reverts the transparent-window styling for release-to-desktop mode.
 /// Lives as an invisible background NSView so it can reach the hosting NSWindow.
+#if os(macOS)  // release window plumbing + studio viewport
 struct ReleaseWindowConfigurator: NSViewRepresentable {
     var release: Bool
 
@@ -1322,6 +1348,8 @@ struct ReleaseReturnPill: View {
     }
 }
 
+#endif  // os(macOS) — release window plumbing
+#if os(macOS)  // studio viewport (camera RealityView + extensions to EOF)
 struct ViewportView: View {
     let model: EditorModel
 
@@ -2120,6 +2148,7 @@ struct ViewportView: View {
         UnlitMaterial(color: NSColor(white: 0.09, alpha: 1.0))
     }()
 }
+#endif  // os(macOS) — studio viewport
 
 // MARK: sketch preview overlay (shared: studio viewport + released desktop)
 
@@ -2328,6 +2357,7 @@ func buildGizmo(model: EditorModel) -> Entity {
     return root
 }
 
+#if os(macOS)  // viewport extensions (camera content, NSEvent gestures, picking)
 extension ViewportView {
     private func rebuildGizmo(_ content: RealityViewCameraContent) {
         guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -2734,5 +2764,18 @@ extension ViewportView {
         guard e.name.hasPrefix("part") else { return nil }
         let digits = e.name.dropFirst(4).prefix(while: \.isNumber)
         return digits.isEmpty ? nil : Int(digits)
+    }
+}
+#endif  // os(macOS) — viewport extensions
+
+
+extension Color {
+    /// `Color(nsColor:)` / `Color(uiColor:)` under one spelling for shared code.
+    init(portedColor c: NSColor) {
+        #if os(macOS)
+        self.init(nsColor: c)
+        #else
+        self.init(uiColor: c)
+        #endif
     }
 }

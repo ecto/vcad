@@ -1,5 +1,7 @@
 import ModelIO
+#if canImport(AppKit)
 import AppKit
+#endif
 import simd
 
 /// USDZ export via ModelIO: kernel part meshes (Z-up, millimeters) → one

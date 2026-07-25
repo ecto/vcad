@@ -792,8 +792,6 @@ dependencies = [
 [[package]]
 name = "clipper-sys"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc6bccb550d47c390af7a601bee66a74fd3a01163feb85442021096f5533d2e5"
 dependencies = [
  "cc",
 ]
@@ -4016,6 +4014,7 @@ dependencies = [
 name = "phyz"
 version = "0.3.0"
 dependencies = [
+ "phyz-math",
  "tang",
 ]
 
