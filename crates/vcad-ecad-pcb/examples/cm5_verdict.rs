@@ -76,24 +76,9 @@ fn main() {
         .map(|l| l.layer)
         .filter(|l| l.is_copper())
         .collect();
+    // Fallback width only: `route_window_complete` searches at the widest
+    // net-class width in each window and reports the per-net commit width.
     let width = pcb.rules.default_rules.trace_width;
-    // Per-net class widths: SI-class nets must be routed and committed at
-    // their class width (the DRC's MinTraceWidth rule is per-net) — a joint
-    // path at default width would land 500+ width violations on a board
-    // whose pairs are classed at 0.2 mm.
-    let net_width: std::collections::HashMap<String, f64> = pcb
-        .rules
-        .class_rules
-        .iter()
-        .flat_map(|rule| {
-            pcb.rules
-                .net_class_assignments
-                .get(&rule.name)
-                .into_iter()
-                .flatten()
-                .map(move |net| (net.clone(), rule.trace_width))
-        })
-        .collect();
 
     // Cluster connections whose bboxes (inflated 2mm) overlap. Two rules keep
     // the certificates honest: a cluster never holds two connections of the
@@ -132,93 +117,75 @@ fn main() {
     }
     println!("clusters: {}", clusters.len());
 
+    let via_radius = pcb.rules.default_rules.via_diameter / 2.0;
     let (mut routed, mut proved, mut unknown) = (0usize, 0usize, 0usize);
     for (lo, hi, conns) in &clusters {
         let names: Vec<&str> = conns.iter().map(|c| c.0.as_str()).collect();
-        // Search at the widest class width in the cluster (conservative:
-        // guarantees the found corridors fit every member's committed width).
-        let cluster_width = conns
-            .iter()
-            .map(|(n, _, _)| net_width.get(n).copied().unwrap_or(width))
-            .fold(width, f64::max);
-        match route_window_complete(&session, (*lo, *hi), &layers, conns, cluster_width, budget) {
+        match route_window_complete(
+            &session,
+            (*lo, *hi),
+            &layers,
+            conns,
+            width,
+            via_radius,
+            budget,
+        ) {
             CompleteOutcome::Routed(paths) => {
-                // Fail-closed: the window router's coarse grid can hide
-                // sub-clearance gaps its pitch cannot see, and joint paths
-                // do not know the intra-pair gap rule. Probe every segment
-                // through the (pair-aware) session before trusting the
-                // routing; a path the oracle rejects downgrades the cluster
-                // to an honest unknown.
-                // Probe-then-commit PER PATH, in order: cluster paths are
-                // node-disjoint on the coarse window grid, but the grid pitch
-                // can hide sub-clearance gaps BETWEEN two paths of the same
-                // cluster (observed: two same-cluster diagonals overlapping
-                // at 0.000mm). Probing each path against the session AFTER
-                // its clustermates committed makes mutual legality exact; a
-                // path that fails downgrades only itself to unknown.
+                // The router has already replayed these paths in order against
+                // a scratch session, so mutual legality is settled: commit the
+                // legal ones (at their own class width), in order. A path it
+                // flags illegal pinched a clustermate through a gap the coarse
+                // grid could not see — an honest unknown for that net alone.
                 let mut cluster_routed = 0usize;
-                for ((net, _, _), path) in conns.iter().zip(&paths) {
-                    let w = net_width.get(net).copied().unwrap_or(width);
-                    let legal = path.iter().all(|&(a, b, l)| {
-                        let g = vcad_ecad_pcb::spatial::CopperGeom::Segment {
-                            a,
-                            b,
-                            half_w: w / 2.0,
-                        };
-                        session.probe(&g, l, net, session.clearance_for(net)).legal
-                    });
-                    if !legal {
+                for path in &paths {
+                    let (net, w) = (&path.net, path.width);
+                    if !path.legal {
                         unknown += 1;
-                        println!("UNKNOWN  [{net:?}] (path failed oracle probe)");
+                        println!("UNKNOWN  [{net:?}] (path failed mutual-legality probe)");
                         continue;
                     }
                     cluster_routed += 1;
-                    let w = net_width.get(net).copied().unwrap_or(width);
-                    for (a, b, layer) in path {
+                    for &(a, b, layer) in &path.segments {
                         session.commit(CopperElement {
                             min: [a.x.min(b.x) - w, a.y.min(b.y) - w],
                             max: [a.x.max(b.x) + w, a.y.max(b.y) + w],
                             net: net.clone(),
-                            layer: *layer,
+                            layer,
                             geom: CopperGeom::Segment {
-                                a: *a,
-                                b: *b,
+                                a,
+                                b,
                                 half_w: w / 2.0,
                             },
                         });
                         pcb.traces.push(vcad_ir::ecad::Trace {
-                            start: *a,
-                            end: *b,
+                            start: a,
+                            end: b,
                             width: w,
-                            layer: *layer,
+                            layer,
                             net: net.clone(),
                             source: None,
                         });
                     }
-                    for w in path.windows(2) {
-                        let (_, b0, l0) = w[0];
-                        let (a1, _, l1) = w[1];
-                        if l0 != l1 && (b0.x - a1.x).abs() < 1e-9 && (b0.y - a1.y).abs() < 1e-9 {
-                            let r = pcb.rules.default_rules.via_diameter / 2.0;
-                            for layer in [l0, l1] {
-                                session.commit(CopperElement {
-                                    min: [b0.x - r, b0.y - r],
-                                    max: [b0.x + r, b0.y + r],
-                                    net: net.clone(),
-                                    layer,
-                                    geom: CopperGeom::Disc { center: b0, r },
-                                });
-                            }
-                            pcb.vias.push(vcad_ir::ecad::Via {
-                                position: b0,
-                                diameter: pcb.rules.default_rules.via_diameter,
-                                drill: pcb.rules.default_rules.via_drill,
-                                start_layer: l0,
-                                end_layer: l1,
+                    for &(c, l0, l1) in &path.vias {
+                        let r = pcb.rules.default_rules.via_diameter / 2.0;
+                        for layer in [l0, l1] {
+                            session.commit(CopperElement {
+                                min: [c.x - r, c.y - r],
+                                max: [c.x + r, c.y + r],
                                 net: net.clone(),
-                                source: None,
+                                layer,
+                                geom: CopperGeom::Disc { center: c, r },
                             });
                         }
+                        pcb.vias.push(vcad_ir::ecad::Via {
+                            position: c,
+                            diameter: pcb.rules.default_rules.via_diameter,
+                            drill: pcb.rules.default_rules.via_drill,
+                            start_layer: l0,
+                            end_layer: l1,
+                            net: net.clone(),
+                            source: None,
+                        });
                     }
                 }
                 routed += cluster_routed;

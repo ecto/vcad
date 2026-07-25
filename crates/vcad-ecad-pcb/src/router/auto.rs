@@ -3050,28 +3050,29 @@ fn joint_window_repair(
                         &cl,
                         &lost,
                         width,
+                        pcb.rules.default_rules.via_diameter / 2.0,
                         2_000_000,
                     ) {
                         CompleteOutcome::Routed(paths) => {
                             let mut still_lost = Vec::new();
-                            for (conn, segs) in lost.drain(..).zip(paths) {
-                                // Vias sit at shared endpoints of consecutive
-                                // segments on different layers (adjacent span).
-                                let mut vias = Vec::new();
-                                for w2 in segs.windows(2) {
-                                    if w2[0].2 != w2[1].2 {
-                                        vias.push((w2[0].1, w2[0].2, w2[1].2));
-                                    }
+                            for (conn, path) in lost.drain(..).zip(paths) {
+                                // The router already replayed the window's
+                                // paths in order: a path it flags illegal
+                                // pinches a clustermate the coarse grid could
+                                // not see, and only that path is dropped.
+                                if !path.legal {
+                                    still_lost.push(conn);
+                                    continue;
                                 }
                                 let cand = Candidate {
                                     thin_segments: vec![],
-                                    thin_width: session.width_for(&conn.0, width),
+                                    thin_width: path.width,
                                     net: conn.0.clone(),
                                     from: conn.1,
                                     to: conn.2,
-                                    width: session.width_for(&conn.0, width),
-                                    segments: segs,
-                                    vias,
+                                    width: path.width,
+                                    segments: path.segments,
+                                    vias: path.vias,
                                 };
                                 match validate_and_commit(session, pcb, cand, placed) {
                                     Some(p) => {

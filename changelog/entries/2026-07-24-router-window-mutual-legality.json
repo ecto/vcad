@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-window-mutual-legality",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "fix",
+  "title": "Window router: mutual legality and per-net class widths",
+  "summary": "Jointly-routed windows now verify each path against its clustermates and commit every net at its net-class width instead of the board default.",
+  "features": ["pcb", "routing", "drc"],
+  "mcpTools": ["route_nets", "run_drc"]
+}

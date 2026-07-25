@@ -22,9 +22,11 @@
 //! - via edges connect the same cell on adjacent layers and are legal iff a
 //!   via-sized disc probes clean on both layers;
 //! - every node has **unit capacity**: at most one net's path may occupy a
-//!   `(cell, layer)` node. At pitch = width + clearance, paths through
-//!   distinct cells are clearance-compatible by construction, so node
-//!   disjointness is the canonical inter-net legality rule.
+//!   `(cell, layer)` node. At pitch = width + clearance, on-grid paths
+//!   through distinct cells are clearance-compatible by construction, so node
+//!   disjointness is the canonical inter-net legality rule *for the on-grid
+//!   part of a path* — the off-grid pad connectors are settled separately
+//!   (see "Mutual legality of the returned paths").
 //!
 //! # Completeness argument
 //!
@@ -63,6 +65,31 @@
 //! finer, off-grid router could in principle still succeed; the certificate
 //! states what was exhausted.
 //!
+//! # Mutual legality of the returned paths
+//!
+//! Node-disjointness on the coarse grid is *not* the same statement as
+//! clearance-legality of the emitted copper: the terminal connectors run
+//! off-grid (exact pad point → snapped cell centre), so two paths of the
+//! same window can be node-disjoint and still pass within a hair of each
+//! other (observed on the CM5: two same-cluster diagonals committed at
+//! 0.000 mm separation). The router therefore closes the gap itself: after
+//! the search succeeds it replays the paths **in order** against a scratch
+//! clone of the session, probing each path against the copper its
+//! predecessors just committed, and stamps the outcome on
+//! [`RoutedPath::legal`]. A path that fails is reported illegal on its own —
+//! its clustermates keep their routing — so the caller's rule is simply
+//! *commit the legal paths, in the order returned*.
+//!
+//! # Per-net class widths
+//!
+//! The `width` argument is a **fallback**, not a mandate: each connection is
+//! committed at its own net-class width ([`RouteSession::width_for`], the
+//! same map DRC's `MinTraceWidth` rule reads) and reported as
+//! [`RoutedPath::width`]. The search itself runs at the *widest* width in
+//! the window — conservative, so every corridor it finds fits every member's
+//! committed copper. Routing an SI-class net at the default width instead
+//! lands one `MinTraceWidth` violation per emitted segment.
+//!
 //! # Infeasibility certificate
 //!
 //! Before the search, a max-flow necessary-condition check runs: k pairwise
@@ -84,19 +111,47 @@ use vcad_ir::ecad::PcbLayer;
 use vcad_ir::Vec2;
 
 use crate::session::RouteSession;
-use crate::spatial::CopperGeom;
+use crate::spatial::{CopperElement, CopperGeom};
 
 /// Hard cap on grid cells per axis; the pitch coarsens to fit. Keeps the
 /// state space honest (≤ 48×48×4 ≈ 9.2k nodes).
 const MAX_AXIS_CELLS: usize = 48;
 
+/// One connection's routing, ready to commit: the copper, the width it must
+/// be committed at, and whether it is legal against its already-committed
+/// clustermates.
+///
+/// The contract for a caller is exactly one rule: **iterate in order and
+/// commit the paths with `legal == true`, at `width`.** That reproduces the
+/// scratch-session replay the router already performed, so the board ends up
+/// in the state whose legality was verified. Committing an illegal path, or
+/// committing out of order, invalidates the verdict.
+#[derive(Debug, Clone)]
+pub struct RoutedPath {
+    /// Net this path belongs to (same order as the input `conns`).
+    pub net: String,
+    /// Copper centreline segments per layer, contiguous from `from` to `to`.
+    pub segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Layer transitions as `(position, from_layer, to_layer)` — adjacent
+    /// spans at the shared endpoint of two consecutive segments.
+    pub vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+    /// Width to commit at: the net's class width, or the caller's fallback
+    /// when the net has no class. Never the search width.
+    pub width: f64,
+    /// True when the path probes clean against fixed copper *and* against
+    /// every preceding legal path in this window. False means the coarse grid
+    /// hid a sub-clearance gap between clustermates; drop this path (only) and
+    /// treat the connection as unrouted.
+    pub legal: bool,
+}
+
 /// Outcome of the complete window router.
 #[derive(Debug, Clone)]
 pub enum CompleteOutcome {
-    /// A joint routing was found: per-connection segment lists, in the same
-    /// order as the input `conns`. Layer transitions within a connection are
-    /// vias at the shared segment endpoint (adjacent-layer span).
-    Routed(Vec<Vec<(Vec2, Vec2, PcbLayer)>>),
+    /// A joint routing was found: one [`RoutedPath`] per connection, in the
+    /// same order as the input `conns`. Commit the ones flagged
+    /// [`RoutedPath::legal`], in order.
+    Routed(Vec<RoutedPath>),
     /// No joint routing exists at the current rules on the canonical grid —
     /// the search space was fully enumerated (or a max-flow cut proves it
     /// outright). `reason` is a human-readable certificate.
@@ -116,17 +171,30 @@ pub enum CompleteOutcome {
 /// * `layers` — copper stack to route on, front → back (≤ 4 recommended).
 /// * `conns` — the k connections as `(net, from, to)`. Copper on any other
 ///   net in `session` is a fixed obstacle.
-/// * `width` — trace width for all k connections (pitch = width + max
-///   clearance across the k nets).
+/// * `width` — **fallback** trace width, used for nets with no net-class
+///   width. The search runs at the widest class width across the k nets
+///   (pitch = that width + max clearance), and each returned
+///   [`RoutedPath`] carries its own net's class width to commit at.
+/// * `via_radius` — radius of the via pad the caller will actually commit
+///   (typically `rules.default_rules.via_diameter / 2.0`). Used to judge
+///   mutual legality of the returned paths against each other. The router
+///   cannot guess this: probing at its own inflated in-search radius rejects
+///   paths that commit perfectly legally.
 /// * `budget` — maximum DFS node expansions. A result of
 ///   [`CompleteOutcome::ProvedInfeasible`] is only ever returned when the
 ///   full space was enumerated within the budget (or the flow cut fired).
+///
+/// On [`CompleteOutcome::Routed`], every path has already been replayed in
+/// order against a scratch session; commit only those with
+/// [`RoutedPath::legal`] set. See the module docs for why node-disjointness
+/// alone does not imply mutual legality.
 pub fn route_window_complete(
     session: &RouteSession,
     window: (Vec2, Vec2),
     layers: &[PcbLayer],
     conns: &[(String, Vec2, Vec2)],
     width: f64,
+    via_radius: f64,
     budget: usize,
 ) -> CompleteOutcome {
     if conns.is_empty() {
@@ -142,17 +210,27 @@ pub fn route_window_complete(
         .iter()
         .map(|(n, _, _)| session.clearance_for(n))
         .collect();
+    // Per-net class widths: the DRC's MinTraceWidth rule is per-net, so an
+    // SI-class net committed at the board default lands one violation per
+    // emitted segment. Each net commits at its own class width; the SEARCH
+    // runs at the widest of them — conservative, so every corridor found
+    // fits every member's committed copper.
+    let commit_widths: Vec<f64> = conns
+        .iter()
+        .map(|(n, _, _)| session.width_for(n, width))
+        .collect();
+    let search_width = commit_widths.iter().cloned().fold(width, f64::max);
     let max_clearance = clearances.iter().cloned().fold(0.0_f64, f64::max);
-    let grid = WinGrid::new(window, width, max_clearance);
+    let grid = WinGrid::new(window, search_width, max_clearance);
     let plane = grid.nx * grid.ny;
     let nl = layers.len();
     let n_nodes = plane * nl;
-    let half_w = width / 2.0;
+    let half_w = search_width / 2.0;
     // Via legality is probed as a disc covering the real microvia pad (the
     // largest via class this router ever realizes is the adjacent-layer
     // microvia) on both spanned layers. Probing smaller than the committed
     // pad let verdict copper pass here and fail board DRC by the difference.
-    let via_r = (width * 1.5).max(0.11);
+    let via_r = (search_width * 1.5).max(0.11);
 
     // --- Free-node raster (fixed copper only) ----------------------------
     // A node is free iff a zero-length capsule (trace centre) at the cell
@@ -370,15 +448,17 @@ pub fn route_window_complete(
             let paths = std::mem::take(&mut search.paths);
             let mut out = Vec::with_capacity(conns.len());
             for (ci, path) in paths.iter().enumerate() {
-                out.push(emit_segments(
-                    &grid,
-                    plane,
-                    layers,
-                    conns[ci].1,
-                    conns[ci].2,
-                    path,
-                ));
+                let segments = emit_segments(&grid, plane, layers, conns[ci].1, conns[ci].2, path);
+                out.push(RoutedPath {
+                    vias: vias_of(&segments),
+                    net: conns[ci].0.clone(),
+                    segments,
+                    width: commit_widths[ci],
+                    // Filled in by the ordered replay below.
+                    legal: false,
+                });
             }
+            mark_mutual_legality(session, &mut out, via_radius);
             CompleteOutcome::Routed(out)
         }
         Step::Tripped => CompleteOutcome::BudgetExhausted,
@@ -397,6 +477,79 @@ pub fn route_window_complete(
                     grid.pitch,
                     search.expansions,
                 ),
+            }
+        }
+    }
+}
+
+/// Layer transitions of a path: the shared endpoint of two consecutive
+/// segments that sit on different layers.
+fn vias_of(segments: &[(Vec2, Vec2, PcbLayer)]) -> Vec<(Vec2, PcbLayer, PcbLayer)> {
+    segments
+        .windows(2)
+        .filter(|w| w[0].2 != w[1].2 && dist(w[0].1, w[1].0) < 1e-9)
+        .map(|w| (w[0].1, w[0].2, w[1].2))
+        .collect()
+}
+
+/// Replay the window's paths in order against a scratch clone of `session`,
+/// stamping [`RoutedPath::legal`].
+///
+/// Node-disjointness on the coarse grid does not imply the emitted copper is
+/// mutually clearance-legal: the terminal connectors run off-grid, so two
+/// paths through different cells can still pinch. Each path is probed against
+/// the copper its *legal* predecessors committed, so the verdicts describe
+/// exactly the board a caller gets by committing the legal paths in order. A
+/// failure downgrades only that path — its clustermates keep their routing.
+///
+/// `via_r` is the caller's real via-pad radius, not the router's in-search
+/// `via_r`: the latter is deliberately inflated to stay conservative against
+/// *fixed* copper, and judging clustermates by it rejects paths that commit
+/// perfectly legally (on the CM5 it cost 9 otherwise-routable connections).
+fn mark_mutual_legality(session: &RouteSession, paths: &mut [RoutedPath], via_r: f64) {
+    let mut scratch = session.clone();
+    for path in paths.iter_mut() {
+        let net = path.net.as_str();
+        let clr = scratch.clearance_for(net);
+        let hw = path.width / 2.0;
+        let segs_ok = path.segments.iter().all(|&(a, b, l)| {
+            scratch
+                .probe(&CopperGeom::Segment { a, b, half_w: hw }, l, net, clr)
+                .legal
+        });
+        let vias_ok = segs_ok
+            && path.vias.iter().all(|&(c, la, lb)| {
+                let disc = CopperGeom::Disc {
+                    center: c,
+                    r: via_r,
+                };
+                scratch.probe(&disc, la, net, clr).legal && scratch.probe(&disc, lb, net, clr).legal
+            });
+        path.legal = vias_ok;
+        if !path.legal {
+            continue;
+        }
+        for &(a, b, layer) in &path.segments {
+            scratch.commit(CopperElement {
+                min: [a.x.min(b.x) - hw, a.y.min(b.y) - hw],
+                max: [a.x.max(b.x) + hw, a.y.max(b.y) + hw],
+                net: path.net.clone(),
+                layer,
+                geom: CopperGeom::Segment { a, b, half_w: hw },
+            });
+        }
+        for &(c, la, lb) in &path.vias {
+            for layer in [la, lb] {
+                scratch.commit(CopperElement {
+                    min: [c.x - via_r, c.y - via_r],
+                    max: [c.x + via_r, c.y + via_r],
+                    net: path.net.clone(),
+                    layer,
+                    geom: CopperGeom::Disc {
+                        center: c,
+                        r: via_r,
+                    },
+                });
             }
         }
     }
@@ -879,15 +1032,11 @@ mod tests {
         ]
     }
 
-    fn assert_probe_legal(
-        session: &RouteSession,
-        conns: &[(String, Vec2, Vec2)],
-        routed: &[Vec<(Vec2, Vec2, PcbLayer)>],
-        width: f64,
-    ) {
-        for ((net, _, _), segs) in conns.iter().zip(routed) {
+    fn assert_probe_legal(session: &RouteSession, routed: &[RoutedPath], width: f64) {
+        for path in routed {
+            let net = path.net.as_str();
             let clr = session.clearance_for(net);
-            for (a, b, l) in segs {
+            for (a, b, l) in &path.segments {
                 assert!(
                     session
                         .probe(
@@ -911,9 +1060,81 @@ mod tests {
         }
     }
 
+    /// The contract a caller depends on: commit exactly the `legal` paths and
+    /// the board is clearance-clean. Checked order-independently — every legal
+    /// path is probed against the *finished* board, so a pinch between any two
+    /// of them fails here regardless of which committed first.
+    fn assert_legal_paths_mutually_clean(
+        session: &RouteSession,
+        routed: &[RoutedPath],
+        via_r: f64,
+    ) {
+        let mut world = session.clone();
+        for path in routed.iter().filter(|p| p.legal) {
+            let hw = path.width / 2.0;
+            for &(a, b, layer) in &path.segments {
+                world.commit(CopperElement {
+                    min: [a.x.min(b.x) - hw, a.y.min(b.y) - hw],
+                    max: [a.x.max(b.x) + hw, a.y.max(b.y) + hw],
+                    net: path.net.clone(),
+                    layer,
+                    geom: CopperGeom::Segment { a, b, half_w: hw },
+                });
+            }
+            for &(c, la, lb) in &path.vias {
+                for layer in [la, lb] {
+                    world.commit(CopperElement {
+                        min: [c.x - via_r, c.y - via_r],
+                        max: [c.x + via_r, c.y + via_r],
+                        net: path.net.clone(),
+                        layer,
+                        geom: CopperGeom::Disc {
+                            center: c,
+                            r: via_r,
+                        },
+                    });
+                }
+            }
+        }
+        for path in routed.iter().filter(|p| p.legal) {
+            let net = path.net.as_str();
+            let clr = world.clearance_for(net);
+            let hw = path.width / 2.0;
+            for &(a, b, l) in &path.segments {
+                assert!(
+                    world
+                        .probe(&CopperGeom::Segment { a, b, half_w: hw }, l, net, clr)
+                        .legal,
+                    "committing the legal paths must leave a clean board, but net {net}'s \
+                     segment ({:.3},{:.3})->({:.3},{:.3}) on {l:?} pinches a clustermate",
+                    a.x,
+                    a.y,
+                    b.x,
+                    b.y,
+                );
+            }
+            for &(c, la, lb) in &path.vias {
+                let disc = CopperGeom::Disc {
+                    center: c,
+                    r: via_r,
+                };
+                assert!(
+                    world.probe(&disc, la, net, clr).legal
+                        && world.probe(&disc, lb, net, clr).legal,
+                    "committing the legal paths must leave a clean board, but net {net}'s \
+                     via at ({:.3},{:.3}) pinches a clustermate",
+                    c.x,
+                    c.y,
+                );
+            }
+        }
+    }
+
     /// Endpoints must be reached: first segment starts at `from`, last ends at `to`.
-    fn assert_connected(conns: &[(String, Vec2, Vec2)], routed: &[Vec<(Vec2, Vec2, PcbLayer)>]) {
-        for ((net, from, to), segs) in conns.iter().zip(routed) {
+    fn assert_connected(conns: &[(String, Vec2, Vec2)], routed: &[RoutedPath]) {
+        for ((net, from, to), path) in conns.iter().zip(routed) {
+            let segs = &path.segments;
+            assert_eq!(&path.net, net, "paths must come back in input order");
             assert!(!segs.is_empty(), "net {net} must have copper");
             assert!(
                 dist(segs[0].0, *from) < 1e-9,
@@ -961,6 +1182,7 @@ mod tests {
             &[PcbLayer::FCu, PcbLayer::BCu],
             &conns,
             0.25,
+            0.4,
             2_000_000,
         );
         let CompleteOutcome::Routed(routed) = r else {
@@ -968,7 +1190,18 @@ mod tests {
         };
         assert_eq!(routed.len(), 3);
         assert_connected(&conns, &routed);
-        assert_probe_legal(&session, &conns, &routed, 0.25);
+        assert_probe_legal(&session, &routed, 0.25);
+        // Node-disjointness buys trace-vs-trace compatibility at pitch =
+        // width + clearance, and nothing more: these corridors change layer,
+        // and a via pad is wider than a trace, so a via one cell from a
+        // clustermate's copper genuinely violates clearance. The replay is
+        // what turns that into an honest per-path verdict instead of copper
+        // that fails board DRC.
+        assert!(
+            routed[0].legal,
+            "the first path has only fixed copper to clear and must survive"
+        );
+        assert_legal_paths_mutually_clean(&session, &routed, 0.4);
     }
 
     #[test]
@@ -992,7 +1225,15 @@ mod tests {
                 Vec2::new(28.0, 26.0),
             ),
         ];
-        let r = route_window_complete(&session, WINDOW, &[PcbLayer::FCu], &conns, 0.25, 2_000_000);
+        let r = route_window_complete(
+            &session,
+            WINDOW,
+            &[PcbLayer::FCu],
+            &conns,
+            0.25,
+            0.4,
+            2_000_000,
+        );
         let CompleteOutcome::ProvedInfeasible { reason } = r else {
             panic!("3 nets through a 2-channel wall must be proved infeasible, got {r:?}");
         };
@@ -1022,12 +1263,24 @@ mod tests {
                 Vec2::new(28.0, 26.0),
             ),
         ];
-        let r = route_window_complete(&session, WINDOW, &[PcbLayer::FCu], &conns, 0.25, 2_000_000);
+        let r = route_window_complete(
+            &session,
+            WINDOW,
+            &[PcbLayer::FCu],
+            &conns,
+            0.25,
+            0.4,
+            2_000_000,
+        );
         let CompleteOutcome::Routed(routed) = r else {
             panic!("2 nets through 2 channels must route, got {r:?}");
         };
         assert_connected(&conns, &routed);
-        assert_probe_legal(&session, &conns, &routed, 0.25);
+        assert_probe_legal(&session, &routed, 0.25);
+        // Single-layer corridors through separate channels: no via, no pinch —
+        // both must survive the replay.
+        assert!(routed.iter().all(|p| p.legal));
+        assert_legal_paths_mutually_clean(&session, &routed, 0.4);
     }
 
     #[test]
@@ -1060,11 +1313,127 @@ mod tests {
             &[PcbLayer::FCu, PcbLayer::BCu],
             &conns,
             0.25,
+            0.4,
             1,
         );
         assert!(
             matches!(r, CompleteOutcome::BudgetExhausted),
             "budget=1 must yield BudgetExhausted, got {r:?}"
         );
+    }
+
+    #[test]
+    fn same_window_paths_that_pinch_off_grid_reject_only_the_second() {
+        // Two terminals straddling a horizontal cell boundary: they snap to
+        // DIFFERENT cells (so the search calls them node-disjoint and happily
+        // routes both) while sitting 0.01 mm apart in exact geometry, so their
+        // off-grid pad connectors overlap outright. This is the CM5 failure —
+        // node-disjointness does not imply mutual clearance-legality. The
+        // ordered replay must keep the first path and reject the second.
+        let pcb = board(vec![], &[PcbLayer::FCu]);
+        let session = RouteSession::from_pcb(&pcb);
+        let pitch = (0.25 + 0.2) * 1.06;
+        let boundary_y = WINDOW.0.y + 4.5 * pitch; // between rows iy=4 and iy=5
+        let conns = vec![
+            (
+                "A".to_string(),
+                Vec2::new(12.0, boundary_y - 0.005),
+                Vec2::new(28.0, 11.0),
+            ),
+            (
+                "B".to_string(),
+                Vec2::new(12.0, boundary_y + 0.005),
+                Vec2::new(28.0, 13.5),
+            ),
+        ];
+        let r = route_window_complete(
+            &session,
+            WINDOW,
+            &[PcbLayer::FCu],
+            &conns,
+            0.25,
+            0.4,
+            2_000_000,
+        );
+        let CompleteOutcome::Routed(routed) = r else {
+            panic!("two node-disjoint corridors must be found, got {r:?}");
+        };
+        assert_connected(&conns, &routed);
+        // Sanity: the search really did hand back two paths that pinch.
+        assert!(
+            dist(routed[0].segments[0].0, routed[1].segments[0].0) < 0.02,
+            "test premise: the two pad connectors must start within a hair"
+        );
+        assert!(
+            routed[0].legal,
+            "the first path has nothing to conflict with and must be kept"
+        );
+        assert!(
+            !routed[1].legal,
+            "the second path pinches its clustermate and must be rejected"
+        );
+        // The verdict must describe the board a caller actually builds:
+        // committing only the legal paths leaves a clearance-clean session.
+        assert_legal_paths_mutually_clean(&session, &routed, 0.4);
+    }
+
+    #[test]
+    fn class_width_net_commits_at_its_class_width() {
+        // The board default is 0.08 mm; the SI class is 0.2 mm. Routing at the
+        // default would land one MinTraceWidth violation per emitted segment.
+        let mut pcb = board(vec![], &[PcbLayer::FCu]);
+        pcb.rules.default_rules.trace_width = 0.08;
+        pcb.rules.class_rules = vec![NetClassRules {
+            name: "SI".into(),
+            trace_width: 0.2,
+            clearance: 0.2,
+            via_diameter: 0.45,
+            via_drill: 0.2,
+            diff_pair_gap: None,
+            diff_pair_width: None,
+        }];
+        pcb.rules
+            .net_class_assignments
+            .insert("SI".into(), vec!["/USB3-1.TX_N".into()]);
+        let session = RouteSession::from_pcb(&pcb);
+        let conns = vec![
+            (
+                "/USB3-1.TX_N".to_string(),
+                Vec2::new(12.0, 14.0),
+                Vec2::new(28.0, 14.0),
+            ),
+            (
+                "UNCLASSED".to_string(),
+                Vec2::new(12.0, 26.0),
+                Vec2::new(28.0, 26.0),
+            ),
+        ];
+        // Caller passes the board default as the fallback, as every caller does.
+        let r = route_window_complete(
+            &session,
+            WINDOW,
+            &[PcbLayer::FCu],
+            &conns,
+            0.08,
+            0.105,
+            2_000_000,
+        );
+        let CompleteOutcome::Routed(routed) = r else {
+            panic!("two parallel corridors must route, got {r:?}");
+        };
+        assert_connected(&conns, &routed);
+        assert!(routed.iter().all(|p| p.legal));
+        assert_eq!(
+            routed[0].width, 0.2,
+            "an SI-class net must commit at its class width, not the 0.08 mm default"
+        );
+        assert_eq!(
+            routed[1].width, 0.08,
+            "a net with no class keeps the caller's fallback width"
+        );
+        // The corridor was searched at the widest member width, so the wide
+        // net's copper is legal at the width it actually commits at.
+        assert_probe_legal(&session, &routed, 0.2);
+        assert_legal_paths_mutually_clean(&session, &routed, 0.105);
     }
 }
