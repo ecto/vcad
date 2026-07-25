@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-kicad-export-design-rules",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "KiCad export carries the board's design rules",
+  "summary": "Exported .kicad_pcb files now declare their own design constraints and net classes, so KiCad checks a board against the rules it was DRC'd under instead of its factory defaults — no more thousands of spurious annular-ring, drill and clearance violations.",
+  "features": ["pcb", "kicad", "drc", "fabrication"],
+  "mcpTools": ["export_kicad", "fab_prep"]
+}
