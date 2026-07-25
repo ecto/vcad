@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-fabprep-via-commit-parity",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "fab-prep no longer commits vias its oracle never saw",
+  "summary": "The fab-prep router committed via barrels unprobed and unindexed, landing inner-layer shorts and hole-to-hole violations; every barrel is now probed and committed on all layers it spans, drill included.",
+  "features": ["pcb", "routing", "drc", "fab"],
+  "mcpTools": ["fab_prep", "run_drc"]
+}

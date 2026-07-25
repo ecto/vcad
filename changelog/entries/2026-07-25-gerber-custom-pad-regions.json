@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-gerber-custom-pad-regions",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Custom polygon pads reach the Gerbers as real copper",
+  "summary": "Custom-shaped pads were exported as a 0.1mm circle placeholder, silently shrinking thermal tabs, shielding paddles and stub antennas to a dot on the fabricated board.",
+  "features": ["pcb", "gerber", "fabrication"],
+  "mcpTools": ["export_gerber", "validate_for_fab"]
+}

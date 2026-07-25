@@ -17,7 +17,11 @@ pub struct Vec3 {
 
 impl Vec3 {
     /// The zero vector.
-    pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+    pub const ZERO: Vec3 = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
     /// Construct from components.
     #[inline]
@@ -34,7 +38,11 @@ impl Vec3 {
     /// Cylindrical construction: radius, azimuth (rad), height.
     #[inline]
     pub fn cylindrical(r: f64, theta: f64, z: f64) -> Self {
-        Self { x: r * theta.cos(), y: r * theta.sin(), z }
+        Self {
+            x: r * theta.cos(),
+            y: r * theta.sin(),
+            z,
+        }
     }
 
     /// Euclidean length.
@@ -82,7 +90,11 @@ impl Vec3 {
     #[inline]
     pub fn rotated_z(self, angle: f64) -> Vec3 {
         let (s, c) = angle.sin_cos();
-        Vec3 { x: c * self.x - s * self.y, y: s * self.x + c * self.y, z: self.z }
+        Vec3 {
+            x: c * self.x - s * self.y,
+            y: s * self.x + c * self.y,
+            z: self.z,
+        }
     }
 
     /// Distance from the z axis.
@@ -96,7 +108,11 @@ impl std::ops::Add for Vec3 {
     type Output = Vec3;
     #[inline]
     fn add(self, o: Vec3) -> Vec3 {
-        Vec3 { x: self.x + o.x, y: self.y + o.y, z: self.z + o.z }
+        Vec3 {
+            x: self.x + o.x,
+            y: self.y + o.y,
+            z: self.z + o.z,
+        }
     }
 }
 
@@ -104,7 +120,11 @@ impl std::ops::Sub for Vec3 {
     type Output = Vec3;
     #[inline]
     fn sub(self, o: Vec3) -> Vec3 {
-        Vec3 { x: self.x - o.x, y: self.y - o.y, z: self.z - o.z }
+        Vec3 {
+            x: self.x - o.x,
+            y: self.y - o.y,
+            z: self.z - o.z,
+        }
     }
 }
 
@@ -112,7 +132,11 @@ impl std::ops::Mul<f64> for Vec3 {
     type Output = Vec3;
     #[inline]
     fn mul(self, s: f64) -> Vec3 {
-        Vec3 { x: self.x * s, y: self.y * s, z: self.z * s }
+        Vec3 {
+            x: self.x * s,
+            y: self.y * s,
+            z: self.z * s,
+        }
     }
 }
 
@@ -120,7 +144,11 @@ impl std::ops::Neg for Vec3 {
     type Output = Vec3;
     #[inline]
     fn neg(self) -> Vec3 {
-        Vec3 { x: -self.x, y: -self.y, z: -self.z }
+        Vec3 {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
     }
 }
 

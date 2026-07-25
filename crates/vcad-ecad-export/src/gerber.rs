@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use vcad_ir::ecad::*;
+use vcad_ir::Vec2;
 
 /// Errors that can occur during Gerber generation.
 #[derive(Debug, thiserror::Error)]
@@ -383,11 +384,20 @@ fn layer_file_function(layer: PcbLayer) -> &'static str {
 // Pad geometry on a specific layer
 // ---------------------------------------------------------------------------
 
+/// How a pad's copper is emitted on a layer.
+enum AbsolutePadGeom {
+    /// Flashed with a standard (possibly rotated) aperture at `x`,`y`.
+    Flash(ApertureShape),
+    /// Painted as a G36/G37 region from an already board-frame contour. Custom
+    /// polygon pads have no standard aperture that describes them.
+    Region(Vec<Vec2>),
+}
+
 /// Resolved absolute position and rotation of a pad.
 struct AbsolutePad {
     x: f64,
     y: f64,
-    shape: ApertureShape,
+    geom: AbsolutePadGeom,
 }
 
 fn resolve_pads_on_layer(footprint: &Footprint, layer: PcbLayer) -> Vec<AbsolutePad> {
@@ -413,26 +423,39 @@ fn resolve_pads_on_layer(footprint: &Footprint, layer: PcbLayer) -> Vec<Absolute
             // part came out 0.25mm wide, overlapping its neighbours.
             let angle = footprint.rotation + pad.rotation;
 
-            let shape = match &pad.shape {
+            let geom = match &pad.shape {
                 // A circle is rotation-invariant.
-                PadShape::Circle { diameter } => ApertureShape::Circle {
+                PadShape::Circle { diameter } => AbsolutePadGeom::Flash(ApertureShape::Circle {
                     diameter: *diameter,
-                },
-                PadShape::Rect { width, height } => ApertureShape::rect(*width, *height, angle),
-                PadShape::Oval { width, height } => ApertureShape::oval(*width, *height, angle),
+                }),
+                PadShape::Rect { width, height } => {
+                    AbsolutePadGeom::Flash(ApertureShape::rect(*width, *height, angle))
+                }
+                PadShape::Oval { width, height } => {
+                    AbsolutePadGeom::Flash(ApertureShape::oval(*width, *height, angle))
+                }
                 PadShape::RoundRect { width, height, .. } => {
                     // Approximate round-rect as rectangle in Gerber output.
-                    ApertureShape::rect(*width, *height, angle)
+                    AbsolutePadGeom::Flash(ApertureShape::rect(*width, *height, angle))
                 }
-                PadShape::Custom { .. } => {
-                    // Custom pads are not directly representable as standard
-                    // apertures; emit a 0.1 mm circle placeholder. Real
-                    // fabrication would need region primitives (future work).
-                    ApertureShape::Circle { diameter: 0.1 }
+                PadShape::Custom { vertices } => {
+                    // No standard aperture describes an arbitrary polygon, so
+                    // paint the pad as a region instead. The vertices are
+                    // pad-local; turn them by the same board-frame angle the
+                    // flashed shapes use, then translate to the pad's centre.
+                    // Emitting a 0.1mm circle placeholder here — as this did
+                    // before — silently shrank real copper to a dot.
+                    let (ca, sa) = (angle.to_radians().cos(), angle.to_radians().sin());
+                    AbsolutePadGeom::Region(
+                        vertices
+                            .iter()
+                            .map(|v| Vec2::new(x + v.x * ca - v.y * sa, y + v.x * sa + v.y * ca))
+                            .collect(),
+                    )
                 }
             };
 
-            AbsolutePad { x, y, shape }
+            AbsolutePad { x, y, geom }
         })
         .collect()
 }
@@ -510,21 +533,38 @@ pub fn write_gerber_layer<W: Write>(
         dcode: u32,
     }
     let mut flashes: Vec<FlashCmd> = Vec::new();
+    // Custom polygon pads, already in board coordinates, painted as regions
+    // after the flashes.
+    let mut pad_regions: Vec<Vec<Vec2>> = Vec::new();
 
     for fp in &pcb.footprints {
         for abs_pad in resolve_pads_on_layer(fp, layer) {
-            let dcode = apertures.register(abs_pad.shape);
-            flashes.push(FlashCmd {
-                x: mm_to_coord(abs_pad.x),
-                y: mm_to_coord(abs_pad.y),
-                dcode,
-            });
+            match abs_pad.geom {
+                AbsolutePadGeom::Flash(shape) => {
+                    let dcode = apertures.register(shape);
+                    flashes.push(FlashCmd {
+                        x: mm_to_coord(abs_pad.x),
+                        y: mm_to_coord(abs_pad.y),
+                        dcode,
+                    });
+                }
+                AbsolutePadGeom::Region(contour) => {
+                    if contour.len() >= 3 {
+                        pad_regions.push(contour);
+                    }
+                }
+            }
         }
     }
 
-    // 2) Via pads on copper layers.
+    // 2) Via pads — only on the copper layers the via actually spans. A blind
+    //    or buried via flashed outside its span is copper the board does not
+    //    have, and shorts whatever runs under it.
     if layer.is_copper() {
         for via in &pcb.vias {
+            if !layer.spanned_by(via.start_layer, via.end_layer) {
+                continue;
+            }
             let dcode = apertures.register(ApertureShape::Circle {
                 diameter: via.diameter,
             });
@@ -849,6 +889,34 @@ pub fn write_gerber_layer<W: Write>(
             current_dcode = Some(flash.dcode);
         }
         writeln!(writer, "X{}Y{}D03*", fmt_coord(flash.x), fmt_coord(flash.y))?;
+    }
+
+    // Custom polygon pads, painted as regions. Each is a single closed contour
+    // already in board coordinates.
+    for contour in &pad_regions {
+        writeln!(writer, "G36*")?;
+        let first = &contour[0];
+        writeln!(
+            writer,
+            "X{}Y{}D02*",
+            fmt_coord(mm_to_coord(first.x)),
+            fmt_coord(mm_to_coord(first.y))
+        )?;
+        for pt in &contour[1..] {
+            writeln!(
+                writer,
+                "X{}Y{}D01*",
+                fmt_coord(mm_to_coord(pt.x)),
+                fmt_coord(mm_to_coord(pt.y))
+            )?;
+        }
+        writeln!(
+            writer,
+            "X{}Y{}D01*",
+            fmt_coord(mm_to_coord(first.x)),
+            fmt_coord(mm_to_coord(first.y))
+        )?;
+        writeln!(writer, "G37*")?;
     }
 
     // Region fills (zones). Each zone is poured — its outline minus exact
@@ -1309,6 +1377,104 @@ mod tests {
         );
     }
 
+    /// Extract the board-frame extents of the first G36/G37 region in `out`.
+    fn first_region_extents(out: &str) -> (f64, f64, f64, f64) {
+        let start = out.find("G36*").expect("no region emitted");
+        let end = out[start..].find("G37*").expect("unterminated region") + start;
+        let mut xs = Vec::new();
+        let mut ys = Vec::new();
+        for line in out[start..end].lines() {
+            if let Some(rest) = line.strip_prefix('X') {
+                let (xr, yr) = rest.split_once('Y').expect("malformed coordinate");
+                // Strip the trailing D-code operation ("...D01*").
+                let yr = yr.split('D').next().expect("malformed coordinate");
+                xs.push(xr.parse::<i64>().unwrap() as f64 / 1e6);
+                ys.push(yr.parse::<i64>().unwrap() as f64 / 1e6);
+            }
+        }
+        assert!(xs.len() >= 3, "region needs a real contour");
+        (
+            xs.iter().cloned().fold(f64::MAX, f64::min),
+            xs.iter().cloned().fold(f64::MIN, f64::max),
+            ys.iter().cloned().fold(f64::MAX, f64::min),
+            ys.iter().cloned().fold(f64::MIN, f64::max),
+        )
+    }
+
+    /// A custom polygon pad is real copper, and must be painted as a region
+    /// that turns with the part.
+    ///
+    /// This used to emit a 0.1mm circle placeholder: whatever the pad actually
+    /// covered — a shielding paddle, a stub antenna, a QFN thermal tab —
+    /// silently shrank to a dot in the Gerbers, so the fabricated board was
+    /// missing copper the DRC, the router and the renderer all believed was
+    /// there.
+    #[test]
+    fn custom_pad_paints_a_rotated_region() {
+        // A 2.0 x 0.5mm bar, expressed as a polygon rather than a rect.
+        let shape = PadShape::Custom {
+            vertices: vec![
+                Vec2::new(-1.0, -0.25),
+                Vec2::new(1.0, -0.25),
+                Vec2::new(1.0, 0.25),
+                Vec2::new(-1.0, 0.25),
+            ],
+        };
+
+        // Unrotated: pad 1 sits at (24, 20), so the bar spans x 23..25.
+        let mut buf = Vec::new();
+        write_gerber_layer(
+            &mut buf,
+            &rotated_pad_pcb(0.0, 0.0, shape.clone()),
+            PcbLayer::FCu,
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(
+            !out.contains("C,0.100000"),
+            "the 0.1mm placeholder aperture must be gone:\n{out}"
+        );
+        let (x0, x1, y0, y1) = first_region_extents(&out);
+        assert!(
+            (x1 - x0 - 2.0).abs() < 1e-6 && (y1 - y0 - 0.5).abs() < 1e-6,
+            "unrotated bar should be 2.0 x 0.5mm, got {:.3} x {:.3}",
+            x1 - x0,
+            y1 - y0
+        );
+        assert!(
+            (x0 - 23.0).abs() < 1e-6 && (y0 - 19.75).abs() < 1e-6,
+            "region must land on the pad, got x0={x0:.3} y0={y0:.3}"
+        );
+
+        // Turned 90°, by the footprint or by the pad — the bar stands up, and
+        // the pad centre itself moves to (25, 19) with the footprint.
+        for (fp_rot, pad_rot, cx, cy) in [(90.0, 0.0, 25.0, 19.0), (0.0, 90.0, 24.0, 20.0)] {
+            let mut buf = Vec::new();
+            write_gerber_layer(
+                &mut buf,
+                &rotated_pad_pcb(fp_rot, pad_rot, shape.clone()),
+                PcbLayer::FCu,
+            )
+            .unwrap();
+            let out = String::from_utf8(buf).unwrap();
+            let (x0, x1, y0, y1) = first_region_extents(&out);
+            assert!(
+                (x1 - x0 - 0.5).abs() < 1e-6 && (y1 - y0 - 2.0).abs() < 1e-6,
+                "at fp={fp_rot} pad={pad_rot} the bar should stand up, \
+                 got {:.3} x {:.3}",
+                x1 - x0,
+                y1 - y0
+            );
+            assert!(
+                ((x0 + x1) / 2.0 - cx).abs() < 1e-6 && ((y0 + y1) / 2.0 - cy).abs() < 1e-6,
+                "at fp={fp_rot} pad={pad_rot} the region centre should be \
+                 ({cx}, {cy}), got ({:.3}, {:.3})",
+                (x0 + x1) / 2.0,
+                (y0 + y1) / 2.0
+            );
+        }
+    }
+
     #[test]
     fn gerber_flash_commands() {
         let pcb = test_pcb();
@@ -1525,6 +1691,87 @@ mod tests {
                 "{name}: missing format spec"
             );
             assert!(content.contains("M02*"), "{name}: missing end-of-file");
+        }
+    }
+
+    /// A board whose only via is buried between two inner layers, placed
+    /// somewhere no pad or trace reaches so its flash is unmistakable.
+    fn buried_via_pcb() -> Pcb {
+        let mut pcb = test_pcb();
+        pcb.footprints.clear();
+        pcb.zones.clear();
+        pcb.traces.clear();
+        pcb.vias = vec![Via {
+            position: Vec2::new(30.0, 20.0),
+            diameter: 0.8,
+            drill: 0.3,
+            start_layer: PcbLayer::In2Cu,
+            end_layer: PcbLayer::In1Cu,
+            net: "1".into(),
+            source: None,
+        }];
+        pcb
+    }
+
+    /// A blind or buried via must not put copper on layers outside its span.
+    ///
+    /// Flashing every via on every copper layer is a dead short: on the CM5
+    /// fixture a via spanning In2.Cu–In1.Cu landed on In4.Cu 0.006mm from a
+    /// track on a different net.
+    #[test]
+    fn buried_via_flashes_only_within_its_span() {
+        let pcb = buried_via_pcb();
+        let via_x = mm_to_coord(30.0);
+        let via_y = mm_to_coord(20.0);
+        let expected = format!("X{via_x}Y{via_y}D03*");
+
+        for layer in [PcbLayer::In1Cu, PcbLayer::In2Cu] {
+            let mut buf = Vec::new();
+            write_gerber_layer(&mut buf, &pcb, layer).unwrap();
+            let output = String::from_utf8(buf).unwrap();
+            assert!(
+                output.contains(&expected),
+                "{layer:?} is inside the via's span but has no via flash"
+            );
+        }
+
+        for layer in [
+            PcbLayer::FCu,
+            PcbLayer::BCu,
+            PcbLayer::In3Cu,
+            PcbLayer::In4Cu,
+        ] {
+            let mut buf = Vec::new();
+            write_gerber_layer(&mut buf, &pcb, layer).unwrap();
+            let output = String::from_utf8(buf).unwrap();
+            assert!(
+                !output.contains(&expected),
+                "{layer:?} is outside the In2.Cu–In1.Cu span but carries the via's pad"
+            );
+        }
+    }
+
+    /// A genuine through-hole via still reaches every copper layer.
+    #[test]
+    fn through_via_flashes_on_all_copper_layers() {
+        let mut pcb = buried_via_pcb();
+        pcb.vias[0].start_layer = PcbLayer::FCu;
+        pcb.vias[0].end_layer = PcbLayer::BCu;
+        let expected = format!("X{}Y{}D03*", mm_to_coord(30.0), mm_to_coord(20.0));
+
+        for layer in [
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In4Cu,
+            PcbLayer::BCu,
+        ] {
+            let mut buf = Vec::new();
+            write_gerber_layer(&mut buf, &pcb, layer).unwrap();
+            let output = String::from_utf8(buf).unwrap();
+            assert!(
+                output.contains(&expected),
+                "{layer:?} is inside a through via's span but has no via flash"
+            );
         }
     }
 }

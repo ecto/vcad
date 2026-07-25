@@ -3219,7 +3219,7 @@ name = "mecheval-grader"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "phyz 0.3.0",
+ "phyz",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4015,20 +4015,12 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.0"
-dependencies = [
- "phyz-math 0.1.0",
- "tang",
-]
-
-[[package]]
-name = "phyz"
 version = "0.3.1"
 dependencies = [
  "phyz-collision",
  "phyz-contact",
  "phyz-diff",
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
  "phyz-rigid",
 ]
@@ -4037,7 +4029,7 @@ dependencies = [
 name = "phyz-collision"
 version = "0.3.1"
 dependencies = [
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
 ]
 
@@ -4046,7 +4038,7 @@ name = "phyz-contact"
 version = "0.3.1"
 dependencies = [
  "phyz-collision",
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
 ]
 
@@ -4054,7 +4046,7 @@ dependencies = [
 name = "phyz-diff"
 version = "0.3.1"
 dependencies = [
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
  "phyz-rigid",
  "tang",
@@ -4068,19 +4060,11 @@ version = "0.3.1"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
  "phyz-rigid",
  "pollster",
  "wgpu",
-]
-
-[[package]]
-name = "phyz-math"
-version = "0.1.0"
-dependencies = [
- "tang",
- "tang-la",
 ]
 
 [[package]]
@@ -4095,7 +4079,7 @@ dependencies = [
 name = "phyz-md"
 version = "0.3.1"
 dependencies = [
- "phyz-math 0.3.1",
+ "phyz-math",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_distr",
@@ -4106,14 +4090,14 @@ dependencies = [
 name = "phyz-model"
 version = "0.3.1"
 dependencies = [
- "phyz-math 0.3.1",
+ "phyz-math",
 ]
 
 [[package]]
 name = "phyz-rigid"
 version = "0.3.1"
 dependencies = [
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
 ]
 
@@ -7610,7 +7594,7 @@ dependencies = [
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
- "phyz 0.3.1",
+ "phyz",
  "serde",
  "serde_json",
  "stl_io",
@@ -7927,9 +7911,9 @@ dependencies = [
 name = "vcad-sim"
 version = "0.9.4"
 dependencies = [
- "phyz 0.3.1",
+ "phyz",
  "phyz-gpu",
- "phyz-math 0.3.1",
+ "phyz-math",
  "phyz-model",
  "serde",
  "thiserror 2.0.18",
