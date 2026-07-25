@@ -32,7 +32,10 @@ fn kicad_round_trip_preserves_every_pad_rectangle() {
                 .iter()
                 .find(|p| p.number == before.number)
                 .unwrap_or_else(|| {
-                    panic!("{}: pad {} lost across the round trip", b.name, before.number)
+                    panic!(
+                        "{}: pad {} lost across the round trip",
+                        b.name, before.number
+                    )
                 });
 
             let want = PadRect::of(before_fp, before);
@@ -54,9 +57,8 @@ fn kicad_round_trip_preserves_every_pad_rectangle() {
 #[test]
 fn kicad_round_trip_keeps_fine_pitch_pads_apart() {
     for &rot in &vcad_ecad_invariants::ROTATIONS {
-        let pcb = vcad_ecad_invariants::board(vec![vcad_ecad_invariants::fine_pitch_tqfn(
-            rot, true,
-        )]);
+        let pcb =
+            vcad_ecad_invariants::board(vec![vcad_ecad_invariants::fine_pitch_tqfn(rot, true)]);
         let back = vcad_ecad_symbols::parse_kicad_pcb(&vcad_ecad_symbols::write_kicad_pcb(&pcb))
             .expect("re-parse");
         let fp = &back.footprints[0];

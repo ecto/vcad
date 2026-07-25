@@ -118,7 +118,11 @@ fn cm5_pads_of_different_nets_do_not_overlap() {
             })
         })
         .collect();
-    assert!(pads.len() > 1000, "fixture looks wrong: {} pads", pads.len());
+    assert!(
+        pads.len() > 1000,
+        "fixture looks wrong: {} pads",
+        pads.len()
+    );
 
     // Bucket by a grid cell so this is a sweep, not an O(n^2) scan over ~9k
     // pads. Cell size covers the largest pad, so any overlapping pair shares

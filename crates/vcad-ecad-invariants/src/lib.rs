@@ -219,18 +219,49 @@ fn shapes_footprint(rot: f64, front: bool) -> Footprint {
         rotation: rot,
         front,
         pads: vec![
-            pad("1", PadShape::Rect { width: 2.4, height: 0.6 }, Vec2::new(-3.0, 0.0), 0.0, layer, "N1"),
+            pad(
+                "1",
+                PadShape::Rect {
+                    width: 2.4,
+                    height: 0.6,
+                },
+                Vec2::new(-3.0, 0.0),
+                0.0,
+                layer,
+                "N1",
+            ),
             pad(
                 "2",
-                PadShape::RoundRect { width: 2.4, height: 0.6, corner_ratio: 0.25 },
+                PadShape::RoundRect {
+                    width: 2.4,
+                    height: 0.6,
+                    corner_ratio: 0.25,
+                },
                 Vec2::new(0.0, 0.0),
                 0.0,
                 layer,
                 "N2",
             ),
-            pad("3", PadShape::Oval { width: 2.4, height: 0.6 }, Vec2::new(3.0, 0.0), 0.0, layer, "N3"),
+            pad(
+                "3",
+                PadShape::Oval {
+                    width: 2.4,
+                    height: 0.6,
+                },
+                Vec2::new(3.0, 0.0),
+                0.0,
+                layer,
+                "N3",
+            ),
             // A disc, which must stay rotation-invariant.
-            pad("4", PadShape::Circle { diameter: 1.0 }, Vec2::new(0.0, 2.5), 0.0, layer, "N4"),
+            pad(
+                "4",
+                PadShape::Circle { diameter: 1.0 },
+                Vec2::new(0.0, 2.5),
+                0.0,
+                layer,
+                "N4",
+            ),
         ],
         graphics: vec![],
         model_3d: None,
@@ -250,8 +281,28 @@ fn pad_local_rotation_footprint(rot: f64) -> Footprint {
         rotation: rot,
         front: true,
         pads: vec![
-            pad("1", PadShape::Rect { width: 2.0, height: 0.5 }, Vec2::new(-2.0, 0.0), 30.0, PcbLayer::FCu, "P1"),
-            pad("2", PadShape::Oval { width: 2.0, height: 0.5 }, Vec2::new(2.0, 0.0), -60.0, PcbLayer::FCu, "P2"),
+            pad(
+                "1",
+                PadShape::Rect {
+                    width: 2.0,
+                    height: 0.5,
+                },
+                Vec2::new(-2.0, 0.0),
+                30.0,
+                PcbLayer::FCu,
+                "P1",
+            ),
+            pad(
+                "2",
+                PadShape::Oval {
+                    width: 2.0,
+                    height: 0.5,
+                },
+                Vec2::new(2.0, 0.0),
+                -60.0,
+                PcbLayer::FCu,
+                "P2",
+            ),
         ],
         graphics: vec![],
         model_3d: None,
@@ -274,7 +325,10 @@ pub fn fine_pitch_tqfn(rot: f64, front: bool) -> Footprint {
             let y = (i as f64 - 2.5) * pitch;
             pad(
                 &format!("{}", i + 1),
-                PadShape::Rect { width: 0.875, height: 0.25 },
+                PadShape::Rect {
+                    width: 0.875,
+                    height: 0.25,
+                },
                 Vec2::new(-2.0, y),
                 0.0,
                 layer,
@@ -407,7 +461,11 @@ mod tests {
         for p in &mut turned.pads {
             p.rotation += 90.0;
         }
-        let bad: Vec<PadRect> = turned.pads.iter().map(|p| PadRect::of(&turned, p)).collect();
+        let bad: Vec<PadRect> = turned
+            .pads
+            .iter()
+            .map(|p| PadRect::of(&turned, p))
+            .collect();
         assert!(
             bad.windows(2).any(|w| w[0].overlaps(&w[1])),
             "double-counted rotation must make neighbouring TQFN pads overlap — \
