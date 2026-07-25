@@ -16,6 +16,14 @@
 //! - [`RouteSession::remove`] — rip a span back out (tombstone + lazy compaction)
 //!   so rip-up-and-reroute is O(drop) rather than a full index rebuild.
 //!
+//! Copper is not the whole legality story: a *drilled hole* obeys a rule that
+//! has nothing to do with layers or nets. [`RouteSession::probe_drill`] /
+//! [`RouteSession::commit_drill`] maintain a second index over via barrels and
+//! through-hole pad drills, so two blind/buried vias on disjoint layer spans —
+//! which share no copper element and therefore never meet in `probe` — still
+//! have to keep `rules.hole_to_hole` apart. A committed barrel takes a
+//! [`SpanId`] like any other span, so rip-up removes it with its copper.
+//!
 //! This is the structural inversion the router rests on: clearance becomes a
 //! constraint consulted *during* the search, not a violation detected after it.
 
@@ -69,6 +77,10 @@ impl RTreeObject for SessionElement {
 struct DrillElement {
     center: Vec2,
     radius: f64,
+    /// `Some` for a barrel the router committed — its liveness is tracked in
+    /// `live` under this id, so rip-up takes the hole out with the copper.
+    /// `None` for a hole that was on the board when the session was built.
+    id: Option<SpanId>,
 }
 
 impl RTreeObject for DrillElement {
@@ -214,6 +226,17 @@ pub struct RouteSession {
     max_drill_radius: f64,
     /// The board's minimum hole-to-hole edge spacing (mm).
     hole_to_hole: f64,
+    /// True at ids that name a drilled barrel rather than a copper span
+    /// (parallel to `live`), so `remove` knows which index to compact. A
+    /// router-committed barrel takes a [`SpanId`] like any other span, so
+    /// rip-up rips the hole out with the copper instead of leaking it.
+    is_drill: Vec<bool>,
+    /// Count of tombstoned-but-not-yet-compacted drills.
+    drills_dead: usize,
+    /// net → via drill diameter from its net class (mirrors how a routed via
+    /// is sized when it is written back to the board).
+    net_via_drill: HashMap<String, f64>,
+    default_via_drill: f64,
     /// Per-span bboxes (parallel to `live`), so a remove can stamp the dirty
     /// grid without consulting the tree.
     bounds: Vec<[f64; 4]>,
@@ -285,6 +308,7 @@ impl RouteSession {
         }
         let elems = elems;
         let live = vec![true; elems.len()];
+        let is_drill = vec![false; elems.len()];
         let bounds: Vec<[f64; 4]> = elems
             .iter()
             .map(|e| [e.min[0], e.min[1], e.max[0], e.max[1]])
@@ -320,8 +344,28 @@ impl RouteSession {
             .values()
             .copied()
             .fold(default_clearance, f64::max);
+        // net → via drill from its class, mirroring how the router's vias are
+        // sized on write-back (see `router::legalize::via_geom_for`), so a
+        // caller can probe a candidate via without plumbing drill sizes.
+        let default_via_drill = pcb.rules.default_rules.via_drill;
+        let mut net_via_drill: HashMap<String, f64> = HashMap::new();
+        for (class, nets) in &pcb.rules.net_class_assignments {
+            let Some(c) = pcb.rules.class_rules.iter().find(|c| c.name == *class) else {
+                continue;
+            };
+            for n in nets {
+                net_via_drill.insert(n.clone(), c.via_drill);
+            }
+        }
         let drills = drill_elements(pcb);
-        let max_drill_radius = drills.iter().map(|d| d.radius).fold(0.0_f64, f64::max);
+        // Broadphase reach: the biggest drill radius already on the board or
+        // that any net class can still mint.
+        let max_drill_radius = net_via_drill
+            .values()
+            .chain(std::iter::once(&default_via_drill))
+            .map(|d| d / 2.0)
+            .chain(drills.iter().map(|d| d.radius))
+            .fold(0.0_f64, f64::max);
         let pair_nets: std::collections::HashSet<String> = crate::drc::diff_pairs(pcb)
             .into_iter()
             .flat_map(|dp| [dp.net_p, dp.net_n])
@@ -360,6 +404,10 @@ impl RouteSession {
             drills: RTree::bulk_load(drills),
             max_drill_radius,
             hole_to_hole: pcb.rules.hole_to_hole,
+            is_drill,
+            drills_dead: 0,
+            net_via_drill,
+            default_via_drill,
             bounds,
             dirty,
             change_epoch: 0,
@@ -406,6 +454,12 @@ impl RouteSession {
                 [center.x + reach, center.y + reach],
             ))
         {
+            // A router-committed barrel that has since been ripped up is not
+            // an obstacle — otherwise rip-up-and-reroute would leak holes and
+            // slowly wall the board off.
+            if hole.id.is_some_and(|i| !self.live[i]) {
+                continue;
+            }
             let d = ((hole.center.x - center.x).powi(2) + (hole.center.y - center.y).powi(2))
                 .sqrt()
                 - hole.radius
@@ -473,13 +527,37 @@ impl RouteSession {
         self.hole_to_hole
     }
 
-    /// Index a drilled hole so later [`RouteSession::probe_drill`] calls see it.
-    /// Call this for every via a router commits — the copper commit alone leaves
-    /// the barrel invisible to the hole-to-hole rule.
-    pub fn commit_drill(&mut self, center: Vec2, diameter: f64) {
+    /// Index a drilled hole so later [`RouteSession::probe_drill`] calls see it,
+    /// returning its stable [`SpanId`]. Call this for every via a router
+    /// commits — the copper commit alone leaves the barrel invisible to the
+    /// hole-to-hole rule, so two router-placed vias on disjoint layer spans
+    /// would still collide in the drill file.
+    ///
+    /// The id shares the span space with copper, so
+    /// [`RouteSession::remove`] rips the barrel out exactly like a trace: a
+    /// ripped-up via must stop blocking the ground it used to occupy.
+    pub fn commit_drill(&mut self, center: Vec2, diameter: f64) -> SpanId {
+        let id = self.live.len();
         let radius = diameter / 2.0;
+        self.live.push(true);
+        self.is_drill.push(true);
+        let bbox = [
+            center.x - radius,
+            center.y - radius,
+            center.x + radius,
+            center.y + radius,
+        ];
+        self.bounds.push(bbox);
+        self.change_epoch += 1;
+        self.dirty
+            .mark([bbox[0], bbox[1]], [bbox[2], bbox[3]], self.change_epoch);
         self.max_drill_radius = self.max_drill_radius.max(radius);
-        self.drills.insert(DrillElement { center, radius });
+        self.drills.insert(DrillElement {
+            center,
+            radius,
+            id: Some(id),
+        });
+        id
     }
 
     /// The declared intra-pair gap between `net` and `other` when the two are
@@ -500,7 +578,8 @@ impl RouteSession {
         self.net_width.get(net).copied().unwrap_or(fallback)
     }
 
-    /// Number of live (non-tombstoned) copper spans.
+    /// Number of live (non-tombstoned) spans — copper elements and drilled
+    /// holes alike.
     pub fn len(&self) -> usize {
         self.live.iter().filter(|&&l| l).count()
     }
@@ -514,6 +593,7 @@ impl RouteSession {
     pub fn commit(&mut self, elem: CopperElement) -> SpanId {
         let id = self.live.len();
         self.live.push(true);
+        self.is_drill.push(false);
         let bbox = [elem.min[0], elem.min[1], elem.max[0], elem.max[1]];
         self.bounds.push(bbox);
         self.change_epoch += 1;
@@ -531,13 +611,20 @@ impl RouteSession {
             return false;
         }
         self.live[id] = false;
-        self.dead += 1;
         let b = self.bounds[id];
         self.change_epoch += 1;
         self.dirty
             .mark([b[0], b[1]], [b[2], b[3]], self.change_epoch);
-        if self.dead * 2 > self.tree.size() {
-            self.compact();
+        if self.is_drill[id] {
+            self.drills_dead += 1;
+            if self.drills_dead * 2 > self.drills.size() {
+                self.compact_drills();
+            }
+        } else {
+            self.dead += 1;
+            if self.dead * 2 > self.tree.size() {
+                self.compact();
+            }
         }
         true
     }
@@ -548,6 +635,36 @@ impl RouteSession {
         let kept: Vec<SessionElement> = self.tree.iter().filter(|e| live[e.id]).cloned().collect();
         self.tree = RTree::bulk_load(kept);
         self.dead = 0;
+    }
+
+    /// Rebuild the drill index without tombstoned barrels. Ids are preserved.
+    fn compact_drills(&mut self) {
+        let live = &self.live;
+        let kept: Vec<DrillElement> = self
+            .drills
+            .iter()
+            .filter(|d| d.id.is_none_or(|i| live[i]))
+            .cloned()
+            .collect();
+        self.drills = RTree::bulk_load(kept);
+        self.drills_dead = 0;
+    }
+
+    /// The drill diameter (mm) a via on `net` gets from its net class — the
+    /// same size the router writes back to the board (mirrors
+    /// `router::legalize::via_geom_for`), so a caller can probe a candidate via
+    /// without plumbing drill sizes through every call site.
+    pub fn via_drill_for(&self, net: &str) -> f64 {
+        self.net_via_drill
+            .get(net)
+            .copied()
+            .unwrap_or(self.default_via_drill)
+    }
+
+    /// [`RouteSession::probe_drill`] for a via on `net`, sized from its net
+    /// class — the shape every via-placement site in the router uses.
+    pub fn probe_via_drill(&self, center: Vec2, net: &str) -> DrillProbe {
+        self.probe_drill(center, self.via_drill_for(net))
     }
 
     /// Axis-aligned bounding boxes (`(min, max)` corners) of every live copper
@@ -754,6 +871,7 @@ fn drill_elements(pcb: &Pcb) -> Vec<DrillElement> {
         .map(|via| DrillElement {
             center: via.position,
             radius: via.drill / 2.0,
+            id: None,
         })
         .collect();
     for fp in &pcb.footprints {
@@ -762,6 +880,7 @@ fn drill_elements(pcb: &Pcb) -> Vec<DrillElement> {
                 out.push(DrillElement {
                     center: crate::geometry::pad_world_position(fp, pad),
                     radius: drill.diameter / 2.0,
+                    id: None,
                 });
             }
         }
@@ -1082,6 +1201,78 @@ mod tests {
         // Newly committed drills join the index.
         session.commit_drill(Vec2::new(60.0, 60.0), 0.4);
         assert!(!session.probe_drill(Vec2::new(60.3, 60.0), 0.4).legal);
+    }
+
+    #[test]
+    fn ripped_up_barrel_stops_blocking() {
+        // A committed barrel takes a SpanId, so rip-up-and-reroute takes the
+        // hole out with the copper. Without this the router would wall itself
+        // in: every via it ever tried and abandoned would keep its ground.
+        let mut session = RouteSession::from_pcb(&empty_pcb());
+        let a = Vec2::new(50.0, 50.0);
+        let id = session.commit_drill(a, 0.4);
+
+        // 0.7mm centers → 0.3mm edge gap against a 0.5mm rule.
+        let near = Vec2::new(50.7, 50.0);
+        let r = session.probe_drill(near, 0.4);
+        assert!(!r.legal, "0.3mm hole gap must violate the 0.5mm rule");
+        assert!(
+            (r.min_spacing - 0.3).abs() < 1e-9,
+            "spacing was {}",
+            r.min_spacing
+        );
+        // Exactly at the rule (0.9mm centers → 0.5mm gap): legal.
+        assert!(session.probe_drill(Vec2::new(50.9, 50.0), 0.4).legal);
+
+        assert!(session.remove(id));
+        assert!(
+            session.probe_drill(near, 0.4).legal,
+            "a ripped-up barrel must stop blocking the ground it held"
+        );
+        assert!(!session.remove(id), "double-remove returns false");
+    }
+
+    #[test]
+    fn drill_index_includes_through_hole_pads() {
+        // A drilled pad is a hole like any other: the DRC compares vias
+        // against pad drills, so the router's oracle must too.
+        let mut pcb = empty_pcb();
+        pcb.footprints.push(Footprint {
+            reference: "J1".into(),
+            value: "conn".into(),
+            footprint_name: "TH".into(),
+            position: Vec2::new(50.0, 50.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![Pad {
+                number: "1".into(),
+                pad_type: PadType::THT,
+                shape: PadShape::Circle { diameter: 1.6 },
+                position: Vec2::new(0.0, 0.0),
+                rotation: 0.0,
+                drill: Some(DrillSpec {
+                    diameter: 1.0,
+                    oval: false,
+                    oval_height: None,
+                }),
+                net: Some("VCC".into()),
+                layers: vec![PcbLayer::FCu],
+            }],
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        // 1.0mm from the pad center: gap = 1.0 - 0.5 - 0.2 = 0.3 < 0.5.
+        assert!(!session.probe_drill(Vec2::new(51.0, 50.0), 0.4).legal);
+        // 1.3mm away: gap = 0.6 — clear.
+        assert!(session.probe_drill(Vec2::new(51.3, 50.0), 0.4).legal);
+        // The pad's own net is irrelevant: a drill bit is mechanical, and the
+        // DRC's hole census counts same-net pairs too.
+        assert_eq!(
+            session.probe_drill(Vec2::new(51.0, 50.0), 0.4).nearest,
+            Some(Vec2::new(50.0, 50.0))
+        );
     }
 
     #[test]
