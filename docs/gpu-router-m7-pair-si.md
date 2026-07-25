@@ -222,3 +222,321 @@ nets adds ~409. Use the `Clearance` rule for attribution.
    an open board and fails on a full one. Wider corridor rip, or ordering
    polish before the board fills.
 4. The clean pre/post full-board DRC A/B.
+
+## M8 re-measurement after #684 — the skew claim was measuring stub copper
+
+Everything below is a fresh full-board measurement taken after #684 (absolute
+KiCad pad angles) and its companion short-pair centerline fix landed, on
+`e1a5d90d`. It was run to check whether the two broken claims had moved. They
+had, but the run also invalidated the *reading* of the skew claim, so this
+section supersedes M7's "two blocker groups" diagnosis.
+
+### The calibration anchor, re-verified
+
+Unchanged, and the bounds were not touched:
+
+```
+worst_group_skew           9.756 mm  <= 10.0   HOLDS
+worst_intra_pair_skew      1.074 mm  <=  1.1   HOLDS
+min_pair_coupled_fraction  0.857     >=  0.5   HOLDS
+vias_per_si_net            2.265     <=  3.0   HOLDS
+verdict: ALL HOLD
+```
+
+### The census improved; the receipt got worse
+
+The stripped-board census is now **47 of 49** coupled (bails: `/PCIe.TX_P`
+connector, `/USB3-1.RX_P` leg-validation), and the full-board pair-first stage
+routes **47** coupled, up from 43. Full route: 980s, routability **0.994**,
+380 routed / 28 unrouted. Despite that:
+
+```
+                            M7 (pre-fix)   M8 (post-#684)    bound
+worst_group_skew            9.297 mm        8.397 mm         <= 10.0   HOLDS
+worst_intra_pair_skew      37.853 mm       38.521 mm         <=  1.1   BROKEN
+min_pair_coupled_fraction   0.000           0.101            >=  0.5   BROKEN
+vias_per_si_net             2.766           3.128            <=  3.0   BROKEN
+```
+
+Three of four now break: `vias_per_si_net` **regressed through its bound**
+(294 vias over 94 routed SI nets). `min_pair_coupled_fraction` came off zero
+— the `/HS.*` group is fixed — but the new worst is `/MIPI0.D1_P` at 0.101.
+
+### What the 38mm skew actually is
+
+M7 read the tail as "pairs where one leg took a large detour" and priced the
+fix in compensation capacity (138mm of run for 38mm of deficit). That reading
+was wrong. The worst pairs are not detoured — **one leg is not routed at all.**
+
+Measured on the routed board, copper length per leg against the straight
+pad-to-pad span of that same net. The ratio needs no connectivity model, so it
+is immune to how one chooses to define an island:
+
+| board | legs | legs with copper < 50% of span | median ratio | min ratio |
+|---|---|---|---|---|
+| human | 86 | **0** | 1.23 | 1.03 |
+| ours (M8) | 84 | **7** | 1.11 | **0.01** |
+
+The seven:
+
+```
+  0.01  /USB3-0.TX_P            copper  0.23mm   span 18.36mm
+  0.02  /MIPI0.D3_P             copper  0.54mm   span 26.64mm
+  0.03  /PCIe.RX_P              copper  0.68mm   span 20.19mm
+  0.06  /RP1 IO/USB3-1-TXC_P    copper  1.02mm   span 17.31mm
+  0.06  /MIPI0.D1_N             copper  1.34mm   span 21.85mm
+  0.10  /HDMI0.CLK_P            copper  1.44mm   span 15.15mm
+  0.19  /MIPI1.D1_P             copper  5.57mm   span 29.54mm
+```
+
+`/USB3-0.TX_P` carries 1% of the copper its own pad span requires. These are
+not routes; they are pad escapes and orphaned stubs. `/MIPI1.D1_P` is four
+disjoint fragments — a 0.739mm escape at U3.V5, a 0.481mm stub, a floating
+4.234mm stub, and a **0.113mm** stub at J4.83 — with 29.5mm of nothing between
+them, while its twin `/MIPI1.D1_N` is a complete 38.57mm route.
+
+So the reported skew is very nearly *the length of the leg that did route*:
+`/MIPI1.D3_P` 38.52mm skew, `/USB3-1.RX_P` 33.50mm against a polish centerline
+of 33.5mm. Compensation cannot close this and should never have been aimed at
+it — there is no second leg to match.
+
+Why it reached the receipt unflagged is a single gap, and it is not in the DRC:
+**`si_claims` never asks whether a leg is connected.** Its test for "measured" is
+`net_routed_length > 0`, which sums any copper carrying the net name, so a pad
+escape qualifies. Every one of the seven was *already* reported
+`UnconnectedNet` by the DRC at the same time as the receipt was scoring it as a
+routed pair.
+
+The second-order reason the resulting numbers looked plausible rather than
+absurd is `coupled_fraction`, which normalizes by P alone — "fraction of P
+length with same-layer N copper within 1.75x pitch". A stub lying beside a full
+twin is 100% coupled, so `/MIPI1.D3_P` reported `coupled 1.000` while carrying
+38.52mm of skew. The metric rewards the failure.
+
+> Correction to an earlier draft of this section, kept because the mistake is
+> instructive: it claimed the DRC missed these legs because each was bridged by
+> copper it was shorted to. That was wrong, and it came from grepping
+> `drc_json`'s output — which prints only `Short`, `Clearance`, `MinTraceWidth`
+> and `NetIslands`, and counts `UnconnectedNet` without ever printing it. The
+> shorts-defeat-connectivity mechanism is real, but it lives in the *pruner*,
+> not in `UnconnectedNet` — see below.
+
+## The prune was being defeated by shorts
+
+`dangling_copper_mask` is documented as removing copper whose island "touches no
+pad and no pour fragment **of their net**", but it judged anchoring over the
+board-global touch graph and accepted *any* pad in the component. So a dead
+island of net X that merely brushed net Y was swept into Y's component, saw Y's
+pads, and read as anchored. On a board carrying 845 shorts that is not a corner
+case.
+
+Fixed by judging anchoring over same-net connectivity (`build_same_net_dsu`,
+which reuses the contact list the global pass already builds, so it costs one
+linear walk and no extra broadphase). Net ties still connect, since intentional
+junctions are what `NetTieGroups::exempt` is for. `UnconnectedNet` gets the same
+treatment for the same reason — a short is not a substitute for a route.
+
+Measured on the routed CM5, re-pruning the saved board:
+
+| | before | after |
+|---|---|---|
+| `NetIslands` | 93 | **17** |
+| `Clearance` | 173 | **150** |
+| `Short` | 845 | 815 |
+| `UnconnectedNet` | 253 | **253** |
+| total | 3400 | 3156 |
+
+`UnconnectedNet` holding at 253 is the soundness evidence: 393 traces and 52
+vias were deleted and **no net lost a connection**. Route-attributable
+`Clearance` drops from +150 to +127, and `worst_group_skew` from 8.397mm to
+3.579mm, because that dead copper was being counted as routed length.
+
+## Spurs: the other half of the excess copper
+
+Removing dead *islands* is not enough. A dead-end branch hanging off an island
+that *does* reach pads is kept by an island-level pruner, and those are large
+here — comparing each net's total copper against the shortest pad-to-pad path
+through it:
+
+| net | total | shortest pad-to-pad path | spur |
+|---|---|---|---|
+| `/USB3-1.DP` | 72.86mm | 36.60mm | **36.26mm** |
+| `/USB3-0.DP` | 70.11mm | 35.95mm | **34.17mm** |
+| `/MIPI1.D2_P` | 68.08mm | 34.67mm | **33.41mm** |
+
+That is a ~34mm unterminated stub on a USB3 differential pair — a real
+transmission-line defect, not just a bookkeeping error.
+
+`drc::spur_copper_mask` / `prune_spur_copper` implement the finer pass: iterated
+leaf removal on the same-net contact graph, where a node is anchored if it is a
+pad or pour. A non-anchored node of degree ≤ 1 cannot lie on a path between two
+pads, so its copper goes and its neighbour's degree drops; repeat to a fixpoint.
+Removing a leaf can never disconnect what remains, and the measurement agrees:
+run over both boards it changed **neither** board's `UnconnectedNet` count
+(human 291 → 291, ours 253 → 253) while dropping `NetIslands` on the human board
+from 128 to 27.
+
+Applied to the routed board it recovers a claim: `vias_per_si_net` **3.106 →
+2.626, HOLDS** — the spurs were carrying the vias that pushed it over.
+
+**It is deliberately not wired into `route_all` yet.** For a net the router only
+partially reached, *every* piece of its copper is a dead end, so enabling the
+pass reclassifies those nets as unrouted and moves `routability`. The existing
+`chained_copper_anchored_through_via_kept` test pins the current island-level
+contract precisely there (a chain reaching one pad, kept as a unit), and it
+fails under the finer rule — correctly, because that chain really is a stub.
+Reconciling the contract needs its own full-board before/after, so it is a
+separate change rather than something smuggled in here.
+
+## What is left, and why compensation is still the wrong tool
+
+After both prunes and the receipt gate, `worst_intra_pair_skew` is **unchanged
+at 38.521mm**. `/MIPI1.D3_N` holds 77.03mm of copper for a 34.54mm pad span, all
+of it on pad-to-pad paths and reported `continuous` with 2/2 pads — so it is
+neither dead copper nor a spur but a genuine redundant **cycle**: two parallel
+routes between the same points, which leaf-pruning cannot touch because every
+node has degree ≥ 2. That is the signature of a re-route that did not remove the
+path it replaced.
+
+So the remaining skew is real excess copper on a real route, and the fix is
+cycle removal (keep a spanning structure over the net's pads, drop the rest) plus
+finding the stage that leaves the loop behind — not compensation, which at
+0.276mm/mm would need ~138mm of run to absorb 38mm and would be adding copper to
+a net that already has twice what it needs.
+
+## The receipt is now fail-closed on unrouted legs
+
+`si_claims` gained a fifth claim, `si_pairs_incomplete` (bound 0), and now
+excludes a pair from the skew and coupling claims when either leg holds less
+copper than its own pad span requires. Excluding without reporting would be
+worse than the original bug — it would let a board pass by leaving the hard
+pairs as stubs — so the exclusions are counted and bounded.
+
+The gate deliberately does **not** use DRC continuity. That was tried first and
+is disqualifying: the CM5 fixture is reverse-engineered, its imported copper has
+sub-tolerance gaps, and continuity therefore reports **25 of the human board's
+49 pairs** as discontinuous, which would break the calibration anchor. The
+length test reads only copper length and pad positions, so it is immune to that.
+
+The threshold is `MIN_LEG_SPAN_FRACTION = 0.5`, calibrated like every other
+bound to the human board, whose thinnest leg is `/LPDDR4 RAM/DQS1_C_A` at 0.522
+(6.81mm across a 13.04mm span). It cannot be 1.0 even though a connected path
+must span its pads, because copper runs pad-edge to pad-edge rather than
+centre-to-centre and correctly routed legs land just under
+(`/LPDDR4 RAM/DQS0_T_B` 0.999, `/HDMI0.TX0_P` 0.994). The ~4% margin is thin and
+is the reason this is a screen for *absent* copper, not a length check. It is a
+necessary, not sufficient, condition — `UnconnectedNet` remains the
+authoritative completeness check; this only stops the receipt from *measuring*
+legs that are plainly not routes.
+
+`examples/starved_legs` names the offending legs, the same way
+`pair_coupled_fraction` names the pairs behind `min_pair_coupled_fraction`.
+
+### The anchor still passes, unchanged
+
+The whole point of the exercise, re-verified after every change:
+
+```
+worst_group_skew           9.756 mm  <= 10.0   HOLDS
+worst_intra_pair_skew      1.074 mm  <=  1.1   HOLDS   (over 49 pairs, 0 excluded)
+si_pairs_incomplete        0         <=  0     HOLDS
+min_pair_coupled_fraction  0.857     >=  0.5   HOLDS
+vias_per_si_net            2.265     <=  3.0   HOLDS
+verdict: ALL HOLD
+```
+
+Every original number is identical to M7's. **No bound was changed**, and the
+stripped-fixture DRC baseline is also unchanged at 311 short/clearance, 23
+`Clearance` — the connectivity fixes do not move it.
+
+## `si_finish` was handing back a dirtier board than it was given
+
+Caught by the end-to-end validation run, and invisible any other way. The
+same-net prune fixed inside `route_all` worked — the fresh route's prune removed
+**2030 dead traces** where re-pruning the old saved board found 393 — yet the
+final receipt was byte-identical to the unfixed baseline.
+
+The reason: `route_all` prunes as its last word, but `si_finish` runs *after* it,
+and every one of its stages rips copper and re-routes it. Measured: **231 dead
+traces and 52 dead vias** left behind, which `net_routed_length` counts as routed
+copper. `si_finish` now prunes at its end, upholding the same invariant
+`route_all` does.
+
+Worth stating as a lesson rather than a line of code: a prune placed anywhere but
+last is a prune that a later stage undoes, and the receipt is what noticed.
+
+## Scoreboard
+
+Fresh full route on the fixed pipeline: 874.5s, routability **0.994**,
+379 routed / 29 unrouted, 895 vias.
+
+| claim | M7 | M8 measured | bound | |
+|---|---|---|---|---|
+| `worst_group_skew` | 9.297mm | **3.579mm** | ≤ 10.0 | HOLDS |
+| `worst_intra_pair_skew` | 37.853mm | 38.521mm | ≤ 1.1 | BROKEN |
+| `si_pairs_incomplete` | *(did not exist)* | 9 | ≤ 0 | BROKEN |
+| `min_pair_coupled_fraction` | 0.000 | 0.221 | ≥ 0.5 | BROKEN |
+| `vias_per_si_net` | 2.766 | 3.106 → **2.626** with spur prune | ≤ 3.0 | BROKEN / HOLDS |
+
+**1 of 5 holds. The goal of this work — all claims HOLDS on the full board — was
+not reached**, and the reason is recorded above rather than papered over: the
+headline skew is one unfixed mechanism (redundant cycles), and reaching it by
+compensation would have meant tuning a number computed over copper that is not a
+route.
+
+One claim recovered decisively, a second recovered once the spur pass lands, and
+one new claim makes the unrouted pairs visible instead of silently feeding the
+other two.
+
+### DRC delta
+
+Against the stripped fixture (311 short/clearance, 23 `Clearance`):
+
+| rule | stripped | M7 full board | M8 fresh route | human |
+|---|---|---|---|---|
+| `Clearance` | 23 | 173 | **158** | 1044 |
+| `NetIslands` | 30 | 93 | **17** | 128 |
+| total | 847 | 3400 | **3164** | 14104 |
+
+Route-attributable `Clearance` is +135, down from +150, so acceptance on "no new
+route-attributable DRC" is **still not met** — it is better, not zero. As the
+human column shows, `MinDrill`, `AnnularRing` and `MinTraceWidth` fire on
+essentially every via and thin trace on the human board too, so they are
+imported-rule artifacts and `Clearance` is the number that attributes.
+
+## What did not work
+
+- **`descend_board` is inert on a full board: 0 of 41 pairs tuned, 41
+  rejected.** M7 credits descent with driving reachable pairs to ~0.006mm, and
+  that reproduces in isolation — but every attempt is rejected by its
+  fail-closed clearance check once the board is full. The lever M7 named as the
+  answer to residual skew contributes exactly nothing at the size that matters.
+- **Phase compensation is real but tiny in reach**: 3 pairs meandered
+  (`/ETH.1_P` 0.889 → 0.145mm, `/LPDDR4 RAM/DQS0_C_B` 0.872 → 0.029mm), with
+  **38 pairs still over tolerance**. It works only on pairs already close.
+- **Coupling degrades after construction.** Construction couples 47 of 49, yet
+  by the end of routing 10 pairs sit below 0.5 and polish recovers only 4. The
+  loss happens in the negotiation / rip-up stages, which re-route pair legs
+  independently. M7 framed the limit as polish's success rate; the earlier and
+  larger effect is that the board *un-couples* work already done.
+- **DRC continuity as the receipt's routed-ness gate** — disqualifying on this
+  fixture, as above (25 of 49 human pairs).
+- **Wiring the spur prune into `route_all`** — sound, but it moves the
+  routability contract, so it is staged separately.
+- **Chasing the four claims to HOLDS on this board would have been false.** With
+  legs unrouted and the pair claims blind to it, a green receipt would assert an
+  SI envelope over copper that is not a route.
+
+## Next
+
+1. Redundant-cycle removal on signal nets — the last mechanism behind the
+   38.5mm skew, and the only one left that compensation would otherwise be
+   pointed at. `/MIPI1.D3_N` (77.03mm of copper, 34.54mm span, continuous, 2/2
+   pads) is the reproducible target.
+2. Find the stage that re-routes a pair leg without removing the path it
+   replaced. The cycle is the evidence; the culprit is upstream of the pruners.
+3. Wire in `prune_spur_copper` with the routability contract reconciled, which
+   lands `vias_per_si_net` for real.
+4. Stop the negotiation / rip-up stages from un-coupling pairs that construction
+   already coupled — 47 coupled becomes 10 below 0.5 with no stage claiming
+   responsibility.

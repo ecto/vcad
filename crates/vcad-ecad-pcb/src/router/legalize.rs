@@ -173,6 +173,15 @@ pub(super) fn prune_dangling(
     // new copper after the existing copper, so the new traces occupy
     // `pcb.traces.len()..` of the mask and the new vias `pcb.vias.len()..`.
     let candidate = candidate_pcb(pcb, traces, vias);
+    // NOTE: [`crate::drc::spur_copper_mask`] is the finer version of this — it
+    // also strips dead-end branches hanging off islands that *are* pad-anchored,
+    // which this pass keeps by design ("the island is the unit"). It is measured
+    // and sound (it never changes any board's `UnconnectedNet` count) and it
+    // recovers `vias_per_si_net` on the CM5, but it is deliberately NOT wired in
+    // here yet: for a net the router only partially reached, every piece of
+    // copper is a dead end, so enabling it would reclassify those nets as
+    // unrouted and move `routability`. That reconciliation needs its own
+    // full-board before/after, so it is a separate change.
     let (keep_trace, keep_via) = dangling_copper_mask(&candidate);
     let (t0, v0) = (pcb.traces.len(), pcb.vias.len());
 

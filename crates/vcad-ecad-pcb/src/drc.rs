@@ -1597,7 +1597,16 @@ fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<D
     }
 
     detect_shorts(&nodes, &mut dsu, net_ties, &contacts, violations);
-    detect_unrouted(pcb, &nodes, &mut dsu, net_ties, violations);
+    // "Is this net routed?" must be asked over *legitimate* connectivity only.
+    // The global graph unions any copper that touches, which is exactly right
+    // for finding shorts and exactly wrong here: a net left as two pad escapes
+    // reads as connected the moment one of those escapes shorts into a
+    // neighbour, because the walk crosses the short and returns through the
+    // neighbour's copper. Measured on the CM5 fixture, seven starved diff-pair
+    // legs passed this check that way — one with 0.23mm of copper spanning
+    // 18.36mm of pad-to-pad distance.
+    let mut same_net = build_same_net_dsu(&nodes, &contacts, net_ties);
+    detect_unrouted(pcb, &nodes, &mut same_net, net_ties, violations);
     detect_net_islands(pcb, &nodes, &mut dsu, violations);
     detect_unstitched_pads(pcb, &nodes, &mut dsu, violations);
     detect_same_net_bypass(&nodes, net_ties, &contacts, violations);
@@ -2455,12 +2464,27 @@ fn build_connectivity(pcb: &Pcb) -> (Vec<ConnNode>, Dsu) {
 /// copper (the autorouter, judging the candidate board it is about to return)
 /// can drop its own dead pieces without touching copper it did not place.
 pub(crate) fn dangling_copper_mask(pcb: &Pcb) -> (Vec<bool>, Vec<bool>) {
-    let (nodes, mut dsu) = build_connectivity(pcb);
+    // Anchoring must be judged over SAME-NET connectivity, which is what this
+    // function's contract says ("no pad and no pour fragment *of their net*").
+    // The global graph unions any copper that touches, so a dead island of net X
+    // that merely brushes net Y is swept into Y's component, sees Y's pads, and
+    // reads as anchored. On a board carrying shorts that is not a corner case:
+    // measured on the routed CM5, ~36mm of dead copper per net survived this way
+    // on /MIPI1.D3_{P,N}, /USB3-1.DP and /MIPI1.D2_P — about half of each net's
+    // copper, which then inflated `net_routed_length` into 38mm of phantom
+    // intra-pair skew and carried the vias that pushed `vias_per_si_net` over
+    // its bound.
+    let net_ties = NetTieGroups::from_pcb(pcb);
+    let (nodes, _global, contacts) = build_connectivity_with_contacts(pcb);
+    let mut dsu = build_same_net_dsu(&nodes, &contacts, &net_ties);
     // Node order in build_conn_nodes: traces, then vias, then pads/pours.
     let n_traces = pcb.traces.len();
     let n_vias = pcb.vias.len();
 
-    // Component roots that are anchored: hold a pad or a pour fragment.
+    // Component roots that are anchored: hold a pad or a pour fragment. Within
+    // the same-net graph a component's members all share a net (or are joined by
+    // an intentional tie), so "holds a pad" already means "holds a pad of this
+    // net" — no per-net comparison is needed here.
     let mut anchored: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for (i, node) in nodes.iter().enumerate() {
         let is_anchor = node.pad.is_some() || matches!(node.geom, NodeGeom::Pour(_));
@@ -2470,12 +2494,14 @@ pub(crate) fn dangling_copper_mask(pcb: &Pcb) -> (Vec<bool>, Vec<bool>) {
         }
     }
 
-    let keep_trace: Vec<bool> = (0..n_traces)
-        .map(|i| anchored.contains(&dsu.find(i)))
-        .collect();
-    let keep_via: Vec<bool> = (0..n_vias)
-        .map(|i| anchored.contains(&dsu.find(n_traces + i)))
-        .collect();
+    // Copper carrying no net is never pruned. The same-net graph cannot reason
+    // about it (it unions nothing), and absent a net there is no claim that it
+    // *should* reach a pad — deleting it would be a guess, not a deduction.
+    let keep = |i: usize, dsu: &mut Dsu| -> bool {
+        nodes[i].net.is_empty() || anchored.contains(&dsu.find(i))
+    };
+    let keep_trace: Vec<bool> = (0..n_traces).map(|i| keep(i, &mut dsu)).collect();
+    let keep_via: Vec<bool> = (0..n_vias).map(|i| keep(n_traces + i, &mut dsu)).collect();
     (keep_trace, keep_via)
 }
 
@@ -2491,6 +2517,103 @@ pub(crate) fn dangling_copper_mask(pcb: &Pcb) -> (Vec<bool>, Vec<bool>) {
 pub fn prune_dangling_copper(pcb: &mut Pcb) -> (usize, usize) {
     let (keep_trace, keep_via) = dangling_copper_mask(pcb);
 
+    let mut ti = 0;
+    pcb.traces.retain(|_| {
+        let k = keep_trace[ti];
+        ti += 1;
+        k
+    });
+    let mut vi = 0;
+    pcb.vias.retain(|_| {
+        let k = keep_via[vi];
+        vi += 1;
+        k
+    });
+    (
+        keep_trace.iter().filter(|k| !**k).count(),
+        keep_via.iter().filter(|k| !**k).count(),
+    )
+}
+
+/// Per-trace and per-via keep flags that additionally drop **spur** copper:
+/// copper that is connected to a net's live island but lies on no path between
+/// two of that net's pads — a dead-end branch.
+///
+/// [`dangling_copper_mask`] cannot see these. It removes whole *islands* that
+/// reach no pad, and a spur hangs off an island that does reach pads, so it is
+/// kept. Measured on the routed CM5, that is not a rounding error: `/USB3-1.DP`
+/// carried 72.86mm of copper whose shortest pad-to-pad path is 36.60mm, so
+/// 36.26mm was dead-end branch — and likewise `/MIPI1.D2_P` (33.41mm of 68.08)
+/// and `/USB3-0.DP` (34.17mm of 70.11). Left in place it doubles
+/// `net_routed_length` (which is what produced 38mm of phantom intra-pair skew),
+/// carries vias that push `vias_per_si_net` over its bound, and — the part that
+/// is not merely bookkeeping — leaves a ~34mm unterminated stub hanging off a
+/// USB3 differential pair.
+///
+/// Algorithm: iterated leaf removal on the same-net contact graph. A node is
+/// *anchored* if it is a pad (or a pour fragment). Any non-anchored node of
+/// degree ≤ 1 cannot lie on a path between two pads, so its copper is dropped
+/// and its neighbour's degree decreases; repeat to a fixpoint. Removing a leaf
+/// can never disconnect what remains, so this preserves every pad-to-pad
+/// connection by construction — the soundness argument
+/// [`prune_dangling`](crate::router) relies on, one step finer.
+///
+/// Indices line up with `pcb.traces` and `pcb.vias`.
+pub(crate) fn spur_copper_mask(pcb: &Pcb) -> (Vec<bool>, Vec<bool>) {
+    let net_ties = NetTieGroups::from_pcb(pcb);
+    let (nodes, _global, contacts) = build_connectivity_with_contacts(pcb);
+    let n_traces = pcb.traces.len();
+    let n_vias = pcb.vias.len();
+
+    // Same-net adjacency, as index lists.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for c in contacts.iter() {
+        let (a, b) = (&nodes[c.i].net, &nodes[c.j].net);
+        if a.is_empty() || b.is_empty() || !net_ties.exempt(a, b, c.at) {
+            continue;
+        }
+        adj[c.i].push(c.j);
+        adj[c.j].push(c.i);
+    }
+
+    // Anchored nodes hold the net electrically and are never leaves to strip.
+    let anchored: Vec<bool> = nodes
+        .iter()
+        .map(|n| n.pad.is_some() || matches!(n.geom, NodeGeom::Pour(_)) || n.net.is_empty())
+        .collect();
+
+    let mut alive: Vec<bool> = vec![true; nodes.len()];
+    let mut degree: Vec<usize> = adj.iter().map(|a| a.len()).collect();
+    // Only trace and via nodes are removable — pads and pours are the board's,
+    // and copper with no net is never judged (see `dangling_copper_mask`).
+    let removable = |i: usize| i < n_traces + n_vias && !anchored[i];
+    let mut queue: Vec<usize> = (0..nodes.len())
+        .filter(|&i| removable(i) && degree[i] <= 1)
+        .collect();
+    while let Some(i) = queue.pop() {
+        if !alive[i] || !removable(i) || degree[i] > 1 {
+            continue;
+        }
+        alive[i] = false;
+        for &j in &adj[i] {
+            if alive[j] {
+                degree[j] = degree[j].saturating_sub(1);
+                if removable(j) && degree[j] <= 1 {
+                    queue.push(j);
+                }
+            }
+        }
+    }
+
+    let keep_trace: Vec<bool> = (0..n_traces).map(|i| alive[i]).collect();
+    let keep_via: Vec<bool> = (0..n_vias).map(|i| alive[n_traces + i]).collect();
+    (keep_trace, keep_via)
+}
+
+/// Remove spur copper board-wide — see [`spur_copper_mask`]. Returns
+/// `(traces_removed, vias_removed)`.
+pub fn prune_spur_copper(pcb: &mut Pcb) -> (usize, usize) {
+    let (keep_trace, keep_via) = spur_copper_mask(pcb);
     let mut ti = 0;
     pcb.traces.retain(|_| {
         let k = keep_trace[ti];
@@ -2608,6 +2731,34 @@ fn build_connectivity_with_contacts(pcb: &Pcb) -> (Vec<ConnNode>, Dsu, Vec<NodeC
         }
     }
     (nodes, dsu, contacts)
+}
+
+/// Union-find over copper connected **legitimately** — same net, or across an
+/// intentional net tie — rather than over everything that merely touches.
+///
+/// Reuses the contact list the global pass already produced, so this costs one
+/// linear walk and no extra broadphase. See the call site in
+/// [`check_connectivity`] for why `UnconnectedNet` needs it: a short is not a
+/// substitute for a route, and traversing one lets an unrouted net claim to be
+/// connected through its neighbour's copper.
+fn build_same_net_dsu(
+    nodes: &[ConnNode],
+    contacts: &[NodeContact],
+    net_ties: &NetTieGroups,
+) -> Dsu {
+    let mut dsu = Dsu::new(nodes.len());
+    for c in contacts {
+        let (a, b) = (&nodes[c.i].net, &nodes[c.j].net);
+        if a.is_empty() || b.is_empty() {
+            continue;
+        }
+        // `exempt` is true for a == b and for nets joined by a (possibly
+        // region-scoped) tie, so intentional junctions still connect.
+        if net_ties.exempt(a, b, c.at) {
+            dsu.union(c.i, c.j);
+        }
+    }
+    dsu
 }
 
 /// Closest point on segment `ab` to point `p`.
@@ -2770,6 +2921,8 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
 /// how many disjoint islands the net's copper forms, what fraction of its pads
 /// reach the main plane, its stitching-via count, and the worst stranded
 /// island. `continuous` is the single bit those gates key off.
+/// Continuity of a single net. Rebuilds the whole board's connectivity per call,
+/// so it is not the tool for scoring every net on a large board.
 pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
     let (nodes, mut dsu) = build_connectivity(pcb);
     continuity_of(pcb, &nodes, &mut dsu, net)
@@ -5427,5 +5580,66 @@ mod tests {
         let full = check_drc(&pcb);
         let scoped = check_drc_in_region(&pcb, Vec2::new(-10.0, -10.0), Vec2::new(110.0, 90.0));
         assert_eq!(full, scoped);
+    }
+
+    /// Dead copper must not be rescued by shorting into a live neighbour.
+    ///
+    /// Anchoring is judged per net, so an island of net B that reaches no B pad
+    /// is dead even when it physically touches net A's routed trace. Judged over
+    /// the board-global touch graph it would join A's component, see A's pads and
+    /// survive — which is what happened on the routed CM5, where a board with 845
+    /// shorts kept ~36mm of dead copper on nets like `/MIPI1.D3_N`, inflating
+    /// `net_routed_length` into phantom intra-pair skew.
+    #[test]
+    fn dead_copper_shorted_to_a_live_net_is_still_pruned() {
+        let mut pcb = clean_pcb();
+        // Net A: two pads, properly joined — the live net.
+        pcb.footprints.push(one_pad_footprint(
+            "U1",
+            Vec2::new(10.0, 10.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "A",
+        ));
+        pcb.footprints.push(one_pad_footprint(
+            "U2",
+            Vec2::new(30.0, 10.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "A",
+        ));
+        // Net B: a pad far away, so B's copper below reaches no pad of its own.
+        pcb.footprints.push(one_pad_footprint(
+            "U3",
+            Vec2::new(10.0, 50.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "B",
+        ));
+        let trace = |a: Vec2, b: Vec2, net: &str| Trace {
+            start: a,
+            end: b,
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: net.to_string(),
+            source: None,
+        };
+        pcb.traces
+            .push(trace(Vec2::new(10.0, 10.0), Vec2::new(30.0, 10.0), "A"));
+        // B stub starting ON A's trace (a short) and ending nowhere.
+        pcb.traces
+            .push(trace(Vec2::new(20.0, 10.0), Vec2::new(20.0, 20.0), "B"));
+
+        prune_dangling_copper(&mut pcb);
+        assert!(
+            !pcb.traces.iter().any(|t| t.net == "B"),
+            "B's stub reaches no B pad and must be pruned despite touching A"
+        );
+        assert!(
+            pcb.traces
+                .iter()
+                .any(|t| t.net == "A" && t.start == Vec2::new(10.0, 10.0)),
+            "A's routed trace runs pad to pad and must survive"
+        );
     }
 }

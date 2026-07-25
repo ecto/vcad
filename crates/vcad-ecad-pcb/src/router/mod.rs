@@ -587,6 +587,21 @@ pub fn si_finish(pcb: &mut Pcb, expansions: usize, descent_iters: usize) -> SiFi
         }
     }
     log::info!("si-finish: meandered {meandered} pairs, {over_tolerance} still over tolerance");
+    // Same invariant `route_all` enforces on its own output, and for the same
+    // reason: every stage above rips copper and re-routes it, so each one can
+    // strand an island. `route_all` prunes as its last word, but this pass runs
+    // *after* it, so without this the board it hands back is dirtier than the one
+    // it was given. Measured on the full CM5: 231 dead traces and 52 dead vias
+    // left behind, which `net_routed_length` counts as routed copper — enough to
+    // report `worst_group_skew` as 8.397mm where the pruned board measures
+    // 3.579mm.
+    let (dead_traces, dead_vias) = crate::drc::prune_dangling_copper(pcb);
+    if dead_traces > 0 || dead_vias > 0 {
+        log::info!(
+            "si-finish: pruned {dead_traces} dead traces, {dead_vias} dead vias left by the \
+             rip-and-reroute stages"
+        );
+    }
     SiFinishReport {
         polished,
         polish_attempted,
