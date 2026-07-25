@@ -2779,14 +2779,22 @@ pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
 /// expected to be a continuous plane, so a [`build_receipt`](crate) verdict
 /// should check their realized continuity. Conservative + case-insensitive:
 /// well-known rail names, `V…`/`…V…` voltage tags (`+3V3`, `5V0`, `1V8`), and
-/// `GND`-family grounds.
+/// `GND`-family grounds. Word separators are folded away first, so the same
+/// rail spelled `V_SUPPLY`, `V-SUPPLY` or `VSUPPLY` reads the same — a motor
+/// controller's battery input is often the highest-current net on the board and
+/// was being missed purely on punctuation.
 pub fn is_power_net(name: &str) -> bool {
     let n = name.trim().to_ascii_uppercase();
-    let core = n.trim_start_matches(['+', '-']);
+    let core: String = n
+        .trim_start_matches(['+', '-'])
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | '.' | ' '))
+        .collect();
+    let core = core.as_str();
     const RAILS: &[&str] = &[
         "GND", "GROUND", "EARTH", "VSS", "VEE", "AGND", "DGND", "PGND", "SGND", "VCC", "VDD",
         "VBAT", "VBUS", "VIN", "VOUT", "VREF", "VPP", "AVDD", "DVDD", "AVCC", "DVCC", "VDDA",
-        "VSSA", "VDDIO", "PWR", "POWER", "VSYS", "VRAW", "B+",
+        "VSSA", "VDDIO", "PWR", "POWER", "VSYS", "VRAW", "VSUPPLY", "VMOT", "VMOTOR", "B+",
     ];
     if RAILS.iter().any(|r| core == *r || core.starts_with(r)) {
         return true;
@@ -4726,6 +4734,12 @@ mod tests {
         }
         for f in ["SCL", "MISO", "RESET", "D0", "USB_DP", "CLK", "TX"] {
             assert!(!is_power_net(f), "{f} should NOT read as power");
+        }
+        // Punctuation is not electrical: the same rail spelled with separators
+        // reads the same. A motor controller's battery input is usually its
+        // highest-current net, and `V_SUPPLY` was being missed on the underscore.
+        for t in ["V_SUPPLY", "V-SUPPLY", "VSUPPLY", "P_GND", "V_MOT", "+3.3V"] {
+            assert!(is_power_net(t), "{t} should read as power");
         }
     }
 

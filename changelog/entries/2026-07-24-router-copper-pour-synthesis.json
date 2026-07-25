@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-24-router-copper-pour-synthesis",
+  "version": "0.9.4",
+  "date": "2026-07-24",
+  "category": "feat",
+  "title": "Autorouter pours planes for high-current nets",
+  "summary": "route_nets now synthesizes copper pours for power nets instead of routing them as thin traces: it sizes current with the same IPC-2221 model as size_trace_for_current, floods a layer, and stitches every pad to the plane.",
+  "features": ["pcb", "autorouter", "copper-pour", "power-integrity"],
+  "mcpTools": ["route_nets", "size_trace_for_current", "run_drc", "validate_for_fab"]
+}

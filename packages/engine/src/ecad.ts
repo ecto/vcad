@@ -15,6 +15,7 @@ import type {
   DerivedPart,
   Receipt,
   ReceiptStatus,
+  Zone,
 } from "@vcad/ir";
 
 // ---------------------------------------------------------------------------
@@ -846,6 +847,13 @@ export interface UnroutedDiagnostic {
 export interface RouteAllResult {
   traces: RoutedTrace[];
   vias: RoutedVia[];
+  /**
+   * Copper pours synthesized for high-current nets. **Must be added to the
+   * board along with the traces and vias** — the routing assumes them: a poured
+   * net is carried by its plane, so its pads were stitched to the plane instead
+   * of traced to each other. Absent on kernels that predate pour synthesis.
+   */
+  zones?: Zone[];
   routed_nets: string[];
   unrouted_nets: string[];
   /** Per-unrouted-connection diagnostics; empty when fully routed. */
@@ -873,6 +881,7 @@ export async function routeAll(
   const empty: RouteAllResult = {
     traces: [],
     vias: [],
+    zones: [],
     routed_nets: [],
     unrouted_nets: [],
     diagnostics: [],
