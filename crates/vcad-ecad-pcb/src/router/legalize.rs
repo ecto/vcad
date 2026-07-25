@@ -49,10 +49,15 @@ use crate::drc::{
 /// Two points closer than this are the same routing coordinate.
 const POS_EPS: f64 = 1e-4;
 
-/// Iteration cap for the DRC-driven fix loop. Every iteration either merges,
-/// prunes, demotes, or marks a violation unfixable, so this only bounds
-/// pathological boards.
-const MAX_FIX_ROUNDS: usize = 4;
+/// Iteration cap for the DRC-driven fix loop.
+///
+/// A round clears *every* independently-provable bypass it sees (see
+/// [`legalize`]), so the cap bounds the number of times a fix has to unmask
+/// another one — not the number of violations. It was 4, which combined with a
+/// re-judge after every single fix capped the whole pass at 4 repairs: a full
+/// CM5 route arrived with 21 same-net bypasses and left with 17, the loop
+/// having spent its budget on the first four.
+const MAX_FIX_ROUNDS: usize = 16;
 
 /// What [`legalize`] did to the router's output.
 #[derive(Debug, Default)]
@@ -71,11 +76,20 @@ pub(super) struct LegalizeReport {
 }
 
 /// Legalize the router's flattened output in place. See the module docs.
+///
+/// `prune_dead` runs [`prune_dangling`] at the top of every fix round. Both
+/// oracles this pass depends on read the board as it will actually ship, and
+/// the speculative emitters' debris is not on it: on the CM5 the router hands
+/// over ~1855 dead traces that the caller's prune deletes moments later, and
+/// deleting them *lengthens* the surviving conductor chains — a contact 5 hops
+/// apart through dead copper is 9 hops apart once it is gone. Judging before
+/// the prune therefore misses bypasses that the shipped board really has.
 pub(super) fn legalize(
     pcb: &Pcb,
     traces: &mut Vec<RoutedTrace>,
     vias: &mut Vec<RoutedVia>,
     stitch_vias: &[Vec2],
+    prune_dead: bool,
 ) -> LegalizeReport {
     let mut report = LegalizeReport::default();
     if traces.is_empty() && vias.is_empty() {
@@ -89,55 +103,238 @@ pub(super) fn legalize(
     // new copper participates in. Loop because one fix can unmask another.
     let mut unfixable: BTreeSet<(u64, u64)> = BTreeSet::new();
     for _ in 0..MAX_FIX_ROUNDS {
+        if prune_dead {
+            prune_dangling(pcb, traces, vias);
+        }
         let candidate = candidate_pcb(pcb, traces, vias);
         let (min, max) = new_copper_bbox(traces, vias);
         let violations = check_drc_in_region(&candidate, min, max);
 
         let mut progressed = false;
-        for v in &violations {
-            match v.rule {
-                DrcRuleType::HoleToHole => {
-                    // Only act when one of the holes is a via we placed; a
-                    // pad-vs-pad conflict is the placement's, not ours.
-                    let Some(idx) = new_via_at_holes(v, vias) else {
-                        continue;
-                    };
-                    // A plane stitch is an independent pad→plane connection:
-                    // drop just that via (and its dog-bone stub) so the net's
-                    // other stitches survive. Anything else is part of a routed
-                    // path, where half a path is worse than none.
-                    if stitch_vias
-                        .iter()
-                        .any(|p| d2(*p, vias[idx].position) <= POS_EPS * POS_EPS)
-                    {
-                        drop_stitch_via(idx, traces, vias, &mut report);
-                    } else {
-                        let net = vias[idx].net.clone();
-                        demote_net(&net, v.position, traces, vias, &mut report);
-                    }
-                    progressed = true;
-                    break; // copper changed — re-judge from scratch
-                }
-                DrcRuleType::SameNetBypass => {
-                    let key = pos_key(v.position);
-                    if unfixable.contains(&key) {
-                        continue;
-                    }
-                    if prune_bypass(pcb, traces, vias, v) {
-                        report.pruned_traces += 1;
-                        progressed = true;
-                        break;
-                    }
-                    unfixable.insert(key);
-                }
-                _ => {}
+        // Bypasses first, and as many as the round can prove independent.
+        // Independence is per net: a same-net bypass is a contact between two
+        // pieces of one net's copper, and its hop count is measured along that
+        // net's own adjacency graph, so pruning net X's copper cannot change
+        // any verdict on net Y. Two violations on the *same* net are not
+        // independent — the first prune may well clear the second — so only
+        // the first is acted on and the rest wait for the next round, where
+        // they are re-judged rather than assumed.
+        let mut touched: BTreeSet<String> = BTreeSet::new();
+        for v in violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::SameNetBypass)
+        {
+            let key = pos_key(v.position);
+            if unfixable.contains(&key) {
+                continue;
             }
+            let Some(net) = bypass_net(traces, v) else {
+                unfixable.insert(key);
+                continue;
+            };
+            if !touched.insert(net) {
+                continue; // same net already changed this round — re-judge first
+            }
+            if prune_bypass(pcb, traces, vias, v) {
+                report.pruned_traces += 1;
+                progressed = true;
+            } else {
+                unfixable.insert(key);
+            }
+        }
+        // Then at most one hole conflict: unlike a prune, a demotion strips a
+        // whole net, so it is never applied against a stale violation list.
+        for v in violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::HoleToHole)
+        {
+            // Only act when one of the holes is a via we placed; a
+            // pad-vs-pad conflict is the placement's, not ours.
+            let Some(idx) = new_via_at_holes(v, vias) else {
+                continue;
+            };
+            // A plane stitch is an independent pad→plane connection:
+            // drop just that via (and its dog-bone stub) so the net's
+            // other stitches survive. Anything else is part of a routed
+            // path, where half a path is worse than none.
+            if stitch_vias
+                .iter()
+                .any(|p| d2(*p, vias[idx].position) <= POS_EPS * POS_EPS)
+            {
+                drop_stitch_via(idx, traces, vias, &mut report);
+            } else {
+                let net = vias[idx].net.clone();
+                demote_net(&net, v.position, traces, vias, &mut report);
+            }
+            progressed = true;
+            break; // copper changed — re-judge from scratch
         }
         if !progressed {
             break;
         }
     }
     report
+}
+
+/// The net a `SameNetBypass` violation is on, recovered geometrically (the
+/// message names it, but parsing prose is not a contract): the new segment
+/// whose copper lies nearest the contact point is copper of that net.
+///
+/// Nearest rather than covering, because the reported point need not be *on*
+/// either conductor — see [`bypass_candidates`].
+fn bypass_net(traces: &[RoutedTrace], v: &DrcViolation) -> Option<String> {
+    traces
+        .iter()
+        .min_by(|a, b| dist_to_trace(v.position, a).total_cmp(&dist_to_trace(v.position, b)))
+        .filter(|t| dist_to_trace(v.position, t) <= t.width) // sanity bound
+        .map(|t| t.net.clone())
+}
+
+/// The new segments of `net` that could be the redundant half of a bypass at
+/// `v.position`, longest first.
+///
+/// The DRC reports a segment-vs-segment contact at the *midpoint of the two
+/// centerlines' closest points*, which is not a point on either centerline: it
+/// is offset from each by at most half the centerline gap, and two segments
+/// touch while that gap is as wide as the sum of their half-widths. So the
+/// point can sit off the conductor it belongs to. Testing `point_on_trace` —
+/// distance ≤ `hw_self` — therefore misses contacts involving copper wider than
+/// the trace being tested, and was doing so on the CM5: the last surviving
+/// bypass sat 0.0437mm from a 0.08mm trace whose half-width test allowed
+/// 0.041mm, so the pruner saw no candidate at all and gave up without ever
+/// consulting the continuity oracle.
+///
+/// `hw_self + hw_other` is an envelope, not a tight bound — the exact offset
+/// depends on which geometry pair the DRC matched (segment/segment, disc, pad
+/// rect, pour), and each has its own contact-point construction. Being generous
+/// here is safe: every candidate is still filtered to the violation's own net,
+/// and no candidate is *removed* unless the continuity oracle proves the net is
+/// no worse off without it.
+fn bypass_candidates(traces: &[RoutedTrace], net: &str, at: Vec2) -> Vec<usize> {
+    /// Radius around the contact point in which to look for the other conductor.
+    const NEARBY: f64 = 1.0;
+    let hw_other = traces
+        .iter()
+        .filter(|t| t.net == net && dist_to_trace(at, t) <= NEARBY)
+        .map(|t| t.width / 2.0)
+        .fold(0.0f64, f64::max);
+    let mut candidates: Vec<usize> = traces
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.net == net && dist_to_trace(at, t) <= t.width / 2.0 + hw_other + 1e-3)
+        .map(|(i, _)| i)
+        .collect();
+    // Longest first: drop the noodle, keep the shortest connecting subtree.
+    candidates.sort_by(|&a, &b| {
+        d2(traces[b].start, traces[b].end).total_cmp(&d2(traces[a].start, traces[a].end))
+    });
+    candidates
+}
+
+/// Distance from `p` to trace `t`'s centerline.
+fn dist_to_trace(p: Vec2, t: &RoutedTrace) -> f64 {
+    let (a, b) = (t.start, t.end);
+    let ab = Vec2::new(b.x - a.x, b.y - a.y);
+    let len2 = ab.x * ab.x + ab.y * ab.y;
+    let u = if len2 <= f64::EPSILON {
+        0.0
+    } else {
+        (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len2).clamp(0.0, 1.0)
+    };
+    d2(p, Vec2::new(a.x + ab.x * u, a.y + ab.y * u)).sqrt()
+}
+
+/// Clear same-net bypasses on an already-committed board, in place; returns the
+/// number of trace segments removed.
+///
+/// [`legalize`] enforces this invariant on `route_all`'s output, but that is not
+/// the last word on the board: [`super::si_finish`] runs afterwards and rips,
+/// re-routes and prunes copper of its own (on the full CM5, 483 dead traces and
+/// 92 dead vias removed *after* legalization). Both moves create bypasses that
+/// nothing then judges — a re-routed pair brushing its own net, and, more often,
+/// a prune that lengthens a surviving conductor chain until an existing contact
+/// crosses the hop limit. A full CM5 route reached the drill file with 8 such
+/// bypasses even once legalization itself was clearing every one it could see.
+///
+/// Same policy as [`crate::drc::prune_dangling_copper`], which `si_finish`
+/// already applies board-wide: the whole board is in scope, and the continuity
+/// oracle is what keeps it honest. A segment is removed only when the net it
+/// belongs to ends up with no more islands and no less coverage than it had —
+/// so this can never clear a violation by deleting connectivity, which is the
+/// trap `fab-prep`'s arrival-vs-completion guard exists to catch.
+pub fn repair_same_net_bypass(pcb: &mut Pcb) -> usize {
+    let mut removed = 0;
+    let mut unfixable: BTreeSet<(u64, u64)> = BTreeSet::new();
+    for _ in 0..MAX_FIX_ROUNDS {
+        // Dead copper first, for the same reason `legalize` does it: the hop
+        // counts this rule measures are the ones on the board that ships.
+        crate::drc::prune_dangling_copper(pcb);
+        let violations: Vec<DrcViolation> = crate::drc::check_drc(pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::SameNetBypass)
+            .collect();
+        let view = trace_view(pcb);
+
+        let mut progressed = false;
+        let mut touched: BTreeSet<String> = BTreeSet::new();
+        for v in &violations {
+            let key = pos_key(v.position);
+            if unfixable.contains(&key) {
+                continue;
+            }
+            let Some(net) = bypass_net(&view, v) else {
+                unfixable.insert(key);
+                continue;
+            };
+            // Bypasses on distinct nets are independent (see `legalize`); two on
+            // one net are not, so the rest of that net waits for a re-judge.
+            if !touched.insert(net.clone()) {
+                continue;
+            }
+            if prune_bypass_in_place(pcb, &view, &net, v) {
+                removed += 1;
+                progressed = true;
+            } else {
+                unfixable.insert(key);
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    removed
+}
+
+/// The board's traces as the geometry the bypass helpers read.
+fn trace_view(pcb: &Pcb) -> Vec<RoutedTrace> {
+    pcb.traces
+        .iter()
+        .map(|t| RoutedTrace {
+            start: t.start,
+            end: t.end,
+            width: t.width,
+            layer: t.layer,
+            net: t.net.clone(),
+        })
+        .collect()
+}
+
+/// [`prune_bypass`] against a committed board: delete the redundant segment at
+/// the contact point, keeping it only if the net is no worse off without it.
+///
+/// `view` indexes `pcb.traces` one-for-one, so a candidate index addresses the
+/// same segment in both.
+fn prune_bypass_in_place(pcb: &mut Pcb, view: &[RoutedTrace], net: &str, v: &DrcViolation) -> bool {
+    for i in bypass_candidates(view, net, v.position) {
+        let before = analyze_net_continuity(pcb, net);
+        let removed = pcb.traces.remove(i);
+        let after = analyze_net_continuity(pcb, net);
+        if after.islands <= before.islands && after.coverage >= before.coverage - 1e-9 {
+            return true;
+        }
+        pcb.traces.insert(i, removed);
+    }
+    false
 }
 
 /// Drop the router's own dead copper: new traces and vias whose galvanic
@@ -584,21 +781,14 @@ fn prune_bypass(
     v: &DrcViolation,
 ) -> bool {
     // The net is named in the message; recover it geometrically instead of
-    // parsing: any new segment covering the contact point names the net.
-    let mut candidates: Vec<usize> = traces
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| point_on_trace(v.position, t))
-        .map(|(i, _)| i)
-        .collect();
+    // parsing, then take that net's segments at the contact point.
+    let Some(net) = bypass_net(traces, v) else {
+        return false;
+    };
+    let candidates = bypass_candidates(traces, &net, v.position);
     if candidates.is_empty() {
         return false;
     }
-    candidates.sort_by(|&a, &b| {
-        let la = d2(traces[a].start, traces[a].end);
-        let lb = d2(traces[b].start, traces[b].end);
-        lb.partial_cmp(&la).unwrap_or(std::cmp::Ordering::Equal)
-    });
 
     for &i in &candidates {
         let net = traces[i].net.clone();
@@ -612,21 +802,6 @@ fn prune_bypass(
         traces.insert(i, removed);
     }
     false
-}
-
-/// True when `p` lies on the copper of trace `t` (within half its width plus
-/// tolerance).
-fn point_on_trace(p: Vec2, t: &RoutedTrace) -> bool {
-    let (a, b) = (t.start, t.end);
-    let ab = Vec2::new(b.x - a.x, b.y - a.y);
-    let len2 = ab.x * ab.x + ab.y * ab.y;
-    let u = if len2 <= f64::EPSILON {
-        0.0
-    } else {
-        (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len2).clamp(0.0, 1.0)
-    };
-    let closest = Vec2::new(a.x + ab.x * u, a.y + ab.y * u);
-    d2(p, closest).sqrt() <= t.width / 2.0 + 1e-3
 }
 
 #[cfg(test)]
@@ -719,7 +894,7 @@ mod tests {
         let pcb = board();
         let mut traces = vec![rtrace((5.0, 5.0), (10.0, 10.0), "A", PcbLayer::FCu)];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.0, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
         assert_eq!(report.merged_vias, 1);
         assert_eq!(vias.len(), 1);
         assert!(report.demoted.is_empty());
@@ -736,7 +911,7 @@ mod tests {
             rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::BCu),
         ];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
         assert_eq!(report.merged_vias, 1);
         assert_eq!(vias.len(), 1);
         // The BCu trace's end at the dropped via must still reach the survivor:
@@ -784,7 +959,7 @@ mod tests {
             rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::BCu),
         ];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
         assert_eq!(report.merged_vias, 0, "the merge must be refused");
         assert!(
             !traces.iter().any(|t| t.net == "A"
@@ -828,7 +1003,7 @@ mod tests {
         });
         let mut traces = vec![rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::FCu)];
         let mut vias = vec![rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
         assert_eq!(report.demoted.len(), 1);
         assert_eq!(report.demoted[0].0, "A");
         assert!(vias.is_empty() && traces.is_empty());
@@ -946,7 +1121,7 @@ mod tests {
         ];
         let mut traces = vec![rtrace((9.0, 10.0), (bad.x, bad.y), "GND", PcbLayer::FCu)];
         let stitches = vec![bad, Vec2::new(30.0, 10.0), Vec2::new(30.0, 20.0)];
-        let report = legalize(&pcb, &mut traces, &mut vias, &stitches);
+        let report = legalize(&pcb, &mut traces, &mut vias, &stitches, false);
 
         assert!(
             report.demoted.is_empty(),
@@ -968,6 +1143,352 @@ mod tests {
                 .any(|v| v.rule == DrcRuleType::HoleToHole),
             "legalized output must be hole-to-hole clean"
         );
+    }
+
+    /// Diagnostic harness (not a gate): re-legalize a saved routed board.
+    ///
+    /// `VCAD_LEGALIZE_FIXTURE=/tmp/cm5.pcb.json cargo test --release -p
+    /// vcad-ecad-pcb -- --ignored legalize_fixture`
+    ///
+    /// A fresh `cm5_bench` run clears the board's copper before routing, so
+    /// every trace and via in the saved board is router output: stripping them
+    /// back out reconstructs `legalize`'s own input.
+    #[test]
+    #[ignore = "needs a routed-board fixture"]
+    fn legalize_fixture() {
+        let Ok(path) = std::env::var("VCAD_LEGALIZE_FIXTURE") else {
+            return;
+        };
+        let full: Pcb = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let mut base = full.clone();
+        base.traces.clear();
+        base.trace_arcs.clear();
+        base.vias.clear();
+
+        let mut traces: Vec<RoutedTrace> = full
+            .traces
+            .iter()
+            .map(|t| RoutedTrace {
+                start: t.start,
+                end: t.end,
+                width: t.width,
+                layer: t.layer,
+                net: t.net.clone(),
+            })
+            .collect();
+        let mut vias: Vec<RoutedVia> = full
+            .vias
+            .iter()
+            .map(|v| RoutedVia {
+                position: v.position,
+                net: v.net.clone(),
+                start_layer: v.start_layer,
+                end_layer: v.end_layer,
+            })
+            .collect();
+
+        let count = |p: &Pcb, rule: DrcRuleType| {
+            crate::drc::check_drc(p)
+                .into_iter()
+                .filter(|v| v.rule == rule)
+                .count()
+        };
+        eprintln!(
+            "BEFORE: {} traces, {} vias, bypass={}, h2h={}",
+            traces.len(),
+            vias.len(),
+            count(&full, DrcRuleType::SameNetBypass),
+            count(&full, DrcRuleType::HoleToHole),
+        );
+
+        let t0 = std::time::Instant::now();
+        let report = legalize(&base, &mut traces, &mut vias, &[], true);
+        let (dt, dv) = prune_dangling(&base, &mut traces, &mut vias);
+        let after = candidate_pcb(&base, &traces, &vias);
+        eprintln!(
+            "AFTER ({:.1}s): {report:?}\n  pruned dangling {dt} traces / {dv} vias\n  \
+             {} traces, {} vias, bypass={}, h2h={}",
+            t0.elapsed().as_secs_f64(),
+            traces.len(),
+            vias.len(),
+            count(&after, DrcRuleType::SameNetBypass),
+            count(&after, DrcRuleType::HoleToHole),
+        );
+        for v in crate::drc::check_drc(&after)
+            .iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::SameNetBypass | DrcRuleType::HoleToHole))
+        {
+            eprintln!("  REMAINS {:?} {}", v.rule, v.message);
+            eprintln!(
+                "    candidates covering the point: {:?}",
+                traces
+                    .iter()
+                    .filter(|t| dist_to_trace(v.position, t) <= t.width)
+                    .map(|t| (t.net.as_str(), t.layer, t.start, t.end))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Board-level repair clears a redundant bypass on a committed board —
+    /// the invariant `si_finish` needs, since it rips, re-routes and prunes
+    /// after `route_all`'s legalization has finished.
+    #[test]
+    fn board_repair_clears_a_redundant_bypass() {
+        let mut pcb = board_with_pads();
+        let t = |a: (f64, f64), b: (f64, f64)| Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "A".into(),
+            source: Some(CopperSource::Autoroute),
+        };
+        // Pad (5,5) → pad (20,5) the long way round, as a hop chain...
+        for k in 0..5 {
+            pcb.traces
+                .push(t((5.0 + k as f64 * 3.0, 5.0), (8.0 + k as f64 * 3.0, 5.0)));
+        }
+        // ...plus a redundant noodle shorting across the middle of it.
+        // Landing mid-segment, not on a chain vertex: an end-to-end meeting is
+        // an intended junction, and the rule rightly ignores those.
+        pcb.traces.push(t((5.0, 5.0), (5.0, 8.0)));
+        pcb.traces.push(t((5.0, 8.0), (12.5, 8.0)));
+        pcb.traces.push(t((12.5, 8.0), (12.5, 5.0)));
+
+        let before = crate::drc::check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::SameNetBypass)
+            .count();
+        assert!(before > 0, "fixture must present a bypass");
+        let unconnected = |p: &Pcb| analyze_net_continuity(p, "A").islands;
+        let islands_before = unconnected(&pcb);
+
+        let removed = repair_same_net_bypass(&mut pcb);
+        assert!(removed > 0, "the redundant noodle must go");
+        assert!(
+            !crate::drc::check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::SameNetBypass),
+            "repair must clear the bypass"
+        );
+        assert!(
+            unconnected(&pcb) <= islands_before,
+            "and must not clear it by disconnecting the net"
+        );
+    }
+
+    /// The repair refuses when both sides of the contact are load-bearing: two
+    /// legs of one net crossing, each the only path to a pad. Deleting either
+    /// would clear the violation *by disconnecting the net* — the exact
+    /// clean-by-deletion trap `fab-prep`'s connectivity guard exists to catch.
+    /// These have to be prevented at routing time, not repaired after.
+    #[test]
+    fn board_repair_refuses_to_clean_by_deletion() {
+        let mut pcb = board_with_pads();
+        // Two more pads, so the net has four and each crossing leg is the sole
+        // path to one of them.
+        let mut extra = pcb.footprints[0].clone();
+        extra.reference = "U3".into();
+        extra.position = Vec2::new(5.0, 20.0);
+        pcb.footprints.push(extra);
+        let mut extra2 = pcb.footprints[1].clone();
+        extra2.reference = "U4".into();
+        extra2.position = Vec2::new(20.0, 20.0);
+        pcb.footprints.push(extra2);
+        let t = |a: (f64, f64), b: (f64, f64)| Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "A".into(),
+            source: Some(CopperSource::Autoroute),
+        };
+        // Two chains that cross in the middle, each ending at its own pad.
+        for k in 0..3 {
+            let f = k as f64;
+            pcb.traces.push(t(
+                (5.0 + f * 5.0, 5.0 + f * 5.0),
+                (10.0 + f * 5.0, 10.0 + f * 5.0),
+            ));
+            pcb.traces.push(t(
+                (5.0 + f * 5.0, 20.0 - f * 5.0),
+                (10.0 + f * 5.0, 15.0 - f * 5.0),
+            ));
+        }
+
+        let islands_before = analyze_net_continuity(&pcb, "A").islands;
+        let coverage_before = analyze_net_continuity(&pcb, "A").coverage;
+        repair_same_net_bypass(&mut pcb);
+        let after = analyze_net_continuity(&pcb, "A");
+        assert!(
+            after.islands <= islands_before && after.coverage >= coverage_before - 1e-9,
+            "the repair must never trade connectivity for a clean DRC table: \
+             islands {islands_before} -> {}, coverage {coverage_before} -> {}",
+            after.islands,
+            after.coverage
+        );
+    }
+
+    /// Diagnostic harness (not a gate): board-level bypass repair on a saved
+    /// routed board, which is exactly what `si_finish` hands back.
+    ///
+    /// `VCAD_LEGALIZE_FIXTURE=/tmp/cm5.pcb.json cargo test --release -p
+    /// vcad-ecad-pcb -- --ignored repair_fixture`
+    #[test]
+    #[ignore = "needs a routed-board fixture"]
+    fn repair_fixture() {
+        let Ok(path) = std::env::var("VCAD_LEGALIZE_FIXTURE") else {
+            return;
+        };
+        let mut pcb: Pcb = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let count = |p: &Pcb, rule: DrcRuleType| {
+            crate::drc::check_drc(p)
+                .into_iter()
+                .filter(|v| v.rule == rule)
+                .count()
+        };
+        let conn = |p: &Pcb| {
+            crate::drc::check_drc(p)
+                .into_iter()
+                .filter(|v| {
+                    matches!(
+                        v.rule,
+                        DrcRuleType::UnconnectedNet | DrcRuleType::NetIslands
+                    )
+                })
+                .count()
+        };
+        eprintln!(
+            "BEFORE: {} traces, bypass={}, h2h={}, connectivity={}",
+            pcb.traces.len(),
+            count(&pcb, DrcRuleType::SameNetBypass),
+            count(&pcb, DrcRuleType::HoleToHole),
+            conn(&pcb),
+        );
+        let t0 = std::time::Instant::now();
+        let removed = repair_same_net_bypass(&mut pcb);
+        eprintln!(
+            "AFTER ({:.1}s): removed {removed} segment(s); {} traces, bypass={}, h2h={}, \
+             connectivity={}",
+            t0.elapsed().as_secs_f64(),
+            pcb.traces.len(),
+            count(&pcb, DrcRuleType::SameNetBypass),
+            count(&pcb, DrcRuleType::HoleToHole),
+            conn(&pcb),
+        );
+    }
+
+    /// Every redundant bypass on the board is cleared, not just the first
+    /// handful. The loop used to re-judge the whole board after each single
+    /// repair under a 4-round cap, so a board with more than four bypasses
+    /// always returned dirty — the CM5 arrived with 21 and left with 17.
+    /// Bypasses on distinct nets are independent (a same-net contact's hop
+    /// count is measured along that net's own copper), so one round clears
+    /// them all.
+    #[test]
+    fn every_independent_bypass_is_cleared_not_just_the_first_few() {
+        const NETS: usize = 7;
+        let mut pcb = board();
+        // One U-shaped conductor chain per net, spaced well apart, each with a
+        // redundant noodle shorting across its own body.
+        for n in 0..NETS {
+            let net = format!("N{n}");
+            let x = 3.0 + n as f64 * 6.0;
+            for k in 0..4 {
+                pcb.traces.push(Trace {
+                    start: Vec2::new(x, 5.0 + k as f64 * 2.0),
+                    end: Vec2::new(x, 7.0 + k as f64 * 2.0),
+                    width: 0.25,
+                    layer: PcbLayer::FCu,
+                    net: net.clone(),
+                    source: Some(CopperSource::Manual),
+                });
+            }
+        }
+        let mut traces: Vec<RoutedTrace> = Vec::new();
+        for n in 0..NETS {
+            let net = format!("N{n}");
+            let x = 3.0 + n as f64 * 6.0;
+            traces.push(rtrace((x, 5.0), (x + 2.0, 5.0), &net, PcbLayer::FCu));
+            traces.push(rtrace((x + 2.0, 5.0), (x + 2.0, 10.0), &net, PcbLayer::FCu));
+            traces.push(rtrace((x + 2.0, 10.0), (x, 10.0), &net, PcbLayer::FCu));
+        }
+        let mut vias = vec![];
+
+        let before = crate::drc::check_drc(&candidate_pcb(&pcb, &traces, &vias))
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::SameNetBypass)
+            .count();
+        /// The cap this loop used to run under, one repair per round.
+        const OLD_CAP: usize = 4;
+        assert!(
+            before > OLD_CAP,
+            "the fixture must present more bypasses than the old one-per-round loop \
+             could ever clear, got {before}"
+        );
+
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        assert!(report.pruned_traces >= NETS, "{report:?}");
+        let bypass: Vec<_> = crate::drc::check_drc(&candidate_pcb(&pcb, &traces, &vias))
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::SameNetBypass)
+            .collect();
+        assert!(
+            bypass.is_empty(),
+            "all {before} must clear, left {bypass:?}"
+        );
+    }
+
+    /// The contact point a segment-vs-segment bypass reports is the midpoint of
+    /// the two centerlines' closest points — a point that lies on *neither*
+    /// conductor. Candidate selection must still find the trace, or the pruner
+    /// silently gives up. On the CM5 this left one bypass standing: the point
+    /// sat 0.0439mm from a 0.08mm trace whose half-width is 0.04mm.
+    #[test]
+    fn bypass_candidates_found_when_the_contact_point_is_off_centerline() {
+        let net = "A";
+        // Two crossing fine traces, in the CM5's geometry: the reported contact
+        // point falls between the centerlines, outside both half-widths.
+        let a = RoutedTrace {
+            start: Vec2::new(2.5, 6.6),
+            end: Vec2::new(3.447, 6.992),
+            width: 0.08,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+        };
+        let b = RoutedTrace {
+            start: Vec2::new(3.15, 6.6),
+            end: Vec2::new(3.466, 7.362),
+            width: 0.08,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+        };
+        let traces = vec![a.clone(), b.clone()];
+        let at = Vec2::new(3.390, 7.016);
+        assert!(
+            dist_to_trace(at, &a) > a.width / 2.0,
+            "the fixture must place the point off the conductor, else it proves nothing"
+        );
+        let found = bypass_candidates(&traces, net, at);
+        assert_eq!(found.len(), 2, "both crossing segments are candidates");
+        assert_eq!(
+            bypass_net(&traces, &bypass_violation(at)).as_deref(),
+            Some(net)
+        );
+    }
+
+    fn bypass_violation(at: Vec2) -> DrcViolation {
+        DrcViolation {
+            rule: DrcRuleType::SameNetBypass,
+            severity: crate::drc::DrcSeverity::Warning,
+            position: at,
+            message: String::new(),
+            actual: 0.0,
+            required: 0.0,
+            provenance: crate::drc::DrcProvenance::Routing,
+            generated: false,
+        }
     }
 
     /// A redundant same-net segment that brushes distant copper of its own net
@@ -997,7 +1518,7 @@ mod tests {
             rtrace((8.0, 10.0), (5.0, 10.0), "A", PcbLayer::FCu),
         ];
         let mut vias = vec![];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[]);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
         assert!(report.pruned_traces >= 1, "the noodle must be pruned");
         // The result must be bypass-free.
         let candidate = candidate_pcb(&pcb, &traces, &vias);
