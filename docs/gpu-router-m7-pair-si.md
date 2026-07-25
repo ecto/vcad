@@ -222,3 +222,159 @@ nets adds ~409. Use the `Clearance` rule for attribution.
    an open board and fails on a full one. Wider corridor rip, or ordering
    polish before the board fills.
 4. The clean pre/post full-board DRC A/B.
+
+## M8 re-measurement after #684 — the skew claim was measuring stub copper
+
+Everything below is a fresh full-board measurement taken after #684 (absolute
+KiCad pad angles) and its companion short-pair centerline fix landed, on
+`e1a5d90d`. It was run to check whether the two broken claims had moved. They
+had, but the run also invalidated the *reading* of the skew claim, so this
+section supersedes M7's "two blocker groups" diagnosis.
+
+### The calibration anchor, re-verified
+
+Unchanged, and the bounds were not touched:
+
+```
+worst_group_skew           9.756 mm  <= 10.0   HOLDS
+worst_intra_pair_skew      1.074 mm  <=  1.1   HOLDS
+min_pair_coupled_fraction  0.857     >=  0.5   HOLDS
+vias_per_si_net            2.265     <=  3.0   HOLDS
+verdict: ALL HOLD
+```
+
+### The census improved; the receipt got worse
+
+The stripped-board census is now **47 of 49** coupled (bails: `/PCIe.TX_P`
+connector, `/USB3-1.RX_P` leg-validation), and the full-board pair-first stage
+routes **47** coupled, up from 43. Full route: 980s, routability **0.994**,
+380 routed / 28 unrouted. Despite that:
+
+```
+                            M7 (pre-fix)   M8 (post-#684)    bound
+worst_group_skew            9.297 mm        8.397 mm         <= 10.0   HOLDS
+worst_intra_pair_skew      37.853 mm       38.521 mm         <=  1.1   BROKEN
+min_pair_coupled_fraction   0.000           0.101            >=  0.5   BROKEN
+vias_per_si_net             2.766           3.128            <=  3.0   BROKEN
+```
+
+Three of four now break: `vias_per_si_net` **regressed through its bound**
+(294 vias over 94 routed SI nets). `min_pair_coupled_fraction` came off zero
+— the `/HS.*` group is fixed — but the new worst is `/MIPI0.D1_P` at 0.101.
+
+### What the 38mm skew actually is
+
+M7 read the tail as "pairs where one leg took a large detour" and priced the
+fix in compensation capacity (138mm of run for 38mm of deficit). That reading
+was wrong. The worst pairs are not detoured — **one leg is not routed at all.**
+
+Measured on the routed board, copper length per leg against the straight
+pad-to-pad span of that same net. The ratio needs no connectivity model, so it
+is immune to how one chooses to define an island:
+
+| board | legs | legs with copper < 50% of span | median ratio | min ratio |
+|---|---|---|---|---|
+| human | 86 | **0** | 1.23 | 1.03 |
+| ours (M8) | 84 | **7** | 1.11 | **0.01** |
+
+The seven:
+
+```
+  0.01  /USB3-0.TX_P            copper  0.23mm   span 18.36mm
+  0.02  /MIPI0.D3_P             copper  0.54mm   span 26.64mm
+  0.03  /PCIe.RX_P              copper  0.68mm   span 20.19mm
+  0.06  /RP1 IO/USB3-1-TXC_P    copper  1.02mm   span 17.31mm
+  0.06  /MIPI0.D1_N             copper  1.34mm   span 21.85mm
+  0.10  /HDMI0.CLK_P            copper  1.44mm   span 15.15mm
+  0.19  /MIPI1.D1_P             copper  5.57mm   span 29.54mm
+```
+
+`/USB3-0.TX_P` carries 1% of the copper its own pad span requires. These are
+not routes; they are pad escapes and orphaned stubs. `/MIPI1.D1_P` is four
+disjoint fragments — a 0.739mm escape at U3.V5, a 0.481mm stub, a floating
+4.234mm stub, and a **0.113mm** stub at J4.83 — with 29.5mm of nothing between
+them, while its twin `/MIPI1.D1_N` is a complete 38.57mm route.
+
+So the reported skew is very nearly *the length of the leg that did route*:
+`/MIPI1.D3_P` 38.52mm skew, `/USB3-1.RX_P` 33.50mm against a polish centerline
+of 33.5mm. Compensation cannot close this and should never have been aimed at
+it — there is no second leg to match.
+
+Two mechanisms let this reach the receipt unflagged:
+
+1. **`net_routed_length > 0` is the gate for "measured".** A 0.23mm stub
+   qualifies a pair for both pair claims. `si_claims` never asks whether the
+   copper connects the net's pads.
+2. **`coupled_fraction` normalizes by P alone** — "fraction of P length with
+   same-layer N copper within 1.75x pitch". A 0.23mm stub lying beside a full
+   twin is 100% coupled. The metric *rewards* the failure: `/MIPI1.D3_P` scores
+   `coupled 1.000` at 38.52mm of skew.
+
+The DRC does not catch it either. None of the seven is reported
+`UnconnectedNet` or `Disjoint`, because each is bridged by copper it is
+**shorted** to — `/MIPI1.D1_P` shorts to `/USB3-0.RX_N` and `/MIPI1.C_N`, and
+the connectivity walk crosses the short. A net continuous only through a short
+is being counted as connected.
+
+### DRC delta, with the control M7 was missing
+
+Against the same fixture stripped of all copper (the post-#684 baseline:
+311 short/clearance, 23 `Clearance`):
+
+| rule | stripped | ours (M8) | human | verdict |
+|---|---|---|---|---|
+| `Clearance` | 23 | **173** | 1044 | +150 route-attributable |
+| `Short` | 258 | 845 | 3132 | +587, but see M7's accounting note |
+| `MinTraceWidth` | 0 | 380 | 2690 | 0.08mm stub copper vs 0.2mm rule |
+| `MinDrill` | 0 | 767 | 2901 | fires on ~every via, human included |
+| `AnnularRing` | 0 | 767 | 2847 | same |
+
+The human-board column is the control M7 lacked, and it settles the
+attribution question: `MinDrill`, `AnnularRing` and `MinTraceWidth` fire on
+essentially every via and thin trace on the *human* board too, so they are
+imported-rule artifacts rather than route defects. `Clearance` is the
+attributable number, and **+150 is not zero** — the route does add
+clearance violations at full-board scale.
+
+### What did not work
+
+- **`descend_board` is inert on a full board: 0 of 41 pairs tuned, 41
+  rejected.** M7 credits descent with driving reachable pairs to ~0.006mm, and
+  that reproduces in isolation — but every attempt is rejected by its
+  fail-closed clearance check once the board is full. The lever M7 named as the
+  answer to residual skew contributes exactly nothing at the size that matters.
+- **Phase compensation is real but tiny in reach**: 3 pairs meandered
+  (`/ETH.1_P` 0.889 → 0.145mm, `/LPDDR4 RAM/DQS0_C_B` 0.872 → 0.029mm), with
+  **38 pairs still over tolerance**. It works only on pairs already close.
+- **Coupling degrades after construction.** Construction couples 47 of 49, yet
+  by the end of routing 10 pairs sit below 0.5 and polish recovers only 4. The
+  loss happens in the negotiation / rip-up stages, which re-route pair legs
+  independently. M7 framed the limit as polish's success rate; the earlier and
+  larger effect is that the board *un-couples* work already done.
+- **Chasing the four claims to HOLDS on this board would be false.** With
+  seven legs unrouted and the pair claims blind to it, a green receipt here
+  would assert an SI envelope over copper that is not a route. Compensation
+  tuning, higher-effort polish and wider corridor rips all move the number
+  without touching the cause.
+
+### The actual next step
+
+Not SI tuning. Three fail-closed gaps, in dependency order:
+
+1. **Router**: do not report a net routed when only escapes and orphan stubs
+   were placed; and stop negotiation from leaving one leg of a coupled pair
+   starved. This is the defect — the other two are the reasons it stayed
+   invisible.
+2. **Connectivity**: a net continuous only through a `Short` must not satisfy
+   the connectivity check. Today it does, which is what let seven starved legs
+   read as complete.
+3. **Receipt**: `si_claims` must fail closed on a starved leg rather than
+   measure it (gate on copper reaching every pad of both legs, not
+   `length > 0`), and `coupled_fraction` must normalize by the longer leg so a
+   stub cannot score 1.000. Both changes make the numbers worse, which is the
+   point — the human board still passes them, so the envelope argument
+   survives.
+
+292 `vcad-ecad-pcb` tests pass and clippy is clean throughout the above, which
+is its own finding: nothing in the suite asserts that a routed net's copper
+reaches its pads.
