@@ -14,6 +14,6 @@ pub mod gerber;
 pub mod pick_place;
 
 pub use bom::write_bom;
-pub use excellon::{write_excellon, ExcellonError};
+pub use excellon::{generate_drill_files, write_excellon, ExcellonError};
 pub use gerber::{generate_gerbers, write_gerber_layer, GerberError};
 pub use pick_place::write_pick_place;
