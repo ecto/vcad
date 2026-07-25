@@ -3219,7 +3219,7 @@ name = "mecheval-grader"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "phyz",
+ "phyz 0.3.0",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4015,12 +4015,20 @@ dependencies = [
 
 [[package]]
 name = "phyz"
+version = "0.3.0"
+dependencies = [
+ "phyz-math 0.1.0",
+ "tang",
+]
+
+[[package]]
+name = "phyz"
 version = "0.3.1"
 dependencies = [
  "phyz-collision",
  "phyz-contact",
  "phyz-diff",
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
  "phyz-rigid",
 ]
@@ -4029,7 +4037,7 @@ dependencies = [
 name = "phyz-collision"
 version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
 ]
 
@@ -4038,7 +4046,7 @@ name = "phyz-contact"
 version = "0.3.1"
 dependencies = [
  "phyz-collision",
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
 ]
 
@@ -4046,7 +4054,7 @@ dependencies = [
 name = "phyz-diff"
 version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
  "phyz-rigid",
  "tang",
@@ -4060,11 +4068,19 @@ version = "0.3.1"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
  "phyz-rigid",
  "pollster",
  "wgpu",
+]
+
+[[package]]
+name = "phyz-math"
+version = "0.1.0"
+dependencies = [
+ "tang",
+ "tang-la",
 ]
 
 [[package]]
@@ -4079,7 +4095,7 @@ dependencies = [
 name = "phyz-md"
 version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.3.1",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_distr",
@@ -4090,14 +4106,14 @@ dependencies = [
 name = "phyz-model"
 version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.3.1",
 ]
 
 [[package]]
 name = "phyz-rigid"
 version = "0.3.1"
 dependencies = [
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
 ]
 
@@ -7506,6 +7522,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-magnetostatic"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-particle",
+]
+
+[[package]]
 name = "vcad-kernel-math"
 version = "0.9.4"
 dependencies = [
@@ -7585,7 +7610,7 @@ dependencies = [
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
- "phyz",
+ "phyz 0.3.1",
  "serde",
  "serde_json",
  "stl_io",
@@ -7902,9 +7927,9 @@ dependencies = [
 name = "vcad-sim"
 version = "0.9.4"
 dependencies = [
- "phyz",
+ "phyz 0.3.1",
  "phyz-gpu",
- "phyz-math",
+ "phyz-math 0.3.1",
  "phyz-model",
  "serde",
  "thiserror 2.0.18",
