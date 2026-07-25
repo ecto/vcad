@@ -27,6 +27,11 @@ pub fn eval_vcad(source: &str, base_dir: Option<&Path>) -> Result<Document, Stri
 /// Evaluate a `.vcad` loon source string and return the raw loon Value.
 ///
 /// Useful for debugging or inspecting the AST before conversion.
+///
+/// Note the difference from [`eval_vcad`]: the loon `Value` returned here is
+/// **not** `serde::Serialize`, so `serde_json::to_string(&value)` fails to
+/// compile (E0277). To write a `.vcad` document, use [`eval_vcad`], which
+/// returns a serializable [`Document`] — see `examples/loon2vcad.rs`.
 pub fn eval_vcad_to_value(source: &str, base_dir: Option<&Path>) -> Result<Value, String> {
     // A loon program's value is its *last* expression, so a source with
     // several top-level value forms (e.g. two `[root ...]` statements) would

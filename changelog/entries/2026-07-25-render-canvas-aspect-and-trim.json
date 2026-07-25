@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-25-render-canvas-aspect-and-trim",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "feat",
+  "title": "vcad-render: non-square canvases, auto-aspect and trim",
+  "summary": "--size now takes WxH, --auto-aspect fits the canvas to the projection, and --trim crops to the drawn content, so parts with a strong aspect ratio no longer waste most of the frame.",
+  "features": ["rendering", "cli"]
+}

@@ -1,6 +1,13 @@
 //! Evaluate a `.loon` source file to a `.vcad` document on stdout.
 //!
-//! Usage: cargo run -p vcad-loon --example loon2vcad -- input.loon > out.vcad
+//! Usage: `cargo run -p vcad-loon --example loon2vcad -- input.loon > out.vcad`
+//!
+//! This is the `.loon` → `.vcad` half of the docs render workflow; the other
+//! half is `cargo run -p vcad-render -- out.vcad --jpeg out.jpg`.
+//!
+//! Note the API pair: [`vcad_loon::eval_vcad`] returns a serde-serializable
+//! `Document` (what you want here), while `eval_vcad_to_value` returns a raw
+//! loon `Value`, which is *not* `Serialize`.
 
 use std::path::Path;
 
