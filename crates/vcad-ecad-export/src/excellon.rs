@@ -268,11 +268,7 @@ mod tests {
         fp.pads[0].rotation = 0.0;
 
         let holes = collect_holes(&pcb);
-        let baseline: Vec<(f64, f64)> = holes
-            .values()
-            .flatten()
-            .map(|h| (h.x, h.y))
-            .collect();
+        let baseline: Vec<(f64, f64)> = holes.values().flatten().map(|h| (h.x, h.y)).collect();
         assert_eq!(baseline.len(), 1);
         // 90° about the footprint origin: (5, 0) -> (0, 5).
         assert!((baseline[0].0 - 10.0).abs() < 1e-9, "x {}", baseline[0].0);
