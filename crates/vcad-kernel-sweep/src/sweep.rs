@@ -498,6 +498,45 @@ mod tests {
         SketchProfile::circle(Point3::origin(), Vec3::z(), radius, n_arcs)
     }
 
+    fn signed_volume(solid: &BRepSolid) -> f64 {
+        let mesh = vcad_kernel_tessellate::tessellate_brep(solid, 32);
+        let v = &mesh.vertices;
+        let mut vol = 0.0;
+        for tri in mesh.indices.chunks(3) {
+            let (a, b, c) = (
+                tri[0] as usize * 3,
+                tri[1] as usize * 3,
+                tri[2] as usize * 3,
+            );
+            let p0 = [v[a] as f64, v[a + 1] as f64, v[a + 2] as f64];
+            let p1 = [v[b] as f64, v[b + 1] as f64, v[b + 2] as f64];
+            let p2 = [v[c] as f64, v[c + 1] as f64, v[c + 2] as f64];
+            vol += p0[0] * (p1[1] * p2[2] - p2[1] * p1[2])
+                - p1[0] * (p0[1] * p2[2] - p2[1] * p0[2])
+                + p2[0] * (p0[1] * p1[2] - p1[1] * p0[2]);
+        }
+        vol / 6.0
+    }
+
+    /// Sweep places the profile on rotation-minimizing frames, so its
+    /// winding depends on the profile's 2D handedness and the path
+    /// direction rather than on the sketch normal (the extrude trap). Pin
+    /// both signs: a sweep must never come back inside-out.
+    #[test]
+    fn sweep_is_positive_volume_for_either_frame_handedness() {
+        for (x_dir, y_dir) in [(Vec3::x(), Vec3::y()), (Vec3::y(), Vec3::x())] {
+            for end in [Point3::new(0.0, 0.0, 10.0), Point3::new(0.0, 0.0, -10.0)] {
+                let profile = SketchProfile::rectangle(Point3::origin(), x_dir, y_dir, 4.0, 2.0);
+                let path = Line3d::from_points(Point3::origin(), end);
+                let vol = signed_volume(&sweep(&profile, &path, SweepOptions::default()).unwrap());
+                assert!(
+                    (vol - 80.0).abs() < 0.5,
+                    "frame ({x_dir:?},{y_dir:?}) to {end:?}: expected +80, got {vol}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_sweep_straight_line() {
         // Sweep along a straight line should be equivalent to extrude
