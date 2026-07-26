@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-assembly-mirror-groups",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Assembly symmetry: mirror-group in loon",
+  "summary": "[mirror-group-x/y/z suffix asm] mirrors parts, instance placements, joint anchors and joint axes together, so one authored side drives both symmetrically.",
+  "features": ["loon", "assemblies", "joints"],
+  "mcpTools": ["create_cad_loon"]
+}
