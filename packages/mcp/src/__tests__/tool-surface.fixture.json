@@ -8287,7 +8287,7 @@
   {
     "name": "check_clearance",
     "title": "Check Clearance",
-    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at a real pose (joint id or name → degrees, or mm for sliders) instead of the stored zero pose — that is how you check a mechanism clears through its travel. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at one real pose (joint id or name → degrees, or mm for sliders) instead of the stored one. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` — pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. (2) audit — omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8327,13 +8327,59 @@
             "type": "number"
           },
           "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
+        },
+        "sweep": {
+          "type": "array",
+          "description": "Range-of-motion sweep: drive these joints across their travel and report the WORST pose, not the authored one. Each axis is {joint, from, to, steps}; multiple axes form a Cartesian grid (capped at 4096 poses). Joint states are restored afterwards — the sweep never edits the document.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "joint": {
+                "type": "string",
+                "description": "Joint id or name to drive."
+              },
+              "from": {
+                "type": "number",
+                "description": "Start of travel (degrees for revolute, mm for prismatic)."
+              },
+              "to": {
+                "type": "number",
+                "description": "End of travel."
+              },
+              "steps": {
+                "type": "number",
+                "description": "Number of intervals; steps + 1 poses are sampled."
+              }
+            },
+            "required": [
+              "joint",
+              "from",
+              "to",
+              "steps"
+            ]
+          }
+        },
+        "ignore_pairs": {
+          "type": "array",
+          "description": "Audit mode: part id/name pairs whose contact is intended (a bolt in its own hole, a bearing pressed into its bore). Each entry is a two-element array.",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "ignore_fixed_joints": {
+          "type": "boolean",
+          "description": "Audit mode: skip pairs joined by a Fixed joint — they are bolted together and always 'interfere'. Default true."
+        },
+        "ignore_adjacent": {
+          "type": "boolean",
+          "description": "Audit mode: skip every directly-jointed parent/child pair, not just Fixed ones. Default false — adjacent links can and do clash away from the joint axis."
         }
       },
       "required": [
-        "document_id",
-        "group_a",
-        "group_b",
-        "min_mm"
+        "document_id"
       ]
     },
     "outputSchema": {

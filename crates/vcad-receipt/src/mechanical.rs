@@ -79,6 +79,50 @@ pub struct ClearanceClaim {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub allow_contact: Option<bool>,
+    /// Range-of-motion sweep the measurement was taken over, when the
+    /// assertion is swept rather than single-pose. Stored so a receipt
+    /// re-verifies over the *same* grid — a swept claim re-checked at one
+    /// pose would silently weaken into the snapshot it was meant to replace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub sweep: Option<Vec<ClearanceSweepAxis>>,
+    /// The pose realizing `measured_mm`, for a swept claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub worst_pose: Option<Vec<JointPose>>,
+    /// Number of poses evaluated (1 for an unswept claim).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub poses_checked: Option<u32>,
+}
+
+/// One axis of the range-of-motion grid a swept clearance was measured over.
+///
+/// Mirrors `vcad_ir::JointSweep`; duplicated because this crate is
+/// deliberately dependency-free (a receipt must deserialize without the IR).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct ClearanceSweepAxis {
+    /// Joint id driven by this axis.
+    pub joint: String,
+    /// Start of the range, in the joint's own units (degrees or mm).
+    pub from: f64,
+    /// End of the range, in the joint's own units.
+    pub to: f64,
+    /// Number of intervals; `steps + 1` states are sampled.
+    pub steps: u32,
+}
+
+/// A single joint's state within a recorded pose.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct JointPose {
+    /// Joint id.
+    pub joint: String,
+    /// Joint state (degrees for revolute, mm for prismatic).
+    pub state: f64,
 }
 
 /// Tolerance (mm) around zero within which two parts count as "touching"
@@ -103,7 +147,23 @@ impl ClearanceClaim {
             measured_mm: if measured_mm == 0.0 { 0.0 } else { measured_mm },
             holds: measured_mm.is_finite() && measured_mm >= required_mm,
             allow_contact: None,
+            sweep: None,
+            worst_pose: None,
+            poses_checked: None,
         }
+    }
+
+    /// Record the range-of-motion sweep the measurement was taken over.
+    pub fn with_sweep(
+        mut self,
+        sweep: Vec<ClearanceSweepAxis>,
+        worst_pose: Vec<JointPose>,
+        poses_checked: u32,
+    ) -> Self {
+        self.sweep = Some(sweep);
+        self.worst_pose = Some(worst_pose);
+        self.poses_checked = Some(poses_checked);
+        self
     }
 
     /// Mark contact as allowed and re-derive `holds` accordingly: a
@@ -128,7 +188,13 @@ pub fn clearance_claims(assertions: &[ClearanceClaim], oracle: &OracleRef) -> Ve
         .iter()
         .map(|a| {
             let id = format!("mech.clearance.{}", a.label);
-            let description = format!("clearance \"{}\" at least {} mm", a.label, a.required_mm);
+            let description = match a.poses_checked {
+                Some(n) if a.sweep.is_some() => format!(
+                    "clearance \"{}\" at least {} mm across {} swept poses",
+                    a.label, a.required_mm, n
+                ),
+                _ => format!("clearance \"{}\" at least {} mm", a.label, a.required_mm),
+            };
             let subject = format!("{} vs {}", a.group_a.join("+"), a.group_b.join("+"));
             if !a.measured_mm.is_finite() || !a.required_mm.is_finite() {
                 return ReceiptClaim::unverifiable(

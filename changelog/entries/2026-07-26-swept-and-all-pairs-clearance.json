@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-swept-and-all-pairs-clearance",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "check_clearance sweeps the range of motion",
+  "summary": "Pass `sweep` to drive joints through their travel and get the worst pose, or omit both groups to audit every part pair in the document for interference.",
+  "features": ["clearance", "assembly", "kinematics", "mcp"],
+  "mcpTools": ["check_clearance", "build_receipt", "verify_receipt"]
+}
