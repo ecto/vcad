@@ -1396,7 +1396,17 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         // Lights are part of the scene: a BSDF ray that lands on one carries
         // its emission, MIS-weighted against the NEE sample that could also
         // have found it.
-        let lh = intersect_lights(ray_o, ray_d);
+        //
+        // They are NOT visible to camera rays, though. The rig is sized to the
+        // scene bounds and the viewport camera orbits and zooms freely, so
+        // otherwise the softboxes swing through frame as giant white slabs.
+        // Skipping them at depth 0 costs nothing physically — it only changes
+        // pixels that look straight down a light — and keeps every shaded
+        // surface identical to the CPU renderer.
+        var lh = intersect_lights(ray_o, ray_d);
+        if depth == 0u {
+            lh.hit = false;
+        }
         let geom_t = select(MAX_T, hit.t, hit.face_idx != 0xFFFFFFFFu);
 
         if lh.hit && lh.t < geom_t {
@@ -1503,11 +1513,8 @@ fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> ve
     if hit.face_idx == 0xFFFFFFFFu {
         // Nothing in front of the camera. Draw the themed backdrop rather
         // than the lighting environment — the backdrop is a viewport choice,
-        // and `vcad-render` composites its own.
-        let lh = intersect_lights(origin, dir);
-        if lh.hit {
-            return vec4<f32>(lights[lh.index].emission.rgb, 1.0);
-        }
+        // and `vcad-render` composites its own. The area lights are skipped
+        // here for the same reason `path_trace` skips them at depth 0.
         return vec4<f32>(sky_color(dir), 0.0);
     }
 
