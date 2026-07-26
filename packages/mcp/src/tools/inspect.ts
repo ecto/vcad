@@ -16,6 +16,7 @@ import {
 } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { isoperimetricViolation } from "./integrity.js";
+import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 import { resolveDocInput } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
@@ -32,6 +33,7 @@ export const inspectCadSchema = {
         "Inline Document IR to inspect instead of a session. Use this stateless " +
         "path when no `document_id` is resident (e.g. a cold serverless instance).",
     },
+    joint_state: jointStateSchemaProp,
   },
 };
 
@@ -65,6 +67,9 @@ export interface InspectResult {
    * Absent when the inspection is clean.
    */
   warnings?: string[];
+  /** Applied `joint_state` pose and the FK transforms it resolved to.
+   *  Absent when the document was measured in its stored pose. */
+  pose?: PoseInfo;
 }
 
 /** Compute properties for a single mesh. Exported so `measure`, the
@@ -300,9 +305,12 @@ export function inspectCad(
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const args = (input ?? {}) as Record<string, unknown>;
-  const { doc: ir } = resolveDocInput(args);
+  const { doc: stored } = resolveDocInput(args);
+  // Measure the pose the caller asked for, not just the zero pose.
+  const { doc: ir, pose } = applyJointState(stored, args.joint_state);
 
   const result = computeInspection(ir, engine);
+  if (pose) result.pose = pose;
 
   return {
     content: [
@@ -319,7 +327,7 @@ export const toolDefs: ToolDef[] = [
     name: "inspect_cad",
     pack: null,
     description:
-      "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
+      "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`. Pass `joint_state` to measure a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) rather than its zero pose.",
     inputSchema: inspectCadSchema,
     handler: (a, c) => inspectCad(a, c.engine),
     behavior: behavior({}),

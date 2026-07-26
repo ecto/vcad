@@ -581,7 +581,22 @@ holds: boolean,
  * [`CONTACT_EPS_MM`] of zero (surfaces touching, e.g. a part bolted
  * flush to another) satisfies the assertion even below `required_mm`.
  */
-allow_contact?: boolean, };
+allow_contact?: boolean, 
+/**
+ * Range-of-motion sweep the measurement was taken over, when the
+ * assertion is swept rather than single-pose. Stored so a receipt
+ * re-verifies over the *same* grid — a swept claim re-checked at one
+ * pose would silently weaken into the snapshot it was meant to replace.
+ */
+sweep?: Array<ClearanceSweepAxis>, 
+/**
+ * The pose realizing `measured_mm`, for a swept claim.
+ */
+worst_pose?: Array<JointPose>, 
+/**
+ * Number of poses evaluated (1 for an unswept claim).
+ */
+poses_checked?: number, };
 
 /**
  * A named minimum-clearance assertion between two groups of parts.
@@ -614,7 +629,39 @@ min_mm: number,
  * even though it is below `min_mm` — e.g. a stage bolted flush to the
  * chamber floor. Penetration beyond the tolerance still fails.
  */
-allow_contact?: boolean, };
+allow_contact?: boolean, 
+/**
+ * Optional range-of-motion sweep: the assertion is evaluated at every
+ * pose on the grid these axes span, and holds only if it holds at the
+ * *worst* pose. Without this a clearance is a single-pose snapshot —
+ * the pose the assembly happened to be authored in, which is often the
+ * one pose that clears.
+ */
+sweep?: Array<JointSweep>, };
+
+/**
+ * One axis of the range-of-motion grid a swept clearance was measured over.
+ *
+ * Mirrors `vcad_ir::JointSweep`; duplicated because this crate is
+ * deliberately dependency-free (a receipt must deserialize without the IR).
+ */
+export type ClearanceSweepAxis = { 
+/**
+ * Joint id driven by this axis.
+ */
+joint: string, 
+/**
+ * Start of the range, in the joint's own units (degrees or mm).
+ */
+from: number, 
+/**
+ * End of the range, in the joint's own units.
+ */
+to: number, 
+/**
+ * Number of intervals; `steps + 1` states are sampled.
+ */
+steps: number, };
 
 /**
  * The geometric relationship a [`DesignConstraint`] asserts.
@@ -1574,7 +1621,61 @@ drawing?: DrawingSettings,
  * Animation timeline: keyframed parameters/joints/visibility plus
  * camera shots. Absent for static models.
  */
-timeline?: Timeline, };
+timeline?: Timeline, 
+/**
+ * The authored source this document was evaluated from, when it came
+ * from one. Lets a document say what made it, so a session and the file
+ * it came from can be compared instead of silently drifting apart.
+ */
+source?: DocumentSource, };
+
+/**
+ * The authored source a [`Document`] was evaluated from.
+ *
+ * A document evaluated from loon used to discard its source immediately, so
+ * the authored form was unrecoverable and a session could diverge from the
+ * `.loon` file that produced it with nothing detecting it. Carrying the
+ * source (and, when it came from disk, the path plus a content hash) makes
+ * that divergence observable: re-hash the file and compare, or check
+ * `diverged` for incremental IR mutations that can't round-trip back to
+ * source.
+ */
+export type DocumentSource = { 
+/**
+ * Source language — currently always `"loon"`.
+ */
+language: string, 
+/**
+ * The source text, exactly as authored.
+ */
+text: string, 
+/**
+ * Modules `[use ...]` resolved against, by value.
+ */
+modules: Record<string, string>, 
+/**
+ * Server-side directory modules were read from, when one was used.
+ */
+base_dir?: string, 
+/**
+ * Path the source was read from, when the document is *of* a file.
+ */
+path?: string, 
+/**
+ * SHA-256 (hex) of `text`, for comparing against the file on disk.
+ */
+hash: string, 
+/**
+ * True once the document has been mutated by an operation that cannot
+ * round-trip back to `text` (incremental create/update/delete). The
+ * source is then a record of the document's origin, not its current
+ * state.
+ */
+diverged: boolean, 
+/**
+ * Tool names that diverged the document, in order, capped at a handful.
+ */
+diverged_by: Array<string>, };
 
 /**
  * A section cut line drawn on an orthographic drawing view. The polyline
@@ -2189,6 +2290,45 @@ limits?: [number, number], } | { "type": "Cylindrical",
  * Axis of rotation/translation.
  */
 axis: Vec3, } | { "type": "Ball" };
+
+/**
+ * A single joint's state within a recorded pose.
+ */
+export type JointPose = { 
+/**
+ * Joint id.
+ */
+joint: string, 
+/**
+ * Joint state (degrees for revolute, mm for prismatic).
+ */
+state: number, };
+
+/**
+ * One axis of a range-of-motion sweep: a joint driven from `from` to `to`
+ * in `steps` intervals (`steps + 1` sampled states, endpoints included).
+ *
+ * Multiple axes form a Cartesian grid, so a two-joint sweep at 24 steps
+ * each is 625 poses — callers are responsible for keeping the product
+ * sane.
+ */
+export type JointSweep = { 
+/**
+ * Joint id (or joint name) to drive.
+ */
+joint: string, 
+/**
+ * Start of the range, in the joint's own units (degrees or mm).
+ */
+from: number, 
+/**
+ * End of the range, in the joint's own units.
+ */
+to: number, 
+/**
+ * Number of intervals; `steps + 1` states are sampled.
+ */
+steps: number, };
 
 /**
  * A keepout region (restricted area).

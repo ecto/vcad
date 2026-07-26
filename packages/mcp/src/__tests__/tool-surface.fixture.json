@@ -28,7 +28,7 @@
   {
     "name": "get_document",
     "title": "Get Document",
-    "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
+    "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. A document authored from loon carries that source under `source`, and the result reports `source_stale` when the session no longer matches it (the file changed, or incremental edits moved the session away from it). Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -72,7 +72,7 @@
   {
     "name": "save_document",
     "title": "Save Document",
-    "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_…` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory).",
+    "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_…` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory) — plus `<name>.loon` when the document knows the source it was authored from, so the file and the session can't diverge without someone choosing it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -97,18 +97,19 @@
   {
     "name": "load_document",
     "title": "Load Document",
-    "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_…` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it.",
+    "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_…` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it. Pass `path` instead to open a `.loon` source file (evaluated on load) or a `.vcad` document from disk — that session stays bound to the file and reports `source_stale` if the two drift apart.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "The name passed to save_document (or the `saved_…` key an anonymous save returned). On a local/stdio server this reads <name>.vcad from the state directory."
+          "description": "The name passed to save_document (or the `saved_…` key an anonymous save returned). On a local/stdio server this reads <name>.vcad from the state directory. Provide this OR `path`."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to a `.loon` source file (evaluated on load) or a `.vcad` document to open as a session. The session records the path and a content hash, so it is explicitly *of* that file: later calls report `source_stale` when the file changes underneath it or the session is edited away from it. Local/stdio servers only — a hosted server's filesystem is ephemeral."
         }
-      },
-      "required": [
-        "name"
-      ]
+      }
     },
     "annotations": {
       "readOnlyHint": false
@@ -1081,6 +1082,13 @@
         "part_id": {
           "type": "string",
           "description": "The part ID to inspect."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [
@@ -1113,6 +1121,13 @@
         "limit": {
           "type": "integer",
           "description": "Cap the number of parts returned when no part_ids are provided (default 100)."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [
@@ -1283,7 +1298,7 @@
   {
     "name": "create_cad_loon",
     "title": "Create CAD (Loon)",
-    "description": "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\nPrimitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\nBooleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\nTransforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\nFeatures: [fillet r s], [chamfer d s], [shell t s]\nPatterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\nSketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\nSketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]]\nAssemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\nPipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\nLet bindings: [let body [cube 50 30 5]] — note these are inlined and do NOT survive into the document; use [defparam ...] for a value you want to change later\nParameters (survive into the document and are settable afterwards with set_parameters, and differentiable with parameter_gradient): [defparam pitch_axis_x 310.0], [defparam wall \"bore * 0.2\"] for derived values, plus optional :unit/:min/:max/:description. Names must be identifier-safe (underscores, not dashes)\nDatums — named reference geometry, so two parts cannot each hold their own copy of a shared plane: [datum-plane \"femur_inner\" y 131.0], [datum-axis \"pitch\" x 0 0 310], [datum-point \"hip\" 0 0 310], read back with [datum \"femur_inner\"], [datum+ \"femur_inner\" 3.0] (3 mm outboard), [datum-x/-y/-z \"pitch\"]\nStacks — declarative packing, where each running clearance is a named value instead of an arbitrary number: [stack y \"leg\" 131.0 [lane \"femur_inner\" 5.0] [gap \"idler_run\" 1.0] [lane \"idler_boss\" 3.0]] declares datum planes leg_femur_inner_lo/_hi, leg_idler_boss_lo/_hi and leg_end; widening leg_idler_run slides everything outboard of it\nScene: [root solid \"material-name\"]\nModules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
+    "description": "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\nPrimitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h], [torus major-r minor-r], [wedge x y z], [prism sides radius height]\nBooleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\nTransforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s], [mirror ox oy oz nx ny nz s] (plane through the origin point with that normal) — plus the axis sugar [mirror-x s] / [mirror-y s] / [mirror-z s], which mirror through the origin, negating that one coordinate. NEVER hand-mirror by negating coordinates; use these.\nFeatures: [fillet r s], [chamfer d s], [shell t s]\nPatterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\nSymmetric patterns (subject-last): [mirror-pattern nx ny nz s] and its sugar [mirror-pattern-x s] / -y / -z union a solid with its mirror image (a left/right pair in one expression, so the halves can't drift apart); [quad-pattern s] is the 4-fold X-and-Y version — a quadruped's legs, a 4-post frame, a vehicle chassis\nSketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\nSketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]], [loft-closed #[sk1 sk2 …]]\nAssemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\nAssembly symmetry: author ONE side as an assembly, then [mirror-group-x \"-r\" side] (or -y / -z) returns it plus a mirrored, suffixed copy — parts reflected, placements and joint anchors mirrored, and joint axes flipped by the correct rule (a hinge across its own mirror normal keeps its axis; the other two flip), so the same joint state drives both sides symmetrically. Splice it back with [assembly-join chassis mirrored]. NEVER hand-mirror an assembly.\nPipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\nLet bindings: [let body [cube 50 30 5]] — note these are inlined and do NOT survive into the document; use [defparam ...] for a value you want to change later\nParameters (survive into the document and are settable afterwards with set_parameters, and differentiable with parameter_gradient): [defparam pitch_axis_x 310.0], [defparam wall \"bore * 0.2\"] for derived values, plus optional :unit/:min/:max/:description. Names must be identifier-safe (underscores, not dashes)\nDatums — named reference geometry, so two parts cannot each hold their own copy of a shared plane: [datum-plane \"femur_inner\" y 131.0], [datum-axis \"pitch\" x 0 0 310], [datum-point \"hip\" 0 0 310], read back with [datum \"femur_inner\"], [datum+ \"femur_inner\" 3.0] (3 mm outboard), [datum-x/-y/-z \"pitch\"]\nStacks — declarative packing, where each running clearance is a named value instead of an arbitrary number: [stack y \"leg\" 131.0 [lane \"femur_inner\" 5.0] [gap \"idler_run\" 1.0] [lane \"idler_boss\" 3.0]] declares datum planes leg_femur_inner_lo/_hi, leg_idler_boss_lo/_hi and leg_end; widening leg_idler_run slides everything outboard of it\nScene: [root solid \"material-name\"], with [material name r g b metallic roughness] to define one\nModules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1502,7 +1517,7 @@
   {
     "name": "export_cad",
     "title": "Export CAD",
-    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
+    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1521,6 +1536,13 @@
         "filename": {
           "type": "string",
           "description": "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp), relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) auto-detect bends, angles, and directions with zero data entry."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [
@@ -1534,7 +1556,7 @@
   {
     "name": "inspect_cad",
     "title": "Inspect CAD",
-    "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
+    "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`. Pass `joint_state` to measure a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) rather than its zero pose.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1545,6 +1567,13 @@
         "document": {
           "type": "object",
           "description": "Inline Document IR to inspect instead of a session. Use this stateless path when no `document_id` is resident (e.g. a cold serverless instance)."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       }
     },
@@ -5712,7 +5741,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Pass `joint_state` to render a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose — forward kinematics resolves the instance placements and the resolved transforms come back in `pose.transforms`. Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5785,6 +5814,13 @@
             "shaded"
           ],
           "description": "Shading style: 'drafting' (default) keeps part colors in the navy drafting tonal family; 'shaded' renders each part in its full assigned material color (same Lambertian shading). Any other value is an error."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       }
     },
@@ -8251,7 +8287,7 @@
   {
     "name": "check_clearance",
     "title": "Check Clearance",
-    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at one real pose (joint id or name → degrees, or mm for sliders) instead of the stored one. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` — pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. (2) audit — omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8284,13 +8320,66 @@
         "allow_contact": {
           "type": "boolean",
           "description": "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
+        },
+        "sweep": {
+          "type": "array",
+          "description": "Range-of-motion sweep: drive these joints across their travel and report the WORST pose, not the authored one. Each axis is {joint, from, to, steps}; multiple axes form a Cartesian grid (capped at 4096 poses). Joint states are restored afterwards — the sweep never edits the document.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "joint": {
+                "type": "string",
+                "description": "Joint id or name to drive."
+              },
+              "from": {
+                "type": "number",
+                "description": "Start of travel (degrees for revolute, mm for prismatic)."
+              },
+              "to": {
+                "type": "number",
+                "description": "End of travel."
+              },
+              "steps": {
+                "type": "number",
+                "description": "Number of intervals; steps + 1 poses are sampled."
+              }
+            },
+            "required": [
+              "joint",
+              "from",
+              "to",
+              "steps"
+            ]
+          }
+        },
+        "ignore_pairs": {
+          "type": "array",
+          "description": "Audit mode: part id/name pairs whose contact is intended (a bolt in its own hole, a bearing pressed into its bore). Each entry is a two-element array.",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "ignore_fixed_joints": {
+          "type": "boolean",
+          "description": "Audit mode: skip pairs joined by a Fixed joint — they are bolted together and always 'interfere'. Default true."
+        },
+        "ignore_adjacent": {
+          "type": "boolean",
+          "description": "Audit mode: skip every directly-jointed parent/child pair, not just Fixed ones. Default false — adjacent links can and do clash away from the joint axis."
         }
       },
       "required": [
-        "document_id",
-        "group_a",
-        "group_b",
-        "min_mm"
+        "document_id"
       ]
     },
     "outputSchema": {

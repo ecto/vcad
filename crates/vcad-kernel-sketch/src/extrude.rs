@@ -31,7 +31,119 @@ impl Default for ExtrudeOptions {
     }
 }
 
+/// True when the extrusion runs against the profile's plane normal.
+///
+/// The builders below all assume the material lies on the +normal side of
+/// the sketch plane: cap normals are taken as ±`profile.normal` and the
+/// lateral winding is derived from a CCW-in-frame loop seen from +normal.
+/// Extruding along −normal silently inverted every one of those decisions,
+/// producing a watertight but inside-out solid (negative volume) that
+/// renders identically to a correct one and corrupts every downstream
+/// boolean. See [`canonicalize_extrusion`].
+fn opposes_normal(profile: &SketchProfile, direction: Vec3) -> bool {
+    direction.dot(profile.normal.as_ref()) < 0.0
+}
+
+/// Reverse a segment loop in place-ish: reverse traversal order and swap
+/// each segment's endpoints. Arc handedness flips with the traversal.
+fn reversed_loop(segments: &[SketchSegment]) -> Vec<SketchSegment> {
+    segments
+        .iter()
+        .rev()
+        .map(|seg| match seg {
+            SketchSegment::Line { start, end } => SketchSegment::Line {
+                start: *end,
+                end: *start,
+            },
+            SketchSegment::Arc {
+                start,
+                end,
+                center,
+                ccw,
+            } => SketchSegment::Arc {
+                start: *end,
+                end: *start,
+                center: *center,
+                ccw: !*ccw,
+            },
+        })
+        .collect()
+}
+
+/// Swap the 2D coordinates of a segment loop (u,v) → (v,u). Paired with a
+/// frame whose x/y axes are swapped, this leaves every 3D point untouched;
+/// the reflection flips arc handedness.
+fn swapped_axes_loop(segments: &[SketchSegment]) -> Vec<SketchSegment> {
+    let swap = |p: Point2| Point2::new(p.y, p.x);
+    segments
+        .iter()
+        .map(|seg| match seg {
+            SketchSegment::Line { start, end } => SketchSegment::Line {
+                start: swap(*start),
+                end: swap(*end),
+            },
+            SketchSegment::Arc {
+                start,
+                end,
+                center,
+                ccw,
+            } => SketchSegment::Arc {
+                start: swap(*start),
+                end: swap(*end),
+                center: swap(*center),
+                ccw: !*ccw,
+            },
+        })
+        .collect()
+}
+
+/// Re-express a profile on a frame whose normal points the other way,
+/// without moving a single 3D point.
+///
+/// The x and y axes are swapped (so `normal = x × y` flips sign) and the 2D
+/// coordinates swap with them; the loop is then reversed so it stays CCW
+/// when viewed from the *new* +normal. The result describes exactly the
+/// same 3D curve — only the frame's handedness changed — so an extrusion
+/// that opposed the old normal runs *along* the new one and the builders'
+/// winding assumptions hold.
+///
+/// This is why extruding "backwards" is not an error: a prism on the −normal
+/// side of a sketch is perfectly well defined, and the caller gets the solid
+/// they asked for, correctly wound, at the position they asked for.
+fn flip_profile_frame(profile: &SketchProfile) -> SketchProfile {
+    let segments = reversed_loop(&swapped_axes_loop(&profile.segments));
+    SketchProfile::new(
+        profile.origin,
+        *profile.y_dir.as_ref(),
+        *profile.x_dir.as_ref(),
+        segments,
+    )
+    .expect("flipping a valid profile's frame preserves closure and non-degeneracy")
+}
+
+/// Canonicalize `(profile, holes)` so the extrusion direction always has a
+/// positive dot product with the profile normal. Returns `None` when the
+/// input is already canonical (the common case — no allocation).
+fn canonicalize_extrusion(
+    profile: &SketchProfile,
+    holes: &[Vec<SketchSegment>],
+    direction: Vec3,
+) -> Option<(SketchProfile, Vec<Vec<SketchSegment>>)> {
+    if !opposes_normal(profile, direction) {
+        return None;
+    }
+    let flipped_holes = holes
+        .iter()
+        .map(|h| reversed_loop(&swapped_axes_loop(h)))
+        .collect();
+    Some((flip_profile_frame(profile), flipped_holes))
+}
+
 /// Extrude a closed profile along a direction to create a B-rep solid.
+///
+/// The direction need not point along the profile's normal: extruding along
+/// −normal builds the prism on the other side of the sketch plane, correctly
+/// wound (positive volume) either way.
 ///
 /// # Arguments
 ///
@@ -67,6 +179,11 @@ pub fn extrude(profile: &SketchProfile, direction: Vec3) -> Result<BRepSolid, Sk
     let dir_len = direction.norm();
     if dir_len < 1e-12 {
         return Err(SketchError::ZeroExtrusion);
+    }
+
+    // Re-frame a backwards extrusion before any winding decision is made.
+    if let Some((flipped, _)) = canonicalize_extrusion(profile, &[], direction) {
+        return extrude(&flipped, direction);
     }
 
     // Analytic fast path: a profile that is a full circle extruded along
@@ -659,6 +776,10 @@ pub fn extrude_with_holes(
         return Err(SketchError::ZeroExtrusion);
     }
 
+    if let Some((flipped, flipped_holes)) = canonicalize_extrusion(profile, holes, direction) {
+        return extrude_with_holes(&flipped, &flipped_holes, direction);
+    }
+
     let arc_segs = ExtrudeOptions::default().arc_segments as usize;
 
     // Validate each hole loop (closure, degeneracy) by round-tripping it
@@ -956,6 +1077,20 @@ pub fn extrude_with_options(
 
     if profile.segments.is_empty() {
         return Err(SketchError::EmptyProfile);
+    }
+
+    // Re-frame a backwards extrusion. Swapping the frame's x/y axes reverses
+    // the sense of the twist rotation (it runs x → y), so the requested
+    // twist is negated to describe the same physical twist.
+    if let Some((flipped, _)) = canonicalize_extrusion(profile, &[], direction) {
+        return extrude_with_options(
+            &flipped,
+            direction,
+            ExtrudeOptions {
+                twist_angle: -options.twist_angle,
+                ..options
+            },
+        );
     }
 
     // Calculate number of segments based on twist angle
@@ -1540,6 +1675,110 @@ mod tests {
             (vol - 1000.0).abs() < 5.0,
             "expected volume ~1000, got {vol}"
         );
+    }
+
+    /// Signed mesh volume — the discriminator the abs()-taking helper below
+    /// throws away, and the only signal that separates an inside-out solid
+    /// from a correct one (they render identically).
+    fn signed_mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
+        let verts = &mesh.vertices;
+        let mut vol = 0.0;
+        for tri in mesh.indices.chunks(3) {
+            let (i0, i1, i2) = (
+                tri[0] as usize * 3,
+                tri[1] as usize * 3,
+                tri[2] as usize * 3,
+            );
+            let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
+            let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
+            let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
+            vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
+                - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+                + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
+        }
+        vol / 6.0
+    }
+
+    fn signed_volume_of(solid: &BRepSolid) -> f64 {
+        signed_mesh_volume(&vcad_kernel_tessellate::tessellate_brep(solid, 32))
+    }
+
+    /// Field report 2026-07-26: a sketch frame whose axes give a −Y normal,
+    /// extruded along +Y (the natural thing to write), produced a
+    /// watertight but inside-out plate. Renders normally; poisons every
+    /// downstream boolean. All four (frame handedness × direction sign)
+    /// combinations must now yield the same positive volume.
+    #[test]
+    fn extrude_is_positive_volume_for_either_direction_sign() {
+        let w = 10.0;
+        let h = 5.0;
+        let t = 3.0;
+        let expected = w * h * t;
+
+        // Two frames spanning the same plane with opposite normals:
+        // (X, Z) → normal −Y, and (Z, X) → normal +Y.
+        let frames = [(Vec3::x(), Vec3::z()), (Vec3::z(), Vec3::x())];
+        let dirs = [
+            Vec3::new(0.0, t, 0.0),  // +Y
+            Vec3::new(0.0, -t, 0.0), // −Y
+        ];
+
+        for (x_dir, y_dir) in frames {
+            for dir in dirs {
+                let profile = SketchProfile::rectangle(Point3::origin(), x_dir, y_dir, w, h);
+                let solid = extrude(&profile, dir).unwrap();
+                let vol = signed_volume_of(&solid);
+                assert!(
+                    (vol - expected).abs() < 0.05,
+                    "frame ({x_dir:?},{y_dir:?}) dir {dir:?}: expected +{expected}, got {vol}"
+                );
+
+                // Watertight regardless of which way it was built.
+                let unpaired = solid
+                    .topology
+                    .half_edges
+                    .iter()
+                    .filter(|(_, he)| he.twin.is_none())
+                    .count();
+                assert_eq!(unpaired, 0, "frame ({x_dir:?},{y_dir:?}) dir {dir:?}");
+            }
+        }
+    }
+
+    /// Same invariant for the arc-bearing (analytic cylinder) path and the
+    /// holed path — both make the identical +normal assumption.
+    #[test]
+    fn backwards_extrude_positive_volume_for_circle_and_holes() {
+        let r = 4.0;
+        let t = 3.0;
+        // Full-circle profile on the XZ plane (normal −Y).
+        let circle = SketchProfile::circle(Point3::origin(), -Vec3::y(), r, 4);
+        for dir in [Vec3::new(0.0, t, 0.0), Vec3::new(0.0, -t, 0.0)] {
+            let vol = signed_volume_of(&extrude(&circle, dir).unwrap());
+            let expected = PI * r * r * t;
+            assert!(
+                (vol - expected).abs() / expected < 0.02,
+                "circle dir {dir:?}: expected ~+{expected}, got {vol}"
+            );
+        }
+
+        // Plate with a square hole, frame (X, Z) → normal −Y.
+        let outer = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::z(),
+            rect_loop(0.0, 0.0, 10.0, 10.0),
+        )
+        .unwrap();
+        let hole = vec![rect_loop(3.0, 3.0, 6.0, 6.0)];
+        let expected = (100.0 - 9.0) * t;
+        for dir in [Vec3::new(0.0, t, 0.0), Vec3::new(0.0, -t, 0.0)] {
+            let vol = signed_volume_of(&extrude_with_holes(&outer, &hole, dir).unwrap());
+            assert!(
+                (vol - expected).abs() < 0.05,
+                "holed dir {dir:?}: expected +{expected}, got {vol}"
+            );
+        }
     }
 
     fn compute_mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {

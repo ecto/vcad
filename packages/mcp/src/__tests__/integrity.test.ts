@@ -12,6 +12,7 @@ import { commandRegistry } from "@vcad/core";
 import {
   computeIntegrity,
   isoperimetricViolation,
+  partLabels,
 } from "../tools/integrity.js";
 import { dispatchRegistryTool } from "../tools/registry-dispatch.js";
 import { registerSession } from "../tools/session.js";
@@ -185,5 +186,40 @@ describe("mutation responses", () => {
     expect(payload.integrity!.volume_mm3).toBeGreaterThan(2500);
     expect(payload.integrity!.volume_mm3).toBeLessThan(2600);
     expect(payload.integrity!.watertight).toBe(true);
+  });
+});
+
+/**
+ * Field report 2026-07-26: four identical `inverted winding` warnings in a
+ * 44-root document named nothing, and the reporter had to bisect the model
+ * by hand to find the bad plates. Every per-part warning now carries the
+ * root id (plus the node's name when the document has one).
+ */
+describe("partLabels", () => {
+  const doc = {
+    roots: [
+      { root: 7, material: "steel" },
+      { root: 12, material: "steel", visible: false },
+      { root: 19, material: "steel" },
+    ],
+    nodes: {
+      "7": { id: 7, name: null, op: { type: "Cube" } },
+      "12": { id: 12, name: "hidden-jig", op: { type: "Cube" } },
+      "19": { id: 19, name: "femur-plate", op: { type: "Extrude" } },
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+
+  it("names the root node, and its name when the document has one", () => {
+    // Hidden roots are skipped by the evaluator, so scene part 2 is root 19
+    // — indexing doc.roots directly would blame the wrong feature.
+    expect(partLabels(doc, 2)).toEqual([
+      'part 1 (root 7)',
+      'part 2 "femur-plate" (root 19)',
+    ]);
+  });
+
+  it("falls back to an index when the document has fewer roots than parts", () => {
+    expect(partLabels({ roots: [], nodes: {} } as never, 1)).toEqual(["part 1"]);
   });
 });

@@ -1,0 +1,17 @@
+{
+  "id": "2026-07-26-joint-state-pose",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Pose assemblies with joint_state",
+  "summary": "render_view, inspect_cad, inspect_part, describe_scene, check_clearance and export_cad now take an optional joint_state map, so a jointed assembly is no longer stuck in its zero pose.",
+  "features": ["assembly", "kinematics", "render", "export"],
+  "mcpTools": [
+    "render_view",
+    "inspect_cad",
+    "inspect_part",
+    "describe_scene",
+    "check_clearance",
+    "export_cad"
+  ]
+}

@@ -33,6 +33,10 @@ import {
   durabilityWarning,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
+import {
+  markSourceDiverged,
+  sourceStatus,
+} from "./tools/source-provenance.js";
 import { previewVersion, previewGlbFor, PREVIEW_MAX_BASE64 } from "./tools/preview.js";
 import {
   createSessionStore,
@@ -1498,6 +1502,24 @@ export async function createServer(
         if (writtenId && writtenId !== incomingId) {
           noteSessionDurability(result, writtenId);
         }
+        // ── Source divergence ──────────────────────────────────────────
+        // Incremental mutations edit the IR directly and cannot round-trip
+        // back to loon, so a document evaluated from source stops matching
+        // that source the moment one lands. Marking it here — the single
+        // site every writer passes through — is what keeps "the model I'm
+        // editing" and "the file I'll fabricate from" from diverging
+        // silently. `create_cad_loon` re-authors the whole document and
+        // re-attaches its own source; `undo` restores a snapshot along with
+        // whatever divergence state that snapshot had.
+        if (
+          incomingId &&
+          writtenId === incomingId &&
+          name !== "create_cad_loon" &&
+          name !== "undo" &&
+          markSourceDiverged(incomingId, name)
+        ) {
+          noteSourceDivergence(result, incomingId);
+        }
         if (writtenId) {
           try {
             await persistSession(sessionStore, writtenId);
@@ -1891,6 +1913,22 @@ function noteSessionDurability(result: ToolResult, documentId: string): void {
   result.content = [
     ...(result.content ?? []),
     { type: "text", text: JSON.stringify({ durability: warning }) },
+  ];
+}
+
+/**
+ * Say — once, at the moment it becomes true — that a session no longer matches
+ * the source it was evaluated from. Said once per session rather than on every
+ * mutation: the state is durable on the document (and readable any time via
+ * `get_document`), so repeating it would be noise, but never saying it is how
+ * the file and the model drift apart unnoticed.
+ */
+function noteSourceDivergence(result: ToolResult, documentId: string): void {
+  const status = sourceStatus(documents.get(documentId));
+  if (!status.source_stale) return;
+  result.content = [
+    ...(result.content ?? []),
+    { type: "text", text: JSON.stringify(status) },
   ];
 }
 

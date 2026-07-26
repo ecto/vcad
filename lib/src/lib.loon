@@ -134,6 +134,29 @@
 ; mirror across a plane through (ox,oy,oz) with normal (nx,ny,nz)
 [let mirror [fn [ox oy oz nx ny nz s] [Mirror s ox oy oz nx ny nz]]]
 
+; Axis sugar — mirror across a principal plane through the origin.
+; [mirror-x s] flips the sign of x (mirrors across the YZ plane), and so on.
+; This is the common case; reach for [mirror ...] only for off-origin or
+; oblique planes.
+[let mirror-x [fn [s] [Mirror s 0.0 0.0 0.0 1.0 0.0 0.0]]]
+[let mirror-y [fn [s] [Mirror s 0.0 0.0 0.0 0.0 1.0 0.0]]]
+[let mirror-z [fn [s] [Mirror s 0.0 0.0 0.0 0.0 0.0 1.0]]]
+
+; Symmetric patterns — union of a solid with its mirror image, so a
+; left/right pair (or a 4-post frame) is one expression and the two halves
+; cannot drift apart.
+; [mirror-pattern nx ny nz s] mirrors through the origin with normal (nx,ny,nz).
+[let mirror-pattern [fn [nx ny nz s]
+  [Union s [Mirror s 0.0 0.0 0.0 nx ny nz]]]]
+[let mirror-pattern-x [fn [s] [Union s [Mirror s 0.0 0.0 0.0 1.0 0.0 0.0]]]]
+[let mirror-pattern-y [fn [s] [Union s [Mirror s 0.0 0.0 0.0 0.0 1.0 0.0]]]]
+[let mirror-pattern-z [fn [s] [Union s [Mirror s 0.0 0.0 0.0 0.0 0.0 1.0]]]]
+; [quad-pattern s] — 4-fold symmetry: mirror in X and in Y (a quadruped's
+; legs, a 4-post frame, most vehicle chassis).
+[let quad-pattern [fn [s]
+  [let half [Union s [Mirror s 0.0 0.0 0.0 1.0 0.0 0.0]]
+    [Union half [Mirror half 0.0 0.0 0.0 0.0 1.0 0.0]]]]]
+
 ; Sketch (no subject — creates new geometry)
 [let sketch [fn [ox oy oz xx xy xz yx yy yz segs]
   [Sketch ox oy oz xx xy xz yx yy yz segs]]]
@@ -214,6 +237,117 @@
 ; Assembly constructor
 [let assembly [fn [parts instances joints ground]
   [Assembly parts instances joints ground]]]
+
+; ---------------------------------------------------------------------------
+; Assembly symmetry — declare that one side is the mirror of the other
+; ---------------------------------------------------------------------------
+;
+; Hand-mirroring an assembly is the single most error-prone thing in this
+; language: an instance placement is easy to flip, but a JOINT anchor must
+; flip together with its axis, and the axis rule is counterintuitive.
+;
+; Under a reflection M (M = M⁻¹, det M = -1), conjugating a rotation gives
+;   M · R(a, θ) · M = R(−M a, θ)
+; so a revolute joint keeps driving its mirrored child through the SAME state
+; θ (and the same limits) only if its axis becomes −M a: the component ALONG
+; the mirror normal keeps its sign and the other two flip. Mirroring across X
+; therefore leaves an X-axis hinge alone and negates a Y- or Z-axis hinge.
+; A prismatic axis is a true vector, not a pseudovector, so it transforms the
+; other way: a' = M a (the along-normal component flips, the others don't).
+;
+; `mirror-group-x/y/z` encode both rules. Author ONE side as an assembly and
+; mirror it; the returned assembly holds the originals plus a suffixed copy:
+;   * parts are mirrored geometrically (so chiral parts really are chiral),
+;   * instances get the mirrored placement and point at the mirrored part,
+;   * joint anchors mirror, axes follow the rules above, and limits/state
+;     carry over unchanged,
+;   * a joint endpoint naming an instance OUTSIDE the group (a shared body,
+;     the ground) keeps its original name, so both sides hang off the same
+;     parent.
+; Ground is preserved. The invariant to assert on the result: the assembly's
+; centre of mass lies on the mirror plane.
+
+; Suffix `id` only when it names an instance inside the mirrored group.
+[let mirror-rename [fn [names suffix id]
+  [if [any? [fn [x] [= x id]] names] [str id suffix] id]]]
+
+; (mx,my,mz) is the diagonal of the reflection M: exactly one entry is -1.
+; The mirror plane's normal is then ((1-mx)/2, (1-my)/2, (1-mz)/2).
+[let mirror-part-entry [fn [mx my mz suffix p]
+  [match p
+    [PartEntry n s m]
+      [PartEntry [str n suffix]
+        [Mirror s 0.0 0.0 0.0
+          [/ [- 1.0 mx] 2.0] [/ [- 1.0 my] 2.0] [/ [- 1.0 mz] 2.0]]
+        m]
+    _ p]]]
+
+[let mirror-instance-entry [fn [mx my mz suffix i]
+  [match i
+    [InstanceEntry n pn x y z]
+      [InstanceEntry [str n suffix] [str pn suffix] [* mx x] [* my y] [* mz z]]
+    _ i]]]
+
+[let mirror-joint-def [fn [mx my mz names suffix j]
+  [match j
+    ; Revolute: axis a' = −M a — along-normal component keeps its sign.
+    [RevoluteJoint n ax ay az lo hi p px py pz c cx cy cz]
+      [RevoluteJoint [str n suffix]
+        [* [- 0.0 mx] ax] [* [- 0.0 my] ay] [* [- 0.0 mz] az]
+        lo hi
+        [mirror-rename names suffix p] [* mx px] [* my py] [* mz pz]
+        [mirror-rename names suffix c] [* mx cx] [* my cy] [* mz cz]]
+    ; Prismatic: axis a' = M a — a displacement, not a pseudovector.
+    [PrismaticJoint n ax ay az lo hi p px py pz c cx cy cz]
+      [PrismaticJoint [str n suffix]
+        [* mx ax] [* my ay] [* mz az]
+        lo hi
+        [mirror-rename names suffix p] [* mx px] [* my py] [* mz pz]
+        [mirror-rename names suffix c] [* mx cx] [* my cy] [* mz cz]]
+    [FixedJoint n p px py pz c cx cy cz]
+      [FixedJoint [str n suffix]
+        [mirror-rename names suffix p] [* mx px] [* my py] [* mz pz]
+        [mirror-rename names suffix c] [* mx cx] [* my cy] [* mz cz]]
+    [BallJoint n p px py pz c cx cy cz]
+      [BallJoint [str n suffix]
+        [mirror-rename names suffix p] [* mx px] [* my py] [* mz pz]
+        [mirror-rename names suffix c] [* mx cx] [* my cy] [* mz cz]]
+    _ j]]]
+
+; General form: (mx,my,mz) = diag(M). Prefer the axis entry points below.
+[let mirror-group-signs [fn [mx my mz suffix asm]
+  [match asm
+    [Assembly parts instances joints ground]
+      [let names [map [fn [i] [match i [InstanceEntry n _ _ _ _] n _ ""]] instances]
+        [Assembly
+          [flatten #[parts
+            [map [fn [p] [mirror-part-entry mx my mz suffix p]] parts]]]
+          [flatten #[instances
+            [map [fn [i] [mirror-instance-entry mx my mz suffix i]] instances]]]
+          [flatten #[joints
+            [map [fn [j] [mirror-joint-def mx my mz names suffix j]] joints]]]
+          ground]]
+    _ asm]]]
+
+; Concatenate two assemblies (parts, instances, joints); the ground comes from
+; the first. This is how a mirrored group is spliced back into the machine:
+;   [assembly-join chassis [mirror-group-x "-r" one-side]]
+[let assembly-join [fn [a b]
+  [match a
+    [Assembly pa ia ja ground]
+      [match b
+        [Assembly pb ib jb _]
+          [Assembly [flatten #[pa pb]] [flatten #[ia ib]] [flatten #[ja jb]] ground]
+        _ a]
+    _ a]]]
+
+; [mirror-group-x "-r" asm] → asm plus its X mirror, names suffixed "-r".
+[let mirror-group-x [fn [suffix asm]
+  [mirror-group-signs [- 0.0 1.0] 1.0 1.0 suffix asm]]]
+[let mirror-group-y [fn [suffix asm]
+  [mirror-group-signs 1.0 [- 0.0 1.0] 1.0 suffix asm]]]
+[let mirror-group-z [fn [suffix asm]
+  [mirror-group-signs 1.0 1.0 [- 0.0 1.0] suffix asm]]]
 
 ; ---------------------------------------------------------------------------
 ; Simulation configuration (data types for sim pipeline)
