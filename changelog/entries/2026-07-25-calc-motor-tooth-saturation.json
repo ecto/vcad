@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-calc-motor-tooth-saturation",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "calc_motor sees saturating stator teeth",
+  "summary": "calc_motor's MEC model treated iron as linear and silently over-predicted Kt on machines whose teeth saturate; it now reports tooth flux, warns past the knee, and can solve the saturating network.",
+  "features": ["motor", "magnetics", "simulation"],
+  "mcpTools": ["calc_motor"]
+}

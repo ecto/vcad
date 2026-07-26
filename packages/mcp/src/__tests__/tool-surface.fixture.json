@@ -9561,7 +9561,7 @@
         },
         "magnet": {
           "type": "object",
-          "description": "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt."
+          "description": "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt. SATURATION: the MEC iron is LINEAR unless you say otherwise, so it over-predicts Kt on a machine whose teeth saturate. Pass slots + (tooth_width_mm or tooth_fraction) to make the teeth visible — the tool then reports tooth_flux_density (B_gap · pitch/width, routinely 2x B_gap) and warns when it passes the ~1.5 T silicon-steel knee. Add iron_js_t (saturation polarization, silicon steel ≈ 2.0 T) with iron_mu_rel to actually SOLVE the saturating network instead of merely warning; tooth_path_mm puts the teeth in the reluctance loop."
         },
         "phase_current_a": {
           "type": "number",

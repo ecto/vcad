@@ -6115,6 +6115,18 @@ mod ecad_wasm {
         Ok(vcad_ecad_sim::airgap_flux_density(&spec))
     }
 
+    /// Solve the air-gap MEC network and return the full `AirGapSolution`:
+    /// gap/tooth/yoke flux densities, whether the iron was solved with its
+    /// saturating B–H law, and any past-the-knee warnings. Superset of
+    /// [`ecad_airgap_flux_density`], which returns only `bGapTesla`.
+    #[wasm_bindgen(js_name = ecadAirgapSolve)]
+    pub fn ecad_airgap_solve(spec_json: &str) -> Result<JsValue, JsError> {
+        let spec: vcad_ecad_sim::AirGapSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let sol = vcad_ecad_sim::airgap_solve(&spec);
+        serde_wasm_bindgen::to_value(&sol).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Run Electrical Rule Check on a schematic sheet.
     ///
     /// # Arguments

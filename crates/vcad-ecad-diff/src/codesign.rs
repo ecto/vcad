@@ -51,6 +51,8 @@ const MAGNET: AirGapSpec = AirGapSpec {
     iron_mu_rel: None,
     iron_path_mm: 0.0,
     iron_area_mm2: 1.0,
+    iron_js_t: None,
+    teeth: None,
 };
 
 /// Air-gap flux density (T) used as the plant constant, computed from [`MAGNET`]
