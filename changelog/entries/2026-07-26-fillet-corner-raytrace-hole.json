@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-fillet-corner-raytrace-hole",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "fix",
+  "title": "Fix holes at fillet corners in ray-traced renders",
+  "summary": "Ray-traced filleted parts showed a crescent-shaped hole at every rounded corner; the spherical corner blend's trim boundary collapsed at the sphere's pole and cut away half the patch.",
+  "features": ["fillet", "rendering", "raytrace"]
+}

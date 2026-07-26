@@ -7642,6 +7642,7 @@ dependencies = [
  "tang",
  "thiserror 2.0.18",
  "vcad-kernel-booleans",
+ "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-gpu",
  "vcad-kernel-math",

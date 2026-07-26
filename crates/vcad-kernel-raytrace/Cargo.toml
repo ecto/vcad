@@ -30,5 +30,8 @@ web-sys = { version = "0.3", features = ["console"] }
 default = []
 gpu = ["dep:vcad-kernel-gpu", "dep:wgpu"]
 
+[dev-dependencies]
+vcad-kernel-fillet = { workspace = true }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 pollster = { workspace = true }
