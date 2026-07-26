@@ -312,11 +312,15 @@ pub fn wall_thickness(
                     continue;
                 }
                 hits.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                for pair in hits.chunks_exact(2) {
-                    let span = pair[1] - pair[0];
+                // Pair consecutive crossings into solid spans, the same
+                // enter/exit parity walk `tet_fill` does along +Z.
+                let mut k = 0;
+                while k + 1 < hits.len() {
+                    let span = hits[k + 1] - hits[k];
                     if span > 0.0 {
                         spans.push(span);
                     }
+                    k += 2;
                 }
             }
         }
