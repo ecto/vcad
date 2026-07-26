@@ -13,7 +13,6 @@ const SURFACE_BILINEAR: u32 = 5u;
 
 const MAX_T: f32 = 1e10;
 const EPSILON: f32 = 1e-6;
-const PI: f32 = 3.14159265359;
 
 // Structures matching Rust definitions
 
@@ -25,13 +24,6 @@ struct GpuSurface {
     _pad1: u32,
     _pad2: u32,
     params: array<f32, 32>,
-}
-
-struct GpuMaterial {
-    color: vec4<f32>,
-    metallic: f32,
-    roughness: f32,
-    _pad: vec2<f32>,
 }
 
 struct GpuFace {
@@ -1180,27 +1172,6 @@ fn compute_normal(hit: RayHit) -> vec3<f32> {
     return normalize(normal);
 }
 
-// Fresnel-Schlick approximation
-fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
-    return f0 + (1.0 - f0) * pow(1.0 - cos_theta, 5.0);
-}
-
-// GGX/Trowbridge-Reitz normal distribution
-fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    return a2 / (PI * denom * denom);
-}
-
-// Smith geometry function (GGX)
-fn geometry_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
-    let r = roughness + 1.0;
-    let k = (r * r) / 8.0;
-    let ggx_v = n_dot_v / (n_dot_v * (1.0 - k) + k);
-    let ggx_l = n_dot_l / (n_dot_l * (1.0 - k) + k);
-    return ggx_v * ggx_l;
-}
 
 // ACES Narkowicz tonemap. Cleaner highlights and richer mids than Reinhard.
 fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {

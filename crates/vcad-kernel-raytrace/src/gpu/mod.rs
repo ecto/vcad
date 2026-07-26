@@ -8,6 +8,7 @@ mod pipeline;
 pub mod shaders;
 
 pub use buffers::{
-    GpuBvhNode, GpuCamera, GpuFace, GpuRenderState, GpuScene, GpuSceneError, GpuSurface, GpuVec2,
+    GpuBvhNode, GpuCamera, GpuFace, GpuMaterial, GpuRenderState, GpuScene, GpuSceneError,
+    GpuSurface, GpuVec2,
 };
 pub use pipeline::RayTracePipeline;

@@ -1139,6 +1139,15 @@ fn bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
     (value, pdf.max(0.0))
 }
 
+/// Reference BSDF evaluation, in the local shading frame (+Z = normal).
+///
+/// Exposed so the WGSL port in `gpu/shaders/bsdf.wgsl` can be checked against
+/// this implementation — see `tests/bsdf_parity.rs`. Returns `(f * cos, pdf)`;
+/// the PDF is the one MIS must agree on across both renderers.
+pub fn reference_bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
+    bsdf_eval(m, wo, wi)
+}
+
 /// Importance-sample the BSDF. Returns `(wi_local, f*cos, pdf)`.
 fn bsdf_sample(m: &Pbr, wo: Vec3, rng: &mut Rng) -> Option<(Vec3, [f32; 3], f32)> {
     if wo.z <= 0.0 {

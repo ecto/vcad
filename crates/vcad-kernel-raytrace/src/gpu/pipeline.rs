@@ -32,7 +32,7 @@ impl RayTracePipeline {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Ray Trace Shader"),
-                source: wgpu::ShaderSource::Wgsl(super::shaders::RAYTRACE_SHADER.into()),
+                source: wgpu::ShaderSource::Wgsl(super::shaders::raytrace_shader().into()),
             });
 
         let bind_group_layout =

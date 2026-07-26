@@ -174,6 +174,10 @@ impl GpuSurface {
 }
 
 /// GPU-compatible material representation (PBR).
+///
+/// Mirrors [`crate::pathtrace::Pbr`] field-for-field so the GPU path tracer and
+/// the CPU reference shade identically. The WGSL `GpuMaterial` struct in
+/// `shaders/raytrace.wgsl` must match this layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuMaterial {
@@ -183,8 +187,14 @@ pub struct GpuMaterial {
     pub metallic: f32,
     /// Roughness factor (0 = smooth, 1 = rough).
     pub roughness: f32,
+    /// Strength of the clearcoat layer (0 = none, 1 = full).
+    pub clearcoat: f32,
+    /// Perceptual roughness of the clearcoat layer.
+    pub clearcoat_roughness: f32,
+    /// Dielectric index of refraction, drives the base specular reflectance.
+    pub ior: f32,
     /// Padding for 16-byte alignment.
-    pub _pad: [f32; 2],
+    pub _pad: [f32; 3],
 }
 
 impl Default for GpuMaterial {
@@ -193,7 +203,10 @@ impl Default for GpuMaterial {
             color: [0.7, 0.7, 0.7, 1.0], // Neutral gray
             metallic: 0.0,
             roughness: 0.5,
-            _pad: [0.0; 2],
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.1,
+            ior: 1.5,
+            _pad: [0.0; 3],
         }
     }
 }
@@ -213,17 +226,38 @@ impl GpuMaterial {
             color: [r, g, b, 1.0],
             metallic: 1.0,
             roughness,
-            _pad: [0.0; 2],
+            ..Default::default()
         }
     }
 
-    /// Create a plastic material.
+    /// Create a plastic material, optionally clearcoated.
     pub fn plastic(r: f32, g: f32, b: f32, roughness: f32) -> Self {
         Self {
             color: [r, g, b, 1.0],
             metallic: 0.0,
             roughness,
-            _pad: [0.0; 2],
+            ..Default::default()
+        }
+    }
+
+    /// Add a clearcoat layer of the given strength and roughness.
+    pub fn with_clearcoat(mut self, clearcoat: f32, clearcoat_roughness: f32) -> Self {
+        self.clearcoat = clearcoat;
+        self.clearcoat_roughness = clearcoat_roughness;
+        self
+    }
+
+    /// Convert to the CPU reference material, for cross-checking the two
+    /// shading paths against each other.
+    pub fn to_pbr(self) -> crate::pathtrace::Pbr {
+        crate::pathtrace::Pbr {
+            base_color: [self.color[0], self.color[1], self.color[2]],
+            metallic: self.metallic,
+            roughness: self.roughness,
+            clearcoat: self.clearcoat,
+            clearcoat_roughness: self.clearcoat_roughness,
+            ior: self.ior,
+            emissive: [0.0; 3],
         }
     }
 }
@@ -1005,7 +1039,7 @@ impl GpuScene {
             color: [r, g, b, 1.0],
             metallic,
             roughness,
-            _pad: [0.0; 2],
+            ..Default::default()
         };
     }
 }
