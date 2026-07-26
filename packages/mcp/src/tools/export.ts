@@ -92,11 +92,13 @@ export const exportCadSchema = {
     filename: {
       type: "string" as const,
       description:
-        "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp), " +
+        "Output filename with extension (.stl, .glb, or .step/.stp), " +
         "relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). " +
-        "STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by " +
-        "the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) " +
-        "auto-detect bends, angles, and directions with zero data entry.",
+        "STEP is a BRep AP214 export: booleans, transforms, fillets, and sweeps keep true " +
+        "analytic faces (the format CNC vendors quote from). Sheet-metal documents export the " +
+        "FOLDED body with cylindrical bend faces auto-detected by 3D fab pipelines (e.g. " +
+        "SendCutSend). Parts built from imported meshes have no BRep and are refused by name — " +
+        "export those as STL.",
     },
     joint_state: jointStateSchemaProp,
   },
@@ -113,26 +115,28 @@ export function exportCad(
   const { doc: ir, pose } = applyJointState(stored, args.joint_state);
   const filename = String(args.filename ?? "");
 
-  // STEP: only the folded sheet-metal body is exportable (mesh-evaluated
-  // documents have no B-rep to write). The folded solid carries real
-  // cylindrical bend faces, so a 3D-pipeline fab service detects bends,
-  // angles, and directions from the file itself — the zero-data-entry
-  // alternative to the DXF path (where bend angles are entered in the
-  // service's UI).
+  // STEP: BRep-preserving export. Sheet-metal documents export the FOLDED
+  // body (true cylindrical bend faces — the zero-data-entry upload path for
+  // 3D fab pipelines); everything else evaluates the scene roots through
+  // the kernel, where booleans, transforms, fillets, and sweeps all keep
+  // analytic BRep faces, and serializes one AP214 body per root.
   const stepExt = filename.toLowerCase().split(".").pop();
   if (stepExt === "step" || stepExt === "stp") {
-    const step = engine.foldedSheetMetalStep(ir);
-    if (step === null) {
-      throw new Error(
-        "STEP export is only available for sheet-metal documents (the folded " +
-          "body needs B-rep bend geometry). Use .stl or .glb for mesh exports.",
-      );
+    const foldedStep = engine.foldedSheetMetalStep(ir);
+    if (foldedStep !== null) {
+      const bytes = new TextEncoder().encode(foldedStep);
+      return deliver(filename, bytes, {
+        format: stepExt,
+        parts: 1,
+        note: "Folded sheet-metal body (AP214) with cylindrical bend faces — bends/angles/directions auto-detect in 3D fab pipelines.",
+      });
     }
-    const bytes = new TextEncoder().encode(step);
+    // General path: BRep evaluation of scene roots. Throws with the
+    // offending root names when a part is mesh-only (e.g. imported mesh).
+    const bytes = engine.documentStep(ir);
     return deliver(filename, bytes, {
       format: stepExt,
-      parts: 1,
-      note: "Folded sheet-metal body (AP214) with cylindrical bend faces — bends/angles/directions auto-detect in 3D fab pipelines.",
+      note: "BRep AP214 export — analytic faces (planes/cylinders/spheres/cones/tori/NURBS) preserved through booleans; ready for CNC quoting.",
     });
   }
 
@@ -180,7 +184,7 @@ export function exportCad(
       bytes = toGlbBytes(scene, filename);
       break;
     default:
-      throw new Error(`Unsupported format: .${ext}. Use .stl, .glb, or .step (sheet-metal only)`);
+      throw new Error(`Unsupported format: .${ext}. Use .stl, .glb, or .step`);
   }
 
   return deliver(filename, bytes, {
@@ -198,7 +202,7 @@ export const toolDefs: ToolDef[] = [
     name: "export_cad",
     pack: null,
     description:
-      "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
+      "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and STEP AP214 (CNC quoting: BRep with true analytic faces, preserved through booleans/transforms/fillets/sweeps; sheet-metal documents export the FOLDED body with cylindrical bend faces that 3D fab pipelines like SendCutSend auto-detect). Mesh-only parts (imported meshes) can't go to STEP and are refused by name — use STL for those. Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
     inputSchema: exportCadSchema,
     handler: (a, c) => exportCad(a, c.engine),
     behavior: behavior({}),

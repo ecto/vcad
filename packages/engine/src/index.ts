@@ -485,6 +485,8 @@ export interface KernelModule {
   WasmAnnotationLayer: typeof WasmAnnotationLayer;
   projectMesh: (mesh: { positions: Float32Array; indices: Uint32Array }, viewDirection: string) => ProjectedView | null;
   importStepBuffer: (data: Uint8Array) => Array<{ positions: Float32Array; indices: Uint32Array }>;
+  /** Export a document's scene roots to a STEP AP214 buffer (BRep-preserving). */
+  documentToStepBuffer?: (docJson: string) => Uint8Array;
   /**
    * Import a URDF (Unified Robot Description Format) file. Returns a
    * JSON-encoded {@link Document} that the caller deserialises with
@@ -1038,6 +1040,7 @@ export class Engine {
       WasmAnnotationLayer: wasmModule.WasmAnnotationLayer,
       projectMesh: wasmModule.projectMesh,
       importStepBuffer: wasmModule.importStepBuffer,
+      documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
@@ -1961,6 +1964,22 @@ export class Engine {
         typeof buildFoldedSheetMetalStep
       >[1],
     );
+  }
+
+  /**
+   * Export the document's scene roots to a STEP AP214 buffer, preserving
+   * BRep through booleans, transforms, fillets, and sweeps — one STEP body
+   * per visible root. Throws when a root evaluated to mesh-only geometry
+   * (the kernel error names the offending roots) or when the loaded WASM
+   * kernel predates the binding.
+   */
+  documentStep(doc: Document): Uint8Array {
+    if (!this.kernel.documentToStepBuffer) {
+      throw new Error(
+        "documentToStepBuffer is not available in this kernel build — rebuild the WASM kernel",
+      );
+    }
+    return this.kernel.documentToStepBuffer(JSON.stringify(doc));
   }
 
   /** Create a detail view (magnified region) from a projected view.
