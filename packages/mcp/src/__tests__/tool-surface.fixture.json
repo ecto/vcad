@@ -481,7 +481,7 @@
   {
     "name": "bom_create",
     "title": "Create BOM",
-    "description": "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+    "description": "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. When document_id names a resident session, fastener lines are seeded from the geometry itself (every loon `bolt`/`bolt-circle`, quantities multiplied through patterns) — pass from_geometry:false to opt out. All prices are estimates and flagged as such.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -579,6 +579,10 @@
             ]
           },
           "description": "Optional full line list to build the BOM in ONE call (recommended on serverless — BOMs are in-memory per instance, so one-shot creation is the robust path)."
+        },
+        "from_geometry": {
+          "type": "boolean",
+          "description": "Seed COTS lines from the hardware the document's geometry declares — every loon `bolt`/`bolt-circle` (plus its washers and nuts), with quantities already multiplied through patterns. Default true when document_id is given."
         }
       },
       "required": []

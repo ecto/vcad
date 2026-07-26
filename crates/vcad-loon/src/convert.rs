@@ -4,6 +4,8 @@ use loon_lang::interp::Value;
 use vcad_ir::ecad;
 use vcad_ir::*;
 
+use crate::fastener;
+
 /// Walk a loon `Value::Adt` tree and produce a vcad-ir `Document`.
 pub fn value_to_document(value: &Value) -> Result<Document, String> {
     let mut ctx = ConvertCtx::new();
@@ -495,6 +497,28 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
     Ok(())
 }
 
+/// Apply an Euler XYZ rotation (degrees, X then Y then Z) to a point.
+fn rotate_xyz(angles: Vec3, p: Vec3) -> Vec3 {
+    let (a, b, c) = (
+        angles.x.to_radians(),
+        angles.y.to_radians(),
+        angles.z.to_radians(),
+    );
+    let (y, z) = (p.y * a.cos() - p.z * a.sin(), p.y * a.sin() + p.z * a.cos());
+    let (x, z) = (p.x * b.cos() + z * b.sin(), -p.x * b.sin() + z * b.cos());
+    let (x, y) = (x * c.cos() - y * c.sin(), x * c.sin() + y * c.cos());
+    Vec3::new(x, y, z)
+}
+
+/// The two in-plane axes of a rotated frame — the plane a bolt circle lies
+/// in, taken from the same rotation that orients its fasteners.
+fn plane_basis(angles: Vec3) -> (Vec3, Vec3) {
+    (
+        rotate_xyz(angles, Vec3::new(1.0, 0.0, 0.0)),
+        rotate_xyz(angles, Vec3::new(0.0, 1.0, 0.0)),
+    )
+}
+
 fn is_solid_tag(tag: &str) -> bool {
     matches!(
         tag,
@@ -524,6 +548,10 @@ fn is_solid_tag(tag: &str) -> bool {
             | "SweepHelix"
             | "Loft"
             | "LoftClosed"
+            | "Fastener"
+            | "BoltCircle"
+            | "ClearanceHole"
+            | "TappedHole"
     )
 }
 
@@ -590,11 +618,286 @@ impl ConvertCtx {
         ))
     }
 
+    fn str_vec(&self, v: &Value) -> Result<Vec<String>, String> {
+        match v {
+            Value::Vec(items) => items.iter().map(|i| self.str_val(i)).collect(),
+            _ => Err(format!("expected a list of strings, got {v}")),
+        }
+    }
+
+    /// Scale up the hardware lines added since `mark` — a fastener inside a
+    /// pattern is needed once per instance, so the BOM count follows the
+    /// geometry instead of being re-tallied by hand.
+    fn multiply_hardware(&mut self, mark: usize, count: u32) {
+        for line in self.doc.hardware.iter_mut().skip(mark) {
+            line.qty = line.qty.saturating_mul(count.max(1));
+        }
+    }
+
+    /// Record a hardware requirement, merging into an identical existing line.
+    fn add_hardware(&mut self, line: HardwareLine) {
+        if let Some(existing) = self
+            .doc
+            .hardware
+            .iter_mut()
+            .find(|l| l.catalog_id == line.catalog_id && l.spec == line.spec)
+        {
+            existing.qty += line.qty;
+            return;
+        }
+        self.doc.hardware.push(line);
+    }
+
+    /// Turn one local-frame piece into a node, positioned along local `+Z`.
+    fn emit_piece(&mut self, piece: &fastener::Piece) -> NodeId {
+        match *piece {
+            fastener::Piece::Cylinder { radius, height, z0 } => {
+                let c = self.insert_node(CsgOp::Cylinder {
+                    radius,
+                    height,
+                    segments: 0,
+                });
+                self.insert_node(CsgOp::Translate {
+                    child: c,
+                    offset: Vec3::new(0.0, 0.0, z0),
+                })
+            }
+            fastener::Piece::Prism {
+                sides,
+                radius,
+                height,
+                z0,
+            } => {
+                let p = self.insert_node(CsgOp::Prism {
+                    sides,
+                    radius,
+                    height,
+                });
+                self.insert_node(CsgOp::Translate {
+                    child: p,
+                    offset: Vec3::new(0.0, 0.0, z0),
+                })
+            }
+            fastener::Piece::Cone {
+                radius_bottom,
+                radius_top,
+                height,
+                z0,
+            } => {
+                let c = self.insert_node(CsgOp::Cone {
+                    radius_bottom,
+                    radius_top,
+                    height,
+                    segments: 0,
+                });
+                self.insert_node(CsgOp::Translate {
+                    child: c,
+                    offset: Vec3::new(0.0, 0.0, z0),
+                })
+            }
+            fastener::Piece::Dome {
+                base_radius,
+                height,
+                z0,
+            } => {
+                // Spherical cap: sphere of radius R clipped to the slab the
+                // cap occupies, which runs from z0 - height up to z0.
+                let r = (base_radius * base_radius + height * height) / (2.0 * height);
+                let sphere = self.insert_node(CsgOp::Sphere {
+                    radius: r,
+                    segments: 0,
+                });
+                let centred = self.insert_node(CsgOp::Translate {
+                    child: sphere,
+                    offset: Vec3::new(0.0, 0.0, z0 - height + r),
+                });
+                let clip = self.insert_node(CsgOp::Cylinder {
+                    radius: base_radius,
+                    height,
+                    segments: 0,
+                });
+                let clip = self.insert_node(CsgOp::Translate {
+                    child: clip,
+                    offset: Vec3::new(0.0, 0.0, z0 - height),
+                });
+                self.insert_node(CsgOp::Intersection {
+                    left: centred,
+                    right: clip,
+                })
+            }
+        }
+    }
+
+    /// Build one fastener: union the pieces in the local frame, cut the hex
+    /// socket, then rotate the whole thing onto its axis and move it into
+    /// place. Head and shaft travel together, so mirroring cannot separate
+    /// them or flip one without the other.
+    fn emit_fastener(&mut self, plan: &fastener::FastenerPlan) -> Result<NodeId, String> {
+        let mut root: Option<NodeId> = None;
+        for piece in &plan.additive {
+            let id = self.emit_piece(piece);
+            root = Some(match root {
+                None => id,
+                Some(left) => self.insert_node(CsgOp::Union { left, right: id }),
+            });
+        }
+        let mut root = root.ok_or_else(|| "fastener produced no geometry".to_string())?;
+        for piece in &plan.subtractive {
+            let tool = self.emit_piece(piece);
+            root = self.insert_node(CsgOp::Difference {
+                left: root,
+                right: tool,
+            });
+        }
+
+        let angles = fastener::axis_to_euler_xyz(plan.axis);
+        if angles.x != 0.0 || angles.y != 0.0 || angles.z != 0.0 {
+            root = self.insert_node(CsgOp::Rotate {
+                child: root,
+                angles,
+            });
+        }
+        if plan.origin.x != 0.0 || plan.origin.y != 0.0 || plan.origin.z != 0.0 {
+            root = self.insert_node(CsgOp::Translate {
+                child: root,
+                offset: plan.origin,
+            });
+        }
+
+        for line in &plan.hardware {
+            self.add_hardware(line.clone());
+        }
+        Ok(root)
+    }
+
+    /// `[BoltCircle spec style bcd count cx cy cz ax ay az grip stack]`
+    fn convert_bolt_circle(&mut self, fields: &[Value]) -> Result<NodeId, String> {
+        assert_fields("BoltCircle", fields, 12)?;
+        let spec = self.str_val(&fields[0])?;
+        let style = self.str_val(&fields[1])?;
+        let bcd = self.f64_val(&fields[2])?;
+        let count = self.u32_val(&fields[3])?;
+        let center = self.vec3(fields, 4)?;
+        let axis = self.vec3(fields, 7)?;
+        let grip = self.f64_val(&fields[10])?;
+        let stack = self.str_vec(&fields[11])?;
+
+        if count == 0 {
+            return Err("bolt-circle needs at least one fastener".into());
+        }
+        if grip <= 0.0 {
+            return Err(format!(
+                "bolt-circle grip must be positive (how far the fastener is driven \
+                 along its axis), got {grip}"
+            ));
+        }
+        let n = (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z).sqrt();
+        if n < 1e-9 {
+            return Err("bolt-circle axis must be non-zero".into());
+        }
+        let axis = Vec3::new(axis.x / n, axis.y / n, axis.z / n);
+
+        // In-plane basis, taken from the same rotation that orients each
+        // fastener — so the ring and the bolts agree by construction.
+        let e = fastener::axis_to_euler_xyz(axis);
+        let (u, v) = plane_basis(e);
+
+        let radius = bcd / 2.0;
+        let mut root: Option<NodeId> = None;
+        for i in 0..count {
+            let theta = std::f64::consts::TAU * (i as f64) / (count as f64);
+            let (c, s) = (theta.cos(), theta.sin());
+            let from = Vec3::new(
+                center.x + radius * (c * u.x + s * v.x),
+                center.y + radius * (c * u.y + s * v.y),
+                center.z + radius * (c * u.z + s * v.z),
+            );
+            let to = Vec3::new(
+                from.x + grip * axis.x,
+                from.y + grip * axis.y,
+                from.z + grip * axis.z,
+            );
+            let plan = fastener::plan(&spec, &style, from, to, &stack)?;
+            let id = self.emit_fastener(&plan)?;
+            root = Some(match root {
+                None => id,
+                Some(left) => self.insert_node(CsgOp::Union { left, right: id }),
+            });
+        }
+        Ok(root.expect("count > 0"))
+    }
+
+    /// `[ClearanceHole|TappedHole size depth ox oy oz dx dy dz]` — a tool
+    /// solid to subtract, sized from the thread designation so the hole and
+    /// the fastener that goes in it cannot disagree.
+    fn convert_hole(&mut self, tag: &str, fields: &[Value]) -> Result<NodeId, String> {
+        assert_fields(tag, fields, 8)?;
+        let size = self.str_val(&fields[0])?.to_ascii_uppercase();
+        let depth = self.f64_val(&fields[1])?;
+        let origin = self.vec3(fields, 2)?;
+        let dir = self.vec3(fields, 5)?;
+        if depth <= 0.0 {
+            return Err(format!("{tag}: depth must be positive, got {depth}"));
+        }
+        let n = (dir.x * dir.x + dir.y * dir.y + dir.z * dir.z).sqrt();
+        if n < 1e-9 {
+            return Err(format!("{tag}: direction must be non-zero"));
+        }
+        let dia = if tag == "TappedHole" {
+            fastener::tap_drill_dia(&size)
+        } else {
+            fastener::clearance_hole_dia(&size)
+        };
+
+        // Overshoot both ends slightly so the cut leaves no membrane.
+        let eps = 0.01;
+        let cyl = self.insert_node(CsgOp::Cylinder {
+            radius: dia / 2.0,
+            height: depth + 2.0 * eps,
+            segments: 0,
+        });
+        let lifted = self.insert_node(CsgOp::Translate {
+            child: cyl,
+            offset: Vec3::new(0.0, 0.0, -eps),
+        });
+        let angles = fastener::axis_to_euler_xyz(Vec3::new(dir.x / n, dir.y / n, dir.z / n));
+        let rotated = if angles.x != 0.0 || angles.y != 0.0 || angles.z != 0.0 {
+            self.insert_node(CsgOp::Rotate {
+                child: lifted,
+                angles,
+            })
+        } else {
+            lifted
+        };
+        Ok(self.insert_node(CsgOp::Translate {
+            child: rotated,
+            offset: origin,
+        }))
+    }
+
     fn convert_solid(&mut self, value: &Value) -> Result<NodeId, String> {
         let (tag, fields) = match value {
             Value::Adt(tag, fields) => (tag.as_str(), fields.as_slice()),
             _ => return Err(format!("expected Solid ADT, got {value}")),
         };
+
+        // Catalog-backed forms build a whole subtree (and emit BOM lines)
+        // rather than a single op.
+        match tag {
+            "Fastener" => {
+                assert_fields(tag, fields, 9)?;
+                let spec = self.str_val(&fields[0])?;
+                let style = self.str_val(&fields[1])?;
+                let from = self.vec3(fields, 2)?;
+                let to = self.vec3(fields, 5)?;
+                let stack = self.str_vec(&fields[8])?;
+                let plan = fastener::plan(&spec, &style, from, to, &stack)?;
+                return self.emit_fastener(&plan);
+            }
+            "BoltCircle" => return self.convert_bolt_circle(fields),
+            "ClearanceHole" | "TappedHole" => return self.convert_hole(tag, fields),
+            _ => {}
+        }
 
         let op = match tag {
             // Primitives
@@ -759,7 +1062,10 @@ impl ConvertCtx {
             "LinearPattern" => {
                 // [LinearPattern solid dx dy dz count spacing]
                 assert_fields(tag, fields, 6)?;
+                let mark = self.doc.hardware.len();
                 let child = self.convert_solid(&fields[0])?;
+                let count = self.u32_val(&fields[4])?;
+                self.multiply_hardware(mark, count);
                 CsgOp::LinearPattern {
                     child,
                     direction: self.vec3(fields, 1)?,
@@ -770,7 +1076,10 @@ impl ConvertCtx {
             "CircularPattern" => {
                 // [CircularPattern solid ox oy oz ax ay az count angle]
                 assert_fields(tag, fields, 9)?;
+                let mark = self.doc.hardware.len();
                 let child = self.convert_solid(&fields[0])?;
+                let count = self.u32_val(&fields[7])?;
+                self.multiply_hardware(mark, count);
                 CsgOp::CircularPattern {
                     child,
                     axis_origin: self.vec3(fields, 1)?,
@@ -947,7 +1256,7 @@ mod tests {
         Value::Str(v.into())
     }
     fn adt(tag: &str, fields: Vec<Value>) -> Value {
-        Value::Adt(tag.into(), fields.into())
+        Value::Adt(tag.into(), fields)
     }
 
     #[test]

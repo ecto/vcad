@@ -1916,6 +1916,14 @@ pub struct Document {
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub timeline: Option<animation::Timeline>,
 
+    // Hardware rollup (optional, zero-cost when empty)
+    /// Off-the-shelf hardware contributed by the geometry itself — every
+    /// fastener form placed in the model emits a line here, so a BOM is
+    /// derived from what was actually modeled instead of being tallied by
+    /// hand. Rolled up (deduplicated by `catalog_id`/`spec`) by BOM tooling.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hardware: Vec<HardwareLine>,
+
     // Provenance (optional, zero-cost when absent)
     /// The authored source this document was evaluated from, when it came
     /// from one. Lets a document say what made it, so a session and the file
@@ -1923,6 +1931,34 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub source: Option<DocumentSource>,
+}
+
+/// One off-the-shelf hardware item required by the modeled geometry.
+///
+/// Emitted by the loon fastener forms (`bolt`, `bolt-circle`, …) at convert
+/// time: each placed fastener — plus any washers and nuts in its stack —
+/// contributes a line. Quantities already account for enclosing patterns, so
+/// a 6-bolt `bolt-circle` emits `qty: 6`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct HardwareLine {
+    /// Mechanical-catalog id (`search_mechanical_parts`), e.g. `screw.m4-shcs`.
+    /// `None` when the modeled item has no catalog entry yet — the line still
+    /// carries `spec` so it can be sourced manually.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub catalog_id: Option<String>,
+    /// Designation as modeled, e.g. `"M4x12 SHCS"`, `"M4 washer"`.
+    pub spec: String,
+    /// Number of these required by the geometry.
+    pub qty: u32,
+    /// How far the head stands proud of the mating face, in mm. `0.0` for a
+    /// countersunk head sitting flush. Lets a clearance check reason about
+    /// heads without re-deriving them from the catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub head_protrusion_mm: Option<f64>,
 }
 
 /// The authored source a [`Document`] was evaluated from.
@@ -2204,6 +2240,7 @@ impl Default for Document {
             analysis_studies: Vec::new(),
             drawing: None,
             timeline: None,
+            hardware: Vec::new(),
             source: None,
         }
     }

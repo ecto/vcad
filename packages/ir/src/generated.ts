@@ -1586,6 +1586,13 @@ drawing?: DrawingSettings,
  */
 timeline?: Timeline, 
 /**
+ * Off-the-shelf hardware contributed by the geometry itself — every
+ * fastener form placed in the model emits a line here, so a BOM is
+ * derived from what was actually modeled instead of being tallied by
+ * hand. Rolled up (deduplicated by `catalog_id`/`spec`) by BOM tooling.
+ */
+hardware?: Array<HardwareLine>, 
+/**
  * The authored source this document was evaluated from, when it came
  * from one. Lets a document say what made it, so a session and the file
  * it came from can be compared instead of silently drifting apart.
@@ -2096,6 +2103,36 @@ pads: Array<Pad>,
  * Silkscreen / courtyard graphics.
  */
 graphics: Array<FootprintGraphic>, };
+
+/**
+ * One off-the-shelf hardware item required by the modeled geometry.
+ *
+ * Emitted by the loon fastener forms (`bolt`, `bolt-circle`, …) at convert
+ * time: each placed fastener — plus any washers and nuts in its stack —
+ * contributes a line. Quantities already account for enclosing patterns, so
+ * a 6-bolt `bolt-circle` emits `qty: 6`.
+ */
+export type HardwareLine = { 
+/**
+ * Mechanical-catalog id (`search_mechanical_parts`), e.g. `screw.m4-shcs`.
+ * `None` when the modeled item has no catalog entry yet — the line still
+ * carries `spec` so it can be sourced manually.
+ */
+catalog_id?: string, 
+/**
+ * Designation as modeled, e.g. `"M4x12 SHCS"`, `"M4 washer"`.
+ */
+spec: string, 
+/**
+ * Number of these required by the geometry.
+ */
+qty: number, 
+/**
+ * How far the head stands proud of the mating face, in mm. `0.0` for a
+ * countersunk head sitting flush. Lets a clearance check reason about
+ * heads without re-deriving them from the catalog.
+ */
+head_protrusion_mm?: number, };
 
 /**
  * Authored mass / inertia / center-of-mass for a part.

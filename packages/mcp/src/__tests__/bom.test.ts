@@ -13,6 +13,7 @@ import {
   searchMechCatalog,
   mechCatalog,
 } from "../tools/mech-parts.js";
+import { documents } from "../tools/session-core.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
 import type { FabOption, Quote } from "../fabricate/types.js";
 import type { AuthUser } from "../oauth.js";
@@ -183,6 +184,36 @@ describe("BOM tools — creation, line math, totals", () => {
     expect(out.totals.shipping_estimate_usd).toBe(24);
     expect(out.totals.grand_total_usd).toBeCloseTo(19 + 13.5 + 24, 2);
     expect(out.note).toContain("ESTIMATE");
+  });
+
+  it("bom_create counts fasteners off the geometry instead of the author's memory", async () => {
+    const store = new InMemoryFabricateStore();
+    // What a loon `bolt-circle` (×6) plus a stacked bolt leaves on the doc.
+    documents.set("doc-frame", {
+      version: "0.1",
+      nodes: {},
+      materials: {},
+      part_materials: {},
+      roots: [],
+      hardware: [
+        { catalog_id: "screw.m4-shcs", spec: "M4x12 SHCS", qty: 6, head_protrusion_mm: 4 },
+        { spec: "M4 hex nut (ISO 4032)", qty: 6 },
+      ],
+    } as never);
+
+    const out = json(await bomCreate({ document_id: "doc-frame" }, store, null));
+    expect(out.lines).toHaveLength(2);
+    const screws = out.lines.find((l: { name: string }) => l.name === "M4x12 SHCS");
+    expect(screws.qty).toBe(6);
+    // The catalog link priced it from the M4 SHCS band without being asked.
+    expect(screws.pricing_basis).toBe("catalog_estimate");
+
+    // Opting out leaves the BOM empty — the author is back to tallying by hand.
+    const manual = json(
+      await bomCreate({ document_id: "doc-frame", from_geometry: false }, store, null),
+    );
+    expect(manual.lines).toHaveLength(0);
+    documents.delete("doc-frame");
   });
 
   it("bom_add_line links a persisted quote and inherits its landed pricing", async () => {

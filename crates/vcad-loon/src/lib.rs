@@ -12,6 +12,7 @@ use loon_lang::module::{MapProvider, ModuleProvider};
 use vcad_ir::Document;
 
 mod convert;
+pub mod fastener;
 pub use convert::value_to_document;
 
 /// The bundled vcad loon library source.

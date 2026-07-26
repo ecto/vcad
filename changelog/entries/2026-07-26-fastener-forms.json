@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-fastener-forms",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Fasteners are a first-class form",
+  "summary": "bolt, bolt-circle, clearance-hole and tapped-hole: catalog-backed hardware oriented by its own axis, with real countersunk heads, length checks, and BOM lines counted off the geometry.",
+  "features": ["loon", "fasteners", "bom", "assembly"],
+  "mcpTools": ["create_cad_loon", "bom_create", "search_mechanical_parts"]
+}
