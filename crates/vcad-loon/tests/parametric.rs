@@ -96,6 +96,26 @@ fn setting_one_parameter_replaces_editing_every_dependent_literal() {
 }
 
 #[test]
+fn a_parameter_survives_the_symmetry_sugar() {
+    // `quad-pattern` (the 4-fold mirror helper) is how the four-mirrored-legs
+    // case is meant to be written. The parameter has to reach every one of the
+    // placements it generates, mirrored copies included.
+    let src = r#"
+[defparam pitch_axis_x 310.0]
+[root [quad-pattern [translate pitch_axis_x 40.0 0.0 [cube 5.0 5.0 5.0]]] "steel"]
+"#;
+    let (doc, warnings) = eval_vcad_parametric(src, None, None).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let xs: Vec<f64> = offsets(&doc).iter().map(|o| o.x).collect();
+    assert_eq!(xs.len(), 4, "quad-pattern makes four placements");
+
+    let moved = with_params(&doc, &[("pitch_axis_x", 315.0)]);
+    for x in offsets(&moved).iter().map(|o| o.x) {
+        assert_eq!(x.abs(), 315.0, "every mirrored copy moved");
+    }
+}
+
+#[test]
 fn set_parameters_agrees_with_re_evaluating_the_source() {
     // The strongest statement of correctness: driving the parameter and
     // re-authoring the source must land in the same place.
