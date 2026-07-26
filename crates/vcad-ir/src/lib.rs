@@ -1942,6 +1942,34 @@ pub struct ClearanceSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub allow_contact: Option<bool>,
+    /// Optional range-of-motion sweep: the assertion is evaluated at every
+    /// pose on the grid these axes span, and holds only if it holds at the
+    /// *worst* pose. Without this a clearance is a single-pose snapshot —
+    /// the pose the assembly happened to be authored in, which is often the
+    /// one pose that clears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub sweep: Option<Vec<JointSweep>>,
+}
+
+/// One axis of a range-of-motion sweep: a joint driven from `from` to `to`
+/// in `steps` intervals (`steps + 1` sampled states, endpoints included).
+///
+/// Multiple axes form a Cartesian grid, so a two-joint sweep at 24 steps
+/// each is 625 poses — callers are responsible for keeping the product
+/// sane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct JointSweep {
+    /// Joint id (or joint name) to drive.
+    pub joint: String,
+    /// Start of the range, in the joint's own units (degrees or mm).
+    pub from: f64,
+    /// End of the range, in the joint's own units.
+    pub to: f64,
+    /// Number of intervals; `steps + 1` states are sampled.
+    pub steps: u32,
 }
 
 /// A persisted solver study for the unified Analyze mode (#592).

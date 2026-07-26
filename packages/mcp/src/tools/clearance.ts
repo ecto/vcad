@@ -19,12 +19,14 @@ import type {
   ClearanceSpec,
   DesignReceipt,
   Document,
+  JointSweep,
   OracleRef,
   ReceiptClaim,
   ReceiptStatus,
+  Transform3D,
 } from "@vcad/ir";
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
-import { transformMesh } from "@vcad/engine";
+import { solveForwardKinematics, transformMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
 import { getSession } from "./session-core.js";
 import { asBool } from "./arg-coerce.js";
@@ -59,16 +61,34 @@ export function clearanceVerdict(distanceMm: number): ClearanceVerdict {
   return "clear";
 }
 
-/** Does the measurement satisfy the spec, honoring allowed contact? */
+/**
+ * Does the measurement satisfy the spec, honoring allowed contact?
+ *
+ * `intersecting` is fail-closed and overrides everything: the kernel reports
+ * a *zero* penetration depth for some interpenetrating pairs (two boxes
+ * crossing face-to-face), which reads as "touching" on distance alone. An
+ * overlap is never an allowed contact, whatever the depth came back as.
+ */
 export function clearanceHolds(
   distanceMm: number,
   minMm: number,
   allowContact: boolean,
+  intersecting = false,
 ): boolean {
+  if (intersecting) return false;
   return (
     distanceMm >= minMm ||
     (allowContact && clearanceVerdict(distanceMm) === "touching")
   );
+}
+
+/** Is measurement `a` worse than `b`? Interpenetration beats any distance. */
+function worseThan(
+  a: { distance: number; intersecting: boolean },
+  b: { distance: number; intersecting: boolean },
+): boolean {
+  if (a.intersecting !== b.intersecting) return a.intersecting;
+  return a.distance < b.distance;
 }
 
 /** Round distances so payloads don't carry float noise. */
@@ -105,8 +125,42 @@ export const checkClearanceSchema = {
       description:
         "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given.",
     },
+    sweep: {
+      type: "array" as const,
+      description:
+        "Range-of-motion sweep: drive these joints across their travel and report the WORST pose, not the authored one. Each axis is {joint, from, to, steps}; multiple axes form a Cartesian grid (capped at 4096 poses). Joint states are restored afterwards — the sweep never edits the document.",
+      items: {
+        type: "object" as const,
+        properties: {
+          joint: { type: "string" as const, description: "Joint id or name to drive." },
+          from: { type: "number" as const, description: "Start of travel (degrees for revolute, mm for prismatic)." },
+          to: { type: "number" as const, description: "End of travel." },
+          steps: { type: "number" as const, description: "Number of intervals; steps + 1 poses are sampled." },
+        },
+        required: ["joint", "from", "to", "steps"],
+      },
+    },
+    ignore_pairs: {
+      type: "array" as const,
+      description:
+        "Audit mode: part id/name pairs whose contact is intended (a bolt in its own hole, a bearing pressed into its bore). Each entry is a two-element array.",
+      items: {
+        type: "array" as const,
+        items: { type: "string" as const },
+      },
+    },
+    ignore_fixed_joints: {
+      type: "boolean" as const,
+      description:
+        "Audit mode: skip pairs joined by a Fixed joint — they are bolted together and always 'interfere'. Default true.",
+    },
+    ignore_adjacent: {
+      type: "boolean" as const,
+      description:
+        "Audit mode: skip every directly-jointed parent/child pair, not just Fixed ones. Default false — adjacent links can and do clash away from the joint axis.",
+    },
   },
-  required: ["document_id", "group_a", "group_b", "min_mm"],
+  required: ["document_id"],
 } as const;
 
 /** A part resolved to its evaluated (already-placed) mesh. */
@@ -116,37 +170,84 @@ interface ResolvedPart {
   mesh: TriangleMesh;
 }
 
-/** Evaluate a CAD session into measurable parts (id, name, placed mesh). */
-function partCandidates(doc: Document, engine: Engine): ResolvedPart[] {
+/**
+ * A part as evaluated once, kept re-poseable: static roots carry their world
+ * mesh directly, assembly instances carry the *part-local* mesh plus the
+ * world transform of the pose they were evaluated in. Sweeping then costs one
+ * mesh transform per pose instead of one full BRep evaluation.
+ */
+interface PoseablePart {
+  id: string;
+  name?: string;
+  /** Part-local mesh for instances; already-world mesh for static roots. */
+  localMesh: TriangleMesh;
+  /** World transform for instances; absent for static roots. */
+  transform?: Transform3D;
+  /** Instance id, when this part is an assembly instance (drives re-posing). */
+  instanceId?: string;
+}
+
+/** Bake a world transform into a part-local mesh. */
+function placeMesh(mesh: TriangleMesh, transform?: Transform3D): TriangleMesh {
+  if (!transform) return mesh;
+  return transformMesh(mesh, {
+    translate: transform.translation,
+    rotate: transform.rotation,
+    scale: transform.scale,
+  });
+}
+
+/** Evaluate a CAD session once into re-poseable parts. */
+function poseableParts(doc: Document, engine: Engine): PoseablePart[] {
   const scene = engine.evaluate(doc);
   const visibleRoots = doc.roots.filter((e) => e.visible !== false);
-  const out: ResolvedPart[] = [];
+  const out: PoseablePart[] = [];
   for (let i = 0; i < scene.parts.length && i < visibleRoots.length; i++) {
     const rootId = visibleRoots[i].root;
     const node = doc.nodes[String(rootId)];
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) continue;
-    out.push({ id: String(rootId), name: node?.name ?? undefined, mesh });
+    out.push({ id: String(rootId), name: node?.name ?? undefined, localMesh: mesh });
   }
   // Assembly instances: bake the FK world transform into the part-local mesh
   // so clearances measure poses, not part-local geometry. Without this,
   // assembly-only documents had no clearance candidates at all.
   for (const inst of scene.instances ?? []) {
-    const mesh = inst.transform
-      ? transformMesh(inst.mesh, {
-          translate: inst.transform.translation,
-          rotate: inst.transform.rotation,
-          scale: inst.transform.scale,
-        })
-      : inst.mesh;
-    if (!mesh || mesh.positions.length === 0) continue;
+    if (!inst.mesh || inst.mesh.positions.length === 0) continue;
     out.push({
       id: inst.instanceId,
       name: inst.name ?? undefined,
-      mesh,
+      localMesh: inst.mesh,
+      transform: inst.transform ?? undefined,
+      instanceId: inst.instanceId,
     });
   }
   return out;
+}
+
+/**
+ * Place every part for one pose. `worldTransforms` (from a re-solved FK pass)
+ * overrides the evaluated transform for instances it names; static roots are
+ * pose-independent and pass through.
+ */
+function placeParts(
+  parts: PoseablePart[],
+  worldTransforms?: Map<string, Transform3D>,
+): ResolvedPart[] {
+  const out: ResolvedPart[] = [];
+  for (const p of parts) {
+    const transform =
+      (p.instanceId ? worldTransforms?.get(p.instanceId) : undefined) ?? p.transform;
+    const mesh = placeMesh(p.localMesh, transform);
+    if (!mesh || mesh.positions.length === 0) continue;
+    out.push({ id: p.id, ...(p.name ? { name: p.name } : {}), mesh });
+  }
+  return out;
+}
+
+/** Evaluate a CAD session into measurable parts (id, name, placed mesh). */
+function partCandidates(doc: Document, engine: Engine): ResolvedPart[] {
+  return placeParts(poseableParts(doc, engine));
 }
 
 /** Resolve group members by part id first, then by exact part name. */
@@ -184,6 +285,95 @@ export interface GroupClearance {
   /** Resolved membership, for the payload/claim subject. */
   group_a: Array<{ id: string; name?: string }>;
   group_b: Array<{ id: string; name?: string }>;
+  /** Joint states realizing the reported minimum (swept queries only). */
+  worst_pose?: Pose;
+  /** Number of poses evaluated (absent when unswept). */
+  poses_checked?: number;
+}
+
+/** One sampled configuration of the mechanism: joint id → state. */
+export type Pose = Array<{ joint: string; state: number }>;
+
+/**
+ * Ceiling on the pose grid a single query may span. A sweep is O(poses ×
+ * pairs × BVH query); silently truncating would report a clearance the
+ * machine never proved, so an oversized grid is an error, not a sample.
+ */
+export const MAX_SWEEP_POSES = 4096;
+
+/** Resolve sweep axes against the document's joints (by id, then by name). */
+function resolveSweepAxes(
+  doc: Document,
+  axes: JointSweep[],
+): { axes?: JointSweep[]; error?: string } {
+  const joints = doc.joints ?? [];
+  const resolved: JointSweep[] = [];
+  for (const axis of axes) {
+    const wanted = String(axis.joint);
+    const found =
+      joints.find((j) => j.id === wanted) ?? joints.find((j) => j.name === wanted);
+    if (!found) {
+      const available = joints.map((j) => `${j.id}${j.name ? ` (${j.name})` : ""}`).join(", ");
+      return { error: `No joint with id or name "${wanted}". Available: ${available || "none"}` };
+    }
+    if (!Number.isFinite(axis.from) || !Number.isFinite(axis.to)) {
+      return { error: `Sweep axis "${wanted}" needs finite \`from\` and \`to\`.` };
+    }
+    const steps = Math.trunc(axis.steps);
+    if (!Number.isFinite(steps) || steps < 1) {
+      return { error: `Sweep axis "${wanted}" needs \`steps\` >= 1.` };
+    }
+    resolved.push({ joint: found.id, from: axis.from, to: axis.to, steps });
+  }
+  if (resolved.length === 0) return { error: "`sweep` needs at least one joint axis." };
+  const total = resolved.reduce((n, a) => n * (a.steps + 1), 1);
+  if (total > MAX_SWEEP_POSES) {
+    return {
+      error: `Sweep grid is ${total} poses (limit ${MAX_SWEEP_POSES}). Lower \`steps\` or sweep fewer joints at once.`,
+    };
+  }
+  return { axes: resolved };
+}
+
+/** Cartesian product of the axes: `steps + 1` samples each, endpoints included. */
+export function poseGrid(axes: JointSweep[]): Pose[] {
+  let poses: Pose[] = [[]];
+  for (const axis of axes) {
+    const n = Math.trunc(axis.steps);
+    const next: Pose[] = [];
+    for (const pose of poses) {
+      for (let i = 0; i <= n; i++) {
+        const state = axis.from + ((axis.to - axis.from) * i) / n;
+        next.push([...pose, { joint: axis.joint, state }]);
+      }
+    }
+    poses = next;
+  }
+  return poses;
+}
+
+/**
+ * Solve forward kinematics once per pose. Joint states are driven on the
+ * document and restored afterwards, so the session is left exactly as the
+ * author posed it — a sweep is a question, not an edit.
+ */
+function poseTransforms(doc: Document, poses: Pose[]): Array<Map<string, Transform3D>> {
+  const joints = doc.joints ?? [];
+  const byId = new Map(joints.map((j) => [j.id, j] as const));
+  const saved = joints.map((j) => j.state);
+  try {
+    return poses.map((pose) => {
+      for (const { joint, state } of pose) {
+        const j = byId.get(joint);
+        if (j) j.state = state;
+      }
+      return solveForwardKinematics(doc);
+    });
+  } finally {
+    joints.forEach((j, i) => {
+      j.state = saved[i];
+    });
+  }
 }
 
 /**
@@ -197,16 +387,67 @@ export function computeGroupClearance(
   engine: Engine,
   groupA: string[],
   groupB: string[],
+  sweep?: JointSweep[],
 ): { result?: GroupClearance; error?: string } {
   if (groupA.length === 0 || groupB.length === 0) {
     return { error: "Both `group_a` and `group_b` need at least one part id." };
   }
-  let candidates: ResolvedPart[];
+  let base: PoseablePart[];
   try {
-    candidates = partCandidates(doc, engine);
+    base = poseableParts(doc, engine);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
+  if (!sweep || sweep.length === 0) {
+    return measureGroups(engine, placeParts(base), groupA, groupB);
+  }
+
+  const { axes, error: sweepError } = resolveSweepAxes(doc, sweep);
+  if (sweepError || !axes) return { error: sweepError ?? "sweep could not be resolved" };
+  const poses = poseGrid(axes);
+  let transforms: Array<Map<string, Transform3D>>;
+  try {
+    transforms = poseTransforms(doc, poses);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  let worst: { result: GroupClearance; pose: Pose } | undefined;
+  for (let i = 0; i < poses.length; i++) {
+    const { result, error } = measureGroups(
+      engine,
+      placeParts(base, transforms[i]),
+      groupA,
+      groupB,
+    );
+    if (error || !result) return { error };
+    if (
+      !worst ||
+      worseThan(
+        { distance: result.distance_mm, intersecting: result.intersecting },
+        { distance: worst.result.distance_mm, intersecting: worst.result.intersecting },
+      )
+    ) {
+      worst = { result, pose: poses[i] };
+    }
+  }
+  if (!worst) return { error: "Sweep produced no poses to measure." };
+  return {
+    result: {
+      ...worst.result,
+      worst_pose: worst.pose.map((p) => ({ joint: p.joint, state: round6(p.state) })),
+      poses_checked: poses.length,
+    },
+  };
+}
+
+/** Single-pose group-vs-group minimum over already-placed parts. */
+function measureGroups(
+  engine: Engine,
+  candidates: ResolvedPart[],
+  groupA: string[],
+  groupB: string[],
+): { result?: GroupClearance; error?: string } {
   const a = resolveGroup(candidates, groupA);
   const b = resolveGroup(candidates, groupB);
   const missing = [...a.missing, ...b.missing];
@@ -238,7 +479,7 @@ export function computeGroupClearance(
         return { error: e instanceof Error ? e.message : String(e) };
       }
       pairs += 1;
-      if (!worst || r.distance < worst.r.distance) {
+      if (!worst || worseThan(r, worst.r)) {
         worst = { a: pa, b: pb, r };
       }
     }
@@ -265,6 +506,222 @@ export function computeGroupClearance(
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * All-pairs interference audit
+ * ------------------------------------------------------------------ */
+
+/** One offending pair found by the audit. */
+export interface InterferenceFinding {
+  a: { id: string; name?: string };
+  b: { id: string; name?: string };
+  /** Worst (smallest) signed distance in mm; negative = penetration depth. */
+  distance_mm: number;
+  verdict: ClearanceVerdict;
+  point_a: [number, number, number];
+  point_b: [number, number, number];
+  /** Joint states realizing the worst distance (swept audits only). */
+  worst_pose?: Pose;
+}
+
+/** Whole-document audit outcome. */
+export interface InterferenceAudit {
+  parts_checked: number;
+  /** Distinct part pairs in the document. */
+  pairs_total: number;
+  /** Pairs excluded by the ignore list / joint graph. */
+  pairs_ignored: number;
+  /** Pairs whose AABBs overlap (survived broadphase) at some pose. */
+  pairs_broadphase: number;
+  /** Exact BVH queries actually run (broadphase survivors × poses). */
+  queries: number;
+  poses_checked?: number;
+  findings: InterferenceFinding[];
+  /** Ignore-list entries that matched no part — reported, never silently dropped. */
+  unresolved_ignores: string[];
+}
+
+/** Axis-aligned bounds of a placed mesh. */
+function meshAabb(mesh: TriangleMesh): { min: [number, number, number]; max: [number, number, number] } {
+  const p = mesh.positions;
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i + 2 < p.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const v = p[i + k];
+      if (v < min[k]) min[k] = v;
+      if (v > max[k]) max[k] = v;
+    }
+  }
+  return { min, max };
+}
+
+/** Do two AABBs come within `margin` of each other on every axis? */
+function aabbNear(
+  a: { min: [number, number, number]; max: [number, number, number] },
+  b: { min: [number, number, number]; max: [number, number, number] },
+  margin: number,
+): boolean {
+  for (let k = 0; k < 3; k++) {
+    if (a.min[k] - margin > b.max[k]) return false;
+    if (b.min[k] - margin > a.max[k]) return false;
+  }
+  return true;
+}
+
+const pairKey = (a: string, b: string) => (a < b ? `${a} ${b}` : `${b} ${a}`);
+
+/** Options for {@link computeInterferenceAudit}. */
+export interface AuditOptions {
+  /** Report pairs closer than this (mm). 0 = report only interpenetration. */
+  minMm: number;
+  /** Explicit whitelist of part id/name pairs. */
+  ignorePairs: Array<[string, string]>;
+  /** Skip pairs joined by a Fixed joint (default true). */
+  ignoreFixedJoints: boolean;
+  /** Skip pairs joined by *any* joint — adjacent links touch at their axis. */
+  ignoreAdjacent: boolean;
+  /** Optional range-of-motion sweep. */
+  sweep?: JointSweep[];
+}
+
+/**
+ * Broadphase every part pair in the document and report those that come
+ * closer than `minMm` — the "does anything hit anything" check, as opposed
+ * to the per-pair question the caller has to remember to ask. Cheap AABB
+ * rejection first; exact BVH distance only on survivors. With `sweep`, each
+ * pair's reported distance is its worst over the whole range of motion.
+ */
+export function computeInterferenceAudit(
+  doc: Document,
+  engine: Engine,
+  opts: AuditOptions,
+): { result?: InterferenceAudit; error?: string } {
+  let base: PoseablePart[];
+  try {
+    base = poseableParts(doc, engine);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+
+  let poses: Pose[] = [];
+  let transforms: Array<Map<string, Transform3D> | undefined> = [undefined];
+  if (opts.sweep && opts.sweep.length > 0) {
+    const { axes, error } = resolveSweepAxes(doc, opts.sweep);
+    if (error || !axes) return { error: error ?? "sweep could not be resolved" };
+    poses = poseGrid(axes);
+    try {
+      transforms = poseTransforms(doc, poses);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  const first = placeParts(base, transforms[0]);
+  if (first.length < 2) {
+    return { error: "Fewer than two measurable parts — nothing to audit." };
+  }
+
+  // Ignore set: explicit pairs first, then the joint graph.
+  const ignore = new Set<string>();
+  const unresolved: string[] = [];
+  const resolveId = (raw: string): string | undefined => {
+    const wanted = String(raw);
+    return (first.find((c) => c.id === wanted) ?? first.find((c) => c.name === wanted))?.id;
+  };
+  for (const [rawA, rawB] of opts.ignorePairs) {
+    const a = resolveId(rawA);
+    const b = resolveId(rawB);
+    if (!a) unresolved.push(String(rawA));
+    if (!b) unresolved.push(String(rawB));
+    if (a && b) ignore.add(pairKey(a, b));
+  }
+  for (const joint of doc.joints ?? []) {
+    const parent = joint.parentInstanceId;
+    if (!parent) continue;
+    const fixed = joint.kind?.type === "Fixed";
+    if (opts.ignoreAdjacent || (fixed && opts.ignoreFixedJoints)) {
+      ignore.add(pairKey(parent, joint.childInstanceId));
+    }
+  }
+
+  const margin = Math.max(opts.minMm, 0);
+  const worstByPair = new Map<
+    string,
+    { a: ResolvedPart; b: ResolvedPart; r: ClearanceResult; pose?: Pose }
+  >();
+  const broadphase = new Set<string>();
+  let queries = 0;
+  let ignored = 0;
+
+  for (let p = 0; p < transforms.length; p++) {
+    const parts = p === 0 ? first : placeParts(base, transforms[p]);
+    const boxes = parts.map((c) => meshAabb(c.mesh));
+    for (let i = 0; i < parts.length; i++) {
+      for (let j = i + 1; j < parts.length; j++) {
+        const key = pairKey(parts[i].id, parts[j].id);
+        if (ignore.has(key)) {
+          if (p === 0) ignored += 1;
+          continue;
+        }
+        if (!aabbNear(boxes[i], boxes[j], margin + CONTACT_EPS_MM)) continue;
+        broadphase.add(key);
+        let r: ClearanceResult;
+        try {
+          r = engine.meshClearance(parts[i].mesh, parts[j].mesh);
+        } catch (e) {
+          return { error: e instanceof Error ? e.message : String(e) };
+        }
+        queries += 1;
+        const prev = worstByPair.get(key);
+        if (!prev || worseThan(r, prev.r)) {
+          worstByPair.set(key, {
+            a: parts[i],
+            b: parts[j],
+            r,
+            ...(poses.length > 0 ? { pose: poses[p] } : {}),
+          });
+        }
+      }
+    }
+  }
+
+  const named = (p: ResolvedPart) => ({ id: p.id, ...(p.name ? { name: p.name } : {}) });
+  const findings: InterferenceFinding[] = [...worstByPair.values()]
+    .filter((w) => !clearanceHolds(round6(w.r.distance), opts.minMm, false, w.r.intersecting))
+    .map((w) => ({
+      a: named(w.a),
+      b: named(w.b),
+      distance_mm: round6(w.r.distance),
+      verdict: w.r.intersecting
+        ? ("intersecting" as ClearanceVerdict)
+        : clearanceVerdict(round6(w.r.distance)),
+      point_a: w.r.pointA.map(round6) as [number, number, number],
+      point_b: w.r.pointB.map(round6) as [number, number, number],
+      ...(w.pose
+        ? { worst_pose: w.pose.map((s) => ({ joint: s.joint, state: round6(s.state) })) }
+        : {}),
+    }))
+    .sort(
+      (x, y) =>
+        Number(y.verdict === "intersecting") - Number(x.verdict === "intersecting") ||
+        x.distance_mm - y.distance_mm,
+    );
+
+  const n = first.length;
+  return {
+    result: {
+      parts_checked: n,
+      pairs_total: (n * (n - 1)) / 2,
+      pairs_ignored: ignored,
+      pairs_broadphase: broadphase.size,
+      queries,
+      ...(poses.length > 0 ? { poses_checked: poses.length } : {}),
+      findings,
+      unresolved_ignores: [...new Set(unresolved)],
+    },
+  };
+}
+
 /** Insert or replace the named spec on the document (upsert by label). */
 function upsertClearanceSpec(doc: Document, spec: ClearanceSpec): void {
   const specs = doc.clearance_specs ?? [];
@@ -280,20 +737,32 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   if (!documentId) return err("Pass `document_id` (the CAD session).");
   const groupA = stringArray(args.group_a);
   const groupB = stringArray(args.group_b);
-  if (!groupA || !groupB) {
-    return err("Pass `group_a` and `group_b` as arrays of part ids (or part names).");
-  }
-  const minMm = typeof args.min_mm === "number" ? args.min_mm : NaN;
-  if (!Number.isFinite(minMm)) return err("Pass `min_mm`, the required minimum separation in mm.");
   const label = typeof args.label === "string" && args.label.trim() ? args.label.trim() : undefined;
   const allowContact = asBool(args.allow_contact);
 
+  const { sweep, error: sweepParseError } = parseSweep(args.sweep);
+  if (sweepParseError) return err(sweepParseError);
+
   const doc = getSession(documentId);
-  const { result, error } = computeGroupClearance(doc, engine, groupA, groupB);
+
+  // Audit mode: no pair named → broadphase the whole document.
+  if (!groupA && !groupB) {
+    return auditClearance(documentId, doc, engine, args, sweep, label);
+  }
+  if (!groupA || !groupB) {
+    return err(
+      "Pass both `group_a` and `group_b` as arrays of part ids (or part names) — or neither, to audit every pair in the document.",
+    );
+  }
+
+  const minMm = typeof args.min_mm === "number" ? args.min_mm : NaN;
+  if (!Number.isFinite(minMm)) return err("Pass `min_mm`, the required minimum separation in mm.");
+
+  const { result, error } = computeGroupClearance(doc, engine, groupA, groupB, sweep);
   if (error || !result) return err(error ?? "Clearance could not be computed.");
 
   const verdict = clearanceVerdict(result.distance_mm);
-  const pass = clearanceHolds(result.distance_mm, minMm, allowContact);
+  const pass = clearanceHolds(result.distance_mm, minMm, allowContact, result.intersecting);
   let specSaved = false;
   if (label) {
     // Persist by resolved part ids so the assertion survives renames.
@@ -303,6 +772,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
       group_b: result.group_b.map((p) => p.id),
       min_mm: minMm,
       ...(allowContact ? { allow_contact: true } : {}),
+      ...(sweep && sweep.length > 0 ? { sweep } : {}),
     });
     specSaved = true;
   }
@@ -318,6 +788,8 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
     ...(allowContact ? { allow_contact: true } : {}),
     intersecting: result.intersecting,
     worst_pair: result.worst_pair,
+    ...(result.worst_pose ? { worst_pose: result.worst_pose } : {}),
+    ...(result.poses_checked !== undefined ? { poses_checked: result.poses_checked } : {}),
     pairs_checked: result.pairs_checked,
     group_a: result.group_a,
     group_b: result.group_b,
@@ -337,6 +809,106 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   };
 }
 
+/** Parse the `sweep` argument into typed axes (undefined when absent). */
+function parseSweep(raw: unknown): { sweep?: JointSweep[]; error?: string } {
+  if (raw === undefined || raw === null) return {};
+  if (!Array.isArray(raw)) {
+    return { error: "`sweep` must be an array of {joint, from, to, steps} axes." };
+  }
+  const sweep: JointSweep[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") {
+      return { error: "Each `sweep` axis must be an object {joint, from, to, steps}." };
+    }
+    const e = entry as Record<string, unknown>;
+    const joint = typeof e.joint === "string" ? e.joint.trim() : "";
+    const from = Number(e.from);
+    const to = Number(e.to);
+    const steps = Number(e.steps);
+    if (!joint || !Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(steps)) {
+      return {
+        error: "Each `sweep` axis needs a `joint` id/name plus numeric `from`, `to`, and `steps`.",
+      };
+    }
+    sweep.push({ joint, from, to, steps });
+  }
+  return sweep.length > 0 ? { sweep } : {};
+}
+
+/** Parse `ignore_pairs` into id/name couples, tolerating loose shapes. */
+function parseIgnorePairs(raw: unknown): { pairs: Array<[string, string]>; error?: string } {
+  if (raw === undefined || raw === null) return { pairs: [] };
+  if (!Array.isArray(raw)) {
+    return { pairs: [], error: "`ignore_pairs` must be an array of [part_a, part_b] pairs." };
+  }
+  const pairs: Array<[string, string]> = [];
+  for (const entry of raw) {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      return { pairs: [], error: "Each `ignore_pairs` entry must be a two-element array." };
+    }
+    pairs.push([String(entry[0]), String(entry[1])]);
+  }
+  return { pairs };
+}
+
+/** All-pairs audit mode of `check_clearance`. */
+function auditClearance(
+  documentId: string,
+  doc: Document,
+  engine: Engine,
+  args: Record<string, unknown>,
+  sweep: JointSweep[] | undefined,
+  label: string | undefined,
+) {
+  const minMm = typeof args.min_mm === "number" && Number.isFinite(args.min_mm) ? args.min_mm : 0;
+  const { pairs: ignorePairs, error: ignoreError } = parseIgnorePairs(args.ignore_pairs);
+  if (ignoreError) return err(ignoreError);
+  const ignoreFixedJoints = args.ignore_fixed_joints === undefined ? true : asBool(args.ignore_fixed_joints);
+  const ignoreAdjacent = asBool(args.ignore_adjacent);
+
+  const { result, error } = computeInterferenceAudit(doc, engine, {
+    minMm,
+    ignorePairs,
+    ignoreFixedJoints,
+    ignoreAdjacent,
+    sweep,
+  });
+  if (error || !result) return err(error ?? "Interference audit could not be computed.");
+
+  const payload = {
+    success: true,
+    document_id: documentId,
+    mode: "audit" as const,
+    required_mm: minMm,
+    pass: result.findings.length === 0,
+    findings: result.findings,
+    interference_count: result.findings.length,
+    parts_checked: result.parts_checked,
+    pairs_total: result.pairs_total,
+    pairs_ignored: result.pairs_ignored,
+    pairs_broadphase: result.pairs_broadphase,
+    queries: result.queries,
+    ...(result.poses_checked !== undefined ? { poses_checked: result.poses_checked } : {}),
+    ...(result.unresolved_ignores.length > 0
+      ? {
+          unresolved_ignores: result.unresolved_ignores,
+          note: `ignore_pairs named parts that do not exist: ${result.unresolved_ignores.join(", ")} — those pairs were NOT whitelisted.`,
+        }
+      : {}),
+    ...(label
+      ? {
+          spec_saved: false,
+          label_note:
+            "`label` persists only pairwise assertions; an audit is a whole-document scan, so nothing was saved. Name the offending pair and re-run with group_a/group_b to persist it.",
+        }
+      : {}),
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: { clearance: payload, document_id: documentId },
+  };
+}
+
 /**
  * Measure every persisted clearance spec and emit unified receipt claims,
  * mirroring the Rust mech adapter (`vcad_receipt::mechanical::clearance_claims`):
@@ -350,7 +922,9 @@ export function clearanceReceiptClaims(doc: Document, engine: Engine | undefined
   const specs = doc.clearance_specs ?? [];
   return specs.map((spec) => {
     const id = `${CLEARANCE_CLAIM_PREFIX}${spec.label}`;
-    const description = `clearance "${spec.label}" at least ${spec.min_mm} mm`;
+    const description = spec.sweep?.length
+      ? `clearance "${spec.label}" at least ${spec.min_mm} mm across the swept range of motion`
+      : `clearance "${spec.label}" at least ${spec.min_mm} mm`;
     const subject = `${spec.group_a.join("+")} vs ${spec.group_b.join("+")}`;
     if (!engine) {
       return {
@@ -364,7 +938,13 @@ export function clearanceReceiptClaims(doc: Document, engine: Engine | undefined
         subject,
       };
     }
-    const { result, error } = computeGroupClearance(doc, engine, spec.group_a, spec.group_b);
+    const { result, error } = computeGroupClearance(
+      doc,
+      engine,
+      spec.group_a,
+      spec.group_b,
+      spec.sweep,
+    );
     if (error || !result) {
       return {
         ...unverifiableClaim(
@@ -384,8 +964,17 @@ export function clearanceReceiptClaims(doc: Document, engine: Engine | undefined
       group_b: spec.group_b,
       required_mm: spec.min_mm,
       measured_mm: result.distance_mm,
-      holds: clearanceHolds(result.distance_mm, spec.min_mm, allowContact),
+      holds: clearanceHolds(result.distance_mm, spec.min_mm, allowContact, result.intersecting),
       ...(allowContact ? { allow_contact: true } : {}),
+      // A swept claim carries its grid so verify_receipt re-checks the same
+      // range of motion — re-verifying at one pose would silently weaken it.
+      ...(spec.sweep?.length
+        ? {
+            sweep: spec.sweep,
+            worst_pose: result.worst_pose ?? [],
+            poses_checked: result.poses_checked ?? 0,
+          }
+        : {}),
     };
     return {
       id,
@@ -411,6 +1000,10 @@ export interface ClearanceCheckStatus {
   /** Distance measured against the current document. */
   measured_mm?: number;
   reason?: string;
+  /** Pose realizing the re-measured worst case (swept assertions only). */
+  worst_pose?: Pose;
+  /** Poses re-evaluated (swept assertions only). */
+  poses_checked?: number;
 }
 
 /**
@@ -438,7 +1031,13 @@ export function verifyClearanceClaims(
       });
       continue;
     }
-    const { result, error } = computeGroupClearance(doc, engine, stored.group_a, stored.group_b);
+    const { result, error } = computeGroupClearance(
+      doc,
+      engine,
+      stored.group_a,
+      stored.group_b,
+      stored.sweep,
+    );
     if (error || !result) {
       checks.push({
         label,
@@ -450,32 +1049,34 @@ export function verifyClearanceClaims(
       continue;
     }
     const measured = result.distance_mm;
-    if (!clearanceHolds(measured, stored.required_mm, stored.allow_contact === true)) {
+    const sweptFields = result.poses_checked
+      ? { worst_pose: result.worst_pose, poses_checked: result.poses_checked }
+      : {};
+    const common = {
+      label,
+      required_mm: stored.required_mm,
+      stored_mm: stored.measured_mm,
+      measured_mm: measured,
+      ...sweptFields,
+    };
+    if (
+      !clearanceHolds(measured, stored.required_mm, stored.allow_contact === true, result.intersecting)
+    ) {
       checks.push({
-        label,
+        ...common,
         status: "Violated",
-        required_mm: stored.required_mm,
-        stored_mm: stored.measured_mm,
-        measured_mm: measured,
-        reason: `measured ${measured} mm is below the required ${stored.required_mm} mm`,
+        reason: result.poses_checked
+          ? `measured ${measured} mm is below the required ${stored.required_mm} mm somewhere in the swept range of motion`
+          : `measured ${measured} mm is below the required ${stored.required_mm} mm`,
       });
     } else if (Math.abs(measured - stored.measured_mm) > STALE_EPS_MM) {
       checks.push({
-        label,
+        ...common,
         status: "Stale",
-        required_mm: stored.required_mm,
-        stored_mm: stored.measured_mm,
-        measured_mm: measured,
         reason: "geometry changed since the receipt was built, but the clearance still holds",
       });
     } else {
-      checks.push({
-        label,
-        status: "Holds",
-        required_mm: stored.required_mm,
-        stored_mm: stored.measured_mm,
-        measured_mm: measured,
-      });
+      checks.push({ ...common, status: "Holds" });
     }
   }
   const status: ReceiptStatus = checks.some((c) => c.status === "Violated")
@@ -527,7 +1128,7 @@ export const toolDefs: ToolDef[] = [
     name: "check_clearance",
     pack: null,
     description:
-      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` \u2014 pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. (2) audit \u2014 omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
     inputSchema: checkClearanceSchema,
     handler: (a, c) => checkClearance(a, c.engine),
     behavior: behavior({ writesDoc: true }),

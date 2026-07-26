@@ -304,3 +304,243 @@ describe("clearance receipts (build_receipt / verify_receipt)", () => {
     expect(res.isError).toBe(true);
   });
 });
+
+/**
+ * The four-bar-knee field report, minimized: a crank arm swinging about the
+ * origin past a fixed post. Authored at 90° the arm points away from the post
+ * and clears by a wide margin; at 0° it swings straight through it. Modelling
+ * one pose is exactly the trap — the authored pose is the pose that works.
+ */
+function swingArmDocument(): Document {
+  const nodes: Record<string, unknown> = {};
+  let id = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const add = (name: string, op: any): number => {
+    id += 1;
+    nodes[String(id)] = { id, name, op };
+    return id;
+  };
+
+  // Arm: 30 mm bar extending along +X from the pivot at the origin.
+  const arm = add("arm-solid", { type: "Cube", size: { x: 30, y: 4, z: 4 } });
+  // Post: a fixed obstacle straddling the arm's swept path at 0°.
+  const postSolid = add("post-solid", { type: "Cube", size: { x: 6, y: 6, z: 10 } });
+  const post = add("post", {
+    type: "Translate",
+    child: postSolid,
+    offset: { x: 20, y: -3, z: -3 },
+  });
+
+  return {
+    version: "0.1",
+    nodes,
+    materials: {},
+    part_materials: {},
+    roots: [],
+    partDefs: {
+      arm: { id: "arm", name: "arm", root: arm },
+      post: { id: "post", name: "post", root: post },
+    },
+    instances: [
+      { id: "post-1", partDefId: "post", name: "post" },
+      { id: "arm-1", partDefId: "arm", name: "arm" },
+    ],
+    joints: [
+      {
+        id: "shoulder",
+        name: "shoulder",
+        parentInstanceId: null,
+        childInstanceId: "arm-1",
+        parentAnchor: { x: 0, y: 0, z: 0 },
+        childAnchor: { x: 0, y: 0, z: 0 },
+        kind: { type: "Revolute", axis: { x: 0, y: 0, z: 1 } },
+        state: 90, // authored at the one angle that clears
+      },
+    ],
+  } as unknown as Document;
+}
+
+function openSwingArm(): string {
+  return out(openDocument({ initial: swingArmDocument() })).document_id as string;
+}
+
+describe("check_clearance sweep", () => {
+  it("clears in the authored pose", async () => {
+    const docId = openSwingArm();
+    const res = out(
+      await checkClearance(
+        { document_id: docId, group_a: ["arm-1"], group_b: ["post-1"], min_mm: 1 },
+        engine,
+      ),
+    );
+    expect(res.pass).toBe(true);
+    expect(res.poses_checked).toBeUndefined();
+  });
+
+  it("finds the collision the authored pose hides, and names the pose", async () => {
+    const docId = openSwingArm();
+    const res = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          sweep: [{ joint: "shoulder", from: 0, to: 90, steps: 9 }],
+        },
+        engine,
+      ),
+    );
+    expect(res.pass).toBe(false);
+    expect(res.intersecting).toBe(true);
+    // The kernel reports a zero penetration depth for two boxes crossing
+    // face-to-face; `intersecting` — not the depth — is the load-bearing flag.
+    expect(res.measured_mm).toBeLessThanOrEqual(0);
+    expect(res.poses_checked).toBe(10);
+    expect(res.worst_pose).toEqual([{ joint: "shoulder", state: 0 }]);
+  });
+
+  it("restores joint states — a sweep asks a question, it does not pose the model", async () => {
+    const docId = openSwingArm();
+    await checkClearance(
+      {
+        document_id: docId,
+        group_a: ["arm-1"],
+        group_b: ["post-1"],
+        min_mm: 1,
+        sweep: [{ joint: "shoulder", from: 0, to: 90, steps: 4 }],
+      },
+      engine,
+    );
+    expect(getSession(docId).joints?.[0].state).toBe(90);
+  });
+
+  it("rejects an unknown joint and an oversized grid instead of guessing", async () => {
+    const docId = openSwingArm();
+    const unknown = await checkClearance(
+      {
+        document_id: docId,
+        group_a: ["arm-1"],
+        group_b: ["post-1"],
+        min_mm: 1,
+        sweep: [{ joint: "elbow", from: 0, to: 90, steps: 4 }],
+      },
+      engine,
+    );
+    expect(unknown.isError).toBe(true);
+
+    const huge = await checkClearance(
+      {
+        document_id: docId,
+        group_a: ["arm-1"],
+        group_b: ["post-1"],
+        min_mm: 1,
+        sweep: [{ joint: "shoulder", from: 0, to: 90, steps: 9999 }],
+      },
+      engine,
+    );
+    expect(huge.isError).toBe(true);
+  });
+
+  it("persists a swept spec and re-verifies over the same range of motion", async () => {
+    const docId = openSwingArm();
+    const first = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          label: "knee-swing",
+          sweep: [{ joint: "shoulder", from: 40, to: 90, steps: 5 }],
+        },
+        engine,
+      ),
+    );
+    expect(first.pass).toBe(true);
+    expect(first.spec_saved).toBe(true);
+
+    const built = out(await buildReceipt({ document_id: docId }, engine));
+    const claim = built.unified.claims.find(
+      (c: { id: string }) => c.id === "mech.clearance.knee-swing",
+    );
+    expect(claim.verdict).toBe("pass");
+    const details = JSON.parse(claim.details);
+    expect(details.sweep).toHaveLength(1);
+    expect(details.poses_checked).toBe(6);
+
+    // Widen the travel on the stored spec: the swept assertion now reaches the
+    // post, and re-verification must catch it rather than re-check one pose.
+    const doc = getSession(docId);
+    doc.clearance_specs![0].sweep = [{ joint: "shoulder", from: 0, to: 90, steps: 9 }];
+    const rebuilt = out(await buildReceipt({ document_id: docId }, engine));
+    const res = out(await verifyReceipt({ document_id: docId, receipt: rebuilt }, engine));
+    expect(res.status).toBe("Violated");
+    expect(res.clearance.checks[0].poses_checked).toBe(10);
+  });
+});
+
+describe("check_clearance audit", () => {
+  it("finds an interpenetrating pair with no pair named", async () => {
+    const docId = openRotorStator(7.0);
+    const res = out(await checkClearance({ document_id: docId }, engine));
+    expect(res.mode).toBe("audit");
+    expect(res.pass).toBe(false);
+    expect(res.findings).toHaveLength(1);
+    expect(res.findings[0].verdict).toBe("intersecting");
+    expect(res.findings[0].distance_mm).toBeLessThan(0);
+    expect(res.parts_checked).toBe(2);
+    expect(res.pairs_total).toBe(1);
+  });
+
+  it("passes a document whose parts all clear", async () => {
+    const docId = openRotorStator(5.0);
+    const res = out(await checkClearance({ document_id: docId }, engine));
+    expect(res.pass).toBe(true);
+    expect(res.findings).toEqual([]);
+  });
+
+  it("honors min_mm as a proximity threshold, not just interpenetration", async () => {
+    const docId = openRotorStator(5.0); // 1.0 mm gap
+    const res = out(await checkClearance({ document_id: docId, min_mm: 2 }, engine));
+    expect(res.pass).toBe(false);
+    expect(res.findings).toHaveLength(1);
+  });
+
+  it("whitelists intended contact via ignore_pairs, and reports entries that resolve to nothing", async () => {
+    const docId = openRotorStator(7.0);
+    const ignored = out(
+      await checkClearance({ document_id: docId, ignore_pairs: [["rotor", "stator"]] }, engine),
+    );
+    expect(ignored.pass).toBe(true);
+    expect(ignored.pairs_ignored).toBe(1);
+
+    const bogus = out(
+      await checkClearance({ document_id: docId, ignore_pairs: [["rotor", "flywheel"]] }, engine),
+    );
+    expect(bogus.pass).toBe(false);
+    expect(bogus.unresolved_ignores).toEqual(["flywheel"]);
+  });
+
+  it("audits the whole range of motion when swept", async () => {
+    const docId = openSwingArm();
+    const still = out(await checkClearance({ document_id: docId }, engine));
+    expect(still.pass).toBe(true);
+
+    const swept = out(
+      await checkClearance(
+        { document_id: docId, sweep: [{ joint: "shoulder", from: 0, to: 90, steps: 9 }] },
+        engine,
+      ),
+    );
+    expect(swept.pass).toBe(false);
+    expect(swept.poses_checked).toBe(10);
+    expect(swept.findings[0].worst_pose).toEqual([{ joint: "shoulder", state: 0 }]);
+  });
+
+  it("rejects a half-specified pair rather than silently auditing everything", async () => {
+    const docId = openRotorStator(5.0);
+    const res = await checkClearance({ document_id: docId, group_a: ["rotor"] }, engine);
+    expect(res.isError).toBe(true);
+  });
+});
