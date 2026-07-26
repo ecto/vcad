@@ -5629,6 +5629,32 @@ export function evalVcadSource(source) {
 }
 
 /**
+ * Evaluate loon source and return both the document and the parametric
+ * warnings, as `{ "document": {...}, "warnings": ["..."] }`.
+ *
+ * Same evaluation as [`eval_vcad_source_with_modules`] — the document is
+ * identical — but the warnings explain intent that could *not* be preserved:
+ * a parameter that drives nothing, a field whose dependence on a parameter
+ * is not affine and therefore keeps its literal. Callers that surface
+ * authoring feedback (the MCP server, the app's editor) want this one;
+ * callers that only need geometry can use the plain entry point.
+ * @param {string} source
+ * @param {string | null} [modules_json]
+ * @returns {any}
+ */
+export function evalVcadSourceParametric(source, modules_json) {
+    const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(modules_json) ? 0 : passStringToWasm0(modules_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.evalVcadSourceParametric(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Evaluate loon source whose `[use ...]` resolves against an in-memory
  * module map, and return a JSON-serialized vcad Document.
  *
@@ -10182,12 +10208,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3756, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3757, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3780, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3781, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3781, function: Function { arguments: [Externref], shim_idx: 3782, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3805, function: Function { arguments: [Externref], shim_idx: 3806, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
