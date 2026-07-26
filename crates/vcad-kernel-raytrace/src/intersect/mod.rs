@@ -23,7 +23,7 @@ pub use triangle::{intersect_triangle, TriangleHit};
 
 use crate::Ray;
 use vcad_kernel_geom::{Surface, SurfaceKind};
-use vcad_kernel_math::Point2;
+use vcad_kernel_math::{Point2, Vec3};
 
 /// Result of a ray-surface intersection (before trim testing).
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +32,42 @@ pub struct SurfaceHit {
     pub t: f64,
     /// Surface parameter coordinates (u, v).
     pub uv: Point2,
+}
+
+/// The surface tangent `dP/du` at `uv`, when the parameterisation carries a
+/// physically meaningful direction.
+///
+/// Analytic surfaces are parameterised the way the geometry actually runs, so
+/// `dP/du` is the surface's grain rather than an arbitrary basis:
+///
+/// - **Plane** — the plane's own x-axis.
+/// - **Cylinder / cone / sphere / torus** — the circumferential (around-the-
+///   axis) direction. On a turned or bored feature that is the direction the
+///   tool travelled, which is what makes anisotropic highlights read as
+///   machined rather than rendered.
+///
+/// Returns `None` for surfaces whose parameterisation is an artefact of
+/// fitting rather than of the geometry (B-spline, bilinear), and at
+/// parametric degeneracies where `dP/du` vanishes — sphere poles, the cone
+/// apex — so that shading falls back to an arbitrary tangent frame instead of
+/// snapping to a garbage direction.
+pub fn surface_tangent(surface: &dyn Surface, uv: Point2) -> Option<Vec3> {
+    match surface.surface_type() {
+        SurfaceKind::Plane
+        | SurfaceKind::Cylinder
+        | SurfaceKind::Cone
+        | SurfaceKind::Sphere
+        | SurfaceKind::Torus => {
+            let d = surface.d_du(uv);
+            // Degenerate at poles/apex: length collapses to zero there.
+            if d.norm() > 1e-9 {
+                Some(d)
+            } else {
+                None
+            }
+        }
+        SurfaceKind::Bilinear | SurfaceKind::BSpline => None,
+    }
 }
 
 /// Intersect a ray with a surface, returning all intersections sorted by t.

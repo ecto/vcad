@@ -47,6 +47,16 @@ pub struct Pbr {
     pub metallic: f32,
     /// Perceptual roughness in 0..1. Squared internally to get the GGX alpha.
     pub roughness: f32,
+    /// Directional bias of the specular lobe, in -1..1.
+    ///
+    /// `0` is isotropic and reduces exactly to a round GGX highlight.
+    /// Positive values stretch the highlight *along* the surface tangent
+    /// (`dP/du`), negative values stretch it across. Because vcad shades the
+    /// analytic BRep, that tangent is the real parameterisation of the
+    /// surface — the circumferential direction on a cylinder — so a turned
+    /// shaft or a bored hole gets the smeared highlight it has in life
+    /// without any generated tangents or texture.
+    pub anisotropy: f32,
     /// Strength of the clearcoat layer (0 = none, 1 = full).
     pub clearcoat: f32,
     /// Perceptual roughness of the clearcoat layer.
@@ -63,6 +73,7 @@ impl Default for Pbr {
             base_color: [0.62, 0.64, 0.67],
             metallic: 0.0,
             roughness: 0.4,
+            anisotropy: 0.0,
             clearcoat: 0.0,
             clearcoat_roughness: 0.1,
             ior: 1.5,
@@ -93,10 +104,54 @@ impl Pbr {
         }
     }
 
-    /// GGX alpha for the base specular lobe.
+    /// A brushed or turned metal: the specular lobe is stretched along the
+    /// surface's own tangent direction.
+    ///
+    /// `anisotropy` is signed — positive smears the highlight along `dP/du`
+    /// (circumferentially on a cylinder, which is a turned finish), negative
+    /// smears it across (an axially-brushed one).
+    pub fn brushed_metal(base_color: [f32; 3], roughness: f32, anisotropy: f32) -> Self {
+        Self {
+            base_color,
+            metallic: 1.0,
+            roughness,
+            anisotropy: anisotropy.clamp(-1.0, 1.0),
+            ..Default::default()
+        }
+    }
+
+    /// GGX alpha for the base specular lobe, ignoring anisotropy.
     #[inline]
     fn alpha(&self) -> f32 {
         (self.roughness * self.roughness).max(1e-4)
+    }
+
+    /// GGX alphas along the tangent and bitangent for the base specular
+    /// lobe.
+    ///
+    /// Uses the standard Disney/glTF construction: an aspect ratio of
+    /// `sqrt(1 - 0.9·|anisotropy|)` splits the isotropic alpha into a
+    /// stretched and a squeezed axis while keeping their product — and hence
+    /// the overall highlight area — roughly fixed. `0.9` bounds the extreme
+    /// case away from a zero-width lobe.
+    ///
+    /// At `anisotropy == 0` the aspect is exactly `1`, so both alphas are
+    /// bit-identical to [`Self::alpha`] and every anisotropic code path
+    /// reduces to the isotropic one.
+    #[inline]
+    fn alpha_tb(&self) -> (f32, f32) {
+        let a = self.alpha();
+        let aniso = self.anisotropy.clamp(-1.0, 1.0);
+        if aniso == 0.0 {
+            return (a, a);
+        }
+        let aspect = (1.0 - 0.9 * aniso.abs()).sqrt();
+        let (wide, narrow) = ((a / aspect).min(1.0), a * aspect);
+        if aniso > 0.0 {
+            (wide, narrow)
+        } else {
+            (narrow, wide)
+        }
     }
 
     /// GGX alpha for the clearcoat lobe.
@@ -793,6 +848,44 @@ fn onb(n: Vec3) -> (Vec3, Vec3) {
     )
 }
 
+/// An orthonormal shading frame: tangent, bitangent, normal.
+///
+/// The tangent is meaningful, not arbitrary, whenever the hit surface has a
+/// real parameterisation — that is what anisotropic shading orients itself
+/// by — so the three vectors travel together rather than as loose arguments.
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    t: Vec3,
+    b: Vec3,
+    n: Vec3,
+}
+
+/// Shading tangent frame around a unit normal.
+///
+/// When the hit carried a surface tangent `dP/du`, it is Gram-Schmidt
+/// orthogonalised against the (possibly face-forwarded) shading normal and
+/// used as the frame's x axis, so the anisotropic lobe lines up with the
+/// surface's own parameterisation. Otherwise this is the arbitrary [`onb`]
+/// basis the isotropic path has always used — which is exactly what an
+/// isotropic material wants, since its BSDF is invariant to the choice.
+fn shading_frame(n: Vec3, dpdu: Option<Vec3>) -> Frame {
+    if let Some(d) = dpdu {
+        let t = d - n * d.dot(n);
+        // A tangent that is (numerically) parallel to the normal carries no
+        // direction; fall back rather than normalising noise.
+        if t.norm() > 1e-9 {
+            let t = t.normalize();
+            return Frame {
+                t,
+                b: n.cross(t),
+                n,
+            };
+        }
+    }
+    let (t, b) = onb(n);
+    Frame { t, b, n }
+}
+
 #[inline]
 fn to_local(t: Vec3, b: Vec3, n: Vec3, w: Vec3) -> Vec3 {
     Vec3::new(w.dot(t), w.dot(b), w.dot(n))
@@ -838,6 +931,22 @@ fn d_ggx(n_dot_h: f32, alpha: f32) -> f32 {
     a2 / (std::f32::consts::PI * d * d).max(1e-9)
 }
 
+/// Anisotropic GGX normal distribution.
+///
+/// `wh` is the half-vector in the local shading frame, whose x axis is the
+/// surface tangent. When `at == ab` this is algebraically identical to
+/// [`d_ggx`]; the equality is made exact (not merely near-exact in floating
+/// point) by dispatching to it.
+#[inline]
+fn d_ggx_aniso(wh: Vec3, at: f32, ab: f32) -> f32 {
+    if at == ab {
+        return d_ggx(wh.z.max(0.0) as f32, at);
+    }
+    let (hx, hy, hz) = (wh.x as f32, wh.y as f32, wh.z as f32);
+    let d = (hx / at) * (hx / at) + (hy / ab) * (hy / ab) + hz * hz;
+    1.0 / (std::f32::consts::PI * at * ab * d * d).max(1e-9)
+}
+
 /// Smith height-correlated visibility term (already divided by 4·NoL·NoV).
 #[inline]
 fn v_smith(n_dot_v: f32, n_dot_l: f32, alpha: f32) -> f32 {
@@ -845,6 +954,40 @@ fn v_smith(n_dot_v: f32, n_dot_l: f32, alpha: f32) -> f32 {
     let gv = n_dot_l * (n_dot_v * n_dot_v * (1.0 - a2) + a2).sqrt();
     let gl = n_dot_v * (n_dot_l * n_dot_l * (1.0 - a2) + a2).sqrt();
     0.5 / (gv + gl).max(1e-9)
+}
+
+/// Anisotropic Smith height-correlated visibility term (already divided by
+/// 4·NoL·NoV). Reduces exactly to [`v_smith`] when `at == ab`.
+#[inline]
+fn v_smith_aniso(wo: Vec3, wi: Vec3, at: f32, ab: f32) -> f32 {
+    if at == ab {
+        return v_smith(wo.z as f32, wi.z as f32, at);
+    }
+    // Λ-style stretched lengths: sqrt((at·x)² + (ab·y)² + z²).
+    let stretched = |w: Vec3| -> f32 {
+        let (x, y, z) = (w.x as f32, w.y as f32, w.z as f32);
+        ((at * x) * (at * x) + (ab * y) * (ab * y) + z * z).sqrt()
+    };
+    let gv = (wi.z as f32) * stretched(wo);
+    let gl = (wo.z as f32) * stretched(wi);
+    0.5 / (gv + gl).max(1e-9)
+}
+
+/// Smith G1 masking term for the anisotropic GGX distribution.
+///
+/// The `at == ab` branch is the isotropic expression evaluated exactly as it
+/// was before anisotropy existed, so isotropic renders are bit-unchanged.
+#[inline]
+fn g1_smith_aniso(w: Vec3, at: f32, ab: f32) -> f32 {
+    let z = w.z.max(1e-6) as f32;
+    let lambda = if at == ab {
+        let a2 = at * at;
+        ((1.0 + a2 * (1.0 - z * z) / (z * z)).sqrt() - 1.0) * 0.5
+    } else {
+        let (x, y) = (w.x as f32, w.y as f32);
+        (((at * x) * (at * x) + (ab * y) * (ab * y) + z * z).sqrt() / z - 1.0) * 0.5
+    };
+    1.0 / (1.0 + lambda)
 }
 
 /// Schlick Fresnel.
@@ -859,11 +1002,16 @@ fn fresnel(f0: [f32; 3], cos_theta: f32) -> [f32; 3] {
 }
 
 /// Sample the GGX visible-normal distribution (Heitz 2018). `wo` is in local
-/// space with +Z the shading normal; returns the sampled half-vector.
-fn sample_vndf(wo: Vec3, alpha: f32, r1: f64, r2: f64) -> Vec3 {
-    let a = alpha as f64;
+/// space with +Z the shading normal and +X the surface tangent; returns the
+/// sampled half-vector.
+///
+/// The method is anisotropic by construction: the stretch step that maps to
+/// the hemisphere-configured space takes each axis' alpha separately, so
+/// passing `at != ab` needs no other change.
+fn sample_vndf(wo: Vec3, at: f32, ab: f32, r1: f64, r2: f64) -> Vec3 {
+    let (a, b) = (at as f64, ab as f64);
     // Stretch the view direction into the hemisphere-configured space.
-    let vh = Vec3::new(a * wo.x, a * wo.y, wo.z).normalize();
+    let vh = Vec3::new(a * wo.x, b * wo.y, wo.z).normalize();
     let lensq = vh.x * vh.x + vh.y * vh.y;
     let t1 = if lensq > 0.0 {
         Vec3::new(-vh.y, vh.x, 0.0) / lensq.sqrt()
@@ -880,19 +1028,15 @@ fn sample_vndf(wo: Vec3, alpha: f32, r1: f64, r2: f64) -> Vec3 {
     let p2 = (1.0 - s) * (1.0 - p1 * p1).max(0.0).sqrt() + s * p2r;
 
     let nh = t1 * p1 + t2 * p2 + vh * (1.0 - p1 * p1 - p2 * p2).max(0.0).sqrt();
-    Vec3::new(a * nh.x, a * nh.y, nh.z.max(1e-9)).normalize()
+    Vec3::new(a * nh.x, b * nh.y, nh.z.max(1e-9)).normalize()
 }
 
 /// PDF of the VNDF sampling strategy, in solid angle around `wi`.
 #[inline]
-fn vndf_pdf(wo: Vec3, wh: Vec3, alpha: f32) -> f32 {
-    let n_dot_h = wh.z.max(0.0) as f32;
+fn vndf_pdf(wo: Vec3, wh: Vec3, at: f32, ab: f32) -> f32 {
     let n_dot_v = wo.z.max(1e-6) as f32;
-    let d = d_ggx(n_dot_h, alpha);
-    // G1 for the Smith masking function.
-    let a2 = alpha * alpha;
-    let lambda = ((1.0 + a2 * (1.0 - n_dot_v * n_dot_v) / (n_dot_v * n_dot_v)).sqrt() - 1.0) * 0.5;
-    let g1 = 1.0 / (1.0 + lambda);
+    let d = d_ggx_aniso(wh, at, ab);
+    let g1 = g1_smith_aniso(wo, at, ab);
     let o_dot_h = wo.dot(wh).max(1e-9) as f32;
     d * g1 * o_dot_h / n_dot_v / (4.0 * o_dot_h)
 }
@@ -926,15 +1070,18 @@ fn bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
     let diffuse = scale3(m.diffuse_albedo(), std::f32::consts::FRAC_1_PI * n_dot_l);
     let pdf_d = n_dot_l * std::f32::consts::FRAC_1_PI;
 
-    // Base specular.
-    let alpha = m.alpha();
-    let d = d_ggx(n_dot_h, alpha);
-    let vis = v_smith(n_dot_v, n_dot_l, alpha);
+    // Base specular. Anisotropy stretches the lobe along the local x axis,
+    // which the integrator has aligned with the surface tangent dP/du.
+    let (at, ab) = m.alpha_tb();
+    let d = d_ggx_aniso(wh, at, ab);
+    let vis = v_smith_aniso(wo, wi, at, ab);
     let f = fresnel(m.f0(), o_dot_h);
     let spec = scale3(f, d * vis * n_dot_l);
-    let pdf_s = vndf_pdf(wo, wh, alpha);
+    let pdf_s = vndf_pdf(wo, wh, at, ab);
 
-    // Clearcoat: a thin dielectric layer over everything else.
+    // Clearcoat: a thin dielectric layer over everything else. It is a
+    // separate isotropic film — the grain lives in the substrate beneath it,
+    // not in the lacquer — so it never takes the anisotropy.
     let (coat, pdf_c, coat_atten) = if m.clearcoat > 0.0 {
         let ca = m.coat_alpha();
         let cd = d_ggx(n_dot_h, ca);
@@ -943,7 +1090,7 @@ fn bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
         let c = cd * cv * n_dot_l * cf;
         (
             [c, c, c],
-            vndf_pdf(wo, wh, ca),
+            vndf_pdf(wo, wh, ca, ca),
             // Energy removed from the layers beneath.
             1.0 - cf,
         )
@@ -970,14 +1117,16 @@ fn bsdf_sample(m: &Pbr, wo: Vec3, rng: &mut Rng) -> Option<(Vec3, [f32; 3], f32)
     let wi = if u < pd {
         cosine_hemisphere(r1, r2)
     } else if u < pd + ps {
-        let wh = sample_vndf(wo, m.alpha(), r1, r2);
+        let (at, ab) = m.alpha_tb();
+        let wh = sample_vndf(wo, at, ab, r1, r2);
         let wi = reflect(-wo, wh);
         if wi.z <= 0.0 {
             return None;
         }
         wi
     } else {
-        let wh = sample_vndf(wo, m.coat_alpha(), r1, r2);
+        let ca = m.coat_alpha();
+        let wh = sample_vndf(wo, ca, ca, r1, r2);
         let wi = reflect(-wo, wh);
         if wi.z <= 0.0 {
             return None;
@@ -1016,6 +1165,8 @@ enum Landing {
     Surface {
         point: Point3,
         normal: Vec3,
+        /// Surface tangent dP/du, when the parameterisation has one.
+        tangent: Option<Vec3>,
         material: Pbr,
     },
     Light {
@@ -1040,6 +1191,7 @@ impl Scene {
                     landing = Landing::Surface {
                         point: hit.point,
                         normal: hit.normal.into_inner(),
+                        tangent: hit.dpdu,
                         material: obj.material,
                     };
                 }
@@ -1055,6 +1207,9 @@ impl Scene {
                     landing = Landing::Surface {
                         point: ray.at(t),
                         normal: Vec3::new(0.0, 0.0, 1.0),
+                        // The studio sweep is a backdrop, not a machined
+                        // face; it has no grain to align to.
+                        tangent: None,
                         material: g.material,
                     };
                 }
@@ -1109,13 +1264,12 @@ impl Scene {
     fn sample_lights(
         &self,
         p: Point3,
-        t: Vec3,
-        b: Vec3,
-        n: Vec3,
+        frame: &Frame,
         wo_local: Vec3,
         m: &Pbr,
         rng: &mut Rng,
     ) -> [f32; 3] {
+        let Frame { t, b, n } = *frame;
         let mut sum = [0.0f32; 3];
         for light in &self.lights {
             let lp = light.sample(rng.f64(), rng.f64());
@@ -1163,19 +1317,15 @@ impl Scene {
     /// Only runs for an importance-sampled environment ([`EnvMap`]). The
     /// analytic gradient stays BSDF-only, exactly as before — it is
     /// low-frequency enough that a second strategy buys nothing.
-    // Same hot-loop shading-frame arguments as `sample_lights`, and the same
-    // reasoning for keeping them positional.
-    #[allow(clippy::too_many_arguments)]
     fn sample_environment(
         &self,
         p: Point3,
-        t: Vec3,
-        b: Vec3,
-        n: Vec3,
+        frame: &Frame,
         wo_local: Vec3,
         m: &Pbr,
         rng: &mut Rng,
     ) -> [f32; 3] {
+        let Frame { t, b, n } = *frame;
         let Some((wi_world, li, env_pdf)) = self.env.sample(rng.f64(), rng.f64()) else {
             return [0.0; 3];
         };
@@ -1261,6 +1411,7 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
             Landing::Surface {
                 point,
                 normal,
+                tangent,
                 material,
             } => {
                 if depth == 0 {
@@ -1273,8 +1424,8 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
                 } else {
                     normal
                 };
-                let (t, b) = onb(n);
-                let wo_local = to_local(t, b, n, wo_world);
+                let frame = shading_frame(n, tangent);
+                let wo_local = to_local(frame.t, frame.b, n, wo_world);
                 if wo_local.z <= 0.0 {
                     break;
                 }
@@ -1284,8 +1435,8 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
                 // Next-event estimation: explicit lights, plus the
                 // environment when it is importance-sampled.
                 let direct = add3(
-                    scene.sample_lights(point, t, b, n, wo_local, &material, rng),
-                    scene.sample_environment(point, t, b, n, wo_local, &material, rng),
+                    scene.sample_lights(point, &frame, wo_local, &material, rng),
+                    scene.sample_environment(point, &frame, wo_local, &material, rng),
                 );
                 let direct = match opts.firefly_clamp {
                     Some(c) if depth > 0 => [direct[0].min(c), direct[1].min(c), direct[2].min(c)],
@@ -1301,7 +1452,7 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
                 prev_bsdf_pdf = pdf;
                 specular_chain = false;
 
-                let wi_world = to_world(t, b, n, wi_local);
+                let wi_world = to_world(frame.t, frame.b, n, wi_local);
                 ray = Ray::new(point + n * 1e-5, wi_world);
 
                 // Russian roulette.
@@ -1595,51 +1746,160 @@ mod tests {
     /// energy-wrong in a way that is hard to see by eye.
     #[test]
     fn bsdf_sample_pdf_matches_eval_pdf() {
-        let m = Pbr {
-            base_color: [0.8, 0.8, 0.8],
-            metallic: 0.3,
-            roughness: 0.4,
-            clearcoat: 0.5,
-            ..Default::default()
-        };
-        let wo = Vec3::new(0.3, 0.15, 0.94).normalize();
-        let mut rng = Rng::new(7);
-        for _ in 0..256 {
-            if let Some((wi, _f, pdf)) = bsdf_sample(&m, wo, &mut rng) {
-                let (_f2, pdf2) = bsdf_eval(&m, wo, wi);
-                assert!(
-                    (pdf - pdf2).abs() <= 1e-4 * pdf.max(1.0),
-                    "pdf mismatch: sampled {pdf}, evaluated {pdf2}"
-                );
+        // Isotropic, plus anisotropy swept across both signs and both
+        // extremes — the sampling and evaluation paths must agree for all of
+        // them or MIS is silently energy-wrong.
+        let anisos = [0.0, 0.4, 0.8, 1.0, -0.4, -0.8, -1.0];
+        for aniso in anisos {
+            for roughness in [0.1, 0.4, 0.8] {
+                let m = Pbr {
+                    base_color: [0.8, 0.8, 0.8],
+                    metallic: 0.3,
+                    roughness,
+                    anisotropy: aniso,
+                    clearcoat: 0.5,
+                    ..Default::default()
+                };
+                // Several view directions: a grazing wo is where an
+                // anisotropic G1 and a mismatched PDF diverge fastest.
+                for wo in [
+                    Vec3::new(0.3, 0.15, 0.94).normalize(),
+                    Vec3::new(0.85, 0.1, 0.52).normalize(),
+                    Vec3::new(0.1, 0.85, 0.52).normalize(),
+                    Vec3::new(0.0, 0.0, 1.0),
+                ] {
+                    let mut rng = Rng::new(7);
+                    for _ in 0..256 {
+                        if let Some((wi, _f, pdf)) = bsdf_sample(&m, wo, &mut rng) {
+                            let (_f2, pdf2) = bsdf_eval(&m, wo, wi);
+                            assert!(
+                                (pdf - pdf2).abs() <= 1e-4 * pdf.max(1.0),
+                                "pdf mismatch at aniso={aniso} rough={roughness}: \
+                                 sampled {pdf}, evaluated {pdf2}"
+                            );
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// Anisotropy 0 must be the isotropic model exactly — not merely close.
+    /// If this drifts, every existing render changes silently.
+    #[test]
+    fn zero_anisotropy_is_exactly_isotropic() {
+        let m = Pbr {
+            base_color: [0.8, 0.7, 0.6],
+            metallic: 0.6,
+            roughness: 0.35,
+            anisotropy: 0.0,
+            clearcoat: 0.3,
+            ..Default::default()
+        };
+        let (at, ab) = m.alpha_tb();
+        assert_eq!(at, m.alpha(), "tangent alpha diverged from the base alpha");
+        assert_eq!(
+            ab,
+            m.alpha(),
+            "bitangent alpha diverged from the base alpha"
+        );
+
+        // And the lobe terms must take their isotropic branches bit-exactly.
+        let wo = Vec3::new(0.3, 0.15, 0.94).normalize();
+        let wi = Vec3::new(-0.2, 0.35, 0.91).normalize();
+        let wh = (wo + wi).normalize();
+        assert_eq!(d_ggx_aniso(wh, at, ab), d_ggx(wh.z.max(0.0) as f32, at));
+        assert_eq!(
+            v_smith_aniso(wo, wi, at, ab),
+            v_smith(wo.z as f32, wi.z as f32, at)
+        );
+    }
+
+    /// The whole point of the feature: an anisotropic lobe must actually
+    /// prefer one tangent direction over the other, and swapping the sign of
+    /// the anisotropy must swap which one.
+    #[test]
+    fn anisotropy_stretches_the_lobe_along_the_tangent() {
+        let rough = |anisotropy| Pbr {
+            base_color: [1.0, 1.0, 1.0],
+            metallic: 1.0,
+            roughness: 0.3,
+            anisotropy,
+            clearcoat: 0.0,
+            ..Default::default()
+        };
+        // Straight-on view, so the mirror direction is +Z and any asymmetry
+        // is the lobe's own, not the geometry's.
+        let wo = Vec3::new(0.0, 0.0, 1.0);
+        // Two directions tilted off the mirror by the same angle: one along
+        // the tangent (x), one along the bitangent (y).
+        let along = Vec3::new(0.25, 0.0, 1.0).normalize();
+        let across = Vec3::new(0.0, 0.25, 1.0).normalize();
+
+        let (f_iso_a, _) = bsdf_eval(&rough(0.0), wo, along);
+        let (f_iso_b, _) = bsdf_eval(&rough(0.0), wo, across);
+        assert!(
+            (f_iso_a[0] - f_iso_b[0]).abs() < 1e-6,
+            "isotropic lobe must be rotationally symmetric"
+        );
+
+        let (f_pos_a, _) = bsdf_eval(&rough(0.8), wo, along);
+        let (f_pos_b, _) = bsdf_eval(&rough(0.8), wo, across);
+        assert!(
+            f_pos_a[0] > f_pos_b[0] * 1.5,
+            "positive anisotropy should spread energy along the tangent: \
+             along {} vs across {}",
+            f_pos_a[0],
+            f_pos_b[0]
+        );
+
+        let (f_neg_a, _) = bsdf_eval(&rough(-0.8), wo, along);
+        let (f_neg_b, _) = bsdf_eval(&rough(-0.8), wo, across);
+        assert!(
+            f_neg_b[0] > f_neg_a[0] * 1.5,
+            "negative anisotropy should spread energy across the tangent: \
+             along {} vs across {}",
+            f_neg_a[0],
+            f_neg_b[0]
+        );
     }
 
     /// A white furnace test: with no lights and a uniform environment, a
     /// pure-white rough dielectric must not create or destroy much energy.
     #[test]
     fn furnace_conserves_energy_roughly() {
-        let m = Pbr {
-            base_color: [1.0, 1.0, 1.0],
-            metallic: 0.0,
-            roughness: 0.5,
-            clearcoat: 0.0,
-            ..Default::default()
-        };
-        let wo = Vec3::new(0.0, 0.0, 1.0);
-        let mut rng = Rng::new(11);
-        let n = 20000;
-        let mut sum = 0.0f32;
-        for _ in 0..n {
-            if let Some((_wi, f, pdf)) = bsdf_sample(&m, wo, &mut rng) {
-                sum += f[0] / pdf;
+        // Anisotropy redistributes energy within the lobe; it must not
+        // create or destroy any. Grazing views are included because that is
+        // where a wrong anisotropic masking term shows up as gain.
+        for aniso in [0.0, 0.5, 0.9, -0.5, -0.9] {
+            for wo in [
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::new(0.6, 0.2, 0.77).normalize(),
+            ] {
+                let m = Pbr {
+                    base_color: [1.0, 1.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 0.5,
+                    anisotropy: aniso,
+                    clearcoat: 0.0,
+                    ..Default::default()
+                };
+                let mut rng = Rng::new(11);
+                let n = 20000;
+                let mut sum = 0.0f32;
+                for _ in 0..n {
+                    if let Some((_wi, f, pdf)) = bsdf_sample(&m, wo, &mut rng) {
+                        sum += f[0] / pdf;
+                    }
+                }
+                let albedo = sum / n as f32;
+                assert!(
+                    (0.75..=1.05).contains(&albedo),
+                    "directional albedo {albedo} outside plausible range \
+                     (anisotropy {aniso}, wo {wo:?})"
+                );
             }
         }
-        let albedo = sum / n as f32;
-        assert!(
-            (0.75..=1.05).contains(&albedo),
-            "directional albedo {albedo} outside plausible range"
-        );
     }
 
     // ── environment maps ──────────────────────────────────────────────────

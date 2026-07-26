@@ -9,7 +9,7 @@ use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
-use crate::intersect::{intersect_surface, intersect_triangle};
+use crate::intersect::{intersect_surface, intersect_triangle, surface_tangent};
 use crate::trim::{face_normal, point_in_face};
 use crate::{Ray, RayHit};
 
@@ -362,7 +362,11 @@ impl Bvh {
                     if point_in_face(brep, face_id, hit.uv) {
                         let point = ray.at(hit.t);
                         let normal = face_normal(brep, face_id, hit.uv);
-                        hits.push(RayHit::new(hit.t, point, normal, hit.uv, face_id));
+                        let tangent = surface_tangent(surface.as_ref(), hit.uv);
+                        hits.push(
+                            RayHit::new(hit.t, point, normal, hit.uv, face_id)
+                                .with_tangent(tangent),
+                        );
                     }
                 }
             }
@@ -392,7 +396,11 @@ impl Bvh {
                     {
                         let point = ray.at(hit.t);
                         let normal = face_normal(brep, face_id, hit.uv);
-                        closest = Some(RayHit::new(hit.t, point, normal, hit.uv, face_id));
+                        let tangent = surface_tangent(surface.as_ref(), hit.uv);
+                        closest = Some(
+                            RayHit::new(hit.t, point, normal, hit.uv, face_id)
+                                .with_tangent(tangent),
+                        );
                     }
                 }
 
@@ -684,6 +692,59 @@ mod tests {
     use super::*;
     use vcad_kernel_math::{Point3, Vec3};
     use vcad_kernel_primitives::make_cube;
+
+    /// A hit on a cylinder wall must report the *circumferential* tangent —
+    /// the direction a lathe tool travels. Anisotropic shading orients its
+    /// specular lobe with this, so if it ever came back axial or radial,
+    /// turned parts would get their grain rotated 90°.
+    #[test]
+    fn cylinder_hit_reports_circumferential_tangent() {
+        use vcad_kernel_primitives::make_cylinder;
+
+        let cyl = make_cylinder(5.0, 20.0, 32);
+        let bvh = Bvh::build(&cyl);
+
+        // Fire at the wall from +X, off-axis in Y so the tangent is not
+        // trivially an axis vector.
+        let ray = Ray::new(Point3::new(20.0, 2.0, 10.0), Vec3::new(-1.0, 0.0, 0.0));
+        let hit = bvh.trace_closest(&ray).expect("ray should hit the wall");
+        let t = hit
+            .dpdu
+            .expect("cylinder wall must carry a tangent")
+            .normalize();
+
+        // Circumferential means: perpendicular to the axis (Z) and
+        // perpendicular to the outward radial direction.
+        assert!(
+            t.z.abs() < 1e-9,
+            "tangent should not run along the axis: {t:?}"
+        );
+        let radial = Vec3::new(hit.point.x, hit.point.y, 0.0).normalize();
+        assert!(
+            t.dot(radial).abs() < 1e-9,
+            "tangent should be perpendicular to the radial direction: {t:?}"
+        );
+        // And it must be a real direction, not a degenerate zero.
+        assert!((t.norm() - 1.0).abs() < 1e-9);
+    }
+
+    /// The flat cap of the same cylinder is a plane: it still has a
+    /// parameterisation, so it reports a tangent lying in the cap.
+    #[test]
+    fn planar_cap_tangent_lies_in_the_face() {
+        use vcad_kernel_primitives::make_cylinder;
+
+        let cyl = make_cylinder(5.0, 20.0, 32);
+        let bvh = Bvh::build(&cyl);
+        let ray = Ray::new(Point3::new(1.0, 1.0, 40.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = bvh.trace_closest(&ray).expect("ray should hit the top cap");
+        let t = hit.dpdu.expect("plane must carry a tangent");
+        let n = hit.normal.into_inner();
+        assert!(
+            t.normalize().dot(n).abs() < 1e-9,
+            "planar tangent must lie in the face"
+        );
+    }
 
     #[test]
     fn test_bvh_build() {

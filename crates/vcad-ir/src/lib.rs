@@ -1405,6 +1405,18 @@ pub struct MaterialDef {
     )]
     #[cfg_attr(feature = "ts-rs", ts(rename = "clearcoatRoughness", optional))]
     pub clearcoat_roughness: Option<f64>,
+    /// Directional bias of the specular highlight, in -1.0..1.0.
+    ///
+    /// `0` (the default when absent) is an ordinary round highlight.
+    /// Positive values stretch it along the surface's own `dP/du` — the
+    /// circumferential direction on a cylinder, i.e. the grain a lathe or a
+    /// boring bar leaves. Negative values stretch it across. This is what
+    /// distinguishes brushed and turned finishes from a uniformly polished
+    /// one; it is honoured by the photoreal path tracer, which shades the
+    /// analytic BRep and therefore has the exact parameterisation to hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub anisotropy: Option<f64>,
 }
 
 /// An entry in the scene — a root node with an assigned material.

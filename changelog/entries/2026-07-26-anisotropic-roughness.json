@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-anisotropic-roughness",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Brushed and turned finishes render correctly",
+  "summary": "Materials gain an anisotropy value, and the photoreal path tracer orients the stretched highlight by the BRep's own surface parameterisation, so turned shafts and bored holes get the circumferential grain they have in life.",
+  "features": ["rendering", "raytracing", "materials"]
+}
