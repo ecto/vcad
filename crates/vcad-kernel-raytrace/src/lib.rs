@@ -34,6 +34,7 @@
 pub mod bvh;
 pub mod cpu;
 pub mod intersect;
+pub mod pathtrace;
 mod ray;
 pub mod trim;
 
@@ -42,4 +43,7 @@ pub mod gpu;
 
 pub use bvh::Bvh;
 pub use cpu::{render_scene, render_scene_samples, CpuRenderer};
+pub use pathtrace::{
+    studio_rig, AreaLight, Camera, Environment, Film, Ground, Object, PathTraceOptions, Pbr, Scene,
+};
 pub use ray::{Ray, RayHit};
