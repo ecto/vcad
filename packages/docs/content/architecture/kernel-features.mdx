@@ -234,6 +234,17 @@ vcad-render part.loon --photoreal --env ~/hdri/studio_small_08_2k.hdr -o hero.pn
 
 Because a real HDRI has high-frequency content — windows, a sun disc — BSDF sampling alone would be very noisy, so an image environment builds a `sin(theta)`-weighted 2D CDF (marginal over rows, conditional within each row) and joins the MIS mix as a third sampling strategy. An image environment replaces the softbox rig, since the HDRI *is* the lighting; `--env-rotation` spins it about the vertical axis for art direction.
 
+Importance sampling narrows the variance but cannot abolish it: path tracing still converges as 1/√N, which is unaffordable at hero resolution. So the film is **denoised** before tonemapping by an edge-aware à-trous wavelet filter (Dammertz et al., EGSR 2010), guided by the world normal, hit distance, albedo, and per-pixel variance the integrator already has in hand at its first hit. Albedo is demodulated before filtering and re-modulated after, so only the noisy illumination is smoothed and one part's colour is never smeared into another's. Below, the same part at 32 spp raw, at 32 spp denoised, and a 1024 spp reference — RMSE against that reference drops 4.10 → 1.22 (of 255) and PSNR 35.9 → 46.4 dB, for a thirtieth of the render time:
+
+```bash
+vcad-render part.loon --photoreal --spp 32 --size 512 -o out.png
+vcad-render part.loon --photoreal --spp 1024 --no-denoise -o reference.png
+```
+
+![The same filleted boss-on-plate rendered three ways: noisy at 32 samples per pixel, denoised at 32 samples per pixel, and a clean 1024-sample reference](/assets/kernel/photoreal-denoise.jpg)
+
+Honesty: the luminance edge-stopping weight is scaled by the estimator's own variance rather than a fixed sigma, because a fixed sigma makes a firefly self-protecting — its own noise spike makes every neighbour look like a different surface, so the filter rejects them all and the one pixel that most needs help survives untouched. Pixels whose primary ray escaped to the backdrop are passed through untouched, and no surface pixel accepts a tap from one: that is what keeps silhouettes exactly as sharp as the tracer drew them, and keeps an HDRI backdrop's own detail intact, but it also leaves backdrop noise from a wide aperture alone. The filter is spatial and single-frame — no temporal reprojection — so it cannot recover detail no sample ever found, and at very low sample counts a smooth indirect gradient is reconstructed rather than resolved. Pass `--no-denoise` whenever the noise itself is the measurement.
+
 ### GPU Compute
 
 `vcad-kernel-gpu` offloads mesh work — normal computation, decimation — to wgpu compute shaders.
