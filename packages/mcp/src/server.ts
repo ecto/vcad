@@ -434,6 +434,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "solve_thermal",
   "simulate_flow",
   "analyze_structure",
+  "beam_check",
   "simulate_neutron_shield",
   "simulate_lattice_gauge",
   "analyze_tolerance_stackup",

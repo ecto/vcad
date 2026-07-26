@@ -44,11 +44,31 @@
 //! note says so. Adjoint gradients are deliberately out of scope for this
 //! pass (M3+).
 //!
+//! **Thin walls are a different discretization, not a finer one.** A
+//! staircase lattice needs several cells through the thinnest load-bearing
+//! section, and a sheet-metal or tube-frame member does not give it that at
+//! any resolution the cost cap allows: a 2 mm wall on a 312 mm member wants
+//! a 0.33 mm pitch, i.e. ~950 cells along the longest axis. So the lattice
+//! path *measures* the part ([`mesh::wall_thickness`]), and when the pitch
+//! cannot resolve the section it fails closed with the cell arithmetic and
+//! a route forward already spelled out ([`mesh::diagnose_thin_wall`]) —
+//! failing without a route is what costs the caller an afternoon.
+//!
+//! The route forward for a prismatic member is [`section`]: closed-form
+//! section properties and beam/torsion checks (Bredt thin-wall torsion, the
+//! Saint-Venant series for solid rectangles, Euler buckling), gated on
+//! their own applicability and carrying the same `vcad.fea-claims/1`
+//! predicted-basis claims. For a constant cross-section that is not a
+//! fallback — it is the more accurate answer, and it costs microseconds.
+//! Shell and beam *elements*, which would cover non-prismatic thin-walled
+//! parts, remain the honest M3+ upgrade.
+//!
 //! Units: geometry in **millimeters**, forces in Newtons, moduli and
 //! stresses in MPa (N/mm²) — the consistent mm-N-MPa system.
 
 pub mod convergence;
 pub mod mesh;
 pub mod receipt;
+pub mod section;
 pub mod solve;
 pub mod spec;

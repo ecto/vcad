@@ -16,12 +16,15 @@ import { documents } from "../tools/session.js";
  */
 
 const probeEngine = await Engine.init();
-const wasmHasFea =
-  typeof (
-    probeEngine as unknown as {
-      kernel?: { feaAnalyzeMesh?: unknown };
-    }
-  ).kernel?.feaAnalyzeMesh === "function";
+const probeKernel = (
+  probeEngine as unknown as {
+    kernel?: { feaAnalyzeMesh?: unknown; feaCheckBeam?: unknown };
+  }
+).kernel;
+const wasmHasFea = typeof probeKernel?.feaAnalyzeMesh === "function";
+/** The closed-form prismatic route and the thin-wall diagnosis ship
+ *  together; both need a kernel newer than the FEA bindings alone. */
+const wasmHasSection = typeof probeKernel?.feaCheckBeam === "function";
 
 function beamDoc(): Document {
   return {
@@ -119,6 +122,99 @@ describe.skipIf(!wasmHasFea)("analyze_structure tool", () => {
     expect(out.claim_set).toBeNull();
     expect(out.receipt_claims).toHaveLength(1);
     expect(out.receipt_claims[0].verdict).toBe("unverifiable");
+  });
+
+  it.skipIf(!wasmHasSection)("a thin-walled plate refuses WITH the cell arithmetic and a route forward", async () => {
+    // A 300x60x2 mm plate: one cell through the wall at any resolution the
+    // tier allows. The old behavior was a bare Unverifiable (or a
+    // staircased answer); the caller had to derive the cell arithmetic to
+    // find out why. Now the refusal carries it, plus where to go instead.
+    documents.set("doc_plate", {
+      version: "0.1",
+      nodes: {
+        "1": {
+          id: 1,
+          name: "plate",
+          op: { type: "Cube", size: { x: 300, y: 60, z: 2 } },
+        },
+      },
+      materials: {},
+      part_materials: {},
+      roots: [{ root: 1, material: "default" }],
+    } as unknown as Document);
+    const res = (await client.callTool({
+      name: "analyze_structure",
+      arguments: {
+        document_id: "doc_plate",
+        part: "plate",
+        loads: [
+          { region: { min: [300, 0, 0], max: [300, 60, 2] }, force: [0, 0, -50] },
+        ],
+        supports: [{ region: { min: [0, 0, 0], max: [0, 60, 2] } }],
+        yield_strength_mpa: 276,
+        resolution: 40,
+        displacement_tol: 10,
+        stress_tol: 10,
+      },
+    })) as ToolText & { isError?: boolean };
+    const text = res.content[0].text;
+    expect(text).toContain("THIN-WALLED");
+    // The arithmetic the caller would otherwise redo by hand.
+    expect(text).toMatch(/thinnest load-bearing section measures 2\.0/);
+    expect(text).toMatch(/cell\(s\) sit through/);
+    expect(text).toMatch(/resolution \d{3,}/);
+    // And a named route forward, not just a refusal.
+    expect(text).toContain("beam_check");
+  });
+
+  it.skipIf(!wasmHasSection)("beam_check prices the thin-walled torsion tube the lattice cannot", async () => {
+    // 40x40x2 mm aluminum tube, 312 mm long, 40 N·m: the exact member
+    // analyze_structure has to refuse.
+    const res = (await client.callTool({
+      name: "beam_check",
+      arguments: {
+        profile: { type: "rect_tube", width_mm: 40, height_mm: 40, wall_mm: 2 },
+        length_mm: 312,
+        end_condition: "cantilever_tip",
+        torque_nmm: 40_000,
+        yield_strength_mpa: 276,
+      },
+    })) as ToolText;
+    const out = JSON.parse(res.content[0].text);
+    expect(out.check.verdict.verdict).toBe("Applicable");
+    // Bredt: J = 4·A_m²·t/s with A_m = 38² mm², s = 152 mm.
+    expect(out.check.section.torsion_constant_mm4).toBeCloseTo(109_744, 0);
+    // tau = T/(2·A_m·t) = 40000/5776.
+    expect(out.check.torsional_shear_mpa).toBeCloseTo(6.925, 2);
+    expect(out.check.twist_deg).toBeLessThan(0.3);
+    expect(out.check.safety_factor).toBeGreaterThan(20);
+    expect(out.claim_set.schema).toBe("vcad.fea-claims/1");
+    for (const c of out.receipt_claims) {
+      expect(c.id.startsWith("structure.beam.")).toBe(true);
+      expect(c.domain).toBe("structure");
+      expect(c.basis).toBe("predicted");
+    }
+  });
+
+  it.skipIf(!wasmHasSection)("beam_check fails closed on a member beam theory cannot price", async () => {
+    const res = (await client.callTool({
+      name: "beam_check",
+      arguments: {
+        profile: { type: "rect", width_mm: 30, height_mm: 30 },
+        length_mm: 60,
+        end_condition: "cantilever_tip",
+        transverse_force_n: 500,
+        yield_strength_mpa: 276,
+      },
+    })) as ToolText;
+    const out = JSON.parse(res.content[0].text);
+    expect(out.check.verdict.verdict).toBe("Unverifiable");
+    expect(out.check.safety_factor).toBeNull();
+    expect(out.claim_set).toBeNull();
+    expect(out.receipt_claims).toHaveLength(1);
+    expect(out.receipt_claims[0].verdict).toBe("unverifiable");
+    // The refusal names the other route, both directions being covered.
+    expect(out.check.verdict.reasons.join(" ")).toContain("analyze_structure");
   });
 
   it("a load region off the part fails closed", async () => {
