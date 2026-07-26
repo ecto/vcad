@@ -10,6 +10,7 @@ import { sceneExportUnits } from "../export/scene-units.js";
 import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment, maxInlineExportBytes } from "./remote.js";
 import { storeArtifact } from "./artifact-store.js";
+import { applyJointState, jointStateSchemaProp } from "./pose.js";
 import { resolveDocInput } from "./session.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
@@ -97,6 +98,7 @@ export const exportCadSchema = {
         "the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) " +
         "auto-detect bends, angles, and directions with zero data entry.",
     },
+    joint_state: jointStateSchemaProp,
   },
   required: ["filename"],
 };
@@ -106,7 +108,9 @@ export function exportCad(
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const args = (input ?? {}) as Record<string, unknown>;
-  const { doc: ir } = resolveDocInput(args, ["document", "ir"]);
+  const { doc: stored } = resolveDocInput(args, ["document", "ir"]);
+  // Export the posed assembly, not just the zero pose.
+  const { doc: ir, pose } = applyJointState(stored, args.joint_state);
   const filename = String(args.filename ?? "");
 
   // STEP: only the folded sheet-metal body is exportable (mesh-evaluated
@@ -182,6 +186,7 @@ export function exportCad(
   return deliver(filename, bytes, {
     format: ext,
     parts: units.length,
+    ...(pose ? { pose } : {}),
     ...(scene.instances && scene.instances.length > 0
       ? { instances: scene.instances.length }
       : {}),
@@ -193,7 +198,7 @@ export const toolDefs: ToolDef[] = [
     name: "export_cad",
     pack: null,
     description:
-      "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
+      "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
     inputSchema: exportCadSchema,
     handler: (a, c) => exportCad(a, c.engine),
     behavior: behavior({}),

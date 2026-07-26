@@ -252,6 +252,60 @@ impl SketchProfile {
         self.segments.iter().map(|s| s.start()).collect()
     }
 
+    /// The same closed loop walked the other way round: segment order
+    /// reversed, each segment's endpoints swapped, arc handedness flipped.
+    ///
+    /// The 3D curve is untouched — only the traversal direction (and hence
+    /// the loop's winding, which is what every solid builder reads to decide
+    /// which side is "out") changes.
+    pub fn reversed(&self) -> Self {
+        let segments = self
+            .segments
+            .iter()
+            .rev()
+            .map(|seg| match seg {
+                SketchSegment::Line { start, end } => SketchSegment::Line {
+                    start: *end,
+                    end: *start,
+                },
+                SketchSegment::Arc {
+                    start,
+                    end,
+                    center,
+                    ccw,
+                } => SketchSegment::Arc {
+                    start: *end,
+                    end: *start,
+                    center: *center,
+                    ccw: !*ccw,
+                },
+            })
+            .collect();
+        Self {
+            origin: self.origin,
+            x_dir: self.x_dir,
+            y_dir: self.y_dir,
+            normal: self.normal,
+            segments,
+        }
+    }
+
+    /// Newell area-weighted normal of the loop in 3D. Its direction encodes
+    /// the loop's winding independently of the sketch frame's handedness —
+    /// the quantity a builder needs when deciding which side of the loop the
+    /// material is on. Zero-length for a degenerate loop.
+    pub fn loop_area_normal(&self) -> Vec3 {
+        let pts = self.vertices_3d();
+        let n = pts.len();
+        let mut acc = Vec3::zeros();
+        for i in 0..n {
+            let a = pts[i];
+            let b = pts[(i + 1) % n];
+            acc += (a - Point3::origin()).cross(b - Point3::origin());
+        }
+        acc / 2.0
+    }
+
     /// Get all segment endpoints mapped to 3D.
     pub fn vertices_3d(&self) -> Vec<Point3> {
         self.vertices_2d().iter().map(|p| self.to_3d(*p)).collect()

@@ -10,7 +10,9 @@ default = ["raster", "cli", "raytrace"]
 # Raster (JPEG/PNG) output. Off for the WASM build, which only needs SVG.
 raster = ["dep:image"]
 # The vcad-render binary. Off for the WASM build, which only needs the lib.
-cli = ["dep:clap"]
+# Pulls in vcad-loon so the CLI can render `.loon` source directly (module
+# imports resolve against the input file's directory — a native-only trick).
+cli = ["dep:clap", "dep:vcad-loon"]
 # Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output via
 # vcad-kernel-raytrace. Off for the WASM build so it doesn't grow.
 raytrace = ["raster", "dep:vcad-kernel-raytrace"]
@@ -24,6 +26,7 @@ serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 vcad-kernel-raytrace = { workspace = true, optional = true }
+vcad-loon = { workspace = true, optional = true }
 
 [lib]
 name = "vcad_render"
@@ -35,5 +38,7 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
+# Also a (feature-gated) normal dep for the CLI's `.loon` input support; tests
+# need it unconditionally.
 vcad-loon = { workspace = true }
 vcad-ecad-symbols = { workspace = true }

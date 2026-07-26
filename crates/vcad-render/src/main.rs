@@ -1,8 +1,13 @@
-//! `vcad-render` CLI — project `.vcad` documents to static line art or a
-//! raster render.
+//! `vcad-render` CLI — project `.vcad` documents (or the `.loon` source they
+//! are built from) to static line art or a raster render.
+//!
+//! Inputs are dispatched on extension: `.vcad` parses as IR JSON, `.loon`
+//! evaluates through `vcad-loon` first, with `[use ...]` module imports
+//! resolved against the input file's own directory. Everything downstream is
+//! identical, so every flag below works on either.
 //!
 //! Usage:
-//!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
+//!   vcad-render <path.vcad|path.loon> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
 //!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
 //!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <N|WxH>] [--fill <frac>] [--quality <1-100>]
@@ -134,7 +139,8 @@ impl Format {
 #[derive(Parser)]
 #[command(name = "vcad-render", version)]
 struct Cli {
-    /// Input `.vcad` file(s); a directory expands to its `*.vcad` files.
+    /// Input `.vcad` or `.loon` file(s); a directory expands to its
+    /// `*.vcad`/`*.loon` files.
     #[arg(required = true)]
     inputs: Vec<PathBuf>,
 
@@ -285,7 +291,7 @@ impl Cli {
     }
 }
 
-/// Expand directory inputs to their `*.vcad` files (sorted); pass files
+/// Expand directory inputs to their `*.vcad`/`*.loon` files (sorted); pass files
 /// through untouched.
 fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
@@ -294,10 +300,16 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
             let mut found: Vec<PathBuf> = std::fs::read_dir(input)
                 .map_err(|e| format!("read dir {}: {}", input.display(), e))?
                 .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("vcad"))
+                .filter(|p| {
+                    p.is_file()
+                        && matches!(
+                            p.extension().and_then(|e| e.to_str()),
+                            Some("vcad") | Some("loon")
+                        )
+                })
                 .collect();
             if found.is_empty() {
-                return Err(format!("no .vcad files in {}", input.display()));
+                return Err(format!("no .vcad or .loon files in {}", input.display()));
             }
             found.sort();
             out.extend(found);
@@ -467,6 +479,25 @@ fn render_pcb_view(pcb: &vcad_ir::ecad::Pcb, cli: &Cli) -> String {
     )
 }
 
+/// Read an input as `.vcad` IR JSON. A `.loon` input is evaluated first, so
+/// the renderer works on source rather than on a build artifact; `[use ...]`
+/// module imports resolve against the input file's own directory.
+fn read_document(input: &Path) -> Result<String, String> {
+    let raw =
+        std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
+    if !is_loon(input) {
+        return Ok(raw);
+    }
+    let doc = vcad_loon::eval_vcad(raw.trim(), input.parent())
+        .map_err(|e| format!("{}: {}", input.display(), e))?;
+    serde_json::to_string(&doc).map_err(|e| format!("{}: serialize: {}", input.display(), e))
+}
+
+/// Does this path name loon source rather than `.vcad` IR?
+fn is_loon(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("loon")
+}
+
 /// Render one input to `dest` (`None` = SVG on stdout) in `format`. With
 /// `--sheet`, a multi-view drawing sheet replaces the single view.
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
@@ -476,8 +507,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
                 .to_string(),
         );
     }
-    let raw =
-        std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
+    let raw = read_document(input)?;
     if cli.sheet {
         return render_sheet_one(input, dest, format, cli, &raw);
     }

@@ -544,3 +544,76 @@ describe("check_clearance audit", () => {
     expect(res.isError).toBe(true);
   });
 });
+
+describe("check_clearance joint_state × sweep", () => {
+  it("measures at the requested pose without touching the session", async () => {
+    const docId = openSwingArm();
+    const res = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          joint_state: { shoulder: 0 },
+        },
+        engine,
+      ),
+    );
+    expect(res.pass).toBe(false);
+    expect(res.intersecting).toBe(true);
+    expect(res.pose.applied.shoulder).toBe(0);
+    expect(getSession(docId).joints?.[0].state).toBe(90);
+  });
+
+  it("refuses label + joint_state — a spec captured at an ad-hoc pose cannot re-verify", async () => {
+    const docId = openSwingArm();
+    const res = await checkClearance(
+      {
+        document_id: docId,
+        group_a: ["arm-1"],
+        group_b: ["post-1"],
+        min_mm: 1,
+        label: "arm-swing",
+        joint_state: { shoulder: 0 },
+      },
+      engine,
+    );
+    expect(res.isError).toBe(true);
+    expect(getSession(docId).clearance_specs ?? []).toHaveLength(0);
+  });
+
+  it("sweeps on top of a joint_state pose and restores the clone, not the session", async () => {
+    const docId = openSwingArm();
+    const res = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          joint_state: { shoulder: 45 },
+          sweep: [{ joint: "shoulder", from: 60, to: 90, steps: 3 }],
+        },
+        engine,
+      ),
+    );
+    // The sweep drives the same joint, so it wins over the base pose — and the
+    // whole 60°–90° arc clears.
+    expect(res.pass).toBe(true);
+    expect(res.poses_checked).toBe(4);
+    expect(res.pose.applied.shoulder).toBe(45);
+    expect(getSession(docId).joints?.[0].state).toBe(90);
+  });
+
+  it("audit mode honors joint_state too", async () => {
+    const docId = openSwingArm();
+    const res = out(
+      await checkClearance({ document_id: docId, joint_state: { shoulder: 0 } }, engine),
+    );
+    expect(res.mode).toBe("audit");
+    expect(res.pass).toBe(false);
+    expect(res.findings[0].verdict).toBe("intersecting");
+    expect(res.pose.applied.shoulder).toBe(0);
+  });
+});

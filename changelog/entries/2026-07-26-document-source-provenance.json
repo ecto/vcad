@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-document-source-provenance",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Documents remember the loon source that made them",
+  "summary": "create_cad_loon stores its source on the document, save_document writes the .loon alongside the .vcad, load_document opens a file path, and sessions report source_stale when they drift.",
+  "features": ["loon", "documents", "mcp"],
+  "mcpTools": ["create_cad_loon", "get_document", "save_document", "load_document"]
+}

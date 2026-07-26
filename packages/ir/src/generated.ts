@@ -1584,7 +1584,61 @@ drawing?: DrawingSettings,
  * Animation timeline: keyframed parameters/joints/visibility plus
  * camera shots. Absent for static models.
  */
-timeline?: Timeline, };
+timeline?: Timeline, 
+/**
+ * The authored source this document was evaluated from, when it came
+ * from one. Lets a document say what made it, so a session and the file
+ * it came from can be compared instead of silently drifting apart.
+ */
+source?: DocumentSource, };
+
+/**
+ * The authored source a [`Document`] was evaluated from.
+ *
+ * A document evaluated from loon used to discard its source immediately, so
+ * the authored form was unrecoverable and a session could diverge from the
+ * `.loon` file that produced it with nothing detecting it. Carrying the
+ * source (and, when it came from disk, the path plus a content hash) makes
+ * that divergence observable: re-hash the file and compare, or check
+ * `diverged` for incremental IR mutations that can't round-trip back to
+ * source.
+ */
+export type DocumentSource = { 
+/**
+ * Source language — currently always `"loon"`.
+ */
+language: string, 
+/**
+ * The source text, exactly as authored.
+ */
+text: string, 
+/**
+ * Modules `[use ...]` resolved against, by value.
+ */
+modules: Record<string, string>, 
+/**
+ * Server-side directory modules were read from, when one was used.
+ */
+base_dir?: string, 
+/**
+ * Path the source was read from, when the document is *of* a file.
+ */
+path?: string, 
+/**
+ * SHA-256 (hex) of `text`, for comparing against the file on disk.
+ */
+hash: string, 
+/**
+ * True once the document has been mutated by an operation that cannot
+ * round-trip back to `text` (incremental create/update/delete). The
+ * source is then a record of the document's origin, not its current
+ * state.
+ */
+diverged: boolean, 
+/**
+ * Tool names that diverged the document, in order, capped at a handful.
+ */
+diverged_by: Array<string>, };
 
 /**
  * A section cut line drawn on an orthographic drawing view. The polyline

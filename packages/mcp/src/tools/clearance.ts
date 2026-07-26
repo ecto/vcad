@@ -28,6 +28,7 @@ import type {
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import { solveForwardKinematics, transformMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
+import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 import { getSession } from "./session-core.js";
 import { asBool } from "./arg-coerce.js";
 
@@ -125,6 +126,7 @@ export const checkClearanceSchema = {
       description:
         "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given.",
     },
+    joint_state: jointStateSchemaProp,
     sweep: {
       type: "array" as const,
       description:
@@ -743,11 +745,37 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   const { sweep, error: sweepParseError } = parseSweep(args.sweep);
   if (sweepParseError) return err(sweepParseError);
 
-  const doc = getSession(documentId);
+  // A persisted spec is re-measured by build_receipt / verify_receipt against
+  // the document's *stored* joint states, so a spec captured at an ad-hoc pose
+  // would re-verify against different geometry and read Violated for no
+  // reason. Refuse the combination rather than persist an unre-verifiable
+  // assertion. (`sweep` is exempt: the grid is persisted with the spec, so a
+  // swept assertion re-verifies over exactly the range it was made over.)
+  if (label && args.joint_state !== undefined && args.joint_state !== null) {
+    return err(
+      "`label` and `joint_state` cannot be combined: a persisted clearance spec is " +
+        "re-measured at the document's stored joint states, so an assertion captured at " +
+        "an ad-hoc pose could not be re-verified. Either drop `label` (one-off pose " +
+        "measurement), use `sweep` (persisted with the spec and re-verified over the same " +
+        "range), or set the joint states on the document and assert there.",
+    );
+  }
+
+  const stored = getSession(documentId);
+  // Measure the requested pose. The pose is a measurement condition applied to
+  // a clone — the session document is never mutated by it. A `sweep` then
+  // drives its own axes on top of that pose, restoring them afterwards.
+  let doc: Document;
+  let pose: PoseInfo | undefined;
+  try {
+    ({ doc, pose } = applyJointState(stored, args.joint_state));
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
 
   // Audit mode: no pair named → broadphase the whole document.
   if (!groupA && !groupB) {
-    return auditClearance(documentId, doc, engine, args, sweep, label);
+    return auditClearance(documentId, doc, engine, args, sweep, label, pose);
   }
   if (!groupA || !groupB) {
     return err(
@@ -766,7 +794,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   let specSaved = false;
   if (label) {
     // Persist by resolved part ids so the assertion survives renames.
-    upsertClearanceSpec(doc, {
+    upsertClearanceSpec(stored, {
       label,
       group_a: result.group_a.map((p) => p.id),
       group_b: result.group_b.map((p) => p.id),
@@ -786,6 +814,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
     pass,
     verdict,
     ...(allowContact ? { allow_contact: true } : {}),
+    ...(pose ? { pose } : {}),
     intersecting: result.intersecting,
     worst_pair: result.worst_pair,
     ...(result.worst_pose ? { worst_pose: result.worst_pose } : {}),
@@ -859,6 +888,7 @@ function auditClearance(
   args: Record<string, unknown>,
   sweep: JointSweep[] | undefined,
   label: string | undefined,
+  pose: PoseInfo | undefined,
 ) {
   const minMm = typeof args.min_mm === "number" && Number.isFinite(args.min_mm) ? args.min_mm : 0;
   const { pairs: ignorePairs, error: ignoreError } = parseIgnorePairs(args.ignore_pairs);
@@ -880,6 +910,7 @@ function auditClearance(
     document_id: documentId,
     mode: "audit" as const,
     required_mm: minMm,
+    ...(pose ? { pose } : {}),
     pass: result.findings.length === 0,
     findings: result.findings,
     interference_count: result.findings.length,
@@ -1128,7 +1159,7 @@ export const toolDefs: ToolDef[] = [
     name: "check_clearance",
     pack: null,
     description:
-      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` \u2014 pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. (2) audit \u2014 omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
+      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at one real pose (joint id or name \u2192 degrees, or mm for sliders) instead of the stored one. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` \u2014 pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. (2) audit \u2014 omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
     inputSchema: checkClearanceSchema,
     handler: (a, c) => checkClearance(a, c.engine),
     behavior: behavior({ writesDoc: true }),

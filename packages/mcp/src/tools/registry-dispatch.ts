@@ -16,6 +16,7 @@ import {
   listPartsFromDocument,
 } from "@vcad/core";
 import { getSession, recordLastChanged, recordTriangles } from "./session.js";
+import { applyJointState, jointStateSchemaProp } from "./pose.js";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import {
   describeSceneResult,
@@ -248,6 +249,11 @@ function withDocumentId(tool: AnthropicTool): {
         "Parameters for the chosen `type` — see the Type Catalog in this server's instructions (e.g. cube: {size:{x,y,z}}, cylinder: {radius,height}).",
     };
   }
+  // Pose-aware reads: measuring a jointed assembly at a real pose is the
+  // point of `joint_state` (see tools/pose.ts).
+  if (tool.name === "inspect_part" || tool.name === "describe_scene") {
+    properties.joint_state = jointStateSchemaProp;
+  }
   const required = ["document_id", ...(original.required ?? [])];
   return {
     name: tool.name,
@@ -402,7 +408,11 @@ export function dispatchRegistryTool(
   // planner (they were app-only, reading the browser docstore + engine
   // scene). Answer them directly from the session document + engine.
   if (toolName === "inspect_part" || toolName === "describe_scene") {
-    return handleMeasureRead(toolName, doc, toolArgs, engine);
+    // These two read measured geometry, so they honour `joint_state` — the
+    // pose is applied to a clone, never to the session document.
+    const { joint_state: jointState, ...readArgs } = toolArgs;
+    const posed = applyJointState(doc, jointState);
+    return handleMeasureRead(toolName, posed.doc, readArgs, engine, posed.pose);
   }
 
   const before = snapshotParts(doc);
@@ -546,6 +556,7 @@ function handleMeasureRead(
   doc: import("@vcad/ir").Document,
   args: Record<string, unknown>,
   engine?: import("@vcad/engine").Engine,
+  pose?: import("./pose.js").PoseInfo,
 ): { content: Array<{ type: "text"; text: string }> } {
   if (!engine) {
     throw new Error(
@@ -569,6 +580,7 @@ function handleMeasureRead(
     if (e instanceof MeasureError) throw new Error(e.message);
     throw e;
   }
+  if (pose) payload.pose = pose;
   return {
     content: [{ type: "text", text: JSON.stringify(payload) }],
   };

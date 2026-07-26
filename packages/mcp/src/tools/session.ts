@@ -10,10 +10,13 @@
 
 import { createDocument } from "@vcad/ir";
 import type { Document } from "@vcad/ir";
+import type { Engine } from "@vcad/engine";
 import { writeFileSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveWithinRoot } from "./safe-path.js";
+import { composeLoonModules } from "./loon.js";
 import { storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes } from "./remote.js";
 import {
@@ -32,6 +35,7 @@ import {
   setSessionScopeProvider,
   setDurabilityProbe,
 } from "./session-core.js";
+import { attachLoonSource, sourceStatus } from "./source-provenance.js";
 
 // The browser-safe core of the session layer (document cache, ids, undo
 // snapshots, resolveDocInput) lives in session-core.ts so pure-compute tool
@@ -250,6 +254,7 @@ export function getDocumentTool(args: Record<string, unknown>): {
       artifact_url: handle.artifact_url,
       manifest: handle.manifest,
       expires_at: handle.expires_at,
+      ...sourceStatus(doc),
       note:
         `Document IR is ${handle.bytes} bytes — over the ${cap}-byte inline ` +
         "limit, so the full IR was written to the artifact store. Download " +
@@ -268,9 +273,17 @@ export function getDocumentTool(args: Record<string, unknown>): {
   // that stub and never the document the tool exists to return. Carrying
   // the IR in both places makes get_document return the document on every
   // client. (Large docs offload above, so this never duplicates megabytes.)
+  // `doc.source` rides inside the IR, so the authored loon comes back with the
+  // document — a document can say what made it. The status flags sit alongside
+  // it because staleness is a comparison against the world (the file on disk,
+  // the mutations since), not a field of the IR.
   return {
     content: [{ type: "text", text: inline }],
-    structuredContent: { document: doc, document_id: id },
+    structuredContent: {
+      document: doc,
+      document_id: id,
+      ...sourceStatus(doc),
+    },
   };
 }
 
@@ -400,11 +413,35 @@ export async function saveDocument(
   if (store.scope === "memory") {
     const path = resolveWithinRoot(`${name}.vcad`, stateRoot());
     writeFileSync(path, JSON.stringify(doc));
+    // A document that knows its source saves BOTH forms, so the file and the
+    // session cannot diverge without someone choosing it: the `.vcad` is the
+    // evaluated IR, the `.loon` is the authored form `load_document({path})`
+    // re-evaluates. Skipped once the session has diverged — writing loon that
+    // no longer produces this geometry would be worse than writing none.
+    const status = sourceStatus(doc);
+    let sourcePath: string | undefined;
+    if (doc.source && !status.source_stale) {
+      sourcePath = resolveWithinRoot(`${name}.loon`, stateRoot());
+      writeFileSync(sourcePath, doc.source.text);
+      doc.source.path = sourcePath;
+    }
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({ saved: true, name, path }),
+          text: JSON.stringify({
+            saved: true,
+            name,
+            path,
+            ...(sourcePath ? { source_path: sourcePath } : {}),
+            ...(doc.source && status.source_stale
+              ? {
+                  source_not_written:
+                    `${status.reason} The .loon was NOT written — it would not ` +
+                    `reproduce this document. The .vcad IR is the source of truth.`,
+                }
+              : {}),
+          }),
         },
       ],
     };
@@ -481,20 +518,38 @@ export const loadDocumentSchema = {
       description:
         "The name passed to save_document (or the `saved_…` key an anonymous " +
         "save returned). On a local/stdio server this reads <name>.vcad from " +
-        "the state directory.",
+        "the state directory. Provide this OR `path`.",
+    },
+    path: {
+      type: "string" as const,
+      description:
+        "Path to a `.loon` source file (evaluated on load) or a `.vcad` " +
+        "document to open as a session. The session records the path and a " +
+        "content hash, so it is explicitly *of* that file: later calls report " +
+        "`source_stale` when the file changes underneath it or the session is " +
+        "edited away from it. Local/stdio servers only — a hosted server's " +
+        "filesystem is ephemeral.",
     },
   },
-  required: ["name"],
 };
 
 export async function loadDocument(
   args: Record<string, unknown>,
   store: SessionStore,
+  engine?: Engine,
 ): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
+  const path = typeof args.path === "string" ? args.path.trim() : "";
+  if (path) return loadDocumentFromPath(path, store, engine);
+
   const name = String(args.name ?? "");
+  if (!name.trim()) {
+    throw new Error(
+      "Pass `name` (a save_document save) or `path` (a .loon or .vcad file).",
+    );
+  }
 
   // Local/stdio: file-backed, exactly as before.
   if (store.scope === "memory") {
@@ -562,6 +617,115 @@ export async function loadDocument(
   };
 }
 
+/**
+ * Open a `.loon` (evaluated) or `.vcad` (parsed) file as a session that knows
+ * which file it came from.
+ *
+ * This is the half of the source⇄document link that runs in the file's
+ * direction: without it a `.loon` edited on disk only reached the server by
+ * someone remembering to re-paste it through `create_cad_loon`, and nothing
+ * marked the session as no longer matching the file.
+ */
+async function loadDocumentFromPath(
+  path: string,
+  store: SessionStore,
+  engine?: Engine,
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
+  const fail = (text: string) => ({
+    isError: true,
+    content: [{ type: "text" as const, text }],
+  });
+
+  // Hosted instances have an ephemeral, unshared filesystem: a path load would
+  // succeed once and then resolve to nothing after an instance flip. Refusing
+  // is the honest answer.
+  if (store.scope !== "memory") {
+    return fail(
+      "`path` loads are local/stdio only — this server's filesystem is " +
+        "ephemeral. Pass the source inline to create_cad_loon, or save with " +
+        "save_document and reopen by `name`.",
+    );
+  }
+
+  const abs = resolve(path);
+  let raw: string;
+  try {
+    raw = readFileSync(abs, "utf8");
+  } catch {
+    return fail(`Cannot read ${abs} — no such file, or it is not readable.`);
+  }
+
+  if (abs.endsWith(".vcad") || abs.endsWith(".json")) {
+    let doc: Document;
+    try {
+      doc = JSON.parse(raw) as Document;
+    } catch (e) {
+      return fail(`${abs} is not valid .vcad JSON: ${(e as Error).message}`);
+    }
+    const id = registerSession(doc);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            document_id: id,
+            path: abs,
+            parts: doc.roots?.length ?? 0,
+            ...sourceStatus(doc),
+          }),
+        },
+      ],
+    };
+  }
+
+  if (!engine) {
+    return fail(
+      "Loon evaluation is unavailable in this server build — load a .vcad " +
+        "document instead.",
+    );
+  }
+  // `[use ...]` resolves against the file's own directory, so a multi-file
+  // project loads the way it reads on disk.
+  const baseDir = dirname(abs);
+  const modules = composeLoonModules({ source: raw, base_dir: baseDir });
+  let doc: Document | null;
+  try {
+    doc = engine.evalVcadSourceWithModules(raw, modules) ?? null;
+  } catch (e) {
+    return fail(`Loon evaluation of ${abs} failed: ${(e as Error).message}`);
+  }
+  if (!doc) return fail(`Loon evaluation of ${abs} produced no document.`);
+
+  attachLoonSource(doc, {
+    text: raw,
+    modules,
+    base_dir: baseDir,
+    path: abs,
+  });
+  const id = registerSession(doc);
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          document_id: id,
+          path: abs,
+          parts: doc.roots?.length ?? 0,
+          source_stale: false,
+          hint:
+            "This session is bound to the file: mutating tools report " +
+            "`source_stale` once it diverges, and save_document rewrites the " +
+            "loon alongside the .vcad.",
+          ...(durabilityWarning() ? { durability: durabilityWarning() } : {}),
+        }),
+      },
+    ],
+  };
+}
+
 /** Open a saved snapshot as a fresh, independent session. The deep copy keeps
  *  the saved row frozen — editing the loaded session never mutates the save. */
 function openSavedSnapshot(
@@ -591,7 +755,7 @@ export const toolDefs: ToolDef[] = [
     name: "get_document",
     pack: null,
     description:
-      "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
+      "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. A document authored from loon carries that source under `source`, and the result reports `source_stale` when the session no longer matches it (the file changed, or incremental edits moved the session away from it). Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
     inputSchema: getDocumentSchema,
     handler: (a) => getDocumentTool(a),
     behavior: behavior({ geometry: true, widgetCallable: true, pureJson: true }),
@@ -614,7 +778,9 @@ export const toolDefs: ToolDef[] = [
       "user's save goes to their vcad.io account under the (normalized) name; " +
       "an anonymous save returns an unguessable `saved_…` key to reopen with. " +
       "On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR " +
-      "(or the working directory).",
+      "(or the working directory) — plus `<name>.loon` when the document knows " +
+      "the source it was authored from, so the file and the session can't " +
+      "diverge without someone choosing it.",
     inputSchema: saveDocumentSchema,
     handler: (a, c) => saveDocument(a, c.sessionStore),
     behavior: behavior({}),
@@ -626,9 +792,12 @@ export const toolDefs: ToolDef[] = [
       "Reopen a save_document save into a fresh session and return its new " +
       "document_id. Pass the same name you saved under (or the `saved_…` key " +
       "an anonymous save returned). The cheap way to resume a board/part " +
-      "across runs instead of rebuilding it.",
+      "across runs instead of rebuilding it. Pass `path` instead to open a " +
+      "`.loon` source file (evaluated on load) or a `.vcad` document from " +
+      "disk — that session stays bound to the file and reports " +
+      "`source_stale` if the two drift apart.",
     inputSchema: loadDocumentSchema,
-    handler: (a, c) => loadDocument(a, c.sessionStore),
+    handler: (a, c) => loadDocument(a, c.sessionStore, c.engine),
     behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
 ];

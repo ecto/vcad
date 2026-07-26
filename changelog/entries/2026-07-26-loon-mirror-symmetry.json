@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-loon-mirror-symmetry",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Mirror sugar and symmetric patterns in loon",
+  "summary": "[mirror-x/y/z], [mirror-pattern nx ny nz s] and [quad-pattern s] make left/right and 4-fold symmetry one expression; mirror is now documented in create_cad_loon.",
+  "features": ["loon", "transforms", "patterns"],
+  "mcpTools": ["create_cad_loon"]
+}
