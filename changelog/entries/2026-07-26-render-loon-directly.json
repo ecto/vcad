@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-render-loon-directly",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Render and export .loon source directly",
+  "summary": "vcad-render and the vcad CLI's export/info now take .loon files anywhere a .vcad goes, evaluating source on the way in with [use ...] imports resolved.",
+  "features": ["loon", "cli", "rendering"]
+}
