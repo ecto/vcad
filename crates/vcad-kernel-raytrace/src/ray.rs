@@ -100,10 +100,26 @@ pub struct RayHit {
     /// Index of the triangle that was hit, when this hit came from a
     /// mesh-backed BVH. `None` for analytic BRep-face hits.
     pub tri: Option<u32>,
+    /// Surface tangent `dP/du` at the intersection, when the surface's
+    /// parameterisation carries a meaningful direction.
+    ///
+    /// This is the *grain* of the surface: on a cylinder it is the
+    /// circumferential direction, which is exactly the axis a lathe or a
+    /// belt sander leaves its marks along. Anisotropic shading uses it to
+    /// orient the specular lobe. It is `None` for surfaces whose
+    /// parameterisation is arbitrary (fitted B-splines, bilinear patches),
+    /// at parametric degeneracies (sphere poles, the cone apex), and for
+    /// triangle hits, where shading must fall back to an arbitrary tangent
+    /// frame.
+    ///
+    /// Not normalised, and not guaranteed orthogonal to [`Self::normal`] —
+    /// consumers should orthogonalise against the normal they shade with.
+    pub dpdu: Option<Vec3>,
 }
 
 impl RayHit {
-    /// Create a new ray hit on an analytic BRep face.
+    /// Create a new ray hit on an analytic BRep face, with no surface
+    /// tangent.
     pub fn new(t: f64, point: Point3, normal: Dir3, uv: Point2, face_id: FaceId) -> Self {
         Self {
             t,
@@ -112,6 +128,7 @@ impl RayHit {
             uv,
             face_id,
             tri: None,
+            dpdu: None,
         }
     }
 
@@ -119,6 +136,10 @@ impl RayHit {
     ///
     /// `uv` carries the barycentric weights `(u, v)` of the hit and
     /// [`face_id`](Self::face_id) is left null — a mesh has no BRep faces.
+    ///
+    /// Triangle hits carry no tangent: a mesh has no parameterisation to
+    /// read a grain from, so anisotropic shading falls back to an arbitrary
+    /// frame exactly as it does for fitted surfaces.
     pub fn triangle(t: f64, point: Point3, normal: Dir3, uv: Point2, tri: u32) -> Self {
         Self {
             t,
@@ -127,7 +148,14 @@ impl RayHit {
             uv,
             face_id: FaceId::default(),
             tri: Some(tri),
+            dpdu: None,
         }
+    }
+
+    /// Attach a surface tangent `dP/du` to this hit.
+    pub fn with_tangent(mut self, dpdu: Option<Vec3>) -> Self {
+        self.dpdu = dpdu;
+        self
     }
 }
 

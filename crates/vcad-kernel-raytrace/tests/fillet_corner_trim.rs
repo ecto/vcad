@@ -90,7 +90,7 @@ fn corner_blends_are_eight_spherical_octants() {
         for a in 0..3 {
             let b = (a + 1) % 3;
             assert!(
-                dirs[a].dot(&dirs[b]).abs() < 1e-9,
+                dirs[a].dot(dirs[b]).abs() < 1e-9,
                 "{face_id:?} corner directions must be orthogonal"
             );
         }

@@ -114,6 +114,26 @@ pub fn render_photoreal_png_str(
 /// machined and moulded parts almost always have some surface layer —
 /// anodising, paint, moulding skin — and adding it is the single biggest
 /// step from "CAD shaded" to "photographed".
+/// Fallback anisotropy for materials that name a directional finish but do
+/// not carry an explicit `anisotropy` value.
+///
+/// Deliberately conservative — only finishes that are unambiguously
+/// directional, and at moderate strength. Anything else stays isotropic, so
+/// this can never change how an existing material renders unless its name
+/// says it is brushed or turned.
+fn anisotropy_from_name(name: &str) -> f32 {
+    let n = name.to_ascii_lowercase();
+    // Turning and boring cut circumferentially, which is the +u direction on
+    // a cylinder — the same direction the tangent frame is built from.
+    if n.contains("turned") || n.contains("machined") || n.contains("bored") {
+        0.6
+    } else if n.contains("brushed") {
+        0.7
+    } else {
+        0.0
+    }
+}
+
 fn to_pbr(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 3]>) -> Pbr {
     let base = mat.map(|m| m.color).or(tint).unwrap_or([0.62, 0.64, 0.67]);
     let base_color = [base[0] as f32, base[1] as f32, base[2] as f32];
@@ -141,10 +161,25 @@ fn to_pbr(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 3]>) -> Pbr {
         0.0
     };
 
+    // Anisotropy is a real IR field (`MaterialDef::anisotropy`) rather than
+    // a rendering-time guess: Rust is the source of truth for IR types, the
+    // value is a genuine property of the surface finish, and it round-trips
+    // in `.vcad`. The name heuristic below only fills in when the document
+    // says nothing — a document that names its material "brushed_aluminum"
+    // or "turned_shaft" has told us the finish, and rendering that as a
+    // uniform polish is the CG tell this feature exists to remove. Anything
+    // explicit always wins.
+    let anisotropy = mat
+        .and_then(|m| m.anisotropy)
+        .map(|v| v as f32)
+        .unwrap_or_else(|| mat.map(|m| anisotropy_from_name(&m.name)).unwrap_or(0.0))
+        .clamp(-1.0, 1.0);
+
     Pbr {
         base_color,
         metallic,
         roughness,
+        anisotropy,
         clearcoat,
         clearcoat_roughness: 0.08,
         ior,
