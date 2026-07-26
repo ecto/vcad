@@ -152,6 +152,34 @@ function countOpenEdges(mesh: TriangleMesh): number {
   return open;
 }
 
+/**
+ * A label per scene part, in evaluation order.
+ *
+ * Scene parts correspond 1:1 to `doc.roots` *filtered by visibility* — the
+ * evaluator skips hidden roots, so indexing `doc.roots` directly would skew
+ * every label after the first hidden part. Each label names the root node
+ * (and its human name when the document carries one), which is what a
+ * caller needs to go fix the thing.
+ */
+export function partLabels(doc: Document, partCount: number): string[] {
+  const visibleRoots = (doc.roots ?? []).filter((r) => r.visible !== false);
+  const labels: string[] = [];
+  for (let i = 0; i < partCount; i++) {
+    const entry = visibleRoots[i];
+    if (!entry) {
+      labels.push(`part ${i + 1}`);
+      continue;
+    }
+    const name = doc.nodes?.[String(entry.root)]?.name;
+    labels.push(
+      name
+        ? `part ${i + 1} "${name}" (root ${entry.root})`
+        : `part ${i + 1} (root ${entry.root})`,
+    );
+  }
+  return labels;
+}
+
 /** Distinct circular-pattern axes in the document (deduped by line). */
 function circularPatternAxes(
   doc: Document,
@@ -230,6 +258,7 @@ export function computeIntegrity(
   // same way check_clearance's candidate set bakes FK transforms. Without
   // this, an assembly-only document reported parts: 0, volume: 0.
   const instanceMeshes: TriangleMesh[] = [];
+  const instanceLabels: string[] = [];
   for (const inst of scene.instances ?? []) {
     const mesh = inst.transform
       ? transformMesh(inst.mesh, {
@@ -240,6 +269,10 @@ export function computeIntegrity(
       : inst.mesh;
     if (!mesh || mesh.positions.length === 0) continue;
     instanceMeshes.push(mesh);
+    // Labelled here rather than by index later: empty meshes are skipped, so
+    // an index into doc.instances would drift.
+    const who = inst.name ?? inst.instanceId;
+    instanceLabels.push(who ? `instance "${who}"` : "instance");
   }
 
   let volume = 0;
@@ -259,6 +292,14 @@ export function computeIntegrity(
     ...scene.parts.map((p) => p.mesh),
     ...instanceMeshes,
   ];
+
+  // Labels for every mesh in the aggregate. Field report 2026-07-26: four
+  // identical `inverted winding` warnings in a 44-root document identified
+  // nothing, and the reporter had to bisect the model by hand to find the
+  // bad plates. A warning that can't be traced back to a root is not
+  // actionable, so every per-part warning below carries this label.
+  const labels = [...partLabels(doc, scene.parts.length), ...instanceLabels];
+  const openEdgesByLabel: Array<{ label: string; open: number }> = [];
   for (let partIndex = 0; partIndex < meshes.length; partIndex++) {
     const mesh = meshes[partIndex];
     const tris = mesh.indices.length / 3;
@@ -290,22 +331,25 @@ export function computeIntegrity(
         bbox.max.z = Math.max(bbox.max.z, q[2]);
       }
     }
+    const label = labels[partIndex] ?? `part ${partIndex + 1}`;
     if (partVolume < 0) {
       warnings.push(
-        `part mesh has net negative volume (${round3(partVolume)} mm³) — inverted winding`,
+        `${label} has net negative volume (${round3(partVolume)} mm³) — inverted winding`,
       );
     }
     const impossible = isoperimetricViolation(partVolume, partArea);
     if (impossible) {
       warnings.push(
-        `part ${partIndex + 1} volume ${round3(Math.abs(partVolume))} mm³ is isoperimetrically impossible for its ` +
+        `${label} volume ${round3(Math.abs(partVolume))} mm³ is isoperimetrically impossible for its ` +
           `${round3(partArea)} mm² of surface (A³ ≥ 36πV² for any real solid; this area can enclose at most ` +
           `≈${round3(impossible.max_volume_mm3)} mm³) — the volume integral is corrupt, do not trust this geometry`,
       );
     }
     volume += partVolume;
     area += partArea;
-    openEdges += countOpenEdges(mesh);
+    const partOpen = countOpenEdges(mesh);
+    if (partOpen > 0) openEdgesByLabel.push({ label, open: partOpen });
+    openEdges += partOpen;
   }
 
   const hasBbox = Number.isFinite(bbox.min.x);
@@ -320,7 +364,20 @@ export function computeIntegrity(
     );
   }
   if (openEdges > 0) {
-    warnings.push(`mesh is not watertight (${openEdges} unpaired edges)`);
+    // Per-part breakdown: one bad part and open edges spread across the
+    // document are very different bugs, and the aggregate count can't tell
+    // them apart. Long documents get the worst offenders plus a tail count.
+    const ranked = [...openEdgesByLabel].sort((a, b) => b.open - a.open);
+    const shown = ranked.slice(0, 5);
+    const rest = ranked.length - shown.length;
+    const breakdown =
+      shown.map((e) => `${e.label}: ${e.open}`).join("; ") +
+      (rest > 0 ? `; +${rest} more part${rest === 1 ? "" : "s"}` : "");
+    warnings.push(
+      `mesh is not watertight (${openEdges} unpaired edges across ${ranked.length} part${
+        ranked.length === 1 ? "" : "s"
+      } — ${breakdown})`,
+    );
   }
   if (com && hasBbox) {
     const eps =
