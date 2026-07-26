@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-raytrace-mesh-parts",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "fix",
+  "title": "Ray-traced renders no longer drop mesh parts",
+  "summary": "Mesh-backed parts (frozen topology-optimization results, imported STL/GLB) now ray trace as smooth-shaded triangles instead of being silently omitted from the image.",
+  "features": ["rendering", "raytrace", "mesh"]
+}

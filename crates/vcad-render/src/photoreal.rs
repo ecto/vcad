@@ -159,15 +159,22 @@ fn rasterize(
         return Err("fill_frac must be in (0, 1]".to_string());
     }
 
-    // One BVH per BRep-backed solid. Mesh-only parts have no analytic
-    // surfaces and are skipped, same as the `--raytrace` path.
+    // One BVH per solid. BRep-backed solids trace analytically; mesh-only
+    // parts (frozen topology-optimization results, imported STL/GLB) trace
+    // as crease-baked triangles, same as the `--raytrace` path.
     let mut objects: Vec<Object> = Vec::new();
+    let mut untraceable: Vec<String> = Vec::new();
     for s in &solids {
-        let Some(brep) = s.solid.as_brep() else {
-            continue;
+        let bvh = match s.solid.as_brep() {
+            Some(brep) => Bvh::build(brep),
+            None => {
+                let mut mesh = s.solid.to_mesh(0);
+                vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
+                Bvh::build_mesh(&mesh)
+            }
         };
-        let bvh = Bvh::build(brep);
         if bvh.root().is_none() {
+            untraceable.push(s.name.clone().unwrap_or_else(|| s.id.clone()));
             continue;
         }
         objects.push(Object {
@@ -176,9 +183,22 @@ fn rasterize(
         });
     }
     if objects.is_empty() {
-        return Err("photoreal: document produced no BRep-backed solids \
-             (mesh-only parts render via the tessellated path)"
-            .to_string());
+        return Err(format!(
+            "photoreal: document produced no traceable geometry ({} part(s) empty \
+             or degenerate: {})",
+            untraceable.len(),
+            untraceable.join(", ")
+        ));
+    }
+    if !untraceable.is_empty() {
+        // Fail closed rather than silently rendering a subset — a missing
+        // part reads as a design that doesn't have it.
+        return Err(format!(
+            "photoreal: {} part(s) have no traceable geometry (empty or fully \
+             degenerate): {}",
+            untraceable.len(),
+            untraceable.join(", ")
+        ));
     }
 
     // ── framing ──────────────────────────────────────────────────────────
@@ -426,5 +446,93 @@ mod tests {
         };
         let png = render_photoreal_png_str(&cube_doc(), &opts, &pr).expect("render");
         assert!(!png.is_empty());
+    }
+
+    /// Same regression as the `--raytrace` path: this used to skip any
+    /// solid without an analytic BRep, so a mesh part beside a BRep part
+    /// was silently omitted. Asserts the mesh actually covers pixels, not
+    /// merely that the render succeeded.
+    #[test]
+    fn renders_both_brep_and_mesh_parts() {
+        // Cube at x 0..20, raw-triangle box at x 60..80 — a 40mm gap, so
+        // each part lands in an outer third of the canvas.
+        let mesh_box = |x0: f64| -> String {
+            let x1 = x0 + 20.0;
+            let corners = [
+                [x0, 0.0, 0.0],
+                [x1, 0.0, 0.0],
+                [x1, 20.0, 0.0],
+                [x0, 20.0, 0.0],
+                [x0, 0.0, 20.0],
+                [x1, 0.0, 20.0],
+                [x1, 20.0, 20.0],
+                [x0, 20.0, 20.0],
+            ];
+            let pos: Vec<String> = corners
+                .iter()
+                .flat_map(|c| c.iter().map(|v| format!("{v:?}")))
+                .collect();
+            let idx = [
+                [0, 2, 1],
+                [0, 3, 2],
+                [4, 5, 6],
+                [4, 6, 7],
+                [0, 1, 5],
+                [0, 5, 4],
+                [1, 2, 6],
+                [1, 6, 5],
+                [2, 3, 7],
+                [2, 7, 6],
+                [3, 0, 4],
+                [3, 4, 7],
+            ];
+            let idx: Vec<String> = idx
+                .iter()
+                .flat_map(|t| t.iter().map(|i| i.to_string()))
+                .collect();
+            format!(
+                r#""2": {{ "id": 2, "name": "meshpart", "op": {{ "type": "ImportedMesh", "positions": [{}], "indices": [{}] }} }}"#,
+                pos.join(", "),
+                idx.join(", ")
+            )
+        };
+        let vcad = format!(
+            r#"{{ "version": "0.1", "nodes": {{ "1": {{ "id": 1, "name": "cube", "op": {{ "type": "Cube", "size": {{ "x": 20.0, "y": 20.0, "z": 20.0 }} }} }}, {} }}, "materials": {{}}, "part_materials": {{}}, "roots": [{{ "root": 1, "material": "default" }}, {{ "root": 2, "material": "default" }}] }}"#,
+            mesh_box(60.0)
+        );
+
+        let opts = RasterOptions {
+            view: crate::View::Front,
+            size_px: 96,
+            fill_frac: 0.9,
+            ..Default::default()
+        };
+        let pr = PhotorealOptions {
+            spp: 4,
+            backdrop: Backdrop::ShadowCatcher,
+            ..Default::default()
+        };
+        let png = render_photoreal_png_str(&vcad, &opts, &pr).expect("render");
+
+        // Alpha channel is the honest coverage signal here: the path tracer
+        // lights the scene, so "not the background colour" is unreliable,
+        // but a shadow-catcher backdrop leaves un-hit pixels transparent.
+        let img = image::load_from_memory(&png).expect("valid PNG").to_rgba8();
+        let cols: Vec<u32> = (0..img.width())
+            .map(|x| {
+                (0..img.height())
+                    .filter(|&y| img.get_pixel(x, y).0[3] > 8)
+                    .count() as u32
+            })
+            .collect();
+
+        let third = cols.len() / 3;
+        let left: u32 = cols[..third].iter().sum();
+        let right: u32 = cols[2 * third..].iter().sum();
+        assert!(
+            left > 100 && right > 100,
+            "both the BRep and the mesh part must cover pixels: \
+             left={left} right={right} cols={cols:?}"
+        );
     }
 }

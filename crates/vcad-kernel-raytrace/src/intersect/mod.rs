@@ -10,6 +10,7 @@ mod cylinder;
 mod plane;
 mod sphere;
 mod torus;
+mod triangle;
 
 pub use bilinear::intersect_bilinear;
 pub use bspline::intersect_bspline;
@@ -18,6 +19,7 @@ pub use cylinder::intersect_cylinder;
 pub use plane::intersect_plane;
 pub use sphere::intersect_sphere;
 pub use torus::intersect_torus;
+pub use triangle::{intersect_triangle, TriangleHit};
 
 use crate::Ray;
 use vcad_kernel_geom::{Surface, SurfaceKind};
