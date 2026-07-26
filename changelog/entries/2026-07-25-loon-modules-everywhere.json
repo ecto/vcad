@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-loon-modules-everywhere",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "feat",
+  "title": "Multi-file loon projects, everywhere loon runs",
+  "summary": "[use ...] now resolves in the browser and over MCP, not just on disk: pass modules by value or point create_cad_loon at a base_dir, and pub, aliasing and selective imports all work.",
+  "features": ["loon", "mcp", "modules"],
+  "mcpTools": ["create_cad_loon"]
+}

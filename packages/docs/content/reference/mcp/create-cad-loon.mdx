@@ -12,9 +12,32 @@ order: 3
 Loon source code defining the geometry. See the [Loon Language Docs](https://loonlang.com/docs) for the complete language reference.
 </Param>
 
+<Param name="modules" type="object" required={false}>
+A `{ "<module name>": "<loon source>" }` map that `[use <name>]` in `source` resolves against -- multi-file projects passed by value. Macros passed via `loons` are importable by name too.
+</Param>
+
+<Param name="base_dir" type="string" required={false}>
+A server-side directory to resolve `[use <name>]` against: the server reads `<base_dir>/<name>.loon` (dots are path separators), follows nested imports, and hands the sources to the kernel. Reads are confined to this directory, and explicit `modules` entries win.
+</Param>
+
 <Param name="format" type="string" required={false}>
 Output format: `"compact"` (default) or `"json"`. Compact is recommended for MCP workflows.
 </Param>
+
+## Modules
+
+Loon's module system works here, so an interface shared between projects can have a single source of truth instead of being concatenated in by a build step:
+
+```json
+{
+  "source": "[use bracket]\n[root bracket.plate \"aluminum\"]",
+  "modules": {
+    "bracket": "[pub let plate [cube 40 20 4]]\n[let scrap [sphere 1]]"
+  }
+}
+```
+
+`pub` picks what a module exports (`scrap` above is private), `[use bracket :as b]` aliases, and `[use bracket [plate]]` imports selectively. Modules see the vcad library exactly as the root program does, and imports nest. A module read from `base_dir` and the same module passed in `modules` produce the same document -- and on the native side (the CLI, `vcad-render`), `[use ...]` resolves against the file's own directory with no extra wiring.
 
 ## Return Value
 

@@ -2,6 +2,8 @@
  * create_cad_loon tool — evaluate loon source to produce a CAD document.
  */
 
+import { readFileSync } from "node:fs";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
@@ -51,6 +53,24 @@ export const createCadLoonSchema = {
         },
       },
     },
+    modules: {
+      type: "object" as const,
+      description:
+        "Multi-file projects, by value: a { \"<module name>\": \"<loon " +
+        "source>\" } map that `[use <name>]` in `source` resolves against. " +
+        "`pub` controls what a module exports; `[use m :as alias]` and " +
+        "`[use m [a b]]` work as in the language. Entries passed via " +
+        "`loons` are importable by name too.",
+      additionalProperties: { type: "string" as const },
+    },
+    base_dir: {
+      type: "string" as const,
+      description:
+        "Server-side directory that `[use <name>]` resolves against — the " +
+        "server reads <base_dir>/<name>.loon (dots are path separators) and " +
+        "hands the sources to the kernel, following nested imports. Reads " +
+        "are confined to this directory. Explicit `modules` entries win.",
+    },
     format: {
       type: "string" as const,
       enum: ["vcode", "json"],
@@ -65,6 +85,8 @@ interface CreateLoonInput {
   source: string;
   use_loons?: string[];
   loons?: InlineLoon[];
+  modules?: Record<string, string>;
+  base_dir?: string;
   format?: "vcode" | "json";
 }
 
@@ -81,6 +103,65 @@ export function composeLoonProgram(input: unknown): string {
   return `${macroPrelude(names, loons)}\n\n${source}`;
 }
 
+/** Module names a program imports: every `[use <name> …]` head. */
+function importedNames(source: string): string[] {
+  const names: string[] = [];
+  const re = /\[\s*use\s+([A-Za-z_][\w.-]*)/g;
+  for (let m = re.exec(source); m; m = re.exec(source)) names.push(m[1]);
+  return names;
+}
+
+/** Read `<base>/<a>/<b>.loon` for a dotted module name, refusing to escape
+ *  `base`. Returns null when the module isn't there. */
+function readModule(base: string, name: string): string | null {
+  if (isAbsolute(name) || name.split(".").includes("..")) return null;
+  const root = resolve(base);
+  for (const ext of [".loon", ".oo"]) {
+    const file = resolve(join(root, ...name.split(".")) + ext);
+    if (file !== root && !file.startsWith(root + sep)) continue;
+    try {
+      return readFileSync(file, "utf8");
+    } catch {
+      // try the next extension
+    }
+  }
+  return null;
+}
+
+/**
+ * The in-memory module map `[use ...]` resolves against: explicit `modules`,
+ * plus inline `loons` (a macro passed by value is also an importable
+ * module), plus — when `base_dir` is given — files read from disk, following
+ * nested imports transitively.
+ *
+ * A name the server can't find is simply left out; the kernel then reports
+ * the missing module with loon's own error, rather than the server guessing.
+ */
+export function composeLoonModules(input: unknown): Record<string, string> {
+  const { source, loons, modules, base_dir } = input as CreateLoonInput;
+  const map: Record<string, string> = {};
+  for (const m of loons ?? []) map[m.name] = m.source;
+  Object.assign(map, modules ?? {});
+
+  if (base_dir) {
+    const pending = [
+      ...importedNames(source),
+      ...Object.values(map).flatMap(importedNames),
+    ];
+    const seen = new Set<string>();
+    while (pending.length) {
+      const name = pending.pop() as string;
+      if (seen.has(name) || map[name]) continue;
+      seen.add(name);
+      const src = readModule(base_dir, name);
+      if (src === null) continue;
+      map[name] = src;
+      pending.push(...importedNames(src));
+    }
+  }
+  return map;
+}
+
 /** Evaluate loon source and return a CAD document. */
 export function createCadLoon(
   input: unknown,
@@ -89,11 +170,16 @@ export function createCadLoon(
   const { format = "vcode" } = input as CreateLoonInput;
   const source = composeLoonProgram(input);
 
-  const doc = engine.evalVcadSource(source);
+  const modules = composeLoonModules(input);
+  const doc = engine.evalVcadSourceWithModules(source, modules);
   if (!doc) {
-    return {
-      content: [{ type: "text", text: "Error: Loon evaluation not supported by this engine build" }],
-    };
+    // Distinguish "no loon at all" from "loon, but a kernel too old to
+    // resolve modules" — otherwise a stale kernel reads as a broken program.
+    const text = Object.keys(modules).length
+      ? "Error: this kernel build cannot resolve loon modules ([use ...]) — " +
+        "update the kernel, or inline the modules into `source`"
+      : "Error: Loon evaluation not supported by this engine build";
+    return { content: [{ type: "text", text }] };
   }
 
   const text = format === "json" ? JSON.stringify(doc, null, 2) : toVCode(doc);
@@ -119,7 +205,8 @@ export const toolDefs: ToolDef[] = [
       "Assemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\n" +
       "Pipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\n" +
       "Let bindings: [let body [cube 50 30 5]]\n" +
-      "Scene: [root solid \"material-name\"]",
+      "Scene: [root solid \"material-name\"]\n" +
+      "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
     inputSchema: createCadLoonSchema,
     handler: async (args, ctx) => {
       // Hydrate any by-name macros from the durable per-user store before
@@ -142,7 +229,10 @@ export const toolDefs: ToolDef[] = [
       // authoring a whole document. The loon evaluation is cheap relative to
       // the mesh evaluation computeIntegrity runs anyway.
       try {
-        const doc = ctx.engine.evalVcadSource(composeLoonProgram(args));
+        const doc = ctx.engine.evalVcadSourceWithModules(
+          composeLoonProgram(args),
+          composeLoonModules(args),
+        );
         if (doc) {
           if (targetId) documents.set(targetId, doc);
           const integrity = computeIntegrity(doc, ctx.engine);

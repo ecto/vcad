@@ -7055,11 +7055,31 @@ pub fn build_part(path: &str, params_json: &str) -> Result<String, JsError> {
 /// Evaluate a loon source string and return a JSON-serialized vcad Document.
 ///
 /// The vcad library (types, constructors) is automatically prepended.
-/// Module resolution (`[use ...]`) is not available in WASM — all code
-/// must be self-contained or use the bundled vcad library.
+/// There is no filesystem in WASM, so `[use ...]` resolves against nothing
+/// here — pass modules explicitly with [`eval_vcad_source_with_modules`].
 #[wasm_bindgen(js_name = evalVcadSource)]
 pub fn eval_vcad_source(source: &str) -> Result<JsValue, JsError> {
     let doc = vcad_loon::eval_vcad(source, None).map_err(|e| JsError::new(&e))?;
+    let json = serde_json::to_string(&doc)
+        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
+    Ok(JsValue::from_str(&json))
+}
+
+/// Evaluate loon source whose `[use ...]` resolves against an in-memory
+/// module map, and return a JSON-serialized vcad Document.
+///
+/// `modules_json` is a JSON object of `{ "<module name>": "<loon source>" }`
+/// — the browser's stand-in for a filesystem. `[use foo]` finds the entry
+/// keyed `foo` (or `foo.loon`); the vcad library is available inside each
+/// module, and `pub` controls what a module exports. Multi-file CAD projects
+/// therefore behave identically here and on the native side, where the same
+/// modules would be files on disk.
+#[wasm_bindgen(js_name = evalVcadSourceWithModules)]
+pub fn eval_vcad_source_with_modules(source: &str, modules_json: &str) -> Result<JsValue, JsError> {
+    let modules: std::collections::HashMap<String, String> = serde_json::from_str(modules_json)
+        .map_err(|e| JsError::new(&format!("invalid modules JSON: {e}")))?;
+    let doc =
+        vcad_loon::eval_vcad_with_modules(source, None, &modules).map_err(|e| JsError::new(&e))?;
     let json = serde_json::to_string(&doc)
         .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
     Ok(JsValue::from_str(&json))
