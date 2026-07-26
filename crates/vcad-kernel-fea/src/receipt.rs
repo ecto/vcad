@@ -101,24 +101,27 @@ fn caveat() -> &'static str {
 }
 
 fn provenance(study: &ConvergedAnalysis, spec: &FeaSpec) -> SolverProvenance {
+    let tw = &study.thin_wall;
+    let mut levels: Vec<String> = vec![format!(
+        "thinnest section {:.2} mm (measured along {}, {} spans sampled); {:.1} cells through \
+         it at the {:.3} mm finest pitch",
+        tw.thickness.p05_mm,
+        tw.thickness.thin_axis,
+        tw.thickness.samples,
+        tw.cells_through_section,
+        tw.finest_pitch_mm
+    )];
+    if let Some(advisory) = &tw.advisory {
+        levels.push(advisory.clone());
+    }
+    levels.extend(study.levels.iter().map(|l| {
+        format!(
+            "grid {}x{}x{} (h {:.3} mm), {} tets / {} nodes, pcg {} iters residual {:.3e}",
+            l.grid[0], l.grid[1], l.grid[2], l.h_mm, l.tets, l.nodes, l.iterations, l.residual_rel
+        )
+    }));
     SolverProvenance {
-        levels: study
-            .levels
-            .iter()
-            .map(|l| {
-                format!(
-                    "grid {}x{}x{} (h {:.3} mm), {} tets / {} nodes, pcg {} iters residual {:.3e}",
-                    l.grid[0],
-                    l.grid[1],
-                    l.grid[2],
-                    l.h_mm,
-                    l.tets,
-                    l.nodes,
-                    l.iterations,
-                    l.residual_rel
-                )
-            })
-            .collect(),
+        levels,
         material: match spec.yield_strength_mpa {
             Some(y) => format!(
                 "E {} MPa, nu {}, yield {} MPa",
@@ -329,6 +332,7 @@ mod tests {
             levels: 2,
             displacement_tol: 0.25,
             stress_tol: 0.50,
+            ..Default::default()
         };
         let study = analyze_converged(&surface, &spec, &conv, &SolveOptions::default()).unwrap();
         assert!(study.converged(), "{:?}", study.verdict);
@@ -359,7 +363,14 @@ mod tests {
             assert!(c.note.contains("linear elasticity"), "note: {}", c.note);
             assert!(c.note.contains("staircase"), "note: {}", c.note);
         }
-        assert_eq!(set.provenance.levels.len(), 2);
+        // One provenance row per lattice level, preceded by the measured
+        // thin-wall row (the cell arithmetic, on the record).
+        assert_eq!(set.provenance.levels.len(), 3);
+        assert!(
+            set.provenance.levels[0].contains("cells through"),
+            "provenance must state cells-through-section: {:?}",
+            set.provenance.levels[0]
+        );
         assert!(set.provenance.material.contains("yield 276"));
         assert_eq!(set.provenance.loads.len(), 1);
         // Round trip.
@@ -398,6 +409,7 @@ mod tests {
             levels: 2,
             displacement_tol: 1e-6,
             stress_tol: 1e-6,
+            ..Default::default()
         };
         let study = analyze_converged(&surface, &spec, &conv, &SolveOptions::default()).unwrap();
         let reasons = match &study.verdict {

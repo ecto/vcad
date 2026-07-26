@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 use vcad_kernel_tessellate::TriangleMesh;
 
-use crate::mesh::{tet_fill, MeshError};
+use crate::mesh::{diagnose_thin_wall, tet_fill, wall_thickness, MeshError, ThinWallDiagnosis};
 use crate::solve::{solve_static_full, NodeFields, Solution, SolveError, SolveOptions};
 use crate::spec::FeaSpec;
 
@@ -36,6 +36,15 @@ pub struct ConvergenceOptions {
     pub displacement_tol: f64,
     /// Relative-change gate on max von Mises stress.
     pub stress_tol: f64,
+    /// The largest coarse-level resolution the caller's tier allows. Used
+    /// only to tell a thin-wall diagnosis whether raising `resolution`
+    /// could ever resolve the section, or whether nothing will.
+    #[serde(default = "default_resolution_cap")]
+    pub resolution_cap: usize,
+}
+
+fn default_resolution_cap() -> usize {
+    256
 }
 
 impl Default for ConvergenceOptions {
@@ -44,6 +53,7 @@ impl Default for ConvergenceOptions {
             levels: 2,
             displacement_tol: 0.05,
             stress_tol: 0.15,
+            resolution_cap: default_resolution_cap(),
         }
     }
 }
@@ -58,6 +68,12 @@ pub enum ConvergenceError {
     Solve(SolveError),
     /// The options are invalid.
     InvalidOptions(String),
+    /// The part is thin-walled: the lattice could not be built at all at
+    /// this pitch, and the measured diagnosis says why and what to do
+    /// instead. Failing closed is right; failing without a route forward is
+    /// what costs the caller an afternoon, so the route travels with the
+    /// error.
+    ThinWalled(Box<ThinWallDiagnosis>),
 }
 
 impl std::fmt::Display for ConvergenceError {
@@ -66,6 +82,13 @@ impl std::fmt::Display for ConvergenceError {
             ConvergenceError::Mesh(e) => write!(f, "{e}"),
             ConvergenceError::Solve(e) => write!(f, "{e}"),
             ConvergenceError::InvalidOptions(m) => write!(f, "invalid convergence options: {m}"),
+            ConvergenceError::ThinWalled(d) => write!(
+                f,
+                "{}",
+                d.blocking_advice
+                    .as_deref()
+                    .unwrap_or("part is thinner than the lattice pitch")
+            ),
         }
     }
 }
@@ -112,6 +135,11 @@ pub struct ConvergedAnalysis {
     /// Safety factor `yield / max_von_mises` from the finest level —
     /// **only** when the study converged and a yield strength was given.
     pub safety_factor: Option<f64>,
+    /// Measured wall thickness against the lattice pitch. When its
+    /// `blocking_advice` is set, the verdict is Unverifiable regardless of
+    /// what the QoIs did between levels — a study that never resolved the
+    /// thin section can agree with itself and still be wrong.
+    pub thin_wall: ThinWallDiagnosis,
     /// Options the study ran with (provenance).
     pub options: ConvergenceOptions,
 }
@@ -158,11 +186,30 @@ pub fn analyze_converged_fields(
             "tolerances must be positive".into(),
         ));
     }
+    // Measure the part before solving it: a lattice that never puts enough
+    // cells through the thinnest section is not converged, it is describing
+    // a different part. The diagnosis carries the cell arithmetic and a
+    // route forward so the caller never has to derive either.
+    let finest_resolution = (spec.resolution << (conv.levels - 1)).min(256);
+    let thin_wall = diagnose_thin_wall(
+        wall_thickness(surface, 32)?,
+        finest_resolution,
+        conv.resolution_cap,
+    );
+
     let mut levels = Vec::with_capacity(conv.levels);
     let mut finest_fields = None;
     for k in 0..conv.levels {
         let res = (spec.resolution << k).min(256);
-        let tm = tet_fill(surface, res)?;
+        // When the lattice cannot even be built, the thin-wall diagnosis is
+        // the useful error — not "no interior cells".
+        let tm = tet_fill(surface, res).map_err(|e| {
+            if thin_wall.blocking_advice.is_some() {
+                ConvergenceError::ThinWalled(Box::new(thin_wall.clone()))
+            } else {
+                ConvergenceError::Mesh(e)
+            }
+        })?;
         let full = solve_static_full(&tm, spec, solve_opts)?;
         levels.push(full.summary);
         finest_fields = Some(full.fields);
@@ -178,6 +225,9 @@ pub fn analyze_converged_fields(
     let stress_change_rel = rel(coarse.max_von_mises_mpa, fine.max_von_mises_mpa);
 
     let mut reasons = Vec::new();
+    if let Some(advice) = &thin_wall.blocking_advice {
+        reasons.push(advice.clone());
+    }
     if displacement_change_rel > conv.displacement_tol {
         reasons.push(format!(
             "max displacement changed {:.1}% between the two finest levels (gate {:.1}%) — \
@@ -213,6 +263,7 @@ pub fn analyze_converged_fields(
             stress_change_rel,
             verdict,
             safety_factor,
+            thin_wall,
             options: *conv,
         },
         finest_fields,
@@ -262,6 +313,7 @@ mod tests {
             levels: 3,
             displacement_tol: 0.10,
             stress_tol: 0.35,
+            ..Default::default()
         };
         let study = analyze_converged(&surface, &spec, &conv, &SolveOptions::default()).unwrap();
         assert_eq!(study.levels.len(), 3);
@@ -291,6 +343,7 @@ mod tests {
             levels: 2,
             displacement_tol: 0.01, // unreachably tight for this pair
             stress_tol: 0.01,
+            ..Default::default()
         };
         let study = analyze_converged(&surface, &spec, &conv, &SolveOptions::default()).unwrap();
         match &study.verdict {
@@ -313,6 +366,7 @@ mod tests {
             levels: 2,
             displacement_tol: 0.25,
             stress_tol: 0.40,
+            ..Default::default()
         };
         let study = analyze_converged(&surface, &spec, &conv, &SolveOptions::default()).unwrap();
         assert!(study.converged(), "verdict {:?}", study.verdict);
@@ -320,6 +374,73 @@ mod tests {
         let expect = 276.0 / study.finest().max_von_mises_mpa;
         assert!((sf - expect).abs() < 1e-12);
         assert!(sf > 1.0, "aluminum cantilever at 100 N should not yield");
+    }
+
+    #[test]
+    fn thin_walled_part_is_unverifiable_with_a_diagnosis_not_a_bare_refusal() {
+        // A 200x60x6 mm plate at resolution 48: the lattice DOES fill
+        // (2.9 cells through the 6 mm thickness at the finest level), so
+        // the QoIs are real numbers that could agree with each other — and
+        // the study must still refuse, with the arithmetic and a route
+        // forward attached rather than leaving the caller to derive why.
+        let surface = box_mesh([0.0, 0.0, 0.0], [200.0, 60.0, 6.0]);
+        let mut spec = cantilever(48, Some(276.0));
+        spec.loads[0].region = RegionBox {
+            min: [200.0, 0.0, 0.0],
+            max: [200.0, 60.0, 6.0],
+        };
+        spec.supports[0].region = RegionBox {
+            min: [0.0, 0.0, 0.0],
+            max: [0.0, 60.0, 6.0],
+        };
+        let conv = ConvergenceOptions {
+            levels: 2,
+            // Deliberately generous gates: the QoIs could agree with
+            // themselves and the study must still refuse.
+            displacement_tol: 10.0,
+            stress_tol: 10.0,
+            resolution_cap: 160,
+        };
+        let study = analyze_converged(&surface, &spec, &conv, &SolveOptions::default()).unwrap();
+        assert!(
+            (study.thin_wall.thickness.p05_mm - 6.0).abs() < 1e-6,
+            "measured {:?}",
+            study.thin_wall.thickness
+        );
+        assert!(study.thin_wall.cells_through_section < 4.0);
+        assert!(!study.thin_wall.reachable, "{:?}", study.thin_wall);
+        match &study.verdict {
+            ConvergenceVerdict::Unverifiable { reasons } => {
+                let joined = reasons.join(" ");
+                assert!(joined.contains("THIN-WALLED"), "{joined}");
+                assert!(joined.contains("beam_check"), "no route forward: {joined}");
+            }
+            v => panic!("a 2 mm wall at 1 cell must never read as converged: {v:?}"),
+        }
+        assert_eq!(study.safety_factor, None);
+    }
+
+    #[test]
+    fn unfillable_thin_plate_errors_with_the_diagnosis_not_no_interior_cells() {
+        // 200x60x2 mm at resolution 24: pitch 8.3 mm, no cell center lands
+        // inside the plate at all. The old failure was a bare "no interior
+        // cells — raise the resolution", which is advice that cannot work.
+        let surface = box_mesh([0.0, 0.0, 0.0], [200.0, 60.0, 2.0]);
+        let spec = cantilever(24, Some(276.0));
+        let conv = ConvergenceOptions {
+            resolution_cap: 160,
+            ..Default::default()
+        };
+        let err = analyze_converged(&surface, &spec, &conv, &SolveOptions::default())
+            .expect_err("a 2 mm plate cannot be latticed at an 8 mm pitch");
+        let d = match &err {
+            ConvergenceError::ThinWalled(d) => d.clone(),
+            e => panic!("expected ThinWalled, got {e:?}"),
+        };
+        assert!(!d.reachable);
+        let text = err.to_string();
+        assert!(text.contains("THIN-WALLED"), "{text}");
+        assert!(text.contains("beam_check"), "no route forward: {text}");
     }
 
     #[test]

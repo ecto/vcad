@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-beam-check-thin-walled-fea",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "beam_check: audited structural answer for thin walls",
+  "summary": "Sheet-metal and tube-frame members had no audited FEA answer at any resolution; beam_check prices them in closed form (Bredt torsion, beam bending, Euler buckling), and analyze_structure now measures the wall and refuses with the cell arithmetic instead of a bare Unverifiable.",
+  "features": ["fea", "sheet-metal", "receipts"],
+  "mcpTools": ["beam_check", "analyze_structure"]
+}

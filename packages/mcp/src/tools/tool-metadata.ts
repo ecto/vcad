@@ -263,6 +263,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   solve_thermal: { title: "Solve Thermal", annotations: RO },
   simulate_flow: { title: "Simulate Flow", annotations: RO },
   analyze_structure: { title: "Analyze Structure", annotations: RO },
+  beam_check: { title: "Check Beam / Section", annotations: RO },
   simulate_neutron_shield: {
     title: "Simulate Neutron Shield",
     annotations: RO,
