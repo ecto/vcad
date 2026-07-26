@@ -226,7 +226,18 @@ export async function executeMcpChatTool(
 
     // check_clearance: draw the min-distance witness line in the viewport.
     if (tool.name === "check_clearance") {
-      const wp = (payload.worst_pair ?? null) as {
+      // Audit mode reports no worst_pair — witness the worst finding instead,
+      // so a whole-document scan still points at the geometry it flagged.
+      const worstFinding = Array.isArray(payload.findings)
+        ? (payload.findings[0] as
+            | {
+                point_a?: [number, number, number];
+                point_b?: [number, number, number];
+                distance_mm?: number;
+              }
+            | undefined)
+        : undefined;
+      const wp = ((payload.worst_pair ?? worstFinding) ?? null) as {
         point_a?: [number, number, number];
         point_b?: [number, number, number];
       } | null;
@@ -235,7 +246,11 @@ export async function executeMcpChatTool(
           pointA: wp.point_a,
           pointB: wp.point_b,
           distanceMm:
-            typeof payload.measured_mm === "number" ? payload.measured_mm : 0,
+            typeof payload.measured_mm === "number"
+              ? payload.measured_mm
+              : typeof worstFinding?.distance_mm === "number"
+                ? worstFinding.distance_mm
+                : 0,
           pass: payload.pass === true,
           ...(typeof payload.label === "string"
             ? { label: payload.label }

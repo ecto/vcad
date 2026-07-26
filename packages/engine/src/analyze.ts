@@ -29,6 +29,30 @@ export interface FeaStudyResult {
   stress_change_rel: number;
   verdict: { verdict: "Converged" } | { verdict: "Unverifiable"; reasons: string[] };
   safety_factor: number | null;
+  /**
+   * Measured wall thickness against the lattice pitch (kernel
+   * `ThinWallDiagnosis`). `blocking_advice` is set when the pitch cannot
+   * resolve the thinnest load-bearing section — the verdict is then
+   * Unverifiable regardless of what the QoIs did between levels, and the
+   * advice names the closed-form route (`beam_check`).
+   */
+  thin_wall: {
+    thickness: {
+      min_mm: number;
+      p05_mm: number;
+      median_mm: number;
+      thin_axis: string;
+      samples: number;
+      longest_bbox_mm: number;
+    };
+    finest_pitch_mm: number;
+    cells_through_section: number;
+    required_resolution: number;
+    resolution_cap: number;
+    reachable: boolean;
+    blocking_advice: string | null;
+    advisory: string | null;
+  };
 }
 
 /** Full `feaAnalyzeMesh` payload. */

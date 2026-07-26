@@ -11,19 +11,23 @@ use std::collections::HashMap;
 
 pub mod animation;
 pub mod constraints;
+pub mod datum;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
 pub mod molecule;
 pub mod parameters;
+pub mod resolve;
 pub mod stroke_font;
 pub mod to_loon;
 pub mod vcode;
 
+pub use datum::{resolve_datums, Datum, PrincipalAxis, ResolvedDatum};
 pub use parameters::{
     resolve_binding, resolve_parameters, validate_bindings, BindingKey, Bindings, Expr, Parameter,
     ResolveError,
 };
+pub use resolve::{resolve_document, resolve_document_cloned, ResolvePatchError};
 
 pub use vcad_tool_derive::ToolSchema;
 
@@ -1883,6 +1887,12 @@ pub struct Document {
     /// resolve, so the kernel never sees expressions.
     #[serde(default, skip_serializing_if = "Bindings::is_empty")]
     pub bindings: Bindings,
+    /// Named reference geometry (planes, axes, points) that parts are placed
+    /// relative to. Coordinates are expressions over `parameters`, so a datum
+    /// is a single source of truth for a shared plane — two parts referencing
+    /// one datum cannot disagree about where it is.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub datums: HashMap<String, Datum>,
 
     // Verification (optional, zero-cost when empty)
     /// Named clearance/clash assertions between part groups, re-measured by
@@ -1915,6 +1925,91 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub timeline: Option<animation::Timeline>,
+
+    // Hardware rollup (optional, zero-cost when empty)
+    /// Off-the-shelf hardware contributed by the geometry itself — every
+    /// fastener form placed in the model emits a line here, so a BOM is
+    /// derived from what was actually modeled instead of being tallied by
+    /// hand. Rolled up (deduplicated by `catalog_id`/`spec`) by BOM tooling.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hardware: Vec<HardwareLine>,
+
+    // Provenance (optional, zero-cost when absent)
+    /// The authored source this document was evaluated from, when it came
+    /// from one. Lets a document say what made it, so a session and the file
+    /// it came from can be compared instead of silently drifting apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub source: Option<DocumentSource>,
+}
+
+/// One off-the-shelf hardware item required by the modeled geometry.
+///
+/// Emitted by the loon fastener forms (`bolt`, `bolt-circle`, …) at convert
+/// time: each placed fastener — plus any washers and nuts in its stack —
+/// contributes a line. Quantities already account for enclosing patterns, so
+/// a 6-bolt `bolt-circle` emits `qty: 6`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct HardwareLine {
+    /// Mechanical-catalog id (`search_mechanical_parts`), e.g. `screw.m4-shcs`.
+    /// `None` when the modeled item has no catalog entry yet — the line still
+    /// carries `spec` so it can be sourced manually.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub catalog_id: Option<String>,
+    /// Designation as modeled, e.g. `"M4x12 SHCS"`, `"M4 washer"`.
+    pub spec: String,
+    /// Number of these required by the geometry.
+    pub qty: u32,
+    /// How far the head stands proud of the mating face, in mm. `0.0` for a
+    /// countersunk head sitting flush. Lets a clearance check reason about
+    /// heads without re-deriving them from the catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub head_protrusion_mm: Option<f64>,
+}
+
+/// The authored source a [`Document`] was evaluated from.
+///
+/// A document evaluated from loon used to discard its source immediately, so
+/// the authored form was unrecoverable and a session could diverge from the
+/// `.loon` file that produced it with nothing detecting it. Carrying the
+/// source (and, when it came from disk, the path plus a content hash) makes
+/// that divergence observable: re-hash the file and compare, or check
+/// `diverged` for incremental IR mutations that can't round-trip back to
+/// source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct DocumentSource {
+    /// Source language — currently always `"loon"`.
+    pub language: String,
+    /// The source text, exactly as authored.
+    pub text: String,
+    /// Modules `[use ...]` resolved against, by value.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub modules: HashMap<String, String>,
+    /// Server-side directory modules were read from, when one was used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub base_dir: Option<String>,
+    /// Path the source was read from, when the document is *of* a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub path: Option<String>,
+    /// SHA-256 (hex) of `text`, for comparing against the file on disk.
+    pub hash: String,
+    /// True once the document has been mutated by an operation that cannot
+    /// round-trip back to `text` (incremental create/update/delete). The
+    /// source is then a record of the document's origin, not its current
+    /// state.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub diverged: bool,
+    /// Tool names that diverged the document, in order, capped at a handful.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diverged_by: Vec<String>,
 }
 
 /// A named minimum-clearance assertion between two groups of parts.
@@ -1942,6 +2037,34 @@ pub struct ClearanceSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub allow_contact: Option<bool>,
+    /// Optional range-of-motion sweep: the assertion is evaluated at every
+    /// pose on the grid these axes span, and holds only if it holds at the
+    /// *worst* pose. Without this a clearance is a single-pose snapshot —
+    /// the pose the assembly happened to be authored in, which is often the
+    /// one pose that clears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub sweep: Option<Vec<JointSweep>>,
+}
+
+/// One axis of a range-of-motion sweep: a joint driven from `from` to `to`
+/// in `steps` intervals (`steps + 1` sampled states, endpoints included).
+///
+/// Multiple axes form a Cartesian grid, so a two-joint sweep at 24 steps
+/// each is 625 poses — callers are responsible for keeping the product
+/// sane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct JointSweep {
+    /// Joint id (or joint name) to drive.
+    pub joint: String,
+    /// Start of the range, in the joint's own units (degrees or mm).
+    pub from: f64,
+    /// End of the range, in the joint's own units.
+    pub to: f64,
+    /// Number of intervals; `steps + 1` states are sampled.
+    pub steps: u32,
 }
 
 /// A persisted solver study for the unified Analyze mode (#592).
@@ -2122,11 +2245,14 @@ impl Default for Document {
             molecule: None,
             parameters: HashMap::new(),
             bindings: Bindings::new(),
+            datums: HashMap::new(),
             clearance_specs: Vec::new(),
             constraints: Vec::new(),
             analysis_studies: Vec::new(),
             drawing: None,
             timeline: None,
+            hardware: Vec::new(),
+            source: None,
         }
     }
 }

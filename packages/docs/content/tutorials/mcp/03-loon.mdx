@@ -89,6 +89,13 @@ Four operations create the basic solids. All dimensions are in millimeters, usin
 [rotate 0 0 45 child]    ; Euler angles in degrees
 [scale 2 1 1 child]      ; scale factors
 
+[mirror 0 0 0 1 0 0 child] ; reflect across a plane (origin point, normal)
+[mirror-x child]           ; sugar: mirror through the origin, negating x
+[mirror-y child]           ; …and y, [mirror-z child] for z
+
+[mirror-pattern-x child]   ; child ∪ its mirror image — a left/right pair
+[quad-pattern child]       ; 4-fold: mirrored in X and Y
+
 [fillet 2 child]          ; round all edges
 [chamfer 1 child]         ; bevel all edges
 [shell 2 child]           ; hollow with wall thickness

@@ -21,7 +21,7 @@ pub mod diff;
 pub mod evaluate;
 pub mod kinematics;
 pub mod pcb_preview;
-pub mod resolve;
+
 pub mod validate;
 
 use std::collections::HashMap;
@@ -33,8 +33,8 @@ use vcad_kernel::Solid;
 // Re-export main entry points
 pub use evaluate::{evaluate_document, evaluate_document_with_sheet_metal, evaluate_node};
 pub use kinematics::solve_forward_kinematics;
-pub use resolve::{resolve_document, resolve_document_cloned, ResolvePatchError};
 pub use validate::validate_document;
+pub use vcad_ir::resolve::{self, resolve_document, resolve_document_cloned, ResolvePatchError};
 
 /// Platform-agnostic clock for timing instrumentation.
 ///

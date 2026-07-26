@@ -51,6 +51,86 @@ Use `let` bindings to give names to intermediate results. This produces a readab
 
 **Guideline:** Name every significant intermediate result. Avoid deeply nested expressions with more than 2-3 levels — use `let` to flatten them.
 
+`let` names geometry for readability, and it is inlined at evaluation. For a
+*dimension* you expect to change later, use `defparam` instead — see
+[Parameters That Survive](#pattern-parameters-that-survive).
+
+## Pattern: Parameters That Survive
+
+A `let` binding is inlined during evaluation. The document that comes out holds
+only the arithmetic result, so a value named `pitch_axis_x` in the source is an
+anonymous `310.0` afterwards — and moving it means finding and editing every
+literal that was derived from it.
+
+`defparam` declares a value that survives into the document as a named
+parameter. Afterwards it can be driven with
+[`set_parameters`](/reference/mcp/set-parameters) and differentiated with
+`parameter_gradient`, without re-authoring the source.
+
+```lisp
+[defparam pitch_axis_x 310.0 :unit "mm" :min 280 :max 340]
+[defparam wall "pitch_axis_x * 0.02"]   ; derived — a formula over other parameters
+
+[let leg [fn [side] [translate [* side pitch_axis_x] 0 0 [cube 20 20 wall]]]]
+[root [union [leg 1] [leg -1]] "aluminum"]
+```
+
+Setting `pitch_axis_x` to 315 now moves both legs — including the mirrored one,
+with its sign preserved.
+
+Names must be identifier-safe: letters, digits and underscores. A dash reads as
+subtraction inside a formula, so `femur-inner` is rejected with a suggestion
+rather than silently meaning something else.
+
+**How intent is recovered.** A parameter reaches geometry through arbitrary
+loon code, so vcad evaluates the program at the declared values and again with
+each parameter nudged, and reads the relationship off the difference. The
+recovered formulas are then re-checked against a fresh evaluation at a point
+that was not used to fit them. Anything that does not reproduce the program's
+own answer — a field that depends on a parameter non-linearly, a parameter that
+changes how many nodes exist — keeps its literal and is reported as a warning.
+The geometry is correct either way; the warning tells you which knob will not
+move which part, and why.
+
+## Pattern: Datums Instead of Shared Literals
+
+When two parts sit against the same plane, writing that plane's coordinate into
+both is how they come to disagree. A datum makes it one named entity.
+
+```lisp
+[datum-plane "carrier_face" y 140.0]
+
+[root [union
+        [translate 0 [datum "carrier_face"] 0 [cube 20 5 5]]
+        [translate 0 [datum+ "carrier_face" 5] 0 [cube 20 5 5]]] "aluminum"]
+```
+
+`[datum+ "name" d]` reads "d millimetres outboard of that face". There is also
+`datum-axis` and `datum-point`, whose components are read with `datum-x`,
+`datum-y`, `datum-z`. Declaring one name twice with different geometry is an
+error.
+
+## Pattern: Stacks for Lateral Packing
+
+A run of parts butting against each other is usually written as a table in a
+comment and a column of literals in the model. `stack` makes the table the
+model:
+
+```lisp
+[stack y "leg" 131.0
+  [lane "femur_inner" 5.0]
+  [gap  "idler_run"   1.0]   ; a running clearance, not an arbitrary number
+  [lane "idler_boss"  3.0]
+  [lane "carrier"     5.0]
+  [lane "actuator"   37.0]]
+```
+
+Each lane boundary becomes a datum plane and a derived parameter —
+`leg_femur_inner_lo` / `_hi`, `leg_idler_boss_lo` / `_hi`, … through `leg_end`
+at the outer face. The knobs are the origin, each lane thickness
+(`leg_carrier_t`) and each gap (`leg_idler_run`); opening a clearance by 1 mm
+slides everything outboard of it and nothing inboard.
+
 ## Pattern: pipe for Sequential Operations
 
 When a single body passes through a chain of transforms and features, `pipe` is more readable than nested `let` bindings or deep nesting.

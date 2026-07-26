@@ -92,6 +92,30 @@ pub fn loft(profiles: &[SketchProfile], options: LoftOptions) -> Result<BRepSoli
         }
     }
 
+    // Canonicalize the section winding before any face is built. The ruled
+    // builder below assumes each section is wound CCW as seen from the
+    // *previous* section — i.e. the loop's area normal points along the
+    // stacking direction. Sections described on a frame of the opposite
+    // handedness violate that and produced a watertight, correctly shaped,
+    // inside-out solid: negative volume, renders identically to a good one,
+    // and silently corrupts every downstream boolean and mass property.
+    // Reversing the traversal moves no geometry, so the caller still gets
+    // exactly the solid they asked for.
+    let centroid = |p: &SketchProfile| {
+        let pts = p.vertices_3d();
+        let n = pts.len() as f64;
+        pts.iter()
+            .fold(Vec3::zeros(), |acc, q| acc + (q - Point3::origin()))
+            / n
+    };
+    let stack = centroid(&profiles[1]) - centroid(&profiles[0]);
+    if profiles[0].loop_area_normal().dot(stack) < 0.0 {
+        let flipped: Vec<SketchProfile> = profiles.iter().map(|p| p.reversed()).collect();
+        return match options.mode {
+            LoftMode::Ruled | LoftMode::Smooth => loft_ruled(&flipped, options.closed),
+        };
+    }
+
     match options.mode {
         LoftMode::Ruled => loft_ruled(profiles, options.closed),
         LoftMode::Smooth => {
@@ -323,6 +347,44 @@ mod tests {
 
     fn create_circle_profile(origin: Point3, radius: f64, n_arcs: u32) -> SketchProfile {
         SketchProfile::circle(origin, Vec3::z(), radius, n_arcs)
+    }
+
+    fn signed_volume(solid: &BRepSolid) -> f64 {
+        let mesh = vcad_kernel_tessellate::tessellate_brep(solid, 32);
+        let v = &mesh.vertices;
+        let mut vol = 0.0;
+        for tri in mesh.indices.chunks(3) {
+            let (a, b, c) = (
+                tri[0] as usize * 3,
+                tri[1] as usize * 3,
+                tri[2] as usize * 3,
+            );
+            let p0 = [v[a] as f64, v[a + 1] as f64, v[a + 2] as f64];
+            let p1 = [v[b] as f64, v[b + 1] as f64, v[b + 2] as f64];
+            let p2 = [v[c] as f64, v[c + 1] as f64, v[c + 2] as f64];
+            vol += p0[0] * (p1[1] * p2[2] - p2[1] * p1[2])
+                - p1[0] * (p0[1] * p2[2] - p2[1] * p0[2])
+                + p2[0] * (p0[1] * p1[2] - p1[1] * p0[2]);
+        }
+        vol / 6.0
+    }
+
+    /// Loft's flavour of the silent-inversion trap: the section profiles
+    /// described on frames of opposite handedness. The result must be
+    /// positively wound either way (an inverted solid renders identically
+    /// and only shows up downstream, in a boolean or a mass property).
+    #[test]
+    fn loft_is_positive_volume_for_either_frame_handedness() {
+        for (x_dir, y_dir) in [(Vec3::x(), Vec3::y()), (Vec3::y(), Vec3::x())] {
+            let p1 = SketchProfile::rectangle(Point3::origin(), x_dir, y_dir, 10.0, 10.0);
+            let p2 =
+                SketchProfile::rectangle(Point3::new(0.0, 0.0, 20.0), x_dir, y_dir, 10.0, 10.0);
+            let vol = signed_volume(&loft(&[p1, p2], LoftOptions::default()).unwrap());
+            assert!(
+                (vol - 2000.0).abs() < 1.0,
+                "frame ({x_dir:?},{y_dir:?}): expected +2000, got {vol}"
+            );
+        }
     }
 
     #[test]
