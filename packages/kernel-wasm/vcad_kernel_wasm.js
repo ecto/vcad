@@ -5937,6 +5937,32 @@ export function feaAnalyzeMesh(spec_json, options_json, positions, indices) {
 }
 
 /**
+ * Closed-form check of a prismatic member: exact section properties,
+ * beam bending with the Timoshenko shear term, Bredt thin-wall torsion (or
+ * the Saint-Venant series for solid rectangles), and Euler buckling — with
+ * the same fail-closed applicability gating and predicted-basis claims the
+ * lattice route carries.
+ *
+ * This is the answer for sheet-metal and tube-frame members, where the
+ * lattice pitch cannot resolve the wall at any affordable resolution. For a
+ * constant cross-section it is not a fallback: it is the more accurate
+ * number, and it costs microseconds.
+ *
+ * `case_json` is a `vcad_kernel_fea::section::BeamCase`.
+ * @param {string} case_json
+ * @returns {any}
+ */
+export function feaCheckBeam(case_json) {
+    const ptr0 = passStringToWasm0(case_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.feaCheckBeam(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Generate a 3MF file from mesh data.
  *
  * Returns the 3MF file as a byte array suitable for download or upload to a printer.
@@ -10156,12 +10182,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3734, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3735, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3756, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3757, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3759, function: Function { arguments: [Externref], shim_idx: 3760, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3781, function: Function { arguments: [Externref], shim_idx: 3782, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
