@@ -837,11 +837,10 @@ pub extern "C" fn vcad_scene_raytrace_gpu(
             width,
             height,
             None,
-            None,
             GpuRenderState::new(1),
         ));
         match result {
-            Ok((pixels, _accum, _ao)) if pixels.len() == (width * height * 4) as usize => {
+            Ok((pixels, _accum)) if pixels.len() == (width * height * 4) as usize => {
                 Box::into_raw(Box::new(VcadImage {
                     pixels,
                     width,
