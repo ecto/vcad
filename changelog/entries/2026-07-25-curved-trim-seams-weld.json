@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-curved-trim-seams-weld",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "Bores and cut curved faces close their seams",
+  "summary": "A through-hole left the shell open along the bore wall — visible as hairline cracks and unusable for 3D print or STL export; bores, holed plates and cut fillet corners now come out watertight.",
+  "features": ["kernel", "booleans", "tessellation", "export"],
+  "mcpTools": ["create_cad_loon", "inspect_cad", "export_cad"]
+}
