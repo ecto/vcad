@@ -243,9 +243,19 @@ export function RayTracedViewportSync() {
           // dropped and a brushed or lacquered part would shade differently
           // here than under `vcad-render --photoreal`. setMaterialFromDef runs
           // the same Rust derivation both renderers share.
+          // Fall back rather than losing the material outright: if the shape
+          // ever drifts from the Rust MaterialDef the deserialize throws, and
+          // dropping to setMaterial costs only the extended fields.
+          let applied = false;
           if (typeof rt.setMaterialFromDef === "function") {
-            rt.setMaterialFromDef(JSON.stringify(mat), null);
-          } else {
+            try {
+              rt.setMaterialFromDef(JSON.stringify(mat), null);
+              applied = true;
+            } catch (e) {
+              logger.debug("gpu", `setMaterialFromDef rejected the definition, falling back: ${e}`);
+            }
+          }
+          if (!applied) {
             rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
           }
         } catch (e) {
