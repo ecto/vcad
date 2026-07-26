@@ -90,6 +90,40 @@ A circular pattern turns one hole into a bolt circle in a single operation:
 
 ![Flange with a six-hole bolt circle](/assets/kernel/patterns.jpg)
 
+### Mirror and Symmetry
+
+`Mirror` reflects a solid across an arbitrary plane — `[mirror ox oy oz nx ny nz s]` — but the overwhelmingly common case is a principal plane through the origin, so the stdlib provides `[mirror-x s]`, `[mirror-y s]`, and `[mirror-z s]`, each negating exactly one coordinate. Never hand-mirror geometry by negating coordinates in a parametric function: the sign rules for extruded plates and rotated cylinders are subtle (a plate extruded along −Y needs its offset flipped *and* its thickness added back), and a mistake is silent.
+
+Symmetric patterns go one step further and union a solid with its own mirror image, so the two halves are one expression and cannot drift apart: `[mirror-pattern nx ny nz s]` (with `[mirror-pattern-x s]` / `-y` / `-z` sugar) for a left/right pair, and `[quad-pattern s]` for the 4-fold X-and-Y case that describes a quadruped's legs, a 4-post frame, and most vehicle chassis. One leg becomes four:
+
+```lisp
+[let leg   [translate 60.0 40.0 0.0 [union [sphere 8.0] [cylinder 6.0 40.0]]]]
+[let legs  [quad-pattern leg]]
+[let deck  [translate -70.0 -50.0 40.0 [cube 140.0 100.0 8.0]]]
+[root [union deck legs] "aluminum"]
+```
+
+![A deck on four mirrored legs, generated from a single leg by quad-pattern](/assets/kernel/mirror-symmetry.jpg)
+
+The invariant worth asserting on any mirrored assembly: the centre of mass must lie on the mirror plane. `crates/vcad-eval/tests/mirror_symmetry.rs` checks exactly that, and it catches every mirroring sign error in one measurement.
+
+Assemblies mirror too, and that is where the sign rules actually bite — a joint anchor has to flip *together with its axis*. Under a reflection `M`, conjugating a rotation gives `M · R(a, θ) · M = R(−M a, θ)`, so a hinge keeps driving its mirrored child through the same state and the same limits only if its axis becomes `−M a`: **the component along the mirror normal keeps its sign and the other two flip**. Mirroring across X therefore leaves an X-axis hinge alone and negates a Y- or Z-axis hinge. A prismatic axis is a displacement rather than a pseudovector, so it transforms the other way, `a' = M a`.
+
+`[mirror-group-x "-r" side]` (and `-y` / `-z`) encodes both rules. Author one side as an assembly and mirror it: parts are reflected geometrically, instances take the mirrored placement and point at the mirrored part, joint anchors mirror, axes follow the rules above, and a joint endpoint naming an instance *outside* the group — a shared body, the ground — keeps its name so both sides hang off the same parent. `[assembly-join chassis mirrored]` splices the result back into the machine.
+
+```lisp
+[let one-side
+  [assembly
+    #[[part "femur" femur-solid "abs"]]
+    #[[instance "leg" "femur" 25.0 12.0 0.0]]
+    #[[revolute-joint "hip" 0.0 1.0 0.0 -90.0 90.0
+        "body-i" 25.0 12.0 0.0 "leg" 0.0 0.0 0.0]]
+    "body-i"]]
+[assembly-join chassis [mirror-group-x "-r" one-side]]
+```
+
+`crates/vcad-eval/tests/assembly_symmetry.rs` drives both hips to the same state and asserts the whole assembly's centre of mass stays on the plane — with a deliberately chiral leg, so a copy that is translated but not reflected fails too.
+
 ### Sketches and Constraints
 
 `vcad-kernel-sketch` models 2D profiles (lines, arcs) on arbitrary planes, and `vcad-kernel-constraints` solves geometric constraints — coincident, horizontal/vertical, parallel, perpendicular, tangent, distance, length, radius, angle, equal-length, fixed — with a Levenberg-Marquardt solver using adaptive damping. Sketches feed every profile-based operation below.

@@ -53,9 +53,9 @@ enum Commands {
         template: String,
     },
 
-    /// Export a .vcad file to another format
+    /// Export a .vcad (or .loon source) file to another format
     Export {
-        /// Input .vcad file
+        /// Input .vcad or .loon file
         input: PathBuf,
         /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf)
         output: PathBuf,
@@ -176,9 +176,9 @@ enum Commands {
         json: bool,
     },
 
-    /// Display information about a .vcad file
+    /// Display information about a .vcad (or .loon source) file
     Info {
-        /// Path to the .vcad file
+        /// Path to the .vcad or .loon file
         file: PathBuf,
     },
 
@@ -546,7 +546,22 @@ fn run_logout() -> Result<()> {
     Ok(())
 }
 
+/// Does this path name loon source rather than `.vcad` IR? Loon inputs are
+/// evaluated on the way in, so the CLI works on source, not build artifacts.
+fn is_loon(path: &std::path::Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("loon")
+}
+
+/// Evaluate a `.loon` file to a document, resolving `[use ...]` module
+/// imports against the file's own directory.
+fn eval_loon(path: &std::path::Path) -> Result<vcad_ir::Document> {
+    vcad_loon::eval_vcad_file(path).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 fn load_doc(path: &std::path::Path) -> Result<vcad_ir::Document> {
+    if is_loon(path) {
+        return eval_loon(path);
+    }
     let json = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
     vcad_ir::Document::from_json(&json)
@@ -599,8 +614,7 @@ fn run_merge(
 fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
     use std::fs;
 
-    let json = fs::read_to_string(input)?;
-    let doc = vcad_ir::Document::from_json(&json)?;
+    let doc = load_vcad_document(input)?;
 
     let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext.eq_ignore_ascii_case("loon") {
@@ -859,9 +873,14 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 }
 
 /// Read a .vcad file and return the materialized IR document.
-/// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes.
+/// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes. A `.loon` input is
+/// evaluated to a document first.
 fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
     use std::fs;
+
+    if is_loon(file) {
+        return eval_loon(file);
+    }
     use vcad_app::materializer::materialize;
     use vcad_app::migrate::{detect_format, FileFormat};
     use vcad_crdt::CrdtDocument;

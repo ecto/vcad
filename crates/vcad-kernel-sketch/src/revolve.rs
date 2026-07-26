@@ -802,6 +802,46 @@ mod tests {
         }
     }
 
+    /// Revolve's sibling of the extrude orientation trap: the same 3D
+    /// profile described on frames of opposite handedness must produce the
+    /// same *positively* wound solid, whichever way the frame normal points
+    /// relative to the axis. (Revolve derives its outward sense from the
+    /// profile's own shoelace, so this holds — the test pins it.)
+    #[test]
+    fn revolve_is_positive_volume_for_either_frame_handedness() {
+        let expected = PI * (8.0 * 8.0 - 5.0 * 5.0) * 10.0 / 4.0;
+        // Same 3D rectangle (r ∈ [5,8], z ∈ [0,10]) described on frames of
+        // opposite handedness: (X,Z) → normal −Y, (Z,X) → normal +Y.
+        for (x_dir, y_dir, w, h) in [
+            (Vec3::x(), Vec3::z(), 3.0, 10.0),
+            (Vec3::z(), Vec3::x(), 10.0, 3.0),
+        ] {
+            let profile = SketchProfile::rectangle(Point3::new(5.0, 0.0, 0.0), x_dir, y_dir, w, h);
+            let solid = revolve(&profile, Point3::origin(), Vec3::z(), PI / 2.0).unwrap();
+            let mesh = vcad_kernel_tessellate::tessellate_brep(&solid, 64);
+            let verts = &mesh.vertices;
+            let mut vol = 0.0;
+            for tri in mesh.indices.chunks(3) {
+                let (i0, i1, i2) = (
+                    tri[0] as usize * 3,
+                    tri[1] as usize * 3,
+                    tri[2] as usize * 3,
+                );
+                let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
+                let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
+                let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
+                vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
+                    - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+                    + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
+            }
+            vol /= 6.0;
+            assert!(
+                vol > expected * 0.5 && vol < expected * 1.2,
+                "frame ({x_dir:?},{y_dir:?}): expected ~+{expected:.1}, got {vol:.1}"
+            );
+        }
+    }
+
     fn compute_mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
         let verts = &mesh.vertices;
         let indices = &mesh.indices;

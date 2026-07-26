@@ -1923,6 +1923,14 @@ pub struct Document {
     /// hand. Rolled up (deduplicated by `catalog_id`/`spec`) by BOM tooling.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hardware: Vec<HardwareLine>,
+
+    // Provenance (optional, zero-cost when absent)
+    /// The authored source this document was evaluated from, when it came
+    /// from one. Lets a document say what made it, so a session and the file
+    /// it came from can be compared instead of silently drifting apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub source: Option<DocumentSource>,
 }
 
 /// One off-the-shelf hardware item required by the modeled geometry.
@@ -1953,6 +1961,47 @@ pub struct HardwareLine {
     pub head_protrusion_mm: Option<f64>,
 }
 
+/// The authored source a [`Document`] was evaluated from.
+///
+/// A document evaluated from loon used to discard its source immediately, so
+/// the authored form was unrecoverable and a session could diverge from the
+/// `.loon` file that produced it with nothing detecting it. Carrying the
+/// source (and, when it came from disk, the path plus a content hash) makes
+/// that divergence observable: re-hash the file and compare, or check
+/// `diverged` for incremental IR mutations that can't round-trip back to
+/// source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct DocumentSource {
+    /// Source language — currently always `"loon"`.
+    pub language: String,
+    /// The source text, exactly as authored.
+    pub text: String,
+    /// Modules `[use ...]` resolved against, by value.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub modules: HashMap<String, String>,
+    /// Server-side directory modules were read from, when one was used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub base_dir: Option<String>,
+    /// Path the source was read from, when the document is *of* a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub path: Option<String>,
+    /// SHA-256 (hex) of `text`, for comparing against the file on disk.
+    pub hash: String,
+    /// True once the document has been mutated by an operation that cannot
+    /// round-trip back to `text` (incremental create/update/delete). The
+    /// source is then a record of the document's origin, not its current
+    /// state.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub diverged: bool,
+    /// Tool names that diverged the document, in order, capped at a handful.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diverged_by: Vec<String>,
+}
+
 /// A named minimum-clearance assertion between two groups of parts.
 ///
 /// Persisted on the document so safety-critical distances (rotor air gaps,
@@ -1978,6 +2027,34 @@ pub struct ClearanceSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub allow_contact: Option<bool>,
+    /// Optional range-of-motion sweep: the assertion is evaluated at every
+    /// pose on the grid these axes span, and holds only if it holds at the
+    /// *worst* pose. Without this a clearance is a single-pose snapshot —
+    /// the pose the assembly happened to be authored in, which is often the
+    /// one pose that clears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub sweep: Option<Vec<JointSweep>>,
+}
+
+/// One axis of a range-of-motion sweep: a joint driven from `from` to `to`
+/// in `steps` intervals (`steps + 1` sampled states, endpoints included).
+///
+/// Multiple axes form a Cartesian grid, so a two-joint sweep at 24 steps
+/// each is 625 poses — callers are responsible for keeping the product
+/// sane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct JointSweep {
+    /// Joint id (or joint name) to drive.
+    pub joint: String,
+    /// Start of the range, in the joint's own units (degrees or mm).
+    pub from: f64,
+    /// End of the range, in the joint's own units.
+    pub to: f64,
+    /// Number of intervals; `steps + 1` states are sampled.
+    pub steps: u32,
 }
 
 /// A persisted solver study for the unified Analyze mode (#592).
@@ -2164,6 +2241,7 @@ impl Default for Document {
             drawing: None,
             timeline: None,
             hardware: Vec::new(),
+            source: None,
         }
     }
 }

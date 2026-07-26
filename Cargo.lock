@@ -6956,6 +6956,7 @@ dependencies = [
  "vcad-kernel-sketch",
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
+ "vcad-loon",
  "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
