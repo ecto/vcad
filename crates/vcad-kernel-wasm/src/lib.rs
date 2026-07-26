@@ -8977,6 +8977,18 @@ struct EmSimOptions {
     ny: usize,
     tol: f64,
     max_sweeps: usize,
+    /// Nonlinear (saturable-iron) outer loop: iteration cap. Independent
+    /// of `max_sweeps`, which caps the inner SOR solve.
+    picard_max_iters: usize,
+    /// Nonlinear outer loop: convergence tolerance on the largest
+    /// relative reluctivity update. Independent of `tol`.
+    picard_tol: f64,
+    /// Nonlinear outer loop: starting (and maximum) under-relaxation, in
+    /// (0, 1]. Lower it for strongly saturated devices.
+    picard_relax: f64,
+    /// Nonlinear outer loop: back the relaxation off when the residual
+    /// stops falling. Default true.
+    picard_adaptive: bool,
     /// Axisym: which coil the inductance claim is priced for.
     drive_coil: usize,
     /// Axisym: also emit force claims for this coil.
@@ -8991,11 +9003,16 @@ struct EmSimOptions {
 
 impl Default for EmSimOptions {
     fn default() -> Self {
+        let p = vcad_kernel::vcad_kernel_em::axisym::PicardOptions::default();
         Self {
             nx: 81,
             ny: 81,
             tol: 1e-8,
             max_sweeps: 200_000,
+            picard_max_iters: p.max_iters,
+            picard_tol: p.tol,
+            picard_relax: p.relax,
+            picard_adaptive: p.adaptive,
             drive_coil: 0,
             force_coil: None,
             stress_probe: None,
@@ -9020,6 +9037,48 @@ struct WasmEmSim {
     qois: serde_json::Value,
     claim_sets: Vec<vcad_kernel::vcad_kernel_em::receipt::ClaimSet>,
     receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+}
+
+/// Map a nonlinear-solve failure to an error that carries the Picard
+/// report as data alongside the prose, so a caller can judge how far off
+/// the material state was rather than only reading that it failed.
+fn em_nonlinear_err(e: vcad_kernel::vcad_kernel_em::grid::SolveError) -> JsError {
+    match e.picard_report() {
+        Some(r) => JsError::new(&format!(
+            "{e} | picard_report: {{\"iterations\": {}, \"max_rel_delta\": {:e}, \
+             \"converged\": false}}",
+            r.iterations, r.max_rel_delta
+        )),
+        None => JsError::new(&e.to_string()),
+    }
+}
+
+/// Nonlinear outer-loop options, validated. The knobs are independent of
+/// the SOR ones — a caller fighting a saturating device needs these.
+fn em_picard_options(
+    opts: &EmSimOptions,
+) -> Result<vcad_kernel::vcad_kernel_em::axisym::PicardOptions, JsError> {
+    if !(opts.picard_relax > 0.0 && opts.picard_relax <= 1.0) {
+        return Err(JsError::new(&format!(
+            "picard_relax must be in (0, 1] (got {})",
+            opts.picard_relax
+        )));
+    }
+    if opts.picard_max_iters == 0 {
+        return Err(JsError::new("picard_max_iters must be at least 1"));
+    }
+    if opts.picard_tol <= 0.0 {
+        return Err(JsError::new(&format!(
+            "picard_tol must be positive (got {})",
+            opts.picard_tol
+        )));
+    }
+    Ok(vcad_kernel::vcad_kernel_em::axisym::PicardOptions {
+        max_iters: opts.picard_max_iters,
+        tol: opts.picard_tol,
+        relax: opts.picard_relax,
+        adaptive: opts.picard_adaptive,
+    })
 }
 
 fn em_solve_options(opts: &EmSimOptions) -> vcad_kernel::vcad_kernel_em::grid::SolveOptions {
@@ -9086,10 +9145,10 @@ pub fn em_simulate(
             }
             let nonlinear = dev.materials.iter().any(|m| m.sat.is_some());
             let (sol, picard) = if nonlinear {
-                let popts = em::axisym::PicardOptions::default();
+                let popts = em_picard_options(&opts)?;
                 let (sol, report) = dev
                     .solve_nonlinear(opts.nx, opts.ny, &sopts, &popts)
-                    .map_err(|e| JsError::new(&e.to_string()))?;
+                    .map_err(em_nonlinear_err)?;
                 (
                     sol,
                     Some(WasmEmPicard {
@@ -9164,10 +9223,10 @@ pub fn em_simulate(
             })?;
             let nonlinear = dev.materials.iter().any(|m| m.sat.is_some());
             let (sol, picard) = if nonlinear {
-                let popts = em::axisym::PicardOptions::default();
+                let popts = em_picard_options(&opts)?;
                 let (sol, report) = dev
                     .solve_nonlinear(opts.nx, opts.ny, &sopts, &popts)
-                    .map_err(|e| JsError::new(&e.to_string()))?;
+                    .map_err(em_nonlinear_err)?;
                 (
                     sol,
                     Some(WasmEmPicard {
