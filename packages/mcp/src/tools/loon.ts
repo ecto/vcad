@@ -201,17 +201,19 @@ export const toolDefs: ToolDef[] = [
     pack: null,
     description:
       "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\n" +
-      "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\n" +
+      "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h], [torus major-r minor-r], [wedge x y z], [prism sides radius height]\n" +
       "Booleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\n" +
-      "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\n" +
+      "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s], [mirror ox oy oz nx ny nz s] (plane through the origin point with that normal) — plus the axis sugar [mirror-x s] / [mirror-y s] / [mirror-z s], which mirror through the origin, negating that one coordinate. NEVER hand-mirror by negating coordinates; use these.\n" +
       "Features: [fillet r s], [chamfer d s], [shell t s]\n" +
       "Patterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\n" +
+      "Symmetric patterns (subject-last): [mirror-pattern nx ny nz s] and its sugar [mirror-pattern-x s] / -y / -z union a solid with its mirror image (a left/right pair in one expression, so the halves can't drift apart); [quad-pattern s] is the 4-fold X-and-Y version — a quadruped's legs, a 4-post frame, a vehicle chassis\n" +
       "Sketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\n" +
-      "Sketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]]\n" +
+      "Sketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]], [loft-closed #[sk1 sk2 …]]\n" +
       "Assemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\n" +
+      "Assembly symmetry: author ONE side as an assembly, then [mirror-group-x \"-r\" side] (or -y / -z) returns it plus a mirrored, suffixed copy — parts reflected, placements and joint anchors mirrored, and joint axes flipped by the correct rule (a hinge across its own mirror normal keeps its axis; the other two flip), so the same joint state drives both sides symmetrically. Splice it back with [assembly-join chassis mirrored]. NEVER hand-mirror an assembly.\n" +
       "Pipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\n" +
       "Let bindings: [let body [cube 50 30 5]]\n" +
-      "Scene: [root solid \"material-name\"]\n" +
+      "Scene: [root solid \"material-name\"], with [material name r g b metallic roughness] to define one\n" +
       "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
     inputSchema: createCadLoonSchema,
     handler: async (args, ctx) => {
