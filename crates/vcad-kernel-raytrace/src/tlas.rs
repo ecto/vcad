@@ -106,10 +106,15 @@ impl Instance {
         Some((Ray::new(origin, dir), len))
     }
 
-    /// Closest hit on this instance nearer than `t_max` (world units).
-    fn trace_closest(&self, ray: &Ray, t_max: f64) -> Option<InstanceHit> {
+    /// Closest hit on this instance inside `(t_min, t_max)` (world units).
+    ///
+    /// Both bounds scale by `len` on the way into local space, which is the
+    /// whole reason `t_world = t_local / len` holds on the way out.
+    fn trace_closest(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<InstanceHit> {
         let (local, len) = self.local_ray(ray)?;
-        let local_hit = self.blas.trace_closest_limit(&local, t_max * len)?;
+        let local_hit = self
+            .blas
+            .trace_closest_range(&local, t_min * len, t_max * len)?;
 
         let t = local_hit.t / len;
         let normal = self
@@ -119,16 +124,26 @@ impl Instance {
             .map(Dir3::new_unchecked)
             .unwrap_or(local_hit.normal);
 
+        // `dpdu` is a *tangent*, not a normal: it transforms by the linear
+        // part of the object→world matrix, not its inverse transpose. Dropping
+        // it here would silently demote every anisotropic material to
+        // isotropic, since the shading frame falls back when it is absent.
+        let dpdu = local_hit
+            .dpdu
+            .map(|v| self.to_world.apply_vec(&v))
+            .filter(|v| v.norm() > 0.0 && v.norm().is_finite());
+
         Some(InstanceHit {
-            hit: RayHit::new(t, ray.at(t), normal, local_hit.uv, local_hit.face_id),
+            hit: RayHit::new(t, ray.at(t), normal, local_hit.uv, local_hit.face_id)
+                .with_tangent(dpdu),
             payload: self.payload,
         })
     }
 
-    /// Any-hit test against this instance, in world units.
-    fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
+    /// Any-hit test against this instance over `(t_min, t_max)`, world units.
+    fn occluded(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
         match self.local_ray(ray) {
-            Some((local, len)) => self.blas.occluded(&local, t_max * len),
+            Some((local, len)) => self.blas.occluded_range(&local, t_min * len, t_max * len),
             None => false,
         }
     }
@@ -255,10 +270,20 @@ impl Tlas {
 
     /// Closest hit in the scene, in world space.
     pub fn trace_closest(&self, ray: &Ray) -> Option<InstanceHit> {
+        self.trace_closest_range(ray, 0.0, f64::INFINITY)
+    }
+
+    /// Closest hit in the scene within the open interval `(t_min, t_max)`.
+    ///
+    /// `t_min` lets a caller skip the surface a ray just left without nudging
+    /// the origin — and because it is pushed down into the BLAS rather than
+    /// applied as a post-filter, a surface hidden behind the skipped one is
+    /// still found.
+    pub fn trace_closest_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<InstanceHit> {
         let root = self.root.as_ref()?;
         let mut best: Option<InstanceHit> = None;
-        let mut best_t = f64::INFINITY;
-        self.closest_node(ray, root, &mut best, &mut best_t);
+        let mut best_t = t_max;
+        self.closest_node(ray, root, t_min, &mut best, &mut best_t);
         best
     }
 
@@ -266,13 +291,14 @@ impl Tlas {
         &self,
         ray: &Ray,
         node: &TlasNode,
+        t_min: f64,
         best: &mut Option<InstanceHit>,
         best_t: &mut f64,
     ) {
-        let Some((t_min, _)) = ray.intersect_aabb(node.aabb()) else {
+        let Some((enter, exit)) = ray.intersect_aabb(node.aabb()) else {
             return;
         };
-        if t_min >= *best_t {
+        if enter >= *best_t || exit <= t_min {
             return;
         }
 
@@ -280,7 +306,7 @@ impl Tlas {
             TlasNode::Leaf { instances, .. } => {
                 for &i in instances {
                     let inst = &self.instances[i as usize];
-                    if let Some(found) = inst.trace_closest(ray, *best_t) {
+                    if let Some(found) = inst.trace_closest(ray, t_min, *best_t) {
                         if found.hit.t < *best_t {
                             *best_t = found.hit.t;
                             *best = Some(found);
@@ -301,10 +327,10 @@ impl Tlas {
                     (None, None) => (None, None),
                 };
                 if let Some(n) = first {
-                    self.closest_node(ray, n, best, best_t);
+                    self.closest_node(ray, n, t_min, best, best_t);
                 }
                 if let Some(n) = second {
-                    self.closest_node(ray, n, best, best_t);
+                    self.closest_node(ray, n, t_min, best, best_t);
                 }
             }
         }
@@ -315,25 +341,31 @@ impl Tlas {
     /// Returns on the first blocker found, at both levels — the traversal
     /// shadow rays want, and strictly cheaper than ranking hits.
     pub fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
+        self.occluded_range(ray, 0.0, t_max)
+    }
+
+    /// Any-hit query over the open interval `(t_min, t_max)`.
+    pub fn occluded_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
         match self.root {
-            Some(ref root) => self.occluded_node(ray, root, t_max),
+            Some(ref root) => self.occluded_node(ray, root, t_min, t_max),
             None => false,
         }
     }
 
-    fn occluded_node(&self, ray: &Ray, node: &TlasNode, t_max: f64) -> bool {
-        let Some((t_min, _)) = ray.intersect_aabb(node.aabb()) else {
+    fn occluded_node(&self, ray: &Ray, node: &TlasNode, t_min: f64, t_max: f64) -> bool {
+        let Some((enter, exit)) = ray.intersect_aabb(node.aabb()) else {
             return false;
         };
-        if t_min >= t_max {
+        if enter >= t_max || exit <= t_min {
             return false;
         }
         match node {
             TlasNode::Leaf { instances, .. } => instances
                 .iter()
-                .any(|&i| self.instances[i as usize].occluded(ray, t_max)),
+                .any(|&i| self.instances[i as usize].occluded(ray, t_min, t_max)),
             TlasNode::Internal { left, right, .. } => {
-                self.occluded_node(ray, left, t_max) || self.occluded_node(ray, right, t_max)
+                self.occluded_node(ray, left, t_min, t_max)
+                    || self.occluded_node(ray, right, t_min, t_max)
             }
         }
     }
@@ -435,7 +467,7 @@ pub fn transform_from_column_major(m: &[f64]) -> Option<Transform> {
 mod tests {
     use super::*;
     use vcad_kernel_math::Vec3;
-    use vcad_kernel_primitives::{make_cube, make_sphere};
+    use vcad_kernel_primitives::{make_cube, make_cylinder, make_sphere};
 
     fn cube_blas() -> Arc<Bvh> {
         Arc::new(Bvh::build(&make_cube(10.0, 10.0, 10.0)))
@@ -577,7 +609,7 @@ mod tests {
 
                 let mut expect: Option<(f64, usize)> = None;
                 for inst in tlas.instances() {
-                    if let Some(h) = inst.trace_closest(&ray, f64::INFINITY) {
+                    if let Some(h) = inst.trace_closest(&ray, 0.0, f64::INFINITY) {
                         if expect.is_none_or(|(t, _)| h.hit.t < t) {
                             expect = Some((h.hit.t, h.payload));
                         }
@@ -616,6 +648,80 @@ mod tests {
             .instances()
             .iter()
             .all(|i| std::ptr::eq(i.blas.as_ref(), first)));
+    }
+
+    /// `t_min` must be a real interval search, not a filter applied to the
+    /// single closest hit. A ray fired through two stacked cubes with `t_min`
+    /// past the first one has to report the *second*, not report a miss.
+    #[test]
+    fn t_min_finds_the_surface_behind_the_skipped_one() {
+        let blas = cube_blas();
+        let tlas = Tlas::build(vec![
+            Instance::identity(Arc::clone(&blas), 0).unwrap(),
+            Instance::new(blas, Transform::translation(0.0, 0.0, 40.0), 1).unwrap(),
+        ]);
+
+        // Cube A spans z 0..10, cube B spans z 40..50. Ray starts at z = -5.
+        let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
+
+        // Unbounded: nearest face of A, at t = 5.
+        let near = tlas.trace_closest(&ray).unwrap();
+        assert!((near.hit.t - 5.0).abs() < 1e-9);
+        assert_eq!(near.payload, 0);
+
+        // Skipping past A's front face finds its back face, not a miss.
+        let mid = tlas.trace_closest_range(&ray, 5.5, f64::INFINITY).unwrap();
+        assert!((mid.hit.t - 15.0).abs() < 1e-9, "t = {}", mid.hit.t);
+        assert_eq!(mid.payload, 0);
+
+        // Skipping past A entirely crosses into the *other instance*.
+        let far = tlas.trace_closest_range(&ray, 20.0, f64::INFINITY).unwrap();
+        assert!((far.hit.t - 45.0).abs() < 1e-9, "t = {}", far.hit.t);
+        assert_eq!(far.payload, 1);
+
+        // Same rule for the any-hit path.
+        assert!(tlas.occluded_range(&ray, 0.0, f64::INFINITY));
+        assert!(tlas.occluded_range(&ray, 20.0, f64::INFINITY));
+        // Nothing lives strictly between the two cubes.
+        assert!(!tlas.occluded_range(&ray, 20.0, 40.0));
+    }
+
+    /// The anisotropic-roughness path reads `dpdu` off the hit; an instance
+    /// must carry it through (rotated into world space) rather than dropping
+    /// it, or every anisotropic material silently falls back to isotropic.
+    #[test]
+    fn instance_carries_the_surface_tangent() {
+        let solid = make_cylinder(6.0, 20.0, 0);
+        let blas = Arc::new(Bvh::build(&solid));
+
+        let ray = Ray::new(Point3::new(0.0, -50.0, 10.0), Vec3::new(0.0, 1.0, 0.0));
+        let bare = blas.trace_closest(&ray).expect("hits the cylinder");
+        assert!(
+            bare.dpdu.is_some(),
+            "precondition: the analytic surface reports a tangent"
+        );
+
+        // Identity instance: the tangent must arrive unchanged.
+        let flat = Tlas::build(vec![Instance::identity(Arc::clone(&blas), 0).unwrap()]);
+        let via = flat.trace_closest(&ray).expect("hits through the TLAS");
+        let (a, b) = (bare.dpdu.unwrap(), via.hit.dpdu.expect("tangent survives"));
+        assert!(
+            (a - b).norm() < 1e-9,
+            "identity changed the tangent: {a:?} vs {b:?}"
+        );
+
+        // Rotated instance: the tangent rotates with the geometry, so it stays
+        // perpendicular to the normal and is no longer the local one.
+        let rot = Transform::rotation_z(std::f64::consts::FRAC_PI_2);
+        let spun = Tlas::build(vec![Instance::new(blas, rot, 0).unwrap()]);
+        let hit = spun.trace_closest(&ray).expect("still hits");
+        let t = hit.hit.dpdu.expect("tangent survives rotation");
+        let n = hit.hit.normal.into_inner();
+        assert!(
+            t.normalize().dot(n).abs() < 1e-9,
+            "tangent must stay perpendicular to the normal, got {}",
+            t.normalize().dot(n)
+        );
     }
 
     #[test]

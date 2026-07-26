@@ -274,11 +274,23 @@ impl Bvh {
     /// prune subtrees a caller has already beaten — the basis of TLAS
     /// traversal, where each instance inherits the best `t` found so far.
     pub fn trace_closest_limit(&self, ray: &Ray, t_max: f64) -> Option<RayHit> {
+        self.trace_closest_range(ray, 0.0, t_max)
+    }
+
+    /// Trace a ray and return the closest hit in the open interval
+    /// `(t_min, t_max)`.
+    ///
+    /// `t_min` is how callers dodge self-intersection without nudging the ray
+    /// origin along the normal — the path tracer's convention. Note this is a
+    /// genuine interval search, not a post-filter: a hit at `t <= t_min` is
+    /// skipped and the search continues past it, so a surface hidden behind
+    /// one is still found.
+    pub fn trace_closest_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<RayHit> {
         let mut closest: Option<RayHit> = None;
         let mut closest_t = t_max;
 
         if let Some(ref root) = self.root {
-            self.trace_node_closest(ray, root, &mut closest, &mut closest_t);
+            self.trace_node_closest(ray, root, t_min, &mut closest, &mut closest_t);
         }
 
         closest
@@ -290,33 +302,40 @@ impl Bvh {
     /// [`Bvh::trace_closest`], which must find the nearest. This is the
     /// traversal shadow and occlusion rays want.
     pub fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
+        self.occluded_range(ray, 0.0, t_max)
+    }
+
+    /// Any-hit test over the open interval `(t_min, t_max)`.
+    pub fn occluded_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
         match self.root {
-            Some(ref root) => self.occluded_node(ray, root, t_max),
+            Some(ref root) => self.occluded_node(ray, root, t_min, t_max),
             None => false,
         }
     }
 
-    fn occluded_node(&self, ray: &Ray, node: &BvhNode, t_max: f64) -> bool {
-        let Some((enter, _)) = ray.intersect_aabb(node_aabb_of(node)) else {
+    fn occluded_node(&self, ray: &Ray, node: &BvhNode, t_min: f64, t_max: f64) -> bool {
+        let Some((enter, exit)) = ray.intersect_aabb(node_aabb_of(node)) else {
             return false;
         };
-        if enter >= t_max {
+        // Prune boxes wholly outside the interval on either side.
+        if enter >= t_max || exit <= t_min {
             return false;
         }
         match node {
             BvhNode::Leaf { prims, .. } => prims
                 .iter()
-                .any(|&prim| self.prim_occludes(ray, prim, t_max)),
+                .any(|&prim| self.prim_occludes(ray, prim, t_min, t_max)),
             BvhNode::Internal { left, right, .. } => {
-                self.occluded_node(ray, left, t_max) || self.occluded_node(ray, right, t_max)
+                self.occluded_node(ray, left, t_min, t_max)
+                    || self.occluded_node(ray, right, t_min, t_max)
             }
         }
     }
 
-    /// Does this primitive block the ray before `t_max`? Stops at the first
-    /// qualifying hit rather than ranking them, which is the whole point of an
-    /// any-hit query.
-    fn prim_occludes(&self, ray: &Ray, prim: u32, t_max: f64) -> bool {
+    /// Does this primitive block the ray inside `(t_min, t_max)`? Stops at the
+    /// first qualifying hit rather than ranking them, which is the whole point
+    /// of an any-hit query.
+    fn prim_occludes(&self, ray: &Ray, prim: u32, t_min: f64, t_max: f64) -> bool {
         match &self.geom {
             BvhGeom::BRep { brep, faces } => {
                 let face_id = faces[prim as usize];
@@ -324,11 +343,15 @@ impl Bvh {
                 let surface = &brep.geometry.surfaces[face.surface_index];
                 intersect_surface(ray, surface.as_ref())
                     .into_iter()
-                    .any(|hit| hit.t < t_max && point_in_face(brep, face_id, hit.uv))
+                    .any(|hit| {
+                        hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
+                    })
             }
             // A triangle is convex: at most one hit, so there is nothing to
             // short-circuit past.
-            BvhGeom::Mesh(mesh) => mesh.test(ray, prim).is_some_and(|h| h.t < t_max),
+            BvhGeom::Mesh(mesh) => mesh
+                .test(ray, prim)
+                .is_some_and(|h| h.t > t_min && h.t < t_max),
         }
     }
 
@@ -356,60 +379,57 @@ impl Bvh {
         }
     }
 
-    /// Trace a ray, keeping only the closest hit.
+    /// Trace a ray, keeping only the closest hit in `(t_min, closest_t)`.
     fn trace_node_closest(
         &self,
         ray: &Ray,
         node: &BvhNode,
+        t_min: f64,
         closest: &mut Option<RayHit>,
         closest_t: &mut f64,
     ) {
-        match node {
-            BvhNode::Leaf { aabb, prims } => {
-                if let Some((t_min, _)) = ray.intersect_aabb(aabb) {
-                    // Early out if AABB entry is beyond current closest
-                    if t_min >= *closest_t {
-                        return;
-                    }
+        let Some((enter, exit)) = ray.intersect_aabb(node_aabb_of(node)) else {
+            return;
+        };
+        // Early out if the box is beyond the current closest, or entirely
+        // behind `t_min`.
+        if enter >= *closest_t || exit <= t_min {
+            return;
+        }
 
-                    for &prim in prims {
-                        if let Some(hit) = self.test_prim_single(ray, prim) {
-                            if hit.t < *closest_t {
-                                *closest_t = hit.t;
-                                *closest = Some(hit);
-                            }
+        match node {
+            BvhNode::Leaf { prims, .. } => {
+                for &prim in prims {
+                    if let Some(hit) = self.test_prim_single(ray, prim, t_min) {
+                        if hit.t < *closest_t {
+                            *closest_t = hit.t;
+                            *closest = Some(hit);
                         }
                     }
                 }
             }
-            BvhNode::Internal { aabb, left, right } => {
-                if let Some((t_min, _)) = ray.intersect_aabb(aabb) {
-                    if t_min >= *closest_t {
-                        return;
-                    }
+            BvhNode::Internal { left, right, .. } => {
+                // Test children in order of AABB distance
+                let left_t = ray.intersect_aabb(&get_aabb(left)).map(|(t, _)| t);
+                let right_t = ray.intersect_aabb(&get_aabb(right)).map(|(t, _)| t);
 
-                    // Test children in order of AABB distance
-                    let left_t = ray.intersect_aabb(&get_aabb(left)).map(|(t, _)| t);
-                    let right_t = ray.intersect_aabb(&get_aabb(right)).map(|(t, _)| t);
-
-                    match (left_t, right_t) {
-                        (Some(lt), Some(rt)) => {
-                            if lt < rt {
-                                self.trace_node_closest(ray, left, closest, closest_t);
-                                self.trace_node_closest(ray, right, closest, closest_t);
-                            } else {
-                                self.trace_node_closest(ray, right, closest, closest_t);
-                                self.trace_node_closest(ray, left, closest, closest_t);
-                            }
+                match (left_t, right_t) {
+                    (Some(lt), Some(rt)) => {
+                        if lt < rt {
+                            self.trace_node_closest(ray, left, t_min, closest, closest_t);
+                            self.trace_node_closest(ray, right, t_min, closest, closest_t);
+                        } else {
+                            self.trace_node_closest(ray, right, t_min, closest, closest_t);
+                            self.trace_node_closest(ray, left, t_min, closest, closest_t);
                         }
-                        (Some(_), None) => {
-                            self.trace_node_closest(ray, left, closest, closest_t);
-                        }
-                        (None, Some(_)) => {
-                            self.trace_node_closest(ray, right, closest, closest_t);
-                        }
-                        (None, None) => {}
                     }
+                    (Some(_), None) => {
+                        self.trace_node_closest(ray, left, t_min, closest, closest_t);
+                    }
+                    (None, Some(_)) => {
+                        self.trace_node_closest(ray, right, t_min, closest, closest_t);
+                    }
+                    (None, None) => {}
                 }
             }
         }
@@ -446,8 +466,9 @@ impl Bvh {
         }
     }
 
-    /// Test a ray against a single primitive, returning only the closest hit.
-    fn test_prim_single(&self, ray: &Ray, prim: u32) -> Option<RayHit> {
+    /// Test a ray against a single primitive, returning only the closest hit
+    /// strictly past `t_min`.
+    fn test_prim_single(&self, ray: &Ray, prim: u32, t_min: f64) -> Option<RayHit> {
         match &self.geom {
             BvhGeom::BRep { brep, faces } => {
                 let face_id = faces[prim as usize];
@@ -459,7 +480,8 @@ impl Bvh {
                 let mut closest: Option<RayHit> = None;
 
                 for hit in surface_hits {
-                    if point_in_face(brep, face_id, hit.uv)
+                    if hit.t > t_min
+                        && point_in_face(brep, face_id, hit.uv)
                         && (closest.is_none() || hit.t < closest.as_ref().unwrap().t)
                     {
                         let point = ray.at(hit.t);
@@ -475,7 +497,7 @@ impl Bvh {
                 closest
             }
             // A triangle is convex: at most one hit, so "closest" is "the" hit.
-            BvhGeom::Mesh(mesh) => mesh.test(ray, prim),
+            BvhGeom::Mesh(mesh) => mesh.test(ray, prim).filter(|h| h.t > t_min),
         }
     }
 
