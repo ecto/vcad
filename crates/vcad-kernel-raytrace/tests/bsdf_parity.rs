@@ -56,6 +56,23 @@ struct ParityOutput {
     resampled: [f32; 4],
 }
 
+/// Mirrors `GpuSurface` in `surface.wgsl` / `buffers.rs`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct GpuSurfaceRaw {
+    surface_type: u32,
+    _pad: [u32; 3],
+    params: [f32; 32],
+}
+
+/// Mirrors `TangentInput` in `bsdf_parity.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct TangentInput {
+    surface: GpuSurfaceRaw,
+    uv: [f32; 4],
+}
+
 fn ctx_or_skip(test_name: &str) -> Option<&'static GpuContext> {
     match pollster::block_on(GpuContext::init()) {
         Ok(ctx) => Some(ctx),
@@ -67,8 +84,34 @@ fn ctx_or_skip(test_name: &str) -> Option<&'static GpuContext> {
     }
 }
 
-/// Run the BSDF harness over `inputs` and read back one output per input.
-fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
+fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// Run one entry point of the harness module.
+///
+/// Both entry points live in the same module, so the bind group must cover
+/// every binding either of them uses; the pass that does not care about a
+/// buffer still binds a one-element dummy. Returns the raw bytes of the output
+/// buffer the caller asked for (`out_binding` is 1 or 3).
+fn run_pass(
+    ctx: &GpuContext,
+    entry: &str,
+    in0: &[u8],
+    in2: &[u8],
+    out_binding: u32,
+    out_size: u64,
+    invocations: u32,
+) -> Vec<u8> {
     use wgpu::util::DeviceExt;
 
     let source = shaders::compose(shaders::BSDF_PARITY_HARNESS);
@@ -80,23 +123,30 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
 
-    let in_buf = ctx
-        .device
-        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("parity in"),
-            contents: bytemuck::cast_slice(inputs),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+    let mk_in = |label, bytes: &[u8]| {
+        ctx.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytes,
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+    };
+    let mk_out = |label, size: u64| {
+        ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        })
+    };
 
-    let out_size = (inputs.len() * std::mem::size_of::<ParityOutput>()) as u64;
-    let out_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("parity out"),
-        size: out_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
+    let buf0 = mk_in("parity in", in0);
+    let buf2 = mk_in("tangent in", in2);
+    let buf1 = mk_out("parity out", if out_binding == 1 { out_size } else { 64 });
+    let buf3 = mk_out("tangent out", if out_binding == 3 { out_size } else { 64 });
+
     let read_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("parity readback"),
+        label: Some("readback"),
         size: out_size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
@@ -107,26 +157,10 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("parity layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                storage_entry(0, true),
+                storage_entry(1, false),
+                storage_entry(2, true),
+                storage_entry(3, false),
             ],
         });
 
@@ -144,7 +178,7 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
             label: Some("parity pipeline"),
             layout: Some(&pipeline_layout),
             module: &module,
-            entry_point: Some("bsdf_parity"),
+            entry_point: Some(entry),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -164,11 +198,19 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: in_buf.as_entire_binding(),
+                resource: buf0.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: out_buf.as_entire_binding(),
+                resource: buf1.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buf2.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: buf3.as_entire_binding(),
             },
         ],
     });
@@ -185,9 +227,10 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups((inputs.len() as u32).div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(invocations.div_ceil(64), 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, out_size);
+    let src = if out_binding == 1 { &buf1 } else { &buf3 };
+    encoder.copy_buffer_to_buffer(src, 0, &read_buf, 0, out_size);
     ctx.queue.submit(Some(encoder.finish()));
 
     let slice = read_buf.slice(..);
@@ -199,10 +242,40 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
     rx.recv().expect("map channel").expect("map read");
 
     let data = slice.get_mapped_range();
-    let out: Vec<ParityOutput> = bytemuck::cast_slice(&data).to_vec();
+    let out = data.to_vec();
     drop(data);
     read_buf.unmap();
     out
+}
+
+/// Run the BSDF harness over `inputs` and read back one output per input.
+fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
+    let dummy = TangentInput::zeroed();
+    let bytes = run_pass(
+        ctx,
+        "bsdf_parity",
+        bytemuck::cast_slice(inputs),
+        bytemuck::bytes_of(&dummy),
+        1,
+        (inputs.len() * std::mem::size_of::<ParityOutput>()) as u64,
+        inputs.len() as u32,
+    );
+    bytemuck::cast_slice(&bytes).to_vec()
+}
+
+/// Run the surface-tangent harness and read back one dP/du per input.
+fn run_tangent_harness(ctx: &GpuContext, inputs: &[TangentInput]) -> Vec<[f32; 4]> {
+    let dummy = ParityInput::zeroed();
+    let bytes = run_pass(
+        ctx,
+        "tangent_parity",
+        bytemuck::bytes_of(&dummy),
+        bytemuck::cast_slice(inputs),
+        3,
+        (inputs.len() * 16) as u64,
+        inputs.len() as u32,
+    );
+    bytemuck::cast_slice(&bytes).to_vec()
 }
 
 /// A spread of materials that exercises every lobe and their combinations.
@@ -531,5 +604,112 @@ fn gpu_anisotropy_actually_changes_the_lobe() {
         (pos - neg).abs() > 1e-4,
         "positive and negative anisotropy produced the same value ({pos} vs \
          {neg}) — the tangent/bitangent alphas are not being swapped",
+    );
+}
+
+/// The GPU's `surface_dpdu` must agree with the geom crate's `d_du` — the same
+/// quantity `intersect::surface_tangent` hands the CPU path tracer.
+///
+/// This is what aligns an anisotropic highlight with the surface's own grain.
+/// Get it wrong and every isotropic material still looks perfect, so nothing
+/// else in the suite would notice.
+///
+/// Compared as *directions*: the frame normalises the tangent and the GGX alpha
+/// ellipse is symmetric, so magnitude and sign are both irrelevant — but
+/// degeneracy (a zero-length tangent at a pole or apex) must agree exactly.
+#[test]
+#[ignore = "requires GPU"]
+fn gpu_surface_tangent_matches_geom_d_du() {
+    use vcad_kernel_geom::{
+        ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, TorusSurface,
+    };
+    use vcad_kernel_math::{Point2, Point3, Vec3};
+    use vcad_kernel_raytrace::gpu::GpuSurface;
+    use vcad_kernel_raytrace::intersect::surface_tangent;
+
+    let Some(ctx) = ctx_or_skip("gpu_surface_tangent_matches_geom_d_du") else {
+        return;
+    };
+
+    // Off-origin, off-axis where the constructors allow it, so a transcription
+    // that silently assumed a canonical frame would show up.
+    let o = Point3::new(1.0, -2.0, 0.5);
+    let tilted = Vec3::new(0.3, -0.2, 1.0);
+    let surfaces: Vec<Box<dyn Surface>> = vec![
+        Box::new(Plane::new(
+            o,
+            Vec3::new(0.8, 0.6, 0.0),
+            Vec3::new(-0.6, 0.8, 0.0),
+        )),
+        Box::new(CylinderSurface::with_axis(o, tilted, 7.5)),
+        Box::new(SphereSurface::with_center(o, 4.25)),
+        Box::new(ConeSurface::new(0.45)),
+        Box::new(TorusSurface::with_axis(o, tilted, 9.0, 2.5)),
+    ];
+
+    // Sweep u right around, and v across both hemispheres / both sides of the
+    // cone apex, so the degenerate cases are covered too.
+    let uvs: Vec<(f64, f64)> = (0..8)
+        .flat_map(|i| {
+            let u = i as f64 * std::f64::consts::TAU / 8.0;
+            [-1.2, -0.5, 0.0, 0.5, 1.2].map(move |v| (u, v))
+        })
+        .collect();
+
+    let mut inputs = Vec::new();
+    let mut expected = Vec::new();
+    for s in &surfaces {
+        let packed = GpuSurface::from_surface(s.as_ref());
+        for &(u, v) in &uvs {
+            inputs.push(TangentInput {
+                surface: GpuSurfaceRaw {
+                    surface_type: packed.surface_type,
+                    _pad: [0; 3],
+                    params: packed.params,
+                },
+                uv: [u as f32, v as f32, 0.0, 0.0],
+            });
+            expected.push(surface_tangent(s.as_ref(), Point2::new(u, v)));
+        }
+    }
+
+    let out = run_tangent_harness(ctx, &inputs);
+    assert_eq!(out.len(), inputs.len());
+
+    let mut compared = 0usize;
+    for (i, (got, want)) in out.iter().zip(&expected).enumerate() {
+        let g = Vec3::new(got[0] as f64, got[1] as f64, got[2] as f64);
+        match want {
+            None => assert!(
+                g.norm() <= 1e-6,
+                "input {i}: CPU reports a degenerate tangent but the GPU \
+                 returned {g:?} — the shader would build a frame from noise",
+            ),
+            Some(w) => {
+                assert!(
+                    g.norm() > 1e-9,
+                    "input {i}: GPU returned a zero tangent where the CPU has \
+                     {w:?} — anisotropic shading would silently fall back to \
+                     an arbitrary basis here",
+                );
+                // Direction only, sign-insensitive.
+                let cosang = (g.normalize().dot(w.normalize())).abs();
+                assert!(
+                    cosang > 1.0 - 1e-4,
+                    "input {i}: tangent direction diverged — GPU {:?} vs CPU \
+                     {:?} (|cos| {cosang}). An anisotropic highlight would run \
+                     the wrong way across this surface.",
+                    g.normalize(),
+                    w.normalize(),
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert!(
+        compared > inputs.len() / 2,
+        "only {compared}/{} tangents were non-degenerate — the sweep is not \
+         exercising the surfaces",
+        inputs.len(),
     );
 }

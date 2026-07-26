@@ -59,3 +59,30 @@ fn bsdf_parity(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     parity_out[i] = out;
 }
+
+// ─── surface tangent harness ──────────────────────────────────────────────
+//
+// Drives `surface_dpdu` (surface.wgsl) directly so the per-surface dP/du
+// transcription can be checked against the geom crate's `d_du` without going
+// through a full render. A silent error here would misalign every anisotropic
+// highlight while every isotropic material still looked perfect.
+
+struct TangentInput {
+    surface: GpuSurface,
+    // uv at the hit; .zw unused.
+    uv: vec4<f32>,
+}
+
+@group(0) @binding(2) var<storage, read> tangent_in: array<TangentInput>;
+@group(0) @binding(3) var<storage, read_write> tangent_out: array<vec4<f32>>;
+
+@compute @workgroup_size(64)
+fn tangent_parity(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let i = global_id.x;
+    if i >= arrayLength(&tangent_in) {
+        return;
+    }
+    let inp = tangent_in[i];
+    let t = surface_dpdu(inp.surface.surface_type, inp.surface.params, inp.uv.xy);
+    tangent_out[i] = vec4<f32>(t, 1.0);
+}

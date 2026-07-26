@@ -17,6 +17,12 @@ pub fn raytrace_shader() -> String {
     compose(RAYTRACE_BODY)
 }
 
+/// Analytic surface parameterisation: the `GpuSurface` struct, the surface
+/// constants, and the `dP/du` tangent that drives anisotropic shading.
+///
+/// Prepended after [`BSDF_SHADER`] (on which it depends for `onb`).
+pub const SURFACE_SHADER: &str = include_str!("surface.wgsl");
+
 /// Test-only harness that evaluates and samples the shared BSDF on the GPU.
 ///
 /// Not valid WGSL on its own — compose it with [`BSDF_SHADER`] via
@@ -28,5 +34,5 @@ pub const BSDF_PARITY_HARNESS: &str = include_str!("bsdf_parity.wgsl");
 /// Used by the render pipeline and by the BSDF parity test, which pairs this
 /// exact BSDF source with a tiny harness entry point.
 pub fn compose(body: &str) -> String {
-    format!("{BSDF_SHADER}\n{body}")
+    format!("{BSDF_SHADER}\n{SURFACE_SHADER}\n{body}")
 }

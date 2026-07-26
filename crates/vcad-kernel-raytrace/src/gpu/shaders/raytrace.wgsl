@@ -3,28 +3,7 @@
 // This shader traces rays against analytic surfaces without tessellation,
 // achieving pixel-perfect silhouettes at any zoom level.
 
-// Constants
-const SURFACE_PLANE: u32 = 0u;
-const SURFACE_CYLINDER: u32 = 1u;
-const SURFACE_SPHERE: u32 = 2u;
-const SURFACE_CONE: u32 = 3u;
-const SURFACE_TORUS: u32 = 4u;
-const SURFACE_BILINEAR: u32 = 5u;
-
-const MAX_T: f32 = 1e10;
-const EPSILON: f32 = 1e-6;
-
 // Structures matching Rust definitions
-
-struct GpuSurface {
-    surface_type: u32,
-    // Use explicit u32 padding instead of vec3<u32> to match Rust layout
-    // vec3<u32> in WGSL has 16-byte alignment which would misalign params
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    params: array<f32, 32>,
-}
 
 struct GpuFace {
     surface_idx: u32,
@@ -1175,6 +1154,15 @@ fn compute_normal(hit: RayHit) -> vec3<f32> {
 }
 
 
+// Surface tangent dP/du at a hit, or a zero vector where the parameterisation
+// is degenerate. Thin wrapper: the maths lives in `surface_dpdu` (surface.wgsl)
+// so it can be driven directly by the parity harness.
+fn compute_tangent(hit: RayHit) -> vec3<f32> {
+    let face = faces[hit.face_idx];
+    let surface = surfaces[face.surface_idx];
+    return surface_dpdu(surface.surface_type, surface.params, hit.uv);
+}
+
 // ACES Narkowicz tonemap. Cleaner highlights and richer mids than Reinhard.
 fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
@@ -1443,12 +1431,14 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         // Resolve the surface we hit.
         var surf: Surface;
         surf.point = ray_o + ray_d * hit.t;
+        var dpdu = vec3<f32>(0.0);
         if hit.face_idx == FACE_IDX_GROUND {
             surf.normal = vec3<f32>(0.0, 0.0, 1.0);
             surf.material = ground_material();
         } else {
             surf.normal = compute_normal(hit);
             surf.material = materials[faces[hit.face_idx].material_idx];
+            dpdu = compute_tangent(hit);
         }
 
         let wo_world = -ray_d;
@@ -1457,7 +1447,9 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         if dot(n, wo_world) < 0.0 {
             n = -n;
         }
-        let frame = onb(n);
+        // Align the frame's x axis with dP/du so an anisotropic highlight
+        // follows the surface's own grain, exactly as the CPU renderer does.
+        let frame = shading_frame(n, dpdu);
         let wo_local = to_local(frame, wo_world);
         if wo_local.z <= 0.0 {
             break;
