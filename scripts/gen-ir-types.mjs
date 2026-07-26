@@ -80,7 +80,14 @@ if (files.length === 0) {
 //       reader code, e.g. `front !== false`) treats them as optional.
 const FORCE_OPTIONAL = {
   Instance: ["tags"],
-  Document: ["parameters", "bindings", "clearance_specs", "analysis_studies", "constraints"],
+  Document: [
+    "parameters",
+    "bindings",
+    "clearance_specs",
+    "analysis_studies",
+    "constraints",
+    "hardware",
+  ],
   DesignRules: ["classRules", "netClassAssignments"],
   BoardOutline: ["cutouts"],
   Zone: ["holes", "priority", "minArea", "fillType", "thermalRelief"],

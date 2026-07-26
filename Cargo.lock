@@ -7861,6 +7861,7 @@ dependencies = [
  "loon-lang",
  "serde_json",
  "vcad-ir",
+ "vcad-parts",
 ]
 
 [[package]]

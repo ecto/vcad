@@ -7,4 +7,5 @@ publish = false
 [dependencies]
 loon-lang = { path = "../../../loon/crates/loon-lang" }
 vcad-ir = { path = "../vcad-ir" }
+vcad-parts = { path = "../vcad-parts" }
 serde_json.workspace = true

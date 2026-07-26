@@ -24,12 +24,13 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ReceiptClaim } from "@vcad/ir";
+import type { HardwareLine, ReceiptClaim } from "@vcad/ir";
 import type { AuthUser } from "../oauth.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { estimateLandedCost } from "../fabricate/pricing.js";
 import { PROCESSES } from "../fabricate/types.js";
 import { mechCatalog, type MechPart } from "./mech-parts.js";
+import { documents } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
@@ -473,6 +474,11 @@ export const bomCreateSchema = {
       description:
         "Optional full line list to build the BOM in ONE call (recommended on serverless — BOMs are in-memory per instance, so one-shot creation is the robust path).",
     },
+    from_geometry: {
+      type: "boolean" as const,
+      description:
+        "Seed COTS lines from the hardware the document's geometry declares — every loon `bolt`/`bolt-circle` (plus its washers and nuts), with quantities already multiplied through patterns. Default true when document_id is given.",
+    },
   },
   required: [],
 };
@@ -501,6 +507,20 @@ export const bomExportSchema = {
 
 // ── tool handlers ────────────────────────────────────────────────────────────
 
+/**
+ * Hardware lines a session document's geometry declares, if that session is
+ * resident. Best-effort: an unknown or non-resident id contributes nothing —
+ * a BOM missing geometry lines is a smaller problem than a failed call.
+ */
+function documentHardware(documentId: string): HardwareLine[] {
+  try {
+    const doc = documents.get(documentId) as { hardware?: HardwareLine[] } | undefined;
+    return Array.isArray(doc?.hardware) ? doc.hardware : [];
+  } catch {
+    return [];
+  }
+}
+
 /** `bom_create` handler. */
 export async function bomCreate(
   input: unknown,
@@ -523,7 +543,28 @@ export async function bomCreate(
     updated_at: now,
   };
 
-  const lineInputs = Array.isArray(args.lines) ? (args.lines as unknown[]) : [];
+  // Fastener counts are the single most tedious and error-prone part of a
+  // BOM, so take them off the geometry rather than off the author's memory:
+  // every `bolt` / `bolt-circle` in the model contributes a hardware line
+  // with its own quantity (patterns already multiplied through).
+  const fromGeometry = args.from_geometry !== false;
+  const geometryLines: Array<Record<string, unknown>> = [];
+  if (fromGeometry && bom.document_id) {
+    for (const hw of documentHardware(bom.document_id)) {
+      geometryLines.push({
+        kind: "cots",
+        name: hw.spec,
+        catalog_id: hw.catalog_id ?? undefined,
+        qty: hw.qty,
+        notes: "counted from the model geometry",
+      });
+    }
+  }
+
+  const lineInputs = [
+    ...geometryLines,
+    ...(Array.isArray(args.lines) ? (args.lines as unknown[]) : []),
+  ];
   for (let i = 0; i < lineInputs.length; i++) {
     const built = await buildLine((lineInputs[i] ?? {}) as Record<string, unknown>, store, owner);
     if ("error" in built) return err(`lines[${i}]: ${built.error}`);
@@ -737,7 +778,7 @@ export const toolDefs: ToolDef[] = [
     name: "bom_create",
     pack: "bom",
     description:
-      "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+      "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. When document_id names a resident session, fastener lines are seeded from the geometry itself (every loon `bolt`/`bolt-circle`, quantities multiplied through patterns) — pass from_geometry:false to opt out. All prices are estimates and flagged as such.",
     inputSchema: bomCreateSchema,
     handler: (a, c) => bomCreate(a, c.fabricateStore, c.user),
     behavior: behavior({}),

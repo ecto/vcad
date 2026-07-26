@@ -140,6 +140,27 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 `vcad-kernel-text` converts text to sketch geometry for embossing and engraving. `vcad-kernel-sheet` models sheet-metal parts — flanges, bends — with lossless unfolding to a flat pattern.
 
+### Fasteners
+
+Fasteners are the most repeated primitive in a real assembly, so they are a form rather than a hand-built union of two cylinders. `[bolt]` takes a catalog designation, a head style, and the two points its axis runs between:
+
+```lisp
+[let holes  [circular-pattern 0 0 0  0 0 1  6 360
+              [clearance-hole "M4" 10  22 0 -1  0 0 1]]]
+[let flange [difference holes [cylinder 30 8]]]
+[root [union flange [bolt-circle "M4x12" "shcs" 44 6  0 0 8  0 0 -1  8]] "steel"]
+```
+
+![Flange with six M4 socket-head cap screws on a bolt circle](/assets/kernel/fasteners.jpg)
+
+Three things fall out of declaring the axis instead of composing rotations by hand:
+
+- **Orientation is derived.** Head and shaft are one solid aligned to the from→to axis, so mirroring a subassembly mirrors the fastener with it — heads cannot end up on the far side of a flange with shafts pointing into free space.
+- **Heads are honest.** `shcs` (ISO 4762) and `bhcs` (ISO 7380) stand proud by their real height, and `flat` (ISO 10642) is genuinely countersunk — flush, zero protrusion. A protruding head is where the model says it is, so a clearance check against a swept volume means something.
+- **Counts come from the geometry.** Every placement emits a `{catalog_id, qty}` line onto the document — multiplied through patterns, so a six-bolt `bolt-circle` reports six — and `bom_create` seeds its COTS lines from that instead of from a hand tally.
+
+The catalog behind `search_mechanical_parts` supplies stocked lengths, so `M4x11` is rejected rather than modeled; `[bolt-stacked]` adds washers and nuts on the same axis and checks the length against the grip plus the stack, refusing a bolt that is too short to reach or too long for a blind hole. `[clearance-hole]` and `[tapped-hole]` take the same thread designation (ISO 273 medium fit, coarse-thread tap drill), so a hole and the fastener that goes in it cannot disagree.
+
 ## Tessellation and Rendering
 
 ### Tessellation
