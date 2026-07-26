@@ -26,6 +26,7 @@ import type {
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import { transformMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
+import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 import { getSession } from "./session-core.js";
 import { asBool } from "./arg-coerce.js";
 
@@ -105,6 +106,7 @@ export const checkClearanceSchema = {
       description:
         "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given.",
     },
+    joint_state: jointStateSchemaProp,
   },
   required: ["document_id", "group_a", "group_b", "min_mm"],
 } as const;
@@ -288,7 +290,30 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   const label = typeof args.label === "string" && args.label.trim() ? args.label.trim() : undefined;
   const allowContact = asBool(args.allow_contact);
 
-  const doc = getSession(documentId);
+  // A persisted spec is re-measured by build_receipt / verify_receipt against
+  // the document's *stored* joint states, so a spec captured at an ad-hoc pose
+  // would re-verify against different geometry and read Violated for no
+  // reason. Refuse the combination rather than persist an unre-verifiable
+  // assertion.
+  if (label && args.joint_state !== undefined && args.joint_state !== null) {
+    return err(
+      "`label` and `joint_state` cannot be combined: a persisted clearance spec is " +
+        "re-measured at the document's stored joint states, so an assertion captured at " +
+        "an ad-hoc pose could not be re-verified. Either drop `label` (one-off pose " +
+        "measurement), or set the joint states on the document and assert there.",
+    );
+  }
+
+  const stored = getSession(documentId);
+  // Measure the requested pose. The pose is a measurement condition applied to
+  // a clone — the session document is never mutated by it.
+  let doc: Document;
+  let pose: PoseInfo | undefined;
+  try {
+    ({ doc, pose } = applyJointState(stored, args.joint_state));
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
   const { result, error } = computeGroupClearance(doc, engine, groupA, groupB);
   if (error || !result) return err(error ?? "Clearance could not be computed.");
 
@@ -297,7 +322,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
   let specSaved = false;
   if (label) {
     // Persist by resolved part ids so the assertion survives renames.
-    upsertClearanceSpec(doc, {
+    upsertClearanceSpec(stored, {
       label,
       group_a: result.group_a.map((p) => p.id),
       group_b: result.group_b.map((p) => p.id),
@@ -316,6 +341,7 @@ export async function checkClearance(args: Record<string, unknown>, engine: Engi
     pass,
     verdict,
     ...(allowContact ? { allow_contact: true } : {}),
+    ...(pose ? { pose } : {}),
     intersecting: result.intersecting,
     worst_pair: result.worst_pair,
     pairs_checked: result.pairs_checked,
@@ -527,7 +553,7 @@ export const toolDefs: ToolDef[] = [
     name: "check_clearance",
     pack: null,
     description:
-      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at a real pose (joint id or name → degrees, or mm for sliders) instead of the stored zero pose — that is how you check a mechanism clears through its travel. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
     inputSchema: checkClearanceSchema,
     handler: (a, c) => checkClearance(a, c.engine),
     behavior: behavior({ writesDoc: true }),
