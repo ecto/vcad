@@ -77,7 +77,7 @@ describe("boot-generation tagging", () => {
     // splitting on "_" and taking [2] truncates it ~22% of the time.
     const suffix = (id: string) => id.replace(/^doc_\d+_/, "");
     expect(suffix(a)).not.toBe(a);
-    expect(suffix(a).length).toBeGreaterThanOrEqual(16);
+    for (const id of [a, b]) expect(suffix(id).length).toBeGreaterThanOrEqual(16);
   });
 });
 
