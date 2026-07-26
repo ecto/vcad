@@ -28,7 +28,7 @@
   {
     "name": "get_document",
     "title": "Get Document",
-    "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
+    "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. A document authored from loon carries that source under `source`, and the result reports `source_stale` when the session no longer matches it (the file changed, or incremental edits moved the session away from it). Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -72,7 +72,7 @@
   {
     "name": "save_document",
     "title": "Save Document",
-    "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_…` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory).",
+    "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_…` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory) — plus `<name>.loon` when the document knows the source it was authored from, so the file and the session can't diverge without someone choosing it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -97,18 +97,19 @@
   {
     "name": "load_document",
     "title": "Load Document",
-    "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_…` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it.",
+    "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_…` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it. Pass `path` instead to open a `.loon` source file (evaluated on load) or a `.vcad` document from disk — that session stays bound to the file and reports `source_stale` if the two drift apart.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "The name passed to save_document (or the `saved_…` key an anonymous save returned). On a local/stdio server this reads <name>.vcad from the state directory."
+          "description": "The name passed to save_document (or the `saved_…` key an anonymous save returned). On a local/stdio server this reads <name>.vcad from the state directory. Provide this OR `path`."
+        },
+        "path": {
+          "type": "string",
+          "description": "Path to a `.loon` source file (evaluated on load) or a `.vcad` document to open as a session. The session records the path and a content hash, so it is explicitly *of* that file: later calls report `source_stale` when the file changes underneath it or the session is edited away from it. Local/stdio servers only — a hosted server's filesystem is ephemeral."
         }
-      },
-      "required": [
-        "name"
-      ]
+      }
     },
     "annotations": {
       "readOnlyHint": false
