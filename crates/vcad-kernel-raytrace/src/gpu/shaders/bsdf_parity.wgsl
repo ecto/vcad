@@ -121,7 +121,8 @@ struct EnvOutput {
 
 @group(0) @binding(4) var<storage, read> env_in: array<EnvInput>;
 @group(0) @binding(5) var<storage, read_write> env_out: array<EnvOutput>;
-@group(0) @binding(6) var<storage, read> env_data: array<f32>;
+@group(0) @binding(6) var env_pixels: texture_2d<f32>;
+@group(0) @binding(7) var env_cdf: texture_2d<f32>;
 
 @compute @workgroup_size(64)
 fn env_parity(@builtin(global_invocation_id) global_id: vec3<u32>) {

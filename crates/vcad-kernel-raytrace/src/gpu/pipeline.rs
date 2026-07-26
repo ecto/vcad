@@ -173,14 +173,26 @@ impl RayTracePipeline {
                             },
                             count: None,
                         },
-                        // HDR environment data (pixels + CDFs, one buffer)
+                        // HDR environment. Textures, not storage buffers: the
+                        // ten bindings above already exhaust the browser's
+                        // maxStorageBuffersPerShaderStage.
                         wgpu::BindGroupLayoutEntry {
                             binding: 13,
                             visibility: wgpu::ShaderStages::COMPUTE,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 14,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
                             count: None,
                         },
@@ -540,20 +552,85 @@ impl RayTracePipeline {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        // HDR environment. WGSL cannot bind a zero-length storage array, so a
-        // gradient-lit scene still gets a one-element dummy; `env_mode` is what
-        // the shader actually branches on.
-        let env_data: &[f32] = match &scene.environment {
-            Some(e) if !e.data.is_empty() => &e.data,
-            _ => &[0.0f32],
-        };
-        let env_buf = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Environment Buffer"),
-                contents: bytemuck::cast_slice(env_data),
-                usage: wgpu::BufferUsages::STORAGE,
+        // HDR environment. A gradient-lit scene still gets 1x1 dummies — a
+        // texture binding cannot be null — and `env_mode` is what the shader
+        // actually branches on.
+        let mk_tex = |label: &str, w: u32, h: u32, fmt: wgpu::TextureFormat, data: &[f32]| {
+            let tex = ctx.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: fmt,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
             });
+            let bytes_per_px = if fmt == wgpu::TextureFormat::Rgba32Float {
+                16
+            } else {
+                4
+            };
+            ctx.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(data),
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * bytes_per_px),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            tex.create_view(&wgpu::TextureViewDescriptor::default())
+        };
+
+        let (env_pixels_view, env_cdf_view) = match &scene.environment {
+            Some(e) if e.width > 0 && e.height > 0 => (
+                mk_tex(
+                    "Environment Pixels",
+                    e.width,
+                    e.height,
+                    wgpu::TextureFormat::Rgba32Float,
+                    &e.pixels,
+                ),
+                mk_tex(
+                    "Environment CDF",
+                    e.width + 1,
+                    e.height + 1,
+                    wgpu::TextureFormat::R32Float,
+                    &e.cdf,
+                ),
+            ),
+            _ => (
+                mk_tex(
+                    "Environment Pixels (unused)",
+                    1,
+                    1,
+                    wgpu::TextureFormat::Rgba32Float,
+                    &[0.0, 0.0, 0.0, 1.0],
+                ),
+                mk_tex(
+                    "Environment CDF (unused)",
+                    1,
+                    1,
+                    wgpu::TextureFormat::R32Float,
+                    &[0.0],
+                ),
+            ),
+        };
 
         // Feature ID buffer: one u32 per pixel storing face_idx (0xFFFFFFFF = background).
         // Written at frame 1 and reused by the crease detector on subsequent frames.
@@ -634,7 +711,11 @@ impl RayTracePipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 13,
-                    resource: env_buf.as_entire_binding(),
+                    resource: wgpu::BindingResource::TextureView(&env_pixels_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::TextureView(&env_cdf_view),
                 },
             ],
         });

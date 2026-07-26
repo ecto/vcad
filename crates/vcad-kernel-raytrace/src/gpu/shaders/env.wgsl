@@ -5,28 +5,24 @@
 // per texel, so nearest sampling makes the radiance and the PDF describe
 // exactly the same function — which is what MIS requires.
 //
-// The pixel and CDF data share ONE storage buffer (`env_data`), declared by the
-// host shader rather than here, so this file can be composed into both the
-// renderer and the parity harness at whatever binding each has spare. The
-// layout, in f32s:
+// Data lives in two TEXTURES, not storage buffers: browsers cap
+// `maxStorageBuffersPerShaderStage` at 10 and the renderer already uses all
+// ten, while sampled textures have 48 slots. `textureLoad` needs no sampler, so
+// nearest lookup is exact and no filtering feature is required.
 //
-//   [0                    .. 3*w*h)                  pixels, RGB per texel
-//   [3*w*h                .. 3*w*h + h*(w+1))        per-row conditional CDFs
-//   [3*w*h + h*(w+1)      .. + (h+1))                marginal CDF over rows
+//   env_pixels : rgba32float, w x h      — RGB radiance per texel
+//   env_cdf    : r32float, (w+1) x (h+1) — row j (j < h) is that row's
+//                conditional CDF over u (w+1 entries); row h is the marginal
+//                CDF over v (h+1 entries). Lat-long maps have w >= h, so the
+//                marginal always fits in the last row.
 //
+// Both are declared by the HOST shader rather than here, so this file composes
+// into the renderer and the parity harness at whatever bindings each has spare.
 // Every function takes the map's scalars explicitly instead of reading a
 // uniform, so the harness can drive them without a RenderState.
 
 const ENV_MODE_GRADIENT: u32 = 0u;
 const ENV_MODE_IMAGE: u32 = 1u;
-
-fn env_cond_base(w: u32, h: u32) -> u32 {
-    return 3u * w * h;
-}
-
-fn env_marg_base(w: u32, h: u32) -> u32 {
-    return 3u * w * h + h * (w + 1u);
-}
 
 // Relative luminance — the scalar the CDF is built over.
 fn env_luminance(c: vec3<f32>) -> f32 {
@@ -34,8 +30,12 @@ fn env_luminance(c: vec3<f32>) -> f32 {
 }
 
 fn env_texel(i: u32, j: u32, w: u32) -> vec3<f32> {
-    let o = 3u * (j * w + i);
-    return vec3<f32>(env_data[o], env_data[o + 1u], env_data[o + 2u]);
+    return textureLoad(env_pixels, vec2<i32>(i32(i), i32(j)), 0).rgb;
+}
+
+// One CDF entry. `row` is the conditional row index, or `h` for the marginal.
+fn env_cdf_at(row: u32, k: u32) -> f32 {
+    return textureLoad(env_cdf, vec2<i32>(i32(k), i32(row)), 0).r;
 }
 
 // Image coordinates in [0,1)^2 for a world direction.
@@ -102,22 +102,22 @@ struct Sample1d {
     frac: f32,
 }
 
-// Binary search a normalised CDF slice starting at `base` with `n` bins
-// (so `n + 1` entries). Mirrors `pathtrace::sample_1d`.
-fn env_sample_1d(base: u32, n: u32, u: f32) -> Sample1d {
+// Binary search a normalised CDF row with `n` bins (so `n + 1` entries).
+// Mirrors `pathtrace::sample_1d`.
+fn env_sample_1d(row: u32, n: u32, u: f32) -> Sample1d {
     var lo = 0u;
     var hi = n;
     while lo < hi {
         let mid = (lo + hi) / 2u;
-        if env_data[base + mid + 1u] <= u {
+        if env_cdf_at(row, mid + 1u) <= u {
             lo = mid + 1u;
         } else {
             hi = mid;
         }
     }
     let i = min(lo, n - 1u);
-    let a = env_data[base + i];
-    let b = env_data[base + i + 1u];
+    let a = env_cdf_at(row, i);
+    let b = env_cdf_at(row, i + 1u);
     var d = 0.5;
     if b > a {
         d = (u - a) / (b - a);
@@ -154,9 +154,10 @@ fn env_image_sample(
         return out;
     }
 
-    let mrow = env_sample_1d(env_marg_base(w, h), h, r2);
+    // Row h holds the marginal; row j holds that row's conditional.
+    let mrow = env_sample_1d(h, h, r2);
     let j = mrow.index;
-    let ccol = env_sample_1d(env_cond_base(w, h) + j * (w + 1u), w, r1);
+    let ccol = env_sample_1d(j, w, r1);
     let i = ccol.index;
 
     let u = (f32(i) + ccol.frac) / f32(w);

@@ -410,8 +410,10 @@ fn sample_1d(cdf: &[f32], u: f32) -> (usize, f32) {
 /// An [`EnvMap`] flattened for GPU upload. See [`EnvMap::pack_for_gpu`].
 #[derive(Debug, Clone)]
 pub struct GpuEnvPack {
-    /// Pixels, then conditional CDFs, then the marginal CDF.
-    pub data: Vec<f32>,
+    /// RGBA32F radiance, `width * height` texels.
+    pub pixels: Vec<f32>,
+    /// R32F CDF texture, `(width + 1) * (height + 1)`.
+    pub cdf: Vec<f32>,
     /// Image width in texels.
     pub width: u32,
     /// Image height in texels.
@@ -606,22 +608,36 @@ impl EnvMap {
         pdf_uv / (two_pi_sq * sin_t)
     }
 
-    /// Pack for GPU upload: pixels, then the per-row conditional CDFs, then
-    /// the marginal CDF — the layout `env.wgsl` reads.
+    /// Pack for GPU upload as two textures — see `env.wgsl` for why textures
+    /// rather than storage buffers.
+    ///
+    /// `pixels` is RGBA32F (`w * h`); `cdf` is R32F (`(w+1) * (h+1)`) with row
+    /// `j < h` the conditional CDF for row `j` and row `h` the marginal.
     ///
     /// Lives here, next to where the CDFs are built, so the two descriptions of
     /// the layout cannot drift apart.
     pub fn pack_for_gpu(&self) -> GpuEnvPack {
-        let mut data = Vec::with_capacity(
-            3 * self.width * self.height + self.cond_cdf.len() + self.marg_cdf.len(),
-        );
+        let (w, h) = (self.width, self.height);
+
+        let mut pixels = Vec::with_capacity(4 * w * h);
         for px in &self.pixels {
-            data.extend_from_slice(px);
+            pixels.extend_from_slice(px);
+            pixels.push(1.0);
         }
-        data.extend_from_slice(&self.cond_cdf);
-        data.extend_from_slice(&self.marg_cdf);
+
+        // (w + 1) x (h + 1), zero-filled: each conditional row uses the full
+        // width, the marginal uses only its first h + 1 entries.
+        let mut cdf = vec![0.0f32; (w + 1) * (h + 1)];
+        for j in 0..h {
+            let base = j * (w + 1);
+            cdf[base..base + w + 1].copy_from_slice(&self.cond_cdf[base..base + w + 1]);
+        }
+        let marg_row = h * (w + 1);
+        cdf[marg_row..marg_row + self.marg_cdf.len()].copy_from_slice(&self.marg_cdf);
+
         GpuEnvPack {
-            data,
+            pixels,
+            cdf,
             width: self.width as u32,
             height: self.height as u32,
             intensity: self.intensity,

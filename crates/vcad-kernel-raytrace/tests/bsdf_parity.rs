@@ -108,13 +108,14 @@ fn run_pass(
     ctx: &GpuContext,
     entry: &str,
     ins: &[(u32, &[u8])],
+    env: Option<&vcad_kernel_raytrace::pathtrace::GpuEnvPack>,
     out_binding: u32,
     out_size: u64,
     invocations: u32,
 ) -> Vec<u8> {
     use wgpu::util::DeviceExt;
 
-    const IN_BINDINGS: [u32; 4] = [0, 2, 4, 6];
+    const IN_BINDINGS: [u32; 3] = [0, 2, 4];
     const OUT_BINDINGS: [u32; 3] = [1, 3, 5];
 
     let source = shaders::compose(shaders::BSDF_PARITY_HARNESS);
@@ -158,6 +159,85 @@ fn run_pass(
     }
     buffers.sort_by_key(|(b, _)| *b);
 
+    // Environment textures (bindings 6 and 7). A pass that does not use them
+    // still binds 1x1 dummies — a texture binding cannot be null.
+    let mk_tex = |w: u32, h: u32, fmt: wgpu::TextureFormat, data: &[f32]| {
+        let tex = ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("env tex"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: fmt,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let bpp = if fmt == wgpu::TextureFormat::Rgba32Float {
+            16
+        } else {
+            4
+        };
+        ctx.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(data),
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * bpp),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
+    };
+    let (env_px, env_cdf) = match env {
+        Some(e) => (
+            mk_tex(
+                e.width,
+                e.height,
+                wgpu::TextureFormat::Rgba32Float,
+                &e.pixels,
+            ),
+            mk_tex(
+                e.width + 1,
+                e.height + 1,
+                wgpu::TextureFormat::R32Float,
+                &e.cdf,
+            ),
+        ),
+        None => (
+            mk_tex(
+                1,
+                1,
+                wgpu::TextureFormat::Rgba32Float,
+                &[0.0, 0.0, 0.0, 1.0],
+            ),
+            mk_tex(1, 1, wgpu::TextureFormat::R32Float, &[0.0]),
+        ),
+    };
+    let tex_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+
     let read_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
         size: out_size,
@@ -165,10 +245,12 @@ fn run_pass(
         mapped_at_creation: false,
     });
 
-    let entries: Vec<wgpu::BindGroupLayoutEntry> = buffers
+    let mut entries: Vec<wgpu::BindGroupLayoutEntry> = buffers
         .iter()
         .map(|(b, _)| storage_entry(*b, IN_BINDINGS.contains(b)))
         .collect();
+    entries.push(tex_entry(6));
+    entries.push(tex_entry(7));
     let layout = ctx
         .device
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -204,13 +286,21 @@ fn run_pass(
          assertion below compare 0 against 0 and pass vacuously.",
     );
 
-    let bg_entries: Vec<wgpu::BindGroupEntry> = buffers
+    let mut bg_entries: Vec<wgpu::BindGroupEntry> = buffers
         .iter()
         .map(|(b, buf)| wgpu::BindGroupEntry {
             binding: *b,
             resource: buf.as_entire_binding(),
         })
         .collect();
+    bg_entries.push(wgpu::BindGroupEntry {
+        binding: 6,
+        resource: wgpu::BindingResource::TextureView(&env_px),
+    });
+    bg_entries.push(wgpu::BindGroupEntry {
+        binding: 7,
+        resource: wgpu::BindingResource::TextureView(&env_cdf),
+    });
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("parity bind group"),
         layout: &layout,
@@ -256,6 +346,7 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
         ctx,
         "bsdf_parity",
         &[(0, bytemuck::cast_slice(inputs))],
+        None,
         1,
         (inputs.len() * std::mem::size_of::<ParityOutput>()) as u64,
         inputs.len() as u32,
@@ -269,6 +360,7 @@ fn run_tangent_harness(ctx: &GpuContext, inputs: &[TangentInput]) -> Vec<[f32; 4
         ctx,
         "tangent_parity",
         &[(2, bytemuck::cast_slice(inputs))],
+        None,
         3,
         (inputs.len() * 16) as u64,
         inputs.len() as u32,
@@ -891,10 +983,8 @@ fn gpu_environment_matches_cpu_envmap() {
     let bytes = run_pass(
         ctx,
         "env_parity",
-        &[
-            (4, bytemuck::cast_slice(&inputs)),
-            (6, bytemuck::cast_slice(&pack.data)),
-        ],
+        &[(4, bytemuck::cast_slice(&inputs))],
+        Some(&pack),
         5,
         (inputs.len() * std::mem::size_of::<EnvOutput>()) as u64,
         inputs.len() as u32,
@@ -999,10 +1089,8 @@ fn gpu_environment_sampling_finds_the_sun() {
     let bytes = run_pass(
         ctx,
         "env_parity",
-        &[
-            (4, bytemuck::cast_slice(&inputs)),
-            (6, bytemuck::cast_slice(&pack.data)),
-        ],
+        &[(4, bytemuck::cast_slice(&inputs))],
+        Some(&pack),
         5,
         (inputs.len() * std::mem::size_of::<EnvOutput>()) as u64,
         inputs.len() as u32,
@@ -1058,5 +1146,35 @@ fn gpu_environment_sampling_finds_the_sun() {
         "GPU env integral {integral} vs CPU {cpu_integral} (rel {rel}) — the \
          estimators disagree, so the two renderers would converge to different \
          images",
+    );
+}
+
+/// The render shader must stay inside the browser's storage-buffer budget.
+///
+/// WebGPU's `maxStorageBuffersPerShaderStage` is **10** in Chrome, and the
+/// renderer sits exactly at that limit. Native Metal allows far more, so every
+/// GPU test here passes while the app viewport dies with an "Invalid
+/// BindGroupLayout" — the shader compiles, the pipeline is rejected, and the
+/// overlay silently never paints. That happened once; this is the guard.
+///
+/// If you need more data in the shader, use a texture (48 slots) rather than an
+/// eleventh storage buffer, as the HDR environment does.
+#[test]
+fn render_shader_fits_the_browser_storage_buffer_budget() {
+    const BROWSER_LIMIT: usize = 10;
+    let src = shaders::raytrace_shader();
+    let count = src
+        .lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            !t.starts_with("//") && t.contains("var<storage")
+        })
+        .count();
+    assert!(
+        count <= BROWSER_LIMIT,
+        "the ray trace shader declares {count} storage buffers, over the \
+         browser limit of {BROWSER_LIMIT}. WebGPU will reject the bind group \
+         layout and the viewport will render nothing, while every native GPU \
+         test still passes. Move the new data into a texture instead.",
     );
 }

@@ -126,10 +126,11 @@ struct GpuAreaLight {
 // highlights on metal. Populated from `pathtrace::studio_rig`, the same
 // function the CPU renderer uses, so both rigs are identical.
 @group(0) @binding(11) var<storage, read> lights: array<GpuAreaLight>;
-// HDR environment: pixels + conditional/marginal CDFs packed into one buffer
-// (see env.wgsl for the layout). One buffer rather than three keeps the
-// storage-binding count inside what browsers allow.
-@group(0) @binding(13) var<storage, read> env_data: array<f32>;
+// HDR environment as textures, not storage buffers: browsers cap
+// maxStorageBuffersPerShaderStage at 10 and the bindings above already use all
+// ten. See env.wgsl for the layout.
+@group(0) @binding(13) var env_pixels: texture_2d<f32>;
+@group(0) @binding(14) var env_cdf: texture_2d<f32>;
 
 // Per-pixel face_idx for analytic crease detection (0xFFFFFFFF = background).
 // Written at frame 1; read at frame 2+ by detect_edge_sobel.
