@@ -76,6 +76,8 @@ import {
   checkErc as kernelCheckErc,
   evaluateMotor,
   airgapFluxDensity,
+  airgapSolve,
+  type AirGapSolutionResult,
   resolvePart as kernelResolvePart,
   resolvePartDef as kernelResolvePartDef,
   searchEcadParts as kernelSearchPartsEcad,
@@ -11412,7 +11414,12 @@ export const calcMotorSchema = {
         "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). " +
         "Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. " +
         "Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order " +
-        "Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt.",
+        "Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt. " +
+        "SATURATION: the MEC iron is LINEAR unless you say otherwise, so it over-predicts Kt on a machine whose teeth " +
+        "saturate. Pass slots + (tooth_width_mm or tooth_fraction) to make the teeth visible — the tool then reports " +
+        "tooth_flux_density (B_gap · pitch/width, routinely 2x B_gap) and warns when it passes the ~1.5 T silicon-steel " +
+        "knee. Add iron_js_t (saturation polarization, silicon steel ≈ 2.0 T) with iron_mu_rel to actually SOLVE the " +
+        "saturating network instead of merely warning; tooth_path_mm puts the teeth in the reluctance loop.",
     },
     phase_current_a: { type: "number" as const, description: "Induction mode (required): phase current, A RMS (balanced 3-phase drive)." },
     electrical_freq_hz: { type: "number" as const, description: "Induction mode (required): electrical drive frequency, Hz." },
@@ -11437,6 +11444,14 @@ export const calcMotorSchema = {
   },
   required: ["pole_pairs", "turns_per_phase"],
 };
+
+/**
+ * Flux density above which soft iron is flagged as saturating, tesla — the low
+ * end of the M19-class silicon-steel knee. Mirrors
+ * `vcad_ecad_sim::airgap::SILICON_STEEL_KNEE_T`; used only for the TS-side
+ * fallback warning when the WASM build predates `ecadAirgapSolve`.
+ */
+const SILICON_STEEL_KNEE_T = 1.5;
 
 /** Round to 6 significant digits — micro-newton-metre torques survive, noise doesn't. */
 const sig6 = (v: number) => (v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(6)));
@@ -11586,6 +11601,7 @@ export async function calcMotor(args: Record<string, unknown>) {
   let bGap = num(args.airgap_flux_tesla);
   let bGapSource: "supplied" | "computed" = "supplied";
   let magnetSpec: Parameters<typeof airgapFluxDensity>[0] | undefined;
+  let solution: AirGapSolutionResult | null = null;
   // Optional first-order fringing derate on the MEC flux (see below).
   let fringing: { poleWidthMm: number; derate: number; bRawTesla: number } | undefined;
   if (!Number.isFinite(bGap)) {
@@ -11602,14 +11618,68 @@ export async function calcMotor(args: Record<string, unknown>) {
       ironMuRel: typeof m.iron_mu_rel === "number" ? (m.iron_mu_rel as number) : null,
       ironPathMm: mnum(m.iron_path_mm, 0),
       ironAreaMm2: mnum(m.iron_area_mm2, 1),
+      ironJsT: typeof m.iron_js_t === "number" ? (m.iron_js_t as number) : null,
     };
-    const computed = await airgapFluxDensity(magnetSpec);
-    if (computed == null) {
-      return fail(
-        "air-gap flux is required: pass airgap_flux_tesla, or `magnet` params (ECAD WASM must be available to compute B_gap).",
-      );
+
+    // Teeth. Without them the model has no tooth concept and structurally
+    // cannot see the saturation that makes a linear-iron Kt optimistic.
+    if (m.slots !== undefined) {
+      const slots = num(m.slots);
+      if (!(slots > 0)) return fail("magnet.slots must be > 0");
+      const meanR = Number.isFinite(num(m.mean_radius_mm))
+        ? num(m.mean_radius_mm)
+        : (innerR + outerR) / 2;
+      const pitch = (2 * Math.PI * meanR) / slots;
+      let toothW = num(m.tooth_width_mm);
+      if (!Number.isFinite(toothW)) {
+        const frac = num(m.tooth_fraction);
+        if (!Number.isFinite(frac)) {
+          return fail("magnet.slots requires magnet.tooth_width_mm or magnet.tooth_fraction");
+        }
+        if (!(frac > 0 && frac <= 1)) return fail("magnet.tooth_fraction must be in (0, 1]");
+        toothW = frac * pitch;
+      }
+      if (!(toothW > 0)) return fail("magnet.tooth_width_mm must be > 0");
+      magnetSpec.teeth = {
+        slots,
+        toothWidthMm: toothW,
+        meanRadiusMm: meanR,
+        toothPathMm: mnum(m.tooth_path_mm, 0),
+      };
     }
-    bGap = computed;
+
+    // Prefer the full solve (tooth/yoke fields + saturation). Fall back to the
+    // scalar binding on an older WASM build, mirroring the tooth geometry in TS
+    // — it is pure geometry, so the warning survives even a stale kernel.
+    solution = await airgapSolve(magnetSpec);
+    if (solution == null) {
+      const computed = await airgapFluxDensity(magnetSpec);
+      if (computed == null) {
+        return fail(
+          "air-gap flux is required: pass airgap_flux_tesla, or `magnet` params (ECAD WASM must be available to compute B_gap).",
+        );
+      }
+      const t = magnetSpec.teeth;
+      const k = t ? Math.max(1, (2 * Math.PI * t.meanRadiusMm) / t.slots / t.toothWidthMm) : null;
+      solution = {
+        bGapTesla: computed,
+        bToothTesla: k == null ? null : computed * k,
+        bIronTesla: null,
+        toothConcentration: k,
+        nonlinear: false,
+        iterations: 0,
+        converged: true,
+        warnings:
+          k != null && computed * k > SILICON_STEEL_KNEE_T
+            ? [
+                `tooth flux density ${(computed * k).toFixed(2)} T exceeds the ` +
+                  `${SILICON_STEEL_KNEE_T.toFixed(2)} T knee — the LINEAR iron model over-predicts ` +
+                  `B_gap and Kt here; pass magnet.iron_js_t to solve the saturating network`,
+              ]
+            : [],
+      };
+    }
+    bGap = solution.bGapTesla;
     bGapSource = "computed";
 
     // Carter-like pole-edge fringing derate (mirrors
@@ -11692,6 +11762,26 @@ export async function calcMotor(args: Record<string, unknown>) {
         }),
       );
     }
+    // Tooth field is the honest saturation indicator, and it is a claim in its
+    // own right — an FEA/simulate_em pass grades it directly.
+    if (solution?.bToothTesla != null && magnetSpec.teeth) {
+      claims.push(
+        emClaim(
+          "tooth_flux_density",
+          r4(solution.bToothTesla),
+          "T",
+          solution.nonlinear ? "mec-saturating-iron" : "mec-tooth-concentration",
+          {
+            ...mecInputs,
+            slots: magnetSpec.teeth.slots,
+            tooth_width_mm: r4(magnetSpec.teeth.toothWidthMm),
+            mean_radius_mm: r4(magnetSpec.teeth.meanRadiusMm),
+            tooth_concentration: r4(solution.toothConcentration ?? 1),
+            ...(magnetSpec.ironJsT != null ? { iron_js_t: magnetSpec.ironJsT } : {}),
+          },
+        ),
+      );
+    }
   }
   return {
     content: [
@@ -11713,6 +11803,21 @@ export async function calcMotor(args: Record<string, unknown>) {
                   "width ≳ 2× gap; below that treat it as a lower bound.",
               }
             : {}),
+          ...(solution?.bToothTesla != null
+            ? {
+                tooth_flux_tesla: r4(solution.bToothTesla),
+                tooth_concentration: r4(solution.toothConcentration ?? 1),
+                // Fringing redistributes flux under the pole; it does not remove
+                // it, so the tooth carries the RAW gap flux either way.
+                tooth_note:
+                  "B_tooth = raw B_gap · (tooth pitch / tooth width) — the gap flux of a whole " +
+                  "tooth pitch funnels into one tooth body. Compare against your steel's knee " +
+                  "(~1.5-1.7 T for M19-class silicon steel).",
+              }
+            : {}),
+          ...(solution?.bIronTesla != null ? { yoke_flux_tesla: r4(solution.bIronTesla) } : {}),
+          ...(solution?.nonlinear ? { iron_model: "saturating (arctangent B-H)" } : {}),
+          ...(solution && solution.warnings.length > 0 ? { warnings: solution.warnings } : {}),
           winding_factor: windingFactor,
           kt_nm_per_a: r4(perf.ktNmPerA),
           ke_v_s_per_rad: r4(perf.keVSPerRad),
@@ -11723,11 +11828,18 @@ export async function calcMotor(args: Record<string, unknown>) {
             speed_rad_s: r4(p.speedRadS),
             torque_nm: r4(p.torqueNm),
           })),
-          note: fringing
-            ? "First-order steady-state estimate (no slotting/saturation/losses; " +
-              "pole-edge fringing derated via magnet.pole_width_mm)."
-            : "First-order steady-state estimate (no slotting/fringing/saturation/losses; " +
-              "pass magnet.pole_width_mm to derate for fringing).",
+          note:
+            "First-order steady-state estimate (no slotting, no losses)" +
+            (fringing
+              ? "; pole-edge fringing derated via magnet.pole_width_mm"
+              : "; pass magnet.pole_width_mm to derate for fringing") +
+            (solution?.nonlinear
+              ? "; iron solved with its saturating B-H law"
+              : "; iron is LINEAR, so Kt is OPTIMISTIC on a machine whose teeth saturate — " +
+                (solution?.bToothTesla != null
+                  ? "see tooth_flux_tesla, and pass magnet.iron_js_t to solve the saturating network"
+                  : "pass magnet.slots + tooth_width_mm to see the tooth field")) +
+            ".",
           claims,
         }),
       },

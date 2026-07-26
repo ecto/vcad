@@ -20,6 +20,10 @@ tang = { workspace = true }
 # gradient linearizes the response, kernel-tolerance rolls it up (WC/RSS/
 # allocation); only the solver-in-the-loop Monte Carlo is circuit-specific.
 vcad-kernel-tolerance = { workspace = true }
+# Single source of truth for the soft-iron B–H law: the MEC network's
+# saturating iron reuses the same arctangent law (and its Newton inversion)
+# that the axisymmetric FV solver uses, rather than growing a second one.
+vcad-kernel-em = { workspace = true }
 
 [dev-dependencies]
 # Used only to prove differentiability: trace a leaf, diff it, and check the

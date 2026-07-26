@@ -659,6 +659,31 @@ export interface AirGapSpecInput {
   ironMuRel?: number | null;
   ironPathMm: number;
   ironAreaMm2: number;
+  /** Soft-iron saturation polarization J_s (T). Omit to keep the iron linear. */
+  ironJsT?: number | null;
+  /** Stator tooth geometry — without it the model cannot see tooth saturation. */
+  teeth?: TeethSpecInput | null;
+}
+
+/** Stator tooth geometry (mirrors `vcad_ecad_sim::TeethSpec`). */
+export interface TeethSpecInput {
+  slots: number;
+  toothWidthMm: number;
+  meanRadiusMm: number;
+  /** Iron path length through the tooth body (mm). 0 = report only, no reluctance. */
+  toothPathMm?: number;
+}
+
+/** Full MEC solve (mirrors `vcad_ecad_sim::AirGapSolution`). */
+export interface AirGapSolutionResult {
+  bGapTesla: number;
+  bToothTesla: number | null;
+  bIronTesla: number | null;
+  toothConcentration: number | null;
+  nonlinear: boolean;
+  iterations: number;
+  converged: boolean;
+  warnings: string[];
 }
 
 /** Evaluate first-order analytical motor performance. Null if ECAD WASM is unavailable. */
@@ -689,6 +714,24 @@ export async function airgapFluxDensity(spec: AirGapSpecInput): Promise<number |
     return fn(JSON.stringify(spec));
   } catch (e) {
     console.warn("[ECAD] airgapFluxDensity failed:", e);
+    return null;
+  }
+}
+
+/**
+ * Full air-gap MEC solve: gap/tooth/yoke flux, saturation state, warnings.
+ * Null if ECAD WASM is unavailable — or predates the binding, in which case the
+ * caller should fall back to {@link airgapFluxDensity}.
+ */
+export async function airgapSolve(spec: AirGapSpecInput): Promise<AirGapSolutionResult | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    const fn = (wasm as unknown as { ecadAirgapSolve?: (s: string) => unknown }).ecadAirgapSolve;
+    if (typeof fn !== "function") return null;
+    return fn(JSON.stringify(spec)) as AirGapSolutionResult;
+  } catch (e) {
+    console.warn("[ECAD] airgapSolve failed:", e);
     return null;
   }
 }

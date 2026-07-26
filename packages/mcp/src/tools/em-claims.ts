@@ -36,6 +36,7 @@ export type EmQuantity =
   | "no_load_speed"
   | "stall_torque"
   | "airgap_flux_density"
+  | "tooth_flux_density"
   | "torque_per_unit_slip"
   | "locked_rotor_torque"
   | "synchronous_speed"
@@ -56,6 +57,8 @@ export type EmMethod =
   | "mec-reluctance" // air-gap B via magnetic equivalent circuit
   | "first-order-dc-motor" // Kt/Ke, V = iR + Ke·ω envelope
   | "mec-fringing-derate" // Carter-like w/(w+2g) pole-edge fringing on the MEC B
+  | "mec-tooth-concentration" // tooth B from gap B x (pitch/width), LINEAR iron
+  | "mec-saturating-iron" // MEC solved with the arctangent B-H law (iron_js_t)
   | "thin-sheet-induction" // rotating-MMF B1 + linear eddy slip torque (Russell–Norsworthy end effect)
   | "bearing-friction-catalog" // documented typical bearing running-drag ranges
   | "torque-friction-margin"; // starting torque vs worst-case friction, fail-closed

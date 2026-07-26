@@ -34,7 +34,10 @@ pub mod motor;
 pub mod signal_integrity;
 pub mod thermal;
 
-pub use airgap::{aircored_airgap_flux_density, airgap_flux_density, fringing_derate, AirGapSpec};
+pub use airgap::{
+    aircored_airgap_flux_density, airgap_flux_density, airgap_solve, fringing_derate,
+    AirGapSolution, AirGapSpec, TeethSpec, SILICON_STEEL_KNEE_T,
+};
 pub use impedance::{
     diff_microstrip_impedance, diff_stripline_impedance, microstrip_impedance, stripline_impedance,
     ImpedanceResult,

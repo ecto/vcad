@@ -6174,6 +6174,93 @@ describe("calc_motor PM fringing derate", () => {
   });
 });
 
+describe("calc_motor PM tooth saturation", () => {
+  // The 24-slot / 20-pole axial-flux QDD actuator: ⌀76→⌀120 annulus, 4 mm N42
+  // across a 1.0 mm gap. B_gap looks comfortable while the teeth run ~2 T.
+  const qdd = {
+    pole_pairs: 10,
+    turns_per_phase: 60,
+    winding_factor: 0.933,
+    inner_radius_mm: 38,
+    outer_radius_mm: 60,
+    phase_resistance_ohm: 0.5,
+    supply_voltage_v: 24,
+    magnet: {
+      remanence_tesla: 1.3,
+      magnet_thickness_mm: 4,
+      airgap_mm: 1.0,
+      iron_mu_rel: 4000,
+      iron_path_mm: 30,
+    },
+  };
+
+  it("reports the tooth field and warns when it passes the knee", async () => {
+    const r = out(await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 24, tooth_fraction: 0.5 } }));
+    // mean radius defaults to (38+60)/2 = 49 -> pitch 12.83 mm, k ≈ 2.
+    expect(r.tooth_concentration).toBeCloseTo(2, 2);
+    expect(r.tooth_flux_tesla).toBeCloseTo(r.airgap_flux_tesla * 2, 2);
+    expect(r.tooth_flux_tesla).toBeGreaterThan(1.5);
+    expect(r.warnings?.[0]).toMatch(/tooth flux density/);
+    // ...and the note no longer claims saturation is simply absent.
+    expect(r.note).toMatch(/iron is LINEAR/);
+    // The tooth field is a claim of its own, gradeable by simulate_em.
+    const c = r.claims.find((x: any) => x.quantity === "tooth_flux_density");
+    expect(c).toBeDefined();
+    expect(c.unit).toBe("T");
+  });
+
+  it("tooth_width_mm and tooth_fraction agree, and a wide tooth stays under the knee", async () => {
+    const byWidth = out(
+      await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 24, tooth_width_mm: 6.4141 } }),
+    );
+    const byFraction = out(
+      await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 24, tooth_fraction: 0.5 } }),
+    );
+    expect(byWidth.tooth_flux_tesla).toBeCloseTo(byFraction.tooth_flux_tesla, 3);
+
+    // A nearly-full-pitch tooth barely concentrates and clears the knee.
+    const wide = out(
+      await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 24, tooth_fraction: 0.98 } }),
+    );
+    expect(wide.tooth_flux_tesla).toBeLessThan(1.5);
+    expect(wide.warnings).toBeUndefined();
+  });
+
+  it("iron_js_t solves the saturating network and drops Kt below the linear model", async () => {
+    // Teeth in the loop (tooth_path_mm) and a real saturation polarization.
+    const teeth = { slots: 24, tooth_fraction: 0.31, tooth_path_mm: 20 };
+    const lin = out(await calcMotor({ ...qdd, magnet: { ...qdd.magnet, ...teeth } }));
+    const sat = out(
+      await calcMotor({ ...qdd, magnet: { ...qdd.magnet, ...teeth, iron_js_t: 2.0 } }),
+    );
+    expect(sat.iron_model).toMatch(/saturating/);
+    // The whole point: the linear model was optimistic about Kt.
+    expect(sat.kt_nm_per_a).toBeLessThan(0.95 * lin.kt_nm_per_a);
+    expect(sat.tooth_flux_tesla).toBeLessThan(lin.tooth_flux_tesla);
+    expect(sat.note).toMatch(/saturating B-H/);
+    const c = sat.claims.find((x: any) => x.quantity === "tooth_flux_density");
+    expect(c.method).toBe("mec-saturating-iron");
+  });
+
+  it("says nothing about teeth when no tooth geometry is given", async () => {
+    const r = out(await calcMotor(qdd));
+    expect(r.tooth_flux_tesla).toBeUndefined();
+    expect(r.warnings).toBeUndefined();
+    // But the note still tells the caller the iron is linear and how to look.
+    expect(r.note).toMatch(/magnet\.slots/);
+  });
+
+  it("rejects incomplete tooth geometry", async () => {
+    expect(isErr(await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 24 } }))).toBe(true);
+    expect(
+      isErr(await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 0, tooth_fraction: 0.5 } })),
+    ).toBe(true);
+    expect(
+      isErr(await calcMotor({ ...qdd, magnet: { ...qdd.magnet, slots: 24, tooth_fraction: 1.5 } })),
+    ).toBe(true);
+  });
+});
+
 describe("check_self_start", () => {
   it("608-2RS light pair lands at the documented 1–4 mN·m and gates fail-closed", () => {
     const r = out(
