@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 rayon = "1"
 vcad-kernel-math = { workspace = true }
+vcad-ir = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-geom = { workspace = true }
 vcad-kernel-primitives = { workspace = true }

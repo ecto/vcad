@@ -713,3 +713,87 @@ fn gpu_surface_tangent_matches_geom_d_du() {
         inputs.len(),
     );
 }
+
+/// A `MaterialDef` must produce the same render material on both paths.
+///
+/// `setMaterial` used to carry only colour/metallic/roughness, so clearcoat,
+/// IOR and anisotropy were silently dropped on the way to the GPU and a
+/// brushed or lacquered part shaded differently in the viewport than under
+/// `--photoreal`. Both now go through `Pbr::from_material_def`; this pins that
+/// the GPU packing round-trips it without loss.
+#[test]
+fn gpu_material_round_trips_the_shared_derivation() {
+    use vcad_ir::MaterialDef;
+    use vcad_kernel_raytrace::pathtrace::Pbr;
+
+    let defs = [
+        // Explicit anisotropy wins over the name heuristic.
+        MaterialDef {
+            name: "brushed_aluminum".into(),
+            color: [0.91, 0.92, 0.92],
+            metallic: 1.0,
+            roughness: 0.28,
+            anisotropy: Some(-0.4),
+            ..Default::default()
+        },
+        // Name heuristic fills in when the document says nothing.
+        MaterialDef {
+            name: "turned_shaft".into(),
+            color: [0.7, 0.7, 0.72],
+            metallic: 1.0,
+            roughness: 0.2,
+            ..Default::default()
+        },
+        // Glossy dielectric: picks up the derived clearcoat.
+        MaterialDef {
+            name: "abs_gloss".into(),
+            color: [0.2, 0.35, 0.7],
+            metallic: 0.0,
+            roughness: 0.15,
+            ior: Some(1.6),
+            ..Default::default()
+        },
+    ];
+
+    for d in &defs {
+        let cpu = Pbr::from_material_def(Some(d), None);
+        let gpu = GpuMaterial::from_pbr(cpu).to_pbr();
+        assert_eq!(
+            cpu.metallic, gpu.metallic,
+            "{}: metallic lost in the GPU packing",
+            d.name
+        );
+        assert_eq!(cpu.roughness, gpu.roughness, "{}: roughness lost", d.name);
+        assert_eq!(
+            cpu.clearcoat, gpu.clearcoat,
+            "{}: clearcoat lost — the viewport would render this matte",
+            d.name
+        );
+        assert_eq!(cpu.ior, gpu.ior, "{}: ior lost", d.name);
+        assert_eq!(
+            cpu.anisotropy, gpu.anisotropy,
+            "{}: anisotropy lost — the grain would vanish in the viewport",
+            d.name
+        );
+        assert_eq!(cpu.base_color, gpu.base_color, "{}: colour lost", d.name);
+    }
+
+    // The heuristic must actually be doing something, or the assertions above
+    // are comparing zero against zero.
+    let turned = Pbr::from_material_def(Some(&defs[1]), None);
+    assert!(
+        turned.anisotropy > 0.5,
+        "the name heuristic did not fire for 'turned_shaft' (got {})",
+        turned.anisotropy
+    );
+    let brushed = Pbr::from_material_def(Some(&defs[0]), None);
+    assert!(
+        (brushed.anisotropy - -0.4).abs() < 1e-6,
+        "explicit anisotropy should win over the name heuristic (got {})",
+        brushed.anisotropy
+    );
+    assert!(
+        Pbr::from_material_def(Some(&defs[2]), None).clearcoat > 0.0,
+        "a glossy dielectric should pick up a clearcoat"
+    );
+}

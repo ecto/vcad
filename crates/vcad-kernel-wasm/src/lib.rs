@@ -3787,6 +3787,43 @@ impl RayTracer {
     /// * `r`, `g`, `b` - RGB color components (0-1 range, linear)
     /// * `metallic` - Metallic factor (0 = dielectric, 1 = metal)
     /// * `roughness` - Roughness factor (0 = smooth/mirror, 1 = rough/diffuse)
+    /// Set the material from a serialized IR `MaterialDef`.
+    ///
+    /// Preferred over `setMaterial`: that one only carries colour, metallic and
+    /// roughness, so clearcoat, IOR and anisotropy never reached the viewport
+    /// and a brushed or lacquered part shaded differently here than under
+    /// `vcad-render --photoreal`. This runs the SAME derivation the CPU
+    /// renderer uses (`Pbr::from_material_def`), so both agree by construction.
+    ///
+    /// `json` is a `MaterialDef` object; pass `null`/empty to fall back to the
+    /// optional `tint` (linear RGB) or the neutral default.
+    #[wasm_bindgen(js_name = setMaterialFromDef)]
+    pub fn set_material_from_def(
+        &self,
+        json: Option<String>,
+        tint: Option<Vec<f64>>,
+    ) -> Result<(), JsError> {
+        let mat: Option<vcad_ir::MaterialDef> = match json.as_deref() {
+            Some(j) if !j.trim().is_empty() && j != "null" => Some(
+                serde_json::from_str(j)
+                    .map_err(|e| JsError::new(&format!("bad MaterialDef: {e}")))?,
+            ),
+            _ => None,
+        };
+        let tint = tint.and_then(|t| (t.len() >= 3).then(|| [t[0], t[1], t[2]]));
+
+        {
+            let mut inner = self.inner.borrow_mut();
+            let scene_rc = inner
+                .scene
+                .as_mut()
+                .ok_or_else(|| JsError::new("No solid uploaded. Call uploadSolid() first."))?;
+            std::rc::Rc::make_mut(scene_rc).set_material_from_def(mat.as_ref(), tint);
+            inner.invalidate_accum();
+        }
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = setMaterial)]
     pub fn set_material(
         &self,

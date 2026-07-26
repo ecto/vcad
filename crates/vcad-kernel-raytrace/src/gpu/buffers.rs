@@ -251,6 +251,24 @@ impl GpuMaterial {
         self
     }
 
+    /// Build from the CPU reference material.
+    ///
+    /// Paired with [`crate::pathtrace::Pbr::from_material_def`], this is what
+    /// makes the viewport and `--photoreal` derive the SAME material from the
+    /// same IR definition — clearcoat heuristic, IOR and grain included.
+    pub fn from_pbr(p: crate::pathtrace::Pbr) -> Self {
+        Self {
+            color: [p.base_color[0], p.base_color[1], p.base_color[2], 1.0],
+            metallic: p.metallic,
+            roughness: p.roughness,
+            clearcoat: p.clearcoat,
+            clearcoat_roughness: p.clearcoat_roughness,
+            ior: p.ior,
+            anisotropy: p.anisotropy,
+            _pad: [0.0; 2],
+        }
+    }
+
     /// Convert to the CPU reference material, for cross-checking the two
     /// shading paths against each other.
     pub fn to_pbr(self) -> crate::pathtrace::Pbr {
@@ -1139,5 +1157,22 @@ impl GpuScene {
             roughness,
             ..Default::default()
         };
+    }
+
+    /// Set the material for all faces from an IR material definition.
+    ///
+    /// Preferred over [`Self::set_material`]: it runs the same derivation the
+    /// CPU renderer uses, so clearcoat, IOR and anisotropy reach the viewport
+    /// instead of being silently dropped.
+    pub fn set_material_from_def(
+        &mut self,
+        mat: Option<&vcad_ir::MaterialDef>,
+        tint: Option<[f64; 3]>,
+    ) {
+        if self.materials.is_empty() {
+            self.materials.push(GpuMaterial::default());
+        }
+        self.materials[0] =
+            GpuMaterial::from_pbr(crate::pathtrace::Pbr::from_material_def(mat, tint));
     }
 }

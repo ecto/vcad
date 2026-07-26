@@ -134,6 +134,7 @@ export function RayTracedViewportSync() {
         ro: number,
       ) => void;
       setMaterial: (r: number, g: number, b: number, m: number, ro: number) => void;
+      setMaterialFromDef?: (json: string | null, tint: number[] | null) => void;
     };
     rt.clearScene?.();
 
@@ -237,7 +238,16 @@ export function RayTracedViewportSync() {
       const mat = docMat ?? preset;
       if (mat) {
         try {
-          rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
+          // Prefer the full definition: setMaterial only carries colour,
+          // metallic and roughness, so clearcoat, IOR and anisotropy would be
+          // dropped and a brushed or lacquered part would shade differently
+          // here than under `vcad-render --photoreal`. setMaterialFromDef runs
+          // the same Rust derivation both renderers share.
+          if (typeof rt.setMaterialFromDef === "function") {
+            rt.setMaterialFromDef(JSON.stringify(mat), null);
+          } else {
+            rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
+          }
         } catch (e) {
           logger.debug("gpu", `Failed to set material: ${e}`);
         }

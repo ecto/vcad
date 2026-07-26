@@ -113,86 +113,6 @@ pub fn render_photoreal_png_str(
     encode_png(rasterize(raw_vcad, opts, pr, true)?, opts)
 }
 
-/// Map a document material to a physically-based surface description.
-///
-/// The IR already carries metallic/roughness/ior, so most of this is a
-/// straight copy. The one piece of authored judgement is clearcoat: real
-/// machined and moulded parts almost always have some surface layer —
-/// anodising, paint, moulding skin — and adding it is the single biggest
-/// step from "CAD shaded" to "photographed".
-/// Fallback anisotropy for materials that name a directional finish but do
-/// not carry an explicit `anisotropy` value.
-///
-/// Deliberately conservative — only finishes that are unambiguously
-/// directional, and at moderate strength. Anything else stays isotropic, so
-/// this can never change how an existing material renders unless its name
-/// says it is brushed or turned.
-fn anisotropy_from_name(name: &str) -> f32 {
-    let n = name.to_ascii_lowercase();
-    // Turning and boring cut circumferentially, which is the +u direction on
-    // a cylinder — the same direction the tangent frame is built from.
-    if n.contains("turned") || n.contains("machined") || n.contains("bored") {
-        0.6
-    } else if n.contains("brushed") {
-        0.7
-    } else {
-        0.0
-    }
-}
-
-fn to_pbr(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 3]>) -> Pbr {
-    let base = mat.map(|m| m.color).or(tint).unwrap_or([0.62, 0.64, 0.67]);
-    let base_color = [base[0] as f32, base[1] as f32, base[2] as f32];
-
-    let metallic = mat
-        .map(|m| m.metallic as f32)
-        .unwrap_or(0.0)
-        .clamp(0.0, 1.0);
-    // Perfectly sharp mirrors read as CG. Floor roughness slightly.
-    let roughness = mat
-        .map(|m| m.roughness as f32)
-        .unwrap_or(0.35)
-        .clamp(0.03, 1.0);
-    let ior = mat
-        .and_then(|m| m.ior)
-        .map(|v| v as f32)
-        .unwrap_or(1.5)
-        .clamp(1.0, 3.0);
-
-    // Dielectrics that are already glossy get a clearcoat; rough matte
-    // surfaces (sandblasted, as-printed) do not.
-    let clearcoat = if metallic < 0.5 && roughness < 0.5 {
-        0.35 * (1.0 - roughness / 0.5)
-    } else {
-        0.0
-    };
-
-    // Anisotropy is a real IR field (`MaterialDef::anisotropy`) rather than
-    // a rendering-time guess: Rust is the source of truth for IR types, the
-    // value is a genuine property of the surface finish, and it round-trips
-    // in `.vcad`. The name heuristic below only fills in when the document
-    // says nothing — a document that names its material "brushed_aluminum"
-    // or "turned_shaft" has told us the finish, and rendering that as a
-    // uniform polish is the CG tell this feature exists to remove. Anything
-    // explicit always wins.
-    let anisotropy = mat
-        .and_then(|m| m.anisotropy)
-        .map(|v| v as f32)
-        .unwrap_or_else(|| mat.map(|m| anisotropy_from_name(&m.name)).unwrap_or(0.0))
-        .clamp(-1.0, 1.0);
-
-    Pbr {
-        base_color,
-        metallic,
-        roughness,
-        anisotropy,
-        clearcoat,
-        clearcoat_roughness: 0.08,
-        ior,
-        emissive: [0.0; 3],
-    }
-}
-
 fn rasterize(
     raw_vcad: &str,
     opts: &RasterOptions,
@@ -230,7 +150,7 @@ fn rasterize(
         }
         objects.push(Object {
             bvh: Arc::new(bvh),
-            material: to_pbr(s.material.as_ref(), s.tint),
+            material: Pbr::from_material_def(s.material.as_ref(), s.tint),
         });
     }
     if objects.is_empty() {
