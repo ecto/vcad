@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::entities::{
     curves::{parse_curve, StepCurve},
     parse_advanced_face, parse_edge_curve, parse_edge_loop, parse_manifold_solid_brep,
-    parse_oriented_edge, parse_shell, parse_surface_oriented, parse_vertex_point,
+    parse_oriented_edge, parse_shell, parse_surface_oriented, parse_vertex_point, EntityArgs,
 };
 use crate::error::StepError;
 use stepperoni::{Parser, StepFile};
@@ -125,14 +125,69 @@ impl<'a> StepReader<'a> {
         }
     }
 
-    fn read_all_solids(&mut self) -> Result<Vec<BRepSolid>, StepError> {
-        let solid_entities = self.file.entities_of_type("MANIFOLD_SOLID_BREP");
-        if solid_entities.is_empty() {
-            return Err(StepError::NoSolids);
+    /// Collect `MANIFOLD_SOLID_BREP` ids reachable through the product anchor:
+    /// SHAPE_DEFINITION_REPRESENTATION -> representation -> items. Returns
+    /// `None` when the file has no SDR entities at all (anchor-less file).
+    ///
+    /// Conforming importers only see geometry through this chain; when it is
+    /// present we honor it, so a vcad-written file is read the same way
+    /// Shapr3D/SolidWorks/Fusion read it — an anchor that references nothing
+    /// becomes a loud error instead of a silent direct-scan pass.
+    fn anchored_solid_ids(&self) -> Option<Vec<u64>> {
+        let sdrs = self
+            .file
+            .entities_of_type("SHAPE_DEFINITION_REPRESENTATION");
+        if sdrs.is_empty() {
+            return None;
         }
+        let mut ids = Vec::new();
+        for sdr in sdrs {
+            let Ok(rep_id) = sdr.entity_ref(1) else {
+                continue;
+            };
+            let Some(rep) = self.file.get(rep_id) else {
+                continue;
+            };
+            if let Ok(items) = rep.entity_ref_list(1) {
+                for item_id in items {
+                    let is_solid = self
+                        .file
+                        .get(item_id)
+                        .map(|e| e.type_name == "MANIFOLD_SOLID_BREP")
+                        .unwrap_or(false);
+                    if is_solid && !ids.contains(&item_id) {
+                        ids.push(item_id);
+                    }
+                }
+            }
+        }
+        Some(ids)
+    }
+
+    fn read_all_solids(&mut self) -> Result<Vec<BRepSolid>, StepError> {
+        let solid_ids: Vec<u64> = match self.anchored_solid_ids() {
+            // Anchor present: read exactly what it references. Empty means the
+            // product structure points at no solids — fail rather than rescue
+            // unreachable geometry a conforming importer would never show.
+            Some(ids) => {
+                if ids.is_empty() {
+                    return Err(StepError::NoSolids);
+                }
+                ids
+            }
+            // Anchor-less file (legacy vcad exports, minimal foreign files):
+            // fall back to scanning for solids directly.
+            None => {
+                let solid_entities = self.file.entities_of_type("MANIFOLD_SOLID_BREP");
+                if solid_entities.is_empty() {
+                    return Err(StepError::NoSolids);
+                }
+                solid_entities.iter().map(|e| e.id).collect()
+            }
+        };
 
         let mut solids = Vec::new();
-        for entity in solid_entities {
+        for entity_id in solid_ids {
             // Reset maps for each solid
             self.vertex_map.clear();
             self.edge_map.clear();
@@ -140,7 +195,7 @@ impl<'a> StepReader<'a> {
             self.surface_map.clear();
             self.subdivided_edges.clear();
 
-            let solid = self.read_solid(entity.id)?;
+            let solid = self.read_solid(entity_id)?;
             solids.push(solid);
         }
 
@@ -546,6 +601,46 @@ impl<'a> StepReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An anchor (SDR -> representation) that references no solids must fail
+    /// loudly, even when unreachable MANIFOLD_SOLID_BREPs exist in the file —
+    /// that is exactly what a conforming importer sees as "no 3D geometry".
+    #[test]
+    fn test_broken_anchor_is_detected() {
+        let cube = vcad_kernel_primitives::make_cube(10.0, 10.0, 10.0);
+        let buffer = crate::writer::write_step_to_buffer(&cube).unwrap();
+        let content = String::from_utf8_lossy(&buffer);
+
+        // Empty the ABSR's item list, orphaning the solid.
+        let start = content
+            .find("ADVANCED_BREP_SHAPE_REPRESENTATION")
+            .expect("writer must emit an ABSR");
+        let open = content[start..].find(",(").unwrap() + start;
+        let close = content[open..].find(')').unwrap() + open;
+        let broken = format!("{},(){}", &content[..open], &content[close + 1..]);
+        assert!(
+            broken.contains("MANIFOLD_SOLID_BREP"),
+            "solid still present"
+        );
+
+        let err = read_step_from_buffer(broken.as_bytes()).unwrap_err();
+        assert!(matches!(err, StepError::NoSolids), "got {err:?}");
+    }
+
+    /// Writer-emitted files are read through the anchor, not the fallback scan.
+    #[test]
+    fn test_anchored_read_finds_solids() {
+        let cube = vcad_kernel_primitives::make_cube(10.0, 20.0, 30.0);
+        let buffer = crate::writer::write_step_to_buffer(&cube).unwrap();
+        let step_file = Parser::parse(&buffer).unwrap();
+        let reader = StepReader::new(&step_file);
+        let anchored = reader
+            .anchored_solid_ids()
+            .expect("writer output must contain an SDR anchor");
+        assert_eq!(anchored.len(), 1);
+        let solids = read_step_from_buffer(&buffer).unwrap();
+        assert_eq!(solids.len(), 1);
+    }
 
     #[test]
     fn test_read_simple_box() {

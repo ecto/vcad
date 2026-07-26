@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-step-export-product-anchor",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "fix",
+  "title": "STEP exports now open in external CAD",
+  "summary": "Exported STEP files carry the AP214 product/representation anchor and mm units, so Shapr3D, SolidWorks, and Fusion no longer reject them as containing no 3D geometry.",
+  "features": ["step-export", "interop"],
+  "mcpTools": ["export_cad"]
+}

@@ -68,12 +68,21 @@ pub fn write_step_solids_to_buffer(solids: &[(&BRepSolid, &str)]) -> Result<Vec<
     }
     let mut entities: Vec<String> = Vec::new();
     let mut next_id = 1;
+    let mut solid_ids: Vec<u64> = Vec::new();
     for (solid, name) in solids {
         let mut writer = StepWriter::with_start_id(solid, next_id);
-        writer.write_entities(name)?;
+        solid_ids.push(writer.write_entities(name)?);
         next_id = writer.next_id;
         entities.extend(writer.output);
     }
+    // Product/representation anchor: without this layer (context with UNITS,
+    // ADVANCED_BREP_SHAPE_REPRESENTATION, PRODUCT chain, and the
+    // SHAPE_DEFINITION_REPRESENTATION that ties them together) conforming
+    // importers traverse PRODUCT -> SDR -> representation, find nothing, and
+    // report "no 3D geometry" even though the MANIFOLD_SOLID_BREPs are in the
+    // file. vcad's own reader scans for solids directly, which is why a
+    // round-trip through vcad alone cannot catch the omission.
+    write_product_anchor(&mut entities, &mut next_id, &solid_ids);
     assemble_file(&entities)
 }
 
@@ -85,6 +94,81 @@ pub fn write_step_solids(
     let buffer = write_step_solids_to_buffer(solids)?;
     std::fs::write(path, buffer)?;
     Ok(())
+}
+
+/// Append the AP214 product structure + representation context that anchor
+/// the solids for conforming importers: SI units (mm), uncertainty, one
+/// PRODUCT, and an ADVANCED_BREP_SHAPE_REPRESENTATION holding every solid.
+fn write_product_anchor(entities: &mut Vec<String>, next_id: &mut u64, solid_ids: &[u64]) {
+    let mut id = || {
+        let v = *next_id;
+        *next_id += 1;
+        v
+    };
+    let app = id();
+    entities.push(format!(
+        "#{app} = APPLICATION_CONTEXT('automotive design');"
+    ));
+    let apd = id();
+    entities.push(format!(
+        "#{apd} = APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2010,#{app});"
+    ));
+    let pctx = id();
+    entities.push(format!(
+        "#{pctx} = PRODUCT_CONTEXT('',#{app},'mechanical');"
+    ));
+    let prod = id();
+    entities.push(format!(
+        "#{prod} = PRODUCT('vcad_part','vcad_part','',(#{pctx}));"
+    ));
+    let prpc = id();
+    entities.push(format!(
+        "#{prpc} = PRODUCT_RELATED_PRODUCT_CATEGORY('part','',(#{prod}));"
+    ));
+    let pdf = id();
+    entities.push(format!(
+        "#{pdf} = PRODUCT_DEFINITION_FORMATION('','',#{prod});"
+    ));
+    let pdctx = id();
+    entities.push(format!(
+        "#{pdctx} = PRODUCT_DEFINITION_CONTEXT('part definition',#{app},'design');"
+    ));
+    let pd = id();
+    entities.push(format!(
+        "#{pd} = PRODUCT_DEFINITION('design','',#{pdf},#{pdctx});"
+    ));
+    let pds = id();
+    entities.push(format!("#{pds} = PRODUCT_DEFINITION_SHAPE('','',#{pd});"));
+    let len_u = id();
+    entities.push(format!(
+        "#{len_u} = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );"
+    ));
+    let ang_u = id();
+    entities.push(format!(
+        "#{ang_u} = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );"
+    ));
+    let sol_u = id();
+    entities.push(format!(
+        "#{sol_u} = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );"
+    ));
+    let unc = id();
+    entities.push(format!(
+        "#{unc} = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.0E-6),#{len_u},'distance_accuracy_value','');"
+    ));
+    let ctx = id();
+    entities.push(format!(
+        "#{ctx} = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{unc})) GLOBAL_UNIT_ASSIGNED_CONTEXT((#{len_u},#{ang_u},#{sol_u})) REPRESENTATION_CONTEXT('','3D') );"
+    ));
+    let items: Vec<String> = solid_ids.iter().map(|s| format!("#{s}")).collect();
+    let absr = id();
+    entities.push(format!(
+        "#{absr} = ADVANCED_BREP_SHAPE_REPRESENTATION('',({}),#{ctx});",
+        items.join(",")
+    ));
+    let sdr = id();
+    entities.push(format!(
+        "#{sdr} = SHAPE_DEFINITION_REPRESENTATION(#{pds},#{absr});"
+    ));
 }
 
 /// Wrap entity lines in the ISO-10303-21 header/footer.
@@ -101,7 +185,10 @@ fn assemble_file(entities: &[String]) -> Result<Vec<u8>, StepError> {
         "FILE_NAME('model.step', '{}', ('vcad'), ('vcad'), 'vcad-kernel-step', 'vcad', '');",
         chrono_lite_date()
     )?;
-    writeln!(buffer, "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));")?;
+    writeln!(
+        buffer,
+        "FILE_SCHEMA(('AUTOMOTIVE_DESIGN {{ 1 0 10303 214 3 1 1 }}'));"
+    )?;
     writeln!(buffer, "ENDSEC;")?;
     writeln!(buffer, "DATA;")?;
     for line in entities {
@@ -162,7 +249,7 @@ impl<'a> StepWriter<'a> {
         self.output.push(format!("#{} = {};", id, entity));
     }
 
-    fn write_entities(&mut self, name: &str) -> Result<(), StepError> {
+    fn write_entities(&mut self, name: &str) -> Result<u64, StepError> {
         // Write all geometry and topology
         self.write_points()?;
         self.write_surfaces()?;
@@ -171,8 +258,8 @@ impl<'a> StepWriter<'a> {
         self.write_loops()?;
         self.write_faces()?;
         let shell_id = self.write_shell()?;
-        let _solid_id = self.write_solid(shell_id, name)?;
-        Ok(())
+        let solid_id = self.write_solid(shell_id, name)?;
+        Ok(solid_id)
     }
 
     fn write_points(&mut self) -> Result<(), StepError> {
@@ -598,8 +685,157 @@ mod tests {
         assert!(content.contains("MANIFOLD_SOLID_BREP"));
         assert!(content.contains("CLOSED_SHELL"));
         assert!(content.contains("ADVANCED_FACE"));
-        assert!(content.contains("PLANE"));
+        assert!(content.contains("PLANE("));
         assert!(content.contains("CARTESIAN_POINT"));
+    }
+
+    /// Parse the DATA section into `id -> entity body` (text after `=`,
+    /// trailing `;` stripped). Deliberately independent of vcad's own STEP
+    /// parser: these conformance tests must not share an oracle with the
+    /// reader, or a layer both sides skip goes untested (the round-trip
+    /// tests passed for months on files every conforming importer rejected).
+    fn parse_entities(content: &str) -> HashMap<u64, String> {
+        let mut map = HashMap::new();
+        for line in content.lines() {
+            let Some(rest) = line.strip_prefix('#') else {
+                continue;
+            };
+            let Some((id, body)) = rest.split_once('=') else {
+                continue;
+            };
+            let Ok(id) = id.trim().parse::<u64>() else {
+                continue;
+            };
+            map.insert(id, body.trim().trim_end_matches(';').trim().to_string());
+        }
+        map
+    }
+
+    fn ids_of_type(map: &HashMap<u64, String>, ty: &str) -> Vec<u64> {
+        let mut ids: Vec<u64> = map
+            .iter()
+            .filter(|(_, body)| {
+                body.strip_prefix(ty)
+                    .map(|rest| rest.trim_start().starts_with('('))
+                    .unwrap_or(false)
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Entity ids referenced (as `#N`) inside a body string.
+    fn refs_in(body: &str) -> Vec<u64> {
+        let mut refs = Vec::new();
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'#' {
+                let start = i + 1;
+                let mut end = start;
+                while end < bytes.len() && bytes[end].is_ascii_digit() {
+                    end += 1;
+                }
+                if end > start {
+                    refs.push(body[start..end].parse().unwrap());
+                }
+                i = end;
+            } else {
+                i += 1;
+            }
+        }
+        refs
+    }
+
+    /// Assert the product/representation anchor a conforming importer
+    /// traverses: PRODUCT -> ... -> SDR -> ABSR(all solids, unit context).
+    fn assert_anchor_graph(content: &str) {
+        let map = parse_entities(content);
+
+        // Header: FILE_SCHEMA must carry the AP214 object identifier.
+        assert!(
+            content.contains("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }'));"),
+            "FILE_SCHEMA must include the AP214 object-identifier suffix"
+        );
+
+        // Exactly one SDR per file.
+        let sdrs = ids_of_type(&map, "SHAPE_DEFINITION_REPRESENTATION");
+        assert_eq!(sdrs.len(), 1, "expected exactly one SDR, got {sdrs:?}");
+        let sdr_refs = refs_in(&map[&sdrs[0]]);
+        assert_eq!(
+            sdr_refs.len(),
+            2,
+            "SDR must reference (PDS, representation)"
+        );
+
+        // SDR arg 0 chains PDS -> PD -> PDF -> PRODUCT.
+        let pds = &map[&sdr_refs[0]];
+        assert!(
+            pds.starts_with("PRODUCT_DEFINITION_SHAPE"),
+            "SDR arg0: {pds}"
+        );
+        let pd = &map[refs_in(pds).last().unwrap()];
+        assert!(pd.starts_with("PRODUCT_DEFINITION"), "PDS ref: {pd}");
+        let pdf = &map[&refs_in(pd)[0]];
+        assert!(
+            pdf.starts_with("PRODUCT_DEFINITION_FORMATION"),
+            "PD arg2: {pdf}"
+        );
+        let product = &map[refs_in(pdf).last().unwrap()];
+        assert!(product.starts_with("PRODUCT"), "PDF ref: {product}");
+
+        // SDR arg 1 is the ABSR; it must reference every MANIFOLD_SOLID_BREP.
+        let absr = &map[&sdr_refs[1]];
+        assert!(
+            absr.starts_with("ADVANCED_BREP_SHAPE_REPRESENTATION"),
+            "SDR arg1: {absr}"
+        );
+        let absr_refs = refs_in(absr);
+        let solids = ids_of_type(&map, "MANIFOLD_SOLID_BREP");
+        assert!(!solids.is_empty(), "no MANIFOLD_SOLID_BREP entities");
+        for solid in &solids {
+            assert!(
+                absr_refs.contains(solid),
+                "ABSR does not reference solid #{solid}: {absr}"
+            );
+        }
+
+        // The ABSR's last ref is the geometric context; it must be the
+        // complex instance carrying GLOBAL_UNIT_ASSIGNED_CONTEXT, and that
+        // context must reference a LENGTH_UNIT.
+        let ctx = &map[absr_refs.last().unwrap()];
+        assert!(
+            ctx.contains("GEOMETRIC_REPRESENTATION_CONTEXT")
+                && ctx.contains("GLOBAL_UNIT_ASSIGNED_CONTEXT")
+                && ctx.contains("GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT"),
+            "ABSR context is not a unit-assigned representation context: {ctx}"
+        );
+        let has_length_unit = refs_in(ctx)
+            .iter()
+            .any(|r| map[r].contains("LENGTH_UNIT()") && map[r].contains("SI_UNIT"));
+        assert!(
+            has_length_unit,
+            "context does not reference an SI LENGTH_UNIT: {ctx}"
+        );
+    }
+
+    #[test]
+    fn test_anchor_graph_single_body() {
+        let cube = make_cube(10.0, 10.0, 10.0);
+        let buffer = write_step_to_buffer(&cube).unwrap();
+        assert_anchor_graph(&String::from_utf8_lossy(&buffer));
+    }
+
+    #[test]
+    fn test_anchor_graph_multi_body() {
+        let a = make_cube(10.0, 10.0, 10.0);
+        let b = make_cube(5.0, 5.0, 20.0);
+        let buffer = write_step_solids_to_buffer(&[(&a, "A"), (&b, "B")]).unwrap();
+        let content = String::from_utf8_lossy(&buffer);
+        assert_anchor_graph(&content);
+        let map = parse_entities(&content);
+        assert_eq!(ids_of_type(&map, "MANIFOLD_SOLID_BREP").len(), 2);
     }
 
     #[test]
@@ -706,7 +942,7 @@ mod tests {
             content
         );
         assert!(
-            !content.contains("PLANE"),
+            !content.contains("PLANE("),
             "B-spline surface should NOT be written as PLANE"
         );
     }
@@ -734,7 +970,7 @@ mod tests {
         let content = String::from_utf8_lossy(&buffer);
 
         assert!(
-            content.contains("PLANE"),
+            content.contains("PLANE("),
             "Planar bilinear should be written as PLANE"
         );
         assert!(
@@ -770,7 +1006,7 @@ mod tests {
             "Non-planar bilinear should be written as B_SPLINE_SURFACE_WITH_KNOTS"
         );
         assert!(
-            !content.contains("PLANE"),
+            !content.contains("PLANE("),
             "Non-planar bilinear should NOT be written as PLANE"
         );
     }
