@@ -18,15 +18,23 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
     let surface = &brep.geometry.surfaces[face.surface_index];
 
     // Get UV coordinates of the outer loop vertices
-    let outer_uvs = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
+    let raw_uvs = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
 
     // A closed surface covering the whole primitive (a full sphere or
     // torus) is bounded only by its seam: the outer loop projects to a
     // zero-area polygon in UV, which would reject every hit. Treat a
     // degenerate outer loop as "untrimmed" — the face spans the entire
     // surface — and still honour inner loops (holes) below.
-    let mut outer_uvs = outer_uvs;
-    let mut untrimmed = polygon_area(&outer_uvs).abs() < 1e-9;
+    //
+    // The degeneracy verdict is taken on the *raw* projection, before any
+    // pole repair: a full sphere's seam loop passes through both poles, and
+    // repairing those would hand it a non-zero area and reject every hit.
+    let mut untrimmed = polygon_area(&raw_uvs).abs() < 1e-9;
+    let mut outer_uvs = if untrimmed {
+        raw_uvs
+    } else {
+        repair_pole_vertices(surface.as_ref(), &raw_uvs)
+    };
 
     // A planar cap bounded by a single closed circle edge (cylinder/cone
     // caps) projects to a degenerate UV polygon too — but "untrimmed" on a
@@ -50,7 +58,7 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
                 return false;
             }
         }
-    } else if !point_in_polygon(&uv, &outer_uvs) {
+    } else if !point_in_polygon(&wrap_u_into_polygon(uv, &outer_uvs), &outer_uvs) {
         return false;
     }
 
@@ -63,6 +71,118 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
     }
 
     true
+}
+
+/// Latitude magnitude above which a spherical loop vertex counts as sitting
+/// on a pole, where longitude is indeterminate.
+const POLE_V_EPS: f64 = 1e-7;
+
+/// Repair a spherical face's UV trim polygon around pole vertices and the
+/// longitude seam.
+///
+/// On a sphere, `u` (longitude) is meaningless at a pole: every meridian
+/// meets there, and `project_to_sphere` reports `u = 0` for want of anything
+/// better. Straight-line point-in-polygon then draws the boundary to
+/// `u = 0` instead of up the two meridians that actually bound the patch.
+///
+/// The fillet corner blend is exactly this case. Each convex corner of a
+/// filleted box gets a spherical octant whose three vertices are the
+/// tangency points with the three faces; the first of those lands on the
+/// pole (the surface's `axis` is that face's normal), so the loop projects
+/// to the right triangle `(0, π/2), (0, 0), (π/2, 0)` when the true patch is
+/// the *square* `[0, π/2] × [0, π/2]`. The hypotenuse cuts away half the
+/// octant, and rays through the missing half pass into the solid — the
+/// crescent-shaped hole visible at every corner of a ray-traced filleted
+/// part, right where the three fillet cylinders meet.
+///
+/// The repair replaces each pole vertex with two vertices carrying the
+/// longitudes of its neighbours, so the boundary runs up one meridian,
+/// across the pole, and back down the other. Longitudes are also unwrapped
+/// onto one continuous branch first, so a patch straddling the `u = 0` seam
+/// stays a single polygon instead of folding across the whole domain.
+///
+/// Non-spherical surfaces are returned unchanged.
+fn repair_pole_vertices(surface: &dyn Surface, uvs: &[Point2]) -> Vec<Point2> {
+    use vcad_kernel_geom::SurfaceKind;
+    if surface.surface_type() != SurfaceKind::Sphere || uvs.len() < 3 {
+        return uvs.to_vec();
+    }
+    let half_pi = std::f64::consts::FRAC_PI_2;
+    let is_pole = |uv: &Point2| (uv.y.abs() - half_pi).abs() < POLE_V_EPS;
+
+    // Nothing to do when the loop avoids both poles — but still unwrap, so a
+    // seam-straddling patch tests as one contiguous polygon.
+    let n = uvs.len();
+    let anchor = (0..n).find(|&i| !is_pole(&uvs[i]));
+    let Some(anchor) = anchor else {
+        return uvs.to_vec();
+    };
+
+    // Unwrap longitudes of the non-pole vertices onto a continuous branch,
+    // walking the loop from the anchor so each step takes the shortest turn.
+    let tau = std::f64::consts::TAU;
+    let mut unwrapped: Vec<Option<f64>> = vec![None; n];
+    unwrapped[anchor] = Some(uvs[anchor].x);
+    let mut last = uvs[anchor].x;
+    for step in 1..n {
+        let i = (anchor + step) % n;
+        if is_pole(&uvs[i]) {
+            continue;
+        }
+        let mut u = uvs[i].x;
+        while u - last > std::f64::consts::PI {
+            u -= tau;
+        }
+        while last - u > std::f64::consts::PI {
+            u += tau;
+        }
+        unwrapped[i] = Some(u);
+        last = u;
+    }
+
+    // Emit, expanding each pole vertex into the two meridian endpoints that
+    // bracket it in loop order.
+    let prev_nonpole = |i: usize| -> f64 {
+        (1..=n)
+            .find_map(|k| unwrapped[(i + n - k) % n])
+            .unwrap_or(0.0)
+    };
+    let next_nonpole =
+        |i: usize| -> f64 { (1..=n).find_map(|k| unwrapped[(i + k) % n]).unwrap_or(0.0) };
+
+    let mut out = Vec::with_capacity(n + 2);
+    for i in 0..n {
+        if let Some(u) = unwrapped[i] {
+            out.push(Point2::new(u, uvs[i].y));
+            continue;
+        }
+        let v = if uvs[i].y > 0.0 { half_pi } else { -half_pi };
+        out.push(Point2::new(prev_nonpole(i), v));
+        out.push(Point2::new(next_nonpole(i), v));
+    }
+    out
+}
+
+/// Shift a query longitude onto the branch spanned by a repaired polygon.
+///
+/// [`repair_pole_vertices`] unwraps longitudes, so a polygon may live on
+/// `[-π/2, π/2]` while `project_to_sphere` reports the hit at `3π/2`. The
+/// polygon's `u` extent is always under a full turn, so at most one whole-turn
+/// shift can land inside.
+fn wrap_u_into_polygon(uv: Point2, polygon: &[Point2]) -> Point2 {
+    let tau = std::f64::consts::TAU;
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for p in polygon {
+        lo = lo.min(p.x);
+        hi = hi.max(p.x);
+    }
+    if !lo.is_finite() || hi - lo >= tau {
+        return uv;
+    }
+    // Map u into [lo, lo + τ). Since the polygon spans under a full turn,
+    // that interval contains [lo, hi] and any u inside the patch lands there.
+    let u = uv.x - ((uv.x - lo) / tau).floor() * tau;
+    Point2::new(u, uv.y)
 }
 
 /// Signed area of a UV polygon (shoelace). Near-zero means the loop is
@@ -197,6 +317,21 @@ pub(crate) fn synthesize_planar_cap_polygon(
     }
 
     None
+}
+
+/// Project a 3D point onto the parameter space of a face's surface.
+///
+/// The inverse of evaluating the face's surface — the coordinates
+/// [`point_in_face`] expects. Exposed so callers can ask whether a specific
+/// surface point falls inside a face's trim boundary.
+pub fn project_face_uv(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    point: &vcad_kernel_math::Point3,
+) -> Point2 {
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    project_to_surface_uv(surface.as_ref(), point)
 }
 
 /// Get the UV coordinates of vertices in a loop by projecting 3D positions onto the surface.
@@ -485,7 +620,15 @@ pub fn extract_face_uv_loop(brep: &BRepSolid, face_id: FaceId) -> Vec<Point2> {
     let face = &topo.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
 
-    loop_uv_coords(brep, face.outer_loop, surface.as_ref())
+    let raw = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
+    // Mirror `point_in_face`: repair pole longitudes on a real trim loop, but
+    // leave a degenerate (seam-only) loop alone so callers can still detect
+    // it and fall back to "untrimmed".
+    if polygon_area(&raw).abs() < 1e-9 {
+        raw
+    } else {
+        repair_pole_vertices(surface.as_ref(), &raw)
+    }
 }
 
 /// Extract UV coordinates for all inner loops (holes) of a face.
