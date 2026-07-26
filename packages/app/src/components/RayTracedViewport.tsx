@@ -134,6 +134,7 @@ export function RayTracedViewportSync() {
         ro: number,
       ) => void;
       setMaterial: (r: number, g: number, b: number, m: number, ro: number) => void;
+      setMaterialFromDef?: (json: string | null, tint: number[] | null) => void;
     };
     rt.clearScene?.();
 
@@ -237,7 +238,26 @@ export function RayTracedViewportSync() {
       const mat = docMat ?? preset;
       if (mat) {
         try {
-          rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
+          // Prefer the full definition: setMaterial only carries colour,
+          // metallic and roughness, so clearcoat, IOR and anisotropy would be
+          // dropped and a brushed or lacquered part would shade differently
+          // here than under `vcad-render --photoreal`. setMaterialFromDef runs
+          // the same Rust derivation both renderers share.
+          // Fall back rather than losing the material outright: if the shape
+          // ever drifts from the Rust MaterialDef the deserialize throws, and
+          // dropping to setMaterial costs only the extended fields.
+          let applied = false;
+          if (typeof rt.setMaterialFromDef === "function") {
+            try {
+              rt.setMaterialFromDef(JSON.stringify(mat), null);
+              applied = true;
+            } catch (e) {
+              logger.debug("gpu", `setMaterialFromDef rejected the definition, falling back: ${e}`);
+            }
+          }
+          if (!applied) {
+            rt.setMaterial(mat.color[0], mat.color[1], mat.color[2], mat.metallic, mat.roughness);
+          }
         } catch (e) {
           logger.debug("gpu", `Failed to set material: ${e}`);
         }
@@ -376,6 +396,13 @@ const TIER_CONFIG: Record<
   high: { scale: 2.0, maxPixels: 1920 * 1080 },       // 2× DPI — final
 };
 
+// Ceiling on path-tracer depth. Matches `PathTraceOptions::default().max_depth`
+// on the CPU side so a converged viewport image agrees with
+// `vcad-render --photoreal`. The kernel escalates toward this with accumulation
+// (2 bounces on the draft frame, then 4, then the full 6), so raising this does
+// not make the first frame slower.
+const PATH_TRACE_MAX_DEPTH = 6;
+
 export function RayTracedViewportOverlay() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const raytraceQuality = useUiStore((s) => s.raytraceQuality);
@@ -390,11 +417,6 @@ export function RayTracedViewportOverlay() {
   const raytraceEdgeCreaseWidth = useUiStore((s) => s.raytraceEdgeCreaseWidth);
   const raytraceEdgeBoundaryWidth = useUiStore((s) => s.raytraceEdgeBoundaryWidth);
   const raytraceEdgeSoftness = useUiStore((s) => s.raytraceEdgeSoftness);
-  const raytraceAoEnabled = useUiStore((s) => s.raytraceAoEnabled);
-  const raytraceAoRadius = useUiStore((s) => s.raytraceAoRadius);
-  const raytraceAoIntensity = useUiStore((s) => s.raytraceAoIntensity);
-  const raytraceAoBias = useUiStore((s) => s.raytraceAoBias);
-  const raytraceAoSampleCount = useUiStore((s) => s.raytraceAoSampleCount);
   const rayTracer = getRayTracer();
   const { isDark } = useTheme();
 
@@ -415,14 +437,8 @@ export function RayTracedViewportOverlay() {
     softness: 1.5,
   });
 
-  // Track last AO settings to detect changes
-  const lastAoSettingsRef = useRef({
-    enabled: true,
-    radius: 0.3,
-    intensity: 1.0,
-    bias: 0.001,
-    sampleCount: 16,
-  });
+  // Track last path-tracer settings to detect changes.
+  const lastPathTraceSettingsRef = useRef({ stylize: true });
 
   // Track pending async render to avoid overlapping calls
   const renderInProgressRef = useRef(false);
@@ -793,42 +809,38 @@ export function RayTracedViewportOverlay() {
     rayTracer, doRender,
   ]);
 
-  // Apply SSAO settings changes
+  // Apply path-tracer settings.
+  //
+  // The renderer is a real path tracer, so there is no SSAO pass any more —
+  // multi-bounce GI computes contact occlusion correctly and a screen-space
+  // proxy on top would double-darken concave corners. What is left to drive is
+  // the depth ceiling and whether the Sobel edge overlay is drawn: edge lines
+  // are a stylisation that fights photorealism, so "edges off" IS the photoreal
+  // viewport mode.
+  //
+  // Depth itself escalates with accumulation inside the kernel, so the draft
+  // frame stays interactive regardless of the ceiling set here.
   useEffect(() => {
     if (!rayTracer) return;
 
-    const last = lastAoSettingsRef.current;
-    if (
-      raytraceAoEnabled === last.enabled &&
-      raytraceAoRadius === last.radius &&
-      raytraceAoIntensity === last.intensity &&
-      raytraceAoBias === last.bias &&
-      raytraceAoSampleCount === last.sampleCount
-    ) {
-      return;
-    }
+    const last = lastPathTraceSettingsRef.current;
+    if (raytraceEdgesEnabled === last.stylize) return;
+    lastPathTraceSettingsRef.current = { stylize: raytraceEdgesEnabled };
 
-    lastAoSettingsRef.current = {
-      enabled: raytraceAoEnabled,
-      radius: raytraceAoRadius,
-      intensity: raytraceAoIntensity,
-      bias: raytraceAoBias,
-      sampleCount: raytraceAoSampleCount,
+    const rt = rayTracer as {
+      setPathTrace?: (maxDepth: number, stylize: boolean) => void;
     };
-
-    const rt = rayTracer as { setAO?: (radius: number, intensity: number, bias: number, sampleCount: number) => void };
-    if (typeof rt.setAO !== "function") {
-      logger.debug("gpu", "setAO not available - WASM may need rebuild");
+    if (typeof rt.setPathTrace !== "function") {
+      logger.debug("gpu", "setPathTrace not available - WASM may need rebuild");
       return;
     }
 
-    const effectiveIntensity = raytraceAoEnabled ? raytraceAoIntensity : 0.0;
-    rt.setAO(raytraceAoRadius, effectiveIntensity, raytraceAoBias, raytraceAoSampleCount);
+    rt.setPathTrace(PATH_TRACE_MAX_DEPTH, raytraceEdgesEnabled);
 
     if (lastCameraStateRef.current) {
       doRender(lastCameraStateRef.current);
     }
-  }, [raytraceAoEnabled, raytraceAoRadius, raytraceAoIntensity, raytraceAoBias, raytraceAoSampleCount, rayTracer, doRender]);
+  }, [raytraceEdgesEnabled, rayTracer, doRender]);
 
   if (!rayTracer) {
     return null;

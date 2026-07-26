@@ -7641,6 +7641,7 @@ dependencies = [
  "rayon",
  "tang",
  "thiserror 2.0.18",
+ "vcad-ir",
  "vcad-kernel-booleans",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",

@@ -195,6 +195,81 @@ impl Pbr {
     }
 }
 
+/// Circumferential grain implied by a material's name, when the document does
+/// not state anisotropy explicitly.
+fn anisotropy_from_name(name: &str) -> f32 {
+    let n = name.to_ascii_lowercase();
+    // Turning and boring cut circumferentially, which is the +u direction on
+    // a cylinder — the same direction the tangent frame is built from.
+    if n.contains("turned") || n.contains("machined") || n.contains("bored") {
+        0.6
+    } else if n.contains("brushed") {
+        0.7
+    } else {
+        0.0
+    }
+}
+
+impl Pbr {
+    /// Derive a render material from an IR material definition.
+    ///
+    /// Single source of truth for BOTH renderers: `vcad-render --photoreal`
+    /// and the GPU viewport call this, so a part cannot pick up a different
+    /// clearcoat, IOR or grain depending on which one drew it.
+    pub fn from_material_def(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 3]>) -> Self {
+        let base = mat.map(|m| m.color).or(tint).unwrap_or([0.62, 0.64, 0.67]);
+        let base_color = [base[0] as f32, base[1] as f32, base[2] as f32];
+
+        let metallic = mat
+            .map(|m| m.metallic as f32)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        // Perfectly sharp mirrors read as CG. Floor roughness slightly.
+        let roughness = mat
+            .map(|m| m.roughness as f32)
+            .unwrap_or(0.35)
+            .clamp(0.03, 1.0);
+        let ior = mat
+            .and_then(|m| m.ior)
+            .map(|v| v as f32)
+            .unwrap_or(1.5)
+            .clamp(1.0, 3.0);
+
+        // Dielectrics that are already glossy get a clearcoat; rough matte
+        // surfaces (sandblasted, as-printed) do not.
+        let clearcoat = if metallic < 0.5 && roughness < 0.5 {
+            0.35 * (1.0 - roughness / 0.5)
+        } else {
+            0.0
+        };
+
+        // Anisotropy is a real IR field (`MaterialDef::anisotropy`) rather than
+        // a rendering-time guess: Rust is the source of truth for IR types, the
+        // value is a genuine property of the surface finish, and it round-trips
+        // in `.vcad`. The name heuristic only fills in when the document says
+        // nothing — a document that names its material "brushed_aluminum" or
+        // "turned_shaft" has told us the finish, and rendering that as a uniform
+        // polish is the CG tell this feature exists to remove. Anything explicit
+        // always wins.
+        let anisotropy = mat
+            .and_then(|m| m.anisotropy)
+            .map(|v| v as f32)
+            .unwrap_or_else(|| mat.map(|m| anisotropy_from_name(&m.name)).unwrap_or(0.0))
+            .clamp(-1.0, 1.0);
+
+        Self {
+            base_color,
+            metallic,
+            roughness,
+            anisotropy,
+            clearcoat,
+            clearcoat_roughness: 0.08,
+            ior,
+            emissive: [0.0; 3],
+        }
+    }
+}
+
 // ─── lights & environment ─────────────────────────────────────────────────
 
 /// A rectangular area light ("softbox"), emitting from its front face only.
@@ -331,6 +406,25 @@ fn sample_1d(cdf: &[f32], u: f32) -> (usize, f32) {
     let (a, b) = (cdf[i], cdf[i + 1]);
     let d = if b > a { (u - a) / (b - a) } else { 0.5 };
     (i, d.clamp(0.0, 1.0))
+}
+
+/// An [`EnvMap`] flattened for GPU upload. See [`EnvMap::pack_for_gpu`].
+#[derive(Debug, Clone)]
+pub struct GpuEnvPack {
+    /// RGBA32F radiance, `width * height` texels.
+    pub pixels: Vec<f32>,
+    /// R32F CDF texture, `(width + 1) * (height + 1)`.
+    pub cdf: Vec<f32>,
+    /// Image width in texels.
+    pub width: u32,
+    /// Image height in texels.
+    pub height: u32,
+    /// Overall multiplier.
+    pub intensity: f32,
+    /// Rotation about +Z in radians.
+    pub rotation: f32,
+    /// PDF normaliser; zero means "not importance-sampled".
+    pub marg_int: f32,
 }
 
 /// A lat-long (equirectangular) HDR environment map with a 2D CDF for
@@ -513,6 +607,50 @@ impl EnvMap {
         }
         let two_pi_sq = 2.0 * std::f32::consts::PI * std::f32::consts::PI;
         pdf_uv / (two_pi_sq * sin_t)
+    }
+
+    /// Pack for GPU upload as two textures — see `env.wgsl` for why textures
+    /// rather than storage buffers.
+    ///
+    /// `pixels` is RGBA32F (`w * h`); `cdf` is R32F (`(w+1) * (h+1)`) with row
+    /// `j < h` the conditional CDF for row `j` and row `h` the marginal.
+    ///
+    /// Lives here, next to where the CDFs are built, so the two descriptions of
+    /// the layout cannot drift apart.
+    pub fn pack_for_gpu(&self) -> GpuEnvPack {
+        let (w, h) = (self.width, self.height);
+
+        let mut pixels = Vec::with_capacity(4 * w * h);
+        for px in &self.pixels {
+            pixels.extend_from_slice(px);
+            pixels.push(1.0);
+        }
+
+        // (w + 1) x (h + 1), zero-filled: each conditional row uses the full
+        // width, the marginal uses only its first h + 1 entries.
+        let mut cdf = vec![0.0f32; (w + 1) * (h + 1)];
+        for j in 0..h {
+            let base = j * (w + 1);
+            cdf[base..base + w + 1].copy_from_slice(&self.cond_cdf[base..base + w + 1]);
+        }
+        let marg_row = h * (w + 1);
+        cdf[marg_row..marg_row + self.marg_cdf.len()].copy_from_slice(&self.marg_cdf);
+
+        GpuEnvPack {
+            pixels,
+            cdf,
+            width: self.width as u32,
+            height: self.height as u32,
+            intensity: self.intensity,
+            rotation: self.rotation as f32,
+            // Zero when the map carries no energy, which switches the shader's
+            // importance sampling off exactly as `is_sampleable` does here.
+            marg_int: if self.is_sampleable() {
+                self.marg_int
+            } else {
+                0.0
+            },
+        }
     }
 
     /// Importance-sample a direction. Returns `(direction, radiance, pdf)`
@@ -1138,6 +1276,15 @@ fn bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
     let value = add3(scale3(under, coat_atten), coat);
     let pdf = pd * pdf_d + ps * pdf_s + pc * pdf_c;
     (value, pdf.max(0.0))
+}
+
+/// Reference BSDF evaluation, in the local shading frame (+Z = normal).
+///
+/// Exposed so the WGSL port in `gpu/shaders/bsdf.wgsl` can be checked against
+/// this implementation — see `tests/bsdf_parity.rs`. Returns `(f * cos, pdf)`;
+/// the PDF is the one MIS must agree on across both renderers.
+pub fn reference_bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
+    bsdf_eval(m, wo, wi)
 }
 
 /// Importance-sample the BSDF. Returns `(wi_local, f*cos, pdf)`.

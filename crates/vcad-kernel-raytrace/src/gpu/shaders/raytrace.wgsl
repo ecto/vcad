@@ -3,36 +3,7 @@
 // This shader traces rays against analytic surfaces without tessellation,
 // achieving pixel-perfect silhouettes at any zoom level.
 
-// Constants
-const SURFACE_PLANE: u32 = 0u;
-const SURFACE_CYLINDER: u32 = 1u;
-const SURFACE_SPHERE: u32 = 2u;
-const SURFACE_CONE: u32 = 3u;
-const SURFACE_TORUS: u32 = 4u;
-const SURFACE_BILINEAR: u32 = 5u;
-
-const MAX_T: f32 = 1e10;
-const EPSILON: f32 = 1e-6;
-const PI: f32 = 3.14159265359;
-
 // Structures matching Rust definitions
-
-struct GpuSurface {
-    surface_type: u32,
-    // Use explicit u32 padding instead of vec3<u32> to match Rust layout
-    // vec3<u32> in WGSL has 16-byte alignment which would misalign params
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-    params: array<f32, 32>,
-}
-
-struct GpuMaterial {
-    color: vec4<f32>,
-    metallic: f32,
-    roughness: f32,
-    _pad: vec2<f32>,
-}
 
 struct GpuFace {
     surface_idx: u32,
@@ -84,16 +55,21 @@ struct RenderState {
     debug_mode: u32,
     // 0=dark, 1=light
     theme: u32,
-    // SSAO params
-    ao_radius: f32,
-    ao_intensity: f32,
-    ao_bias: f32,
-    ao_sample_count: u32,
+    // Path tracing controls. max_depth is escalated by the refinement
+    // scheduler: shallow for the draft frame, deeper as accumulation proceeds.
+    max_depth: u32,
+    rr_start: u32,
+    light_count: u32,
+    env_intensity: f32,
     // Additional rays per edge pixel for adaptive refinement (0 = disabled).
     refine_sample_count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    // Clamp on indirect radiance to kill fireflies (0 = disabled).
+    firefly_clamp: f32,
+    // Whether the implicit ground plane participates in the path trace.
+    ground_enabled: u32,
+    // Non-zero enables non-photoreal stylisation (the Sobel edge overlay).
+    // Off in a photoreal viewport: edge lines fight photorealism.
+    stylize: u32,
     // Edge style — layout must match GpuRenderState in buffers.rs
     silhouette_color: vec4<f32>,
     crease_color: vec4<f32>,
@@ -102,12 +78,34 @@ struct RenderState {
     crease_width: f32,
     boundary_width: f32,
     edge_softness: f32,
+    // Environment: 0 = analytic gradient, 1 = lat-long HDR image in env_data.
+    env_mode: u32,
+    env_width: u32,
+    env_height: u32,
+    env_rotation: f32,
+    env_marg_int: f32,
+    _pad3: u32,
+    _pad4: u32,
+    _pad5: u32,
 }
 
 struct RayHit {
     t: f32,
     face_idx: u32,
     uv: vec2<f32>,
+}
+
+// A rectangular area light. Layout must match GpuAreaLight in buffers.rs,
+// which is built from pathtrace::AreaLight.
+struct GpuAreaLight {
+    // Centre of the rectangle (.w unused).
+    center: vec4<f32>,
+    // Half-extent along the rectangle's first axis (.w unused).
+    u: vec4<f32>,
+    // Half-extent along the second axis (.w unused).
+    v: vec4<f32>,
+    // Emitted radiance (.w unused).
+    emission: vec4<f32>,
 }
 
 // Bind groups
@@ -123,9 +121,17 @@ struct RayHit {
 @group(0) @binding(8) var<storage, read_write> accum_buffer: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read> materials: array<GpuMaterial>;
 @group(0) @binding(10) var<storage, read_write> depth_normal_buffer: array<vec4<f32>>;
-// SSAO result buffer: one f32 per pixel in [0,1]. Written by the `ssao` pass,
-// read by `shade`. Initialised to 1.0 (no occlusion); accumulates over frames.
-@group(0) @binding(11) var<storage, read_write> ao_buffer: array<f32>;
+// Rectangular area lights ("softboxes"). Intersectable, so both BSDF sampling
+// and NEE find them and combine under MIS — that is what puts correctly-shaped
+// highlights on metal. Populated from `pathtrace::studio_rig`, the same
+// function the CPU renderer uses, so both rigs are identical.
+@group(0) @binding(11) var<storage, read> lights: array<GpuAreaLight>;
+// HDR environment as textures, not storage buffers: browsers cap
+// maxStorageBuffersPerShaderStage at 10 and the bindings above already use all
+// ten. See env.wgsl for the layout.
+@group(0) @binding(13) var env_pixels: texture_2d<f32>;
+@group(0) @binding(14) var env_cdf: texture_2d<f32>;
+
 // Per-pixel face_idx for analytic crease detection (0xFFFFFFFF = background).
 // Written at frame 1; read at frame 2+ by detect_edge_sobel.
 @group(0) @binding(12) var<storage, read_write> feature_id_buffer: array<u32>;
@@ -1073,24 +1079,6 @@ fn world_to_screen_coords(world_pos: vec3<f32>) -> vec2<i32> {
     return vec2<i32>(px, py);
 }
 
-// Ambient occlusion via a single short hemisphere ray per pixel. Accumulation
-// across frames averages out the noise — at 1 sample per frame and ~8-16
-// frames at HIGH quality, the result settles into clean soft contact
-// shadows.
-fn ambient_occlusion(p: vec3<f32>, normal: vec3<f32>, pixel: vec2<u32>) -> f32 {
-    let bias = 0.001;
-    let max_dist = 6.0;
-    let u = rand_uniform2(pixel, 7u);
-    let dir = sample_hemisphere_cosine(normal, u);
-    let origin = p + normal * bias;
-    let hit = trace_bvh(origin, dir);
-    if hit.face_idx == 0xFFFFFFFFu || hit.t > max_dist {
-        return 1.0;
-    }
-    // Linear falloff with hit distance — close hits darken more than far hits.
-    return clamp(hit.t / max_dist, 0.0, 1.0);
-}
-
 // Compute surface normal at hit point
 fn compute_normal(hit: RayHit) -> vec3<f32> {
     let face = faces[hit.face_idx];
@@ -1180,26 +1168,14 @@ fn compute_normal(hit: RayHit) -> vec3<f32> {
     return normalize(normal);
 }
 
-// Fresnel-Schlick approximation
-fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
-    return f0 + (1.0 - f0) * pow(1.0 - cos_theta, 5.0);
-}
 
-// GGX/Trowbridge-Reitz normal distribution
-fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    return a2 / (PI * denom * denom);
-}
-
-// Smith geometry function (GGX)
-fn geometry_smith(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
-    let r = roughness + 1.0;
-    let k = (r * r) / 8.0;
-    let ggx_v = n_dot_v / (n_dot_v * (1.0 - k) + k);
-    let ggx_l = n_dot_l / (n_dot_l * (1.0 - k) + k);
-    return ggx_v * ggx_l;
+// Surface tangent dP/du at a hit, or a zero vector where the parameterisation
+// is degenerate. Thin wrapper: the maths lives in `surface_dpdu` (surface.wgsl)
+// so it can be driven directly by the parity harness.
+fn compute_tangent(hit: RayHit) -> vec3<f32> {
+    let face = faces[hit.face_idx];
+    let surface = surfaces[face.surface_idx];
+    return surface_dpdu(surface.surface_type, surface.params, hit.uv);
 }
 
 // ACES Narkowicz tonemap. Cleaner highlights and richer mids than Reinhard.
@@ -1212,241 +1188,434 @@ fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Evaluate Cook-Torrance BRDF for one light direction. Returns the
-// radiance contribution (already weighted by n_dot_l).
-fn brdf_direct(
+// ─── environment ──────────────────────────────────────────────────────────
+
+// Incoming radiance from the analytic studio environment.
+//
+// Mirrors `pathtrace::GradientEnv::radiance` with the constants from
+// `GradientEnv::default()`, so the GPU and CPU integrate the SAME sky. This is
+// deliberately low-frequency: BSDF sampling alone converges on it, which is
+// why the gradient needs no environment CDF.
+//
+// The CPU renderer also supports `Environment::Image` (a lat-long HDRI, with
+// its own CDF). That is NOT ported here — the GPU path always uses the
+// gradient. A document rendered with `--hdri` will therefore not match the
+// viewport; the default studio gradient does.
+//
+// Distinct from `sky_color`, which is the themed backdrop the viewport DRAWS.
+// Lighting must match the CPU; the visible background is a UI choice.
+fn env_radiance(d: vec3<f32>) -> vec3<f32> {
+    let zenith = vec3<f32>(0.34, 0.42, 0.55);
+    let horizon = vec3<f32>(0.62, 0.64, 0.68);
+    let ground_c = vec3<f32>(0.18, 0.17, 0.16);
+
+    if render_state.env_mode == ENV_MODE_IMAGE {
+        return env_image_radiance(
+            d,
+            render_state.env_width,
+            render_state.env_height,
+            render_state.env_intensity,
+            render_state.env_rotation,
+        );
+    }
+
+    let t = d.z;
+    var c: vec3<f32>;
+    if t >= 0.0 {
+        let k = smoothstep(0.0, 1.0, pow(t, 0.65));
+        c = mix(horizon, zenith, k);
+    } else {
+        let k = smoothstep(0.0, 1.0, pow(-t, 0.5));
+        c = mix(horizon, ground_c, k);
+    }
+    return c * render_state.env_intensity;
+}
+
+// ─── area lights ──────────────────────────────────────────────────────────
+
+fn light_normal(l: GpuAreaLight) -> vec3<f32> {
+    return normalize(cross(l.u.xyz, l.v.xyz));
+}
+
+fn light_area(l: GpuAreaLight) -> f32 {
+    return 4.0 * length(cross(l.u.xyz, l.v.xyz));
+}
+
+struct LightHit {
+    t: f32,
+    index: u32,
+    hit: bool,
+}
+
+// Closest intersection against the emitting (front) face of any area light.
+// Lights are intersectable so a BSDF ray can find them too — that is what
+// makes MIS work and what gives metal correctly-shaped softbox highlights
+// instead of a jittered sun cone.
+fn intersect_lights(origin: vec3<f32>, dir: vec3<f32>) -> LightHit {
+    var out: LightHit;
+    out.t = MAX_T;
+    out.index = 0u;
+    out.hit = false;
+
+    for (var i = 0u; i < render_state.light_count; i = i + 1u) {
+        let l = lights[i];
+        let n = light_normal(l);
+        let denom = dot(n, dir);
+        if abs(denom) < 1e-12 {
+            continue;
+        }
+        // Emitting face only: we must be looking at the front.
+        if denom > 0.0 {
+            continue;
+        }
+        let t = dot(n, l.center.xyz - origin) / denom;
+        if t <= 1e-6 || t >= out.t {
+            continue;
+        }
+        let p = origin + dir * t;
+        let rel = p - l.center.xyz;
+        let ul = length(l.u.xyz);
+        let vl = length(l.v.xyz);
+        let du = dot(rel, l.u.xyz / ul);
+        let dv = dot(rel, l.v.xyz / vl);
+        if abs(du) <= ul && abs(dv) <= vl {
+            out.t = t;
+            out.index = i;
+            out.hit = true;
+        }
+    }
+    return out;
+}
+
+// Any-hit occlusion against geometry and the ground. Lights do not occlude,
+// matching `pathtrace::Scene::occluded`.
+fn occluded(origin: vec3<f32>, dir: vec3<f32>, max_dist: f32) -> bool {
+    let o = origin;
+    let hit = trace_bvh(o, dir);
+    if hit.face_idx != 0xFFFFFFFFu && hit.t > 1e-6 && hit.t < max_dist - 1e-6 {
+        return true;
+    }
+    if render_state.ground_enabled != 0u {
+        let g = intersect_ground(o, dir);
+        if g.t > 1e-6 && g.t < max_dist - 1e-6 {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ─── surface description at a hit ─────────────────────────────────────────
+
+struct Surface {
+    point: vec3<f32>,
     normal: vec3<f32>,
-    view_dir: vec3<f32>,
-    light_dir: vec3<f32>,
-    albedo: vec3<f32>,
-    metallic: f32,
-    roughness: f32,
-    f0: vec3<f32>,
+    material: GpuMaterial,
+}
+
+// The implicit ground plane's material, matching the studio floor that
+// `vcad-render --photoreal` builds (photoreal.rs `Backdrop::Studio`).
+fn ground_material() -> GpuMaterial {
+    var m: GpuMaterial;
+    m.color = vec4<f32>(0.55, 0.55, 0.56, 1.0);
+    m.metallic = 0.0;
+    m.roughness = 0.6;
+    m.clearcoat = 0.0;
+    m.clearcoat_roughness = 0.1;
+    m.ior = 1.5;
+    m.anisotropy = 0.0;
+    m._pad0 = 0.0;
+    m._pad1 = 0.0;
+    return m;
+}
+
+// ─── next-event estimation ────────────────────────────────────────────────
+
+// Sample every area light once, MIS-weighted against the BSDF strategy with
+// the power heuristic. Mirrors `pathtrace::Scene::sample_lights`.
+fn sample_lights(
+    p: vec3<f32>,
+    frame: mat3x3<f32>,
+    n: vec3<f32>,
+    wo_local: vec3<f32>,
+    m: GpuMaterial,
+    pixel: vec2<u32>,
+    depth: u32,
 ) -> vec3<f32> {
-    let n_dot_l = max(dot(normal, light_dir), 0.0);
-    if n_dot_l <= 0.0 {
+    var sum = vec3<f32>(0.0);
+    for (var i = 0u; i < render_state.light_count; i = i + 1u) {
+        let l = lights[i];
+        // Two fresh randoms per light per bounce, decorrelated per frame.
+        let r = rand_uniform2(pixel, 101u + depth * 17u + i * 5u);
+        let lp = l.center.xyz + l.u.xyz * (2.0 * r.x - 1.0) + l.v.xyz * (2.0 * r.y - 1.0);
+        let to_light = lp - p;
+        let dist = length(to_light);
+        if dist < 1e-9 {
+            continue;
+        }
+        let wi_world = to_light / dist;
+        let ln = light_normal(l);
+        let cos_light = -dot(wi_world, ln);
+        if cos_light <= 1e-9 {
+            continue;
+        }
+        let wi_local = to_local(frame, wi_world);
+        if wi_local.z <= 0.0 {
+            continue;
+        }
+
+        let e = bsdf_eval(m, wo_local, wi_local);
+        if max3(e.value) <= 0.0 {
+            continue;
+        }
+
+        // Solid-angle PDF of the area sampling strategy.
+        let light_pdf = dist * dist / (cos_light * light_area(l));
+        if light_pdf <= 0.0 {
+            continue;
+        }
+
+        if occluded(p + n * 1e-4, wi_world, dist) {
+            continue;
+        }
+
+        let w = power_heuristic(light_pdf, e.pdf);
+        sum += e.value * l.emission.rgb * (w / light_pdf);
+    }
+    return sum;
+}
+
+// Next-event estimation against the environment, MIS-weighted against BSDF
+// sampling. Only runs for an importance-sampled environment (the HDR image);
+// the analytic gradient is low-frequency enough that BSDF sampling alone
+// integrates it, which is why it has no CDF in either renderer.
+//
+// Mirrors `pathtrace::Scene::sample_environment`.
+fn sample_environment(
+    p: vec3<f32>,
+    frame: mat3x3<f32>,
+    n: vec3<f32>,
+    wo_local: vec3<f32>,
+    m: GpuMaterial,
+    pixel: vec2<u32>,
+    depth: u32,
+) -> vec3<f32> {
+    if render_state.env_mode != ENV_MODE_IMAGE {
         return vec3<f32>(0.0);
     }
-    let halfway = normalize(view_dir + light_dir);
-    let n_dot_v = max(dot(normal, view_dir), 0.001);
-    let n_dot_h = max(dot(normal, halfway), 0.0);
-    let h_dot_v = max(dot(halfway, view_dir), 0.0);
-
-    let d = distribution_ggx(n_dot_h, roughness);
-    let g = geometry_smith(n_dot_v, n_dot_l, roughness);
-    let f = fresnel_schlick(h_dot_v, f0);
-
-    let specular = (d * g * f) / (4.0 * n_dot_v * n_dot_l + 0.001);
-    let kd = (1.0 - f) * (1.0 - metallic);
-    let diffuse = kd * albedo / PI;
-    return (diffuse + specular) * n_dot_l;
+    let r = rand_uniform2(pixel, 601u + depth * 19u);
+    let es = env_image_sample(
+        r.x,
+        r.y,
+        render_state.env_width,
+        render_state.env_height,
+        render_state.env_intensity,
+        render_state.env_rotation,
+        render_state.env_marg_int,
+    );
+    if !es.ok || max3(es.radiance) <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let wi_local = to_local(frame, es.dir);
+    if wi_local.z <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let e = bsdf_eval(m, wo_local, wi_local);
+    if max3(e.value) <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    // The environment is at infinity: nothing between here and the sky may
+    // block, so the shadow ray is unbounded.
+    if occluded(p + n * 1e-4, es.dir, MAX_T) {
+        return vec3<f32>(0.0);
+    }
+    let w = power_heuristic(es.pdf, e.pdf);
+    return e.value * es.radiance * (w / es.pdf);
 }
 
-// Shade the implicit ground plane. Warm-tinted matte so models read as
-// sitting on a platform rather than floating in sky. Casts soft contact
-// shadows (jittered shadow ray accumulating across frames) and gets AO
-// for proper grounding under the model.
-fn shade_ground(p: vec3<f32>, dir: vec3<f32>, fade: f32, pixel: vec2<u32>) -> vec4<f32> {
-    let normal = vec3<f32>(0.0, 0.0, 1.0);
-    let view_dir = -dir;
-    // Ground albedo follows theme: warm gray on dark, near-white on light.
-    var albedo: vec3<f32>;
-    var ambient_factor: vec3<f32>;
-    var fade_target: vec3<f32>;
-    if render_state.theme == 1u {
-        albedo = vec3<f32>(0.78, 0.78, 0.79);
-        ambient_factor = vec3<f32>(0.55, 0.55, 0.57);
-        fade_target = vec3<f32>(0.96, 0.97, 0.99);
-    } else {
-        albedo = vec3<f32>(0.22, 0.21, 0.20);
-        ambient_factor = vec3<f32>(0.22, 0.22, 0.23);
-        fade_target = vec3<f32>(0.80, 0.85, 0.92);
-    }
-    let roughness = 0.92;
-    let metallic = 0.0;
-    let f0 = vec3<f32>(0.04);
+// ─── integrator ───────────────────────────────────────────────────────────
 
-    let ambient_base = ambient_factor * albedo;
-    let ray_ao = ambient_occlusion(p, normal, pixel);
-    let ssao_val = ao_buffer[pixel_index(pixel)];
-    let ambient = ambient_base * ray_ao * ssao_val;
-
-    var lo = vec3<f32>(0.0);
-    let sun = sun_direction();
-    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.4;
-    let shadow_jitter = rand_uniform2(pixel, 13u);
-    let sun_jittered = jitter_direction(sun, 0.025, shadow_jitter);
-    let shadowed = in_shadow(p, sun_jittered, MAX_T);
-    if !shadowed {
-        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
-    }
-
-    var color = ambient + lo;
-    color = tonemap_aces(color);
-    color = pow(color, vec3<f32>(1.0 / 2.2));
-
-    let sky_tonemapped = pow(tonemap_aces(fade_target), vec3<f32>(1.0 / 2.2));
-    color = mix(sky_tonemapped, color, fade);
-    return vec4<f32>(color, 1.0);
-}
-
-// Direct-only shading used as the *bounce hit* color for one-bounce GI.
-// Returns LINEAR radiance (no tonemap, no gamma) so it can be added to
-// the primary hit's lo before the final tonemap. Skips IBL, AO, and
-// recursive bounces — those are the things that would cause cost
-// blow-up or recursion (which WGSL forbids).
-fn shade_direct(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec3<f32> {
-    if hit.face_idx == 0xFFFFFFFFu {
-        return sky_color(dir);
-    }
-
-    let sun = sun_direction();
-    let view_dir = -dir;
-
-    if hit.face_idx == FACE_IDX_GROUND {
-        let p = origin + dir * hit.t;
-        let normal = vec3<f32>(0.0, 0.0, 1.0);
-        let albedo = vec3<f32>(0.22, 0.21, 0.20);
-        let ambient = vec3<f32>(0.22, 0.22, 0.23) * albedo;
-        var lo = vec3<f32>(0.0);
-        if !in_shadow(p, sun, MAX_T) {
-            // Lambertian — single light, no fresnel/specular.
-            let n_dot_l = max(dot(normal, sun), 0.0);
-            lo += albedo / PI * vec3<f32>(1.0, 0.96, 0.88) * 2.4 * n_dot_l;
-        }
-        return ambient + lo;
-    }
-
-    let face = faces[hit.face_idx];
-    let mat = materials[face.material_idx];
-    let albedo = mat.color.rgb;
-    let metallic = mat.metallic;
-    let roughness = max(mat.roughness, 0.04);
-    let normal = compute_normal(hit);
-    let p = origin + dir * hit.t;
-    let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
-
-    var lo = vec3<f32>(0.0);
-    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.6;
-    if !in_shadow(p, sun, MAX_T) {
-        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
-    }
-    let fill_dir = normalize(vec3<f32>(-0.4, 0.5, 0.6));
-    let fill_color = vec3<f32>(0.7, 0.8, 1.0) * 0.45;
-    if !in_shadow(p, fill_dir, MAX_T) {
-        lo += brdf_direct(normal, view_dir, fill_dir, albedo, metallic, roughness, f0) * fill_color;
-    }
-    // Cheap hemisphere ambient — no AO/sky-blend, just a flat tint.
-    lo += albedo * 0.08;
-    return lo;
-}
-
-// PBR shading with Cook-Torrance BRDF, soft shadow rays, AO, one-bounce
-// indirect (GI), and HDR env IBL. Z-up world (kernel space).
+// Unidirectional path tracer: multi-bounce GI with throughput accumulation,
+// next-event estimation against the area lights under MIS, and Russian
+// roulette termination. This replaces the old single hardcoded GI bounce
+// (`shade_direct` used as a bounce estimator) and the SSAO proxy — real
+// multi-bounce transport computes contact occlusion correctly, so stacking
+// SSAO on top of it would double-darken every concave corner.
 //
-// Stochastic terms (soft shadows, AO, env-spec jitter, GI bounce) are
-// decorrelated per-pixel and per-frame so progressive accumulation
-// converges to a noise-free image.
+// `max_depth` is driven per-frame by the refinement scheduler: draft frames
+// trace shallow to stay interactive and depth escalates as accumulation
+// proceeds, so the first frame is still usable.
+fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec4<f32> {
+    var l = vec3<f32>(0.0);
+    var throughput = vec3<f32>(1.0);
+    var ray_o = origin;
+    var ray_d = dir;
+    var hit = first;
+    // PDF of the lobe the previous bounce was sampled from; used to MIS
+    // against light sampling when the new ray lands on an emitter.
+    var prev_bsdf_pdf = 0.0;
+    var specular_chain = true;
+    var alpha = 0.0;
+
+    let max_depth = max(render_state.max_depth, 1u);
+
+    for (var depth = 0u; depth < max_depth; depth = depth + 1u) {
+        // Lights are part of the scene: a BSDF ray that lands on one carries
+        // its emission, MIS-weighted against the NEE sample that could also
+        // have found it.
+        //
+        // They are NOT visible to camera rays, though. The rig is sized to the
+        // scene bounds and the viewport camera orbits and zooms freely, so
+        // otherwise the softboxes swing through frame as giant white slabs.
+        // Skipping them at depth 0 costs nothing physically — it only changes
+        // pixels that look straight down a light — and keeps every shaded
+        // surface identical to the CPU renderer.
+        var lh = intersect_lights(ray_o, ray_d);
+        if depth == 0u {
+            lh.hit = false;
+        }
+        let geom_t = select(MAX_T, hit.t, hit.face_idx != 0xFFFFFFFFu);
+
+        if lh.hit && lh.t < geom_t {
+            let light = lights[lh.index];
+            var w = 1.0;
+            if !specular_chain {
+                let ln = light_normal(light);
+                let cos_light = max(-dot(ray_d, ln), 1e-9);
+                let light_pdf = lh.t * lh.t / (cos_light * light_area(light));
+                w = power_heuristic(prev_bsdf_pdf, light_pdf);
+            }
+            l += throughput * light.emission.rgb * w;
+            if depth == 0u {
+                alpha = 1.0;
+            }
+            break;
+        }
+
+        if hit.face_idx == 0xFFFFFFFFu {
+            // Escaped the scene — pick up the environment, MIS-weighted
+            // against environment NEE, which could also have found this
+            // direction. A specular chain (including the primary ray) had no
+            // other strategy, so it takes full weight; so does the gradient,
+            // which is not importance-sampled.
+            var w = 1.0;
+            if !specular_chain && render_state.env_mode == ENV_MODE_IMAGE {
+                let epdf = env_image_pdf(
+                    ray_d,
+                    render_state.env_width,
+                    render_state.env_height,
+                    render_state.env_rotation,
+                    render_state.env_marg_int,
+                );
+                w = power_heuristic(prev_bsdf_pdf, epdf);
+            }
+            l += throughput * env_radiance(ray_d) * w;
+            break;
+        }
+
+        if depth == 0u {
+            alpha = 1.0;
+        }
+
+        // Resolve the surface we hit.
+        var surf: Surface;
+        surf.point = ray_o + ray_d * hit.t;
+        var dpdu = vec3<f32>(0.0);
+        if hit.face_idx == FACE_IDX_GROUND {
+            surf.normal = vec3<f32>(0.0, 0.0, 1.0);
+            surf.material = ground_material();
+        } else {
+            surf.normal = compute_normal(hit);
+            surf.material = materials[faces[hit.face_idx].material_idx];
+            dpdu = compute_tangent(hit);
+        }
+
+        let wo_world = -ray_d;
+        // Face-forward: interior faces (bore walls) must shade right.
+        var n = surf.normal;
+        if dot(n, wo_world) < 0.0 {
+            n = -n;
+        }
+        // Align the frame's x axis with dP/du so an anisotropic highlight
+        // follows the surface's own grain, exactly as the CPU renderer does.
+        let frame = shading_frame(n, dpdu);
+        let wo_local = to_local(frame, wo_world);
+        if wo_local.z <= 0.0 {
+            break;
+        }
+
+        // Next-event estimation.
+        var direct = sample_lights(surf.point, frame, n, wo_local, surf.material, pixel, depth)
+            + sample_environment(surf.point, frame, n, wo_local, surf.material, pixel, depth);
+        if depth > 0u && render_state.firefly_clamp > 0.0 {
+            direct = min(direct, vec3<f32>(render_state.firefly_clamp));
+        }
+        l += throughput * direct;
+
+        // Continue the path.
+        let r_lobe = rand_uniform(pixel, 211u + depth * 23u);
+        let r12 = rand_uniform2(pixel, 307u + depth * 29u);
+        let s = bsdf_sample(surf.material, wo_local, r_lobe, r12.x, r12.y);
+        if !s.ok {
+            break;
+        }
+        throughput = throughput * s.value / s.pdf;
+        prev_bsdf_pdf = s.pdf;
+        specular_chain = false;
+
+        let wi_world = to_world(frame, s.wi);
+        ray_o = surf.point + n * 1e-4;
+        ray_d = wi_world;
+
+        // Russian roulette.
+        if depth >= render_state.rr_start {
+            let q = clamp(max3(throughput), 0.0, 0.95);
+            if rand_uniform(pixel, 401u + depth * 31u) > q {
+                break;
+            }
+            throughput = throughput / q;
+        }
+        if max3(throughput) <= 1e-5 {
+            break;
+        }
+
+        // Trace the next segment.
+        hit = trace_bvh(ray_o, ray_d);
+        if render_state.ground_enabled != 0u {
+            let g = intersect_ground(ray_o, ray_d);
+            if g.t < hit.t {
+                hit.t = g.t;
+                hit.face_idx = FACE_IDX_GROUND;
+                hit.uv = vec2<f32>(g.fade, 0.0);
+            }
+        }
+    }
+
+    return vec4<f32>(l, alpha);
+}
+
+// Entry point used by the main pass. Returns LINEAR radiance in .rgb and
+// coverage in .a; tonemapping happens once, after accumulation.
 fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec4<f32> {
     if hit.face_idx == 0xFFFFFFFFu {
-        // Background — render the sky directly.
-        let sky = sky_color(dir);
-        let mapped = tonemap_aces(sky);
-        return vec4<f32>(pow(mapped, vec3<f32>(1.0 / 2.2)), 1.0);
+        // Nothing in front of the camera. Draw the themed backdrop rather
+        // than the lighting environment — the backdrop is a viewport choice,
+        // and `vcad-render` composites its own. The area lights are skipped
+        // here for the same reason `path_trace` skips them at depth 0.
+        return vec4<f32>(sky_color(dir), 0.0);
     }
 
+    let traced = path_trace(hit, origin, dir, pixel);
+
+    // The implicit ground plane is bounded: fade it into the backdrop with
+    // horizontal distance so it reads as a platform under the model rather
+    // than a disc floating in sky. `intersect_ground` stashes the fade factor
+    // in uv.x. The CPU renderer uses an unbounded plane, so this only affects
+    // pixels far from the subject.
     if hit.face_idx == FACE_IDX_GROUND {
-        let p = origin + dir * hit.t;
-        return shade_ground(p, dir, hit.uv.x, pixel);
+        let fade = hit.uv.x;
+        return vec4<f32>(mix(sky_color(dir), traced.rgb, fade), traced.a);
     }
-
-    let face = faces[hit.face_idx];
-    let mat = materials[face.material_idx];
-    let albedo = mat.color.rgb;
-    let metallic = mat.metallic;
-    let roughness = max(mat.roughness, 0.04);
-
-    let normal = compute_normal(hit);
-    let view_dir = -dir;
-    let p = origin + dir * hit.t;
-
-    let f0 = mix(vec3<f32>(0.04, 0.04, 0.04), albedo, metallic);
-
-    // Hemisphere ambient blend, modulated by both ray AO and SSAO for crisp
-    // contact darkening in concave features and tight corners.
-    let sky_up = mix(vec3<f32>(0.40, 0.42, 0.46), sky_color(normal), 0.3);
-    let sky_down = vec3<f32>(0.30, 0.27, 0.24);
-    let hemi_factor = max(normal.z, 0.0) * 0.5 + 0.5;
-    let ray_ao = ambient_occlusion(p, normal, pixel);
-    // SSAO value is written by the previous frame's `ssao` pass (one-frame lag).
-    // Defaults to 1.0 on frame 1 and when ao_intensity = 0.
-    let ssao_val = ao_buffer[pixel_index(pixel)];
-    let ambient = mix(sky_down, sky_up, hemi_factor) * albedo * 0.30 * ray_ao * ssao_val;
-
-    var lo = vec3<f32>(0.0);
-
-    // Soft sun shadow — single jittered ray per frame, smoothed by accumulation.
-    let sun = sun_direction();
-    let sun_color = vec3<f32>(1.0, 0.96, 0.88) * 2.6;
-    let sun_jitter = rand_uniform2(pixel, 17u);
-    let sun_jittered = jitter_direction(sun, 0.025, sun_jitter);
-    if !in_shadow(p, sun_jittered, MAX_T) {
-        lo += brdf_direct(normal, view_dir, sun, albedo, metallic, roughness, f0) * sun_color;
-    }
-
-    // Soft fill from upper-back. Wider cone since fill lights are physically
-    // larger / softer than the sun.
-    let fill_dir = normalize(vec3<f32>(-0.4, 0.5, 0.6));
-    let fill_color = vec3<f32>(0.7, 0.8, 1.0) * 0.45;
-    let fill_jitter = rand_uniform2(pixel, 23u);
-    let fill_jittered = jitter_direction(fill_dir, 0.08, fill_jitter);
-    if !in_shadow(p, fill_jittered, MAX_T) {
-        lo += brdf_direct(normal, view_dir, fill_dir, albedo, metallic, roughness, f0) * fill_color;
-    }
-
-    // Camera-relative wrap fill: cheap, no shadow test, keeps near-camera
-    // faces readable when both directional lights are occluded.
-    {
-        let n_dot_v = max(dot(normal, view_dir), 0.0);
-        let kd = (1.0 - metallic);
-        let diffuse = kd * albedo / PI;
-        lo += diffuse * vec3<f32>(0.85, 0.88, 0.95) * 0.18 * n_dot_v;
-    }
-
-    // Specular IBL: jitter the reflection direction within a roughness-sized
-    // cone so glossy reflections soften over accumulation rather than ringing.
-    let n_dot_v_amb = max(dot(normal, view_dir), 0.0);
-    let f_ambient = fresnel_schlick(n_dot_v_amb, f0);
-    let reflect_dir = reflect(dir, normal);
-    let env_jitter = rand_uniform2(pixel, 31u);
-    let env_dir = jitter_direction(reflect_dir, roughness * 0.4, env_jitter);
-    let env_specular = sky_color(env_dir) * f_ambient * (1.0 - roughness * 0.85);
-
-    // One-bounce indirect (GI). Cosine-weighted hemisphere sample, traced
-    // against BVH + ground; the bounce hit is shaded with shade_direct
-    // (no recursion). For a Lambertian + cosine-weighted sample, the brdf
-    // and pdf factors cancel to just `albedo`, so the contribution is
-    // `albedo * incoming_radiance`. Skipped for metals (they have no
-    // Lambertian diffuse bounce — their indirect comes through env_specular).
-    let bounce_jitter = rand_uniform2(pixel, 41u);
-    let bounce_dir = sample_hemisphere_cosine(normal, bounce_jitter);
-    let bounce_origin = p + normal * 0.001;
-    var bounce_hit = trace_bvh(bounce_origin, bounce_dir);
-    let bounce_ground = intersect_ground(bounce_origin, bounce_dir);
-    if bounce_ground.t < bounce_hit.t {
-        bounce_hit.t = bounce_ground.t;
-        bounce_hit.face_idx = FACE_IDX_GROUND;
-        bounce_hit.uv = vec2<f32>(bounce_ground.fade, 0.0);
-    }
-    let indirect_radiance = shade_direct(bounce_hit, bounce_origin, bounce_dir, pixel);
-    let indirect = albedo * (1.0 - metallic) * indirect_radiance * 0.7;
-
-    var color = ambient + lo + env_specular + indirect;
-
-    color = tonemap_aces(color);
-    color = pow(color, vec3<f32>(1.0 / 2.2));
-
-    return vec4<f32>(color, 1.0);
+    return traced;
 }
 
 // HSV to RGB conversion for debug visualization
@@ -1775,9 +1944,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         final_color = denoise(pixel_coord, accumulated, stored_dn);
     }
 
+    // The path tracer works in LINEAR radiance and accumulates in linear, so
+    // tonemapping happens exactly once, here — after averaging and denoising.
+    // (The old renderer tonemapped inside `shade`, which meant it averaged
+    // already-compressed values and darkened highlights as frames piled up.)
+    // Edge lines and debug overlays are authored in display space, so they are
+    // composited after this point.
+    final_color = vec4<f32>(
+        pow(tonemap_aces(final_color.rgb), vec3<f32>(1.0 / 2.2)),
+        final_color.a,
+    );
+
     // Apply Fusion-style edge lines on later frames (stable depth/normal/face-ID data).
-    // enable_edges is a bit-mask: bit0=silhouette, bit1=crease, bit2=boundary.
-    if render_state.enable_edges != 0u && render_state.frame_index >= 2u {
+    // The Sobel edge overlay is a STYLISATION, not a shading term: it fights
+    // photorealism, so it is gated behind `stylize` and stays off in a
+    // photoreal viewport. enable_edges is then a bit-mask within that mode:
+    // bit0=silhouette, bit1=crease, bit2=boundary.
+    if render_state.stylize != 0u && render_state.enable_edges != 0u && render_state.frame_index >= 2u {
         let strengths = detect_edge_sobel(pixel_coord);
 
         // Silhouette lines (large depth/normal gradient, bit 0)
@@ -1847,117 +2030,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     textureStore(output, pixel_coord, final_color);
 }
 
-// Screen-Space Ambient Occlusion (SSAO) compute kernel.
-//
-// Runs after the main `main` pass so depth_normal_buffer is populated.
-// Samples N hemisphere directions (Halton sequence for low discrepancy,
-// offset by frame_index so temporal accumulation converges to a noise-free
-// result).  Writes the AO factor (in [0,1]) to ao_buffer; the main pass
-// reads this on the next frame.
-//
-// When ao_intensity == 0 every pixel receives 1.0 (no occlusion), giving
-// bit-identical output to a renderer without any SSAO contribution.
-@compute @workgroup_size(8, 8)
-fn ssao(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let pixel = global_id.xy;
-    if pixel.x >= camera.width || pixel.y >= camera.height { return; }
-
-    let idx = pixel_index(pixel);
-
-    // Fast-exit: AO disabled.
-    if render_state.ao_intensity < 0.001 {
-        ao_buffer[idx] = 1.0;
-        return;
-    }
-
-    let dn     = depth_normal_buffer[idx];
-    let depth  = dn.w;
-    let normal = dn.xyz;
-
-    // Background or ground — skip, write no-occlusion.
-    if depth >= MAX_T - 1.0 || length(normal) < 0.5 {
-        ao_buffer[idx] = 1.0;
-        return;
-    }
-
-    let pos     = world_pos_from_depth(pixel, depth);
-    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
-
-    // View-space Z of the centre pixel (used for range-check below).
-    let center_view_z = dot(pos - camera.position.xyz, forward);
-
-    let n_samples  = render_state.ao_sample_count;
-    // Halton base offset advances each frame so temporal accumulation
-    // samples a different part of the hemisphere every frame.
-    let frame_base = (render_state.frame_index - 1u) * n_samples;
-
-    var occ = 0.0;
-
-    for (var i = 0u; i < n_samples; i++) {
-        let h = frame_base + i;
-
-        // Low-discrepancy 2D sample in [0,1)^2 — Halton bases 5 and 7.
-        let u = vec2<f32>(halton_wgsl(h, 5u), halton_wgsl(h, 7u));
-
-        // Uniform hemisphere (not cosine-weighted — we want even spatial
-        // coverage around the normal, not cosine-biased AO).
-        let sin_theta = sqrt(max(0.0, 1.0 - u.x * u.x));
-        let phi       = 2.0 * PI * u.y;
-        let local_dir = vec3<f32>(sin_theta * cos(phi), sin_theta * sin(phi), u.x);
-        let sample_dir = build_tangent_frame(normal) * local_dir;
-
-        // Vary radius: bias towards shorter distances (quadratic ramp).
-        let t_radius   = render_state.ao_radius * halton_wgsl(h + 1u, 11u);
-        let sample_pos = pos + sample_dir * t_radius;
-
-        // Project sample point to screen.
-        let screen = world_to_screen_coords(sample_pos);
-        if screen.x < 0 || screen.x >= i32(camera.width) ||
-           screen.y < 0 || screen.y >= i32(camera.height) {
-            continue;
-        }
-
-        let scene_dn    = depth_normal_buffer[pixel_index_i32(screen)];
-        let scene_depth = scene_dn.w;
-        // Transparent sky or unresolved pixel — no occlusion from this sample.
-        if scene_depth >= MAX_T - 1.0 { continue; }
-
-        // Reconstruct the scene surface's world position.
-        let scene_pos    = world_pos_from_depth(vec2<u32>(screen), scene_depth);
-        let scene_view_z = dot(scene_pos - camera.position.xyz, forward);
-        let sample_view_z = dot(sample_pos - camera.position.xyz, forward);
-
-        // Range guard: surfaces far from the centre pixel should not
-        // contribute — this prevents haloing at depth discontinuities
-        // (silhouette edges stay clean).
-        if abs(center_view_z - scene_view_z) > render_state.ao_radius { continue; }
-
-        // Occlusion test: the scene surface is closer to the camera than
-        // the sample point → the sample is hidden behind it.
-        if scene_view_z < sample_view_z - render_state.ao_bias {
-            // Smooth falloff: close occluders contribute more than distant ones.
-            let dist         = length(scene_pos - pos);
-            let range_weight = 1.0 - smoothstep(0.0, render_state.ao_radius, dist);
-            occ += range_weight;
-        }
-    }
-
-    // AO value in [0,1]: 0 = fully occluded, 1 = fully lit.
-    let ao_val = clamp(
-        1.0 - (occ / f32(n_samples)) * render_state.ao_intensity,
-        0.0, 1.0
-    );
-
-    // Progressive accumulation (running average matches main-pass behaviour).
-    if render_state.frame_index <= 1u {
-        ao_buffer[idx] = ao_val;
-    } else {
-        let prev   = ao_buffer[idx];
-        let weight = 1.0 / f32(render_state.frame_index);
-        ao_buffer[idx] = mix(prev, ao_val, weight);
-    }
-}
-
 // Adaptive refinement pass: fires additional stratified rays for edge pixels,
 // blends with the coarse main-pass sample, and updates the output texture.
 // Only runs when render_state.refine_sample_count > 0.
@@ -2023,11 +2095,18 @@ fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Store back with sample count in alpha for heatmap debug mode.
     accum_buffer[idx] = vec4<f32>(blended_rgb, total);
 
-    // Compose the refined output pixel.
-    var final_color = vec4<f32>(blended_rgb, 1.0);
+    // Compose the refined output pixel. `shade` and the accumulation buffer are
+    // both LINEAR, so tonemap here exactly as the main pass does — otherwise
+    // refined edge pixels are written in a different colour space than their
+    // neighbours and the overlay reads as a bright fringe.
+    var final_color = vec4<f32>(
+        pow(tonemap_aces(blended_rgb), vec3<f32>(1.0 / 2.2)),
+        1.0,
+    );
 
-    // Re-apply edge overlay (only on later frames, consistent with main pass).
-    if render_state.enable_edges == 1u && render_state.frame_index >= 2u {
+    // Re-apply edge overlay (only on later frames, consistent with main pass,
+    // and only when stylisation is on).
+    if render_state.stylize != 0u && render_state.enable_edges == 1u && render_state.frame_index >= 2u {
         let edge_color = vec4<f32>(0.1, 0.1, 0.12, 1.0);
         final_color = mix(final_color, edge_color, edge * 0.8);
     }

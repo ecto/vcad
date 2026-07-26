@@ -146,12 +146,6 @@ export interface UiState {
   raytraceEdgeCreaseWidth: number;
   raytraceEdgeBoundaryWidth: number;
   raytraceEdgeSoftness: number;
-  // SSAO
-  raytraceAoEnabled: boolean;
-  raytraceAoRadius: number;
-  raytraceAoIntensity: number;
-  raytraceAoBias: number;
-  raytraceAoSampleCount: number;
   // Toolbar state
   toolbarExpanded: boolean;
   toolbarTab: ToolbarTab;
@@ -232,12 +226,6 @@ export interface UiState {
   setRaytraceEdgeCreaseWidth: (width: number) => void;
   setRaytraceEdgeBoundaryWidth: (width: number) => void;
   setRaytraceEdgeSoftness: (softness: number) => void;
-  // SSAO actions
-  setRaytraceAoEnabled: (enabled: boolean) => void;
-  setRaytraceAoRadius: (radius: number) => void;
-  setRaytraceAoIntensity: (intensity: number) => void;
-  setRaytraceAoBias: (bias: number) => void;
-  setRaytraceAoSampleCount: (count: number) => void;
   // Toolbar actions
   setToolbarExpanded: (expanded: boolean) => void;
   toggleToolbarExpanded: () => void;
@@ -345,11 +333,6 @@ export const useUiStore = create<UiState>((set) => ({
   raytraceEdgeCreaseWidth: 0.75,
   raytraceEdgeBoundaryWidth: 1.25,
   raytraceEdgeSoftness: 1.5,
-  raytraceAoEnabled: true,
-  raytraceAoRadius: 0.3,
-  raytraceAoIntensity: 1.0,
-  raytraceAoBias: 0.001,
-  raytraceAoSampleCount: 16,
   toolbarExpanded: persistedToolbarExpanded,
   toolbarTab: "create" as ToolbarTab,
   sidebarPane: "tree" as SidebarPane,
@@ -529,16 +512,6 @@ export const useUiStore = create<UiState>((set) => ({
   setRaytraceEdgeCreaseWidth: (width) => set({ raytraceEdgeCreaseWidth: width }),
   setRaytraceEdgeBoundaryWidth: (width) => set({ raytraceEdgeBoundaryWidth: width }),
   setRaytraceEdgeSoftness: (softness) => set({ raytraceEdgeSoftness: softness }),
-
-  setRaytraceAoEnabled: (enabled) => set({ raytraceAoEnabled: enabled }),
-
-  setRaytraceAoRadius: (radius) => set({ raytraceAoRadius: radius }),
-
-  setRaytraceAoIntensity: (intensity) => set({ raytraceAoIntensity: intensity }),
-
-  setRaytraceAoBias: (bias) => set({ raytraceAoBias: bias }),
-
-  setRaytraceAoSampleCount: (count) => set({ raytraceAoSampleCount: count }),
 
   setToolbarExpanded: (expanded) => {
     try {

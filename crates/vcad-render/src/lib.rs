@@ -572,6 +572,10 @@ struct SceneSolid {
     /// Full material definition (metallic/roughness/transmission/ior), kept
     /// alongside `tint` because the photoreal path needs more than a colour.
     /// `None` when the document names no material for this solid.
+    ///
+    /// Only the `raytrace`-gated `photoreal` module reads this; the SVG and
+    /// raster paths shade from `tint` alone.
+    #[cfg_attr(not(feature = "raytrace"), allow(dead_code))]
     material: Option<vcad_ir::MaterialDef>,
     name: Option<String>,
     /// Focus-match labels (node name, instance id/name, part-def id) for

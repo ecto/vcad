@@ -174,6 +174,10 @@ impl GpuSurface {
 }
 
 /// GPU-compatible material representation (PBR).
+///
+/// Mirrors [`crate::pathtrace::Pbr`] field-for-field so the GPU path tracer and
+/// the CPU reference shade identically. The WGSL `GpuMaterial` struct in
+/// `shaders/raytrace.wgsl` must match this layout exactly.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuMaterial {
@@ -183,6 +187,15 @@ pub struct GpuMaterial {
     pub metallic: f32,
     /// Roughness factor (0 = smooth, 1 = rough).
     pub roughness: f32,
+    /// Strength of the clearcoat layer (0 = none, 1 = full).
+    pub clearcoat: f32,
+    /// Perceptual roughness of the clearcoat layer.
+    pub clearcoat_roughness: f32,
+    /// Dielectric index of refraction, drives the base specular reflectance.
+    pub ior: f32,
+    /// Signed anisotropy in -1..1: positive stretches the specular highlight
+    /// along the local tangent, negative along the bitangent, 0 = isotropic.
+    pub anisotropy: f32,
     /// Padding for 16-byte alignment.
     pub _pad: [f32; 2],
 }
@@ -193,6 +206,10 @@ impl Default for GpuMaterial {
             color: [0.7, 0.7, 0.7, 1.0], // Neutral gray
             metallic: 0.0,
             roughness: 0.5,
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.1,
+            ior: 1.5,
+            anisotropy: 0.0,
             _pad: [0.0; 2],
         }
     }
@@ -213,17 +230,88 @@ impl GpuMaterial {
             color: [r, g, b, 1.0],
             metallic: 1.0,
             roughness,
-            _pad: [0.0; 2],
+            ..Default::default()
         }
     }
 
-    /// Create a plastic material.
+    /// Create a plastic material, optionally clearcoated.
     pub fn plastic(r: f32, g: f32, b: f32, roughness: f32) -> Self {
         Self {
             color: [r, g, b, 1.0],
             metallic: 0.0,
             roughness,
+            ..Default::default()
+        }
+    }
+
+    /// Add a clearcoat layer of the given strength and roughness.
+    pub fn with_clearcoat(mut self, clearcoat: f32, clearcoat_roughness: f32) -> Self {
+        self.clearcoat = clearcoat;
+        self.clearcoat_roughness = clearcoat_roughness;
+        self
+    }
+
+    /// Build from the CPU reference material.
+    ///
+    /// Paired with [`crate::pathtrace::Pbr::from_material_def`], this is what
+    /// makes the viewport and `--photoreal` derive the SAME material from the
+    /// same IR definition — clearcoat heuristic, IOR and grain included.
+    pub fn from_pbr(p: crate::pathtrace::Pbr) -> Self {
+        Self {
+            color: [p.base_color[0], p.base_color[1], p.base_color[2], 1.0],
+            metallic: p.metallic,
+            roughness: p.roughness,
+            clearcoat: p.clearcoat,
+            clearcoat_roughness: p.clearcoat_roughness,
+            ior: p.ior,
+            anisotropy: p.anisotropy,
             _pad: [0.0; 2],
+        }
+    }
+
+    /// Convert to the CPU reference material, for cross-checking the two
+    /// shading paths against each other.
+    pub fn to_pbr(self) -> crate::pathtrace::Pbr {
+        crate::pathtrace::Pbr {
+            base_color: [self.color[0], self.color[1], self.color[2]],
+            metallic: self.metallic,
+            roughness: self.roughness,
+            clearcoat: self.clearcoat,
+            clearcoat_roughness: self.clearcoat_roughness,
+            ior: self.ior,
+            anisotropy: self.anisotropy,
+            emissive: [0.0; 3],
+        }
+    }
+}
+
+/// GPU-compatible rectangular area light ("softbox").
+///
+/// Mirrors the WGSL `GpuAreaLight`. Built from [`crate::pathtrace::AreaLight`]
+/// via [`GpuAreaLight::from_area_light`] so the GPU and CPU renderers light the
+/// scene with the same rig — that is what makes specular highlights on metal
+/// match between the viewport and `--photoreal`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct GpuAreaLight {
+    /// Centre of the rectangle (w unused).
+    pub center: [f32; 4],
+    /// Half-extent along the rectangle's first axis (w unused).
+    pub u: [f32; 4],
+    /// Half-extent along the second axis (w unused).
+    pub v: [f32; 4],
+    /// Emitted radiance (w unused).
+    pub emission: [f32; 4],
+}
+
+impl GpuAreaLight {
+    /// Convert a CPU reference area light to its GPU representation.
+    pub fn from_area_light(l: &crate::pathtrace::AreaLight) -> Self {
+        Self {
+            center: [l.center.x as f32, l.center.y as f32, l.center.z as f32, 0.0],
+            u: [l.u.x as f32, l.u.y as f32, l.u.z as f32, 0.0],
+            v: [l.v.x as f32, l.v.y as f32, l.v.z as f32, 0.0],
+            emission: [l.emission[0], l.emission[1], l.emission[2], 0.0],
         }
     }
 }
@@ -310,9 +398,8 @@ pub struct GpuCamera {
 ///
 /// Layout (128 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
 /// offset  0–31:  eight u32/f32 scalars (frame_index … theme)
-/// offset 32–47:  SSAO params (ao_radius, ao_intensity, ao_bias, ao_sample_count)
-/// offset 48–51:  refine_sample_count u32
-/// offset 52–63:  _pad [u32; 3]
+/// offset 32–47:  path tracing (max_depth, rr_start, light_count, env_intensity)
+/// offset 48–63:  refine_sample_count, firefly_clamp, ground_enabled, stylize
 /// offset 64–79:  silhouette_color vec4
 /// offset 80–95:  crease_color vec4
 /// offset 96–111: boundary_color vec4
@@ -339,21 +426,28 @@ pub struct GpuRenderState {
     /// palette in `sky_color`; the IBL panels and direct lighting stay
     /// constant across themes so the model itself looks the same.
     pub theme: u32,
-    // SSAO
-    /// SSAO world-space sample hemisphere radius.
-    pub ao_radius: f32,
-    /// SSAO intensity: 0 = disabled (ao_buffer writes 1.0), 1 = default strength.
-    pub ao_intensity: f32,
-    /// SSAO depth bias to prevent self-occlusion.
-    pub ao_bias: f32,
-    /// SSAO hemisphere sample count per frame (8, 16, or 32).
-    pub ao_sample_count: u32,
-    // refinement + padding
+    // Path tracing
+    /// Maximum path length (1 = direct lighting only). Escalated by the
+    /// refinement scheduler: shallow on the draft frame, deeper as
+    /// accumulation proceeds, so the first frame stays interactive.
+    pub max_depth: u32,
+    /// Depth at which Russian roulette begins.
+    pub rr_start: u32,
+    /// Number of valid entries in the area-light buffer.
+    pub light_count: u32,
+    /// Overall multiplier on the analytic studio environment.
+    pub env_intensity: f32,
+    // refinement + path tracing continued
     /// Number of additional refinement rays per edge pixel (0 = disabled).
     /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
     pub refine_sample_count: u32,
-    /// Padding to align silhouette_color to 16-byte boundary (required for uniform buffers).
-    pub _pad: [u32; 3],
+    /// Clamp on indirect radiance to kill fireflies (0 = disabled).
+    pub firefly_clamp: f32,
+    /// Whether the implicit ground plane participates in the path trace.
+    pub ground_enabled: u32,
+    /// Non-zero enables non-photoreal stylisation (the Sobel edge overlay).
+    /// Off in a photoreal viewport: edge lines fight photorealism.
+    pub stylize: u32,
     // --- edge style (added for Fusion-style edge lines) ---
     /// Silhouette line color (RGBA linear, depth-gradient edges).
     pub silhouette_color: [f32; 4],
@@ -369,6 +463,18 @@ pub struct GpuRenderState {
     pub boundary_width: f32,
     /// Sub-pixel softness factor (higher = softer AA transition).
     pub edge_softness: f32,
+    /// Environment mode: 0 = analytic gradient, 1 = lat-long HDR image.
+    pub env_mode: u32,
+    /// Environment image width in texels (image mode only).
+    pub env_width: u32,
+    /// Environment image height in texels (image mode only).
+    pub env_height: u32,
+    /// Environment rotation about +Z, in radians.
+    pub env_rotation: f32,
+    /// Normaliser for the environment's uv-space PDF.
+    pub env_marg_int: f32,
+    /// Padding to a 16-byte multiple (required for uniform buffers).
+    pub _pad3: [u32; 3],
 }
 
 /// Default silhouette line color: near-black, slightly cool.
@@ -380,6 +486,36 @@ const DEFAULT_BOUNDARY_COLOR: [f32; 4] = [0.06, 0.06, 0.08, 1.0];
 
 /// All three edge types on: bits 0 (silhouette) | 1 (crease) | 2 (boundary).
 const EDGES_ALL: u32 = 7;
+
+/// Full path depth, matching `PathTraceOptions::default().max_depth` so the
+/// converged viewport image matches `vcad-render --photoreal`.
+pub const DEFAULT_MAX_DEPTH: u32 = 6;
+/// Depth at which Russian roulette begins, matching the CPU renderer.
+pub const DEFAULT_RR_START: u32 = 3;
+/// Environment multiplier, matching `Environment::default().intensity`.
+pub const DEFAULT_ENV_INTENSITY: f32 = 0.35;
+/// Indirect-radiance clamp, matching the CPU renderer's firefly clamp.
+pub const DEFAULT_FIREFLY_CLAMP: f32 = 12.0;
+
+/// Path depth to trace on a given accumulation frame.
+///
+/// Full path tracing is too slow for the viewport's draft frame, so depth
+/// escalates with accumulation: the first frame traces shallow (direct
+/// lighting plus one bounce) and lands fast, and by the time the `high` tier
+/// is accumulating we are at the full depth that matches the CPU renderer.
+/// The refinement scheduler in `RayTracedViewport.tsx` resets `frame_index` on
+/// every camera change, so each gesture gets a cheap first frame.
+///
+/// Depth only ever increases, and the accumulation buffer is a running average,
+/// so early shallow frames are progressively outweighed by deeper ones.
+pub fn depth_for_frame(frame_index: u32, ceiling: u32) -> u32 {
+    let d = match frame_index {
+        0 | 1 => 2,
+        2..=4 => 4,
+        _ => DEFAULT_MAX_DEPTH,
+    };
+    d.min(ceiling.max(1))
+}
 
 impl GpuRenderState {
     /// Create a new render state for the given frame with default edge style.
@@ -394,12 +530,14 @@ impl GpuRenderState {
             edge_normal_threshold: 30.0,
             debug_mode: 0,
             theme: 0,
-            ao_radius: 0.3,
-            ao_intensity: 1.0,
-            ao_bias: 0.001,
-            ao_sample_count: 16,
+            max_depth: depth_for_frame(frame_index, DEFAULT_MAX_DEPTH),
+            rr_start: DEFAULT_RR_START,
+            light_count: 0,
+            env_intensity: DEFAULT_ENV_INTENSITY,
             refine_sample_count: 0,
-            _pad: [0; 3],
+            firefly_clamp: DEFAULT_FIREFLY_CLAMP,
+            ground_enabled: 1,
+            stylize: 1,
             silhouette_color: DEFAULT_SILHOUETTE_COLOR,
             crease_color: DEFAULT_CREASE_COLOR,
             boundary_color: DEFAULT_BOUNDARY_COLOR,
@@ -407,6 +545,12 @@ impl GpuRenderState {
             crease_width: 0.75,
             boundary_width: 1.25,
             edge_softness: 1.5,
+            env_mode: 0,
+            env_width: 0,
+            env_height: 0,
+            env_rotation: 0.0,
+            env_marg_int: 0.0,
+            _pad3: [0; 3],
         }
     }
 
@@ -425,7 +569,7 @@ impl GpuRenderState {
         state
     }
 
-    /// Create a render state with custom edge settings (default AO).
+    /// Create a render state with custom edge settings.
     pub fn with_edge_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -440,15 +584,11 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             0,
-            0.3,
-            1.0,
-            0.001,
-            16,
             0,
         )
     }
 
-    /// Create a render state with all settings including theme, SSAO, and refinement.
+    /// Create a render state with all settings including theme and refinement.
     #[allow(clippy::too_many_arguments)]
     pub fn with_full_settings(
         frame_index: u32,
@@ -457,10 +597,6 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
         theme: u32,
-        ao_radius: f32,
-        ao_intensity: f32,
-        ao_bias: f32,
-        ao_sample_count: u32,
         refine_sample_count: u32,
     ) -> Self {
         let mut state = Self::new(frame_index);
@@ -469,10 +605,6 @@ impl GpuRenderState {
         state.edge_normal_threshold = edge_normal_threshold;
         state.debug_mode = debug_mode;
         state.theme = theme;
-        state.ao_radius = ao_radius;
-        state.ao_intensity = ao_intensity;
-        state.ao_bias = ao_bias;
-        state.ao_sample_count = ao_sample_count;
         state.refine_sample_count = refine_sample_count;
         state
     }
@@ -512,12 +644,14 @@ impl GpuRenderState {
             edge_normal_threshold,
             debug_mode,
             theme,
-            ao_radius: 0.3,
-            ao_intensity: 1.0,
-            ao_bias: 0.001,
-            ao_sample_count: 16,
+            max_depth: depth_for_frame(frame_index, DEFAULT_MAX_DEPTH),
+            rr_start: DEFAULT_RR_START,
+            light_count: 0,
+            env_intensity: DEFAULT_ENV_INTENSITY,
             refine_sample_count: 0,
-            _pad: [0; 3],
+            firefly_clamp: DEFAULT_FIREFLY_CLAMP,
+            ground_enabled: 1,
+            stylize: 1,
             silhouette_color,
             crease_color,
             boundary_color,
@@ -525,6 +659,12 @@ impl GpuRenderState {
             crease_width,
             boundary_width,
             edge_softness,
+            env_mode: 0,
+            env_width: 0,
+            env_height: 0,
+            env_rotation: 0.0,
+            env_marg_int: 0.0,
+            _pad3: [0; 3],
         }
     }
 
@@ -545,10 +685,6 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             theme,
-            0.3,
-            1.0,
-            0.001,
-            16,
             refine_sample_count,
         )
     }
@@ -617,6 +753,13 @@ pub struct GpuScene {
     pub inner_loop_descs: Vec<u32>,
     /// Mapping from FaceId to GPU face index.
     pub face_index_map: std::collections::HashMap<FaceId, u32>,
+    /// Optional lat-long HDR environment. `None` uses the analytic studio
+    /// gradient, matching `pathtrace::Environment::default()`.
+    pub environment: Option<crate::pathtrace::GpuEnvPack>,
+    /// Area lights (softboxes) illuminating the scene, derived from the scene
+    /// bounds via [`crate::pathtrace::studio_rig`] — the same rig the CPU
+    /// renderer uses, so highlights match between the two.
+    pub lights: Vec<GpuAreaLight>,
 }
 
 /// Error building GPU scene.
@@ -650,6 +793,37 @@ impl std::fmt::Display for GpuSceneError {
 }
 
 impl std::error::Error for GpuSceneError {}
+
+/// Build the studio softbox rig for a scene, sized to its BVH root bounds.
+///
+/// Delegates to [`crate::pathtrace::studio_rig`] — the SAME function
+/// `vcad-render --photoreal` calls — so the viewport and the CPU renderer are
+/// lit by an identical rig rather than by two hand-tuned approximations.
+fn studio_lights_for_bvh(bvh_nodes: &[GpuBvhNode]) -> Vec<GpuAreaLight> {
+    let Some(root) = bvh_nodes.first() else {
+        return Vec::new();
+    };
+    let min = root.aabb_min;
+    let max = root.aabb_max;
+    let center = vcad_kernel_math::Point3::new(
+        ((min[0] + max[0]) * 0.5) as f64,
+        ((min[1] + max[1]) * 0.5) as f64,
+        ((min[2] + max[2]) * 0.5) as f64,
+    );
+    // Bounding-sphere radius of the root AABB.
+    let radius = 0.5
+        * (((max[0] - min[0]) as f64).powi(2)
+            + ((max[1] - min[1]) as f64).powi(2)
+            + ((max[2] - min[2]) as f64).powi(2))
+        .sqrt();
+    if !radius.is_finite() || radius <= 0.0 {
+        return Vec::new();
+    }
+    crate::pathtrace::studio_rig(center, radius)
+        .iter()
+        .map(GpuAreaLight::from_area_light)
+        .collect()
+}
 
 impl GpuScene {
     /// Build GPU scene data from a BRep solid.
@@ -880,6 +1054,8 @@ impl GpuScene {
         // Create default material (neutral gray)
         let materials = vec![GpuMaterial::default()];
 
+        let lights = studio_lights_for_bvh(&bvh_nodes);
+
         Ok(Self {
             surfaces,
             faces,
@@ -888,6 +1064,8 @@ impl GpuScene {
             trim_verts,
             inner_loop_descs,
             face_index_map,
+            environment: None,
+            lights,
         })
     }
 
@@ -1005,7 +1183,34 @@ impl GpuScene {
             color: [r, g, b, 1.0],
             metallic,
             roughness,
-            _pad: [0.0; 2],
+            ..Default::default()
         };
+    }
+
+    /// Light the scene with a lat-long HDR environment instead of the analytic
+    /// gradient.
+    ///
+    /// The map is importance-sampled on the GPU exactly as it is on the CPU —
+    /// same CDFs, same nearest-texel lookup, same solid-angle PDF — so both
+    /// renderers converge to the same image.
+    pub fn set_environment(&mut self, env: Option<&crate::pathtrace::EnvMap>) {
+        self.environment = env.map(|e| e.pack_for_gpu());
+    }
+
+    /// Set the material for all faces from an IR material definition.
+    ///
+    /// Preferred over [`Self::set_material`]: it runs the same derivation the
+    /// CPU renderer uses, so clearcoat, IOR and anisotropy reach the viewport
+    /// instead of being silently dropped.
+    pub fn set_material_from_def(
+        &mut self,
+        mat: Option<&vcad_ir::MaterialDef>,
+        tint: Option<[f64; 3]>,
+    ) {
+        if self.materials.is_empty() {
+            self.materials.push(GpuMaterial::default());
+        }
+        self.materials[0] =
+            GpuMaterial::from_pbr(crate::pathtrace::Pbr::from_material_def(mat, tint));
     }
 }
