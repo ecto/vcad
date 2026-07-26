@@ -40,6 +40,8 @@
 
 mod exact;
 pub mod pcb;
+#[cfg(feature = "raytrace")]
+pub mod photoreal;
 
 /// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
 /// checked in node-id order, then the legacy top-level `pcb` field.
@@ -562,6 +564,10 @@ fn xml_escape(s: &str) -> String {
 struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
+    /// Full material definition (metallic/roughness/transmission/ior), kept
+    /// alongside `tint` because the photoreal path needs more than a colour.
+    /// `None` when the document names no material for this solid.
+    material: Option<vcad_ir::MaterialDef>,
     name: Option<String>,
     /// Focus-match labels (node name, instance id/name, part-def id) for
     /// `--focus` / `CameraOptions::focus`.
@@ -618,6 +624,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                 SceneSolid {
                     solid: s,
                     tint: materials.get(&p.material).map(|m| m.color),
+                    material: materials.get(&p.material).cloned(),
                     labels: name.clone().into_iter().collect(),
                     name,
                     id: visible_roots
@@ -687,6 +694,7 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
             .or_else(|| def.default_material.clone())
             .unwrap_or_else(|| "default".to_string());
         let color = doc.materials.get(&material).map(|m| m.color);
+        let material_def = doc.materials.get(&material).cloned();
         let name = inst
             .name
             .clone()
@@ -699,6 +707,7 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
         out.push(SceneSolid {
             solid: placed,
             tint: color,
+            material: material_def,
             name,
             labels,
             id: inst.id.clone(),
@@ -3008,6 +3017,9 @@ mod raster {
                     .map(|(i, s)| SceneSolid {
                         solid: s.clone(),
                         tint: tints.get(i).copied().flatten(),
+                        // Section path only needs colour; the photoreal
+                        // renderer does its own evaluation.
+                        material: None,
                         name: names.get(i).cloned().flatten(),
                         // Raster path does no highlighting or focus lookup
                         // here; id and labels are unused.

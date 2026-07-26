@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-photoreal-path-tracer",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Photorealistic rendering with --photoreal",
+  "summary": "vcad-render gains a physically-based path tracer: GGX materials with clearcoat, studio softbox lighting, global illumination, and a real camera lens with depth of field.",
+  "features": ["rendering", "raytracing", "cli", "materials"]
+}

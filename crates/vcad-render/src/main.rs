@@ -266,6 +266,61 @@ struct Cli {
     /// output (`.png`/`.jpg`).
     #[arg(long)]
     raytrace: bool,
+
+    /// Photorealistic path tracing: physically-based materials, a studio
+    /// softbox rig, global illumination, and a real camera lens. Needs a
+    /// raster output (`.png`/`.jpg`). Much slower than `--raytrace` — tune
+    /// with `--spp`.
+    #[arg(long, conflicts_with = "raytrace")]
+    photoreal: bool,
+
+    /// Samples per pixel for `--photoreal`. 32 for a quick look, 512+ for a
+    /// clean hero render.
+    #[arg(long, default_value_t = 128, requires = "photoreal")]
+    spp: u32,
+
+    /// Maximum path length (light bounces) for `--photoreal`.
+    #[arg(long, default_value_t = 6, requires = "photoreal")]
+    max_depth: u32,
+
+    /// Exposure multiplier applied before the ACES tonemap (`--photoreal`).
+    #[arg(long, default_value_t = 1.0, requires = "photoreal")]
+    exposure: f32,
+
+    /// Vertical field of view in degrees (`--photoreal`). Lower reads as a
+    /// longer lens: 30-40 flatters mechanical parts.
+    #[arg(long, default_value_t = 34.0, requires = "photoreal")]
+    fov: f64,
+
+    /// Keep the orthographic drafting framing but shade physically
+    /// (`--photoreal`).
+    #[arg(long, requires = "photoreal")]
+    ortho: bool,
+
+    /// Aperture radius as a fraction of the scene radius (`--photoreal`).
+    /// 0 is a pinhole; 0.02-0.05 gives a tasteful product-shot defocus.
+    #[arg(long, default_value_t = 0.0, requires = "photoreal")]
+    aperture: f64,
+
+    /// Backdrop for `--photoreal`: studio sweep, shadow-catcher (transparent
+    /// but keeps the contact shadow), or none.
+    #[arg(long, value_enum, default_value_t = BackdropArg::Studio, requires = "photoreal")]
+    backdrop: BackdropArg,
+
+    /// Random seed for `--photoreal` sampling.
+    #[arg(long, default_value_t = 0x5eed_1234, requires = "photoreal")]
+    seed: u64,
+}
+
+/// CLI spelling of the photoreal backdrop options.
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+enum BackdropArg {
+    /// Infinite neutral studio sweep.
+    Studio,
+    /// Transparent background that still receives the contact shadow.
+    Shadow,
+    /// No floor; the subject floats in the environment gradient.
+    None,
 }
 
 impl Cli {
@@ -359,6 +414,44 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
 fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String> {
     let png = format == Format::Png;
     let opts = raster_opts(cli, png);
+    if cli.photoreal {
+        // Same constraint as --raytrace: the path tracer needs analytic BRep
+        // surfaces, and the overlays are drawn by the projected 2D path.
+        if cli.section.is_some() || cli.annotations().any() {
+            return Err(
+                "--photoreal does not compose with --section/--axes/--labels/--dims; \
+                 use the tessellated raster path for those"
+                    .to_string(),
+            );
+        }
+        #[cfg(feature = "raytrace")]
+        {
+            use vcad_render::photoreal::{Backdrop, PhotorealOptions};
+            let pr = PhotorealOptions {
+                spp: cli.spp,
+                max_depth: cli.max_depth,
+                exposure: cli.exposure,
+                fov_deg: cli.fov,
+                orthographic: cli.ortho,
+                aperture_frac: cli.aperture,
+                backdrop: match cli.backdrop {
+                    BackdropArg::Studio => Backdrop::Studio,
+                    BackdropArg::Shadow => Backdrop::ShadowCatcher,
+                    BackdropArg::None => Backdrop::None,
+                },
+                seed: cli.seed,
+            };
+            return if png {
+                vcad_render::photoreal::render_photoreal_png_str(raw, &opts, &pr)
+            } else {
+                vcad_render::photoreal::render_photoreal_jpeg_str(raw, &opts, &pr)
+            };
+        }
+        #[cfg(not(feature = "raytrace"))]
+        {
+            return Err("this build of vcad-render lacks the `raytrace` feature".to_string());
+        }
+    }
     if cli.raytrace {
         // The ray tracer works on analytic BRep surfaces; sectioning
         // boolean-subtracts (yielding mesh-backed solids it can't trace) and
@@ -433,6 +526,9 @@ fn render_sheet_one(
     if cli.raytrace {
         return Err("--sheet and --raytrace cannot be combined".to_string());
     }
+    if cli.photoreal {
+        return Err("--sheet and --photoreal cannot be combined".to_string());
+    }
     let bytes = match format {
         Format::Svg => {
             let svg = vcad_render::sheet::render_sheet_svg_str(
@@ -504,6 +600,12 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
     if cli.raytrace && !format.is_raster() {
         return Err(
             "--raytrace needs a raster output: use -o <out.png> / <out.jpg> or --format png/jpeg"
+                .to_string(),
+        );
+    }
+    if cli.photoreal && !format.is_raster() {
+        return Err(
+            "--photoreal needs a raster output: use -o <out.png> / <out.jpg> or --format png/jpeg"
                 .to_string(),
         );
     }
