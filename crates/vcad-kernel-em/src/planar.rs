@@ -29,7 +29,7 @@
 //! depth**; multiply by the stack length. Not modeled at M0: curvature of
 //! the unrolled annulus, radial end effects, saturation, eddy currents.
 
-use crate::axisym::{PicardOptions, PicardReport};
+use crate::axisym::{PicardDamping, PicardOptions, PicardReport};
 use crate::constants::MU_0;
 use crate::grid::{Bc, EnergyBalance, FvSystem, Grid2D, SolveError, SolveOptions};
 use crate::material::{b_of_h, Saturation};
@@ -576,6 +576,7 @@ impl PlanarMagnetostatics {
         let mut nu = self.initial_nu_cells(nx, ny);
         // Damped on the solved H — see the axisym driver for why both
         // ν-damping and B-damping diverge.
+        let mut damp = PicardDamping::new(popts);
         let mut h_est = vec![0.0_f64; x_cells * y_cells];
         let mut warm: Option<Vec<f64>> = None;
         let mut report = PicardReport {
@@ -603,6 +604,7 @@ impl PlanarMagnetostatics {
             let solution = self.wrap_solution(sys, unit, mag, sol);
             let mut max_db: f64 = 0.0;
             let mut b_scale: f64 = 1e-12;
+            let relax = damp.relax();
             for ci in 0..x_cells {
                 for cj in 0..y_cells {
                     let id = ci * y_cells + cj;
@@ -615,17 +617,19 @@ impl PlanarMagnetostatics {
                     let b = (bx * bx + by * by).sqrt();
                     let h_solved = nu[id] * b;
                     let delta = h_solved - h_est[id];
-                    h_est[id] += popts.relax * delta;
+                    h_est[id] += relax * delta;
                     nu[id] = if h_est[id] > 1e-9 {
                         h_est[id] / b_of_h(mu_ri, s, h_est[id])
                     } else {
                         1.0 / (MU_0 * mu_ri)
                     };
-                    max_db = max_db.max((popts.relax * delta).abs());
+                    // Undamped — see the axisym driver.
+                    max_db = max_db.max(delta.abs());
                     b_scale = b_scale.max(h_est[id].abs());
                 }
             }
             let rel = max_db / b_scale;
+            damp.observe(rel);
             report = PicardReport {
                 iterations: it,
                 max_rel_delta: rel,
@@ -645,6 +649,9 @@ impl PlanarMagnetostatics {
         Err(SolveError::NonlinearNotConverged {
             max_rel_delta: report.max_rel_delta,
             iterations: report.iterations,
+            relax: damp.relax(),
+            tol: popts.tol,
+            decay_rate: damp.decay_rate(),
         })
     }
 }
@@ -992,5 +999,185 @@ mod tests {
         assert!(asym < 1e-3, "action–reaction mismatch: {asym:.3e}");
         assert!(fx0.abs() < 0.02 * fy0.abs());
         assert!(fx1.abs() < 0.02 * fy0.abs());
+    }
+
+    /// An unrolled axial-flux machine cross-section at mean radius 49 mm:
+    /// rotor back-iron, four alternating NdFeB poles on a 15.395 mm
+    /// pitch, a 1 mm air gap, five stator teeth on a 12.316 mm pitch, and
+    /// a stator yoke — all iron saturable (μ_ri 4000, J_s 2.0 T).
+    ///
+    /// `tooth_w_mm` sets the flux concentration: the tooth carries a pole
+    /// pitch of gap flux through its own width, so a narrow tooth runs
+    /// past the B–H knee and a wide one stays under it. That is the whole
+    /// point of the fixture — the same geometry on both sides of the
+    /// knee.
+    pub(super) fn axial_flux_section(tooth_w_mm: f64) -> PlanarMagnetostatics {
+        let pole_pitch = 15.395;
+        let x_max = 4.0 * pole_pitch; // 61.58 mm, four poles
+        let tooth_pitch = x_max / 5.0; // five teeth, fractional-slot
+        let mut dev = PlanarMagnetostatics::new(0.0, x_max, 0.0, 29.0);
+        let iron = |x0: f64, x1: f64, y0: f64, y1: f64| {
+            PlanarMaterial::saturable(
+                Rect {
+                    x_min_mm: x0,
+                    x_max_mm: x1,
+                    y_min_mm: y0,
+                    y_max_mm: y1,
+                },
+                4000.0,
+                2.0,
+            )
+        };
+        // Rotor back-iron, then magnets, gap, teeth, stator yoke.
+        dev.materials.push(iron(0.0, x_max, 0.0, 5.0));
+        for k in 0..4 {
+            let x0 = k as f64 * pole_pitch;
+            dev.magnets.push(MagnetBlock {
+                region: Rect {
+                    x_min_mm: x0,
+                    x_max_mm: x0 + pole_pitch,
+                    y_min_mm: 5.0,
+                    y_max_mm: 9.0,
+                },
+                br_x_t: 0.0,
+                br_y_t: if k % 2 == 0 { 1.3 } else { -1.3 },
+                mu_r: 1.05,
+            });
+        }
+        for k in 0..5 {
+            let cx = (k as f64 + 0.5) * tooth_pitch;
+            dev.materials.push(iron(
+                cx - tooth_w_mm / 2.0,
+                cx + tooth_w_mm / 2.0,
+                10.0,
+                22.0,
+            ));
+        }
+        dev.materials.push(iron(0.0, x_max, 22.0, 28.0));
+        dev
+    }
+
+    /// Peak |B| over the tooth column at mid-height — the number that
+    /// says which side of the knee the fixture is on.
+    pub(super) fn peak_tooth_b(sol: &PlanarMagSolution, tooth_w_mm: f64) -> f64 {
+        let tooth_pitch = 4.0 * 15.395 / 5.0;
+        let mut peak: f64 = 0.0;
+        for k in 0..5 {
+            let cx = (k as f64 + 0.5) * tooth_pitch;
+            for s in 0..9 {
+                let x = cx + (s as f64 / 8.0 - 0.5) * tooth_w_mm * 0.8;
+                let (bx, by) = sol.b_at(x * 1e-3, 16.0e-3);
+                peak = peak.max((bx * bx + by * by).sqrt());
+            }
+        }
+        peak
+    }
+
+    #[test]
+    fn unsaturated_motor_section_converges_on_the_defaults() {
+        // 8 mm teeth: the tooth stays under the knee, and the stock
+        // Picard settings must keep handling it. This is the control for
+        // the saturated case below — it makes the failure boundary
+        // explicit rather than implicit.
+        let dev = axial_flux_section(8.0);
+        let (sol, report) = dev
+            .solve_nonlinear(95, 45, &SolveOptions::default(), &PicardOptions::default())
+            .expect("below-knee section must converge on the defaults");
+        let b = peak_tooth_b(&sol, 8.0);
+        assert!(
+            (0.8..1.7).contains(&b),
+            "control fixture drifted off the knee: peak tooth B = {b:.3} T"
+        );
+        assert!(
+            report.iterations <= PicardOptions::default().max_iters,
+            "iterations {}",
+            report.iterations
+        );
+    }
+
+    #[test]
+    fn saturating_motor_section_converges_with_adjusted_picard_options() {
+        // 6.4 mm teeth push the tooth well past the knee. This is the
+        // case that used to be unreachable: it contracts steadily at the
+        // stock relaxation but needs ~140 outer iterations, and the old
+        // 80-iteration cap was not caller-settable, so `tol` and
+        // `max_sweeps` (which govern the inner SOR solve) left the
+        // reported residual bit-identical.
+        let dev = axial_flux_section(6.4);
+        let popts = PicardOptions {
+            max_iters: 400,
+            ..PicardOptions::default()
+        };
+        let (sol, report) = dev
+            .solve_nonlinear(95, 45, &SolveOptions::default(), &popts)
+            .expect("saturated section must converge with a raised cap");
+        assert!(report.max_rel_delta < popts.tol);
+        assert!(
+            report.iterations > 80,
+            "fixture no longer exercises the old cap: {} iterations",
+            report.iterations
+        );
+        let b = peak_tooth_b(&sol, 6.4);
+        assert!(
+            b > 1.6,
+            "fixture is supposed to be saturated: peak tooth B = {b:.3} T"
+        );
+    }
+
+    #[test]
+    fn saturating_motor_section_converges_on_the_defaults() {
+        // And with the raised default cap it needs no options at all —
+        // the repro from the bug report, verbatim in spirit.
+        let dev = axial_flux_section(6.4);
+        let (_, report) = dev
+            .solve_nonlinear(95, 45, &SolveOptions::default(), &PicardOptions::default())
+            .expect("saturated section must converge on the defaults");
+        assert!(report.max_rel_delta < PicardOptions::default().tol);
+    }
+
+    #[test]
+    fn nonconvergence_names_the_knob_and_carries_the_report() {
+        // Fail-closed contract: the error must carry the report as DATA
+        // (so a caller can judge how far off the material state was, or
+        // accept a looser answer deliberately) and must point at the
+        // nonlinear knobs, not the SOR ones a caller would otherwise
+        // reach for.
+        let dev = axial_flux_section(6.4);
+        let popts = PicardOptions {
+            max_iters: 1,
+            ..PicardOptions::default()
+        };
+        let err = dev
+            .solve_nonlinear(95, 45, &SolveOptions::default(), &popts)
+            .expect_err("one iteration must not converge");
+        let report = err.picard_report().expect("report must survive failure");
+        assert_eq!(report.iterations, 1);
+        assert!(report.max_rel_delta > popts.tol);
+        let msg = err.to_string();
+        assert!(msg.contains("picard_max_iters"), "{msg}");
+        assert!(msg.contains("max_sweeps"), "{msg}");
+    }
+
+    #[test]
+    fn slow_convergence_is_diagnosed_as_the_iteration_cap() {
+        // The exact shape of the reported bug: a device that contracts
+        // steadily, stopped by the cap. The error must say so and point
+        // at `picard_max_iters` — advising deeper under-relaxation here
+        // would have made it strictly slower.
+        let dev = axial_flux_section(6.4);
+        let popts = PicardOptions {
+            max_iters: 40,
+            ..PicardOptions::default()
+        };
+        let err = dev
+            .solve_nonlinear(95, 45, &SolveOptions::default(), &popts)
+            .expect_err("40 iterations is short of this device's ~140");
+        let msg = err.to_string();
+        assert!(msg.contains("still falling"), "{msg}");
+        assert!(msg.contains("picard_max_iters"), "{msg}");
+        assert!(
+            !msg.contains("under-relax harder"),
+            "must not advise under-relaxing a converging loop: {msg}"
+        );
     }
 }

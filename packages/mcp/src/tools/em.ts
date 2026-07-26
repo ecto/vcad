@@ -246,6 +246,44 @@ export const toolDefs: ToolDef[] = [
               type: "number" as const,
               description: "SOR sweep cap. Default 200000.",
             },
+            picard_max_iters: {
+              type: "number" as const,
+              description:
+                "Saturable iron only: cap on the NONLINEAR outer loop over " +
+                "the B-H law. Default 300. Separate from max_sweeps, which " +
+                "caps the inner SOR solve and does nothing for a " +
+                "non-converging material state. A deeply saturated motor " +
+                "section contracts steadily but needs 150-250 iterations; " +
+                "raise this when the error says the residual is still " +
+                "falling.",
+            },
+            picard_tol: {
+              type: "number" as const,
+              description:
+                "Saturable iron only: nonlinear convergence tolerance on the " +
+                "largest relative reluctivity update. Default 1e-4. Raise it " +
+                "to accept a looser material state deliberately.",
+            },
+            picard_relax: {
+              type: "number" as const,
+              description:
+                "Saturable iron only: under-relaxation of the nonlinear " +
+                "loop, in (0, 1]. Default 0.7. Lower it ONLY when the error " +
+                "reports the residual has stopped falling (a limit cycle); " +
+                "when the residual is still falling, lowering this makes " +
+                "convergence strictly slower — raise picard_max_iters " +
+                "instead.",
+            },
+            picard_adaptive: {
+              type: "boolean" as const,
+              description:
+                "Saturable iron only: back the relaxation off automatically " +
+                "when the nonlinear residual makes no progress over a " +
+                "10-iteration window. Default FALSE — on a healthy saturated " +
+                "solve it reacts to ordinary residual jitter and costs ~1.7x " +
+                "the iterations. Turn it on for a device that is " +
+                "demonstrably oscillating.",
+            },
             drive_coil: {
               type: "number" as const,
               description:

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-25-em-saturated-picard",
+  "version": "0.9.4",
+  "date": "2026-07-25",
+  "category": "fix",
+  "title": "simulate_em solves strongly saturating magnetostatics",
+  "summary": "Saturated motor cross-sections no longer fail with an unfixable 'Picard not converged': the nonlinear loop's cap, tolerance and relaxation are now caller-settable, and the default cap was raised.",
+  "features": ["em", "magnetostatics", "motors"],
+  "mcpTools": ["simulate_em"]
+}

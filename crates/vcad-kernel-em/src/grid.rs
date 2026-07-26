@@ -222,6 +222,16 @@ pub enum SolveError {
         max_rel_delta: f64,
         /// Outer iterations performed.
         iterations: usize,
+        /// Relaxation in force when the loop gave up (below the starting
+        /// `picard_relax` if adaptive damping backed it off).
+        relax: f64,
+        /// Tolerance the loop was aiming for.
+        tol: f64,
+        /// Observed per-iteration contraction of the residual over the
+        /// trailing window. `< 1` = converging, just not fast enough for
+        /// the iteration cap; `>= 1` = not converging at all. `None` when
+        /// the loop gave up before the window filled.
+        decay_rate: Option<f64>,
     },
 }
 
@@ -236,11 +246,66 @@ impl std::fmt::Display for SolveError {
             SolveError::NonlinearNotConverged {
                 max_rel_delta,
                 iterations,
-            } => write!(
-                f,
-                "Picard not converged after {iterations} iterations \
-                 (largest reluctivity update {max_rel_delta:.3e})"
-            ),
+                relax,
+                tol,
+                decay_rate,
+            } => {
+                write!(
+                    f,
+                    "Picard not converged after {iterations} iterations \
+                     (largest reluctivity update {max_rel_delta:.3e}, target \
+                     {tol:.1e}, relaxation {relax:.3}). This is the NONLINEAR \
+                     outer loop over the B-H law, NOT the SOR inner solve — \
+                     `tol` and `max_sweeps` have no effect on it. "
+                )?;
+                // Two failure modes, opposite fixes. Read the measured
+                // contraction rate rather than guessing: a residual still
+                // falling geometrically wants a higher iteration cap, and
+                // under-relaxing it further would only slow it down.
+                match decay_rate {
+                    // Too few iterations to have measured a trend — say
+                    // that, rather than diagnosing a mode from nothing.
+                    None => write!(
+                        f,
+                        "The loop stopped before its contraction rate could be \
+                         measured, so which mode this is (slow convergence vs \
+                         oscillation) is not yet known. Raise \
+                         `picard_max_iters` and retry; the next failure will \
+                         name the mode."
+                    ),
+                    Some(rate) if *rate < 0.999 => {
+                        let need = (max_rel_delta / tol).ln() / (1.0 / rate).ln();
+                        let suggested =
+                            iterations + ((need * 1.5).ceil().max(50.0) as usize).max(50);
+                        write!(
+                            f,
+                            "The residual IS still falling, at {rate:.4} per \
+                             iteration — the iteration cap arrived first. \
+                             Retry with `picard_max_iters: {suggested}`. Do \
+                             not lower `picard_relax` here; it would only \
+                             slow the contraction further."
+                        )
+                    }
+                    _ => {
+                        let suggested_relax = (relax * 0.4).max(0.05);
+                        write!(
+                            f,
+                            "The residual has stopped falling, so more \
+                             iterations alone will not close it. Try \
+                             `picard_relax: {suggested_relax:.2}` (deeper \
+                             under-relaxation, the lever for a limit cycle) — \
+                             but check the device too: a flux path driven \
+                             past what it can carry stalls the same way, and \
+                             no solver setting fixes that."
+                        )
+                    }
+                }?;
+                write!(
+                    f,
+                    " Raising `picard_tol` accepts a looser material state \
+                     deliberately."
+                )
+            }
         }
     }
 }
