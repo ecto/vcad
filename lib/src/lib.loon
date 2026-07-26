@@ -80,7 +80,16 @@
   [LoftClosed (Vec Sketch)]
   ; Patterns
   [LinearPattern Solid f64 f64 f64 Int f64]
-  [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]]
+  [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]
+  ; Fasteners — catalog-backed hardware, oriented by its own axis.
+  ; [Fastener spec style fx fy fz tx ty tz stack]
+  [Fastener Str Str f64 f64 f64 f64 f64 f64 (Vec Str)]
+  ; [BoltCircle spec style bcd count cx cy cz ax ay az grip stack]
+  [BoltCircle Str Str f64 Int f64 f64 f64 f64 f64 f64 f64 (Vec Str)]
+  ; Hole tools, sized from the same thread designation as the fastener.
+  ; [ClearanceHole size depth ox oy oz dx dy dz]
+  [ClearanceHole Str f64 f64 f64 f64 f64 f64 f64]
+  [TappedHole Str f64 f64 f64 f64 f64 f64 f64]]
 
 ; ---------------------------------------------------------------------------
 ; Sketch — 2D profiles for extrude/revolve
@@ -191,6 +200,51 @@
   [LinearPattern s dx dy dz count spacing]]]
 [let circular-pattern [fn [ox oy oz ax ay az count angle s]
   [CircularPattern s ox oy oz ax ay az count angle]]]
+
+; ---------------------------------------------------------------------------
+; Fasteners — one form per fastener, oriented by its axis.
+;
+; The head is NOT a separate rotate: [bolt] builds head + shaft as one solid
+; and aligns it to the from→to axis, so mirroring a subassembly mirrors the
+; fastener with it and the head stays on the side of the flange it belongs to.
+;
+;   from-point = the face the head bears against (for "flat", the flush face)
+;   to-point   = where the shaft tip lands
+;   the distance between them is the GRIP, and the catalog length is checked
+;   against it — a bolt that is too short or too long for its stack is an
+;   error, not a render.
+;
+; Styles: "shcs" (ISO 4762), "bhcs" (ISO 7380), "flat" (ISO 10642 —
+; genuinely countersunk, zero protrusion).
+;
+; Every placed fastener emits a {catalog_id, qty} line onto the document, so
+; bom_create reads the count off the geometry instead of off your memory.
+;
+;   [bolt "M4x12" "shcs" 10 0 5  10 0 -3]
+;   [bolt-stacked "M4x25" "shcs" 0 0 8  0 0 -8 #["washer" "nut"]]
+;   [bolt-circle "M4x12" "shcs" 60 6  0 0 10  0 0 -1  8]
+[let bolt [fn [spec style fx fy fz tx ty tz]
+  [Fastener spec style fx fy fz tx ty tz #[]]]]
+; Same, with washers/nuts sharing the axis. Washers before the first "nut"
+; sit under the head; the nut (and any washer after it) sits past the tip.
+; The stack height is added to the length check.
+[let bolt-stacked [fn [spec style fx fy fz tx ty tz stack]
+  [Fastener spec style fx fy fz tx ty tz stack]]]
+; The common case: `count` fasteners evenly spaced on a bolt circle of
+; diameter `bcd`, centred at (cx,cy,cz) in the plane normal to (ax,ay,az),
+; each driven `grip` mm along that axis. Emits qty = count.
+[let bolt-circle [fn [spec style bcd count cx cy cz ax ay az grip]
+  [BoltCircle spec style bcd count cx cy cz ax ay az grip #[]]]]
+[let bolt-circle-stacked [fn [spec style bcd count cx cy cz ax ay az grip stack]
+  [BoltCircle spec style bcd count cx cy cz ax ay az grip stack]]]
+
+; Hole tools — subtract these; the diameter comes from the same thread
+; designation as the fastener, so hole and fastener cannot disagree.
+;   [pipe plate [difference [clearance-hole "M4" 6 10 0 0  0 0 -1]]]
+[let clearance-hole [fn [size depth ox oy oz dx dy dz]
+  [ClearanceHole size depth ox oy oz dx dy dz]]]
+[let tapped-hole [fn [size depth ox oy oz dx dy dz]
+  [TappedHole size depth ox oy oz dx dy dz]]]
 
 ; Material (no subject)
 [let material [fn [name r g b metallic roughness]

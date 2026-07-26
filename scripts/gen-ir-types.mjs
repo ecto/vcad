@@ -87,6 +87,7 @@ const FORCE_OPTIONAL = {
     "clearance_specs",
     "analysis_studies",
     "constraints",
+    "hardware",
   ],
   DesignRules: ["classRules", "netClassAssignments"],
   BoardOutline: ["cutouts"],

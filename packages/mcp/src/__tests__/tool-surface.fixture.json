@@ -481,7 +481,7 @@
   {
     "name": "bom_create",
     "title": "Create BOM",
-    "description": "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+    "description": "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. When document_id names a resident session, fastener lines are seeded from the geometry itself (every loon `bolt`/`bolt-circle`, quantities multiplied through patterns) — pass from_geometry:false to opt out. All prices are estimates and flagged as such.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -579,6 +579,10 @@
             ]
           },
           "description": "Optional full line list to build the BOM in ONE call (recommended on serverless — BOMs are in-memory per instance, so one-shot creation is the robust path)."
+        },
+        "from_geometry": {
+          "type": "boolean",
+          "description": "Seed COTS lines from the hardware the document's geometry declares — every loon `bolt`/`bolt-circle` (plus its washers and nuts), with quantities already multiplied through patterns. Default true when document_id is given."
         }
       },
       "required": []
@@ -4502,7 +4506,7 @@
   {
     "name": "analyze_structure",
     "title": "Analyze Structure",
-    "description": "Static structural FEA on a part's real geometry with fail-closed mesh-convergence gating: linear-tet fill of the tessellated interior at 2+ refinement levels, linear-elastic solve (PCG), returning max von Mises stress, max displacement, discretization-error estimates, and (with yield_strength_mpa) a safety factor — plus `vcad.fea-claims/1` and unified-receipt claims. If QoIs disagree across levels the verdict is Unverifiable and NO stress/displacement claim is emitted (raise resolution, or fillet the singular corner it points at). Claims carry basis \"predicted\" and roll up Provisional until hardware is load-tested. Scope: small-displacement linear elasticity, one isotropic material; no plasticity, buckling, contact, or dynamic loads; boundary is staircase-approximated at the lattice pitch. Use predict_physics for the fast coarse steering loop; use this for the audited answer.",
+    "description": "Static structural FEA on a part's real geometry with fail-closed mesh-convergence gating: linear-tet fill of the tessellated interior at 2+ refinement levels, linear-elastic solve (PCG), returning max von Mises stress, max displacement, discretization-error estimates, and (with yield_strength_mpa) a safety factor — plus `vcad.fea-claims/1` and unified-receipt claims. If QoIs disagree across levels the verdict is Unverifiable and NO stress/displacement claim is emitted (raise resolution, or fillet the singular corner it points at). Claims carry basis \"predicted\" and roll up Provisional until hardware is load-tested. Scope: small-displacement linear elasticity, one isotropic material; no plasticity, buckling, contact, or dynamic loads; boundary is staircase-approximated at the lattice pitch. THIN-WALLED PARTS (sheet metal, tube frame, plate) are outside this tool: it measures the thinnest load-bearing section and fails closed with the cell arithmetic and a pointer to beam_check, which is the more accurate answer for a prismatic member anyway. Use predict_physics for the fast coarse steering loop; use this for the audited answer on chunky geometry.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4627,7 +4631,7 @@
         },
         "resolution": {
           "type": "number",
-          "description": "Coarse-level lattice cells along the longest bbox axis (default 24). The finest level is resolution * 2^(levels-1), capped at 160 for this tier. Keep >= ~6 cells through the thinnest load-bearing section."
+          "description": "Coarse-level lattice cells along the longest bbox axis (default 24). The finest level is resolution * 2^(levels-1), capped at 160 for this tier. Keep >= ~6 cells through the thinnest load-bearing section — the tool measures the part and refuses below ~4, with the cell arithmetic attached. Raising this is NOT the lever for a thin wall (a 2 mm wall on a 300 mm member needs ~950 cells): use beam_check."
         },
         "levels": {
           "type": "number",
@@ -4647,6 +4651,115 @@
         "part",
         "loads",
         "supports"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "beam_check",
+    "title": "Check Beam / Section",
+    "description": "Closed-form structural check of a PRISMATIC member — the audited answer for thin-walled geometry, where the lattice in analyze_structure cannot put enough cells through the wall at any affordable resolution. Give it a profile (rect, rect_tube, round, round_tube, i_beam), a span, an end condition, and a load case; get section properties (A, I_y, I_z, J, section moduli, torsional stiffness), stresses (bending, axial, torsional and transverse shear, von Mises), deflection with the Timoshenko shear term, twist, the Euler buckling load under compression, and a safety factor — plus `vcad.fea-claims/1` and unified-receipt claims under `structure.beam.*`. Exact integrals where they exist (round, round tube, rectangle bending), the convergent Saint-Venant series for solid-rectangle torsion, Bredt closed thin-wall theory for tube torsion — every approximation is stated in the returned notes. For a constant cross-section this is not a fallback: it beats a staircased lattice on accuracy and costs microseconds. Fail-closed: too stubby for beam theory (L/depth < 5), too thick-walled for Bredt, deflecting past a tenth of the span, torque on an open section, or buckling before it yields — any of those makes the verdict Unverifiable and NO QoI is claimed, with the reason naming the route forward. Claims carry basis \"predicted\" and roll up Provisional until hardware is load-tested. Scope: one uniform section over the whole span, idealized ends, no stress concentrations (holes, welds, corner radii), no local wall buckling, no fatigue. Needs no document — it is geometry-by-description, so it works before the part exists.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "description": "Cross-section. The member runs along X and the section lives in (Y, Z): width_mm is the Y extent, height_mm the Z extent. One of: {\"type\":\"rect\",width_mm,height_mm}, {\"type\":\"rect_tube\",width_mm,height_mm,wall_mm}, {\"type\":\"round\",diameter_mm}, {\"type\":\"round_tube\",diameter_mm,wall_mm}, {\"type\":\"i_beam\",width_mm,height_mm,flange_mm,web_mm}. Tube dimensions are OUTSIDE dimensions.",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "rect",
+                "rect_tube",
+                "round",
+                "round_tube",
+                "i_beam"
+              ]
+            },
+            "width_mm": {
+              "type": "number",
+              "description": "Y extent, mm."
+            },
+            "height_mm": {
+              "type": "number",
+              "description": "Z extent, mm."
+            },
+            "wall_mm": {
+              "type": "number",
+              "description": "Wall thickness, mm."
+            },
+            "diameter_mm": {
+              "type": "number",
+              "description": "Outside diameter, mm."
+            },
+            "flange_mm": {
+              "type": "number",
+              "description": "Flange thickness, mm."
+            },
+            "web_mm": {
+              "type": "number",
+              "description": "Web thickness, mm."
+            }
+          }
+        },
+        "length_mm": {
+          "type": "number",
+          "description": "Free span between supports, mm."
+        },
+        "end_condition": {
+          "type": "string",
+          "enum": [
+            "cantilever_tip",
+            "cantilever_uniform",
+            "simple_center",
+            "simple_uniform",
+            "fixed_fixed_center",
+            "fixed_fixed_uniform"
+          ],
+          "description": "Support and load arrangement. `*_uniform` spreads the transverse force over the span; `*_center`/`*_tip` concentrates it. Also sets the Euler effective-length factor (cantilever K=2, simple K=1, fixed-fixed K=0.5)."
+        },
+        "transverse_force_n": {
+          "type": "number",
+          "description": "Total transverse force, N (magnitude). Default 0."
+        },
+        "bend_axis": {
+          "type": "string",
+          "enum": [
+            "y",
+            "z"
+          ],
+          "description": "Which principal axis to bend about: `y` uses I_y and deflects along Z (default), `z` uses I_z and deflects along Y. Matters for any non-square section."
+        },
+        "torque_nmm": {
+          "type": "number",
+          "description": "Torque about the member axis, N·mm (1 N·m = 1000 N·mm). Default 0. This is the case closed-form theory answers best and the lattice answers worst."
+        },
+        "axial_force_n": {
+          "type": "number",
+          "description": "Axial force, N — positive tension, negative compression. Compression is also checked against Euler buckling, and a member that buckles is reported Unverifiable rather than 'safe'. Default 0."
+        },
+        "youngs_modulus_mpa": {
+          "type": "number",
+          "description": "Young's modulus, MPa. Default 69000 (6061 aluminum); steel ~200000, PLA ~2300."
+        },
+        "poisson": {
+          "type": "number",
+          "description": "Poisson's ratio in [0, 0.5). Default 0.33; sets G = E/(2(1+nu))."
+        },
+        "yield_strength_mpa": {
+          "type": "number",
+          "description": "Yield strength, MPa. When given, safety_factor = yield / von Mises is computed and claimed (applicable checks only)."
+        }
+      },
+      "required": [
+        "profile",
+        "length_mm",
+        "end_condition"
       ]
     },
     "annotations": {

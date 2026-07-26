@@ -665,6 +665,8 @@ export interface KernelModule {
     positions: Float32Array,
     indices: Uint32Array,
   ) => unknown;
+  /** Closed-form prismatic member check (BeamCase JSON). */
+  feaCheckBeam?: (caseJson: string) => unknown;
   /** EM field simulation (problem-tagged spec/params/options JSON). */
   emSimulate?: (
     specJson: string,
@@ -1080,6 +1082,7 @@ export class Engine {
       circuitTransient: (wasmModule as Record<string, unknown>).circuitTransient as KernelModule["circuitTransient"],
       circuitTune: (wasmModule as Record<string, unknown>).circuitTune as KernelModule["circuitTune"],
       feaAnalyzeMesh: (wasmModule as Record<string, unknown>).feaAnalyzeMesh as KernelModule["feaAnalyzeMesh"],
+      feaCheckBeam: (wasmModule as Record<string, unknown>).feaCheckBeam as KernelModule["feaCheckBeam"],
       emSimulate: (wasmModule as Record<string, unknown>).emSimulate as KernelModule["emSimulate"],
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
       photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
@@ -1527,6 +1530,25 @@ export class Engine {
       );
     }
     return fn(specJson, optionsJson, positions, indices);
+  }
+
+  /**
+   * Closed-form check of a prismatic member: exact section properties,
+   * beam bending with the Timoshenko shear term, Bredt thin-wall (or
+   * Saint-Venant series) torsion, and Euler buckling — the route for
+   * thin-walled sheet-metal and tube-frame members, which no affordable
+   * lattice pitch can resolve. Same fail-closed contract and
+   * `vcad.fea-claims/1` predicted claims as `feaAnalyzeMesh`; see
+   * `vcad-kernel-fea::section`.
+   */
+  feaCheckBeam(caseJson: string): unknown {
+    const fn = this.kernel.feaCheckBeam;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "feaCheckBeam is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(caseJson);
   }
 
   /**

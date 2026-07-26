@@ -12,6 +12,7 @@ use loon_lang::module::{MapProvider, ModuleProvider};
 use vcad_ir::Document;
 
 mod convert;
+pub mod fastener;
 pub mod params;
 pub mod recover;
 pub use convert::value_to_document;

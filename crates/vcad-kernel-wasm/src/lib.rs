@@ -8715,6 +8715,10 @@ pub fn thermal_solve_transient(
 // Static structural FEA (vcad-kernel-fea)
 // ---------------------------------------------------------------------------
 
+/// Largest finest-level lattice resolution the MCP tier will solve. The
+/// mesher's own hard ceiling is 256; this is the cost cap below it.
+const MCP_RESOLUTION_CAP: usize = 160;
+
 /// Options for [`fea_analyze_mesh`] (all fields optional in JSON).
 #[derive(serde::Deserialize)]
 #[serde(default)]
@@ -8855,10 +8859,13 @@ pub fn fea_analyze_mesh(
         .resolution
         .saturating_mul(1usize << (opts.levels.saturating_sub(1)).min(8))
         .min(256);
-    if finest > 160 {
+    if finest > MCP_RESOLUTION_CAP {
         return Err(JsError::new(&format!(
-            "finest lattice level would be {finest} cells along the longest axis (cap 160 \
-             for the MCP tier) — lower `resolution` or `levels`"
+            "finest lattice level would be {finest} cells along the longest axis (cap \
+             {MCP_RESOLUTION_CAP} for the MCP tier) — lower `resolution` or `levels`. If you \
+             raised the resolution to chase a thin wall, that is the wrong lever: even the \
+             256-cell hard ceiling puts about one cell through a 2 mm wall on a 300 mm member. \
+             Use feaCheckBeam / the `beam_check` tool for a prismatic member."
         )));
     }
     let mut mesh = vcad_kernel_tessellate::TriangleMesh::new();
@@ -8868,6 +8875,9 @@ pub fn fea_analyze_mesh(
         levels: opts.levels,
         displacement_tol: opts.displacement_tol,
         stress_tol: opts.stress_tol,
+        // So a thin-wall diagnosis can say whether raising `resolution`
+        // could ever resolve the section under THIS tier's cap.
+        resolution_cap: MCP_RESOLUTION_CAP,
     };
     let solve_opts = fea::solve::SolveOptions {
         tol: opts.tol,
@@ -8899,6 +8909,51 @@ pub fn fea_analyze_mesh(
         receipt_claims,
         vertex_displacement_mm,
         vertex_von_mises_mpa,
+    };
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[derive(serde::Serialize)]
+struct WasmBeamCheck {
+    check: vcad_kernel::vcad_kernel_fea::section::BeamCheck,
+    claim_set: Option<vcad_kernel::vcad_kernel_fea::receipt::ClaimSet>,
+    receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+}
+
+/// Closed-form check of a prismatic member: exact section properties,
+/// beam bending with the Timoshenko shear term, Bredt thin-wall torsion (or
+/// the Saint-Venant series for solid rectangles), and Euler buckling — with
+/// the same fail-closed applicability gating and predicted-basis claims the
+/// lattice route carries.
+///
+/// This is the answer for sheet-metal and tube-frame members, where the
+/// lattice pitch cannot resolve the wall at any affordable resolution. For a
+/// constant cross-section it is not a fallback: it is the more accurate
+/// number, and it costs microseconds.
+///
+/// `case_json` is a `vcad_kernel_fea::section::BeamCase`.
+#[wasm_bindgen(js_name = feaCheckBeam)]
+pub fn fea_check_beam(case_json: &str) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_fea as fea;
+    let case: fea::section::BeamCase =
+        serde_json::from_str(case_json).map_err(|e| JsError::new(&format!("bad case: {e}")))?;
+    let check = fea::section::check_beam(&case).map_err(|e| JsError::new(&e.to_string()))?;
+    let (claim_set, receipt_claims) = match &check.verdict {
+        fea::section::BeamVerdict::Applicable => {
+            let set = fea::section::predicted_claims(&check, &case)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            let claims = fea::section::design_claims(&set);
+            (Some(set), claims)
+        }
+        fea::section::BeamVerdict::Unverifiable { reasons } => {
+            (None, fea::section::design_claims_unverifiable(reasons))
+        }
+    };
+    let out = WasmBeamCheck {
+        check,
+        claim_set,
+        receipt_claims,
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))

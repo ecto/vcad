@@ -1,4 +1,4 @@
-# Structural FEA — milestone ladder (M0–M2)
+# Structural FEA — milestone ladder (M0–M3)
 
 `crates/vcad-kernel-fea` answers the everyday question — **will this bracket
 break?** — on the part's real BRep geometry: a linear-elastic solve returning
@@ -92,10 +92,102 @@ discretization-error estimate:
   `Engine.feaAnalyzeMesh`. Finest-level resolution capped at 160 for the
   MCP tier.
 
-## M3+ — out of scope for this pass
+## M3 — thin walls: measure, diagnose, and answer in closed form ✅
+
+Found in the field (2026-07-26, sizing a robot chassis): the lattice route is
+unusable on thin-walled parts, which is most of a sheet-metal or tube-frame
+machine. The arithmetic is not a corner case, it is the domain:
+
+```
+160 cells over a 312 mm member  ->  1.95 mm/cell  ->  ~1 cell through a 2 mm wall
+6 cells through 2 mm            ->  0.33 mm/cell  ->  ~950 cells, past every cap
+```
+
+A staircase at one cell per wall is not a coarse approximation of a thin wall;
+it is a different part. Raising `resolution` is not the lever — the mesher's own
+hard ceiling of 256 is still ~4× short — so this milestone does two things
+instead.
+
+**Measure, then diagnose** (`mesh::wall_thickness`, `mesh::diagnose_thin_wall`).
+Axis-aligned rays on a 32×32 grid per axis collect the solid spans through the
+part; the 5th percentile of that distribution is the working estimate of the
+thinnest load-bearing section (exact for plate and prismatic-tube geometry,
+which is the reported domain; the percentile rather than the minimum keeps
+grazing rays at curved surfaces from dominating). `diagnose_thin_wall` turns
+that into the cell arithmetic — pitch, cells through the section, the
+resolution ~6 cells would need, whether that is under the caller's cap — and
+below 4 cells emits `blocking_advice`, which:
+
+- forces the convergence verdict to `Unverifiable` **even when the QoIs agree
+  between levels** (a study that never resolved the wall can agree with itself
+  and still be wrong), and
+- replaces the old bare `NoInteriorCells` ("raise the resolution" — advice that
+  cannot work here) via `ConvergenceError::ThinWalled`, which carries the
+  diagnosis.
+
+Between 4 and 6 cells the study runs and the gate judges it, with an `advisory`
+recorded in the claim provenance. Converged studies now state
+cells-through-section in their provenance regardless — the arithmetic is on the
+record either way. Cost is a small fraction of one solve.
+
+**Answer it in closed form** (`section`). For a *prismatic* member the closed
+form is not a consolation prize, it is the better answer:
+
+- `Profile`: `rect`, `rect_tube`, `round`, `round_tube`, `i_beam` (outside
+  dimensions, uniform wall). Properties: `A`, `I_y`, `I_z`, section moduli,
+  Saint-Venant `J`, torsional modulus `T/τ_max`, transverse-shear factor,
+  Timoshenko κ.
+- Torsion by provenance, never by table lookup: **exact** for round and round
+  tube (`J = 2I`, any wall); the **convergent Saint-Venant Fourier series** for
+  solid rectangles (reproduces the classical `J = 0.1406 s⁴`, `τ = T/(0.208 s³)`
+  square-bar constants, and Roark's 2:1 values to 0.5%); **Bredt closed
+  thin-wall** for rectangular tube (`J = 4A_m²t/s`, `τ = T/(2A_m t)`); the
+  thin-strip Saint-Venant sum for the open I-section, which states that it
+  ignores warping entirely.
+- `check_beam`: bending moment and stress by end condition (six cantilever /
+  simple / fixed-fixed cases, point and distributed), axial stress, torsional
+  and transverse shear superposed conservatively, von Mises, deflection with
+  the Timoshenko shear term, twist, torsional stiffness, Euler buckling under
+  compression (`K` from the end condition), safety factor.
+- **Fail-closed applicability**, same contract as the lattice gate:
+  `L/depth < 5`, Bredt on a wall thicker than 0.2 of the section, deflection
+  past `L/10`, torque on an open section, or an Euler margin below 1 → verdict
+  `Unverifiable`, no QoI claimed, and each reason names the route forward
+  (usually back to `analyze_structure`, since a stubby part is exactly what the
+  lattice *can* resolve). Non-blocking `cautions` (short-but-workable
+  slenderness, `d/t > 50`, buckling margin under 2) ride the provenance.
+- Claims land on the same `vcad.fea-claims/1` schema under receipt ids
+  `structure.beam.*` with oracle `vcad-kernel-fea/section` and
+  `basis: predicted` — exact arithmetic on an idealized member is still not a
+  load test, so receipts roll up **Provisional**.
+- Validation: the same 80×10×10 aluminum cantilever the lattice is validated
+  against (0.301 mm Timoshenko tip deflection, 48 MPa root stress, within 2%
+  and 1%), the classical torsion constants above, hand-computed Bredt values
+  for the 40×40×2 chassis tube, and a slender strap that yields comfortably
+  while Euler says it folds (verdict `Unverifiable`, not "safe").
+
+**MCP**: `beam_check` (`tools/structure.ts`), WASM binding `feaCheckBeam`,
+engine wrapper `Engine.feaCheckBeam`. It takes **no document** — geometry by
+description, so it works before the part exists.
+
+What this does *not* cover: a non-prismatic thin-walled part (a bent sheet
+bracket with cutouts) still has no audited answer. Shell and beam *elements*
+remain the real fix, and are the top of the M4+ list below.
+
+## M4+ — out of scope for this pass
 
 Deliberately not started, in rough order of value:
 
+- **Shell and beam elements** — the physically right discretization for plate
+  and thin-walled geometry, sidestepping the through-thickness cell problem for
+  *any* shape rather than only prismatic ones. Biggest job, biggest payoff: it
+  covers the whole sheet-metal-robot domain that M3's closed forms only reach
+  when the member happens to be prismatic.
+- **Prismatic-section detection from a solid** — verify a constant cross-section
+  by sampling stations along the longest axis, then derive `A`/`I` by
+  integrating the rasterized section, so `beam_check` can be handed a part
+  instead of a profile. `J` for an arbitrary section needs a warping (Poisson)
+  solve, so torsion would stay profile-driven until that lands.
 - **Adjoint gradients** (`d(max stress)/d(parameter)` via the discrete
   adjoint; the max-QoI needs the thermal crate's smooth-max treatment) and
   seam registration with `vcad-kernel-diff`.
@@ -106,4 +198,4 @@ Deliberately not started, in rough order of value:
   document instead of world boxes, surviving parameter edits.
 - Richardson extrapolation of QoIs (report the h→0 estimate, not just the
   finest level), multi-material assemblies, gravity/body loads,
-  modal analysis, Euler buckling estimate.
+  modal analysis. (Euler buckling landed in M3 for prismatic members.)

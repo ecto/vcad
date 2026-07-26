@@ -174,6 +174,27 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 `vcad-kernel-text` converts text to sketch geometry for embossing and engraving. `vcad-kernel-sheet` models sheet-metal parts — flanges, bends — with lossless unfolding to a flat pattern.
 
+### Fasteners
+
+Fasteners are the most repeated primitive in a real assembly, so they are a form rather than a hand-built union of two cylinders. `[bolt]` takes a catalog designation, a head style, and the two points its axis runs between:
+
+```lisp
+[let holes  [circular-pattern 0 0 0  0 0 1  6 360
+              [clearance-hole "M4" 10  22 0 -1  0 0 1]]]
+[let flange [difference holes [cylinder 30 8]]]
+[root [union flange [bolt-circle "M4x12" "shcs" 44 6  0 0 8  0 0 -1  8]] "steel"]
+```
+
+![Flange with six M4 socket-head cap screws on a bolt circle](/assets/kernel/fasteners.jpg)
+
+Three things fall out of declaring the axis instead of composing rotations by hand:
+
+- **Orientation is derived.** Head and shaft are one solid aligned to the from→to axis, so mirroring a subassembly mirrors the fastener with it — heads cannot end up on the far side of a flange with shafts pointing into free space.
+- **Heads are honest.** `shcs` (ISO 4762) and `bhcs` (ISO 7380) stand proud by their real height, and `flat` (ISO 10642) is genuinely countersunk — flush, zero protrusion. A protruding head is where the model says it is, so a clearance check against a swept volume means something.
+- **Counts come from the geometry.** Every placement emits a `{catalog_id, qty}` line onto the document — multiplied through patterns, so a six-bolt `bolt-circle` reports six — and `bom_create` seeds its COTS lines from that instead of from a hand tally.
+
+The catalog behind `search_mechanical_parts` supplies stocked lengths, so `M4x11` is rejected rather than modeled; `[bolt-stacked]` adds washers and nuts on the same axis and checks the length against the grip plus the stack, refusing a bolt that is too short to reach or too long for a blind hole. `[clearance-hole]` and `[tapped-hole]` take the same thread designation (ISO 273 medium fit, coarse-thread tap drill), so a hole and the fastener that goes in it cannot disagree.
+
 ## Tessellation and Rendering
 
 ### Tessellation
@@ -245,6 +266,10 @@ Loft interpolates a solid through a sequence of cross-sections:
 ### Structural FEA
 
 `vcad-kernel-fea` answers the everyday question — will this bracket break? — on the part's real geometry: the tessellated boundary is filled with a lattice of linear tetrahedra (Kuhn decomposition, face-conforming and watertight by construction), and a constant-strain-tet linear-elastic solve (matrix-free Jacobi-PCG, mm-N-MPa units) returns max von Mises stress and its location, max displacement, compliance, and — given a yield strength — a safety factor. The load-bearing feature is the **fail-closed mesh-convergence gate**: every analysis solves at two or more refinement levels, the inter-level change of each QoI is reported as its discretization-error estimate, and a study whose QoIs disagree beyond stated tolerances is `Unverifiable` — no safety factor, no claims, with the reason spelled out (including "your peak stress sits on a singular re-entrant corner; fillet it", which is design feedback, not solver failure). Validation is closed-form: axial bar compliance within 3% of FL/(EA), a cantilever converging monotonically from below onto the Timoshenko deflection, exact 1/E displacement scaling, exact volume recovery on lattice-aligned geometry. Converged studies emit `vcad.fea-claims/1` (stress, displacement, safety factor, plus the discretization-error conscience claims; basis `predicted` — receipts roll up Provisional until the part is load-tested); unconverged ones poison the receipt with a single `unverifiable` claim so nothing quietly passes. Honesty: small-displacement linear elasticity of one isotropic material — no plasticity, buckling, contact, or dynamic loads; the boundary is staircase-approximated at the lattice pitch (priced by the gate); constant-strain tets smear stress concentrations, so the reported peak is a lower bound that tightens with refinement. Exposed over MCP as `analyze_structure`; `predict_physics` remains the fast voxel-hex steering loop.
+
+**Thin walls take the other route.** A staircase lattice needs several cells through the thinnest load-bearing section, and sheet metal does not offer that at any affordable pitch: a 2 mm wall on a 312 mm member wants a 0.33 mm pitch, about 950 cells along the longest axis. So `analyze_structure` *measures* the part first (axis-aligned solid-span sampling, 5th percentile as the working thickness) and, below ~4 cells through the section, refuses with the arithmetic spelled out — pitch, cells through the wall, the resolution six cells would need, whether that is even reachable — and names where to go instead. That matters because the refusal is right but a refusal without a route forward costs an afternoon. Above the wall it also forces `Unverifiable` when the QoIs happen to agree: a study that never resolved the wall can agree with itself and still be describing a different part.
+
+`beam_check` is that route, and for a *prismatic* member it is not a fallback but the more accurate answer. Give it a profile (rect, rect tube, round, round tube, I-section), a span, an end condition and a load case; get exact section properties (A, I, section moduli, J, torsional stiffness), stresses, deflection with the Timoshenko shear term, twist, the Euler buckling load, and a safety factor. Torsion carries its provenance rather than a table lookup: exact for round sections at any wall, the convergent Saint-Venant Fourier series for solid rectangles (reproducing the classical `J = 0.1406 s⁴` and `τ = T/(0.208 s³)` square-bar constants), Bredt closed thin-wall theory for rectangular tube, and the thin-strip sum for the open I-section, which says outright that it ignores warping. It gates its own applicability the same fail-closed way — too stubby for beam theory (L/depth < 5), a wall too thick for Bredt, deflection past a tenth of the span, torque on an open section, or an Euler margin under 1 → `Unverifiable`, nothing claimed, each reason naming the route forward (usually back to `analyze_structure`, since a stubby part is exactly what a lattice can resolve). Validated against the same aluminum cantilever the lattice is (0.301 mm Timoshenko tip deflection to within 2%), the classical torsion constants, and hand-computed Bredt values. Claims ride the same `vcad.fea-claims/1` schema under `structure.beam.*` with basis `predicted`. It needs no document — geometry by description, so it works before the part exists. What neither route covers: a *non-prismatic* thin-walled part (a bent bracket with cutouts) still has no audited answer; shell and beam elements are the real fix.
 
 ### Tolerance Stackup
 
