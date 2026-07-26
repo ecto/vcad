@@ -66,6 +66,11 @@ pub struct PhotorealOptions {
     pub backdrop: Backdrop,
     /// Random seed, for reproducible noise.
     pub seed: u64,
+    /// Run the edge-aware à-trous denoiser over the film before tonemapping.
+    ///
+    /// On by default: it is worth far more per second of render time than the
+    /// equivalent extra samples. Turn it off for reference renders.
+    pub denoise: bool,
 }
 
 impl Default for PhotorealOptions {
@@ -81,6 +86,7 @@ impl Default for PhotorealOptions {
             aperture_frac: 0.0,
             backdrop: Backdrop::Studio,
             seed: 0x5eed_1234,
+            denoise: true,
         }
     }
 }
@@ -383,6 +389,8 @@ fn rasterize(
         firefly_clamp: Some(12.0),
         show_background: !png || pr.backdrop == Backdrop::Studio,
         seed: pr.seed,
+        denoise: pr.denoise,
+        ..PathTraceOptions::default()
     };
 
     let film = pathtrace::render(&scene, &camera, canvas.w as u32, canvas.h as u32, &pt_opts);

@@ -322,6 +322,12 @@ struct Cli {
     /// Random seed for `--photoreal` sampling.
     #[arg(long, default_value_t = 0x5eed_1234, requires = "photoreal")]
     seed: u64,
+
+    /// Skip the edge-aware denoiser (`--photoreal`), leaving the raw Monte
+    /// Carlo estimate. Use this for reference or ground-truth renders, where
+    /// the noise itself is the thing being measured.
+    #[arg(long, requires = "photoreal")]
+    no_denoise: bool,
 }
 
 /// CLI spelling of the photoreal backdrop options.
@@ -454,6 +460,7 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
                     BackdropArg::None => Backdrop::None,
                 },
                 seed: cli.seed,
+                denoise: !cli.no_denoise,
             };
             return if png {
                 vcad_render::photoreal::render_photoreal_png_str(raw, &opts, &pr)
