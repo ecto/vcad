@@ -294,7 +294,7 @@ fn weld(mesh: MeshView<'_>) -> (Vec<Point3>, Vec<[usize; 3]>) {
         *slot = id;
     }
     let mut tris = Vec::with_capacity(mesh.indices.len() / 3);
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let a = remap[t[0] as usize];
         let b = remap[t[1] as usize];
         let c = remap[t[2] as usize];
