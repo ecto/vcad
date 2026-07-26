@@ -13,7 +13,7 @@
  *  3. a mint under a non-durable store says so, up front.
  */
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "@vcad/engine";
@@ -73,7 +73,11 @@ describe("boot-generation tagging", () => {
     const b = nextSessionId();
     expect(a).not.toBe(b);
     // Boot token + at least the 12 base64url chars of the 9 random bytes.
-    expect(a.split("_")[2].length).toBeGreaterThanOrEqual(16);
+    // NB: base64url uses "_", so the suffix can itself contain underscores —
+    // splitting on "_" and taking [2] truncates it ~22% of the time.
+    const suffix = (id: string) => id.replace(/^doc_\d+_/, "");
+    expect(suffix(a)).not.toBe(a);
+    expect(suffix(a).length).toBeGreaterThanOrEqual(16);
   });
 });
 
@@ -125,13 +129,21 @@ describe("unknownSessionMessage distinguishes the two causes", () => {
 });
 
 describe("FileSessionStore survives the restart", () => {
+  // The session dir is NESTED inside a sandbox so the traversal test can assert
+  // on the sandbox's contents. Probing an absolute host path (e.g.
+  // join(dir, "..", "..", "etc", "passwd")) is not a test of this code: on a
+  // shallow tmpdir like Linux CI's /tmp it resolves to the REAL /etc/passwd and
+  // fails no matter how airtight the guard is.
+  let sandbox: string;
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "vcad-sessions-"));
+    sandbox = mkdtempSync(join(tmpdir(), "vcad-sessions-"));
+    dir = join(sandbox, "sessions");
+    mkdirSync(dir);
     documents.clear();
   });
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(sandbox, { recursive: true, force: true });
     documents.clear();
   });
 
@@ -171,9 +183,15 @@ describe("FileSessionStore survives the restart", () => {
 
   it("refuses an id that could escape the session directory", async () => {
     const store = new FileSessionStore(dir);
-    await store.save("../../etc/passwd", makeDoc());
-    expect(await store.load("../../etc/passwd")).toBeNull();
-    expect(existsSync(join(dir, "..", "..", "etc", "passwd"))).toBe(false);
+    for (const id of ["../../etc/passwd", "../escaped", "..", "/abs/path"]) {
+      await store.save(id, makeDoc());
+      expect(await store.load(id)).toBeNull();
+    }
+    // Nothing escaped: the sandbox still holds only the session dir, and the
+    // session dir itself is untouched. "../escaped" would have landed right
+    // here if the guard let it through.
+    expect(readdirSync(sandbox)).toEqual(["sessions"]);
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("a corrupt snapshot is a miss, not a crash", async () => {
