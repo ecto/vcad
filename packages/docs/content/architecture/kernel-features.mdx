@@ -60,7 +60,7 @@ The vcad kernel is a purpose-built BRep (boundary representation) modeling kerne
 
 ```lisp
 [let a [fillet 6 [cube 40 40 40]]]
-[let b [translate 60 0 0 [chamfer 6 [cube 40 40 40]]]]
+[let b [translate -60 0 0 [chamfer 6 [cube 40 40 40]]]]
 [root [union a b] "aluminum"]
 ```
 
@@ -173,6 +173,17 @@ Loft interpolates a solid through a sequence of cross-sections:
 ### Text and Sheet Metal
 
 `vcad-kernel-text` converts text to sketch geometry for embossing and engraving. `vcad-kernel-sheet` models sheet-metal parts — flanges, bends — with lossless unfolding to a flat pattern.
+
+Unfolding also runs in reverse, on geometry the sheet-metal ops did not author. `vcad_kernel_sheet::flatten` takes the **triangle mesh of any solid** — an extruded sketch, a boolean result, an imported STEP — recognises its constant-thickness walls and the cylindrical bends between them, and rebuilds the panel/bend graph, so a part modelled as an ordinary plate still yields a fab-ready DXF and a bend table. It is the mechanical counterpart of `board_from_solid`: solid in, manufacturable 2D out, no second representation to drift.
+
+Recognition is a chain of geometric tests, each of which fails loudly rather than guessing:
+
+1. Triangles are grouped into edge-connected planar clusters.
+2. A panel is a pair of antiparallel, overlapping clusters; the **smallest** separation shared by every pair is the material thickness (which is why a 100×50×5 plate isn't read as a 50 mm-thick part standing on edge).
+3. Bends are the curved bands between non-parallel panels — found by walking triangles whose normals are perpendicular to the bend axis `nP × nC`, which excludes the flat side wall of an L-bracket, whose normal lies *along* that axis. Each cylindrical surface's own area gives its radius: `A = θ·R·W`.
+4. Finally the round-trip: `Σ panel_area·t + Σ bend_volume` must reproduce the solid's own volume. A part that isn't really constant-thickness sheet — a drafted or tapered wall — fails here instead of silently emitting a wrong outline.
+
+Exposed to agents as the `flat_pattern_from_solid` MCP tool, which flattens a whole document at once and groups identical parts into one pattern × quantity (mirror-image parts stay separate — a chirality-sensitive profile signature keeps a left- and right-hand bracket from collapsing into "×2").
 
 ### Fasteners
 

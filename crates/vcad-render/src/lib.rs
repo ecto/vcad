@@ -40,6 +40,8 @@
 
 mod exact;
 pub mod pcb;
+#[cfg(feature = "raytrace")]
+pub mod photoreal;
 
 /// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
 /// checked in node-id order, then the legacy top-level `pcb` field.
@@ -248,9 +250,12 @@ impl View {
     /// World direction mapping to screen +x.
     fn right(self) -> [f64; 3] {
         match self {
-            // Non-unit on purpose: preserves the exact legacy isometric
-            // projection (uniform √1.5 scale vs the axis views).
-            View::Isometric => [COS30, -COS30, 0.0],
+            // Screen-right for a camera at (1, 1, 1) looking at the origin
+            // with +Z up: (−1, 1, 0)/√2. Non-unit on purpose — the √1.5
+            // scale (vs the axis views) is the legacy isometric projection
+            // scale. Was [COS30, −COS30, 0] until 2026-07, which mirrored
+            // every isometric render; see `view_basis_handedness_is_pinned`.
+            View::Isometric => [-COS30, COS30, 0.0],
             View::Front => [1.0, 0.0, 0.0],
             View::Side => [0.0, -1.0, 0.0],
             View::Top => [1.0, 0.0, 0.0],
@@ -562,6 +567,10 @@ fn xml_escape(s: &str) -> String {
 struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
+    /// Full material definition (metallic/roughness/transmission/ior), kept
+    /// alongside `tint` because the photoreal path needs more than a colour.
+    /// `None` when the document names no material for this solid.
+    material: Option<vcad_ir::MaterialDef>,
     name: Option<String>,
     /// Focus-match labels (node name, instance id/name, part-def id) for
     /// `--focus` / `CameraOptions::focus`.
@@ -633,6 +642,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                 SceneSolid {
                     solid: s,
                     tint: materials.get(&p.material).map(|m| m.color),
+                    material: materials.get(&p.material).cloned(),
                     labels: name.clone().into_iter().collect(),
                     name,
                     id: visible_roots
@@ -702,6 +712,7 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
             .or_else(|| def.default_material.clone())
             .unwrap_or_else(|| "default".to_string());
         let color = doc.materials.get(&material).map(|m| m.color);
+        let material_def = doc.materials.get(&material).cloned();
         let name = inst
             .name
             .clone()
@@ -714,6 +725,7 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
         out.push(SceneSolid {
             solid: placed,
             tint: color,
+            material: material_def,
             name,
             labels,
             id: inst.id.clone(),
@@ -3023,6 +3035,9 @@ mod raster {
                     .map(|(i, s)| SceneSolid {
                         solid: s.clone(),
                         tint: tints.get(i).copied().flatten(),
+                        // Section path only needs colour; the photoreal
+                        // renderer does its own evaluation.
+                        material: None,
                         name: names.get(i).cloned().flatten(),
                         // Raster path does no highlighting or focus lookup
                         // here; id and labels are unused.
@@ -3967,6 +3982,64 @@ mod raytrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the handedness of every [`View`]'s screen basis.
+    ///
+    /// For a camera looking at the scene, `right × down` must point *into*
+    /// the screen, i.e. along `−cam` (`cam` points scene → camera). A basis
+    /// where it points along `+cam` renders a mirror image — invisible on
+    /// flat-shaded line art, obvious once shadows or reflections exist.
+    ///
+    /// `View::Isometric` was mirrored until 2026-07 (`right = [COS30,
+    /// −COS30, 0]`), which mirrored every default render — docs assets,
+    /// mecheval leaderboard, MCP `render_view`. Every view is non-mirrored
+    /// now; a `+1` here means someone flipped a basis by accident.
+    #[test]
+    fn view_basis_handedness_is_pinned() {
+        // right × down points INTO the screen for every view.
+        let cases: &[(View, f64)] = &[
+            (View::Isometric, -1.0),
+            (View::Front, -1.0),
+            (View::Side, -1.0),
+            (View::Top, -1.0),
+            (
+                View::Orbit {
+                    azimuth: 45.0,
+                    elevation: 35.0,
+                },
+                -1.0,
+            ),
+            (
+                View::Orbit {
+                    azimuth: -117.0,
+                    elevation: -12.0,
+                },
+                -1.0,
+            ),
+            (
+                View::Orbit {
+                    azimuth: 0.0,
+                    elevation: 90.0,
+                },
+                -1.0,
+            ),
+        ];
+
+        for &(view, want_sign) in cases {
+            let n = normalize(cross(view.right(), view.down()));
+            let cam = normalize(view.cam());
+            // n must be parallel (or antiparallel) to cam: |dot| ≈ 1.
+            let dot = n[0] * cam[0] + n[1] * cam[1] + n[2] * cam[2];
+            assert!(
+                (dot.abs() - 1.0).abs() < 1e-9,
+                "{view:?}: right × down is not parallel to cam (dot = {dot})",
+            );
+            assert!(
+                (dot - want_sign).abs() < 1e-9,
+                "{view:?}: handedness flipped — right × down · cam = {dot}, expected {want_sign}",
+            );
+        }
+    }
 
     #[test]
     fn render_style_parses_known_names_and_rejects_unknown() {

@@ -176,6 +176,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   // ── Sheet metal ────────────────────────────────────────────────────────
   sheet_metal_create: { title: "Create Sheet Metal", annotations: RW },
   sheet_metal_unfold: { title: "Unfold Sheet Metal", annotations: RO },
+  flat_pattern_from_solid: { title: "Flat Pattern From Solid", annotations: RO },
   sheet_metal_check: { title: "Check Sheet Metal", annotations: RO },
   sheet_metal_materials: { title: "Sheet Metal Materials", annotations: RO },
   sheet_metal_bend_table: { title: "Sheet Metal Bend Table", annotations: RO },

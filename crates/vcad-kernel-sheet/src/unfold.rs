@@ -111,12 +111,20 @@ fn walk_and_update(model: &mut SheetMetalModel, kind: FrameKind) -> Result<(), U
     Ok(())
 }
 
+/// Public shim over the internal bent-frame math, for callers that need to
+/// evaluate a candidate bend before committing it to a model (see
+/// [`crate::flatten`]).
+///
 /// Compute the child panel's bent frame from the parent's bent frame.
 ///
 /// Mirrors the geometry in [`crate::edge_flange::add_edge_flange`]: rotate
 /// the parent's outward in-plane direction about the hinge axis by the
 /// signed bend angle. Origin sits at `parent.to_world(edge_parent.0)`,
 /// which is on the axis and therefore fixed by the rotation.
+pub fn child_bent_frame_for(parent_frame: &Frame, bend: &Bend) -> Frame {
+    child_bent_frame(parent_frame, bend)
+}
+
 fn child_bent_frame(parent_frame: &Frame, bend: &Bend) -> Frame {
     let (p0, p1) = bend.edge_parent;
     let edge_dir_2d = p1 - p0;

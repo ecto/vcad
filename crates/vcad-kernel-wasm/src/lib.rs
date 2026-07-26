@@ -6841,6 +6841,69 @@ pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<J
     Ok(js_val)
 }
 
+/// Export a document's scene roots to a STEP AP214 buffer, preserving BRep.
+///
+/// Evaluates every visible root through the kernel (booleans, transforms,
+/// fillets, sweeps all stay BRep) and serializes them as one STEP body per
+/// root. Errors if any root evaluates to a mesh-only or empty solid, naming
+/// the offending roots so the caller can fall back per part.
+///
+/// # Arguments
+///
+/// * `doc_json` - A JSON string representing a vcad Document
+///
+/// # Returns
+///
+/// The STEP file contents as bytes.
+#[module("step")]
+#[wasm_bindgen(js_name = documentToStepBuffer)]
+pub fn document_to_step_buffer(doc_json: &str) -> Result<Vec<u8>, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+
+    let roots = vcad_eval::evaluate_root_solids(&doc)
+        .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
+    if roots.is_empty() {
+        return Err(JsError::new(
+            "Document has no scene-root geometry to export to STEP",
+        ));
+    }
+
+    let mesh_only: Vec<String> = roots
+        .iter()
+        .filter(|r| {
+            !r.solid
+                .as_ref()
+                .is_some_and(vcad_kernel::Solid::can_export_step)
+        })
+        .map(|r| match &r.name {
+            Some(name) => format!("'{}' (node {})", name, r.node_id),
+            None => format!("node {}", r.node_id),
+        })
+        .collect();
+    if !mesh_only.is_empty() {
+        return Err(JsError::new(&format!(
+            "STEP export requires BRep geometry, but {} of {} root(s) are mesh-only \
+             or empty: {}. Export those parts as STL, or fix the failing feature.",
+            mesh_only.len(),
+            roots.len(),
+            mesh_only.join(", ")
+        )));
+    }
+
+    let named: Vec<(&vcad_kernel::Solid, String)> = roots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            let name = r.name.clone().unwrap_or_else(|| format!("part_{}", i + 1));
+            r.solid.as_ref().map(|s| (s, name))
+        })
+        .collect();
+    let refs: Vec<(&vcad_kernel::Solid, &str)> =
+        named.iter().map(|(s, n)| (*s, n.as_str())).collect();
+    vcad_kernel::Solid::solids_to_step_buffer(&refs).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Solve forward kinematics for an assembly document.
 ///
 /// # Arguments

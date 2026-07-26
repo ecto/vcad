@@ -4325,6 +4325,36 @@ export function documentToLoonChecked(doc_json) {
 }
 
 /**
+ * Export a document's scene roots to a STEP AP214 buffer, preserving BRep.
+ *
+ * Evaluates every visible root through the kernel (booleans, transforms,
+ * fillets, sweeps all stay BRep) and serializes them as one STEP body per
+ * root. Errors if any root evaluates to a mesh-only or empty solid, naming
+ * the offending roots so the caller can fall back per part.
+ *
+ * # Arguments
+ *
+ * * `doc_json` - A JSON string representing a vcad Document
+ *
+ * # Returns
+ *
+ * The STEP file contents as bytes.
+ * @param {string} doc_json
+ * @returns {Uint8Array}
+ */
+export function documentToStepBuffer(doc_json) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.documentToStepBuffer(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
  * Compose a drawing sheet from projected views, sections, annotations,
  * title block, and BOM table, and export it as a PDF.
  *
@@ -5986,6 +6016,33 @@ export function feaCheckBeam(case_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Recover a flat pattern from a solid that was **not** authored through the
+ * sheet-metal ops — an extruded sketch, a boolean result, an imported STEP.
+ *
+ * This is the mechanical counterpart of `boardFromSolid`: it recognises the
+ * constant-thickness walls and the cylindrical bends between them, rebuilds
+ * the panel/bend graph, and runs it through the same unfold → silhouette →
+ * DXF pipeline authored parts use. It fails closed — a solid that is not
+ * constant-thickness sheet returns an `error` rather than a wrong outline.
+ * @param {string} request_json
+ * @returns {string}
+ */
+export function flattenSolidToSheetMetal(request_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.flattenSolidToSheetMetal(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**
@@ -10208,12 +10265,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3780, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3781, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3781, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3782, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3805, function: Function { arguments: [Externref], shim_idx: 3806, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3806, function: Function { arguments: [Externref], shim_idx: 3807, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

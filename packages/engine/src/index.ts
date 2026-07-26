@@ -21,6 +21,7 @@ import {
   getSheetMetalBendTable as readSheetMetalBendTable,
   getSheetMetalShopCatalog as readSheetMetalShopCatalog,
   foldedSheetMetalStep as buildFoldedSheetMetalStep,
+  flattenSolidToSheetMetal as runFlattenSolidToSheetMetal,
 } from "./sheet-metal.js";
 import type {
   SheetMetalShopProfile,
@@ -136,6 +137,10 @@ export type {
   SheetMetalFlatCrease,
   SheetMetalFlatPattern,
   SheetMetalRendered,
+  SheetMetalFromSolid,
+  SheetMetalFlattenOptions,
+  SheetMetalPanelReport,
+  SheetMetalBendReport,
   SheetMetalViolation,
   SheetMetalShopProfile,
   SheetMetalCheckResult,
@@ -485,6 +490,8 @@ export interface KernelModule {
   WasmAnnotationLayer: typeof WasmAnnotationLayer;
   projectMesh: (mesh: { positions: Float32Array; indices: Uint32Array }, viewDirection: string) => ProjectedView | null;
   importStepBuffer: (data: Uint8Array) => Array<{ positions: Float32Array; indices: Uint32Array }>;
+  /** Export a document's scene roots to a STEP AP214 buffer (BRep-preserving). */
+  documentToStepBuffer?: (docJson: string) => Uint8Array;
   /**
    * Import a URDF (Unified Robot Description Format) file. Returns a
    * JSON-encoded {@link Document} that the caller deserialises with
@@ -563,6 +570,7 @@ export interface KernelModule {
   getSheetMetalShopCatalog?: (shopId: string) => string;
   /** Folded sheet-metal solid as STEP AP214 → JSON `{step, error}`. */
   sheetMetalFoldedStep?: (chainJson: string) => string;
+  flattenSolidToSheetMetal?: (requestJson: string) => string;
   /** Mesh-to-mesh clearance over raw evaluated-mesh buffers. */
   mesh_clearance?: (
     positionsA: Float32Array,
@@ -1038,6 +1046,7 @@ export class Engine {
       WasmAnnotationLayer: wasmModule.WasmAnnotationLayer,
       projectMesh: wasmModule.projectMesh,
       importStepBuffer: wasmModule.importStepBuffer,
+      documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
@@ -1063,6 +1072,7 @@ export class Engine {
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
+      flattenSolidToSheetMetal: (wasmModule as Record<string, unknown>).flattenSolidToSheetMetal as KernelModule["flattenSolidToSheetMetal"],
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
       topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
@@ -1859,6 +1869,20 @@ export class Engine {
     );
   }
 
+  /** Recover a flat pattern (panels, bends, DXF) from a solid part's mesh —
+   *  the mechanical counterpart of `board_from_solid`. Throws when the solid
+   *  is not constant-thickness sheet. */
+  flattenSolidToSheetMetal(
+    mesh: { positions: ArrayLike<number>; indices: ArrayLike<number> },
+    options?: import("./sheet-metal.js").SheetMetalFlattenOptions,
+  ): import("./sheet-metal.js").SheetMetalFromSolid {
+    return runFlattenSolidToSheetMetal(
+      mesh,
+      this.kernel as unknown as Parameters<typeof runFlattenSolidToSheetMetal>[1],
+      options,
+    );
+  }
+
   /** Compute a feasible bend sequence (outermost-first) for the
    *  sheet-metal part in `doc`. Returns `null` if there is none. */
   sheetMetalSequence(doc: Document): SheetMetalBendStep[] | null {
@@ -1961,6 +1985,22 @@ export class Engine {
         typeof buildFoldedSheetMetalStep
       >[1],
     );
+  }
+
+  /**
+   * Export the document's scene roots to a STEP AP214 buffer, preserving
+   * BRep through booleans, transforms, fillets, and sweeps — one STEP body
+   * per visible root. Throws when a root evaluated to mesh-only geometry
+   * (the kernel error names the offending roots) or when the loaded WASM
+   * kernel predates the binding.
+   */
+  documentStep(doc: Document): Uint8Array {
+    if (!this.kernel.documentToStepBuffer) {
+      throw new Error(
+        "documentToStepBuffer is not available in this kernel build — rebuild the WASM kernel",
+      );
+    }
+    return this.kernel.documentToStepBuffer(JSON.stringify(doc));
   }
 
   /** Create a detail view (magnified region) from a projected view.

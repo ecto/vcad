@@ -357,6 +357,56 @@ pub fn evaluate_document(
     })
 }
 
+/// A named scene-root solid, for BRep-preserving exports (STEP).
+#[derive(Debug, Clone)]
+pub struct RootSolid {
+    /// The root node id.
+    pub node_id: NodeId,
+    /// The root node's name, if it has one.
+    pub name: Option<String>,
+    /// The evaluated kernel solid (BRep preserved where the ops allow it).
+    /// `None` when the root produced no kernel solid at all (e.g. an
+    /// `ImportedMesh` chain) — callers exporting exact geometry should
+    /// refuse these by name rather than silently dropping the part.
+    pub solid: Option<Solid>,
+}
+
+/// Evaluate every visible scene root to a kernel [`Solid`], preserving the
+/// BRep representation where the operation chain allows it (primitives,
+/// booleans, transforms, fillets, sweeps, ...).
+///
+/// Unlike [`evaluate_document`] this never tessellates, so the result is
+/// suitable for exact exports such as STEP. Roots that evaluate to no
+/// geometry (e.g. `ImportedMesh` chains) are skipped.
+pub fn evaluate_root_solids(doc: &Document) -> Result<Vec<RootSolid>, EvalError> {
+    // Resolve parameters + bindings, mirroring evaluate_document.
+    let resolved_owned;
+    let doc: &Document = if doc.parameters.is_empty() && doc.bindings.is_empty() {
+        doc
+    } else {
+        let (d, _env) = crate::resolve::resolve_document_cloned(doc)
+            .map_err(|e| EvalError::ResolveBindings(e.to_string()))?;
+        resolved_owned = d;
+        &resolved_owned
+    };
+
+    let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
+    let mut out = Vec::new();
+    for entry in &doc.roots {
+        if entry.visible == Some(false) {
+            continue;
+        }
+        let solid = evaluate_node(entry.root, &doc.nodes, &mut cache)?;
+        let name = doc.nodes.get(&entry.root).and_then(|n| n.name.clone());
+        out.push(RootSolid {
+            node_id: entry.root,
+            name,
+            solid,
+        });
+    }
+    Ok(out)
+}
+
 /// Recursively evaluate a node, with caching.
 pub fn evaluate_node(
     node_id: NodeId,
