@@ -19,6 +19,7 @@ use vcad_kernel_raytrace::pathtrace::{
 };
 use vcad_kernel_raytrace::Bvh;
 
+use super::envmap::{self, EnvSource};
 use super::raster::{canvas_for, encode_jpeg, encode_png, fit_scale, Frame};
 use super::{dot, evaluate_vcad, normalize, RasterOptions};
 
@@ -37,8 +38,15 @@ pub enum Backdrop {
 
 /// Options for the photoreal path, layered on top of [`RasterOptions`]
 /// (which still controls canvas size, framing, trim, and JPEG quality).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PhotorealOptions {
+    /// Where the ambient light comes from. The analytic gradient (default)
+    /// is paired with the three-softbox rig; an image environment replaces
+    /// the rig, since an HDRI *is* the lighting.
+    pub environment: EnvSource,
+    /// Spin the image environment about the vertical axis, in degrees.
+    /// Ignored for the analytic gradient.
+    pub env_rotation_deg: f64,
     /// Samples per pixel. 64 is a quick look, 512+ is a clean hero render.
     pub spp: u32,
     /// Maximum path length. 6 is plenty for opaque studio scenes.
@@ -63,6 +71,8 @@ pub struct PhotorealOptions {
 impl Default for PhotorealOptions {
     fn default() -> Self {
         Self {
+            environment: EnvSource::Gradient,
+            env_rotation_deg: 0.0,
             spp: 128,
             max_depth: 6,
             exposure: 1.0,
@@ -297,7 +307,15 @@ fn rasterize(
     let _ = half_w_world;
 
     // ── lighting ─────────────────────────────────────────────────────────
-    let lights: Vec<AreaLight> = pathtrace::studio_rig(center_world, radius);
+    let env = envmap::resolve(&pr.environment, pr.env_rotation_deg)?;
+
+    // The softbox rig exists to give the low-frequency analytic gradient
+    // something to make highlights with. An HDRI already carries its own
+    // lights, so keeping the rig would double-light the subject.
+    let lights: Vec<AreaLight> = match env {
+        Environment::Gradient(_) => pathtrace::studio_rig(center_world, radius),
+        Environment::Image(_) => Vec::new(),
+    };
 
     let ground = match pr.backdrop {
         Backdrop::None => None,
@@ -319,7 +337,7 @@ fn rasterize(
     let scene = Scene {
         objects,
         lights,
-        env: Environment::default(),
+        env,
         ground,
     };
 
@@ -353,7 +371,7 @@ fn rasterize(
 mod tests {
     use super::*;
 
-    fn cube_doc() -> String {
+    pub(super) fn cube_doc() -> String {
         r#"{
   "version": "0.1",
   "nodes": {
@@ -431,6 +449,105 @@ mod tests {
             clean < noisy,
             "more samples should compress better (noise down): {clean} vs {noisy}"
         );
+    }
+
+    /// Every built-in HDRI must render, and must produce a lit image — a
+    /// black frame would mean the rig was dropped without the environment
+    /// taking over.
+    #[test]
+    fn builtin_environments_light_the_scene() {
+        let opts = RasterOptions {
+            size_px: 48,
+            ..Default::default()
+        };
+        for kind in envmap::BuiltinEnv::all() {
+            let pr = PhotorealOptions {
+                environment: EnvSource::Builtin(kind),
+                spp: 24,
+                ..Default::default()
+            };
+            let png = render_photoreal_png_str(&cube_doc(), &opts, &pr)
+                .unwrap_or_else(|e| panic!("{} failed: {e}", kind.name()));
+            assert_eq!(&png[1..4], b"PNG");
+            assert!(png.len() > 500, "{} produced a trivial image", kind.name());
+        }
+    }
+
+    /// Switching to a built-in HDRI must not change the exposure. The
+    /// built-ins are normalised to a mean radiance chosen to match the
+    /// default gradient-plus-softbox rig precisely so `--env` is a choice of
+    /// *look*, not a hidden exposure change the user has to dial back out.
+    #[test]
+    fn builtins_match_the_default_rig_exposure() {
+        let opts = RasterOptions {
+            size_px: 64,
+            ..Default::default()
+        };
+        let mean = |src: EnvSource| -> f64 {
+            let pr = PhotorealOptions {
+                environment: src,
+                spp: 64,
+                ..Default::default()
+            };
+            let png = render_photoreal_png_str(&cube_doc(), &opts, &pr).expect("render");
+            let img = image::load_from_memory(&png).expect("decode").to_rgb8();
+            img.pixels()
+                .map(|p| p[0] as f64 + p[1] as f64 + p[2] as f64)
+                .sum::<f64>()
+                / (img.pixels().len() as f64 * 3.0)
+        };
+        let reference = mean(EnvSource::Gradient);
+        for kind in envmap::BuiltinEnv::all() {
+            let m = mean(EnvSource::Builtin(kind));
+            assert!(
+                (m - reference).abs() < 0.15 * reference,
+                "{} renders at mean {m}, default rig at {reference} — the \
+                 built-in normalisation has drifted",
+                kind.name()
+            );
+        }
+    }
+
+    /// Rotating the environment must change the render. This is the whole
+    /// point of the flag — if it silently did nothing, nothing else would
+    /// catch it.
+    #[test]
+    fn env_rotation_changes_the_image() {
+        let opts = RasterOptions {
+            size_px: 40,
+            ..Default::default()
+        };
+        let render_at = |deg: f64| {
+            let pr = PhotorealOptions {
+                environment: EnvSource::Builtin(envmap::BuiltinEnv::Softbox),
+                env_rotation_deg: deg,
+                spp: 32,
+                ..Default::default()
+            };
+            render_photoreal_png_str(&cube_doc(), &opts, &pr).expect("render")
+        };
+        assert_ne!(
+            render_at(0.0),
+            render_at(120.0),
+            "--env-rotation had no effect on the image"
+        );
+    }
+
+    /// An unreadable `--env` path must fail loudly rather than silently
+    /// falling back to the gradient.
+    #[test]
+    fn bad_env_path_is_reported() {
+        let opts = RasterOptions {
+            size_px: 32,
+            ..Default::default()
+        };
+        let pr = PhotorealOptions {
+            environment: EnvSource::File("/nope/not-here.hdr".into()),
+            spp: 2,
+            ..Default::default()
+        };
+        let err = render_photoreal_png_str(&cube_doc(), &opts, &pr).expect_err("should fail");
+        assert!(err.contains("not-here.hdr"), "unhelpful error: {err}");
     }
 
     #[test]

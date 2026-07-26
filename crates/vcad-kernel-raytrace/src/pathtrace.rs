@@ -17,9 +17,12 @@
 //!   be hit by a BSDF ray *and* sampled directly, both strategies combine
 //!   under MIS with the power heuristic. That is what puts crisp, correctly
 //!   shaped highlights on metal.
-//! - **The environment** is a smooth analytic studio gradient. It is
-//!   low-frequency by construction, so BSDF sampling alone converges quickly
-//!   and no environment CDF is needed.
+//! - **The environment** is, by default, a smooth analytic studio gradient.
+//!   It is low-frequency by construction, so BSDF sampling alone converges
+//!   quickly and no environment CDF is needed. An opt-in lat-long HDR image
+//!   ([`EnvMap`]) is also supported; because a real HDRI carries windows and
+//!   sun discs, that variant builds a `sin(theta)`-weighted 2D CDF and joins
+//!   the MIS mix as a third sampling strategy.
 //! - **The BSDF** is a layered metallic-roughness model: Lambert diffuse,
 //!   a GGX specular lobe with VNDF sampling, and a GGX clearcoat lobe.
 //!   Clearcoat is what sells anodised aluminium and moulded plastic.
@@ -197,7 +200,7 @@ impl AreaLight {
 /// Deliberately low-frequency — BSDF sampling alone integrates it cleanly, so
 /// there is no environment importance-sampling CDF to build or maintain.
 #[derive(Debug, Clone, Copy)]
-pub struct Environment {
+pub struct GradientEnv {
     /// Radiance straight up.
     pub zenith: [f32; 3],
     /// Radiance at the horizon.
@@ -208,7 +211,7 @@ pub struct Environment {
     pub intensity: f32,
 }
 
-impl Default for Environment {
+impl Default for GradientEnv {
     fn default() -> Self {
         Self {
             zenith: [0.34, 0.42, 0.55],
@@ -221,7 +224,7 @@ impl Default for Environment {
     }
 }
 
-impl Environment {
+impl GradientEnv {
     /// Evaluate incoming radiance from direction `d` (world space, Z-up).
     fn radiance(&self, d: Vec3) -> [f32; 3] {
         let t = d.z as f32;
@@ -233,6 +236,313 @@ impl Environment {
             mix3(self.horizon, self.ground, k)
         };
         scale3(c, self.intensity)
+    }
+}
+
+/// Relative luminance, the scalar the environment CDF is built over.
+#[inline]
+fn luminance(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// Sample a normalised piecewise-constant CDF (`cdf[0] == 0`, `cdf[n] == 1`).
+///
+/// Returns the chosen bin and the offset within it, so the caller can build a
+/// continuous coordinate whose density is exactly the piecewise-constant one.
+fn sample_1d(cdf: &[f32], u: f32) -> (usize, f32) {
+    let n = cdf.len() - 1;
+    let (mut lo, mut hi) = (0usize, n);
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if cdf[mid + 1] <= u {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let i = lo.min(n - 1);
+    let (a, b) = (cdf[i], cdf[i + 1]);
+    let d = if b > a { (u - a) / (b - a) } else { 0.5 };
+    (i, d.clamp(0.0, 1.0))
+}
+
+/// A lat-long (equirectangular) HDR environment map with a 2D CDF for
+/// importance sampling.
+///
+/// Row 0 is the zenith (+Z) and the last row is nadir; column 0 is
+/// `phi = rotation`. Unlike [`GradientEnv`] this can carry arbitrarily
+/// high-frequency content — bright windows, a sun disc — so BSDF sampling
+/// alone would be very noisy and importance sampling is mandatory.
+///
+/// The CDF is built over `luminance * sin(theta)`: the `sin(theta)` factor is
+/// the lat-long solid-angle Jacobian, and omitting it over-weights the poles,
+/// where texels cover almost no solid angle.
+#[derive(Debug, Clone)]
+pub struct EnvMap {
+    width: usize,
+    height: usize,
+    /// Row-major linear radiance, `width * height` texels.
+    pixels: Vec<[f32; 3]>,
+    intensity: f32,
+    /// Rotation about +Z in radians, applied when mapping u to phi.
+    rotation: f64,
+    /// Per-row conditional CDF over u, `height * (width + 1)` entries.
+    cond_cdf: Vec<f32>,
+    /// Marginal CDF over v, `height + 1` entries.
+    marg_cdf: Vec<f32>,
+    /// Mean of the weighted function; the normaliser for the uv-space PDF.
+    marg_int: f32,
+}
+
+impl EnvMap {
+    /// Build a map from row-major linear-RGB texels (row 0 = zenith).
+    pub fn new(width: usize, height: usize, pixels: Vec<[f32; 3]>) -> Result<Self, String> {
+        if width == 0 || height == 0 {
+            return Err("environment map must have non-zero dimensions".to_string());
+        }
+        if pixels.len() != width * height {
+            return Err(format!(
+                "environment map has {} texels, expected {}x{} = {}",
+                pixels.len(),
+                width,
+                height,
+                width * height
+            ));
+        }
+
+        let mut cond_cdf = vec![0.0f32; height * (width + 1)];
+        let mut row_int = vec![0.0f32; height];
+        for j in 0..height {
+            // sin(theta) at the row's centre — the solid-angle weight.
+            let sin_t = (std::f64::consts::PI * (j as f64 + 0.5) / height as f64).sin() as f32;
+            let base = j * (width + 1);
+            let mut acc = 0.0f32;
+            for i in 0..width {
+                acc += luminance(pixels[j * width + i]).max(0.0) * sin_t;
+                cond_cdf[base + i + 1] = acc;
+            }
+            row_int[j] = acc / width as f32;
+            if acc > 0.0 {
+                for i in 1..=width {
+                    cond_cdf[base + i] /= acc;
+                }
+            } else {
+                // A black row is never selected by the marginal; keep its CDF
+                // well-formed anyway so sampling can't index out of range.
+                for i in 0..=width {
+                    cond_cdf[base + i] = i as f32 / width as f32;
+                }
+            }
+        }
+
+        let mut marg_cdf = vec![0.0f32; height + 1];
+        let mut acc = 0.0f32;
+        for j in 0..height {
+            acc += row_int[j];
+            marg_cdf[j + 1] = acc;
+        }
+        let marg_int = acc / height as f32;
+        if acc > 0.0 {
+            for c in marg_cdf.iter_mut().skip(1) {
+                *c /= acc;
+            }
+        } else {
+            for (j, c) in marg_cdf.iter_mut().enumerate() {
+                *c = j as f32 / height as f32;
+            }
+        }
+
+        Ok(Self {
+            width,
+            height,
+            pixels,
+            intensity: 1.0,
+            rotation: 0.0,
+            cond_cdf,
+            marg_cdf,
+            marg_int,
+        })
+    }
+
+    /// Scale every sample by `k`.
+    pub fn with_intensity(mut self, k: f32) -> Self {
+        self.intensity = k;
+        self
+    }
+
+    /// Spin the environment about the vertical axis by `deg` degrees.
+    ///
+    /// A rigid rotation in phi leaves the CDF valid as-is: it is built in
+    /// image space and only the image-to-direction mapping moves.
+    pub fn with_rotation_deg(mut self, deg: f64) -> Self {
+        self.rotation = deg.to_radians();
+        self
+    }
+
+    /// Whether the map carries any energy to importance-sample.
+    #[inline]
+    fn is_sampleable(&self) -> bool {
+        self.marg_int > 0.0
+    }
+
+    /// Image coordinates in `[0, 1)^2` for a world direction.
+    fn uv(&self, d: Vec3) -> (f64, f64) {
+        const EPS: f64 = 1e-9;
+        let theta = d.z.clamp(-1.0, 1.0).acos();
+        let v = (theta / std::f64::consts::PI).clamp(0.0, 1.0 - EPS);
+        let phi = (d.y.atan2(d.x) - self.rotation).rem_euclid(std::f64::consts::TAU);
+        let u = (phi / std::f64::consts::TAU).clamp(0.0, 1.0 - EPS);
+        (u, v)
+    }
+
+    /// World direction for image coordinates in `[0, 1]^2`.
+    fn direction(&self, u: f64, v: f64) -> Vec3 {
+        let phi = u * std::f64::consts::TAU + self.rotation;
+        let theta = v * std::f64::consts::PI;
+        let (st, ct) = theta.sin_cos();
+        Vec3::new(st * phi.cos(), st * phi.sin(), ct)
+    }
+
+    /// Texel indices for image coordinates.
+    #[inline]
+    fn texel_index(&self, u: f64, v: f64) -> (usize, usize) {
+        let i = ((u * self.width as f64) as usize).min(self.width - 1);
+        let j = ((v * self.height as f64) as usize).min(self.height - 1);
+        (i, j)
+    }
+
+    /// Incoming radiance from direction `d`.
+    ///
+    /// Nearest-texel, deliberately: the CDF is piecewise-constant per texel,
+    /// so a nearest lookup makes the sampled radiance and the PDF describe
+    /// exactly the same function, which is what MIS requires.
+    pub fn radiance(&self, d: Vec3) -> [f32; 3] {
+        let (u, v) = self.uv(d);
+        let (i, j) = self.texel_index(u, v);
+        scale3(self.pixels[j * self.width + i], self.intensity)
+    }
+
+    /// Solid-angle PDF of the environment sampling strategy for direction `d`.
+    ///
+    /// The uv-space density converts with `dω = 2·π² · sin(θ) · du dv`, since
+    /// `u` spans `2π` of azimuth and `v` spans `π` of polar angle.
+    pub fn pdf(&self, d: Vec3) -> f32 {
+        if !self.is_sampleable() {
+            return 0.0;
+        }
+        let (u, v) = self.uv(d);
+        let (i, j) = self.texel_index(u, v);
+        let sin_bin = (std::f64::consts::PI * (j as f64 + 0.5) / self.height as f64).sin() as f32;
+        let f = luminance(self.pixels[j * self.width + i]).max(0.0) * sin_bin;
+        if f <= 0.0 {
+            return 0.0;
+        }
+        let pdf_uv = f / self.marg_int;
+        // Actual sin(theta) of this direction, not the bin's — the Jacobian
+        // is a property of the point, while the bin weight is importance.
+        let sin_t = (1.0 - d.z * d.z).max(0.0).sqrt() as f32;
+        if sin_t <= 1e-9 {
+            return 0.0;
+        }
+        let two_pi_sq = 2.0 * std::f32::consts::PI * std::f32::consts::PI;
+        pdf_uv / (two_pi_sq * sin_t)
+    }
+
+    /// Importance-sample a direction. Returns `(direction, radiance, pdf)`
+    /// with the PDF measured in solid angle.
+    pub fn sample(&self, r1: f64, r2: f64) -> Option<(Vec3, [f32; 3], f32)> {
+        if !self.is_sampleable() {
+            return None;
+        }
+        let (j, dv) = sample_1d(&self.marg_cdf, r2 as f32);
+        let base = j * (self.width + 1);
+        let (i, du) = sample_1d(&self.cond_cdf[base..base + self.width + 1], r1 as f32);
+        let u = (i as f64 + du as f64) / self.width as f64;
+        let v = (j as f64 + dv as f64) / self.height as f64;
+        let d = self.direction(u, v);
+        // Recompute through `pdf` so the MIS partner and this sample agree
+        // bit-for-bit on the density.
+        let pdf = self.pdf(d);
+        if pdf <= 0.0 || !pdf.is_finite() {
+            return None;
+        }
+        Some((
+            d,
+            scale3(self.pixels[j * self.width + i], self.intensity),
+            pdf,
+        ))
+    }
+}
+
+/// Incoming light from infinity.
+///
+/// The analytic [`GradientEnv`] is the default: fast, dependency-free, ships
+/// no asset, and genuinely good for neutral product renders. [`EnvMap`] is
+/// opt-in and brings the CDF machinery with it.
+#[derive(Debug, Clone)]
+pub enum Environment {
+    /// Smooth analytic studio gradient. Sampled by the BSDF alone.
+    Gradient(GradientEnv),
+    /// Lat-long HDR image. Joins MIS as a third sampling strategy.
+    Image(Box<EnvMap>),
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Environment::Gradient(GradientEnv::default())
+    }
+}
+
+impl Environment {
+    /// A uniform environment of constant radiance — the white-furnace case.
+    pub fn constant(rgb: [f32; 3]) -> Self {
+        Environment::Gradient(GradientEnv {
+            zenith: rgb,
+            horizon: rgb,
+            ground: rgb,
+            intensity: 1.0,
+        })
+    }
+
+    /// Wrap a lat-long HDR map.
+    pub fn image(map: EnvMap) -> Self {
+        Environment::Image(Box::new(map))
+    }
+
+    /// Evaluate incoming radiance from direction `d` (world space, Z-up).
+    fn radiance(&self, d: Vec3) -> [f32; 3] {
+        match self {
+            Environment::Gradient(g) => g.radiance(d),
+            Environment::Image(m) => m.radiance(d),
+        }
+    }
+
+    /// Whether this environment participates in MIS as its own strategy.
+    #[inline]
+    fn is_importance_sampled(&self) -> bool {
+        match self {
+            Environment::Gradient(_) => false,
+            Environment::Image(m) => m.is_sampleable(),
+        }
+    }
+
+    /// Solid-angle PDF of the environment sampling strategy, or 0 when this
+    /// environment is not importance-sampled.
+    #[inline]
+    fn pdf(&self, d: Vec3) -> f32 {
+        match self {
+            Environment::Gradient(_) => 0.0,
+            Environment::Image(m) => m.pdf(d),
+        }
+    }
+
+    /// Importance-sample a direction, if this environment supports it.
+    #[inline]
+    fn sample(&self, r1: f64, r2: f64) -> Option<(Vec3, [f32; 3], f32)> {
+        match self {
+            Environment::Gradient(_) => None,
+            Environment::Image(m) => m.sample(r1, r2),
+        }
     }
 }
 
@@ -264,7 +574,7 @@ pub struct Scene {
     pub objects: Vec<Object>,
     /// Explicit area lights.
     pub lights: Vec<AreaLight>,
-    /// Analytic sky.
+    /// Analytic sky, or a lat-long HDR environment map.
     pub env: Environment,
     /// Optional studio floor.
     pub ground: Option<Ground>,
@@ -846,6 +1156,48 @@ impl Scene {
         }
         sum
     }
+
+    /// Next-event estimation against the environment, MIS-weighted against
+    /// BSDF sampling.
+    ///
+    /// Only runs for an importance-sampled environment ([`EnvMap`]). The
+    /// analytic gradient stays BSDF-only, exactly as before — it is
+    /// low-frequency enough that a second strategy buys nothing.
+    // Same hot-loop shading-frame arguments as `sample_lights`, and the same
+    // reasoning for keeping them positional.
+    #[allow(clippy::too_many_arguments)]
+    fn sample_environment(
+        &self,
+        p: Point3,
+        t: Vec3,
+        b: Vec3,
+        n: Vec3,
+        wo_local: Vec3,
+        m: &Pbr,
+        rng: &mut Rng,
+    ) -> [f32; 3] {
+        let Some((wi_world, li, env_pdf)) = self.env.sample(rng.f64(), rng.f64()) else {
+            return [0.0; 3];
+        };
+        if !env_pdf.is_finite() || env_pdf <= 0.0 || max3(li) <= 0.0 {
+            return [0.0; 3];
+        }
+        let wi_local = to_local(t, b, n, wi_world);
+        if wi_local.z <= 0.0 {
+            return [0.0; 3];
+        }
+        let (f, bsdf_pdf) = bsdf_eval(m, wo_local, wi_local);
+        if max3(f) <= 0.0 {
+            return [0.0; 3];
+        }
+        // The environment is at infinity: nothing between here and the sky
+        // may block, so the shadow ray is unbounded.
+        if self.occluded(p + n * 1e-5, wi_world, f64::INFINITY) {
+            return [0.0; 3];
+        }
+        let w = power_heuristic(env_pdf, bsdf_pdf);
+        scale3(mul3(f, li), w / env_pdf)
+    }
 }
 
 // ─── integrator ───────────────────────────────────────────────────────────
@@ -865,12 +1217,21 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
     for depth in 0..opts.max_depth {
         match scene.intersect(&ray) {
             Landing::Miss => {
-                let env = scene.env.radiance(ray.direction.into_inner());
+                let dir = ray.direction.into_inner();
+                let env = scene.env.radiance(dir);
                 if depth == 0 && !opts.show_background {
                     // Leave the backdrop clear; still no contribution.
                     break;
                 }
-                l = add3(l, mul3(throughput, env));
+                // MIS against environment NEE, which could also have found
+                // this direction. A specular chain (including the primary
+                // ray) had no other strategy, so it takes full weight.
+                let w = if specular_chain || !scene.env.is_importance_sampled() {
+                    1.0
+                } else {
+                    power_heuristic(prev_bsdf_pdf, scene.env.pdf(dir))
+                };
+                l = add3(l, scale3(mul3(throughput, env), w));
                 break;
             }
             Landing::Light {
@@ -920,8 +1281,12 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
 
                 l = add3(l, mul3(throughput, material.emissive));
 
-                // Next-event estimation.
-                let direct = scene.sample_lights(point, t, b, n, wo_local, &material, rng);
+                // Next-event estimation: explicit lights, plus the
+                // environment when it is importance-sampled.
+                let direct = add3(
+                    scene.sample_lights(point, t, b, n, wo_local, &material, rng),
+                    scene.sample_environment(point, t, b, n, wo_local, &material, rng),
+                );
                 let direct = match opts.firefly_clamp {
                     Some(c) if depth > 0 => [direct[0].min(c), direct[1].min(c), direct[2].min(c)],
                     _ => direct,
@@ -1274,6 +1639,220 @@ mod tests {
         assert!(
             (0.75..=1.05).contains(&albedo),
             "directional albedo {albedo} outside plausible range"
+        );
+    }
+
+    // ── environment maps ──────────────────────────────────────────────────
+
+    /// A map of constant radiance `c`.
+    fn uniform_map(w: usize, h: usize, c: f32) -> EnvMap {
+        EnvMap::new(w, h, vec![[c, c, c]; w * h]).expect("uniform map")
+    }
+
+    /// A deliberately high-frequency map: a dim surround with one small,
+    /// very bright patch — the case BSDF-only sampling handles badly and the
+    /// CDF exists for.
+    fn structured_map() -> EnvMap {
+        let (w, h) = (64usize, 32usize);
+        let mut px = vec![[0.05f32, 0.06, 0.08]; w * h];
+        for j in 6..10 {
+            for i in 20..25 {
+                px[j * w + i] = [40.0, 38.0, 34.0];
+            }
+        }
+        // A second, low patch near the horizon on the far side.
+        for j in 16..18 {
+            for i in 50..56 {
+                px[j * w + i] = [6.0, 6.5, 8.0];
+            }
+        }
+        EnvMap::new(w, h, px).expect("structured map")
+    }
+
+    /// Uniform directions on the sphere, for reference integration.
+    fn uniform_sphere(r1: f64, r2: f64) -> Vec3 {
+        let z = 1.0 - 2.0 * r1;
+        let r = (1.0 - z * z).max(0.0).sqrt();
+        let phi = std::f64::consts::TAU * r2;
+        Vec3::new(r * phi.cos(), r * phi.sin(), z)
+    }
+
+    /// The single strongest guard on the PDF conversion: a density over the
+    /// sphere must integrate to 1. A wrong `2*pi^2`, or a forgotten
+    /// `sin(theta)`, shows up here immediately.
+    #[test]
+    fn env_pdf_integrates_to_one_over_the_sphere() {
+        for map in [uniform_map(32, 16, 1.0), structured_map()] {
+            let mut rng = Rng::new(3);
+            let n = 200_000;
+            let mut sum = 0.0f64;
+            for _ in 0..n {
+                let d = uniform_sphere(rng.f64(), rng.f64());
+                // Uniform-sphere pdf is 1/4pi, so the estimator is 4pi * mean.
+                sum += map.pdf(d) as f64;
+            }
+            let integral = sum / n as f64 * 4.0 * std::f64::consts::PI;
+            assert!(
+                (integral - 1.0).abs() < 0.02,
+                "environment PDF integrates to {integral}, expected 1"
+            );
+        }
+    }
+
+    /// White furnace, at the estimator level: with a uniform environment of
+    /// radiance `c`, importance sampling must recover the analytic
+    /// irradiance `pi * c` over a hemisphere. This is the test that catches
+    /// a PDF-conversion constant that merely *looks* plausible in an image.
+    #[test]
+    fn uniform_env_sampling_recovers_irradiance() {
+        let c = 0.75f32;
+        let map = uniform_map(32, 16, c);
+        let n = 100_000;
+        let mut rng = Rng::new(5);
+        let mut sum = 0.0f64;
+        for _ in 0..n {
+            let Some((d, li, pdf)) = map.sample(rng.f64(), rng.f64()) else {
+                continue;
+            };
+            if d.z <= 0.0 {
+                continue;
+            }
+            sum += (li[0] as f64) * d.z / pdf as f64;
+        }
+        let irradiance = sum / n as f64;
+        let expected = std::f64::consts::PI * c as f64;
+        assert!(
+            (irradiance - expected).abs() < 0.02 * expected,
+            "irradiance {irradiance}, expected {expected}"
+        );
+    }
+
+    /// The same integral, on a high-frequency map, estimated two ways. They
+    /// must agree — importance sampling may only change the variance, never
+    /// the answer.
+    #[test]
+    fn structured_env_sampling_agrees_with_uniform_sphere_sampling() {
+        let map = structured_map();
+        let n = 400_000;
+
+        let mut rng = Rng::new(9);
+        let mut is_sum = 0.0f64;
+        for _ in 0..n {
+            if let Some((d, li, pdf)) = map.sample(rng.f64(), rng.f64()) {
+                if d.z > 0.0 {
+                    is_sum += (li[0] as f64) * d.z / pdf as f64;
+                }
+            }
+        }
+        let importance = is_sum / n as f64;
+
+        let mut rng = Rng::new(10);
+        let mut u_sum = 0.0f64;
+        let uniform_pdf = 1.0 / (4.0 * std::f64::consts::PI);
+        for _ in 0..n {
+            let d = uniform_sphere(rng.f64(), rng.f64());
+            if d.z > 0.0 {
+                u_sum += (map.radiance(d)[0] as f64) * d.z / uniform_pdf;
+            }
+        }
+        let reference = u_sum / n as f64;
+
+        assert!(
+            (importance - reference).abs() < 0.05 * reference,
+            "importance-sampled irradiance {importance} disagrees with \
+             uniform-sampled reference {reference}"
+        );
+    }
+
+    /// Rotation must actually move the environment, and must not disturb the
+    /// PDF normalisation (the CDF is reused across rotations).
+    #[test]
+    fn rotation_moves_the_environment_without_breaking_the_pdf() {
+        let map = structured_map();
+        let spun = structured_map().with_rotation_deg(90.0);
+        // Aim straight at the bright patch in the unrotated map; spinning the
+        // environment must move it out from under this direction.
+        let d = map.direction(0.34, 0.24);
+        assert!(
+            map.radiance(d)[0] > 10.0,
+            "probe direction missed the bright patch"
+        );
+        assert!(
+            (map.radiance(d)[0] - spun.radiance(d)[0]).abs() > 1e-6,
+            "rotating the environment changed nothing"
+        );
+
+        let mut rng = Rng::new(21);
+        let n = 200_000;
+        let mut sum = 0.0f64;
+        for _ in 0..n {
+            sum += spun.pdf(uniform_sphere(rng.f64(), rng.f64())) as f64;
+        }
+        let integral = sum / n as f64 * 4.0 * std::f64::consts::PI;
+        assert!(
+            (integral - 1.0).abs() < 0.02,
+            "rotated environment PDF integrates to {integral}"
+        );
+    }
+
+    /// A degenerate (all-black) map must not be importance-sampled, and must
+    /// not poison the MIS weights.
+    #[test]
+    fn black_env_map_is_not_importance_sampled() {
+        let env = Environment::image(uniform_map(8, 4, 0.0));
+        assert!(!env.is_importance_sampled());
+        assert_eq!(env.pdf(Vec3::new(0.0, 0.0, 1.0)), 0.0);
+        assert!(env.sample(0.5, 0.5).is_none());
+    }
+
+    /// End-to-end white furnace: a uniform HDRI and the analytic environment
+    /// set to the same constant colour must render to the same image, even
+    /// though one is integrated by BSDF sampling alone and the other by a
+    /// three-way MIS mix. Any error in the image-space to solid-angle PDF
+    /// conversion shows up as a systematic brightness difference here.
+    #[test]
+    fn uniform_env_map_matches_analytic_constant_environment() {
+        let c = 0.6f32;
+        let cube = make_cube(10.0, 10.0, 10.0);
+        let material = Pbr {
+            base_color: [1.0, 1.0, 1.0],
+            metallic: 0.0,
+            roughness: 0.6,
+            clearcoat: 0.0,
+            ..Default::default()
+        };
+        let scene_with = |env: Environment| Scene {
+            objects: vec![Object {
+                bvh: Arc::new(Bvh::build(&cube)),
+                material,
+            }],
+            // No area lights: the environment must be the only illuminant,
+            // or light sampling would mask a bad environment PDF.
+            lights: Vec::new(),
+            env,
+            ground: None,
+        };
+        let cam = test_camera();
+        let opts = PathTraceOptions {
+            spp: 220,
+            max_depth: 4,
+            firefly_clamp: None,
+            ..Default::default()
+        };
+
+        let mean = |scene: &Scene| -> f64 {
+            let film = render(scene, &cam, 24, 24, &opts);
+            film.rgb.iter().map(|v| *v as f64).sum::<f64>() / film.rgb.len() as f64
+        };
+
+        let analytic = mean(&scene_with(Environment::constant([c, c, c])));
+        let image = mean(&scene_with(Environment::image(uniform_map(64, 32, c))));
+
+        assert!(analytic > 0.1, "reference render was black");
+        assert!(
+            (image - analytic).abs() < 0.02 * analytic,
+            "uniform HDRI rendered at {image}, analytic constant environment \
+             at {analytic} — the environment PDF conversion is off"
         );
     }
 }
