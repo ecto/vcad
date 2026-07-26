@@ -792,6 +792,10 @@ impl Scene {
 
     /// Next-event estimation: sample every area light once, MIS-weighted
     /// against the BSDF sampling strategy.
+    // The shading frame (p, t, b, n) and the outgoing direction are the
+    // integrator's hot-loop state; bundling them into a struct just to
+    // satisfy the lint would add a copy per light sample.
+    #[allow(clippy::too_many_arguments)]
     fn sample_lights(
         &self,
         p: Point3,
