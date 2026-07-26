@@ -238,6 +238,51 @@ interface RawCheckResult {
   error: string | null;
 }
 
+/** Per-panel evidence from `flattenSolidToSheetMetal`. */
+export interface SheetMetalPanelReport {
+  panel: number;
+  area_mm2: number;
+  holes: number;
+  normal: [number, number, number];
+}
+
+/** Per-bend evidence from `flattenSolidToSheetMetal`. */
+export interface SheetMetalBendReport {
+  bend: number;
+  parent: number;
+  child: number;
+  angle_deg: number;
+  radius: number;
+  length: number;
+  direction: "up" | "down";
+  k_factor: number;
+}
+
+/** What the kernel recovered from a solid that wasn't authored as sheet metal. */
+export interface SheetMetalFromSolid extends SheetMetalRendered {
+  /** Detected material thickness (mm). */
+  thickness: number;
+  panels: SheetMetalPanelReport[];
+  bends: SheetMetalBendReport[];
+  /** Volume of the input solid (mm³). */
+  solidVolumeMm3: number;
+  /** Volume implied by the recovered flat pattern + bends (mm³). */
+  recoveredVolumeMm3: number;
+  /** `|recovered - solid| / solid` — the round-trip check. */
+  volumeErrorFrac: number;
+  warnings: string[];
+}
+
+/** Recognition tuning for {@link flattenSolidToSheetMetal}. */
+export interface SheetMetalFlattenOptions {
+  material?: string;
+  manualK?: number;
+  shopProfile?: string;
+  volumeTolFrac?: number;
+  planeAngleTolDeg?: number;
+  planeOffsetTol?: number;
+}
+
 /** Everything the engine attaches to an `EvaluatedPart.sheetMetal`. */
 export interface SheetMetalRendered {
   flatPattern: SheetMetalFlatPattern;
@@ -496,6 +541,7 @@ interface SheetMetalKernel {
   getSheetMetalBendTable?(): string;
   getSheetMetalShopCatalog?(shopId: string): string;
   sheetMetalFoldedStep?(chainJson: string): string;
+  flattenSolidToSheetMetal?(requestJson: string): string;
 }
 
 /**
@@ -843,4 +889,66 @@ export function costSheetMetalChain(
     throw new Error("sheet-metal cost: kernel returned empty breakdown");
   }
   return { breakdown: parsed.breakdown, rates: parsed.rates };
+}
+
+/**
+ * Recover a flat pattern from a solid that was modelled some other way —
+ * an extruded sketch, a boolean, an imported STEP.
+ *
+ * The mechanical counterpart of `board_from_solid`: the kernel recognises the
+ * constant-thickness walls and the cylindrical bends between them, rebuilds
+ * the panel/bend graph, and runs it through the same unfold → DXF pipeline an
+ * authored sheet-metal part uses. It fails closed — a solid that is not
+ * constant-thickness sheet throws instead of emitting a wrong outline.
+ */
+export function flattenSolidToSheetMetal(
+  mesh: { positions: ArrayLike<number>; indices: ArrayLike<number> },
+  kernel: SheetMetalKernel,
+  options: SheetMetalFlattenOptions = {},
+): SheetMetalFromSolid {
+  if (!kernel.flattenSolidToSheetMetal) {
+    throw new Error(
+      "kernel.flattenSolidToSheetMetal not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const request = {
+    positions: Array.from(mesh.positions),
+    indices: Array.from(mesh.indices),
+    material: options.material,
+    manualK: options.manualK,
+    shopProfile: options.shopProfile,
+    volumeTolFrac: options.volumeTolFrac,
+    planeAngleTolDeg: options.planeAngleTolDeg,
+    planeOffsetTol: options.planeOffsetTol,
+  };
+  const parsed = JSON.parse(kernel.flattenSolidToSheetMetal(JSON.stringify(request))) as {
+    flat_pattern: SheetMetalFlatPattern;
+    model: SheetMetalModelSummary;
+    dxf: string;
+    violations: SheetMetalViolation[];
+    thickness: number;
+    panels: SheetMetalPanelReport[];
+    bends: SheetMetalBendReport[];
+    solid_volume_mm3: number;
+    recovered_volume_mm3: number;
+    volume_error_frac: number;
+    warnings: string[];
+    error: string | null;
+  };
+  if (parsed.error) {
+    throw new Error(parsed.error);
+  }
+  return {
+    flatPattern: parsed.flat_pattern,
+    model: parsed.model,
+    dxf: parsed.dxf,
+    violations: parsed.violations,
+    thickness: parsed.thickness,
+    panels: parsed.panels,
+    bends: parsed.bends,
+    solidVolumeMm3: parsed.solid_volume_mm3,
+    recoveredVolumeMm3: parsed.recovered_volume_mm3,
+    volumeErrorFrac: parsed.volume_error_frac,
+    warnings: parsed.warnings ?? [],
+  };
 }

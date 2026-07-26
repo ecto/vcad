@@ -149,6 +149,7 @@ import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
+import { toolDefs as flatPatternToolDefs } from "./tools/flat-pattern.js";
 import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
 import { toolDefs as importToolDefs } from "./tools/import.js";
 import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
@@ -339,6 +340,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...loonMacroToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
+  ...flatPatternToolDefs,
   ...acousticsToolDefs,
   ...importToolDefs,
   ...importPcbToolDefs,
@@ -465,6 +467,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "sheet_metal_suggest_fix",
   "sheet_metal_sequence",
   "sheet_metal_nest",
+  "flat_pattern_from_solid",
   "simulate_strike",
   // ── Import + share ─────────────────────────────────────────
   "import_step",
@@ -588,6 +591,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (whole-document volume, area, bbox, center of mass), `inspect_part` / `describe_scene` (per-part bbox, size, center, material), and `measure` (min distance/overlap between two parts, or one part's bbox+volume+center of mass).",
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
+    "- Cut sheet parts you already modelled: `flat_pattern_from_solid` turns any constant-thickness solid — extruded sketch, boolean, imported STEP — into a fab-ready DXF plus a bend table, no sheet-metal re-authoring. Called without `part_id` it does the whole document and groups identical parts into one pattern × quantity; hand its `nest_input` to `sheet_metal_nest`, then `sheet_metal_cost`, for a quote. It fails closed: the emitted profile re-extruded by the detected thickness must reproduce the solid's volume.",
     "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
     "",
     "",
@@ -1579,6 +1583,9 @@ export function slimPreviewForInlineUi(
   // The flat-pattern coordinates ARE the deliverable — the viewer draws
   // them, but the agent needs the numbers too. Never slim.
   if (toolName === "sheet_metal_unfold") return;
+  // Same for flat_pattern_from_solid: the DXF and the bend table ARE the
+  // deliverable — a fab order can't be placed from a summary of them.
+  if (toolName === "flat_pattern_from_solid") return;
   // get_document's contract is to RETURN the full IR Document body so the
   // caller can capture / serialize / feed it back — the IR is the deliverable,
   // not a side effect of a mutation. Slimming it to a {document_id} stub

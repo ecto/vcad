@@ -1356,3 +1356,140 @@ mod folded_step_tests {
         assert!(v["error"].as_str().unwrap().contains("chain JSON"));
     }
 }
+
+// ─────────────────────── flatten an existing solid ────────────────────────
+
+/// Input to [`flatten_solid_to_sheet_metal`]: a triangle mesh plus optional
+/// recognition tuning.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FlattenRequest {
+    /// Flat `xyz` vertex coordinates (mm).
+    positions: Vec<f64>,
+    /// Triangle vertex indices.
+    indices: Vec<u32>,
+    /// Material key for K-factor lookup. Defaults to `"al-soft"`.
+    #[serde(default)]
+    material: Option<String>,
+    /// Manual K-factor override for every recovered bend.
+    #[serde(default)]
+    manual_k: Option<f64>,
+    /// Built-in shop catalog id (e.g. `"sendcutsend"`) to check against.
+    #[serde(default)]
+    shop_profile: Option<String>,
+    /// Max relative volume error accepted by the round-trip check.
+    #[serde(default)]
+    volume_tol_frac: Option<f64>,
+    /// Planarity tolerance overrides.
+    #[serde(default)]
+    plane_angle_tol_deg: Option<f64>,
+    #[serde(default)]
+    plane_offset_tol: Option<f64>,
+}
+
+/// Result of [`flatten_solid_to_sheet_metal`] — the same flat-pattern /
+/// model / DXF bundle `evaluateSheetMetalChain` returns, plus the evidence
+/// that the solid really was sheet metal.
+#[derive(Debug, Clone, Serialize, Default)]
+struct FlattenResult {
+    flat_pattern: FlatPatternDto,
+    model: ModelSummaryDto,
+    dxf: String,
+    violations: Vec<ViolationDto>,
+    /// Detected material thickness (mm).
+    thickness: f64,
+    /// Per-panel recognition evidence.
+    panels: Vec<vcad_kernel_sheet::PanelReport>,
+    /// Per-bend recognition evidence.
+    bends: Vec<vcad_kernel_sheet::BendReport>,
+    /// Volume of the input solid (mm³).
+    solid_volume_mm3: f64,
+    /// Volume implied by the recovered flat pattern + bends (mm³).
+    recovered_volume_mm3: f64,
+    /// `|recovered - solid| / solid` — the round-trip check.
+    volume_error_frac: f64,
+    /// Non-fatal observations.
+    warnings: Vec<String>,
+    error: Option<String>,
+}
+
+/// Recover a flat pattern from a solid that was **not** authored through the
+/// sheet-metal ops — an extruded sketch, a boolean result, an imported STEP.
+///
+/// This is the mechanical counterpart of `boardFromSolid`: it recognises the
+/// constant-thickness walls and the cylindrical bends between them, rebuilds
+/// the panel/bend graph, and runs it through the same unfold → silhouette →
+/// DXF pipeline authored parts use. It fails closed — a solid that is not
+/// constant-thickness sheet returns an `error` rather than a wrong outline.
+#[wasm_bindgen(js_name = flattenSolidToSheetMetal)]
+pub fn flatten_solid_to_sheet_metal(request_json: &str) -> String {
+    let result = match flatten_impl(request_json) {
+        Ok(r) => r,
+        Err(msg) => FlattenResult {
+            error: Some(msg),
+            ..Default::default()
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|_| r#"{"error":"serialize failed"}"#.to_string())
+}
+
+fn flatten_impl(request_json: &str) -> Result<FlattenResult, String> {
+    let req: FlattenRequest =
+        serde_json::from_str(request_json).map_err(|e| format!("request JSON: {e}"))?;
+    let mut opts = vcad_kernel_sheet::FlattenOptions::default();
+    if let Some(m) = req.material.clone() {
+        opts.material = m;
+    }
+    opts.manual_k = req.manual_k;
+    if let Some(v) = req.volume_tol_frac {
+        opts.volume_tol_frac = v;
+    }
+    if let Some(v) = req.plane_angle_tol_deg {
+        opts.plane_angle_tol_deg = v;
+    }
+    if let Some(v) = req.plane_offset_tol {
+        opts.plane_offset_tol = v;
+    }
+    let table = BendTable::builtin();
+    let recovered = vcad_kernel_sheet::flatten_solid(
+        vcad_kernel_sheet::MeshView {
+            positions: &req.positions,
+            indices: &req.indices,
+        },
+        &table,
+        &opts,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let flat = FlatPattern::from_model(&recovered.model);
+    let dxf = flat_pattern_to_dxf(&flat).map_err(|e| format!("dxf: {e}"))?;
+    let shop = match req.shop_profile.as_deref() {
+        Some(id) if !id.is_empty() => shop_catalog(id)
+            .map_err(|e| e.to_string())?
+            .shop_profile_for(&recovered.model.material, recovered.thickness),
+        _ => ShopProfile::generic(),
+    };
+    let violations = check_manufacturability(&recovered.model, &shop)
+        .into_iter()
+        .map(|v| ViolationDto {
+            rule: v.rule(),
+            severity: format!("{:?}", v.severity()),
+            message: v.message(),
+            detail: v,
+        })
+        .collect();
+    Ok(FlattenResult {
+        flat_pattern: flat_pattern_to_dto(flat),
+        model: summarise_model(&recovered.model),
+        dxf,
+        violations,
+        thickness: recovered.thickness,
+        volume_error_frac: recovered.volume_error_frac(),
+        solid_volume_mm3: recovered.mesh_volume,
+        recovered_volume_mm3: recovered.recovered_volume,
+        panels: recovered.panels.clone(),
+        bends: recovered.bends.clone(),
+        warnings: recovered.warnings.clone(),
+        error: None,
+    })
+}

@@ -6657,6 +6657,50 @@
     }
   },
   {
+    "name": "flat_pattern_from_solid",
+    "title": "Flat Pattern From Solid",
+    "description": "Emit the flat pattern (DXF + bend table) for a part that was modelled as an ordinary solid — extruded sketch, boolean, imported STEP — with no sheet-metal authoring required. The mechanical counterpart of board_from_solid: it detects the constant-thickness walls and the cylindrical bends between them, returns the cut profile (outer boundary + every interior hole) with the detected thickness, and a bend table (line positions, angles, direction, allowance) for bent parts. Called without part_id it batches the whole document and groups identical parts into one pattern × quantity (mirror images stay separate). Fails closed: re-extruding the emitted profile by the detected thickness must reproduce the solid's volume, so a part that isn't really constant-thickness sheet is reported as such instead of yielding a wrong outline.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "CAD session id (open_document / create_cad_loon) holding the solid(s)."
+        },
+        "part_id": {
+          "type": "string",
+          "description": "Root id of a single part to flatten (from `read`). Omit to flatten every solid part in the document and group identical parts into one pattern × quantity."
+        },
+        "material": {
+          "type": "string",
+          "description": "Material key for K-factor lookup (e.g. \"al-soft\", \"steel-mild\"). Default \"al-soft\". See sheet_metal_materials."
+        },
+        "manual_k": {
+          "type": "number",
+          "description": "Override the K-factor for every recovered bend (skips the bend table)."
+        },
+        "shop_profile": {
+          "type": "string",
+          "description": "Fab-service catalog id (e.g. \"sendcutsend\") to run manufacturability against. Default: generic shop."
+        },
+        "volume_tolerance": {
+          "type": "number",
+          "description": "Max relative volume error the round-trip check accepts (default 0.02). Re-extruding the emitted profile by the detected thickness must reproduce the solid's volume; a mismatch fails the part."
+        },
+        "include_dxf": {
+          "type": "boolean",
+          "description": "Include the DXF string per pattern. Default true."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "simulate_strike",
     "title": "Simulate Strike",
     "description": "Hear a part before it's cut: simulate a mallet strike on a flat free-free bar (glockenspiel/vibraphone bar) and verify its pitch. Modal frequencies from BOTH the closed-form Euler–Bernoulli model and a hole-aware 1-D FEM (cord holes change A(x), I(x)); strike-excited modal synthesis (mode shape at strike point × half-sine mallet spectrum, Q-based decay) → optional 44.1 kHz WAV → FFT peak extraction → cents-error verdict vs `note`/`expect_hz`. Takes a flat sheet_metal_create `document_id` (dims, material, holes read from the session) or an explicit `bar` spec. E/ρ come from the kernel material registry. The `modes` table {hz, gain, q} is compact enough to drive client-side Web Audio synthesis.",

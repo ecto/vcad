@@ -21,6 +21,7 @@ import {
   getSheetMetalBendTable as readSheetMetalBendTable,
   getSheetMetalShopCatalog as readSheetMetalShopCatalog,
   foldedSheetMetalStep as buildFoldedSheetMetalStep,
+  flattenSolidToSheetMetal as runFlattenSolidToSheetMetal,
 } from "./sheet-metal.js";
 import type {
   SheetMetalShopProfile,
@@ -136,6 +137,10 @@ export type {
   SheetMetalFlatCrease,
   SheetMetalFlatPattern,
   SheetMetalRendered,
+  SheetMetalFromSolid,
+  SheetMetalFlattenOptions,
+  SheetMetalPanelReport,
+  SheetMetalBendReport,
   SheetMetalViolation,
   SheetMetalShopProfile,
   SheetMetalCheckResult,
@@ -559,6 +564,7 @@ export interface KernelModule {
   getSheetMetalShopCatalog?: (shopId: string) => string;
   /** Folded sheet-metal solid as STEP AP214 → JSON `{step, error}`. */
   sheetMetalFoldedStep?: (chainJson: string) => string;
+  flattenSolidToSheetMetal?: (requestJson: string) => string;
   /** Mesh-to-mesh clearance over raw evaluated-mesh buffers. */
   mesh_clearance?: (
     positionsA: Float32Array,
@@ -1056,6 +1062,7 @@ export class Engine {
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
+      flattenSolidToSheetMetal: (wasmModule as Record<string, unknown>).flattenSolidToSheetMetal as KernelModule["flattenSolidToSheetMetal"],
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
       topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
@@ -1829,6 +1836,20 @@ export class Engine {
       parts,
       this.kernel as unknown as Parameters<typeof runNestSheetMetalParts>[1],
       params,
+    );
+  }
+
+  /** Recover a flat pattern (panels, bends, DXF) from a solid part's mesh —
+   *  the mechanical counterpart of `board_from_solid`. Throws when the solid
+   *  is not constant-thickness sheet. */
+  flattenSolidToSheetMetal(
+    mesh: { positions: ArrayLike<number>; indices: ArrayLike<number> },
+    options?: import("./sheet-metal.js").SheetMetalFlattenOptions,
+  ): import("./sheet-metal.js").SheetMetalFromSolid {
+    return runFlattenSolidToSheetMetal(
+      mesh,
+      this.kernel as unknown as Parameters<typeof runFlattenSolidToSheetMetal>[1],
+      options,
     );
   }
 
