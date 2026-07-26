@@ -4,6 +4,6 @@
   "date": "2026-07-26",
   "category": "feat",
   "title": "The raytrace viewport is a real path tracer",
-  "summary": "The viewport now shades with the same physically-based BSDF and softbox rig as --photoreal: multi-bounce global illumination, MIS area lights, and clearcoat, so a part looks the same in the app as in a render.",
+  "summary": "The viewport now shades with the same BSDF, materials and lighting as --photoreal: multi-bounce global illumination, MIS area lights, clearcoat and brushed-metal anisotropy, so a part looks the same in the app as in a render.",
   "features": ["rendering", "raytracing", "viewport", "materials"]
 }
