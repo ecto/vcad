@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-parametric-loon-datums",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Named parameters, datums and stacks in loon",
+  "summary": "Values named with [defparam] survive into the document and are settable with set_parameters; [datum-plane]/[stack] make shared planes and packing clearances named entities instead of repeated literals.",
+  "features": ["loon", "parameters", "datums", "assemblies"],
+  "mcpTools": ["create_cad_loon", "list_parameters", "set_parameters", "parameter_gradient"]
+}

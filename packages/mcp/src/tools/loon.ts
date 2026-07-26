@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
+import type { Document } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { documents, getSession, recordTriangles } from "./session-core.js";
@@ -183,10 +184,73 @@ export function createCadLoon(
   }
 
   const text = format === "json" ? JSON.stringify(doc, null, 2) : toVCode(doc);
+  const content: Array<{ type: "text"; text: string }> = [{ type: "text", text }];
 
-  return {
-    content: [{ type: "text", text }],
-  };
+  const note = parametricNote(source, modules, engine, doc);
+  if (note) content.push({ type: "text", text: note });
+
+  return { content };
+}
+
+/**
+ * Report the parametric surface a program declared, and anything the bridge
+ * could not preserve.
+ *
+ * Without this an author has no way to tell that `pitch_axis_x` reached the
+ * document as a live parameter rather than being inlined — the geometry looks
+ * the same either way. Silent on programs that declare nothing, and silent on
+ * kernels too old to answer.
+ */
+function parametricNote(
+  source: string,
+  modules: Record<string, string>,
+  engine: Engine,
+  doc: Document,
+): string | null {
+  const names = Object.keys(doc.parameters ?? {}).sort();
+  if (!names.length) return null;
+
+  const lines: string[] = [];
+  // Only base (numeric) parameters are knobs. Derived ones follow from them —
+  // they never appear in a binding formula, so flagging them as driving
+  // nothing would be noise, and set_parameters refuses them anyway.
+  const value = (n: string) => (doc.parameters as Record<string, { value: number | string }>)[n].value;
+  const bound = new Set(
+    Object.values(doc.bindings ?? {}).flatMap((expr) =>
+      typeof expr === "string" ? (expr.match(/[A-Za-z_]\w*/g) ?? []) : [],
+    ),
+  );
+  const base = names.filter((n) => typeof value(n) === "number");
+  const derived = names.filter((n) => typeof value(n) === "string");
+
+  if (base.length) {
+    lines.push(
+      `Parameters (${base.length}, settable): ${base
+        .map((n) => (bound.has(n) ? n : `${n} (drives nothing)`))
+        .join(", ")}`,
+    );
+  }
+  if (derived.length) {
+    lines.push(
+      `Derived (${derived.length}, follow from the above): ${derived
+        .map((n) => `${n} = "${value(n)}"`)
+        .join(", ")}`,
+    );
+  }
+  const datums = Object.keys(doc.datums ?? {}).sort();
+  if (datums.length) lines.push(`Datums (${datums.length}): ${datums.join(", ")}`);
+  if (base.length) {
+    lines.push("Change any settable parameter with set_parameters — no re-authoring needed.");
+  }
+
+  let warnings: string[] = [];
+  try {
+    warnings = engine.evalVcadSourceParametric(source, modules)?.warnings ?? [];
+  } catch {
+    // Best-effort: never fail authoring over diagnostics.
+  }
+  for (const w of warnings) lines.push(`- ${w}`);
+  return lines.join("\n");
 }
 
 export const toolDefs: ToolDef[] = [
@@ -204,7 +268,10 @@ export const toolDefs: ToolDef[] = [
       "Sketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]]\n" +
       "Assemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\n" +
       "Pipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\n" +
-      "Let bindings: [let body [cube 50 30 5]]\n" +
+      "Let bindings: [let body [cube 50 30 5]] — note these are inlined and do NOT survive into the document; use [defparam ...] for a value you want to change later\n" +
+      "Parameters (survive into the document and are settable afterwards with set_parameters, and differentiable with parameter_gradient): [defparam pitch_axis_x 310.0], [defparam wall \"bore * 0.2\"] for derived values, plus optional :unit/:min/:max/:description. Names must be identifier-safe (underscores, not dashes)\n" +
+      "Datums — named reference geometry, so two parts cannot each hold their own copy of a shared plane: [datum-plane \"femur_inner\" y 131.0], [datum-axis \"pitch\" x 0 0 310], [datum-point \"hip\" 0 0 310], read back with [datum \"femur_inner\"], [datum+ \"femur_inner\" 3.0] (3 mm outboard), [datum-x/-y/-z \"pitch\"]\n" +
+      "Stacks — declarative packing, where each running clearance is a named value instead of an arbitrary number: [stack y \"leg\" 131.0 [lane \"femur_inner\" 5.0] [gap \"idler_run\" 1.0] [lane \"idler_boss\" 3.0]] declares datum planes leg_femur_inner_lo/_hi, leg_idler_boss_lo/_hi and leg_end; widening leg_idler_run slides everything outboard of it\n" +
       "Scene: [root solid \"material-name\"]\n" +
       "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
     inputSchema: createCadLoonSchema,
