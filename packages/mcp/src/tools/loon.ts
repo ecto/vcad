@@ -9,6 +9,7 @@ import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { documents, getSession, recordTriangles } from "./session-core.js";
+import { attachLoonSource } from "./source-provenance.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -167,11 +168,16 @@ export function createCadLoon(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { format = "vcode" } = input as CreateLoonInput;
+  const { format = "vcode", base_dir } = input as CreateLoonInput;
   const source = composeLoonProgram(input);
 
   const modules = composeLoonModules(input);
   const doc = engine.evalVcadSourceWithModules(source, modules);
+  // Record what made this document. The COMPOSED program is stored rather
+  // than the bare `source` argument: it inlines the macro prelude, so the
+  // stored text re-evaluates to the same geometry with no dependency on a
+  // macro registry that a restart may have emptied.
+  if (doc) attachLoonSource(doc, { text: source, modules, base_dir });
   if (!doc) {
     // Distinguish "no loon at all" from "loon, but a kernel too old to
     // resolve modules" — otherwise a stale kernel reads as a broken program.
@@ -229,11 +235,16 @@ export const toolDefs: ToolDef[] = [
       // authoring a whole document. The loon evaluation is cheap relative to
       // the mesh evaluation computeIntegrity runs anyway.
       try {
-        const doc = ctx.engine.evalVcadSourceWithModules(
-          composeLoonProgram(args),
-          composeLoonModules(args),
-        );
+        const composed = composeLoonProgram(args);
+        const modules = composeLoonModules(args);
+        const doc = ctx.engine.evalVcadSourceWithModules(composed, modules);
         if (doc) {
+          attachLoonSource(doc, {
+            text: composed,
+            modules,
+            base_dir:
+              typeof args.base_dir === "string" ? args.base_dir : undefined,
+          });
           if (targetId) documents.set(targetId, doc);
           const integrity = computeIntegrity(doc, ctx.engine);
           if (integrity) {
