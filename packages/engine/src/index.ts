@@ -521,6 +521,8 @@ export interface KernelModule {
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
   /** Evaluate loon source → JSON-serialized Document. */
   evalVcadSource?: (source: string) => string;
+  /** Evaluate loon source with an in-memory `[use ...]` module map. */
+  evalVcadSourceWithModules?: (source: string, modulesJson: string) => string;
   /** d(mass-property + bbox QoIs)/dθ for a named document parameter. */
   documentParameterGradient?: (
     docJson: string,
@@ -1036,6 +1038,7 @@ export class Engine {
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
+      evalVcadSourceWithModules: (wasmModule as Record<string, unknown>).evalVcadSourceWithModules as KernelModule["evalVcadSourceWithModules"],
       documentParameterGradient: (wasmModule as Record<string, unknown>).documentParameterGradient as KernelModule["documentParameterGradient"],
       getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
@@ -1960,6 +1963,26 @@ export class Engine {
   evalVcadSource(source: string): Document | null {
     if (!this.kernel.evalVcadSource) return null;
     const json = this.kernel.evalVcadSource(source);
+    return JSON.parse(json) as Document;
+  }
+
+  /**
+   * Evaluate loon source whose `[use ...]` resolves against an in-memory
+   * `name -> source` map — the browser's stand-in for a filesystem.
+   *
+   * With an empty map this is exactly {@link evalVcadSource}. Returns null
+   * if the kernel doesn't support module-aware loon evaluation.
+   */
+  evalVcadSourceWithModules(
+    source: string,
+    modules: Record<string, string>,
+  ): Document | null {
+    if (!Object.keys(modules).length) return this.evalVcadSource(source);
+    if (!this.kernel.evalVcadSourceWithModules) return null;
+    const json = this.kernel.evalVcadSourceWithModules(
+      source,
+      JSON.stringify(modules),
+    );
     return JSON.parse(json) as Document;
   }
 

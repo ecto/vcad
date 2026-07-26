@@ -3,9 +3,12 @@
 //! Evaluates `.vcad` loon source files and converts the resulting
 //! `Value::Adt` tree into a `vcad_ir::Document`.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use loon_lang::interp::Value;
+use loon_lang::module::{MapProvider, ModuleProvider};
 use vcad_ir::Document;
 
 mod convert;
@@ -24,6 +27,37 @@ pub fn eval_vcad(source: &str, base_dir: Option<&Path>) -> Result<Document, Stri
     value_to_document(&result)
 }
 
+/// Evaluate a `.vcad` loon source string whose `[use ...]` resolves against an
+/// in-memory `name -> source` map instead of (or before) the filesystem.
+///
+/// This is the resolver for hosts with no filesystem — the browser/WASM
+/// kernel and the MCP server, which reads the files itself and hands the
+/// kernel a map. A name absent from the map still falls through to
+/// `base_dir` when one is given, so the two mechanisms compose.
+///
+/// The vcad library is available inside imported modules exactly as it is in
+/// the root program, and a module's own definitions are what it exports.
+pub fn eval_vcad_with_modules(
+    source: &str,
+    base_dir: Option<&Path>,
+    modules: &HashMap<String, String>,
+) -> Result<Document, String> {
+    let result = eval_vcad_to_value_with_modules(source, base_dir, modules)?;
+    value_to_document(&result)
+}
+
+/// [`eval_vcad_with_modules`], returning the raw loon `Value`.
+///
+/// See [`eval_vcad_to_value`] for why that `Value` is not serializable.
+pub fn eval_vcad_to_value_with_modules(
+    source: &str,
+    base_dir: Option<&Path>,
+    modules: &HashMap<String, String>,
+) -> Result<Value, String> {
+    let provider: Rc<dyn ModuleProvider> = Rc::new(MapProvider::new(modules.clone()));
+    eval_with_provider(source, base_dir, Some(provider))
+}
+
 /// Evaluate a `.vcad` loon source string and return the raw loon Value.
 ///
 /// Useful for debugging or inspecting the AST before conversion.
@@ -33,6 +67,16 @@ pub fn eval_vcad(source: &str, base_dir: Option<&Path>) -> Result<Document, Stri
 /// compile (E0277). To write a `.vcad` document, use [`eval_vcad`], which
 /// returns a serializable [`Document`] — see `examples/loon2vcad.rs`.
 pub fn eval_vcad_to_value(source: &str, base_dir: Option<&Path>) -> Result<Value, String> {
+    eval_with_provider(source, base_dir, None)
+}
+
+/// Shared body of the eval entry points: rewrite multi-value programs,
+/// prepend the vcad library, and evaluate with the given module resolver.
+fn eval_with_provider(
+    source: &str,
+    base_dir: Option<&Path>,
+    provider: Option<Rc<dyn ModuleProvider>>,
+) -> Result<Value, String> {
     // A loon program's value is its *last* expression, so a source with
     // several top-level value forms (e.g. two `[root ...]` statements) would
     // silently keep only the final one. Rewrite such programs so every
@@ -44,7 +88,10 @@ pub fn eval_vcad_to_value(source: &str, base_dir: Option<&Path>) -> Result<Value
 
     let exprs = loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())?;
 
-    loon_lang::interp::eval_program_with_base_dir(&exprs, base_dir).map_err(|e| format!("{e}"))
+    // Imported modules get the vcad library too, so `[use ...]` code can
+    // speak the same vocabulary as the root program.
+    loon_lang::interp::eval_program_with_modules(&exprs, base_dir, provider, Some(VCAD_LIB_SOURCE))
+        .map_err(|e| format!("{e}"))
 }
 
 /// Top-level statement heads — forms that bind, define, mutate, or print
@@ -435,6 +482,177 @@ mod tests {
         let doc = eval_vcad(source, None).unwrap();
         assert_eq!(doc.roots.len(), 2);
         assert_eq!(doc.roots[0].material, "steel");
+    }
+
+    // ── module resolution ────────────────────────────────────────────
+    //
+    // The point of these is the *equivalence*: the same two-file project
+    // must produce the same Document whether the modules come off disk or
+    // out of an in-memory map.
+
+    const BRACKET_MODULE: &str = r#"
+[pub let plate [cube 40.0 20.0 4.0]]
+[pub let post [cylinder 3.0 12.0]]
+[let internal-scrap [sphere 1.0]]
+"#;
+
+    const MAIN_SOURCE: &str = r#"
+[use bracket]
+[root bracket.plate "aluminum"]
+[root [translate 20.0 10.0 4.0 bracket.post] "steel"]
+"#;
+
+    fn modules_map(entries: &[(&str, &str)]) -> HashMap<String, String> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn eval_modules_from_disk() {
+        let dir = std::env::temp_dir().join(format!("vcad-loon-mod-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bracket.loon"), BRACKET_MODULE).unwrap();
+        let doc = eval_vcad(MAIN_SOURCE, Some(&dir)).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(doc.roots.len(), 2);
+        assert_eq!(doc.roots[0].material, "aluminum");
+        assert_eq!(doc.roots[1].material, "steel");
+    }
+
+    #[test]
+    fn eval_modules_in_memory_matches_disk() {
+        let dir = std::env::temp_dir().join(format!("vcad-loon-eq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("bracket.loon"), BRACKET_MODULE).unwrap();
+        let from_disk = eval_vcad(MAIN_SOURCE, Some(&dir)).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let from_map = eval_vcad_with_modules(
+            MAIN_SOURCE,
+            None,
+            &modules_map(&[("bracket", BRACKET_MODULE)]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&from_disk).unwrap(),
+            serde_json::to_value(&from_map).unwrap(),
+            "in-memory and filesystem module resolution must agree"
+        );
+    }
+
+    #[test]
+    fn eval_modules_in_memory_keyed_by_filename() {
+        let doc = eval_vcad_with_modules(
+            MAIN_SOURCE,
+            None,
+            &modules_map(&[("bracket.loon", BRACKET_MODULE)]),
+        )
+        .unwrap();
+        assert_eq!(doc.roots.len(), 2);
+    }
+
+    #[test]
+    fn eval_modules_aliased_and_selective() {
+        let aliased = eval_vcad_with_modules(
+            "[use bracket :as b]\n[root b.plate \"aluminum\"]",
+            None,
+            &modules_map(&[("bracket", BRACKET_MODULE)]),
+        )
+        .unwrap();
+        assert_eq!(aliased.roots.len(), 1);
+
+        let selective = eval_vcad_with_modules(
+            "[use bracket [plate]]\n[root plate \"aluminum\"]",
+            None,
+            &modules_map(&[("bracket", BRACKET_MODULE)]),
+        )
+        .unwrap();
+        assert_eq!(selective.roots.len(), 1);
+    }
+
+    #[test]
+    fn eval_modules_pub_hides_non_pub_names() {
+        // `internal-scrap` is not `pub`, so a selective import must fail.
+        let err = eval_vcad_with_modules(
+            "[use bracket [internal-scrap]]\n[root internal-scrap \"steel\"]",
+            None,
+            &modules_map(&[("bracket", BRACKET_MODULE)]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("does not export"),
+            "expected an export error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn eval_modules_stdlib_visible_inside_module() {
+        // The module body calls `cube`, which lives in the vcad library —
+        // proof the host prelude reaches imported modules.
+        let doc = eval_vcad_with_modules(
+            "[use m]\n[root m.thing \"steel\"]",
+            None,
+            &modules_map(&[("m", "[pub let thing [cube 5.0 5.0 5.0]]")]),
+        )
+        .unwrap();
+        assert_eq!(doc.roots.len(), 1);
+    }
+
+    #[test]
+    fn eval_modules_nested_use() {
+        // b imports a; the root imports b. Nested `[use]` inside an
+        // in-memory module resolves against the same map.
+        let doc = eval_vcad_with_modules(
+            "[use b]\n[root b.stack \"steel\"]",
+            None,
+            &modules_map(&[
+                ("a", "[pub let base [cube 10.0 10.0 2.0]]"),
+                (
+                    "b",
+                    "[use a]\n[pub let stack [translate 0.0 0.0 2.0 a.base]]",
+                ),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(doc.roots.len(), 1);
+    }
+
+    #[test]
+    fn eval_modules_circular_import_errors() {
+        let err = eval_vcad_with_modules(
+            "[use a]\n[root a.x \"steel\"]",
+            None,
+            &modules_map(&[
+                ("a", "[use b]\n[pub let x [cube 1.0 1.0 1.0]]"),
+                ("b", "[use a]\n[pub let y [cube 1.0 1.0 1.0]]"),
+            ]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("circular dependency"),
+            "expected a cycle error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn eval_modules_missing_module_errors() {
+        let err = eval_vcad_with_modules(
+            "[use nope]\n[cube 1.0 1.0 1.0]",
+            None,
+            &modules_map(&[("bracket", BRACKET_MODULE)]),
+        )
+        .unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn eval_empty_provider_is_a_no_op() {
+        // Nothing downstream breaks when no modules are supplied.
+        let doc = eval_vcad_with_modules("[cube 10.0 20.0 30.0]", None, &HashMap::new()).unwrap();
+        assert_eq!(doc.nodes.len(), 1);
     }
 
     #[test]
