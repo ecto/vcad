@@ -12,7 +12,9 @@
 //! - [`RayHit`] - Intersection result with surface parameters
 //! - [`intersect`] - Ray-surface intersection algorithms for each surface type
 //! - [`trim`] - Point-in-face testing for trimmed surfaces
-//! - [`bvh`] - Bounding volume hierarchy for acceleration
+//! - [`bvh`] - Per-solid bounding volume hierarchy (the BLAS)
+//! - [`tlas`] - Top-level hierarchy over placed instances, so a scene costs
+//!   O(log parts) per ray instead of O(parts) and repeated parts share one BLAS
 //!
 //! # Example
 //!
@@ -36,6 +38,7 @@ pub mod cpu;
 pub mod intersect;
 pub mod pathtrace;
 mod ray;
+pub mod tlas;
 pub mod trim;
 
 #[cfg(feature = "gpu")]
@@ -47,3 +50,4 @@ pub use pathtrace::{
     studio_rig, AreaLight, Camera, Environment, Film, Ground, Object, PathTraceOptions, Pbr, Scene,
 };
 pub use ray::{Ray, RayHit};
+pub use tlas::{Instance, InstanceHit, Tlas};

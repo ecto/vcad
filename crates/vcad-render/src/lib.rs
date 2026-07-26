@@ -3738,7 +3738,7 @@ mod raytrace {
     use super::raster::{canvas_for, encode_jpeg, encode_png, fit_scale, Frame, BACKGROUND};
     use super::*;
     use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
-    use vcad_kernel_raytrace::{bvh::BvhNode, Bvh, Ray};
+    use vcad_kernel_raytrace::{Bvh, Instance, Ray, Tlas};
 
     /// Stratified supersampling grid per pixel (N × N rays). Analytic
     /// intersection makes interior shading perfectly smooth already; the
@@ -3768,12 +3768,6 @@ mod raytrace {
         encode_png(rasterize_rt(raw_vcad, opts, true)?, opts)
     }
 
-    fn node_aabb(node: &BvhNode) -> &vcad_kernel::vcad_kernel_booleans::bbox::Aabb3 {
-        match node {
-            BvhNode::Leaf { aabb, .. } | BvhNode::Internal { aabb, .. } => aabb,
-        }
-    }
-
     /// Trace the scene to an RGB frame plus a per-pixel coverage mask (255
     /// where a surface was hit, fractional at supersampled silhouette edges,
     /// 0 over background). The `png` flavour keeps hit pixels at their pure
@@ -3792,13 +3786,16 @@ mod raytrace {
             return Err("fill_frac must be in (0, 1]".to_string());
         }
 
-        // One BVH per solid; assembly instances arrive from `evaluate_vcad`
-        // already world-placed, so no per-instance transforms are needed
-        // here. BRep-backed solids trace analytically; mesh-only ones
-        // (frozen topology-optimization results, imported STL/GLB parts)
-        // trace as triangles, crease-baked so they read smooth next to the
-        // analytic surfaces rather than faceted.
-        let mut scene: Vec<(Bvh, Option<[[u8; 3]; 4]>)> = Vec::new();
+        // One BLAS per solid, gathered under a TLAS so a ray only descends
+        // into the parts whose bounds it actually crosses (the old linear scan
+        // cost O(parts) per ray). Assembly instances arrive from
+        // `evaluate_vcad` already world-placed, so every instance here sits at
+        // the identity. BRep-backed solids trace analytically; mesh-only ones
+        // (frozen topology-optimization results, imported STL/GLB parts) trace
+        // as triangles, crease-baked so they read smooth next to the analytic
+        // surfaces rather than faceted.
+        let mut ramps: Vec<Option<[[u8; 3]; 4]>> = Vec::new();
+        let mut instances = Vec::new();
         let mut untraceable: Vec<String> = Vec::new();
         for s in &tinted {
             let bvh = match s.solid.as_brep() {
@@ -3809,16 +3806,18 @@ mod raytrace {
                     Bvh::build_mesh(&mesh)
                 }
             };
-            if bvh.root().is_none() {
-                // Empty solid, or a mesh whose triangles were all
-                // degenerate: nothing to trace. Name it rather than
-                // dropping it on the floor.
+            // `Instance::identity` rejects an empty BLAS, which is exactly the
+            // `bvh.root().is_none()` filter this replaced: an empty solid, or
+            // a mesh whose triangles were all degenerate. Name it rather than
+            // dropping it on the floor.
+            let Some(inst) = Instance::identity(std::sync::Arc::new(bvh), ramps.len()) else {
                 untraceable.push(s.name.clone().unwrap_or_else(|| s.id.clone()));
                 continue;
-            }
-            scene.push((bvh, s.tint.map(tint_ramp)));
+            };
+            instances.push(inst);
+            ramps.push(s.tint.map(tint_ramp));
         }
-        if scene.is_empty() {
+        if instances.is_empty() {
             return Err(format!(
                 "raytrace: document produced no traceable geometry ({} part(s) empty \
                  or degenerate: {})",
@@ -3827,9 +3826,9 @@ mod raytrace {
             ));
         }
         if !untraceable.is_empty() {
-            // Fail closed rather than silently rendering a subset: a
-            // missing part in a render reads as a design that doesn't have
-            // it, which is worse than no render at all.
+            // Fail closed rather than silently rendering a subset: a missing
+            // part in a render reads as a design that doesn't have it, which
+            // is worse than no render at all.
             return Err(format!(
                 "raytrace: {} part(s) have no traceable geometry (empty or \
                  fully degenerate): {}",
@@ -3837,6 +3836,7 @@ mod raytrace {
                 untraceable.join(", ")
             ));
         }
+        let scene = Tlas::build(instances);
 
         // Framing: project the union of the BVH root AABBs onto the view
         // basis — same fill/centre math as the tessellated raster path.
@@ -3849,8 +3849,8 @@ mod raytrace {
         let mut max = [f64::NEG_INFINITY; 2];
         let mut dmin = f64::INFINITY;
         let mut dmax = f64::NEG_INFINITY;
-        for (bvh, _) in &scene {
-            let aabb = node_aabb(bvh.root().expect("empty BVHs were filtered"));
+        for inst in scene.instances() {
+            let aabb = inst.world_aabb();
             for i in 0..8 {
                 let c = [
                     if i & 1 == 0 { aabb.min.x } else { aabb.max.x },
@@ -3918,16 +3918,10 @@ mod raytrace {
                         );
                         let ray = Ray::new(origin, dir);
 
-                        let mut best: Option<(f64, [u8; 3])> = None;
-                        for (bvh, ramp) in &scene {
-                            if let Some(hit) = bvh.trace_closest(&ray) {
-                                if best.as_ref().is_none_or(|(t, _)| hit.t < *t) {
-                                    let shade = shade_hit(&hit, ramp, cam, light, dmin, dspan);
-                                    best = Some((hit.t, shade));
-                                }
-                            }
-                        }
-                        if let Some((_, c)) = best {
+                        let shaded = scene.trace_closest(&ray).map(|found| {
+                            shade_hit(&found.hit, &ramps[found.payload], cam, light, dmin, dspan)
+                        });
+                        if let Some(c) = shaded {
                             for k in 0..3 {
                                 acc[k] += c[k] as f64;
                             }
