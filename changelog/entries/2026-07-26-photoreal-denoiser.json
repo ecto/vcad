@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-photoreal-denoiser",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "perf",
+  "title": "Edge-aware denoising for --photoreal",
+  "summary": "Photoreal renders are now denoised by default, reaching near-reference quality from ~32 samples per pixel instead of ~1024. Pass --no-denoise for ground-truth renders.",
+  "features": ["rendering", "raytracing", "cli"]
+}

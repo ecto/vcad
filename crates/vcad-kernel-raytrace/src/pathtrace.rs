@@ -181,6 +181,17 @@ impl Pbr {
             self.base_color[2] * k,
         ]
     }
+
+    /// The colour to divide out before denoising, and multiply back after.
+    ///
+    /// Dielectrics carry their colour in the diffuse term; metals carry it in
+    /// F0. Blending by `metallic` gives one buffer that tracks "what colour
+    /// this surface is" for both, so the à-trous filter only ever sees the
+    /// noisy illumination and never smears one part's colour into another's.
+    #[inline]
+    fn denoise_albedo(&self) -> [f32; 3] {
+        mix3(self.diffuse_albedo(), self.f0(), self.metallic)
+    }
 }
 
 // ─── lights & environment ─────────────────────────────────────────────────
@@ -745,6 +756,25 @@ pub struct PathTraceOptions {
     pub show_background: bool,
     /// Random seed.
     pub seed: u64,
+    /// Run the edge-aware à-trous denoiser over the film before returning.
+    ///
+    /// This is a pure post-process on the accumulated radiance — it consumes
+    /// no random numbers and cannot change the integrator's estimate.
+    pub denoise: bool,
+    /// À-trous iterations. Each doubles the tap stride, so `n` iterations
+    /// reach a footprint of roughly `2^(n+1)` pixels.
+    pub denoise_iters: u32,
+    /// Edge-stopping tolerance on the world normal, as `‖n_p − n_q‖`.
+    /// Smaller keeps creases sharper and denoises less.
+    pub sigma_normal: f32,
+    /// Edge-stopping tolerance on hit distance, *relative* to the centre
+    /// pixel's depth and scaled by the tap stride (so grazing surfaces still
+    /// filter).
+    pub sigma_depth: f32,
+    /// Edge-stopping tolerance on demodulated illumination luminance. Halved
+    /// each iteration, per Dammertz, so late wide passes cannot flatten
+    /// detail the early passes already resolved.
+    pub sigma_lum: f32,
 }
 
 impl Default for PathTraceOptions {
@@ -756,6 +786,11 @@ impl Default for PathTraceOptions {
             firefly_clamp: Some(12.0),
             show_background: true,
             seed: 0x5eed_1234,
+            denoise: true,
+            denoise_iters: 5,
+            sigma_normal: 0.35,
+            sigma_depth: 0.02,
+            sigma_lum: 4.0,
         }
     }
 }
@@ -1352,9 +1387,33 @@ impl Scene {
 
 // ─── integrator ───────────────────────────────────────────────────────────
 
-/// Trace one path and return its radiance estimate, plus whether the primary
-/// ray hit anything (for alpha).
-fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> ([f32; 3], bool) {
+/// What the primary ray of a path found at depth 0.
+///
+/// Recorded for the denoiser's guide buffers. `depth == 0.0` means the primary
+/// ray escaped the scene — the sentinel for "background", which the filter
+/// refuses to mix with any surface.
+#[derive(Debug, Clone, Copy, Default)]
+struct Primary {
+    /// Whether the primary ray hit geometry or an emitter (drives alpha).
+    hit: bool,
+    /// Face-forwarded world normal at the first hit.
+    normal: [f32; 3],
+    /// Distance from the camera to the first hit; 0 for a miss.
+    depth: f32,
+    /// Surface colour at the first hit, for albedo demodulation.
+    albedo: [f32; 3],
+}
+
+/// Trace one path and return its radiance estimate, plus what its primary ray
+/// landed on (for alpha and for the denoiser's guide buffers).
+fn radiance(
+    scene: &Scene,
+    opts: &PathTraceOptions,
+    ray: Ray,
+    rng: &mut Rng,
+) -> ([f32; 3], Primary) {
+    let origin = ray.origin;
+    let mut primary = Primary::default();
     let mut l = [0.0f32; 3];
     let mut throughput = [1.0f32; 3];
     let mut ray = ray;
@@ -1362,7 +1421,6 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
     // against light sampling when the new ray lands on an emitter.
     let mut prev_bsdf_pdf = 0.0f32;
     let mut specular_chain = true;
-    let mut primary_hit = false;
 
     for depth in 0..opts.max_depth {
         match scene.intersect(&ray) {
@@ -1391,7 +1449,14 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
                 point,
             } => {
                 if depth == 0 {
-                    primary_hit = true;
+                    // An emitter seen directly. It is noise-free by
+                    // construction, but it still needs a guide entry so the
+                    // filter treats it as its own surface rather than as
+                    // background.
+                    primary.hit = true;
+                    primary.depth = distance as f32;
+                    primary.normal = vec_to_f32(scene.lights[light_index].normal());
+                    primary.albedo = [1.0; 3];
                 }
                 let w = if specular_chain {
                     1.0
@@ -1414,9 +1479,6 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
                 tangent,
                 material,
             } => {
-                if depth == 0 {
-                    primary_hit = true;
-                }
                 let wo_world = -ray.direction.into_inner();
                 // Face-forward: interior faces (bore walls) must shade right.
                 let n = if normal.dot(wo_world) < 0.0 {
@@ -1424,6 +1486,12 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
                 } else {
                     normal
                 };
+                if depth == 0 {
+                    primary.hit = true;
+                    primary.depth = (point - origin).norm() as f32;
+                    primary.normal = vec_to_f32(n);
+                    primary.albedo = material.denoise_albedo();
+                }
                 let frame = shading_frame(n, tangent);
                 let wo_local = to_local(frame.t, frame.b, n, wo_world);
                 if wo_local.z <= 0.0 {
@@ -1470,7 +1538,12 @@ fn radiance(scene: &Scene, opts: &PathTraceOptions, ray: Ray, rng: &mut Rng) -> 
         }
     }
 
-    (l, primary_hit)
+    (l, primary)
+}
+
+#[inline]
+fn vec_to_f32(v: Vec3) -> [f32; 3] {
+    [v.x as f32, v.y as f32, v.z as f32]
 }
 
 /// A rendered frame in linear space.
@@ -1483,6 +1556,25 @@ pub struct Film {
     pub rgb: Vec<f32>,
     /// Coverage in 0..1, one float per pixel.
     pub alpha: Vec<f32>,
+    /// World normal at each pixel's first hit, 3 floats per pixel. Zero for
+    /// background pixels. Guide buffer for [`denoise`].
+    pub normal: Vec<f32>,
+    /// Distance from the camera to each pixel's first hit, one float per
+    /// pixel. **Zero means the primary ray escaped** — the background
+    /// sentinel. Guide buffer for [`denoise`].
+    pub depth: Vec<f32>,
+    /// Surface colour at each pixel's first hit, 3 floats per pixel. Divided
+    /// out before filtering and multiplied back after, so [`denoise`] only
+    /// ever blurs illumination.
+    pub albedo: Vec<f32>,
+    /// Estimated variance of each pixel's mean radiance luminance, one float
+    /// per pixel — the Monte Carlo estimator's own error bar.
+    ///
+    /// [`denoise`] scales its luminance edge-stopping tolerance by this, which
+    /// is what lets the filter tell "this neighbour is genuinely a different
+    /// brightness" from "this pixel is a noise spike". Without it a firefly
+    /// rejects every neighbour and survives the filter untouched.
+    pub variance: Vec<f32>,
 }
 
 /// Render `scene` from `cam` into a linear-space [`Film`].
@@ -1490,6 +1582,10 @@ pub struct Film {
 /// Scanlines are traced in parallel. Each pixel's RNG is seeded from its
 /// coordinates and the option seed, so output is deterministic and
 /// independent of thread scheduling.
+///
+/// When [`PathTraceOptions::denoise`] is set (the default), the film is run
+/// through [`denoise`] before returning. Pass `denoise: false` for a
+/// reference render.
 pub fn render(
     scene: &Scene,
     cam: &Camera,
@@ -1504,11 +1600,21 @@ pub fn render(
 
     let mut rgb = vec![0.0f32; (width * height * 3) as usize];
     let mut alpha = vec![0.0f32; (width * height) as usize];
+    let mut normal = vec![0.0f32; (width * height * 3) as usize];
+    let mut depth = vec![0.0f32; (width * height) as usize];
+    let mut albedo = vec![0.0f32; (width * height * 3) as usize];
+    let mut variance = vec![0.0f32; (width * height) as usize];
 
-    rgb.par_chunks_mut(width as usize * 3)
-        .zip(alpha.par_chunks_mut(width as usize))
+    let w3 = width as usize * 3;
+    let w1 = width as usize;
+    rgb.par_chunks_mut(w3)
+        .zip(alpha.par_chunks_mut(w1))
+        .zip(normal.par_chunks_mut(w3))
+        .zip(depth.par_chunks_mut(w1))
+        .zip(albedo.par_chunks_mut(w3))
+        .zip(variance.par_chunks_mut(w1))
         .enumerate()
-        .for_each(|(py, (row, arow))| {
+        .for_each(|(py, (((((row, arow), nrow), drow), brow), vrow))| {
             for px in 0..width as usize {
                 let mut rng = Rng::new(
                     opts.seed
@@ -1517,8 +1623,11 @@ pub fn render(
                 );
                 let mut acc = [0.0f32; 3];
                 let mut cov = 0.0f32;
+                // Running sums for the estimator's own variance.
+                let mut lsum = 0.0f32;
+                let mut lsum2 = 0.0f32;
 
-                for _ in 0..spp {
+                for s in 0..spp {
                     // Jittered pixel position.
                     let jx = rng.f64();
                     let jy = rng.f64();
@@ -1527,10 +1636,26 @@ pub fn render(
                     let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
 
                     let ray = cam.ray(sx, sy, aspect, lu, lv);
-                    let (l, hit) = radiance(scene, opts, ray, &mut rng);
+                    let (l, primary) = radiance(scene, opts, ray, &mut rng);
                     acc = add3(acc, l);
-                    if hit {
+                    let ls = luminance(l);
+                    lsum += ls;
+                    lsum2 += ls * ls;
+                    if primary.hit {
                         cov += 1.0;
+                    }
+                    if s == 0 {
+                        // Guide buffers come from one primary ray, not an
+                        // average: averaging normals and depths across
+                        // samples would soften exactly the silhouettes the
+                        // edge-stopping weights exist to protect.
+                        nrow[px * 3] = primary.normal[0];
+                        nrow[px * 3 + 1] = primary.normal[1];
+                        nrow[px * 3 + 2] = primary.normal[2];
+                        drow[px] = primary.depth;
+                        brow[px * 3] = primary.albedo[0];
+                        brow[px * 3 + 1] = primary.albedo[1];
+                        brow[px * 3 + 2] = primary.albedo[2];
                     }
                 }
 
@@ -1539,14 +1664,258 @@ pub fn render(
                 row[px * 3 + 1] = acc[1] * inv;
                 row[px * 3 + 2] = acc[2] * inv;
                 arow[px] = cov * inv;
+                // Variance of the *mean*: sample variance / spp. A single
+                // sample carries no information about its own spread, so fall
+                // back to the estimate itself as a scale.
+                vrow[px] = if spp > 1 {
+                    let mean = lsum * inv;
+                    let sample_var =
+                        (lsum2 * inv - mean * mean).max(0.0) * spp as f32 / (spp - 1) as f32;
+                    sample_var / spp as f32
+                } else {
+                    let mean = lsum;
+                    mean * mean
+                };
             }
         });
 
-    Film {
+    let mut film = Film {
         width,
         height,
         rgb,
         alpha,
+        normal,
+        depth,
+        albedo,
+        variance,
+    };
+    if opts.denoise {
+        denoise(&mut film, opts);
+    }
+    film
+}
+
+// ─── denoising ────────────────────────────────────────────────────────────
+
+/// 5×5 separable B3-spline (cubic) kernel, `[1 4 6 4 1] / 16`.
+const B3_SPLINE: [f32; 5] = [1.0 / 16.0, 1.0 / 4.0, 3.0 / 8.0, 1.0 / 4.0, 1.0 / 16.0];
+
+/// Floor on the demodulation divisor.
+///
+/// Dividing by a near-black albedo would turn a dark surface's illumination
+/// into enormous numbers, and any filtering error there comes back multiplied.
+/// Clamping trades a little residual colour-blurring on very dark materials
+/// for numerical sanity.
+const DEMOD_FLOOR: f32 = 0.05;
+
+/// Edge-aware à-trous wavelet denoiser (Dammertz et al., EGSR 2010).
+///
+/// Filters the film's linear radiance in place, guided by the normal, depth,
+/// and albedo buffers that [`render`] records from each pixel's primary ray.
+///
+/// The algorithm is a sequence of 5×5 B3-spline convolutions whose taps are
+/// spread by a doubling stride ("holes" — *à trous*), each tap weighted by how
+/// well the neighbour matches the centre pixel's normal, depth, and
+/// illumination. That reaches a wide footprint in a few passes while refusing
+/// to average across geometric or shading discontinuities.
+///
+/// Two properties are worth naming, because the tests pin them:
+///
+/// - **Illumination only.** Radiance is divided by albedo before filtering and
+///   multiplied back afterwards, so a part's colour is never blurred into its
+///   neighbour's — only the Monte Carlo noise in the lighting is smoothed.
+/// - **Background is inviolable.** A pixel whose primary ray escaped
+///   (`depth == 0`) is passed through untouched, and no surface pixel ever
+///   accepts a tap from one. Silhouettes against the backdrop stay exactly as
+///   sharp as the path tracer drew them.
+///
+/// This is a post-process: it consumes no random numbers and never touches the
+/// integrator, so a reference render is exactly the un-denoised film.
+///
+/// Only the `denoise_iters` and `sigma_*` fields of `opts` are read. Calling
+/// this *is* the request to filter, so [`PathTraceOptions::denoise`] is the
+/// caller's gate — as [`render`] uses it — and is deliberately ignored here.
+pub fn denoise(film: &mut Film, opts: &PathTraceOptions) {
+    use rayon::prelude::*;
+
+    let w = film.width as usize;
+    let h = film.height as usize;
+    let n = w * h;
+    if n == 0 || opts.denoise_iters == 0 {
+        return;
+    }
+
+    // Demodulate: work on illumination = radiance / albedo.
+    let mut illum = vec![0.0f32; n * 3];
+    let mut var = vec![0.0f32; n];
+    for i in 0..n {
+        for c in 0..3 {
+            let a = film.albedo[i * 3 + c].max(DEMOD_FLOOR);
+            illum[i * 3 + c] = film.rgb[i * 3 + c] / a;
+        }
+        // Variance was measured on radiance; demodulation scales it by the
+        // square of the (scalar) albedo it divided through.
+        let la = luminance([
+            film.albedo[i * 3].max(DEMOD_FLOOR),
+            film.albedo[i * 3 + 1].max(DEMOD_FLOOR),
+            film.albedo[i * 3 + 2].max(DEMOD_FLOOR),
+        ])
+        .max(DEMOD_FLOOR);
+        var[i] = film.variance[i] / (la * la);
+    }
+
+    // Prefilter the variance estimate with a 3×3 box. The per-pixel estimate
+    // is itself noisy at low sample counts, and a noisy error bar makes the
+    // luminance weight jitter between "trust" and "reject" from pixel to
+    // pixel.
+    {
+        let mut smooth = var.clone();
+        for y in 0..h {
+            for x in 0..w {
+                let mut s = 0.0f32;
+                let mut k = 0.0f32;
+                for dy in -1i32..=1 {
+                    for dx in -1i32..=1 {
+                        let (qx, qy) = (x as i32 + dx, y as i32 + dy);
+                        if qx < 0 || qy < 0 || qx >= w as i32 || qy >= h as i32 {
+                            continue;
+                        }
+                        let q = qy as usize * w + qx as usize;
+                        if film.depth[q] <= 0.0 {
+                            continue;
+                        }
+                        s += var[q];
+                        k += 1.0;
+                    }
+                }
+                if k > 0.0 {
+                    smooth[y * w + x] = s / k;
+                }
+            }
+        }
+        var = smooth;
+    }
+
+    let sigma_n2 = (opts.sigma_normal.max(1e-4)).powi(2);
+    let mut scratch = illum.clone();
+    let mut var_scratch = var.clone();
+    let g_depth = &film.depth;
+    let g_normal = &film.normal;
+
+    for it in 0..opts.denoise_iters {
+        let stride = 1usize << it;
+        // Dammertz shrinks a *fixed* illumination tolerance as the footprint
+        // grows. Here the tolerance is already scaled by the filtered variance,
+        // which shrinks on its own as the estimate gets cleaner, so shrinking
+        // sigma too would penalise the wide passes twice and they would reject
+        // every tap. Measured: with the extra 2^-i, iterations past the first
+        // bought nothing at all.
+        let sigma_l = opts.sigma_lum.max(1e-6);
+        let sigma_z = opts.sigma_depth.max(1e-6) * stride as f32;
+
+        scratch
+            .par_chunks_mut(w * 3)
+            .zip(var_scratch.par_chunks_mut(w))
+            .enumerate()
+            .for_each(|(y, (row, vrow))| {
+                for x in 0..w {
+                    let p = y * w + x;
+                    let z_p = g_depth[p];
+                    if z_p <= 0.0 {
+                        // Background: analytic and noise-free. Pass through.
+                        row[x * 3] = illum[p * 3];
+                        row[x * 3 + 1] = illum[p * 3 + 1];
+                        row[x * 3 + 2] = illum[p * 3 + 2];
+                        vrow[x] = var[p];
+                        continue;
+                    }
+                    let n_p = [g_normal[p * 3], g_normal[p * 3 + 1], g_normal[p * 3 + 2]];
+                    let c_p = [illum[p * 3], illum[p * 3 + 1], illum[p * 3 + 2]];
+                    let l_p = luminance(c_p);
+                    // The estimator's own error bar sets how much luminance
+                    // disagreement counts as signal rather than noise. A
+                    // firefly has an enormous error bar, so it stops
+                    // protecting itself and gets filtered.
+                    let l_tol = sigma_l * var[p].max(0.0).sqrt() + 1e-4;
+
+                    let mut sum = [0.0f32; 3];
+                    let mut vsum = 0.0f32;
+                    let mut wsum = 0.0f32;
+
+                    for (ky, dy) in (-2i32..=2).enumerate() {
+                        let qy = y as i32 + dy * stride as i32;
+                        if qy < 0 || qy >= h as i32 {
+                            continue;
+                        }
+                        for (kx, dx) in (-2i32..=2).enumerate() {
+                            let qx = x as i32 + dx * stride as i32;
+                            if qx < 0 || qx >= w as i32 {
+                                continue;
+                            }
+                            let q = qy as usize * w + qx as usize;
+                            let z_q = g_depth[q];
+                            if z_q <= 0.0 {
+                                // Never let the backdrop bleed onto a surface.
+                                continue;
+                            }
+
+                            // Normal: squared distance between unit normals.
+                            let dn = [
+                                n_p[0] - g_normal[q * 3],
+                                n_p[1] - g_normal[q * 3 + 1],
+                                n_p[2] - g_normal[q * 3 + 2],
+                            ];
+                            let dn2 = dn[0] * dn[0] + dn[1] * dn[1] + dn[2] * dn[2];
+                            let w_n = (-dn2 / sigma_n2).exp();
+
+                            // Depth: relative, so the tolerance scales with
+                            // scene size instead of being tuned per model.
+                            let w_z = (-(z_p - z_q).abs() / (sigma_z * z_p)).exp();
+
+                            // Illumination: rejects the far side of a shadow
+                            // edge or a specular highlight.
+                            let c_q = [illum[q * 3], illum[q * 3 + 1], illum[q * 3 + 2]];
+                            let w_l = (-(l_p - luminance(c_q)).abs() / l_tol).exp();
+
+                            let weight = B3_SPLINE[kx] * B3_SPLINE[ky] * w_n * w_z * w_l;
+                            if weight <= 0.0 {
+                                continue;
+                            }
+                            sum = add3(sum, scale3(c_q, weight));
+                            // Variance of a weighted mean of independent
+                            // estimates carries the *squared* weights.
+                            vsum += weight * weight * var[q];
+                            wsum += weight;
+                        }
+                    }
+
+                    let (out, vout) = if wsum > 0.0 {
+                        (scale3(sum, 1.0 / wsum), vsum / (wsum * wsum))
+                    } else {
+                        (c_p, var[p])
+                    };
+                    row[x * 3] = out[0];
+                    row[x * 3 + 1] = out[1];
+                    row[x * 3 + 2] = out[2];
+                    vrow[x] = vout;
+                }
+            });
+
+        std::mem::swap(&mut illum, &mut scratch);
+        std::mem::swap(&mut var, &mut var_scratch);
+    }
+
+    // Re-modulate back into radiance. Background pixels are left exactly as
+    // the tracer wrote them — a divide-then-multiply round trip is not
+    // bit-exact in f32, and the backdrop has no noise to remove anyway.
+    for i in 0..n {
+        if film.depth[i] <= 0.0 {
+            continue;
+        }
+        for c in 0..3 {
+            let a = film.albedo[i * 3 + c].max(DEMOD_FLOOR);
+            film.rgb[i * 3 + c] = illum[i * 3 + c] * a;
+        }
     }
 }
 
@@ -1861,6 +2230,176 @@ mod tests {
              along {} vs across {}",
             f_neg_a[0],
             f_neg_b[0]
+        );
+    }
+
+    /// Root-mean-square error between two films, measured on the tonemapped
+    /// display values rather than raw radiance.
+    ///
+    /// Linear-radiance RMSE on a path-traced frame is almost entirely a
+    /// firefly metric — measured on this scene, the worst 1% of pixels carried
+    /// 97% of the squared error, so the number mostly reports how many
+    /// outliers the *reference* still has, not how clean the image looks. The
+    /// tonemap is the transform the viewer sees through, and it is what makes
+    /// this a measure of visible error.
+    fn rmse(a: &Film, b: &Film) -> f32 {
+        assert_eq!(a.rgb.len(), b.rgb.len());
+        let s: f32 = a
+            .rgb
+            .iter()
+            .zip(&b.rgb)
+            .map(|(x, y)| {
+                let d = tonemap_aces(*x) - tonemap_aces(*y);
+                d * d
+            })
+            .sum();
+        (s / a.rgb.len() as f32).sqrt()
+    }
+
+    /// The property that matters: denoising a noisy render must move it
+    /// *closer to the truth*, not merely change it. A blur that smeared
+    /// everything would also "change the output" while making the image
+    /// worse, and this is the test that tells the two apart.
+    #[test]
+    fn denoise_moves_low_spp_toward_high_spp_reference() {
+        let scene = test_scene();
+        let cam = test_camera();
+        // Big enough that the doubling stride is meaningful: at 28px a
+        // 5-iteration à-trous reaches past the image edge and the later passes
+        // can only over-blur, which made an earlier version of this test
+        // report a 7% win where the real figure is ~60%.
+        let (w, h) = (96, 96);
+
+        let reference = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                spp: 1024,
+                denoise: false,
+                ..Default::default()
+            },
+        );
+        let noisy = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                spp: 4,
+                denoise: false,
+                ..Default::default()
+            },
+        );
+        let denoised = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                spp: 4,
+                denoise: true,
+                ..Default::default()
+            },
+        );
+
+        // Denoising is a post-process, so the two 4-spp films must have come
+        // from the very same samples.
+        assert_eq!(
+            noisy.alpha, denoised.alpha,
+            "denoising perturbed the sampling"
+        );
+
+        let before = rmse(&noisy, &reference);
+        let after = rmse(&denoised, &reference);
+        eprintln!("RMSE vs 1024spp: noisy {before:.5} -> denoised {after:.5}");
+        // Measured ~60% reduction; assert a conservative fraction of it so the
+        // test pins real quality rather than just "something happened", without
+        // being brittle to sampling changes upstream.
+        assert!(
+            after < before * 0.75,
+            "denoising did not meaningfully improve the estimate: \
+             RMSE {before} -> {after}"
+        );
+    }
+
+    /// The denoiser must not blur across a silhouette. Background pixels are
+    /// analytic and noise-free, so they must come through untouched, and no
+    /// surface pixel may pick up any backdrop.
+    #[test]
+    fn denoise_preserves_silhouette_edge() {
+        let scene = test_scene();
+        let cam = test_camera();
+        let (w, h) = (48, 48);
+        let opts = PathTraceOptions {
+            spp: 4,
+            denoise: false,
+            ..Default::default()
+        };
+        let raw = render(&scene, &cam, w, h, &opts);
+        let mut filtered = render(&scene, &cam, w, h, &opts);
+        denoise(
+            &mut filtered,
+            &PathTraceOptions {
+                denoise: true,
+                ..opts
+            },
+        );
+
+        let n = (w * h) as usize;
+        let bg: Vec<usize> = (0..n).filter(|&i| raw.depth[i] <= 0.0).collect();
+        let fg: Vec<usize> = (0..n).filter(|&i| raw.depth[i] > 0.0).collect();
+        assert!(
+            !bg.is_empty() && !fg.is_empty(),
+            "test framing must contain both subject and backdrop"
+        );
+
+        // Backdrop is bit-identical.
+        for &i in &bg {
+            for c in 0..3 {
+                assert_eq!(
+                    raw.rgb[i * 3 + c],
+                    filtered.rgb[i * 3 + c],
+                    "backdrop pixel {i} was modified by the denoiser"
+                );
+            }
+        }
+
+        // Silhouette contrast is retained. A filter that leaked across the
+        // edge would pull the two sides toward each other.
+        let mean_lum = |f: &Film, idx: &[usize]| -> f32 {
+            let s: f32 = idx
+                .iter()
+                .map(|&i| luminance([f.rgb[i * 3], f.rgb[i * 3 + 1], f.rgb[i * 3 + 2]]))
+                .sum();
+            s / idx.len() as f32
+        };
+        // Only the surface pixels that actually touch the backdrop.
+        let rim: Vec<usize> = fg
+            .iter()
+            .copied()
+            .filter(|&i| {
+                let (x, y) = ((i % w as usize) as i32, (i / w as usize) as i32);
+                [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)]
+                    .iter()
+                    .any(|(dx, dy)| {
+                        let (qx, qy) = (x + dx, y + dy);
+                        qx >= 0
+                            && qy >= 0
+                            && qx < w as i32
+                            && qy < h as i32
+                            && raw.depth[qy as usize * w as usize + qx as usize] <= 0.0
+                    })
+            })
+            .collect();
+        assert!(!rim.is_empty(), "expected a silhouette rim");
+
+        let before = (mean_lum(&raw, &rim) - mean_lum(&raw, &bg)).abs();
+        let after = (mean_lum(&filtered, &rim) - mean_lum(&filtered, &bg)).abs();
+        assert!(
+            after >= before * 0.95,
+            "silhouette contrast collapsed: {before} -> {after}"
         );
     }
 
