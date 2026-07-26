@@ -568,22 +568,6 @@ export class RayTracer {
         wasm.raytracer_resetAccumulation(this.__wbg_ptr);
     }
     /**
-     * Set SSAO (screen-space ambient occlusion) parameters.
-     *
-     * # Arguments
-     * * `radius` - World-space hemisphere sample radius (default 0.3)
-     * * `intensity` - Occlusion strength: 0 = disabled, 1 = default (>1 stylized)
-     * * `bias` - Depth bias to prevent self-occlusion (default 0.001)
-     * * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
-     * @param {number} radius
-     * @param {number} intensity
-     * @param {number} bias
-     * @param {number} sample_count
-     */
-    setAO(radius, intensity, bias, sample_count) {
-        wasm.raytracer_setAO(this.__wbg_ptr, radius, intensity, bias, sample_count);
-    }
-    /**
      * Set the debug render mode.
      *
      * # Arguments
@@ -638,12 +622,6 @@ export class RayTracer {
         wasm.raytracer_setEdgeStyle(this.__wbg_ptr, enable_silhouette, enable_crease, enable_boundary, silhouette_r, silhouette_g, silhouette_b, silhouette_a, crease_r, crease_g, crease_b, crease_a, boundary_r, boundary_g, boundary_b, boundary_a, silhouette_width, crease_width, boundary_width, edge_softness);
     }
     /**
-     * Set the material for all faces in the scene.
-     *
-     * # Arguments
-     * * `r`, `g`, `b` - RGB color components (0-1 range, linear)
-     * * `metallic` - Metallic factor (0 = dielectric, 1 = metal)
-     * * `roughness` - Roughness factor (0 = smooth/mirror, 1 = rough/diffuse)
      * @param {number} r
      * @param {number} g
      * @param {number} b
@@ -655,6 +633,57 @@ export class RayTracer {
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
+    }
+    /**
+     * Set the material for all faces in the scene.
+     *
+     * # Arguments
+     * * `r`, `g`, `b` - RGB color components (0-1 range, linear)
+     * * `metallic` - Metallic factor (0 = dielectric, 1 = metal)
+     * * `roughness` - Roughness factor (0 = smooth/mirror, 1 = rough/diffuse)
+     * Set the material from a serialized IR `MaterialDef`.
+     *
+     * Preferred over `setMaterial`: that one only carries colour, metallic and
+     * roughness, so clearcoat, IOR and anisotropy never reached the viewport
+     * and a brushed or lacquered part shaded differently here than under
+     * `vcad-render --photoreal`. This runs the SAME derivation the CPU
+     * renderer uses (`Pbr::from_material_def`), so both agree by construction.
+     *
+     * `json` is a `MaterialDef` object; pass `null`/empty to fall back to the
+     * optional `tint` (linear RGB) or the neutral default.
+     * @param {string | null} [json]
+     * @param {Float64Array | null} [tint]
+     */
+    setMaterialFromDef(json, tint) {
+        var ptr0 = isLikeNone(json) ? 0 : passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(tint) ? 0 : passArrayF64ToWasm0(tint, wasm.__wbindgen_malloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.raytracer_setMaterialFromDef(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Set the path tracer's quality ceiling and stylisation mode.
+     *
+     * Replaces the old `setAO`. The renderer is a real path tracer now, so
+     * screen-space ambient occlusion is gone — multi-bounce GI computes
+     * contact occlusion correctly, and stacking a proxy on top of it would
+     * double-darken every concave corner.
+     *
+     * # Arguments
+     * * `max_depth` - Ceiling on path length (1 = direct lighting only,
+     *   default 6, which matches `vcad-render --photoreal`). Actual depth
+     *   escalates with accumulation, so the draft frame stays interactive
+     *   regardless of this value.
+     * * `stylize` - Draw the Sobel edge overlay. Turn this OFF for a
+     *   photoreal viewport: edge lines fight photorealism.
+     * @param {number} max_depth
+     * @param {boolean} stylize
+     */
+    setPathTrace(max_depth, stylize) {
+        wasm.raytracer_setPathTrace(this.__wbg_ptr, max_depth, stylize);
     }
     /**
      * Set the adaptive refinement sample count.

@@ -256,16 +256,6 @@ export class RayTracer {
      */
     resetAccumulation(): void;
     /**
-     * Set SSAO (screen-space ambient occlusion) parameters.
-     *
-     * # Arguments
-     * * `radius` - World-space hemisphere sample radius (default 0.3)
-     * * `intensity` - Occlusion strength: 0 = disabled, 1 = default (>1 stylized)
-     * * `bias` - Depth bias to prevent self-occlusion (default 0.001)
-     * * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
-     */
-    setAO(radius: number, intensity: number, bias: number, sample_count: number): void;
-    /**
      * Set the debug render mode.
      *
      * # Arguments
@@ -290,6 +280,7 @@ export class RayTracer {
      * the sub-pixel anti-aliasing transition width.
      */
     setEdgeStyle(enable_silhouette: boolean, enable_crease: boolean, enable_boundary: boolean, silhouette_r: number, silhouette_g: number, silhouette_b: number, silhouette_a: number, crease_r: number, crease_g: number, crease_b: number, crease_a: number, boundary_r: number, boundary_g: number, boundary_b: number, boundary_a: number, silhouette_width: number, crease_width: number, boundary_width: number, edge_softness: number): void;
+    setMaterial(r: number, g: number, b: number, metallic: number, roughness: number): void;
     /**
      * Set the material for all faces in the scene.
      *
@@ -297,8 +288,35 @@ export class RayTracer {
      * * `r`, `g`, `b` - RGB color components (0-1 range, linear)
      * * `metallic` - Metallic factor (0 = dielectric, 1 = metal)
      * * `roughness` - Roughness factor (0 = smooth/mirror, 1 = rough/diffuse)
+     * Set the material from a serialized IR `MaterialDef`.
+     *
+     * Preferred over `setMaterial`: that one only carries colour, metallic and
+     * roughness, so clearcoat, IOR and anisotropy never reached the viewport
+     * and a brushed or lacquered part shaded differently here than under
+     * `vcad-render --photoreal`. This runs the SAME derivation the CPU
+     * renderer uses (`Pbr::from_material_def`), so both agree by construction.
+     *
+     * `json` is a `MaterialDef` object; pass `null`/empty to fall back to the
+     * optional `tint` (linear RGB) or the neutral default.
      */
-    setMaterial(r: number, g: number, b: number, metallic: number, roughness: number): void;
+    setMaterialFromDef(json?: string | null, tint?: Float64Array | null): void;
+    /**
+     * Set the path tracer's quality ceiling and stylisation mode.
+     *
+     * Replaces the old `setAO`. The renderer is a real path tracer now, so
+     * screen-space ambient occlusion is gone — multi-bounce GI computes
+     * contact occlusion correctly, and stacking a proxy on top of it would
+     * double-darken every concave corner.
+     *
+     * # Arguments
+     * * `max_depth` - Ceiling on path length (1 = direct lighting only,
+     *   default 6, which matches `vcad-render --photoreal`). Actual depth
+     *   escalates with accumulation, so the draft frame stays interactive
+     *   regardless of this value.
+     * * `stylize` - Draw the Sobel edge overlay. Turn this OFF for a
+     *   photoreal viewport: edge lines fight photorealism.
+     */
+    setPathTrace(max_depth: number, stylize: boolean): void;
     /**
      * Set the adaptive refinement sample count.
      *
@@ -3375,11 +3393,12 @@ export interface InitOutput {
     readonly raytracer_pick: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number];
     readonly raytracer_render: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => any;
     readonly raytracer_resetAccumulation: (a: number) => void;
-    readonly raytracer_setAO: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly raytracer_setDebugMode: (a: number, b: number) => void;
     readonly raytracer_setEdgeDetection: (a: number, b: number, c: number, d: number) => void;
     readonly raytracer_setEdgeStyle: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number) => void;
     readonly raytracer_setMaterial: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly raytracer_setMaterialFromDef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly raytracer_setPathTrace: (a: number, b: number, c: number) => void;
     readonly raytracer_setRefineSamples: (a: number, b: number) => void;
     readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
@@ -3561,17 +3580,6 @@ export interface InitOutput {
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
     readonly isSlicerAvailable: () => number;
-    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
-    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -3652,6 +3660,17 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
+    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
+    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
     readonly checkDesignConstraints: (a: number, b: number) => [number, number, number, number];
     readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
