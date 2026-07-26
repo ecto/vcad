@@ -737,77 +737,62 @@ fn export_stl_bytes(vertices: &[f32], indices: &[u32]) -> Result<Vec<u8>> {
 fn export_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
     use vcad_kernel::Solid;
 
-    // For now, we can only export primitives that haven't been through booleans
-    // We need to evaluate the document and check if B-rep is available
+    // Evaluate the document through the kernel: booleans, transforms,
+    // fillets, sweeps etc. all preserve BRep, so the result serializes to
+    // AP214 with true analytic faces.
+    let roots = vcad_eval::evaluate_root_solids(doc)
+        .map_err(|e| anyhow::anyhow!("failed to evaluate document: {e}"))?;
 
-    // Simple case: single root with a primitive
-    if doc.roots.is_empty() {
+    if roots.is_empty() {
         anyhow::bail!("Document has no geometry to export");
     }
 
-    // Get the first root and try to create geometry from it
-    let root_id = doc.roots[0].root;
-    let root_node = doc
-        .nodes
-        .get(&root_id)
-        .ok_or_else(|| anyhow::anyhow!("Root node not found"))?;
+    // Refuse per-root, naming the offenders, instead of a blanket refusal.
+    let mesh_only: Vec<String> = roots
+        .iter()
+        .filter(|r| !r.solid.as_ref().is_some_and(Solid::can_export_step))
+        .map(|r| {
+            let op = doc
+                .nodes
+                .get(&r.node_id)
+                .and_then(|n| serde_json::to_value(&n.op).ok())
+                .and_then(|v| v.get("type").and_then(|t| t.as_str().map(String::from)))
+                .unwrap_or_else(|| "unknown op".to_string());
+            match &r.name {
+                Some(name) => format!("'{}' (node {}, {})", name, r.node_id, op),
+                None => format!("node {} ({})", r.node_id, op),
+            }
+        })
+        .collect();
+    if !mesh_only.is_empty() {
+        anyhow::bail!(
+            "STEP export requires BRep geometry, but {} of {} root(s) evaluated to \
+             mesh-only or empty solids: {}. These ops (e.g. mesh imports, degraded \
+             booleans) have no analytic faces to serialize — export those parts as \
+             STL, or fix the failing feature.",
+            mesh_only.len(),
+            roots.len(),
+            mesh_only.join(", ")
+        );
+    }
 
-    // Try to create a solid from the IR
-    let solid = match &root_node.op {
-        vcad_ir::CsgOp::Cube { size } => Solid::cube(size.x, size.y, size.z),
-        vcad_ir::CsgOp::Cylinder {
-            radius,
-            height,
-            segments,
-        } => Solid::cylinder(
-            *radius,
-            *height,
-            if *segments == 0 { 32 } else { *segments },
-        ),
-        vcad_ir::CsgOp::Sphere { radius, segments } => {
-            Solid::sphere(*radius, if *segments == 0 { 32 } else { *segments })
-        }
-        vcad_ir::CsgOp::Cone {
-            radius_bottom,
-            radius_top,
-            height,
-            segments,
-        } => Solid::cone(
-            *radius_bottom,
-            *radius_top,
-            *height,
-            if *segments == 0 { 32 } else { *segments },
-        ),
-        vcad_ir::CsgOp::Torus {
-            major_radius,
-            minor_radius,
-            segments,
-        } => Solid::torus(
-            *major_radius,
-            *minor_radius,
-            if *segments == 0 { 32 } else { *segments },
-        ),
-        vcad_ir::CsgOp::Wedge { size } => Solid::wedge(size.x, size.y, size.z),
-        vcad_ir::CsgOp::Prism {
-            sides,
-            radius,
-            height,
-        } => Solid::prism(*sides, *radius, *height),
-        vcad_ir::CsgOp::StepImport { path } => {
-            // Re-read from the original STEP file
-            Solid::from_step(path)?
-        }
-        _ => {
-            anyhow::bail!(
-                "STEP export only supports primitive shapes (cube, cylinder, sphere, cone) \
-                 or previously imported STEP files. Boolean operations convert geometry to mesh \
-                 which cannot be exported to STEP format."
-            );
-        }
-    };
-
-    solid.to_step(output)?;
-    println!("Exported STEP to {}", output.display());
+    let named: Vec<(&Solid, String)> = roots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            let name = r.name.clone().unwrap_or_else(|| format!("part_{}", i + 1));
+            r.solid.as_ref().map(|s| (s, name))
+        })
+        .collect();
+    let refs: Vec<(&Solid, &str)> = named.iter().map(|(s, n)| (*s, n.as_str())).collect();
+    let buffer = Solid::solids_to_step_buffer(&refs)?;
+    std::fs::write(output, buffer)?;
+    println!(
+        "Exported STEP ({} solid{}) to {}",
+        roots.len(),
+        if roots.len() == 1 { "" } else { "s" },
+        output.display()
+    );
     Ok(())
 }
 

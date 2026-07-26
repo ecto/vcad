@@ -1335,6 +1335,23 @@ impl Solid {
         }
     }
 
+    /// Export several named solids into a single STEP file buffer.
+    ///
+    /// Every solid must carry BRep data; a mesh-only or empty entry returns
+    /// `StepExportError::NotBRep` / `Empty` — check [`Solid::can_export_step`]
+    /// per solid first if you want to name the offender.
+    pub fn solids_to_step_buffer(solids: &[(&Solid, &str)]) -> Result<Vec<u8>, StepExportError> {
+        let mut breps: Vec<(&BRepSolid, &str)> = Vec::with_capacity(solids.len());
+        for (solid, name) in solids {
+            match &solid.repr {
+                SolidRepr::BRep(brep) => breps.push((brep.as_ref(), name)),
+                SolidRepr::Mesh(_) => return Err(StepExportError::NotBRep),
+                SolidRepr::Empty => return Err(StepExportError::Empty),
+            }
+        }
+        Ok(vcad_kernel_step::write_step_solids_to_buffer(&breps)?)
+    }
+
     /// Check if this solid can be exported to STEP format.
     ///
     /// Returns `true` if the solid has B-rep data (not converted to mesh-only).

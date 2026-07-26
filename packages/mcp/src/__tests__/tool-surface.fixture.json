@@ -1521,7 +1521,7 @@
   {
     "name": "export_cad",
     "title": "Export CAD",
-    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
+    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and STEP AP214 (CNC quoting: BRep with true analytic faces, preserved through booleans/transforms/fillets/sweeps; sheet-metal documents export the FOLDED body with cylindrical bend faces that 3D fab pipelines like SendCutSend auto-detect). Mesh-only parts (imported meshes) can't go to STEP and are refused by name — use STL for those. Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1539,7 +1539,7 @@
         },
         "filename": {
           "type": "string",
-          "description": "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp), relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) auto-detect bends, angles, and directions with zero data entry."
+          "description": "Output filename with extension (.stl, .glb, or .step/.stp), relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). STEP is a BRep AP214 export: booleans, transforms, fillets, and sweeps keep true analytic faces (the format CNC vendors quote from). Sheet-metal documents export the FOLDED body with cylindrical bend faces auto-detected by 3D fab pipelines (e.g. SendCutSend). Parts built from imported meshes have no BRep and are refused by name — export those as STL."
         },
         "joint_state": {
           "type": "object",

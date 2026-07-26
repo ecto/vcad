@@ -60,7 +60,9 @@ pub use pmi::{
     StepTolerance,
 };
 pub use reader::{read_step, read_step_from_buffer};
-pub use writer::{write_step, write_step_to_buffer};
+pub use writer::{
+    write_step, write_step_solids, write_step_solids_to_buffer, write_step_to_buffer,
+};
 
 // Re-export stepperoni types for downstream consumers
 pub use stepperoni::{

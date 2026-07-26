@@ -31,7 +31,10 @@ use vcad_ir::Transform3D;
 use vcad_kernel::Solid;
 
 // Re-export main entry points
-pub use evaluate::{evaluate_document, evaluate_document_with_sheet_metal, evaluate_node};
+pub use evaluate::{
+    evaluate_document, evaluate_document_with_sheet_metal, evaluate_node, evaluate_root_solids,
+    RootSolid,
+};
 pub use kinematics::solve_forward_kinematics;
 pub use validate::validate_document;
 pub use vcad_ir::resolve::{self, resolve_document, resolve_document_cloned, ResolvePatchError};
