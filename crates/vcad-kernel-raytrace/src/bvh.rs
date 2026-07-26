@@ -187,10 +187,14 @@ impl Bvh {
             Vec::new()
         };
 
-        let tris: Vec<[u32; 3]> = mesh
-            .indices
-            .chunks_exact(3)
-            .map(|c| [c[0], c[1], c[2]])
+        let tris: Vec<[u32; 3]> = (0..mesh.indices.len() / 3)
+            .map(|i| {
+                [
+                    mesh.indices[i * 3],
+                    mesh.indices[i * 3 + 1],
+                    mesh.indices[i * 3 + 2],
+                ]
+            })
             .filter(|t| {
                 if !t.iter().all(|&i| (i as usize) < vertex_count) {
                     return false;
