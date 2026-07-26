@@ -218,6 +218,22 @@ The catalog behind `search_mechanical_parts` supplies stocked lengths, so `M4x11
 
 `vcad-kernel-raytrace` renders BReps pixel-perfectly *without* tessellation: analytic ray intersection against every surface type, SAH-built BVH acceleration, and trimmed-surface handling, running as a WebGPU compute pipeline in the app's ray-traced view mode. The same engine runs on the CPU for headless output: `vcad-render part.vcad --raytrace --png out.png` produces an exact-silhouette raster in any of the standard views.
 
+### Photorealistic Path Tracing
+
+The same crate carries a physically-based path tracer (`vcad-render part.vcad --photoreal -o out.png`): multi-bounce global illumination, a layered metallic-roughness-clearcoat BSDF with GGX visible-normal sampling, and a camera with a real aperture — all still tracing the untessellated BRep, so silhouettes and specular highlights on fillets are exact at any resolution.
+
+Lighting splits by frequency. The default is an analytic studio gradient plus three intersectable softboxes, combined under multiple importance sampling — fast, and good for neutral product renders. `--env` swaps in a lat-long HDR environment instead:
+
+```bash
+# built-in studio environments: studio, softbox, overcast
+vcad-render part.loon --photoreal --env softbox --env-rotation 40 -o hero.png
+
+# or any lat-long Radiance .hdr (Poly Haven and friends)
+vcad-render part.loon --photoreal --env ~/hdri/studio_small_08_2k.hdr -o hero.png
+```
+
+Because a real HDRI has high-frequency content — windows, a sun disc — BSDF sampling alone would be very noisy, so an image environment builds a `sin(theta)`-weighted 2D CDF (marginal over rows, conditional within each row) and joins the MIS mix as a third sampling strategy. An image environment replaces the softbox rig, since the HDRI *is* the lighting; `--env-rotation` spins it about the vertical axis for art direction.
+
 ### GPU Compute
 
 `vcad-kernel-gpu` offloads mesh work — normal computation, decimation — to wgpu compute shaders.

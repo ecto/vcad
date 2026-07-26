@@ -307,6 +307,18 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = BackdropArg::Studio, requires = "photoreal")]
     backdrop: BackdropArg,
 
+    /// Environment lighting for `--photoreal`: `gradient` (the analytic
+    /// studio sky plus the softbox rig, the default), a built-in studio
+    /// HDRI (`studio`, `softbox`, `overcast`), or a path to a lat-long
+    /// Radiance `.hdr` file. An image environment replaces the softbox rig.
+    #[arg(long, default_value = "gradient", requires = "photoreal")]
+    env: String,
+
+    /// Spin the image environment about the vertical axis, in degrees
+    /// (`--photoreal`). Ignored by `--env gradient`.
+    #[arg(long, default_value_t = 0.0, requires = "photoreal")]
+    env_rotation: f64,
+
     /// Random seed for `--photoreal` sampling.
     #[arg(long, default_value_t = 0x5eed_1234, requires = "photoreal")]
     seed: u64,
@@ -428,6 +440,8 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
         {
             use vcad_render::photoreal::{Backdrop, PhotorealOptions};
             let pr = PhotorealOptions {
+                environment: vcad_render::envmap::parse_env_arg(&cli.env),
+                env_rotation_deg: cli.env_rotation,
                 spp: cli.spp,
                 max_depth: cli.max_depth,
                 exposure: cli.exposure,

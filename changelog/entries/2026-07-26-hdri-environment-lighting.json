@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-hdri-environment-lighting",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "HDRI environment lighting for photoreal renders",
+  "summary": "vcad-render --photoreal gains --env (three built-in studio HDRIs or any lat-long .hdr file) and --env-rotation, importance-sampled as a third MIS strategy.",
+  "features": ["render", "photoreal", "lighting"]
+}

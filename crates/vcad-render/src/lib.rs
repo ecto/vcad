@@ -38,6 +38,8 @@
 
 #![warn(missing_docs)]
 
+#[cfg(feature = "raytrace")]
+pub mod envmap;
 mod exact;
 pub mod pcb;
 #[cfg(feature = "raytrace")]
