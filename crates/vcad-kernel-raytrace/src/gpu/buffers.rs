@@ -463,6 +463,18 @@ pub struct GpuRenderState {
     pub boundary_width: f32,
     /// Sub-pixel softness factor (higher = softer AA transition).
     pub edge_softness: f32,
+    /// Environment mode: 0 = analytic gradient, 1 = lat-long HDR image.
+    pub env_mode: u32,
+    /// Environment image width in texels (image mode only).
+    pub env_width: u32,
+    /// Environment image height in texels (image mode only).
+    pub env_height: u32,
+    /// Environment rotation about +Z, in radians.
+    pub env_rotation: f32,
+    /// Normaliser for the environment's uv-space PDF.
+    pub env_marg_int: f32,
+    /// Padding to a 16-byte multiple (required for uniform buffers).
+    pub _pad3: [u32; 3],
 }
 
 /// Default silhouette line color: near-black, slightly cool.
@@ -533,6 +545,12 @@ impl GpuRenderState {
             crease_width: 0.75,
             boundary_width: 1.25,
             edge_softness: 1.5,
+            env_mode: 0,
+            env_width: 0,
+            env_height: 0,
+            env_rotation: 0.0,
+            env_marg_int: 0.0,
+            _pad3: [0; 3],
         }
     }
 
@@ -641,6 +659,12 @@ impl GpuRenderState {
             crease_width,
             boundary_width,
             edge_softness,
+            env_mode: 0,
+            env_width: 0,
+            env_height: 0,
+            env_rotation: 0.0,
+            env_marg_int: 0.0,
+            _pad3: [0; 3],
         }
     }
 
@@ -729,6 +753,9 @@ pub struct GpuScene {
     pub inner_loop_descs: Vec<u32>,
     /// Mapping from FaceId to GPU face index.
     pub face_index_map: std::collections::HashMap<FaceId, u32>,
+    /// Optional lat-long HDR environment. `None` uses the analytic studio
+    /// gradient, matching `pathtrace::Environment::default()`.
+    pub environment: Option<crate::pathtrace::GpuEnvPack>,
     /// Area lights (softboxes) illuminating the scene, derived from the scene
     /// bounds via [`crate::pathtrace::studio_rig`] — the same rig the CPU
     /// renderer uses, so highlights match between the two.
@@ -1037,6 +1064,7 @@ impl GpuScene {
             trim_verts,
             inner_loop_descs,
             face_index_map,
+            environment: None,
             lights,
         })
     }
@@ -1157,6 +1185,16 @@ impl GpuScene {
             roughness,
             ..Default::default()
         };
+    }
+
+    /// Light the scene with a lat-long HDR environment instead of the analytic
+    /// gradient.
+    ///
+    /// The map is importance-sampled on the GPU exactly as it is on the CPU —
+    /// same CDFs, same nearest-texel lookup, same solid-angle PDF — so both
+    /// renderers converge to the same image.
+    pub fn set_environment(&mut self, env: Option<&crate::pathtrace::EnvMap>) {
+        self.environment = env.map(|e| e.pack_for_gpu());
     }
 
     /// Set the material for all faces from an IR material definition.

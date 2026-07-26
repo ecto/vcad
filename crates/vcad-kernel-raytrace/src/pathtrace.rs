@@ -407,6 +407,23 @@ fn sample_1d(cdf: &[f32], u: f32) -> (usize, f32) {
     (i, d.clamp(0.0, 1.0))
 }
 
+/// An [`EnvMap`] flattened for GPU upload. See [`EnvMap::pack_for_gpu`].
+#[derive(Debug, Clone)]
+pub struct GpuEnvPack {
+    /// Pixels, then conditional CDFs, then the marginal CDF.
+    pub data: Vec<f32>,
+    /// Image width in texels.
+    pub width: u32,
+    /// Image height in texels.
+    pub height: u32,
+    /// Overall multiplier.
+    pub intensity: f32,
+    /// Rotation about +Z in radians.
+    pub rotation: f32,
+    /// PDF normaliser; zero means "not importance-sampled".
+    pub marg_int: f32,
+}
+
 /// A lat-long (equirectangular) HDR environment map with a 2D CDF for
 /// importance sampling.
 ///
@@ -587,6 +604,36 @@ impl EnvMap {
         }
         let two_pi_sq = 2.0 * std::f32::consts::PI * std::f32::consts::PI;
         pdf_uv / (two_pi_sq * sin_t)
+    }
+
+    /// Pack for GPU upload: pixels, then the per-row conditional CDFs, then
+    /// the marginal CDF — the layout `env.wgsl` reads.
+    ///
+    /// Lives here, next to where the CDFs are built, so the two descriptions of
+    /// the layout cannot drift apart.
+    pub fn pack_for_gpu(&self) -> GpuEnvPack {
+        let mut data = Vec::with_capacity(
+            3 * self.width * self.height + self.cond_cdf.len() + self.marg_cdf.len(),
+        );
+        for px in &self.pixels {
+            data.extend_from_slice(px);
+        }
+        data.extend_from_slice(&self.cond_cdf);
+        data.extend_from_slice(&self.marg_cdf);
+        GpuEnvPack {
+            data,
+            width: self.width as u32,
+            height: self.height as u32,
+            intensity: self.intensity,
+            rotation: self.rotation as f32,
+            // Zero when the map carries no energy, which switches the shader's
+            // importance sampling off exactly as `is_sampleable` does here.
+            marg_int: if self.is_sampleable() {
+                self.marg_int
+            } else {
+                0.0
+            },
+        }
     }
 
     /// Importance-sample a direction. Returns `(direction, radiance, pdf)`

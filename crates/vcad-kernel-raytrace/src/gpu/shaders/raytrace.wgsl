@@ -78,6 +78,15 @@ struct RenderState {
     crease_width: f32,
     boundary_width: f32,
     edge_softness: f32,
+    // Environment: 0 = analytic gradient, 1 = lat-long HDR image in env_data.
+    env_mode: u32,
+    env_width: u32,
+    env_height: u32,
+    env_rotation: f32,
+    env_marg_int: f32,
+    _pad3: u32,
+    _pad4: u32,
+    _pad5: u32,
 }
 
 struct RayHit {
@@ -117,6 +126,11 @@ struct GpuAreaLight {
 // highlights on metal. Populated from `pathtrace::studio_rig`, the same
 // function the CPU renderer uses, so both rigs are identical.
 @group(0) @binding(11) var<storage, read> lights: array<GpuAreaLight>;
+// HDR environment: pixels + conditional/marginal CDFs packed into one buffer
+// (see env.wgsl for the layout). One buffer rather than three keeps the
+// storage-binding count inside what browsers allow.
+@group(0) @binding(13) var<storage, read> env_data: array<f32>;
+
 // Per-pixel face_idx for analytic crease detection (0xFFFFFFFF = background).
 // Written at frame 1; read at frame 2+ by detect_edge_sobel.
 @group(0) @binding(12) var<storage, read_write> feature_id_buffer: array<u32>;
@@ -1194,6 +1208,16 @@ fn env_radiance(d: vec3<f32>) -> vec3<f32> {
     let horizon = vec3<f32>(0.62, 0.64, 0.68);
     let ground_c = vec3<f32>(0.18, 0.17, 0.16);
 
+    if render_state.env_mode == ENV_MODE_IMAGE {
+        return env_image_radiance(
+            d,
+            render_state.env_width,
+            render_state.env_height,
+            render_state.env_intensity,
+            render_state.env_rotation,
+        );
+    }
+
     let t = d.z;
     var c: vec3<f32>;
     if t >= 0.0 {
@@ -1359,6 +1383,54 @@ fn sample_lights(
     return sum;
 }
 
+// Next-event estimation against the environment, MIS-weighted against BSDF
+// sampling. Only runs for an importance-sampled environment (the HDR image);
+// the analytic gradient is low-frequency enough that BSDF sampling alone
+// integrates it, which is why it has no CDF in either renderer.
+//
+// Mirrors `pathtrace::Scene::sample_environment`.
+fn sample_environment(
+    p: vec3<f32>,
+    frame: mat3x3<f32>,
+    n: vec3<f32>,
+    wo_local: vec3<f32>,
+    m: GpuMaterial,
+    pixel: vec2<u32>,
+    depth: u32,
+) -> vec3<f32> {
+    if render_state.env_mode != ENV_MODE_IMAGE {
+        return vec3<f32>(0.0);
+    }
+    let r = rand_uniform2(pixel, 601u + depth * 19u);
+    let es = env_image_sample(
+        r.x,
+        r.y,
+        render_state.env_width,
+        render_state.env_height,
+        render_state.env_intensity,
+        render_state.env_rotation,
+        render_state.env_marg_int,
+    );
+    if !es.ok || max3(es.radiance) <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let wi_local = to_local(frame, es.dir);
+    if wi_local.z <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let e = bsdf_eval(m, wo_local, wi_local);
+    if max3(e.value) <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    // The environment is at infinity: nothing between here and the sky may
+    // block, so the shadow ray is unbounded.
+    if occluded(p + n * 1e-4, es.dir, MAX_T) {
+        return vec3<f32>(0.0);
+    }
+    let w = power_heuristic(es.pdf, e.pdf);
+    return e.value * es.radiance * (w / es.pdf);
+}
+
 // ─── integrator ───────────────────────────────────────────────────────────
 
 // Unidirectional path tracer: multi-bounce GI with throughput accumulation,
@@ -1419,8 +1491,23 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         }
 
         if hit.face_idx == 0xFFFFFFFFu {
-            // Escaped the scene — pick up the environment.
-            l += throughput * env_radiance(ray_d);
+            // Escaped the scene — pick up the environment, MIS-weighted
+            // against environment NEE, which could also have found this
+            // direction. A specular chain (including the primary ray) had no
+            // other strategy, so it takes full weight; so does the gradient,
+            // which is not importance-sampled.
+            var w = 1.0;
+            if !specular_chain && render_state.env_mode == ENV_MODE_IMAGE {
+                let epdf = env_image_pdf(
+                    ray_d,
+                    render_state.env_width,
+                    render_state.env_height,
+                    render_state.env_rotation,
+                    render_state.env_marg_int,
+                );
+                w = power_heuristic(prev_bsdf_pdf, epdf);
+            }
+            l += throughput * env_radiance(ray_d) * w;
             break;
         }
 
@@ -1456,7 +1543,8 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         }
 
         // Next-event estimation.
-        var direct = sample_lights(surf.point, frame, n, wo_local, surf.material, pixel, depth);
+        var direct = sample_lights(surf.point, frame, n, wo_local, surf.material, pixel, depth)
+            + sample_environment(surf.point, frame, n, wo_local, surf.material, pixel, depth);
         if depth > 0u && render_state.firefly_clamp > 0.0 {
             direct = min(direct, vec3<f32>(render_state.firefly_clamp));
         }

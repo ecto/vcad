@@ -173,6 +173,17 @@ impl RayTracePipeline {
                             },
                             count: None,
                         },
+                        // HDR environment data (pixels + CDFs, one buffer)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 13,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
                         // Feature ID buffer (per-pixel face_idx for analytic crease detection)
                         wgpu::BindGroupLayoutEntry {
                             binding: 12,
@@ -364,6 +375,22 @@ impl RayTracePipeline {
     ) -> Result<(Vec<u8>, wgpu::Buffer), GpuError> {
         use wgpu::util::DeviceExt;
 
+        // Derive the scene-dependent state here rather than trusting callers to
+        // keep it in sync with the buffers we are about to bind.
+        let mut render_state = render_state;
+        render_state.light_count = scene.lights.len() as u32;
+        match &scene.environment {
+            Some(e) => {
+                render_state.env_mode = 1;
+                render_state.env_width = e.width;
+                render_state.env_height = e.height;
+                render_state.env_intensity = e.intensity;
+                render_state.env_rotation = e.rotation;
+                render_state.env_marg_int = e.marg_int;
+            }
+            None => render_state.env_mode = 0,
+        }
+
         // Create camera buffer
         let camera_buffer = ctx
             .device
@@ -513,6 +540,21 @@ impl RayTracePipeline {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
+        // HDR environment. WGSL cannot bind a zero-length storage array, so a
+        // gradient-lit scene still gets a one-element dummy; `env_mode` is what
+        // the shader actually branches on.
+        let env_data: &[f32] = match &scene.environment {
+            Some(e) if !e.data.is_empty() => &e.data,
+            _ => &[0.0f32],
+        };
+        let env_buf = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Environment Buffer"),
+                contents: bytemuck::cast_slice(env_data),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
         // Feature ID buffer: one u32 per pixel storing face_idx (0xFFFFFFFF = background).
         // Written at frame 1 and reused by the crease detector on subsequent frames.
         let feature_id_buf_size = (width * height * 4) as u64;
@@ -589,6 +631,10 @@ impl RayTracePipeline {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: feature_id_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: env_buf.as_entire_binding(),
                 },
             ],
         });

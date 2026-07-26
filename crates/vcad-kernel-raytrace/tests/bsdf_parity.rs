@@ -99,20 +99,23 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 
 /// Run one entry point of the harness module.
 ///
-/// Both entry points live in the same module, so the bind group must cover
-/// every binding either of them uses; the pass that does not care about a
-/// buffer still binds a one-element dummy. Returns the raw bytes of the output
-/// buffer the caller asked for (`out_binding` is 1 or 3).
+/// All entry points live in one module, so the bind group must cover every
+/// binding any of them uses; a pass that does not care about a buffer still
+/// binds a small dummy. Inputs sit on even bindings, outputs on odd ones
+/// (plus binding 6, the environment data). Returns the raw bytes of
+/// `out_binding`.
 fn run_pass(
     ctx: &GpuContext,
     entry: &str,
-    in0: &[u8],
-    in2: &[u8],
+    ins: &[(u32, &[u8])],
     out_binding: u32,
     out_size: u64,
     invocations: u32,
 ) -> Vec<u8> {
     use wgpu::util::DeviceExt;
+
+    const IN_BINDINGS: [u32; 4] = [0, 2, 4, 6];
+    const OUT_BINDINGS: [u32; 3] = [1, 3, 5];
 
     let source = shaders::compose(shaders::BSDF_PARITY_HARNESS);
     ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -123,27 +126,37 @@ fn run_pass(
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
 
-    let mk_in = |label, bytes: &[u8]| {
-        ctx.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytes,
-                usage: wgpu::BufferUsages::STORAGE,
-            })
-    };
-    let mk_out = |label, size: u64| {
-        ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        })
-    };
-
-    let buf0 = mk_in("parity in", in0);
-    let buf2 = mk_in("tangent in", in2);
-    let buf1 = mk_out("parity out", if out_binding == 1 { out_size } else { 64 });
-    let buf3 = mk_out("tangent out", if out_binding == 3 { out_size } else { 64 });
+    let dummy = [0u8; 64];
+    let mut buffers: Vec<(u32, wgpu::Buffer)> = Vec::new();
+    for b in IN_BINDINGS {
+        let bytes = ins
+            .iter()
+            .find(|(bind, _)| *bind == b)
+            .map(|(_, d)| *d)
+            .unwrap_or(&dummy);
+        buffers.push((
+            b,
+            ctx.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("harness in"),
+                    contents: bytes,
+                    usage: wgpu::BufferUsages::STORAGE,
+                }),
+        ));
+    }
+    for b in OUT_BINDINGS {
+        let size = if b == out_binding { out_size } else { 64 };
+        buffers.push((
+            b,
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("harness out"),
+                size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+        ));
+    }
+    buffers.sort_by_key(|(b, _)| *b);
 
     let read_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
@@ -152,16 +165,15 @@ fn run_pass(
         mapped_at_creation: false,
     });
 
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = buffers
+        .iter()
+        .map(|(b, _)| storage_entry(*b, IN_BINDINGS.contains(b)))
+        .collect();
     let layout = ctx
         .device
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("parity layout"),
-            entries: &[
-                storage_entry(0, true),
-                storage_entry(1, false),
-                storage_entry(2, true),
-                storage_entry(3, false),
-            ],
+            entries: &entries,
         });
 
     let pipeline_layout = ctx
@@ -186,33 +198,23 @@ fn run_pass(
     let validation = pollster::block_on(ctx.device.pop_error_scope());
     assert!(
         validation.is_none(),
-        "BSDF harness failed WebGPU validation: {validation:?}\n\
+        "harness failed WebGPU validation: {validation:?}\n\
          A WGSL compile error here silently no-ops the dispatch and the \
          readback comes back all zeros — which would make every parity \
          assertion below compare 0 against 0 and pass vacuously.",
     );
 
+    let bg_entries: Vec<wgpu::BindGroupEntry> = buffers
+        .iter()
+        .map(|(b, buf)| wgpu::BindGroupEntry {
+            binding: *b,
+            resource: buf.as_entire_binding(),
+        })
+        .collect();
     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("parity bind group"),
         layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buf0.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: buf1.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: buf2.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: buf3.as_entire_binding(),
-            },
-        ],
+        entries: &bg_entries,
     });
 
     let mut encoder = ctx
@@ -229,7 +231,7 @@ fn run_pass(
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(invocations.div_ceil(64), 1, 1);
     }
-    let src = if out_binding == 1 { &buf1 } else { &buf3 };
+    let src = &buffers.iter().find(|(b, _)| *b == out_binding).unwrap().1;
     encoder.copy_buffer_to_buffer(src, 0, &read_buf, 0, out_size);
     ctx.queue.submit(Some(encoder.finish()));
 
@@ -250,12 +252,10 @@ fn run_pass(
 
 /// Run the BSDF harness over `inputs` and read back one output per input.
 fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
-    let dummy = TangentInput::zeroed();
     let bytes = run_pass(
         ctx,
         "bsdf_parity",
-        bytemuck::cast_slice(inputs),
-        bytemuck::bytes_of(&dummy),
+        &[(0, bytemuck::cast_slice(inputs))],
         1,
         (inputs.len() * std::mem::size_of::<ParityOutput>()) as u64,
         inputs.len() as u32,
@@ -265,12 +265,10 @@ fn run_harness(ctx: &GpuContext, inputs: &[ParityInput]) -> Vec<ParityOutput> {
 
 /// Run the surface-tangent harness and read back one dP/du per input.
 fn run_tangent_harness(ctx: &GpuContext, inputs: &[TangentInput]) -> Vec<[f32; 4]> {
-    let dummy = ParityInput::zeroed();
     let bytes = run_pass(
         ctx,
         "tangent_parity",
-        bytemuck::bytes_of(&dummy),
-        bytemuck::cast_slice(inputs),
+        &[(2, bytemuck::cast_slice(inputs))],
         3,
         (inputs.len() * 16) as u64,
         inputs.len() as u32,
@@ -795,5 +793,270 @@ fn gpu_material_round_trips_the_shared_derivation() {
     assert!(
         Pbr::from_material_def(Some(&defs[2]), None).clearcoat > 0.0,
         "a glossy dielectric should pick up a clearcoat"
+    );
+}
+
+/// Mirrors `EnvInput` in `bsdf_parity.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct EnvInput {
+    dir: [f32; 4],
+    rnd: [f32; 4],
+    width: u32,
+    height: u32,
+    intensity: f32,
+    rotation: f32,
+    marg_int: f32,
+    _pad: [u32; 3],
+}
+
+/// Mirrors `EnvOutput` in `bsdf_parity.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+struct EnvOutput {
+    eval: [f32; 4],
+    sample_dir: [f32; 4],
+    sample_radiance: [f32; 4],
+    resampled: [f32; 4],
+}
+
+/// A small but genuinely high-frequency lat-long map: a bright "sun" texel
+/// against a dim sky, plus a warm horizon band. Flat maps would let a broken
+/// CDF pass, since every bin would be equally likely.
+fn test_envmap() -> vcad_kernel_raytrace::pathtrace::EnvMap {
+    use vcad_kernel_raytrace::pathtrace::EnvMap;
+    let (w, h) = (32usize, 16usize);
+    let mut px = vec![[0.02f32, 0.03, 0.05]; w * h];
+    for (j, row) in (0..h).enumerate() {
+        let _ = row;
+        for i in 0..w {
+            // Warm band across the horizon.
+            if j == h / 2 {
+                px[j * w + i] = [0.6, 0.45, 0.3];
+            }
+        }
+    }
+    // A hot, tiny sun well away from the poles.
+    px[4 * w + 9] = [180.0, 170.0, 150.0];
+    px[4 * w + 10] = [90.0, 85.0, 75.0];
+    EnvMap::new(w, h, px)
+        .expect("valid dimensions")
+        .with_intensity(1.3)
+        .with_rotation_deg(37.0)
+}
+
+/// The GPU environment must agree with `pathtrace::EnvMap` on radiance, on the
+/// solid-angle PDF, and on what importance sampling draws.
+///
+/// The PDF is the dangerous one: MIS combines it with the BSDF PDF, so a
+/// mismatch produces an image that is energy-wrong yet entirely plausible.
+#[test]
+#[ignore = "requires GPU"]
+fn gpu_environment_matches_cpu_envmap() {
+    use vcad_kernel_math::Vec3;
+
+    let Some(ctx) = ctx_or_skip("gpu_environment_matches_cpu_envmap") else {
+        return;
+    };
+
+    let env = test_envmap();
+    let pack = env.pack_for_gpu();
+
+    // Directions spread over the whole sphere, including near-polar ones where
+    // the sin(theta) Jacobian blows up.
+    let dirs: Vec<Vec3> = (0..64)
+        .map(|k| {
+            let a = k as f64 * 0.9312;
+            let z = -0.985 + 1.97 * (k as f64 / 63.0);
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            Vec3::new(r * a.cos(), r * a.sin(), z).normalize()
+        })
+        .collect();
+
+    let inputs: Vec<EnvInput> = dirs
+        .iter()
+        .enumerate()
+        .map(|(k, d)| EnvInput {
+            dir: [d.x as f32, d.y as f32, d.z as f32, 0.0],
+            rnd: [halton(k as u32 + 1, 2), halton(k as u32 + 1, 3), 0.0, 0.0],
+            width: pack.width,
+            height: pack.height,
+            intensity: pack.intensity,
+            rotation: pack.rotation,
+            marg_int: pack.marg_int,
+            _pad: [0; 3],
+        })
+        .collect();
+
+    let bytes = run_pass(
+        ctx,
+        "env_parity",
+        &[
+            (4, bytemuck::cast_slice(&inputs)),
+            (6, bytemuck::cast_slice(&pack.data)),
+        ],
+        5,
+        (inputs.len() * std::mem::size_of::<EnvOutput>()) as u64,
+        inputs.len() as u32,
+    );
+    let out: Vec<EnvOutput> = bytemuck::cast_slice(&bytes).to_vec();
+    assert_eq!(out.len(), inputs.len());
+
+    let mut sampled = 0usize;
+    let mut hot = 0usize;
+    for (k, (d, o)) in dirs.iter().zip(&out).enumerate() {
+        // Radiance.
+        let want = env.radiance(*d);
+        for (c, &wc) in want.iter().enumerate() {
+            let tol = 1e-4 * wc.abs().max(1.0);
+            assert!(
+                (o.eval[c] - wc).abs() <= tol,
+                "dir {k} channel {c}: env radiance diverged — GPU {} vs CPU {wc} \
+                 (the two renderers would light the scene differently)",
+                o.eval[c],
+            );
+        }
+        if want[0] > 1.0 {
+            hot += 1;
+        }
+
+        // PDF.
+        let want_pdf = env.pdf(*d);
+        assert!(
+            (o.eval[3] - want_pdf).abs() <= 1e-4 * want_pdf.abs().max(1.0),
+            "dir {k}: env PDF diverged — GPU {} vs CPU {want_pdf}. MIS weights \
+             come from this number, so the image goes energy-wrong invisibly.",
+            o.eval[3],
+        );
+
+        // Sampling: the returned pdf must equal the pdf re-evaluated at the
+        // sampled direction, exactly as the CPU recomputes it through `pdf`.
+        if o.sample_radiance[3] > 0.5 {
+            sampled += 1;
+            let p = o.sample_dir[3];
+            assert!(
+                (p - o.resampled[0]).abs() <= 1e-4 * p.max(1.0),
+                "sample {k}: env sample pdf {p} != pdf at the sampled direction \
+                 {}",
+                o.resampled[0],
+            );
+            // And that direction's CPU pdf must match too.
+            let sd = Vec3::new(
+                o.sample_dir[0] as f64,
+                o.sample_dir[1] as f64,
+                o.sample_dir[2] as f64,
+            );
+            let cpu_p = env.pdf(sd);
+            assert!(
+                (p - cpu_p).abs() <= 2e-3 * p.max(1.0),
+                "sample {k}: GPU sampled pdf {p} vs CPU pdf {cpu_p} at the same \
+                 direction — the two CDFs disagree",
+            );
+        }
+    }
+
+    assert!(
+        sampled > inputs.len() / 2,
+        "only {sampled}/{} env samples succeeded — the harness probably did \
+         not run",
+        inputs.len(),
+    );
+    assert!(
+        hot > 0,
+        "no direction landed on the bright sun texel — the sweep is not \
+         exercising the high-frequency part of the map, which is exactly where \
+         a broken CDF would show",
+    );
+}
+
+/// Importance sampling must actually concentrate on the bright texels. A CDF
+/// that degenerated to uniform would still satisfy the pdf-agreement checks
+/// above while converging far more slowly than the CPU.
+#[test]
+#[ignore = "requires GPU"]
+fn gpu_environment_sampling_finds_the_sun() {
+    let Some(ctx) = ctx_or_skip("gpu_environment_sampling_finds_the_sun") else {
+        return;
+    };
+
+    let env = test_envmap();
+    let pack = env.pack_for_gpu();
+
+    let n = 2048u32;
+    let inputs: Vec<EnvInput> = (0..n)
+        .map(|k| EnvInput {
+            dir: [0.0, 0.0, 1.0, 0.0],
+            rnd: [halton(k + 1, 2), halton(k + 1, 3), 0.0, 0.0],
+            width: pack.width,
+            height: pack.height,
+            intensity: pack.intensity,
+            rotation: pack.rotation,
+            marg_int: pack.marg_int,
+            _pad: [0; 3],
+        })
+        .collect();
+
+    let bytes = run_pass(
+        ctx,
+        "env_parity",
+        &[
+            (4, bytemuck::cast_slice(&inputs)),
+            (6, bytemuck::cast_slice(&pack.data)),
+        ],
+        5,
+        (inputs.len() * std::mem::size_of::<EnvOutput>()) as u64,
+        inputs.len() as u32,
+    );
+    let out: Vec<EnvOutput> = bytemuck::cast_slice(&bytes).to_vec();
+
+    let bright = out
+        .iter()
+        .filter(|o| o.sample_radiance[3] > 0.5 && o.sample_radiance[0] > 1.0)
+        .count();
+    // The sun is 2 texels of 512, i.e. 0.4% of the image by area, but carries
+    // almost all the energy — importance sampling should land on it far more
+    // often than uniform sampling would.
+    assert!(
+        bright > out.len() / 10,
+        "only {bright}/{} samples hit the bright texels — the environment CDF \
+         is not concentrating on the energy, so the GPU would converge far \
+         more slowly than the CPU on the same map",
+        out.len(),
+    );
+
+    // Monte Carlo sanity: E[L/pdf] over the sphere is the mean radiance times
+    // 4*pi. A mis-normalised CDF shows up here even when every individual pdf
+    // is self-consistent.
+    let mut sum = 0.0f64;
+    let mut used = 0usize;
+    for o in &out {
+        if o.sample_radiance[3] > 0.5 && o.sample_dir[3] > 0.0 {
+            sum += (o.sample_radiance[0] / o.sample_dir[3]) as f64;
+            used += 1;
+        }
+    }
+    assert!(used > 0, "no usable samples");
+    let integral = sum / used as f64;
+
+    // Reference: integrate the same quantity on the CPU with its own sampler.
+    let mut cpu_sum = 0.0f64;
+    let mut cpu_used = 0usize;
+    for k in 0..n {
+        let r1 = halton(k + 1, 5) as f64;
+        let r2 = halton(k + 1, 7) as f64;
+        if let Some((_d, li, pdf)) = env.sample(r1, r2) {
+            if pdf > 0.0 {
+                cpu_sum += (li[0] / pdf) as f64;
+                cpu_used += 1;
+            }
+        }
+    }
+    let cpu_integral = cpu_sum / cpu_used.max(1) as f64;
+    let rel = (integral - cpu_integral).abs() / cpu_integral.max(1e-6);
+    assert!(
+        rel < 0.05,
+        "GPU env integral {integral} vs CPU {cpu_integral} (rel {rel}) — the \
+         estimators disagree, so the two renderers would converge to different \
+         images",
     );
 }

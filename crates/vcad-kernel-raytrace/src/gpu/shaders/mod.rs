@@ -23,6 +23,13 @@ pub fn raytrace_shader() -> String {
 /// Prepended after [`BSDF_SHADER`] (on which it depends for `onb`).
 pub const SURFACE_SHADER: &str = include_str!("surface.wgsl");
 
+/// Lat-long HDR environment: nearest-texel lookup, CDF importance sampling and
+/// the solid-angle PDF, ported from `pathtrace::EnvMap`.
+///
+/// References an `env_data: array<f32>` storage binding that the HOST shader
+/// declares, so it can be composed at whatever binding index each has spare.
+pub const ENV_SHADER: &str = include_str!("env.wgsl");
+
 /// Test-only harness that evaluates and samples the shared BSDF on the GPU.
 ///
 /// Not valid WGSL on its own — compose it with [`BSDF_SHADER`] via
@@ -34,5 +41,5 @@ pub const BSDF_PARITY_HARNESS: &str = include_str!("bsdf_parity.wgsl");
 /// Used by the render pipeline and by the BSDF parity test, which pairs this
 /// exact BSDF source with a tiny harness entry point.
 pub fn compose(body: &str) -> String {
-    format!("{BSDF_SHADER}\n{SURFACE_SHADER}\n{body}")
+    format!("{BSDF_SHADER}\n{SURFACE_SHADER}\n{ENV_SHADER}\n{body}")
 }
