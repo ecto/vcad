@@ -431,6 +431,9 @@ target/debug/vcad-render path/to/part.vcad > out.svg
   labeled assertions persist on the document and re-verify via
   `build_receipt` / `verify_receipt` as Holds/Stale/Violated
 - `render_view` — render the session document to an isometric PNG (agent eyes)
+- `flat_pattern_from_solid` — flat pattern (DXF + bend table) for a part
+  modelled as an ordinary solid; batches a document into unique patterns ×
+  quantity and fails closed on a volume-mismatched (non-sheet) part
 - `topology_optimize` — SIMP topology optimization: stiffest material layout
   for given loads/supports inside a box envelope or an existing part's volume;
   result lands in the document as a frozen mesh part

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-flat-pattern-from-solid",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "feat",
+  "title": "Flat patterns from parts you already modelled",
+  "summary": "flat_pattern_from_solid turns any constant-thickness solid into a fab-ready DXF plus a bend table — no sheet-metal re-authoring — batching a whole assembly into unique patterns x quantity.",
+  "features": ["sheet-metal", "manufacturing", "mcp"],
+  "mcpTools": ["flat_pattern_from_solid", "sheet_metal_nest", "sheet_metal_cost"]
+}
