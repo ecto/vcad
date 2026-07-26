@@ -8,7 +8,8 @@ mod pipeline;
 pub mod shaders;
 
 pub use buffers::{
-    GpuBvhNode, GpuCamera, GpuFace, GpuMaterial, GpuRenderState, GpuScene, GpuSceneError,
-    GpuSurface, GpuVec2,
+    depth_for_frame, GpuAreaLight, GpuBvhNode, GpuCamera, GpuFace, GpuMaterial, GpuRenderState,
+    GpuScene, GpuSceneError, GpuSurface, GpuVec2, DEFAULT_ENV_INTENSITY, DEFAULT_FIREFLY_CLAMP,
+    DEFAULT_MAX_DEPTH, DEFAULT_RR_START,
 };
 pub use pipeline::RayTracePipeline;

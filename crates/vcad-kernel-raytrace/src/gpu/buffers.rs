@@ -262,6 +262,37 @@ impl GpuMaterial {
     }
 }
 
+/// GPU-compatible rectangular area light ("softbox").
+///
+/// Mirrors the WGSL `GpuAreaLight`. Built from [`crate::pathtrace::AreaLight`]
+/// via [`GpuAreaLight::from_area_light`] so the GPU and CPU renderers light the
+/// scene with the same rig — that is what makes specular highlights on metal
+/// match between the viewport and `--photoreal`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct GpuAreaLight {
+    /// Centre of the rectangle (w unused).
+    pub center: [f32; 4],
+    /// Half-extent along the rectangle's first axis (w unused).
+    pub u: [f32; 4],
+    /// Half-extent along the second axis (w unused).
+    pub v: [f32; 4],
+    /// Emitted radiance (w unused).
+    pub emission: [f32; 4],
+}
+
+impl GpuAreaLight {
+    /// Convert a CPU reference area light to its GPU representation.
+    pub fn from_area_light(l: &crate::pathtrace::AreaLight) -> Self {
+        Self {
+            center: [l.center.x as f32, l.center.y as f32, l.center.z as f32, 0.0],
+            u: [l.u.x as f32, l.u.y as f32, l.u.z as f32, 0.0],
+            v: [l.v.x as f32, l.v.y as f32, l.v.z as f32, 0.0],
+            emission: [l.emission[0], l.emission[1], l.emission[2], 0.0],
+        }
+    }
+}
+
 /// GPU-compatible face representation.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -344,9 +375,8 @@ pub struct GpuCamera {
 ///
 /// Layout (128 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
 /// offset  0–31:  eight u32/f32 scalars (frame_index … theme)
-/// offset 32–47:  SSAO params (ao_radius, ao_intensity, ao_bias, ao_sample_count)
-/// offset 48–51:  refine_sample_count u32
-/// offset 52–63:  _pad [u32; 3]
+/// offset 32–47:  path tracing (max_depth, rr_start, light_count, env_intensity)
+/// offset 48–63:  refine_sample_count, firefly_clamp, ground_enabled, stylize
 /// offset 64–79:  silhouette_color vec4
 /// offset 80–95:  crease_color vec4
 /// offset 96–111: boundary_color vec4
@@ -373,21 +403,28 @@ pub struct GpuRenderState {
     /// palette in `sky_color`; the IBL panels and direct lighting stay
     /// constant across themes so the model itself looks the same.
     pub theme: u32,
-    // SSAO
-    /// SSAO world-space sample hemisphere radius.
-    pub ao_radius: f32,
-    /// SSAO intensity: 0 = disabled (ao_buffer writes 1.0), 1 = default strength.
-    pub ao_intensity: f32,
-    /// SSAO depth bias to prevent self-occlusion.
-    pub ao_bias: f32,
-    /// SSAO hemisphere sample count per frame (8, 16, or 32).
-    pub ao_sample_count: u32,
-    // refinement + padding
+    // Path tracing
+    /// Maximum path length (1 = direct lighting only). Escalated by the
+    /// refinement scheduler: shallow on the draft frame, deeper as
+    /// accumulation proceeds, so the first frame stays interactive.
+    pub max_depth: u32,
+    /// Depth at which Russian roulette begins.
+    pub rr_start: u32,
+    /// Number of valid entries in the area-light buffer.
+    pub light_count: u32,
+    /// Overall multiplier on the analytic studio environment.
+    pub env_intensity: f32,
+    // refinement + path tracing continued
     /// Number of additional refinement rays per edge pixel (0 = disabled).
     /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
     pub refine_sample_count: u32,
-    /// Padding to align silhouette_color to 16-byte boundary (required for uniform buffers).
-    pub _pad: [u32; 3],
+    /// Clamp on indirect radiance to kill fireflies (0 = disabled).
+    pub firefly_clamp: f32,
+    /// Whether the implicit ground plane participates in the path trace.
+    pub ground_enabled: u32,
+    /// Non-zero enables non-photoreal stylisation (the Sobel edge overlay).
+    /// Off in a photoreal viewport: edge lines fight photorealism.
+    pub stylize: u32,
     // --- edge style (added for Fusion-style edge lines) ---
     /// Silhouette line color (RGBA linear, depth-gradient edges).
     pub silhouette_color: [f32; 4],
@@ -415,6 +452,36 @@ const DEFAULT_BOUNDARY_COLOR: [f32; 4] = [0.06, 0.06, 0.08, 1.0];
 /// All three edge types on: bits 0 (silhouette) | 1 (crease) | 2 (boundary).
 const EDGES_ALL: u32 = 7;
 
+/// Full path depth, matching `PathTraceOptions::default().max_depth` so the
+/// converged viewport image matches `vcad-render --photoreal`.
+pub const DEFAULT_MAX_DEPTH: u32 = 6;
+/// Depth at which Russian roulette begins, matching the CPU renderer.
+pub const DEFAULT_RR_START: u32 = 3;
+/// Environment multiplier, matching `Environment::default().intensity`.
+pub const DEFAULT_ENV_INTENSITY: f32 = 0.35;
+/// Indirect-radiance clamp, matching the CPU renderer's firefly clamp.
+pub const DEFAULT_FIREFLY_CLAMP: f32 = 12.0;
+
+/// Path depth to trace on a given accumulation frame.
+///
+/// Full path tracing is too slow for the viewport's draft frame, so depth
+/// escalates with accumulation: the first frame traces shallow (direct
+/// lighting plus one bounce) and lands fast, and by the time the `high` tier
+/// is accumulating we are at the full depth that matches the CPU renderer.
+/// The refinement scheduler in `RayTracedViewport.tsx` resets `frame_index` on
+/// every camera change, so each gesture gets a cheap first frame.
+///
+/// Depth only ever increases, and the accumulation buffer is a running average,
+/// so early shallow frames are progressively outweighed by deeper ones.
+pub fn depth_for_frame(frame_index: u32, ceiling: u32) -> u32 {
+    let d = match frame_index {
+        0 | 1 => 2,
+        2..=4 => 4,
+        _ => DEFAULT_MAX_DEPTH,
+    };
+    d.min(ceiling.max(1))
+}
+
 impl GpuRenderState {
     /// Create a new render state for the given frame with default edge style.
     pub fn new(frame_index: u32) -> Self {
@@ -428,12 +495,14 @@ impl GpuRenderState {
             edge_normal_threshold: 30.0,
             debug_mode: 0,
             theme: 0,
-            ao_radius: 0.3,
-            ao_intensity: 1.0,
-            ao_bias: 0.001,
-            ao_sample_count: 16,
+            max_depth: depth_for_frame(frame_index, DEFAULT_MAX_DEPTH),
+            rr_start: DEFAULT_RR_START,
+            light_count: 0,
+            env_intensity: DEFAULT_ENV_INTENSITY,
             refine_sample_count: 0,
-            _pad: [0; 3],
+            firefly_clamp: DEFAULT_FIREFLY_CLAMP,
+            ground_enabled: 1,
+            stylize: 1,
             silhouette_color: DEFAULT_SILHOUETTE_COLOR,
             crease_color: DEFAULT_CREASE_COLOR,
             boundary_color: DEFAULT_BOUNDARY_COLOR,
@@ -459,7 +528,7 @@ impl GpuRenderState {
         state
     }
 
-    /// Create a render state with custom edge settings (default AO).
+    /// Create a render state with custom edge settings.
     pub fn with_edge_settings(
         frame_index: u32,
         debug_mode: u32,
@@ -474,15 +543,11 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             0,
-            0.3,
-            1.0,
-            0.001,
-            16,
             0,
         )
     }
 
-    /// Create a render state with all settings including theme, SSAO, and refinement.
+    /// Create a render state with all settings including theme and refinement.
     #[allow(clippy::too_many_arguments)]
     pub fn with_full_settings(
         frame_index: u32,
@@ -491,10 +556,6 @@ impl GpuRenderState {
         edge_depth_threshold: f32,
         edge_normal_threshold: f32,
         theme: u32,
-        ao_radius: f32,
-        ao_intensity: f32,
-        ao_bias: f32,
-        ao_sample_count: u32,
         refine_sample_count: u32,
     ) -> Self {
         let mut state = Self::new(frame_index);
@@ -503,10 +564,6 @@ impl GpuRenderState {
         state.edge_normal_threshold = edge_normal_threshold;
         state.debug_mode = debug_mode;
         state.theme = theme;
-        state.ao_radius = ao_radius;
-        state.ao_intensity = ao_intensity;
-        state.ao_bias = ao_bias;
-        state.ao_sample_count = ao_sample_count;
         state.refine_sample_count = refine_sample_count;
         state
     }
@@ -546,12 +603,14 @@ impl GpuRenderState {
             edge_normal_threshold,
             debug_mode,
             theme,
-            ao_radius: 0.3,
-            ao_intensity: 1.0,
-            ao_bias: 0.001,
-            ao_sample_count: 16,
+            max_depth: depth_for_frame(frame_index, DEFAULT_MAX_DEPTH),
+            rr_start: DEFAULT_RR_START,
+            light_count: 0,
+            env_intensity: DEFAULT_ENV_INTENSITY,
             refine_sample_count: 0,
-            _pad: [0; 3],
+            firefly_clamp: DEFAULT_FIREFLY_CLAMP,
+            ground_enabled: 1,
+            stylize: 1,
             silhouette_color,
             crease_color,
             boundary_color,
@@ -579,10 +638,6 @@ impl GpuRenderState {
             edge_depth_threshold,
             edge_normal_threshold,
             theme,
-            0.3,
-            1.0,
-            0.001,
-            16,
             refine_sample_count,
         )
     }
@@ -651,6 +706,10 @@ pub struct GpuScene {
     pub inner_loop_descs: Vec<u32>,
     /// Mapping from FaceId to GPU face index.
     pub face_index_map: std::collections::HashMap<FaceId, u32>,
+    /// Area lights (softboxes) illuminating the scene, derived from the scene
+    /// bounds via [`crate::pathtrace::studio_rig`] — the same rig the CPU
+    /// renderer uses, so highlights match between the two.
+    pub lights: Vec<GpuAreaLight>,
 }
 
 /// Error building GPU scene.
@@ -684,6 +743,37 @@ impl std::fmt::Display for GpuSceneError {
 }
 
 impl std::error::Error for GpuSceneError {}
+
+/// Build the studio softbox rig for a scene, sized to its BVH root bounds.
+///
+/// Delegates to [`crate::pathtrace::studio_rig`] — the SAME function
+/// `vcad-render --photoreal` calls — so the viewport and the CPU renderer are
+/// lit by an identical rig rather than by two hand-tuned approximations.
+fn studio_lights_for_bvh(bvh_nodes: &[GpuBvhNode]) -> Vec<GpuAreaLight> {
+    let Some(root) = bvh_nodes.first() else {
+        return Vec::new();
+    };
+    let min = root.aabb_min;
+    let max = root.aabb_max;
+    let center = vcad_kernel_math::Point3::new(
+        ((min[0] + max[0]) * 0.5) as f64,
+        ((min[1] + max[1]) * 0.5) as f64,
+        ((min[2] + max[2]) * 0.5) as f64,
+    );
+    // Bounding-sphere radius of the root AABB.
+    let radius = 0.5
+        * (((max[0] - min[0]) as f64).powi(2)
+            + ((max[1] - min[1]) as f64).powi(2)
+            + ((max[2] - min[2]) as f64).powi(2))
+        .sqrt();
+    if !radius.is_finite() || radius <= 0.0 {
+        return Vec::new();
+    }
+    crate::pathtrace::studio_rig(center, radius)
+        .iter()
+        .map(GpuAreaLight::from_area_light)
+        .collect()
+}
 
 impl GpuScene {
     /// Build GPU scene data from a BRep solid.
@@ -914,6 +1004,8 @@ impl GpuScene {
         // Create default material (neutral gray)
         let materials = vec![GpuMaterial::default()];
 
+        let lights = studio_lights_for_bvh(&bvh_nodes);
+
         Ok(Self {
             surfaces,
             faces,
@@ -922,6 +1014,7 @@ impl GpuScene {
             trim_verts,
             inner_loop_descs,
             face_index_map,
+            lights,
         })
     }
 

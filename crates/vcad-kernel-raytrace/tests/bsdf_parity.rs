@@ -314,9 +314,9 @@ fn gpu_bsdf_eval_matches_cpu_reference() {
         let wi = Vec3::new(inp.wi[0] as f64, inp.wi[1] as f64, inp.wi[2] as f64);
         let (ref_value, ref_pdf) = reference_bsdf_eval(&pbr, wo, wi);
 
-        for c in 0..3 {
-            let d = (out.eval[c] - ref_value[c]).abs();
-            let tol = 2e-4 * ref_value[c].abs().max(1.0);
+        for (c, &rv) in ref_value.iter().enumerate() {
+            let d = (out.eval[c] - rv).abs();
+            let tol = 2e-4 * rv.abs().max(1.0);
             worst_value = worst_value.max(d);
             assert!(
                 d <= tol,
@@ -325,7 +325,7 @@ fn gpu_bsdf_eval_matches_cpu_reference() {
                  pathtrace::bsdf_eval; the viewport and --photoreal will \
                  disagree on this material.",
                 out.eval[c],
-                ref_value[c],
+                rv,
             );
         }
 

@@ -3428,8 +3428,6 @@ struct RayTracerInner {
     frame_index: u32,
     /// Accumulation buffer for progressive anti-aliasing.
     accum_buffer: Option<wgpu::Buffer>,
-    /// AO buffer for progressive SSAO accumulation.
-    ao_buffer: Option<wgpu::Buffer>,
     /// Last camera state for detecting camera changes.
     last_camera_hash: u64,
     /// Last render dimensions.
@@ -3446,14 +3444,11 @@ struct RayTracerInner {
     edge_normal_threshold: f32,
     /// Theme: 0 = dark, 1 = light. Drives the visible background palette.
     theme: u32,
-    /// SSAO world-space sample radius.
-    ao_radius: f32,
-    /// SSAO intensity (0 = disabled, 1 = default).
-    ao_intensity: f32,
-    /// SSAO depth bias.
-    ao_bias: f32,
-    /// SSAO sample count per frame.
-    ao_sample_count: u32,
+    /// Ceiling on path-tracer depth. Actual depth escalates with accumulation
+    /// up to this value, so the draft frame stays interactive.
+    max_path_depth: u32,
+    /// Enable non-photoreal stylisation (the Sobel edge overlay).
+    stylize: bool,
     /// Additional rays per edge pixel for adaptive refinement (0 = disabled).
     refine_sample_count: u32,
     // Per-type edge style
@@ -3474,7 +3469,6 @@ impl RayTracerInner {
     fn invalidate_accum(&mut self) {
         self.frame_index = 0;
         self.accum_buffer = None;
-        self.ao_buffer = None;
         self.accum_epoch = self.accum_epoch.wrapping_add(1);
     }
 }
@@ -3504,7 +3498,6 @@ impl RayTracer {
                 accum_epoch: 0,
                 frame_index: 0,
                 accum_buffer: None,
-                ao_buffer: None,
                 last_camera_hash: 0,
                 last_width: 0,
                 last_height: 0,
@@ -3513,10 +3506,8 @@ impl RayTracer {
                 edge_depth_threshold: 0.1,
                 edge_normal_threshold: 30.0,
                 theme: 0,
-                ao_radius: 0.3,
-                ao_intensity: 1.0,
-                ao_bias: 0.001,
-                ao_sample_count: 16,
+                max_path_depth: vcad_kernel_raytrace::gpu::DEFAULT_MAX_DEPTH,
+                stylize: true,
                 refine_sample_count: 0,
                 enable_silhouette: true,
                 enable_crease: true,
@@ -3674,29 +3665,30 @@ impl RayTracer {
         inner.invalidate_accum();
     }
 
-    /// Set SSAO (screen-space ambient occlusion) parameters.
+    /// Set the path tracer's quality ceiling and stylisation mode.
+    ///
+    /// Replaces the old `setAO`. The renderer is a real path tracer now, so
+    /// screen-space ambient occlusion is gone — multi-bounce GI computes
+    /// contact occlusion correctly, and stacking a proxy on top of it would
+    /// double-darken every concave corner.
     ///
     /// # Arguments
-    /// * `radius` - World-space hemisphere sample radius (default 0.3)
-    /// * `intensity` - Occlusion strength: 0 = disabled, 1 = default (>1 stylized)
-    /// * `bias` - Depth bias to prevent self-occlusion (default 0.001)
-    /// * `sample_count` - Hemisphere samples per frame: 8, 16, or 32 (default 16)
-    #[wasm_bindgen(js_name = setAO)]
-    pub fn set_ao(&self, radius: f32, intensity: f32, bias: f32, sample_count: u32) {
+    /// * `max_depth` - Ceiling on path length (1 = direct lighting only,
+    ///   default 6, which matches `vcad-render --photoreal`). Actual depth
+    ///   escalates with accumulation, so the draft frame stays interactive
+    ///   regardless of this value.
+    /// * `stylize` - Draw the Sobel edge overlay. Turn this OFF for a
+    ///   photoreal viewport: edge lines fight photorealism.
+    #[wasm_bindgen(js_name = setPathTrace)]
+    pub fn set_path_trace(&self, max_depth: u32, stylize: bool) {
         {
             let mut inner = self.inner.borrow_mut();
-            inner.ao_radius = radius;
-            inner.ao_intensity = intensity;
-            inner.ao_bias = bias;
-            inner.ao_sample_count = sample_count.clamp(1, 64);
+            inner.max_path_depth = max_depth.clamp(1, 32);
+            inner.stylize = stylize;
             inner.invalidate_accum();
         }
         web_sys::console::log_1(
-            &format!(
-                "[WASM] SSAO: radius={:.3}, intensity={:.2}, bias={:.4}, samples={}",
-                radius, intensity, bias, sample_count
-            )
-            .into(),
+            &format!("[WASM] path trace: max_depth={max_depth}, stylize={stylize}").into(),
         );
     }
 
@@ -3880,7 +3872,7 @@ impl RayTracer {
 
         // Snapshot everything we need under one short borrow, then drop it
         // before any `.await`. Setters can run freely during the GPU wait.
-        let (scene, accum_buf, ao_buf, render_state, frame_index, accum_epoch) = {
+        let (scene, accum_buf, render_state, frame_index, accum_epoch) = {
             let mut inner = self.inner.borrow_mut();
 
             let scene = inner
@@ -3941,17 +3933,18 @@ impl RayTracer {
                 inner.boundary_width,
                 inner.edge_softness,
             );
-            rs.ao_radius = inner.ao_radius;
-            rs.ao_intensity = inner.ao_intensity;
-            rs.ao_bias = inner.ao_bias;
-            rs.ao_sample_count = inner.ao_sample_count;
             rs.refine_sample_count = inner.refine_sample_count;
+            rs.light_count = scene.lights.len() as u32;
+            rs.stylize = u32::from(inner.stylize);
+            // Path depth escalates with accumulation so the draft frame stays
+            // interactive; `max_path_depth` is the user's ceiling.
+            rs.max_depth =
+                vcad_kernel_raytrace::gpu::depth_for_frame(inner.frame_index, inner.max_path_depth);
 
             let accum_buf = inner.accum_buffer.take();
-            let ao_buf = inner.ao_buffer.take();
             let frame_index = inner.frame_index;
             let accum_epoch = inner.accum_epoch;
-            (scene, accum_buf, ao_buf, rs, frame_index, accum_epoch)
+            (scene, accum_buf, rs, frame_index, accum_epoch)
         };
         let _ = frame_index;
 
@@ -3967,7 +3960,7 @@ impl RayTracer {
         let ctx =
             vcad_kernel_gpu::GpuContext::get().ok_or_else(|| JsError::new("GPU context lost"))?;
 
-        let (pixels, new_accum, new_ao) = self
+        let (pixels, new_accum) = self
             .pipeline
             .render_with_render_state(
                 ctx,
@@ -3976,7 +3969,6 @@ impl RayTracer {
                 width,
                 height,
                 accum_buf,
-                ao_buf,
                 render_state,
             )
             .await
@@ -3988,7 +3980,6 @@ impl RayTracer {
         let mut inner = self.inner.borrow_mut();
         if inner.accum_epoch == accum_epoch {
             inner.accum_buffer = Some(new_accum);
-            inner.ao_buffer = Some(new_ao);
         }
         drop(inner);
 
