@@ -5613,8 +5613,8 @@ export function eulerXyzDegToQuat(x_deg, y_deg, z_deg) {
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
  *
  * The vcad library (types, constructors) is automatically prepended.
- * Module resolution (`[use ...]`) is not available in WASM — all code
- * must be self-contained or use the bundled vcad library.
+ * There is no filesystem in WASM, so `[use ...]` resolves against nothing
+ * here — pass modules explicitly with [`eval_vcad_source_with_modules`].
  * @param {string} source
  * @returns {any}
  */
@@ -5622,6 +5622,32 @@ export function evalVcadSource(source) {
     const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.evalVcadSource(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Evaluate loon source whose `[use ...]` resolves against an in-memory
+ * module map, and return a JSON-serialized vcad Document.
+ *
+ * `modules_json` is a JSON object of `{ "<module name>": "<loon source>" }`
+ * — the browser's stand-in for a filesystem. `[use foo]` finds the entry
+ * keyed `foo` (or `foo.loon`); the vcad library is available inside each
+ * module, and `pub` controls what a module exports. Multi-file CAD projects
+ * therefore behave identically here and on the native side, where the same
+ * modules would be files on disk.
+ * @param {string} source
+ * @param {string} modules_json
+ * @returns {any}
+ */
+export function evalVcadSourceWithModules(source, modules_json) {
+    const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(modules_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.evalVcadSourceWithModules(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -10130,12 +10156,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3725, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3726, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3732, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3733, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3750, function: Function { arguments: [Externref], shim_idx: 3751, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3757, function: Function { arguments: [Externref], shim_idx: 3758, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

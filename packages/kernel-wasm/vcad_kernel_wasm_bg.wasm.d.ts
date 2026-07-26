@@ -26,6 +26,7 @@ export const emSimulate: (a: number, b: number, c: number, d: number, e: number,
 export const estimate_cost_for_process: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const eulerXyzDegToQuat: (a: number, b: number, c: number) => [number, number];
 export const evalVcadSource: (a: number, b: number) => [number, number, number];
+export const evalVcadSourceWithModules: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
 export const evaluateVCode: (a: number, b: number) => [number, number, number];
 export const exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];

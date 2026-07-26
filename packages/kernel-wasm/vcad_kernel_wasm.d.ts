@@ -2198,10 +2198,23 @@ export function eulerXyzDegToQuat(x_deg: number, y_deg: number, z_deg: number): 
  * Evaluate a loon source string and return a JSON-serialized vcad Document.
  *
  * The vcad library (types, constructors) is automatically prepended.
- * Module resolution (`[use ...]`) is not available in WASM — all code
- * must be self-contained or use the bundled vcad library.
+ * There is no filesystem in WASM, so `[use ...]` resolves against nothing
+ * here — pass modules explicitly with [`eval_vcad_source_with_modules`].
  */
 export function evalVcadSource(source: string): any;
+
+/**
+ * Evaluate loon source whose `[use ...]` resolves against an in-memory
+ * module map, and return a JSON-serialized vcad Document.
+ *
+ * `modules_json` is a JSON object of `{ "<module name>": "<loon source>" }`
+ * — the browser's stand-in for a filesystem. `[use foo]` finds the entry
+ * keyed `foo` (or `foo.loon`); the vcad library is available inside each
+ * module, and `pub` controls what a module exports. Multi-file CAD projects
+ * therefore behave identically here and on the native side, where the same
+ * modules would be files on disk.
+ */
+export function evalVcadSourceWithModules(source: string, modules_json: string): any;
 
 /**
  * Evaluate a full vcad document JSON into a serialized EvaluatedScene.
@@ -3239,6 +3252,7 @@ export interface InitOutput {
     readonly estimate_cost_for_process: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly eulerXyzDegToQuat: (a: number, b: number, c: number) => [number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
+    readonly evalVcadSourceWithModules: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
     readonly evaluateVCode: (a: number, b: number) => [number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
