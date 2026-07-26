@@ -13,6 +13,8 @@ use vcad_ir::Document;
 
 mod convert;
 pub mod fastener;
+pub mod params;
+pub mod recover;
 pub use convert::value_to_document;
 
 /// The bundled vcad loon library source.
@@ -24,8 +26,63 @@ pub const VCAD_LIB_SOURCE: &str = include_str!("../../../lib/src/lib.loon");
 /// The vcad library is automatically available — the source is evaluated with
 /// the vcad type definitions and constructors pre-loaded.
 pub fn eval_vcad(source: &str, base_dir: Option<&Path>) -> Result<Document, String> {
-    let result = eval_vcad_to_value(source, base_dir)?;
-    value_to_document(&result)
+    Ok(eval_vcad_parametric(source, base_dir, None)?.0)
+}
+
+/// Evaluate a `.vcad` loon source string, preserving its declared parameters,
+/// datums, and the bindings that connect them to geometry.
+///
+/// This is [`eval_vcad`] plus provenance. A program that declares parameters
+/// with [`params`] forms produces a document whose `parameters`, `datums`, and
+/// `bindings` are populated, so the value the author called `pitch_axis_x` is
+/// still called that afterwards and `set_parameters` can drive it. A program
+/// that declares nothing takes the plain path and pays nothing.
+///
+/// The returned warnings describe intent that could *not* be preserved — a
+/// field whose dependence on a parameter is not affine, a parameter that
+/// changes the model's topology. The document is correct either way; the
+/// warnings explain why a given parameter will not move a given part.
+///
+/// Set `VCAD_LOON_NO_PARAM_RECOVERY=1` to declare parameters and datums
+/// without recovering bindings. Recovery costs `2n + 2` extra evaluations of
+/// the program for `n` independent parameters, which is worth skipping in a
+/// hot loop that only needs the geometry.
+pub fn eval_vcad_parametric(
+    source: &str,
+    base_dir: Option<&Path>,
+    modules: Option<&HashMap<String, String>>,
+) -> Result<(Document, Vec<String>), String> {
+    let provider =
+        modules.map(|m| -> Rc<dyn ModuleProvider> { Rc::new(MapProvider::new(m.clone())) });
+    let exprs = parse_program(source)?;
+    let decls = params::scan(&exprs)?;
+
+    let run = |env: &HashMap<String, f64>| -> Result<Document, String> {
+        let rewritten = params::rewrite(&exprs, env)?;
+        let value = run_program(&rewritten, base_dir, provider.clone())?;
+        value_to_document(&value)
+    };
+
+    if decls.is_empty() {
+        // Nothing declared: run the program as parsed, with no rewrite pass
+        // and no AST clone. This is the path every existing model takes.
+        let value = run_program(&exprs, base_dir, provider)?;
+        return Ok((value_to_document(&value)?, Vec::new()));
+    }
+
+    let env0 = decls.env()?;
+    let mut doc = run(&env0)?;
+
+    let warnings = if std::env::var_os("VCAD_LOON_NO_PARAM_RECOVERY").is_some() {
+        Vec::new()
+    } else {
+        let recovery = recover::recover(&decls, &doc, run);
+        doc.bindings = recovery.bindings;
+        recovery.warnings
+    };
+    doc.parameters = decls.params;
+    doc.datums = decls.datums;
+    Ok((doc, warnings))
 }
 
 /// Evaluate a `.vcad` loon source string whose `[use ...]` resolves against an
@@ -43,8 +100,7 @@ pub fn eval_vcad_with_modules(
     base_dir: Option<&Path>,
     modules: &HashMap<String, String>,
 ) -> Result<Document, String> {
-    let result = eval_vcad_to_value_with_modules(source, base_dir, modules)?;
-    value_to_document(&result)
+    Ok(eval_vcad_parametric(source, base_dir, Some(modules))?.0)
 }
 
 /// [`eval_vcad_with_modules`], returning the raw loon `Value`.
@@ -71,36 +127,71 @@ pub fn eval_vcad_to_value(source: &str, base_dir: Option<&Path>) -> Result<Value
     eval_with_provider(source, base_dir, None)
 }
 
-/// Shared body of the eval entry points: rewrite multi-value programs,
-/// prepend the vcad library, and evaluate with the given module resolver.
-fn eval_with_provider(
-    source: &str,
-    base_dir: Option<&Path>,
-    provider: Option<Rc<dyn ModuleProvider>>,
-) -> Result<Value, String> {
+/// Parse a `.vcad` program: rewrite multi-value sources and prepend the vcad
+/// library so types and constructors are available.
+fn parse_program(source: &str) -> Result<Vec<loon_lang::ast::Expr>, String> {
     // A loon program's value is its *last* expression, so a source with
     // several top-level value forms (e.g. two `[root ...]` statements) would
     // silently keep only the final one. Rewrite such programs so every
     // top-level value expression is collected into the document.
     let user_source = collect_top_level_values(source);
-
-    // Prepend the vcad library so types and constructors are available
     let full_source = format!("{VCAD_LIB_SOURCE}\n\n{user_source}");
+    loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())
+}
 
-    let exprs = loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())?;
-
+/// Evaluate a parsed program with the given module resolver.
+fn run_program(
+    exprs: &[loon_lang::ast::Expr],
+    base_dir: Option<&Path>,
+    provider: Option<Rc<dyn ModuleProvider>>,
+) -> Result<Value, String> {
     // Imported modules get the vcad library too, so `[use ...]` code can
     // speak the same vocabulary as the root program.
-    loon_lang::interp::eval_program_with_modules(&exprs, base_dir, provider, Some(VCAD_LIB_SOURCE))
+    loon_lang::interp::eval_program_with_modules(exprs, base_dir, provider, Some(VCAD_LIB_SOURCE))
         .map_err(|e| format!("{e}"))
+}
+
+/// Shared body of the raw-`Value` entry points. Declaration forms are still
+/// resolved and substituted — they are part of the language now, so a program
+/// using them must run here too — but no provenance is recovered.
+fn eval_with_provider(
+    source: &str,
+    base_dir: Option<&Path>,
+    provider: Option<Rc<dyn ModuleProvider>>,
+) -> Result<Value, String> {
+    let exprs = parse_program(source)?;
+    let decls = params::scan(&exprs)?;
+    if decls.is_empty() {
+        return run_program(&exprs, base_dir, provider);
+    }
+    let rewritten = params::rewrite(&exprs, &decls.env()?)?;
+    run_program(&rewritten, base_dir, provider)
 }
 
 /// Top-level statement heads — forms that bind, define, mutate, or print
 /// rather than produce a scene value. Everything else at top level is a
 /// value expression.
-const STATEMENT_HEADS: &[&str] = &[
-    "let", "use", "type", "fn", "macro", "mod", "import", "def", "defn", "impl", "set!", "mut",
-    "inspect", "pub",
+pub(crate) const STATEMENT_HEADS: &[&str] = &[
+    "let",
+    "use",
+    "type",
+    "fn",
+    "macro",
+    "mod",
+    "import",
+    "def",
+    "defn",
+    "impl",
+    "set!",
+    "mut",
+    "inspect",
+    "pub",
+    // Parametric declarations — see [`params::DECL_HEADS`].
+    "defparam",
+    "datum-plane",
+    "datum-axis",
+    "datum-point",
+    "stack",
 ];
 
 /// One top-level form in the source: its byte span and head symbol
@@ -258,11 +349,12 @@ fn collect_top_level_values(source: &str) -> String {
     let Some(forms) = split_top_level(source) else {
         return source.to_string();
     };
-    let value_count = forms
-        .iter()
-        .filter(|f| !STATEMENT_HEADS.contains(&f.head.as_str()))
-        .count();
-    if value_count < 2 {
+    let is_value = |f: &TopForm| !STATEMENT_HEADS.contains(&f.head.as_str());
+    let value_count = forms.iter().filter(|f| is_value(f)).count();
+    // One value form is fine only when it is also the *last* form — otherwise
+    // the program's value is a trailing statement (a `let`, or a parametric
+    // declaration) and the scene would be lost.
+    if value_count == 0 || (value_count == 1 && forms.last().is_some_and(is_value)) {
         return source.to_string();
     }
     // Pick a binding prefix that can't shadow (or be shadowed by) anything

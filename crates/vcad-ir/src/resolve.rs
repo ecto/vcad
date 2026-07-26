@@ -1,7 +1,7 @@
 //! Parameter and binding resolution pre-pass.
 //!
-//! [`resolve_document`] evaluates every [`Parameter`](vcad_ir::Parameter) in
-//! dependency order and applies every [`Bindings`](vcad_ir::Bindings) entry
+//! [`resolve_document`] evaluates every [`Parameter`](crate::Parameter) in
+//! dependency order and applies every [`Bindings`](crate::Bindings) entry
 //! to the matching concrete field on the target `CsgOp`. After this pass,
 //! the document is kernel-ready — downstream code continues to consume
 //! `f64` / `Vec3` without ever seeing an expression.
@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use vcad_ir::{BindingKey, CsgOp, Document, Vec2, Vec3};
+use crate::{BindingKey, CsgOp, Document, Vec2, Vec3};
 
 /// Error applying a binding to a concrete field.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,7 +32,7 @@ pub enum ResolvePatchError {
         op_name: &'static str,
     },
     /// Underlying parameter / eval failure bubbled up.
-    Resolve(vcad_ir::ResolveError),
+    Resolve(crate::ResolveError),
 }
 
 impl std::fmt::Display for ResolvePatchError {
@@ -53,8 +53,8 @@ impl std::fmt::Display for ResolvePatchError {
 
 impl std::error::Error for ResolvePatchError {}
 
-impl From<vcad_ir::ResolveError> for ResolvePatchError {
-    fn from(e: vcad_ir::ResolveError) -> Self {
+impl From<crate::ResolveError> for ResolvePatchError {
+    fn from(e: crate::ResolveError) -> Self {
         Self::Resolve(e)
     }
 }
@@ -70,11 +70,11 @@ pub fn resolve_document(doc: &mut Document) -> Result<HashMap<String, f64>, Reso
         return Ok(HashMap::new());
     }
 
-    let env = vcad_ir::resolve_parameters(&doc.parameters)?;
+    let env = crate::resolve_parameters(&doc.parameters)?;
 
     // Collect bindings sorted by node id then field path for deterministic
     // iteration (aids tests and diagnostics).
-    let mut keys: Vec<(BindingKey, vcad_ir::Expr)> = doc
+    let mut keys: Vec<(BindingKey, crate::Expr)> = doc
         .bindings
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -86,10 +86,17 @@ pub fn resolve_document(doc: &mut Document) -> Result<HashMap<String, f64>, Reso
     });
 
     for (key, expr) in keys {
-        let value = vcad_ir::resolve_binding(&key, &expr, &env)?;
+        let value = crate::resolve_binding(&key, &expr, &env)?;
         // A "pcb."-prefixed field path targets the document's PCB (a non-node
         // domain), so the same Bindings map couples connector_x to a footprint
         // position exactly as it couples it to a node field — one DAG.
+        // An "instance."-prefixed path drives an assembly instance's placement
+        // from a parameter, so a lane plane can move a whole sub-assembly the
+        // same way it moves a primitive's field.
+        if let Some(inst_path) = key.field_path.strip_prefix("instance.") {
+            apply_instance_patch(doc, inst_path, value, &key)?;
+            continue;
+        }
         if let Some(pcb_path) = key.field_path.strip_prefix("pcb.") {
             let pcb = doc
                 .pcb
@@ -108,10 +115,51 @@ pub fn resolve_document(doc: &mut Document) -> Result<HashMap<String, f64>, Reso
     Ok(env)
 }
 
+/// Apply an `"instance."`-prefixed binding onto an assembly instance's
+/// transform. The remaining path is `"<instance id>.<translation|rotation|
+/// scale>.<x|y|z>"`. An instance with no explicit transform gets the identity
+/// one first, so binding a single component never silently drops the others.
+fn apply_instance_patch(
+    doc: &mut Document,
+    path: &str,
+    value: f64,
+    key: &BindingKey,
+) -> Result<(), ResolvePatchError> {
+    let bad = || ResolvePatchError::UnknownField {
+        key: key.clone(),
+        op_name: "Instance",
+    };
+    let parts: Vec<&str> = path.split('.').collect();
+    let [id, channel, axis] = parts.as_slice() else {
+        return Err(bad());
+    };
+    let inst = doc
+        .instances
+        .as_mut()
+        .ok_or_else(bad)?
+        .iter_mut()
+        .find(|i| i.id == *id)
+        .ok_or_else(bad)?;
+    let xf = inst.transform.get_or_insert_with(Default::default);
+    let target = match *channel {
+        "translation" | "position" => &mut xf.translation,
+        "rotation" => &mut xf.rotation,
+        "scale" => &mut xf.scale,
+        _ => return Err(bad()),
+    };
+    match *axis {
+        "x" => target.x = value,
+        "y" => target.y = value,
+        "z" => target.z = value,
+        _ => return Err(bad()),
+    }
+    Ok(())
+}
+
 /// Apply a `"pcb."`-prefixed binding onto the document's PCB. The remaining path
 /// is `"<ref>.position.<x|y>"` — drives a footprint's placement from a parameter.
 fn apply_pcb_patch(
-    pcb: &mut vcad_ir::ecad::Pcb,
+    pcb: &mut crate::ecad::Pcb,
     path: &str,
     value: f64,
     key: &BindingKey,
@@ -509,7 +557,7 @@ fn apply_vec2(v: &mut Vec2, component: &str, value: f64) -> Option<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vcad_ir::{BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry};
+    use crate::{BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry};
 
     fn doc_with_cube(size: Vec3) -> Document {
         let mut doc = Document::new();
@@ -572,6 +620,47 @@ mod tests {
             }
             _ => panic!("wrong op"),
         }
+    }
+
+    #[test]
+    fn binding_drives_an_assembly_instance_placement() {
+        // A lane plane should be able to move a whole sub-assembly, not only a
+        // primitive's field.
+        let mut doc = doc_with_cube(Vec3::new(1.0, 1.0, 1.0));
+        doc.instances = Some(vec![crate::Instance {
+            id: "hip_left".into(),
+            part_def_id: "femur".into(),
+            name: None,
+            tags: Vec::new(),
+            transform: None,
+            material: None,
+        }]);
+        doc.parameters
+            .insert("femur_inner".into(), Parameter::literal(131.0));
+        doc.bindings.bind(
+            BindingKey::new(0, "instance.hip_left.translation.y"),
+            Expr::formula("femur_inner + 5"),
+        );
+        resolve_document(&mut doc).unwrap();
+        let xf = doc.instances.as_ref().unwrap()[0]
+            .transform
+            .as_ref()
+            .expect("an instance with no transform gets the identity one");
+        assert_eq!(xf.translation.y, 136.0);
+        // The identity defaults are intact — binding one component must not
+        // zero the scale.
+        assert_eq!(xf.scale, Vec3::new(1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn binding_an_unknown_instance_reports() {
+        let mut doc = doc_with_cube(Vec3::new(1.0, 1.0, 1.0));
+        doc.bindings.bind(
+            BindingKey::new(0, "instance.nope.translation.y"),
+            Expr::num(5.0),
+        );
+        let err = resolve_document(&mut doc).unwrap_err();
+        assert!(matches!(err, ResolvePatchError::UnknownField { .. }));
     }
 
     #[test]

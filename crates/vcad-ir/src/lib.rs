@@ -11,19 +11,23 @@ use std::collections::HashMap;
 
 pub mod animation;
 pub mod constraints;
+pub mod datum;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
 pub mod molecule;
 pub mod parameters;
+pub mod resolve;
 pub mod stroke_font;
 pub mod to_loon;
 pub mod vcode;
 
+pub use datum::{resolve_datums, Datum, PrincipalAxis, ResolvedDatum};
 pub use parameters::{
     resolve_binding, resolve_parameters, validate_bindings, BindingKey, Bindings, Expr, Parameter,
     ResolveError,
 };
+pub use resolve::{resolve_document, resolve_document_cloned, ResolvePatchError};
 
 pub use vcad_tool_derive::ToolSchema;
 
@@ -1883,6 +1887,12 @@ pub struct Document {
     /// resolve, so the kernel never sees expressions.
     #[serde(default, skip_serializing_if = "Bindings::is_empty")]
     pub bindings: Bindings,
+    /// Named reference geometry (planes, axes, points) that parts are placed
+    /// relative to. Coordinates are expressions over `parameters`, so a datum
+    /// is a single source of truth for a shared plane — two parts referencing
+    /// one datum cannot disagree about where it is.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub datums: HashMap<String, Datum>,
 
     // Verification (optional, zero-cost when empty)
     /// Named clearance/clash assertions between part groups, re-measured by
@@ -2235,6 +2245,7 @@ impl Default for Document {
             molecule: None,
             parameters: HashMap::new(),
             bindings: Bindings::new(),
+            datums: HashMap::new(),
             clearance_specs: Vec::new(),
             constraints: Vec::new(),
             analysis_studies: Vec::new(),

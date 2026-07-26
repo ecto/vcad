@@ -12,6 +12,38 @@
 ;   [pipe [cube 50 30 5] [fillet 1.0] [translate 10 0 0]]
 
 ; ---------------------------------------------------------------------------
+; Parametric declarations
+;
+; These forms are NOT closures — they are resolved by the vcad bridge before
+; the program runs (see crates/vcad-loon/src/params.rs), which is what lets a
+; named value survive into the document as a `Parameter` instead of being
+; inlined to a literal. Names must be identifier-safe (letters, digits,
+; underscore); a `-` would read as subtraction in a formula.
+;
+;   [defparam pitch_axis_x 310.0]          ; a named, settable value
+;   [defparam femur_len "pitch_axis_x - 40"] ; derived from other parameters
+;   [defparam bore 10.0 :unit "mm" :min 4.0 :max 40.0 :description "..."]
+;   [param "wall" 2.0]                     ; expression form; evaluates to 2.0
+;
+;   [datum-plane "femur_inner" y 131.0]    ; named reference plane
+;   [datum-axis  "pitch" x 0.0 0.0 310.0]  ; named reference axis
+;   [datum-point "hip"   0.0 0.0 310.0]
+;
+;   [stack y "leg" 131.0                   ; a declarative packing stack
+;     [lane "femur_inner" 5.0]             ;   -> leg_femur_inner_lo / _hi
+;     [gap  "idler_run"   1.0]             ;   -> leg_idler_run (a named clearance)
+;     [lane "idler_boss"  3.0]]            ;   -> leg_end at the outer face
+;
+; and the matching reads, used wherever a literal coordinate would go:
+;
+;   [datum  "leg_idler_boss_lo"]           ; the plane's coordinate
+;   [datum+ "leg_femur_inner_hi" 3.0]      ; 3 mm outboard of that face
+;   [datum-x "pitch"] [datum-y "pitch"] [datum-z "pitch"]
+;
+; Two parts that reference one datum cannot disagree about where it is, and
+; `set_parameters` on the resulting document moves every dependent field.
+
+; ---------------------------------------------------------------------------
 ; Solid — the CSG tree
 ; ---------------------------------------------------------------------------
 

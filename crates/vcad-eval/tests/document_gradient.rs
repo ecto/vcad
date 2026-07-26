@@ -254,3 +254,33 @@ fn loon_authored_document_gradient() {
         "loon-authored dV/dr {dv} vs closed form {dv_exact} (rel {rel:.3e})"
     );
 }
+
+#[test]
+fn defparam_makes_the_gradient_reachable_without_hand_binding() {
+    // The test above binds the parameter onto the produced node by hand,
+    // after evaluation — the step that made the differentiable seam
+    // unreachable for anyone actually authoring in loon. `defparam` declares
+    // the parameter in the source, and the document comes out already
+    // parameterized and bound.
+    let source = format!("[defparam r {R0}]\n[root [cylinder r {HEIGHT}] \"steel\"]");
+    let doc = vcad_loon::eval_vcad(&source, None).expect("loon eval");
+
+    assert!(
+        doc.parameters.contains_key("r"),
+        "the authored name survived evaluation"
+    );
+    assert!(
+        !doc.bindings.is_empty(),
+        "and it is bound to the geometry it drives"
+    );
+
+    let grads = document_parameter_gradient(&doc, "r", 1.0, &tess(), 1e-4).expect("gradient");
+    assert_eq!(grads.len(), 1);
+    let dv = grads[0].derivative.volume;
+    let dv_exact = 2.0 * kfac() * R0 * HEIGHT;
+    let rel = (dv - dv_exact).abs() / dv_exact;
+    assert!(
+        rel <= 1e-9,
+        "defparam-authored dV/dr {dv} vs closed form {dv_exact} (rel {rel:.3e})"
+    );
+}

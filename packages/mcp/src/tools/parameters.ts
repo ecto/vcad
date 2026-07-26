@@ -121,6 +121,26 @@ export const setParametersSchema = {
   required: ["document_id", "parameters"],
 };
 
+/**
+ * Every parameter name something in the document actually reads: binding
+ * formulas plus design-constraint dimensions. A name outside this set is
+ * declared but inert — setting it is a no-op.
+ */
+function referencedNames(doc: Document): Set<string> {
+  const out = new Set<string>();
+  const harvest = (expr: unknown) => {
+    if (typeof expr !== "string") return;
+    for (const v of expr.match(/[A-Za-z_]\w*/g) ?? []) out.add(v);
+  };
+  for (const expr of Object.values(doc.bindings ?? {})) harvest(expr);
+  // Constraint dimensions are expressions over parameters too ("board_width
+  // - 2*margin"), and set_parameters re-solves them below.
+  for (const c of doc.constraints ?? []) {
+    for (const v of Object.values(c as unknown as Record<string, unknown>)) harvest(v);
+  }
+  return out;
+}
+
 interface ParameterDelta {
   name: string;
   previous: Expr;
@@ -160,6 +180,34 @@ export async function setParameters(input: unknown, engine: Engine): Promise<Too
     );
   }
 
+  // A parameter only moves geometry if something references it: a binding
+  // formula, or a design-constraint dimension. Setting one that nothing
+  // references succeeds and changes nothing — the failure mode is turning a
+  // knob and watching the model sit still. Typically it is a *derived*
+  // parameter (a stack boundary follows from thicknesses and gaps; geometry
+  // is bound to those), so the report names what to set instead.
+  const referenced = referencedNames(doc);
+  const noEffect = entries
+    .map(([name]) => name)
+    .filter((name) => !referenced.has(name))
+    .map((name) => {
+      const value = (doc.parameters[name] as Parameter).value;
+      const inputs =
+        typeof value === "string"
+          ? [...new Set(value.match(/[A-Za-z_]\w*/g) ?? [])].filter(
+              (v) => v in doc.parameters && referenced.has(v),
+            )
+          : [];
+      return {
+        name,
+        reason:
+          typeof value === "string"
+            ? `derived (${JSON.stringify(value)}) — no field is bound to it`
+            : "no field is bound to it",
+        ...(inputs.length ? { set_instead: inputs } : {}),
+      };
+    });
+
   const changed: ParameterDelta[] = [];
   for (const [name, value] of entries) {
     const param = doc.parameters[name] as Parameter;
@@ -186,6 +234,7 @@ export async function setParameters(input: unknown, engine: Engine): Promise<Too
     document_id: documentId,
     updated: changed.length,
     changed,
+    ...(noEffect.length ? { no_effect: noEffect } : {}),
     ...(constraintSolve ? { constraint_solve: constraintSolve } : {}),
   });
   result.structuredContent = { changed };

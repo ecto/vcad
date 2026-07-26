@@ -160,7 +160,7 @@ impl Parameter {
 ///
 /// Serialized as `"{node_id}:{field_path}"` for compact JSON and easy
 /// MCP authoring.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BindingKey {
     /// Target node identifier.
     pub node_id: NodeId,

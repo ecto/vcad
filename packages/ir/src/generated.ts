@@ -1366,6 +1366,36 @@ width?: number,
 depth?: number, };
 
 /**
+ * Reference geometry: a named plane, axis, or point.
+ *
+ * Every coordinate is an [`Expr`], so datums participate in the parameter
+ * DAG. An axis-aligned lane plane is the common case and has a constructor
+ * ([`Datum::axis_plane`]) that keeps the offset symbolic while pinning the
+ * normal to a literal unit vector.
+ */
+export type Datum = { "kind": "plane", 
+/**
+ * A point on the plane.
+ */
+origin: [Expr, Expr, Expr], 
+/**
+ * Plane normal (need not be unit length).
+ */
+normal: [Expr, Expr, Expr], } | { "kind": "axis", 
+/**
+ * A point on the axis.
+ */
+origin: [Expr, Expr, Expr], 
+/**
+ * Axis direction (need not be unit length).
+ */
+direction: [Expr, Expr, Expr], } | { "kind": "point", 
+/**
+ * The point's position.
+ */
+position: [Expr, Expr, Expr], };
+
+/**
  * IPC-7351 producibility level, controlling fillet (toe/heel/side) goals and
  * courtyard excess. Higher density → smaller lands.
  */
@@ -1558,6 +1588,13 @@ parameters?: Record<string, Parameter>,
  * resolve, so the kernel never sees expressions.
  */
 bindings?: Bindings, 
+/**
+ * Named reference geometry (planes, axes, points) that parts are placed
+ * relative to. Coordinates are expressions over `parameters`, so a datum
+ * is a single source of truth for a shared plane — two parts referencing
+ * one datum cannot disagree about where it is.
+ */
+datums?: Record<string, Datum>, 
 /**
  * Named clearance/clash assertions between part groups, re-measured by
  * `check_clearance` and receipt verification whenever geometry changes.

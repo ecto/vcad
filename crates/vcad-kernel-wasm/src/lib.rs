@@ -7085,6 +7085,33 @@ pub fn eval_vcad_source_with_modules(source: &str, modules_json: &str) -> Result
     Ok(JsValue::from_str(&json))
 }
 
+/// Evaluate loon source and return both the document and the parametric
+/// warnings, as `{ "document": {...}, "warnings": ["..."] }`.
+///
+/// Same evaluation as [`eval_vcad_source_with_modules`] — the document is
+/// identical — but the warnings explain intent that could *not* be preserved:
+/// a parameter that drives nothing, a field whose dependence on a parameter
+/// is not affine and therefore keeps its literal. Callers that surface
+/// authoring feedback (the MCP server, the app's editor) want this one;
+/// callers that only need geometry can use the plain entry point.
+#[wasm_bindgen(js_name = evalVcadSourceParametric)]
+pub fn eval_vcad_source_parametric(
+    source: &str,
+    modules_json: Option<String>,
+) -> Result<JsValue, JsError> {
+    let modules: std::collections::HashMap<String, String> = match &modules_json {
+        Some(j) if !j.is_empty() => serde_json::from_str(j)
+            .map_err(|e| JsError::new(&format!("invalid modules JSON: {e}")))?,
+        _ => std::collections::HashMap::new(),
+    };
+    let (doc, warnings) = vcad_loon::eval_vcad_parametric(source, None, Some(&modules))
+        .map_err(|e| JsError::new(&e))?;
+    let out = serde_json::json!({ "document": doc, "warnings": warnings });
+    let json = serde_json::to_string(&out)
+        .map_err(|e| JsError::new(&format!("Serialization error: {}", e)))?;
+    Ok(JsValue::from_str(&json))
+}
+
 /// Convert a Document (as JSON) back to loon source code.
 #[wasm_bindgen(js_name = documentToLoon)]
 pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {

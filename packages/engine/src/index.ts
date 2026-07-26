@@ -526,6 +526,10 @@ export interface KernelModule {
   evalVcadSource?: (source: string) => string;
   /** Evaluate loon source with an in-memory `[use ...]` module map. */
   evalVcadSourceWithModules?: (source: string, modulesJson: string) => string;
+  evalVcadSourceParametric?: (
+    source: string,
+    modulesJson: string | undefined,
+  ) => string;
   /** d(mass-property + bbox QoIs)/dθ for a named document parameter. */
   documentParameterGradient?: (
     docJson: string,
@@ -1044,6 +1048,7 @@ export class Engine {
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
       evalVcadSourceWithModules: (wasmModule as Record<string, unknown>).evalVcadSourceWithModules as KernelModule["evalVcadSourceWithModules"],
+      evalVcadSourceParametric: (wasmModule as Record<string, unknown>).evalVcadSourceParametric as KernelModule["evalVcadSourceParametric"],
       documentParameterGradient: (wasmModule as Record<string, unknown>).documentParameterGradient as KernelModule["documentParameterGradient"],
       getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
@@ -2009,6 +2014,28 @@ export class Engine {
       JSON.stringify(modules),
     );
     return JSON.parse(json) as Document;
+  }
+
+  /**
+   * Evaluate loon source, returning the document alongside any parametric
+   * warnings — intent the bridge could *not* preserve, such as a declared
+   * parameter that ends up driving no geometry, or a field whose dependence
+   * on a parameter is not affine and so keeps its literal.
+   *
+   * The document is identical to {@link evalVcadSourceWithModules}; only the
+   * authoring feedback is extra. Returns null on kernels predating the
+   * parametric loon forms, so callers can fall back.
+   */
+  evalVcadSourceParametric(
+    source: string,
+    modules: Record<string, string> = {},
+  ): { document: Document; warnings: string[] } | null {
+    if (!this.kernel.evalVcadSourceParametric) return null;
+    const json = this.kernel.evalVcadSourceParametric(
+      source,
+      Object.keys(modules).length ? JSON.stringify(modules) : undefined,
+    );
+    return JSON.parse(json) as { document: Document; warnings: string[] };
   }
 
   /** Evaluate a preview extrusion without adding to document */

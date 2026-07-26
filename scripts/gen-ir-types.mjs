@@ -83,6 +83,7 @@ const FORCE_OPTIONAL = {
   Document: [
     "parameters",
     "bindings",
+    "datums",
     "clearance_specs",
     "analysis_studies",
     "constraints",
