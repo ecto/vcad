@@ -162,6 +162,10 @@ export async function setParameters(input: unknown, engine: Engine): Promise<Too
 
   const doc: Document = getSession(documentId);
   doc.parameters ??= {};
+  // Same object, but a `const` binding: the `??=` narrowing above is lost
+  // inside the closures below, since TypeScript can't assume a mutable
+  // property stays defined across a callback boundary.
+  const params = doc.parameters;
 
   // Validate up front so a bad entry never leaves a half-applied batch.
   const entries = Object.entries(updates as Record<string, unknown>);
@@ -191,11 +195,11 @@ export async function setParameters(input: unknown, engine: Engine): Promise<Too
     .map(([name]) => name)
     .filter((name) => !referenced.has(name))
     .map((name) => {
-      const value = (doc.parameters[name] as Parameter).value;
+      const value = (params[name] as Parameter).value;
       const inputs =
         typeof value === "string"
           ? [...new Set(value.match(/[A-Za-z_]\w*/g) ?? [])].filter(
-              (v) => v in doc.parameters && referenced.has(v),
+              (v) => v in params && referenced.has(v),
             )
           : [];
       return {

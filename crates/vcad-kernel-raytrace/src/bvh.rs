@@ -125,8 +125,14 @@ pub struct Bvh {
 impl Bvh {
     /// Build a BVH from a BRep solid using SAH construction.
     pub fn build(brep: &BRepSolid) -> Self {
-        let brep = Arc::new(brep.clone());
+        Self::build_shared(Arc::new(brep.clone()))
+    }
 
+    /// Build a BVH over an already-shared BRep solid.
+    ///
+    /// Skips the clone `build` performs, so N instances of the same part can
+    /// share one BLAS (see [`crate::tlas`]).
+    pub fn build_shared(brep: Arc<BRepSolid>) -> Self {
         // Collect all faces with their AABBs
         let faces: Vec<FaceId> = brep.topology.faces.iter().map(|(id, _)| id).collect();
         let mut prim_data: Vec<PrimData> = faces
@@ -259,14 +265,99 @@ impl Bvh {
 
     /// Trace a ray and return only the closest hit.
     pub fn trace_closest(&self, ray: &Ray) -> Option<RayHit> {
+        self.trace_closest_limit(ray, f64::INFINITY)
+    }
+
+    /// Trace a ray and return the closest hit strictly nearer than `t_max`.
+    ///
+    /// Seeding the search with a known upper bound lets the SAH early-outs
+    /// prune subtrees a caller has already beaten — the basis of TLAS
+    /// traversal, where each instance inherits the best `t` found so far.
+    pub fn trace_closest_limit(&self, ray: &Ray, t_max: f64) -> Option<RayHit> {
+        self.trace_closest_range(ray, 0.0, t_max)
+    }
+
+    /// Trace a ray and return the closest hit in the open interval
+    /// `(t_min, t_max)`.
+    ///
+    /// `t_min` is how callers dodge self-intersection without nudging the ray
+    /// origin along the normal — the path tracer's convention. Note this is a
+    /// genuine interval search, not a post-filter: a hit at `t <= t_min` is
+    /// skipped and the search continues past it, so a surface hidden behind
+    /// one is still found.
+    pub fn trace_closest_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<RayHit> {
         let mut closest: Option<RayHit> = None;
-        let mut closest_t = f64::INFINITY;
+        let mut closest_t = t_max;
 
         if let Some(ref root) = self.root {
-            self.trace_node_closest(ray, root, &mut closest, &mut closest_t);
+            self.trace_node_closest(ray, root, t_min, &mut closest, &mut closest_t);
         }
 
         closest
+    }
+
+    /// Any-hit test: does the ray hit *anything* in `(0, t_max)`?
+    ///
+    /// Returns as soon as one hit is found — strictly less work than
+    /// [`Bvh::trace_closest`], which must find the nearest. This is the
+    /// traversal shadow and occlusion rays want.
+    pub fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
+        self.occluded_range(ray, 0.0, t_max)
+    }
+
+    /// Any-hit test over the open interval `(t_min, t_max)`.
+    pub fn occluded_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
+        match self.root {
+            Some(ref root) => self.occluded_node(ray, root, t_min, t_max),
+            None => false,
+        }
+    }
+
+    fn occluded_node(&self, ray: &Ray, node: &BvhNode, t_min: f64, t_max: f64) -> bool {
+        let Some((enter, exit)) = ray.intersect_aabb(node_aabb_of(node)) else {
+            return false;
+        };
+        // Prune boxes wholly outside the interval on either side.
+        if enter >= t_max || exit <= t_min {
+            return false;
+        }
+        match node {
+            BvhNode::Leaf { prims, .. } => prims
+                .iter()
+                .any(|&prim| self.prim_occludes(ray, prim, t_min, t_max)),
+            BvhNode::Internal { left, right, .. } => {
+                self.occluded_node(ray, left, t_min, t_max)
+                    || self.occluded_node(ray, right, t_min, t_max)
+            }
+        }
+    }
+
+    /// Does this primitive block the ray inside `(t_min, t_max)`? Stops at the
+    /// first qualifying hit rather than ranking them, which is the whole point
+    /// of an any-hit query.
+    fn prim_occludes(&self, ray: &Ray, prim: u32, t_min: f64, t_max: f64) -> bool {
+        match &self.geom {
+            BvhGeom::BRep { brep, faces } => {
+                let face_id = faces[prim as usize];
+                let face = &brep.topology.faces[face_id];
+                let surface = &brep.geometry.surfaces[face.surface_index];
+                intersect_surface(ray, surface.as_ref())
+                    .into_iter()
+                    .any(|hit| {
+                        hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
+                    })
+            }
+            // A triangle is convex: at most one hit, so there is nothing to
+            // short-circuit past.
+            BvhGeom::Mesh(mesh) => mesh
+                .test(ray, prim)
+                .is_some_and(|h| h.t > t_min && h.t < t_max),
+        }
+    }
+
+    /// World-space (well, solid-space) bounds of the whole hierarchy.
+    pub fn bounds(&self) -> Option<Aabb3> {
+        self.root.as_ref().map(get_aabb)
     }
 
     /// Trace a ray through a single node.
@@ -288,60 +379,57 @@ impl Bvh {
         }
     }
 
-    /// Trace a ray, keeping only the closest hit.
+    /// Trace a ray, keeping only the closest hit in `(t_min, closest_t)`.
     fn trace_node_closest(
         &self,
         ray: &Ray,
         node: &BvhNode,
+        t_min: f64,
         closest: &mut Option<RayHit>,
         closest_t: &mut f64,
     ) {
-        match node {
-            BvhNode::Leaf { aabb, prims } => {
-                if let Some((t_min, _)) = ray.intersect_aabb(aabb) {
-                    // Early out if AABB entry is beyond current closest
-                    if t_min >= *closest_t {
-                        return;
-                    }
+        let Some((enter, exit)) = ray.intersect_aabb(node_aabb_of(node)) else {
+            return;
+        };
+        // Early out if the box is beyond the current closest, or entirely
+        // behind `t_min`.
+        if enter >= *closest_t || exit <= t_min {
+            return;
+        }
 
-                    for &prim in prims {
-                        if let Some(hit) = self.test_prim_single(ray, prim) {
-                            if hit.t < *closest_t {
-                                *closest_t = hit.t;
-                                *closest = Some(hit);
-                            }
+        match node {
+            BvhNode::Leaf { prims, .. } => {
+                for &prim in prims {
+                    if let Some(hit) = self.test_prim_single(ray, prim, t_min) {
+                        if hit.t < *closest_t {
+                            *closest_t = hit.t;
+                            *closest = Some(hit);
                         }
                     }
                 }
             }
-            BvhNode::Internal { aabb, left, right } => {
-                if let Some((t_min, _)) = ray.intersect_aabb(aabb) {
-                    if t_min >= *closest_t {
-                        return;
-                    }
+            BvhNode::Internal { left, right, .. } => {
+                // Test children in order of AABB distance
+                let left_t = ray.intersect_aabb(&get_aabb(left)).map(|(t, _)| t);
+                let right_t = ray.intersect_aabb(&get_aabb(right)).map(|(t, _)| t);
 
-                    // Test children in order of AABB distance
-                    let left_t = ray.intersect_aabb(&get_aabb(left)).map(|(t, _)| t);
-                    let right_t = ray.intersect_aabb(&get_aabb(right)).map(|(t, _)| t);
-
-                    match (left_t, right_t) {
-                        (Some(lt), Some(rt)) => {
-                            if lt < rt {
-                                self.trace_node_closest(ray, left, closest, closest_t);
-                                self.trace_node_closest(ray, right, closest, closest_t);
-                            } else {
-                                self.trace_node_closest(ray, right, closest, closest_t);
-                                self.trace_node_closest(ray, left, closest, closest_t);
-                            }
+                match (left_t, right_t) {
+                    (Some(lt), Some(rt)) => {
+                        if lt < rt {
+                            self.trace_node_closest(ray, left, t_min, closest, closest_t);
+                            self.trace_node_closest(ray, right, t_min, closest, closest_t);
+                        } else {
+                            self.trace_node_closest(ray, right, t_min, closest, closest_t);
+                            self.trace_node_closest(ray, left, t_min, closest, closest_t);
                         }
-                        (Some(_), None) => {
-                            self.trace_node_closest(ray, left, closest, closest_t);
-                        }
-                        (None, Some(_)) => {
-                            self.trace_node_closest(ray, right, closest, closest_t);
-                        }
-                        (None, None) => {}
                     }
+                    (Some(_), None) => {
+                        self.trace_node_closest(ray, left, t_min, closest, closest_t);
+                    }
+                    (None, Some(_)) => {
+                        self.trace_node_closest(ray, right, t_min, closest, closest_t);
+                    }
+                    (None, None) => {}
                 }
             }
         }
@@ -378,8 +466,9 @@ impl Bvh {
         }
     }
 
-    /// Test a ray against a single primitive, returning only the closest hit.
-    fn test_prim_single(&self, ray: &Ray, prim: u32) -> Option<RayHit> {
+    /// Test a ray against a single primitive, returning only the closest hit
+    /// strictly past `t_min`.
+    fn test_prim_single(&self, ray: &Ray, prim: u32, t_min: f64) -> Option<RayHit> {
         match &self.geom {
             BvhGeom::BRep { brep, faces } => {
                 let face_id = faces[prim as usize];
@@ -391,7 +480,8 @@ impl Bvh {
                 let mut closest: Option<RayHit> = None;
 
                 for hit in surface_hits {
-                    if point_in_face(brep, face_id, hit.uv)
+                    if hit.t > t_min
+                        && point_in_face(brep, face_id, hit.uv)
                         && (closest.is_none() || hit.t < closest.as_ref().unwrap().t)
                     {
                         let point = ray.at(hit.t);
@@ -407,7 +497,7 @@ impl Bvh {
                 closest
             }
             // A triangle is convex: at most one hit, so "closest" is "the" hit.
-            BvhGeom::Mesh(mesh) => mesh.test(ray, prim),
+            BvhGeom::Mesh(mesh) => mesh.test(ray, prim).filter(|h| h.t > t_min),
         }
     }
 
@@ -459,6 +549,13 @@ impl Bvh {
     }
 }
 
+/// Borrow a node's AABB without copying it.
+fn node_aabb_of(node: &BvhNode) -> &Aabb3 {
+    match node {
+        BvhNode::Leaf { aabb, .. } | BvhNode::Internal { aabb, .. } => aabb,
+    }
+}
+
 /// Get the AABB of a node.
 fn get_aabb(node: &BvhNode) -> Aabb3 {
     match node {
@@ -501,7 +598,10 @@ fn flatten_node(
 }
 
 /// One primitive's build-time record: index, bounds, centroid.
-type PrimData = (u32, Aabb3, Point3);
+/// A BLAS primitive for the SAH builder: prim index, bounds, centroid.
+/// Spelled as the generic [`SahItem`] so the per-solid BLAS and the scene
+/// TLAS share one split implementation rather than keeping two copies.
+type PrimData = SahItem<u32>;
 
 /// Centre of an AABB.
 fn centroid_of(aabb: &Aabb3) -> Point3 {
@@ -514,12 +614,7 @@ fn centroid_of(aabb: &Aabb3) -> Point3 {
 
 /// Build a BVH node recursively using SAH.
 fn build_node(face_data: &mut [PrimData]) -> BvhNode {
-    // Compute bounds of all faces
-    let mut bounds = Aabb3::empty();
-    for (_, aabb, _) in face_data.iter() {
-        bounds.include_point(&aabb.min);
-        bounds.include_point(&aabb.max);
-    }
+    let bounds = item_bounds(face_data);
 
     // Base case: small number of faces -> leaf
     if face_data.len() <= 4 {
@@ -529,24 +624,7 @@ fn build_node(face_data: &mut [PrimData]) -> BvhNode {
         };
     }
 
-    // Find best split using SAH
-    let (best_axis, best_pos) = find_best_split(face_data, &bounds);
-
-    // Partition faces
-    let mid = partition_faces(face_data, best_axis, best_pos);
-
-    // Fallback if partition fails
-    if mid == 0 || mid == face_data.len() {
-        // Just split in the middle
-        let mid = face_data.len() / 2;
-        let (left_data, right_data) = face_data.split_at_mut(mid);
-        return BvhNode::Internal {
-            aabb: bounds,
-            left: Box::new(build_node(left_data)),
-            right: Box::new(build_node(right_data)),
-        };
-    }
-
+    let mid = sah_split(face_data, &bounds);
     let (left_data, right_data) = face_data.split_at_mut(mid);
 
     BvhNode::Internal {
@@ -556,8 +634,38 @@ fn build_node(face_data: &mut [PrimData]) -> BvhNode {
     }
 }
 
+/// An item to be partitioned by the SAH builder: a payload, its bounds, and
+/// its centroid. Generic over the payload so the same split search serves
+/// both the per-solid BLAS (faces) and the scene TLAS (instances).
+pub(crate) type SahItem<T> = (T, Aabb3, vcad_kernel_math::Point3);
+
+/// Compute the bounds of a slice of SAH items.
+pub(crate) fn item_bounds<T>(items: &[SahItem<T>]) -> Aabb3 {
+    let mut bounds = Aabb3::empty();
+    for (_, aabb, _) in items {
+        bounds.include_point(&aabb.min);
+        bounds.include_point(&aabb.max);
+    }
+    bounds
+}
+
+/// Split a slice of SAH items in two, returning the midpoint index.
+///
+/// Runs the bucketed SAH search and falls back to a median split when the
+/// chosen plane leaves one side empty. Always returns `1..items.len()`, so
+/// callers can recurse unconditionally.
+pub(crate) fn sah_split<T>(items: &mut [SahItem<T>], bounds: &Aabb3) -> usize {
+    let (axis, pos) = find_best_split(items, bounds);
+    let mid = partition_items(items, axis, pos);
+    if mid == 0 || mid == items.len() {
+        items.len() / 2
+    } else {
+        mid
+    }
+}
+
 /// Find the best split axis and position using SAH.
-fn find_best_split(face_data: &[PrimData], bounds: &Aabb3) -> (usize, f64) {
+fn find_best_split<T>(face_data: &[SahItem<T>], bounds: &Aabb3) -> (usize, f64) {
     const NUM_BUCKETS: usize = 12;
 
     let extent = Vec3::new(
@@ -654,8 +762,8 @@ fn find_best_split(face_data: &[PrimData], bounds: &Aabb3) -> (usize, f64) {
     (best_axis, best_pos)
 }
 
-/// Partition faces by centroid along an axis.
-fn partition_faces(face_data: &mut [PrimData], axis: usize, pos: f64) -> usize {
+/// Partition items by centroid along an axis.
+fn partition_items<T>(face_data: &mut [SahItem<T>], axis: usize, pos: f64) -> usize {
     let mut left = 0;
     let mut right = face_data.len();
 

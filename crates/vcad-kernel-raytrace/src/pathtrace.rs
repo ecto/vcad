@@ -31,6 +31,7 @@ use std::sync::Arc;
 use vcad_kernel_math::{Point3, Vec3};
 
 use crate::bvh::Bvh;
+use crate::tlas::{Instance, Tlas};
 use crate::Ray;
 
 // ─── material ─────────────────────────────────────────────────────────────
@@ -1213,24 +1214,50 @@ enum Landing {
     Miss,
 }
 
+/// The scene's geometry gathered into a TLAS, built once per render.
+///
+/// `Scene` keeps `objects` as its authoring surface — a plain list is the
+/// right thing to *write* — while the integrator traces against this. Kept
+/// separate rather than added as a `Scene` field so the public struct-literal
+/// construction in `Scene { objects, lights, env, ground }` keeps working.
+pub(crate) struct SceneAccel {
+    tlas: Tlas,
+}
+
+impl SceneAccel {
+    /// Place every object at the identity (path-trace objects arrive already
+    /// world-placed) and gather them under one TLAS. Objects already hold
+    /// `Arc<Bvh>`, so repeated parts share a BLAS without any copying.
+    pub(crate) fn build(scene: &Scene) -> Self {
+        let instances = scene
+            .objects
+            .iter()
+            .enumerate()
+            .filter_map(|(i, obj)| Instance::identity(Arc::clone(&obj.bvh), i))
+            .collect();
+        Self {
+            tlas: Tlas::build(instances),
+        }
+    }
+}
+
 impl Scene {
     /// Closest intersection against objects, ground, and lights.
-    fn intersect(&self, ray: &Ray) -> Landing {
+    fn intersect(&self, accel: &SceneAccel, ray: &Ray) -> Landing {
         let mut best_t = f64::INFINITY;
         let mut landing = Landing::Miss;
 
-        for obj in &self.objects {
-            if let Some(hit) = obj.bvh.trace_closest(ray) {
-                if hit.t < best_t && hit.t > 1e-7 {
-                    best_t = hit.t;
-                    landing = Landing::Surface {
-                        point: hit.point,
-                        normal: hit.normal.into_inner(),
-                        tangent: hit.dpdu,
-                        material: obj.material,
-                    };
-                }
-            }
+        // `1e-7` as the interval floor rather than a post-filter: pushed into
+        // the traversal, a surface just behind the one the ray left is still
+        // found instead of the whole query being discarded.
+        if let Some(found) = self.tlas_hit(accel, ray, 1e-7) {
+            best_t = found.hit.t;
+            landing = Landing::Surface {
+                point: found.hit.point,
+                normal: found.hit.normal.into_inner(),
+                tangent: found.hit.dpdu,
+                material: self.objects[found.payload].material,
+            };
         }
 
         if let Some(g) = &self.ground {
@@ -1268,15 +1295,25 @@ impl Scene {
         landing
     }
 
+    /// Closest geometry hit past `t_min`, in world space.
+    fn tlas_hit(
+        &self,
+        accel: &SceneAccel,
+        ray: &Ray,
+        t_min: f64,
+    ) -> Option<crate::tlas::InstanceHit> {
+        accel.tlas.trace_closest_range(ray, t_min, f64::INFINITY)
+    }
+
     /// Any-hit occlusion test against geometry only (lights do not occlude).
-    fn occluded(&self, origin: Point3, dir: Vec3, max_dist: f64) -> bool {
+    ///
+    /// A true any-hit traversal: it returns at the first blocker rather than
+    /// finding the nearest one and then comparing distance, which is strictly
+    /// more work than a shadow ray needs.
+    fn occluded(&self, accel: &SceneAccel, origin: Point3, dir: Vec3, max_dist: f64) -> bool {
         let ray = Ray::new(origin, dir);
-        for obj in &self.objects {
-            if let Some(hit) = obj.bvh.trace_closest(&ray) {
-                if hit.t > 1e-6 && hit.t < max_dist - 1e-6 {
-                    return true;
-                }
-            }
+        if accel.tlas.occluded_range(&ray, 1e-6, max_dist - 1e-6) {
+            return true;
         }
         if let Some(g) = &self.ground {
             let d = ray.direction.into_inner();
@@ -1298,6 +1335,7 @@ impl Scene {
     #[allow(clippy::too_many_arguments)]
     fn sample_lights(
         &self,
+        accel: &SceneAccel,
         p: Point3,
         frame: &Frame,
         wo_local: Vec3,
@@ -1335,7 +1373,7 @@ impl Scene {
                 continue;
             }
 
-            if self.occluded(p + n * 1e-5, wi_world, dist) {
+            if self.occluded(accel, p + n * 1e-5, wi_world, dist) {
                 continue;
             }
 
@@ -1354,6 +1392,7 @@ impl Scene {
     /// low-frequency enough that a second strategy buys nothing.
     fn sample_environment(
         &self,
+        accel: &SceneAccel,
         p: Point3,
         frame: &Frame,
         wo_local: Vec3,
@@ -1377,7 +1416,7 @@ impl Scene {
         }
         // The environment is at infinity: nothing between here and the sky
         // may block, so the shadow ray is unbounded.
-        if self.occluded(p + n * 1e-5, wi_world, f64::INFINITY) {
+        if self.occluded(accel, p + n * 1e-5, wi_world, f64::INFINITY) {
             return [0.0; 3];
         }
         let w = power_heuristic(env_pdf, bsdf_pdf);
@@ -1408,6 +1447,7 @@ struct Primary {
 /// landed on (for alpha and for the denoiser's guide buffers).
 fn radiance(
     scene: &Scene,
+    accel: &SceneAccel,
     opts: &PathTraceOptions,
     ray: Ray,
     rng: &mut Rng,
@@ -1423,7 +1463,7 @@ fn radiance(
     let mut specular_chain = true;
 
     for depth in 0..opts.max_depth {
-        match scene.intersect(&ray) {
+        match scene.intersect(accel, &ray) {
             Landing::Miss => {
                 let dir = ray.direction.into_inner();
                 let env = scene.env.radiance(dir);
@@ -1503,8 +1543,8 @@ fn radiance(
                 // Next-event estimation: explicit lights, plus the
                 // environment when it is importance-sampled.
                 let direct = add3(
-                    scene.sample_lights(point, &frame, wo_local, &material, rng),
-                    scene.sample_environment(point, &frame, wo_local, &material, rng),
+                    scene.sample_lights(accel, point, &frame, wo_local, &material, rng),
+                    scene.sample_environment(accel, point, &frame, wo_local, &material, rng),
                 );
                 let direct = match opts.firefly_clamp {
                     Some(c) if depth > 0 => [direct[0].min(c), direct[1].min(c), direct[2].min(c)],
@@ -1598,6 +1638,10 @@ pub fn render(
     let aspect = width as f64 / height as f64;
     let spp = opts.spp.max(1);
 
+    // One TLAS for the whole frame: every ray, primary and shadow, traverses
+    // it instead of scanning `scene.objects` linearly.
+    let accel = SceneAccel::build(scene);
+
     let mut rgb = vec![0.0f32; (width * height * 3) as usize];
     let mut alpha = vec![0.0f32; (width * height) as usize];
     let mut normal = vec![0.0f32; (width * height * 3) as usize];
@@ -1636,7 +1680,7 @@ pub fn render(
                     let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
 
                     let ray = cam.ray(sx, sy, aspect, lu, lv);
-                    let (l, primary) = radiance(scene, opts, ray, &mut rng);
+                    let (l, primary) = radiance(scene, &accel, opts, ray, &mut rng);
                     acc = add3(acc, l);
                     let ls = luminance(l);
                     lsum += ls;

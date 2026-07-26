@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-26-raytrace-tlas",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "perf",
+  "title": "Ray tracing scales to many-part assemblies",
+  "summary": "A two-level acceleration structure culls whole parts per ray and shares one hierarchy across repeated instances: 6.2x faster on a 216-part assembly.",
+  "features": ["raytrace", "render", "assembly"],
+  "mcpTools": ["render_view"]
+}
