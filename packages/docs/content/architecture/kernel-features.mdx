@@ -60,7 +60,7 @@ The vcad kernel is a purpose-built BRep (boundary representation) modeling kerne
 
 ```lisp
 [let a [fillet 6 [cube 40 40 40]]]
-[let b [translate 60 0 0 [chamfer 6 [cube 40 40 40]]]]
+[let b [translate -60 0 0 [chamfer 6 [cube 40 40 40]]]]
 [root [union a b] "aluminum"]
 ```
 
