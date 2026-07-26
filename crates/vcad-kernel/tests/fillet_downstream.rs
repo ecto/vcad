@@ -95,49 +95,72 @@ fn pocket_in_filleted_box_is_exact() {
 
 /// Case 4: a cut whose planes slice every blend and corner at once.
 ///
-/// KNOWN BROKEN — not fixed here, and deliberately not papered over.
+/// The duplicate-patch half is fixed: `split_spherical_face_by_circle`
+/// used to replace a patch's loop with the new circle unconditionally,
+/// so three cutting planes on one corner left four identical,
+/// overlapping copies of it — the reported 5.7×-too-large volume. The
+/// clip now walks the patch as a spherical polygon, and a circle that
+/// misses the patch reports a clean no-op instead of falling through to
+/// the whole-sphere path that minted the copies.
 ///
-/// Diagnosis: `split_spherical_face_by_circle` replaces the face's loop
-/// with the new circle unconditionally, discarding whatever trim the
-/// face already carried. Three cutting planes on one corner patch
-/// therefore leave FOUR identical, fully-overlapping copies of it —
-/// which is where the reported 5.7×-too-large volume comes from. A
-/// clipping implementation (walk the patch as a spherical polygon, solve
-/// the crossings on the great arcs, close both sides with one shared arc
-/// of the cutting circle) removes the duplicates, but on its own it only
-/// takes this case from 24 duplicate patches to 20 and leaves it just as
-/// cracked, because a second, independent defect sits underneath: the
-/// boundary sampling of a trimmed curved face does not match its
-/// neighbors'. That one is not fillet-specific — a bore through a PLAIN
-/// box cracks the same way. Both want fixing together.
-///
-/// The `#[ignore]`d test below is the target state; this one pins what
-/// holds today so the case cannot silently get worse.
+/// Volume went 476028 → 105056 against a Monte-Carlo truth of 86618.
+/// The remainder is one more trimming defect, tested for separately in
+/// `curved_trim_conformity.rs`: a circle that crosses a planar face's
+/// boundary more than twice leaves that face chorded while the curved
+/// side follows the arc.
 #[test]
-fn difference_with_filleted_subject_still_cuts() {
+fn difference_with_filleted_subject_has_no_duplicate_patches() {
     let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
     let result = filleted.difference(&inner);
 
+    let brep = result.as_brep().expect("brep result");
+    let topo = &brep.topology;
+    let shell = &topo.shells[topo.solids[brep.solid_id].outer_shell];
+    let mut boundaries: Vec<String> = Vec::new();
+    for &fid in &shell.faces {
+        let face = &topo.faces[fid];
+        if format!(
+            "{:?}",
+            brep.geometry.surfaces[face.surface_index].surface_type()
+        ) != "Sphere"
+        {
+            continue;
+        }
+        let key: String = topo
+            .loop_vertices(face.outer_loop)
+            .iter()
+            .map(|v| {
+                let p = topo.vertices[*v].point;
+                format!("{:.3},{:.3},{:.3};", p.x, p.y, p.z)
+            })
+            .collect();
+        assert!(
+            !boundaries.contains(&key),
+            "two sphere faces share a boundary loop — a re-split \
+             discarded an earlier trim"
+        );
+        boundaries.push(key);
+    }
+
     let volume = result.volume();
     assert!(volume.is_finite() && volume > 0.0, "volume {volume}");
-    // The reported symptom included INVERTED winding (a net negative
-    // volume) on the humanoid assembly; positive-and-shrinking is the
-    // floor this case must keep.
+    // Was 5.5× the Monte-Carlo truth when the corners were duplicated.
     assert!(
-        volume < filleted.volume(),
-        "cut added material: {volume} vs {}",
-        filleted.volume()
+        volume < 86_618.0 * 1.5,
+        "{volume} is far above the Monte-Carlo truth 86618 — corner \
+         patches are being counted more than once again"
     );
 }
 
-/// Case 4's target state. Un-`ignore` this when the spherical-patch clip
-/// and the curved-trim boundary sampling land — 86618 mm³ is a 20M-sample
-/// Monte-Carlo integration of the rounded-box SDF minus the inner cube.
+/// Case 4's target state. Un-`ignore` this when a circle crossing a
+/// planar face's boundary more than twice trims that face along the arc
+/// — 86618 mm³ is a 20M-sample Monte-Carlo integration of the
+/// rounded-box SDF minus the inner cube.
 #[test]
-#[ignore = "known broken: spherical re-split discards prior trims, and \
-            trimmed curved faces don't share boundary samples with their \
-            neighbors (a bore through a plain box cracks identically)"]
+#[ignore = "known broken: a circle crossing a planar face's boundary \
+            more than twice leaves the face chorded while the curved \
+            side follows the arc"]
 fn difference_with_filleted_subject_is_watertight() {
     let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);

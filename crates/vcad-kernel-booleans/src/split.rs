@@ -1825,6 +1825,32 @@ pub fn split_spherical_face_by_circle(
 
     let tolerance = 1e-6;
 
+    // A face whose loop is a real spherical polygon (a fillet corner
+    // patch, or a sub-face left by an earlier circle split) must be
+    // CLIPPED by the circle — the whole-sphere path below throws the
+    // existing boundary away and hands back two faces bounded by this
+    // circle alone. Splitting such a face three times (the three planes
+    // of a box cutting a corner blend) then yielded four identical,
+    // fully-overlapping patches: volume counted several times over and a
+    // shell full of holes. An untrimmed sphere keeps the 4-vertex seam
+    // cycle, which is not a boundary, so it still takes the path below.
+    if brep
+        .topology
+        .loop_len(brep.topology.faces[face_id].outer_loop)
+        != 4
+    {
+        if let Some(result) =
+            clip_spherical_face_by_circle(brep, face_id, circle, segments, tolerance)
+        {
+            return result;
+        }
+        // The clip declined (circle misses the patch, crosses its
+        // boundary somewhere other than exactly twice, or can't seat its
+        // connector). Fall through to the whole-sphere split — that is
+        // what this face got before the clip existed, so declining never
+        // costs behavior that used to work.
+    }
+
     // Generate the N shared circle vertices.
     let n = segments as usize;
     let circle_verts: Vec<Point3> = (0..segments)
@@ -1887,6 +1913,274 @@ pub fn split_spherical_face_by_circle(
     SplitResult {
         sub_faces: vec![face_id, face_b],
     }
+}
+
+/// Clip an already-trimmed spherical face by a circle lying on its sphere.
+///
+/// The face's loop is walked as a spherical polygon; where it crosses the
+/// circle's plane the crossing point is solved on the great arc between
+/// the straddling vertices, and the two sides are closed off with a
+/// shared, identically-sampled arc of the circle so they weld.
+///
+/// Returns `None` — leaving the caller to fall back to the whole-sphere
+/// split — when the circle misses the patch, when it crosses the
+/// boundary anywhere other than exactly twice (a multiply-crossing clip
+/// needs region tracking this doesn't do), or when the connecting arc
+/// can't be seated inside the patch.
+fn clip_spherical_face_by_circle(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    tolerance: f64,
+) -> Option<SplitResult> {
+    use vcad_kernel_math::Vec3;
+
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+    let sph = brep.geometry.surfaces[surface_index]
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::SphereSurface>()?
+        .clone();
+    if !face.inner_loops.is_empty() {
+        return None;
+    }
+    let center = sph.center;
+    let radius = sph.radius.abs();
+    if radius < 1e-9 {
+        return None;
+    }
+
+    let x_dir = circle.x_dir.into_inner();
+    let y_dir = circle.y_dir.into_inner();
+    let normal = x_dir.cross(y_dir).normalize();
+    let plane_d = (circle.center - center).dot(normal);
+    let side = |p: &Point3| (*p - center).dot(normal) - plane_d;
+
+    let verts: Vec<Point3> = brep
+        .topology
+        .loop_vertices(brep.topology.faces[face_id].outer_loop)
+        .iter()
+        .map(|v| brep.topology.vertices[*v].point)
+        .collect();
+    let m = verts.len();
+    if m < 3 {
+        return None;
+    }
+    let eps = (radius * 1e-9).max(1e-9);
+    let sides: Vec<f64> = verts.iter().map(side).collect();
+    if sides.iter().all(|s| *s > -eps) || sides.iter().all(|s| *s < eps) {
+        // The circle doesn't cross this patch's boundary. Either it lies
+        // somewhere else on the sphere entirely — in which case there is
+        // nothing to split and falling through to the whole-sphere path
+        // would REPLACE this patch with two copies bounded by a circle
+        // it never touches — or it sits wholly inside the patch, which
+        // needs an inner-loop split this routine doesn't build yet.
+        // Probe the circle: if no point of it is in the face, report a
+        // clean no-op instead of declining.
+        let mut any_inside = false;
+        for k in 0..16 {
+            let ang = 2.0 * std::f64::consts::PI * k as f64 / 16.0;
+            let p = circle.center + circle.radius * (ang.cos() * x_dir + ang.sin() * y_dir);
+            if crate::trim::point_in_face(brep, face_id, &p) {
+                any_inside = true;
+                break;
+            }
+        }
+        if !any_inside {
+            return Some(SplitResult {
+                sub_faces: vec![face_id],
+            });
+        }
+        return None;
+    }
+
+    // Crossing point on the great arc between two straddling vertices:
+    // bisect the arc on the plane's signed distance.
+    let arc_crossing = |a: &Point3, b: &Point3| -> Point3 {
+        let (ua, ub) = ((*a - center) / radius, (*b - center) / radius);
+        let (mut lo, mut hi) = (0.0f64, 1.0f64);
+        let point_at = |t: f64| -> Point3 {
+            let dir = ua + t * (ub - ua);
+            let n = dir.norm();
+            if n < 1e-12 {
+                center + radius * ua
+            } else {
+                center + radius * (dir / n)
+            }
+        };
+        let s_lo = side(&point_at(0.0));
+        for _ in 0..80 {
+            let mid = 0.5 * (lo + hi);
+            if side(&point_at(mid)) * s_lo > 0.0 {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        point_at(0.5 * (lo + hi))
+    };
+
+    let mut crossings: Vec<(usize, Point3)> = Vec::new();
+    for i in 0..m {
+        let j = (i + 1) % m;
+        let (si, sj) = (sides[i], sides[j]);
+        if (si > eps && sj < -eps) || (si < -eps && sj > eps) {
+            crossings.push((i, arc_crossing(&verts[i], &verts[j])));
+        }
+    }
+    if crossings.len() != 2 {
+        return None;
+    }
+    let (e1, x_a) = crossings[0];
+    let (e2, x_b) = crossings[1];
+
+    // The two boundary chains between the crossings.
+    let walk = |from: usize, to: usize| -> Vec<Point3> {
+        let mut out = Vec::new();
+        let mut i = (from + 1) % m;
+        loop {
+            if i == (to + 1) % m {
+                break;
+            }
+            out.push(verts[i]);
+            i = (i + 1) % m;
+        }
+        out
+    };
+    let chain1 = walk(e1, e2);
+    let chain2 = walk(e2, e1);
+
+    // Connector: the arc of the circle between the two crossings that
+    // runs through the patch. Both candidate arcs are tested by their
+    // midpoint; the one inside the original face wins.
+    let angle_of = |p: &Point3| -> f64 {
+        let d = *p - circle.center;
+        d.dot(y_dir).atan2(d.dot(x_dir))
+    };
+    let (a_ang, b_ang) = (angle_of(&x_a), angle_of(&x_b));
+    let on_circle = |ang: f64| -> Point3 {
+        circle.center + circle.radius * (ang.cos() * x_dir + ang.sin() * y_dir)
+    };
+    let mut sweep = b_ang - a_ang;
+    while sweep <= -std::f64::consts::PI {
+        sweep += 2.0 * std::f64::consts::PI;
+    }
+    while sweep > std::f64::consts::PI {
+        sweep -= 2.0 * std::f64::consts::PI;
+    }
+    let alt = if sweep > 0.0 {
+        sweep - 2.0 * std::f64::consts::PI
+    } else {
+        sweep + 2.0 * std::f64::consts::PI
+    };
+    let inside = |s: f64| crate::trim::point_in_face(brep, face_id, &on_circle(a_ang + 0.5 * s));
+    let sweep = if inside(sweep) {
+        sweep
+    } else if inside(alt) {
+        alt
+    } else {
+        return None;
+    };
+
+    // Sample the connector on the circle's CANONICAL grid — the same
+    // θ = 2πk/segments schedule every other splitter uses for this
+    // circle — rather than by evenly dividing this particular sweep.
+    // Any face bounded by the same circle then lands on identical
+    // points instead of a phase-shifted set that zippers open.
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let step = two_pi / segments.max(3) as f64;
+    let ang_eps = step * 1e-6;
+    let mut conn_angles: Vec<f64> = Vec::new();
+    if sweep > 0.0 {
+        let mut k = (a_ang / step).floor() + 1.0;
+        while k * step < a_ang + sweep - ang_eps {
+            if k * step > a_ang + ang_eps {
+                conn_angles.push(k * step);
+            }
+            k += 1.0;
+        }
+    } else {
+        let mut k = (a_ang / step).ceil() - 1.0;
+        while k * step > a_ang + sweep + ang_eps {
+            if k * step < a_ang - ang_eps {
+                conn_angles.push(k * step);
+            }
+            k -= 1.0;
+        }
+    }
+    let connector: Vec<Point3> = conn_angles.iter().map(|a| on_circle(*a)).collect();
+
+    // Materialize vertices. The connector is shared by both sub-faces
+    // (same ids, opposite traversal) so the seam pairs into edges.
+    let va = find_or_create_vertex(brep, &x_a, tolerance);
+    let vb = find_or_create_vertex(brep, &x_b, tolerance);
+    let conn_ids: Vec<_> = connector
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tolerance))
+        .collect();
+    let chain_ids = |brep: &mut BRepSolid, pts: &[Point3]| -> Vec<vcad_kernel_topo::VertexId> {
+        pts.iter()
+            .map(|p| find_or_create_vertex(brep, p, tolerance))
+            .collect()
+    };
+    let chain1_ids = chain_ids(brep, &chain1);
+    let chain2_ids = chain_ids(brep, &chain2);
+
+    // Loop A: x_a → chain1 → x_b → connector reversed → back to x_a.
+    let mut loop_a_verts = vec![va];
+    loop_a_verts.extend(chain1_ids);
+    loop_a_verts.push(vb);
+    loop_a_verts.extend(conn_ids.iter().rev().copied());
+    // Loop B: x_b → chain2 → x_a → connector forward → back to x_b.
+    let mut loop_b_verts = vec![vb];
+    loop_b_verts.extend(chain2_ids);
+    loop_b_verts.push(va);
+    loop_b_verts.extend(conn_ids.iter().copied());
+
+    loop_a_verts.dedup();
+    loop_b_verts.dedup();
+    if loop_a_verts.len() < 3 || loop_b_verts.len() < 3 {
+        return None;
+    }
+
+    let make_loop = |brep: &mut BRepSolid, vs: &[vcad_kernel_topo::VertexId]| {
+        let hes: Vec<HalfEdgeId> = vs.iter().map(|v| brep.topology.add_half_edge(*v)).collect();
+        let loop_id = brep.topology.add_loop(&hes);
+        (loop_id, hes)
+    };
+    let (loop_a, he_a) = make_loop(brep, &loop_a_verts);
+    let (loop_b, he_b) = make_loop(brep, &loop_b_verts);
+
+    {
+        let f = &mut brep.topology.faces[face_id];
+        f.outer_loop = loop_a;
+        f.inner_loops.clear();
+    }
+    let face_b = brep.topology.add_face(loop_b, surface_index, orientation);
+    if let Some(shell_id) = brep.topology.faces[face_id].shell {
+        brep.topology.shells[shell_id].faces.push(face_b);
+        brep.topology.faces[face_b].shell = Some(shell_id);
+    }
+
+    // Pair the shared seam: A walks x_b → connector → x_a, B walks the
+    // same vertices in reverse.
+    let a_seam_start = loop_a_verts.len() - conn_ids.len() - 1;
+    let b_seam_start = loop_b_verts.len() - conn_ids.len() - 1;
+    let seam_len = conn_ids.len() + 1;
+    for k in 0..seam_len {
+        let ha = he_a[(a_seam_start + k) % he_a.len()];
+        let hb = he_b[(b_seam_start + seam_len - 1 - k) % he_b.len()];
+        brep.topology.add_edge(ha, hb);
+    }
+
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+    let _ = Vec3::zeros();
+    Some(SplitResult {
+        sub_faces: vec![face_id, face_b],
+    })
 }
 
 /// Check if a face's underlying surface is a cylinder.

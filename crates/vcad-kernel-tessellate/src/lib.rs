@@ -1513,19 +1513,20 @@ fn tessellate_planar_face_with_holes(
     // that together form a full circle at the same position).
     merge_overlapping_holes(&mut inner_2d, &mut inner_loops);
 
-    // Large multiply-connected faces (chip-layer islands with hundreds of
-    // holes and thousands of boundary vertices) blow up the O(n²)-ish
-    // bridge + ear-clip path below; route them through earcut, which is
-    // near-linear and handles holes natively without Steiner points.
-    let total_verts = outer_2d.len() + inner_2d.iter().map(Vec::len).sum::<usize>();
-    if total_verts > EARCUT_VERTEX_THRESHOLD {
-        if let Some(mesh) =
-            earcut_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
-        {
-            return mesh;
-        }
-        // earcut failed — fall through to the bridge + ear-clip path below.
+    // Earcut first: it handles holes natively and — the property that
+    // matters here — introduces NO vertices. The bridge + ear-clip path
+    // below refines this face's OUTER ring (a Steiner point every 8mm),
+    // and the neighbor across that ring has no way to know: the ring is
+    // a shared edge, so every inserted point is a T-junction the weld
+    // can't close. A bore through a plain box cracked exactly there.
+    // Earcut is also near-linear, which is why the big multiply-
+    // connected faces (chip-layer islands) were already routed here.
+    if let Some(mesh) =
+        earcut_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
+    {
+        return mesh;
     }
+    // earcut failed — fall through to the bridge + ear-clip path below.
 
     // After merging overlapping arcs, use bridge+ear-clip directly.
     // The merged holes are well-shaped (no more overlapping semicircles),
@@ -2612,6 +2613,74 @@ fn tessellate_simple_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh {
     mesh
 }
 
+/// Vertices of OTHER faces that sit on this cylindrical face's end
+/// circles, in loop order per ring.
+///
+/// A cylinder a boolean left whole keeps its 2-vertex seam loop, so it
+/// has no record of how the faces it meets sampled the shared circle.
+/// Those faces store it as an inner (hole) loop and tessellate it
+/// verbatim; picking the ring up from them lets the cylinder anchor its
+/// u-schedule on the same points. Only vertices within tolerance of the
+/// surface AND of one of the two end planes qualify, so unrelated
+/// geometry that happens to share the infinite cylinder is excluded.
+fn end_ring_anchor_points(
+    topo: &Topology,
+    geom: &GeometryStore,
+    face_id: FaceId,
+    cyl: &vcad_kernel_geom::CylinderSurface,
+    seam: &[Point3],
+) -> Vec<Point3> {
+    if seam.len() < 2 {
+        return Vec::new();
+    }
+    let axis = *cyl.axis.as_ref();
+    let radius = cyl.radius.abs();
+    if radius < 1e-9 {
+        return Vec::new();
+    }
+    let v_of = |p: &Point3| (*p - cyl.center).dot(axis);
+    let radial_err = |p: &Point3| {
+        let d = *p - cyl.center;
+        ((d - axis * d.dot(axis)).norm() - radius).abs()
+    };
+    let (mut v_lo, mut v_hi) = (f64::MAX, f64::MIN);
+    for p in seam {
+        let v = v_of(p);
+        v_lo = v_lo.min(v);
+        v_hi = v_hi.max(v);
+    }
+    if (v_hi - v_lo).abs() < 1e-12 {
+        return Vec::new();
+    }
+    let tol = (radius * 1e-6).max(1e-9);
+    let mut out = Vec::new();
+    for (other_id, other) in &topo.faces {
+        if other_id == face_id {
+            continue;
+        }
+        // Only a face bounded BY this circle can own the ring; skip
+        // anything on this same cylinder to avoid pulling in a twin
+        // strip's own sampling.
+        if geom.surfaces[other.surface_index].surface_type() == SurfaceKind::Cylinder {
+            continue;
+        }
+        let loops = std::iter::once(other.outer_loop).chain(other.inner_loops.iter().copied());
+        for loop_id in loops {
+            for he in topo.loop_half_edges(loop_id) {
+                let p = topo.vertices[topo.half_edges[he].origin].point;
+                if radial_err(&p) > tol {
+                    continue;
+                }
+                let v = v_of(&p);
+                if (v - v_lo).abs() <= tol || (v - v_hi).abs() <= tol {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Tessellate a cylindrical face (lateral surface of a cylinder).
 fn tessellate_cylindrical_face(
     topo: &Topology,
@@ -2630,10 +2699,28 @@ fn tessellate_cylindrical_face(
 
     // Determine the v (height) parameter range by projecting seam vertices
     // onto the cylinder axis. This works correctly after any transform.
-    let verts: Vec<_> = topo
+    let mut verts: Vec<_> = topo
         .loop_half_edges(face.outer_loop)
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
+
+    // A full-circle wall (a bore, or any cylinder a boolean left whole)
+    // keeps the analytic 2-vertex seam loop, which carries no ring — so
+    // it cannot anchor on the sampling its neighbors chose. The faces
+    // that close it off DO carry that ring, as the hole loop the split
+    // gave them, and they tessellate it verbatim. Borrow those vertices
+    // as anchors: they lie on this cylinder's own end circles, so the
+    // schedule below reproduces them exactly and the seam welds instead
+    // of zippering open against an evenly-spaced schedule of its own.
+    let borrowed_ring = if verts.len() <= 2 {
+        surface
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+            .map(|cyl| end_ring_anchor_points(topo, geom, face_id, cyl, &verts))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     // Ruled two-chain strip: a blend face whose end rings are angle-paired
     // sample curves but not necessarily planar (a miter-trimmed fillet
@@ -2659,6 +2746,9 @@ fn tessellate_cylindrical_face(
             return mesh;
         }
     }
+
+    verts.extend(borrowed_ring);
+    let verts = verts;
 
     let mut radius = None;
     let mut u_min = 0.0;
@@ -2819,7 +2909,17 @@ fn tessellate_cylindrical_face(
     // keep the original evenly-spaced schedule.
     let mut u_samples: Vec<f64> = Vec::new();
     let is_partial = u_range < 2.0 * PI - 0.01;
-    if is_partial && unique_angles.len() >= 2 {
+    if !is_partial && unique_angles.len() >= 3 {
+        // Full circle with anchors of its own (a bore that borrowed the
+        // ring its end faces carry). Walk the anchors and close the loop
+        // by repeating the first one a turn later — spanning only
+        // first→last leaves the wrap-around wedge as a hole.
+        let mut anchors = unique_angles.clone();
+        anchors.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        anchors.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        u_samples = anchors.clone();
+        u_samples.push(anchors[0] + 2.0 * PI);
+    } else if is_partial && unique_angles.len() >= 2 {
         // Map unique angles into the (possibly wrap-extended) u range.
         let offset = if u_max > 2.0 * PI { 2.0 * PI } else { 0.0 };
         let mut anchors: Vec<f64> = Vec::new();
@@ -3389,6 +3489,87 @@ fn tessellate_ruled_two_chain(
     Some(mesh)
 }
 
+/// Neighbour-owned points on this spherical face's boundary arcs.
+///
+/// Where a fillet blend meets its corner sphere, the shared boundary is
+/// a GREAT circle of that sphere. A boolean samples that arc densely on
+/// the cylinder side (its split writes the samples into the cylinder's
+/// loop) but leaves the sphere patch holding only its corner vertices,
+/// so the two sides tessellate the same arc at different densities and
+/// the seam zippers open. Walk each boundary edge and pull in any vertex
+/// that lies on the great arc between its endpoints — an exact test, so
+/// unrelated geometry can't be swept in.
+fn sphere_boundary_with_neighbors(
+    topo: &Topology,
+    sphere: &vcad_kernel_geom::SphereSurface,
+    loop_verts: &[Point3],
+) -> Vec<Point3> {
+    let center = sphere.center;
+    let radius = sphere.radius.abs();
+    if radius < 1e-9 || loop_verts.len() < 3 {
+        return loop_verts.to_vec();
+    }
+    let tol = (radius * 1e-6).max(1e-9);
+    let ang_tol = (tol / radius).max(1e-9);
+
+    let candidates: Vec<Point3> = {
+        let mut seen: Vec<Point3> = Vec::new();
+        for (_, he) in &topo.half_edges {
+            if he.loop_id.is_none() {
+                continue;
+            }
+            let p = topo.vertices[he.origin].point;
+            if ((p - center).norm() - radius).abs() > tol {
+                continue;
+            }
+            if !seen.iter().any(|q| (*q - p).norm() <= tol) {
+                seen.push(p);
+            }
+        }
+        seen
+    };
+    if candidates.is_empty() {
+        return loop_verts.to_vec();
+    }
+
+    let mut out: Vec<Point3> = Vec::with_capacity(loop_verts.len());
+    for i in 0..loop_verts.len() {
+        let a = loop_verts[i];
+        let b = loop_verts[(i + 1) % loop_verts.len()];
+        out.push(a);
+        let (da, db) = (a - center, b - center);
+        let n = da.cross(db);
+        if n.norm() < 1e-12 {
+            continue;
+        }
+        let n = n.normalize();
+        let (ua, ub) = (da.normalize(), db.normalize());
+        let total = ua.dot(ub).clamp(-1.0, 1.0).acos();
+        if total < ang_tol {
+            continue;
+        }
+        let mut hits: Vec<(f64, Point3)> = Vec::new();
+        for p in &candidates {
+            let dp = *p - center;
+            if dp.dot(n).abs() > tol {
+                continue; // off the great circle's plane
+            }
+            let up = dp.normalize();
+            let ta = ua.dot(up).clamp(-1.0, 1.0).acos();
+            let tb = up.dot(ub).clamp(-1.0, 1.0).acos();
+            if (ta + tb - total).abs() > ang_tol * 10.0 || ta <= ang_tol || tb <= ang_tol {
+                continue; // not strictly between a and b on this arc
+            }
+            hits.push((ta, *p));
+        }
+        hits.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (_, p) in hits {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// Tessellate a spherical face.
 /// Uses a single vertex at each pole to avoid normal computation artifacts.
 /// For split caps (from boolean operations), uses boundary-aware tessellation.
@@ -3413,7 +3594,16 @@ fn tessellate_spherical_face(
     // either boolean-split caps or fillet vertex-blend patches — and
     // should be tessellated as a bounded cap, not a full sphere.
     if loop_verts.len() == 3 || loop_verts.len() > 4 {
-        return tessellate_spherical_cap(surface.as_ref(), &loop_verts, params, reversed);
+        // Adopt whatever the neighbours sampled on the shared arcs
+        // before tessellating, so both sides of every seam agree.
+        let enriched = match surface
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+        {
+            Some(sph) => sphere_boundary_with_neighbors(topo, sph, &loop_verts),
+            None => loop_verts.clone(),
+        };
+        return tessellate_spherical_cap(surface.as_ref(), &enriched, params, reversed);
     }
 
     let sphere_radius = surface
@@ -3673,7 +3863,13 @@ fn tessellate_small_spherical_cap(
     // `samples_per_arc` follows `circle_segments`: a 90° great-circle
     // (cube case) gets `circle_segments / 4` segments, which is the
     // same density a cylinder fillet uses around its 90° v-arc cap.
-    let dense_loop_verts: Vec<Point3> = if loop_verts.len() >= 3 {
+    // Only a pristine analytic patch (the 3- or 4-vertex fillet corner
+    // blend, whose neighbours are equally coarse and follow the same
+    // formula) is densified. A boundary that already carries neighbour
+    // samples must be used verbatim: densifying it inserts points no
+    // neighbour has, and on the cut-circle stretches the great-arc
+    // interpolation bulges off the true boundary as well.
+    let dense_loop_verts: Vec<Point3> = if (3..=4).contains(&loop_verts.len()) {
         let n = loop_verts.len();
         let mut out: Vec<Point3> = Vec::new();
         for i in 0..n {
