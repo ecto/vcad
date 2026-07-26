@@ -1081,6 +1081,13 @@
         "part_id": {
           "type": "string",
           "description": "The part ID to inspect."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [
@@ -1113,6 +1120,13 @@
         "limit": {
           "type": "integer",
           "description": "Cap the number of parts returned when no part_ids are provided (default 100)."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [
@@ -1502,7 +1516,7 @@
   {
     "name": "export_cad",
     "title": "Export CAD",
-    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
+    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension. Pass `joint_state` to export a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1521,6 +1535,13 @@
         "filename": {
           "type": "string",
           "description": "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp), relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) auto-detect bends, angles, and directions with zero data entry."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [
@@ -1534,7 +1555,7 @@
   {
     "name": "inspect_cad",
     "title": "Inspect CAD",
-    "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
+    "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`. Pass `joint_state` to measure a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) rather than its zero pose.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1545,6 +1566,13 @@
         "document": {
           "type": "object",
           "description": "Inline Document IR to inspect instead of a session. Use this stateless path when no `document_id` is resident (e.g. a cold serverless instance)."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       }
     },
@@ -5712,7 +5740,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Pass `joint_state` to render a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose — forward kinematics resolves the instance placements and the resolved transforms come back in `pose.transforms`. Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5785,6 +5813,13 @@
             "shaded"
           ],
           "description": "Shading style: 'drafting' (default) keeps part colors in the navy drafting tonal family; 'shaded' renders each part in its full assigned material color (same Lambertian shading). Any other value is an error."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       }
     },
@@ -8251,7 +8286,7 @@
   {
     "name": "check_clearance",
     "title": "Check Clearance",
-    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at a real pose (joint id or name → degrees, or mm for sliders) instead of the stored zero pose — that is how you check a mechanism clears through its travel. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8284,6 +8319,13 @@
         "allow_contact": {
           "type": "boolean",
           "description": "Treat exact surface contact (measured distance within 0.001 mm of zero) as passing even though it is below `min_mm` — for parts designed to touch, e.g. a stage bolted flush to the chamber floor. Penetration beyond the tolerance still fails. Persisted with the spec when `label` is given."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
         }
       },
       "required": [

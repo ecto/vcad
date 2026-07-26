@@ -31,6 +31,7 @@ import {
   withRenderAssets,
 } from "./render-assets.js";
 import { asBool } from "./arg-coerce.js";
+import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 
 export const renderViewSchema = {
   type: "object" as const,
@@ -108,6 +109,7 @@ export const renderViewSchema = {
       description:
         "Shading style: 'drafting' (default) keeps part colors in the navy drafting tonal family; 'shaded' renders each part in its full assigned material color (same Lambertian shading). Any other value is an error.",
     },
+    joint_state: jointStateSchemaProp,
   },
 };
 
@@ -226,9 +228,30 @@ export async function rasterize(
 export async function renderView(
   args: Record<string, unknown>,
 ): Promise<RenderViewResult> {
-  const { doc, documentId: resolvedId } = resolveDocInput(args);
+  const { doc: storedDoc, documentId: resolvedId } = resolveDocInput(args);
   // Echoed back in result/error payloads; the empty string marks the inline path.
   const documentId = resolvedId ?? "";
+
+  // Optional pose: render the assembly at the requested joint states rather
+  // than the stored (usually zero) pose. Never mutates the session document.
+  let doc: Document;
+  let pose: PoseInfo | undefined;
+  try {
+    ({ doc, pose } = applyJointState(storedDoc, args.joint_state));
+  } catch (e) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: e instanceof Error ? e.message : String(e),
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
 
   const widthRaw = Number(args.width_px ?? DEFAULT_WIDTH_PX);
   const widthPx = Math.min(
@@ -631,6 +654,7 @@ export async function renderView(
             ...(style !== "drafting" ? { style } : {}),
             width_px: widthPx,
             format: "png",
+            ...(pose ? { pose } : {}),
             ...(highlight.length > 0 ? { highlight } : {}),
             asset: renderAssetSummary(asset),
             suggested_final_markdown: asset.markdown,
@@ -681,6 +705,7 @@ export async function renderView(
           ...(sectionRaw ? { section: sectionRaw } : {}),
           format: "svg",
           ...(highlight.length > 0 ? { highlight } : {}),
+          ...(pose ? { pose } : {}),
           note,
           ...(svgBytes <= MAX_INLINE_SVG_BYTES
             ? { svg }
@@ -1300,7 +1325,7 @@ export const toolDefs: ToolDef[] = [
     name: "render_view",
     pack: null,
     description:
-      "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Call after mutations to visually confirm the part matches intent before declaring done.",
+      "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Pass style:'shaded' to render parts in their full assigned material colors instead of the navy drafting look. Pass `joint_state` to render a jointed assembly at a real pose (joint id or name → degrees, or mm for sliders) instead of its zero pose — forward kinematics resolves the instance placements and the resolved transforms come back in `pose.transforms`. Call after mutations to visually confirm the part matches intent before declaring done.",
     inputSchema: renderViewSchema,
     handler: async (a) => (await renderView(a)) as unknown as ToolResult,
     behavior: behavior({}),
