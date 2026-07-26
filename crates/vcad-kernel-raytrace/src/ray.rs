@@ -90,13 +90,20 @@ pub struct RayHit {
     /// Surface normal at the intersection (pointing outward).
     pub normal: Dir3,
     /// Surface parameter coordinates (u, v) at intersection.
+    ///
+    /// For triangle hits (see [`tri`](Self::tri)) these are the barycentric
+    /// weights of the second and third vertices, not a surface parameter.
     pub uv: Point2,
-    /// Face ID that was hit.
+    /// Face ID that was hit. Null (`FaceId::default()`) for triangle hits,
+    /// which belong to a mesh and have no BRep face.
     pub face_id: FaceId,
+    /// Index of the triangle that was hit, when this hit came from a
+    /// mesh-backed BVH. `None` for analytic BRep-face hits.
+    pub tri: Option<u32>,
 }
 
 impl RayHit {
-    /// Create a new ray hit.
+    /// Create a new ray hit on an analytic BRep face.
     pub fn new(t: f64, point: Point3, normal: Dir3, uv: Point2, face_id: FaceId) -> Self {
         Self {
             t,
@@ -104,6 +111,22 @@ impl RayHit {
             normal,
             uv,
             face_id,
+            tri: None,
+        }
+    }
+
+    /// Create a new ray hit on a mesh triangle.
+    ///
+    /// `uv` carries the barycentric weights `(u, v)` of the hit and
+    /// [`face_id`](Self::face_id) is left null — a mesh has no BRep faces.
+    pub fn triangle(t: f64, point: Point3, normal: Dir3, uv: Point2, tri: u32) -> Self {
+        Self {
+            t,
+            point,
+            normal,
+            uv,
+            face_id: FaceId::default(),
+            tri: Some(tri),
         }
     }
 }

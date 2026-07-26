@@ -44,8 +44,10 @@ impl CpuRenderer {
         self.material_color = [r, g, b];
     }
 
-    /// Get a reference to the underlying BRep solid.
-    pub fn brep(&self) -> &BRepSolid {
+    /// Get a reference to the underlying BRep solid, if this renderer was
+    /// built over one. `None` when [`from_bvh`](Self::from_bvh) was handed a
+    /// mesh-backed BVH.
+    pub fn brep(&self) -> Option<&BRepSolid> {
         self.bvh.brep()
     }
 
@@ -706,7 +708,12 @@ mod tests {
     fn test_cpu_renderer_create() {
         let cube = make_cube(10.0, 10.0, 10.0);
         let renderer = CpuRenderer::new(&cube);
-        assert!(!renderer.brep().topology.faces.is_empty());
+        assert!(!renderer
+            .brep()
+            .expect("built from a BRep")
+            .topology
+            .faces
+            .is_empty());
     }
 
     #[test]

@@ -7646,6 +7646,7 @@ dependencies = [
  "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
+ "vcad-kernel-tessellate",
  "vcad-kernel-topo",
  "wasm-bindgen",
  "wasm-bindgen-futures",

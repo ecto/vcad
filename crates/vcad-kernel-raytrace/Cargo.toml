@@ -12,6 +12,7 @@ vcad-kernel-math = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-geom = { workspace = true }
 vcad-kernel-primitives = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-booleans = { workspace = true }
 vcad-kernel-gpu = { workspace = true, optional = true }
 wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }

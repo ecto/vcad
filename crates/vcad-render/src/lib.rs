@@ -610,7 +610,22 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            p.solid.clone().map(|s| {
+            // A root whose chain bottoms out in an `ImportedMesh` (frozen
+            // topology-optimization results, drag-dropped STL/GLB) carries
+            // no `Solid` — the evaluator has no path from a triangle soup
+            // back to a BRep. Wrap the raw mesh so it still reaches the
+            // renderer instead of vanishing from the scene entirely.
+            let solid = p.solid.clone().or_else(|| {
+                (!p.mesh.indices.is_empty()).then(|| {
+                    Solid::from_mesh(vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+                        vertices: p.mesh.positions.clone(),
+                        indices: p.mesh.indices.clone(),
+                        normals: p.mesh.normals.clone().unwrap_or_default(),
+                        face_kinds: p.mesh.face_kinds.clone().unwrap_or_default(),
+                    })
+                })
+            });
+            solid.map(|s| {
                 let name = visible_roots
                     .get(i)
                     .and_then(|r| parsed.document.nodes.get(&r.root))
@@ -3760,26 +3775,50 @@ mod raytrace {
             return Err("fill_frac must be in (0, 1]".to_string());
         }
 
-        // One BVH per BRep-backed solid; assembly instances arrive from
-        // `evaluate_vcad` already world-placed, so no per-instance
-        // transforms are needed here. Mesh-only solids (frozen topology-
-        // optimization results, imported meshes) have no analytic surfaces
-        // to trace and are skipped.
+        // One BVH per solid; assembly instances arrive from `evaluate_vcad`
+        // already world-placed, so no per-instance transforms are needed
+        // here. BRep-backed solids trace analytically; mesh-only ones
+        // (frozen topology-optimization results, imported STL/GLB parts)
+        // trace as triangles, crease-baked so they read smooth next to the
+        // analytic surfaces rather than faceted.
         let mut scene: Vec<(Bvh, Option<[[u8; 3]; 4]>)> = Vec::new();
+        let mut untraceable: Vec<String> = Vec::new();
         for s in &tinted {
-            let Some(brep) = s.solid.as_brep() else {
-                continue;
+            let bvh = match s.solid.as_brep() {
+                Some(brep) => Bvh::build(brep),
+                None => {
+                    let mut mesh = s.solid.to_mesh(0);
+                    vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
+                    Bvh::build_mesh(&mesh)
+                }
             };
-            let bvh = Bvh::build(brep);
             if bvh.root().is_none() {
+                // Empty solid, or a mesh whose triangles were all
+                // degenerate: nothing to trace. Name it rather than
+                // dropping it on the floor.
+                untraceable.push(s.name.clone().unwrap_or_else(|| s.id.clone()));
                 continue;
             }
             scene.push((bvh, s.tint.map(tint_ramp)));
         }
         if scene.is_empty() {
-            return Err("raytrace: document produced no BRep-backed solids \
-                 (mesh-only parts render via the tessellated path)"
-                .to_string());
+            return Err(format!(
+                "raytrace: document produced no traceable geometry ({} part(s) empty \
+                 or degenerate: {})",
+                untraceable.len(),
+                untraceable.join(", ")
+            ));
+        }
+        if !untraceable.is_empty() {
+            // Fail closed rather than silently rendering a subset: a
+            // missing part in a render reads as a design that doesn't have
+            // it, which is worse than no render at all.
+            return Err(format!(
+                "raytrace: {} part(s) have no traceable geometry (empty or \
+                 fully degenerate): {}",
+                untraceable.len(),
+                untraceable.join(", ")
+            ));
         }
 
         // Framing: project the union of the BVH root AABBs onto the view
@@ -5199,6 +5238,146 @@ mod tests {
             assert!(
                 non_bg > 500,
                 "expected both placed instances to cover pixels, got {non_bg} non-background"
+            );
+        }
+
+        /// A 20mm axis-aligned box as a raw triangle mesh, translated along
+        /// X. Twelve triangles, no normals — the shape a frozen
+        /// `topology_optimize` result or a dropped-in STL arrives as.
+        fn mesh_box_node(id: u32, x0: f64) -> String {
+            let (x1, s) = (x0 + 20.0, 20.0);
+            let corners = [
+                [x0, 0.0, 0.0],
+                [x1, 0.0, 0.0],
+                [x1, s, 0.0],
+                [x0, s, 0.0],
+                [x0, 0.0, s],
+                [x1, 0.0, s],
+                [x1, s, s],
+                [x0, s, s],
+            ];
+            let positions: Vec<String> = corners
+                .iter()
+                .flat_map(|c| c.iter().map(|v| format!("{v:?}")))
+                .collect();
+            // Two triangles per face, outward-wound (winding is irrelevant to
+            // the double-sided intersector, but keeps the fixture sane).
+            let indices = [
+                [0, 2, 1],
+                [0, 3, 2],
+                [4, 5, 6],
+                [4, 6, 7],
+                [0, 1, 5],
+                [0, 5, 4],
+                [1, 2, 6],
+                [1, 6, 5],
+                [2, 3, 7],
+                [2, 7, 6],
+                [3, 0, 4],
+                [3, 4, 7],
+            ];
+            let indices: Vec<String> = indices
+                .iter()
+                .flat_map(|t| t.iter().map(|i| i.to_string()))
+                .collect();
+            format!(
+                r#""{id}": {{ "id": {id}, "name": "meshpart", "op": {{ "type": "ImportedMesh", "positions": [{}], "indices": [{}] }} }}"#,
+                positions.join(", "),
+                indices.join(", ")
+            )
+        }
+
+        /// Per-column non-background pixel counts.
+        fn column_coverage(png: &[u8]) -> Vec<u32> {
+            let img = image::load_from_memory(png).expect("valid PNG").to_rgb8();
+            let bg = super::super::raster::BACKGROUND;
+            (0..img.width())
+                .map(|x| {
+                    (0..img.height())
+                        .filter(|&y| img.get_pixel(x, y).0 != bg)
+                        .count() as u32
+                })
+                .collect()
+        }
+
+        /// The regression this guards: `rasterize_rt` used to skip any solid
+        /// without an analytic BRep, so a document mixing a BRep part with a
+        /// mesh part rendered the BRep and silently omitted the mesh — no
+        /// error, no warning. Asserting "it didn't error" would have passed
+        /// against the bug; this asserts the mesh actually covers pixels.
+        #[test]
+        fn raytrace_renders_both_brep_and_mesh_parts() {
+            // Cube at x 0..20, mesh box at x 60..80: with a 40mm gap the two
+            // parts land in opposite thirds of the canvas whichever way the
+            // view basis runs.
+            let cube = r#""1": { "id": 1, "name": "cube", "op": { "type": "Cube", "size": { "x": 20.0, "y": 20.0, "z": 20.0 } } }"#;
+            let doc = |nodes: &str, roots: &str| {
+                format!(
+                    r#"{{ "version": "0.1", "nodes": {{ {nodes} }}, "materials": {{}}, "part_materials": {{}}, "roots": [{roots}] }}"#
+                )
+            };
+            let both = doc(
+                &format!("{cube}, {}", mesh_box_node(2, 60.0)),
+                r#"{ "root": 1, "material": "default" }, { "root": 2, "material": "default" }"#,
+            );
+
+            let opts = RasterOptions {
+                view: View::Front,
+                size_px: 128,
+                fill_frac: 0.9,
+                ..Default::default()
+            };
+            let cols = column_coverage(&render_raytrace_png_str(&both, &opts).unwrap());
+
+            // Both outer thirds must carry geometry, and the gap between the
+            // parts must not.
+            let third = cols.len() / 3;
+            let left: u32 = cols[..third].iter().sum();
+            let middle: u32 = cols[third..2 * third].iter().sum();
+            let right: u32 = cols[2 * third..].iter().sum();
+            assert!(
+                left > 200 && right > 200,
+                "both parts must cover pixels: left={left} middle={middle} right={right}"
+            );
+            assert_eq!(
+                middle, 0,
+                "the 40mm gap between the parts should be background"
+            );
+
+            // Framing-independent restatement of the same thing: the
+            // covered columns form exactly two disjoint runs, one per part.
+            // Under the old `as_brep()`-or-skip code only the cube survived,
+            // which frames to a single run filling the canvas.
+            let runs = cols
+                .iter()
+                .zip(cols.iter().skip(1))
+                .filter(|(a, b)| (**a == 0) != (**b == 0))
+                .count();
+            assert_eq!(
+                runs, 4,
+                "expected two separate covered runs (4 background/content \
+                 transitions), got {runs}: {cols:?}"
+            );
+        }
+
+        /// The drop path is honest: a part with no traceable geometry is
+        /// named in the error rather than quietly omitted from the image.
+        #[test]
+        fn raytrace_reports_untraceable_parts_instead_of_dropping_them() {
+            // A degenerate "mesh" — three collinear points, so every
+            // triangle is dropped at BVH build time.
+            let degenerate = r#""2": { "id": 2, "name": "flat", "op": { "type": "ImportedMesh", "positions": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0], "indices": [0, 1, 2] } }"#;
+            let vcad = format!(
+                r#"{{ "version": "0.1", "nodes": {{ "1": {{ "id": 1, "name": "cube", "op": {{ "type": "Cube", "size": {{ "x": 20.0, "y": 20.0, "z": 20.0 }} }} }}, {degenerate} }}, "materials": {{}}, "part_materials": {{}}, "roots": [{{ "root": 1, "material": "default" }}, {{ "root": 2, "material": "default" }}] }}"#
+            );
+            let opts = RasterOptions {
+                size_px: 64,
+                ..Default::default()
+            };
+            let err = render_raytrace_png_str(&vcad, &opts).unwrap_err();
+            assert!(
+                err.contains("no traceable geometry") && err.contains("flat"),
+                "error should name the untraceable part, got: {err}"
             );
         }
     }
