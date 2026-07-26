@@ -193,8 +193,11 @@ pub struct GpuMaterial {
     pub clearcoat_roughness: f32,
     /// Dielectric index of refraction, drives the base specular reflectance.
     pub ior: f32,
+    /// Signed anisotropy in -1..1: positive stretches the specular highlight
+    /// along the local tangent, negative along the bitangent, 0 = isotropic.
+    pub anisotropy: f32,
     /// Padding for 16-byte alignment.
-    pub _pad: [f32; 3],
+    pub _pad: [f32; 2],
 }
 
 impl Default for GpuMaterial {
@@ -206,7 +209,8 @@ impl Default for GpuMaterial {
             clearcoat: 0.0,
             clearcoat_roughness: 0.1,
             ior: 1.5,
-            _pad: [0.0; 3],
+            anisotropy: 0.0,
+            _pad: [0.0; 2],
         }
     }
 }
@@ -257,6 +261,7 @@ impl GpuMaterial {
             clearcoat: self.clearcoat,
             clearcoat_roughness: self.clearcoat_roughness,
             ior: self.ior,
+            anisotropy: self.anisotropy,
             emissive: [0.0; 3],
         }
     }

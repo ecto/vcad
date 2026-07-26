@@ -18,9 +18,11 @@ struct GpuMaterial {
     clearcoat: f32,
     clearcoat_roughness: f32,
     ior: f32,
+    // Signed: positive smears the highlight along the local +X (tangent) axis,
+    // negative along +Y. See `mat_alpha_tb`.
+    anisotropy: f32,
     _pad0: f32,
     _pad1: f32,
-    _pad2: f32,
 }
 
 // ─── unified BSDF ─────────────────────────────────────────────────────────
@@ -44,9 +46,31 @@ fn max3(v: vec3<f32>) -> f32 {
     return max(max(v.x, v.y), v.z);
 }
 
-// GGX alpha for the base specular lobe.
+// GGX alpha for the base specular lobe, ignoring anisotropy.
 fn mat_alpha(m: GpuMaterial) -> f32 {
     return max(m.roughness * m.roughness, 1e-4);
+}
+
+// GGX alphas along the tangent and bitangent for the base specular lobe.
+//
+// Standard Disney/glTF construction: an aspect ratio of
+// sqrt(1 - 0.9·|anisotropy|) splits the isotropic alpha into a stretched and
+// a squeezed axis while keeping their product roughly fixed. At anisotropy 0
+// the aspect is exactly 1, so both alphas equal mat_alpha and every
+// anisotropic path below reduces bit-identically to the isotropic one.
+fn mat_alpha_tb(m: GpuMaterial) -> vec2<f32> {
+    let a = mat_alpha(m);
+    let aniso = clamp(m.anisotropy, -1.0, 1.0);
+    if aniso == 0.0 {
+        return vec2<f32>(a, a);
+    }
+    let aspect = sqrt(1.0 - 0.9 * abs(aniso));
+    let wide = min(a / aspect, 1.0);
+    let narrow = a * aspect;
+    if aniso > 0.0 {
+        return vec2<f32>(wide, narrow);
+    }
+    return vec2<f32>(narrow, wide);
 }
 
 // GGX alpha for the clearcoat lobe.
@@ -75,12 +99,52 @@ fn d_ggx(n_dot_h: f32, alpha: f32) -> f32 {
     return a2 / max(PI * d * d, 1e-9);
 }
 
+// Anisotropic GGX normal distribution. Reduces exactly to `d_ggx` when at==ab.
+fn d_ggx_aniso(wh: vec3<f32>, at: f32, ab: f32) -> f32 {
+    if at == ab {
+        return d_ggx(max(wh.z, 0.0), at);
+    }
+    let d = (wh.x / at) * (wh.x / at) + (wh.y / ab) * (wh.y / ab) + wh.z * wh.z;
+    return 1.0 / max(PI * at * ab * d * d, 1e-9);
+}
+
 // Smith height-correlated visibility term, already divided by 4·NoL·NoV.
 fn v_smith(n_dot_v: f32, n_dot_l: f32, alpha: f32) -> f32 {
     let a2 = alpha * alpha;
     let gv = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
     let gl = n_dot_v * sqrt(n_dot_l * n_dot_l * (1.0 - a2) + a2);
     return 0.5 / max(gv + gl, 1e-9);
+}
+
+// Λ-style stretched length used by the anisotropic Smith terms.
+fn aniso_stretched(w: vec3<f32>, at: f32, ab: f32) -> f32 {
+    return sqrt((at * w.x) * (at * w.x) + (ab * w.y) * (ab * w.y) + w.z * w.z);
+}
+
+// Anisotropic Smith height-correlated visibility term (already divided by
+// 4·NoL·NoV). Reduces exactly to `v_smith` when at==ab.
+fn v_smith_aniso(wo: vec3<f32>, wi: vec3<f32>, at: f32, ab: f32) -> f32 {
+    if at == ab {
+        return v_smith(wo.z, wi.z, at);
+    }
+    let gv = wi.z * aniso_stretched(wo, at, ab);
+    let gl = wo.z * aniso_stretched(wi, at, ab);
+    return 0.5 / max(gv + gl, 1e-9);
+}
+
+// Smith G1 masking term for the anisotropic GGX distribution. The at==ab
+// branch is the isotropic expression evaluated exactly as it was before
+// anisotropy existed, so isotropic renders are bit-unchanged.
+fn g1_smith_aniso(w: vec3<f32>, at: f32, ab: f32) -> f32 {
+    let z = max(w.z, 1e-6);
+    var lambda: f32;
+    if at == ab {
+        let a2 = at * at;
+        lambda = (sqrt(1.0 + a2 * (1.0 - z * z) / (z * z)) - 1.0) * 0.5;
+    } else {
+        lambda = (aniso_stretched(vec3<f32>(w.x, w.y, z), at, ab) / z - 1.0) * 0.5;
+    }
+    return 1.0 / (1.0 + lambda);
 }
 
 // Schlick Fresnel.
@@ -98,10 +162,14 @@ fn cosine_hemisphere_local(r1: f32, r2: f32) -> vec3<f32> {
 
 // Sample the GGX visible-normal distribution (Heitz 2018). Returns the
 // sampled half-vector in the local frame.
-fn sample_vndf(wo: vec3<f32>, alpha: f32, r1: f32, r2: f32) -> vec3<f32> {
-    let a = alpha;
+// Anisotropic by construction: the stretch step that maps to the
+// hemisphere-configured space takes each axis' alpha separately, so passing
+// at != ab needs no other change.
+fn sample_vndf(wo: vec3<f32>, at: f32, ab: f32, r1: f32, r2: f32) -> vec3<f32> {
+    let a = at;
+    let b = ab;
     // Stretch the view direction into the hemisphere-configured space.
-    let vh = normalize(vec3<f32>(a * wo.x, a * wo.y, wo.z));
+    let vh = normalize(vec3<f32>(a * wo.x, b * wo.y, wo.z));
     let lensq = vh.x * vh.x + vh.y * vh.y;
     var t1: vec3<f32>;
     if lensq > 0.0 {
@@ -119,18 +187,14 @@ fn sample_vndf(wo: vec3<f32>, alpha: f32, r1: f32, r2: f32) -> vec3<f32> {
     let p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * p2r;
 
     let nh = t1 * p1 + t2 * p2 + vh * sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0));
-    return normalize(vec3<f32>(a * nh.x, a * nh.y, max(nh.z, 1e-9)));
+    return normalize(vec3<f32>(a * nh.x, b * nh.y, max(nh.z, 1e-9)));
 }
 
 // PDF of the VNDF sampling strategy, in solid angle around wi.
-fn vndf_pdf(wo: vec3<f32>, wh: vec3<f32>, alpha: f32) -> f32 {
-    let n_dot_h = max(wh.z, 0.0);
+fn vndf_pdf(wo: vec3<f32>, wh: vec3<f32>, at: f32, ab: f32) -> f32 {
     let n_dot_v = max(wo.z, 1e-6);
-    let d = d_ggx(n_dot_h, alpha);
-    // G1 for the Smith masking function.
-    let a2 = alpha * alpha;
-    let lambda = (sqrt(1.0 + a2 * (1.0 - n_dot_v * n_dot_v) / (n_dot_v * n_dot_v)) - 1.0) * 0.5;
-    let g1 = 1.0 / (1.0 + lambda);
+    let d = d_ggx_aniso(wh, at, ab);
+    let g1 = g1_smith_aniso(wo, at, ab);
     let o_dot_h = max(dot(wo, wh), 1e-9);
     return d * g1 * o_dot_h / n_dot_v / (4.0 * o_dot_h);
 }
@@ -170,15 +234,18 @@ fn bsdf_eval(m: GpuMaterial, wo: vec3<f32>, wi: vec3<f32>) -> BsdfEval {
     let diffuse = mat_diffuse_albedo(m) * (n_dot_l / PI);
     let pdf_d = n_dot_l / PI;
 
-    // Base specular.
-    let alpha = mat_alpha(m);
-    let d = d_ggx(n_dot_h, alpha);
-    let vis = v_smith(n_dot_v, n_dot_l, alpha);
+    // Base specular. Anisotropy stretches the lobe along the local x axis,
+    // which the integrator aligns with the surface tangent dP/du.
+    let ab_pair = mat_alpha_tb(m);
+    let d = d_ggx_aniso(wh, ab_pair.x, ab_pair.y);
+    let vis = v_smith_aniso(wo, wi, ab_pair.x, ab_pair.y);
     let f = fresnel(mat_f0(m), o_dot_h);
     let spec = f * (d * vis * n_dot_l);
-    let pdf_s = vndf_pdf(wo, wh, alpha);
+    let pdf_s = vndf_pdf(wo, wh, ab_pair.x, ab_pair.y);
 
-    // Clearcoat: a thin dielectric layer over everything else.
+    // Clearcoat: a thin dielectric layer over everything else. It is a
+    // separate isotropic film — the grain lives in the substrate beneath it,
+    // not in the lacquer — so it never takes the anisotropy.
     var coat = vec3<f32>(0.0);
     var pdf_c = 0.0;
     var coat_atten = 1.0;
@@ -189,7 +256,7 @@ fn bsdf_eval(m: GpuMaterial, wo: vec3<f32>, wi: vec3<f32>) -> BsdfEval {
         let cf = fresnel(vec3<f32>(0.04), o_dot_h).x * m.clearcoat;
         let c = cd * cv * n_dot_l * cf;
         coat = vec3<f32>(c, c, c);
-        pdf_c = vndf_pdf(wo, wh, ca);
+        pdf_c = vndf_pdf(wo, wh, ca, ca);
         // Energy removed from the layers beneath.
         coat_atten = 1.0 - cf;
     }
@@ -223,13 +290,15 @@ fn bsdf_sample(m: GpuMaterial, wo: vec3<f32>, r_lobe: f32, r1: f32, r2: f32) -> 
     if r_lobe < w.x {
         wi = cosine_hemisphere_local(r1, r2);
     } else if r_lobe < w.x + w.y {
-        let wh = sample_vndf(wo, mat_alpha(m), r1, r2);
+        let ab_pair = mat_alpha_tb(m);
+        let wh = sample_vndf(wo, ab_pair.x, ab_pair.y, r1, r2);
         wi = reflect(-wo, wh);
         if wi.z <= 0.0 {
             return out;
         }
     } else {
-        let wh = sample_vndf(wo, mat_coat_alpha(m), r1, r2);
+        let ca = mat_coat_alpha(m);
+        let wh = sample_vndf(wo, ca, ca, r1, r2);
         wi = reflect(-wo, wh);
         if wi.z <= 0.0 {
             return out;

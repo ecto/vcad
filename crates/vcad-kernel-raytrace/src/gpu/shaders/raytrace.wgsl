@@ -1189,10 +1189,15 @@ fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {
 
 // Incoming radiance from the analytic studio environment.
 //
-// Mirrors `pathtrace::Environment::radiance` with the constants from
-// `Environment::default()`, so the GPU and CPU integrate the SAME sky. This is
+// Mirrors `pathtrace::GradientEnv::radiance` with the constants from
+// `GradientEnv::default()`, so the GPU and CPU integrate the SAME sky. This is
 // deliberately low-frequency: BSDF sampling alone converges on it, which is
-// why there is no environment CDF anywhere in either renderer.
+// why the gradient needs no environment CDF.
+//
+// The CPU renderer also supports `Environment::Image` (a lat-long HDRI, with
+// its own CDF). That is NOT ported here — the GPU path always uses the
+// gradient. A document rendered with `--hdri` will therefore not match the
+// viewport; the default studio gradient does.
 //
 // Distinct from `sky_color`, which is the themed backdrop the viewport DRAWS.
 // Lighting must match the CPU; the visible background is a UI choice.
@@ -1304,9 +1309,9 @@ fn ground_material() -> GpuMaterial {
     m.clearcoat = 0.0;
     m.clearcoat_roughness = 0.1;
     m.ior = 1.5;
+    m.anisotropy = 0.0;
     m._pad0 = 0.0;
     m._pad1 = 0.0;
-    m._pad2 = 0.0;
     return m;
 }
 

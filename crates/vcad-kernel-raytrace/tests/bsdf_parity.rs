@@ -238,7 +238,8 @@ fn test_materials() -> Vec<GpuMaterial> {
             clearcoat: 0.5,
             clearcoat_roughness: 0.1,
             ior: 1.5,
-            _pad: [0.0; 3],
+            anisotropy: 0.0,
+            _pad: [0.0; 2],
         },
         // High IOR dielectric, strong coat — pushes F0 and coat attenuation.
         GpuMaterial {
@@ -248,7 +249,38 @@ fn test_materials() -> Vec<GpuMaterial> {
             clearcoat: 1.0,
             clearcoat_roughness: 0.03,
             ior: 1.8,
-            _pad: [0.0; 3],
+            anisotropy: 0.0,
+            _pad: [0.0; 2],
+        },
+        // Brushed metal — anisotropy swept across both signs and both
+        // extremes. The anisotropic D/G/VNDF paths are separate branches from
+        // the isotropic ones, so they need their own coverage or a divergence
+        // hides until someone ships a brushed material.
+        GpuMaterial {
+            color: [0.91, 0.92, 0.92, 1.0],
+            metallic: 1.0,
+            roughness: 0.3,
+            anisotropy: 0.85,
+            ..Default::default()
+        },
+        GpuMaterial {
+            color: [0.91, 0.92, 0.92, 1.0],
+            metallic: 1.0,
+            roughness: 0.3,
+            anisotropy: -0.85,
+            ..Default::default()
+        },
+        // Anisotropic AND clearcoated: the coat must stay isotropic while the
+        // substrate takes the grain.
+        GpuMaterial {
+            color: [0.6, 0.15, 0.15, 1.0],
+            metallic: 0.2,
+            roughness: 0.35,
+            clearcoat: 0.7,
+            clearcoat_roughness: 0.08,
+            ior: 1.5,
+            anisotropy: 0.5,
+            _pad: [0.0; 2],
         },
     ]
 }
@@ -419,7 +451,8 @@ fn gpu_furnace_conserves_energy() {
         clearcoat: 0.0,
         clearcoat_roughness: 0.1,
         ior: 1.5,
-        _pad: [0.0; 3],
+        anisotropy: 0.0,
+        _pad: [0.0; 2],
     };
 
     let n = 20_000u32;
@@ -451,5 +484,52 @@ fn gpu_furnace_conserves_energy() {
         "GPU directional albedo {albedo} outside the plausible range — the \
          WGSL sampling routine and its PDF disagree, so the path tracer will \
          gain or lose energy at every bounce.",
+    );
+}
+
+/// Guard against the anisotropy field being silently dropped somewhere in the
+/// Rust→WGSL struct layout. If the GPU read it as zero, the parity test above
+/// would still pass for every isotropic material and quietly stop covering the
+/// anisotropic D/G/VNDF branches at all.
+#[test]
+#[ignore = "requires GPU"]
+fn gpu_anisotropy_actually_changes_the_lobe() {
+    let Some(ctx) = ctx_or_skip("gpu_anisotropy_actually_changes_the_lobe") else {
+        return;
+    };
+
+    let base = GpuMaterial {
+        color: [0.9, 0.9, 0.9, 1.0],
+        metallic: 1.0,
+        roughness: 0.3,
+        ..Default::default()
+    };
+    let mk = |anisotropy: f32| GpuMaterial { anisotropy, ..base };
+
+    // Off-axis half-vector so the tangent and bitangent alphas differ.
+    let wo = unit([0.4, 0.0, 0.92]);
+    let wi = unit([0.0, 0.45, 0.89]);
+    let inputs: Vec<ParityInput> = [-0.85f32, 0.0, 0.85]
+        .iter()
+        .map(|&a| ParityInput {
+            material: mk(a),
+            wo: [wo[0], wo[1], wo[2], 0.0],
+            wi: [wi[0], wi[1], wi[2], 0.0],
+            rnd: [0.3, 0.4, 0.6, 0.0],
+        })
+        .collect();
+
+    let out = run_harness(ctx, &inputs);
+    let (neg, iso, pos) = (out[0].eval[0], out[1].eval[0], out[2].eval[0]);
+    assert!(
+        (pos - iso).abs() > 1e-4 && (neg - iso).abs() > 1e-4,
+        "anisotropy did not change the BSDF on the GPU (neg {neg}, iso {iso}, \
+         pos {pos}) — the field is probably not reaching the shader, which \
+         would make the anisotropic parity coverage vacuous",
+    );
+    assert!(
+        (pos - neg).abs() > 1e-4,
+        "positive and negative anisotropy produced the same value ({pos} vs \
+         {neg}) — the tangent/bitangent alphas are not being swapped",
     );
 }
