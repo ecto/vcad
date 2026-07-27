@@ -14,11 +14,15 @@ use crate::entities::{
     write_vertex_point, AxisPlacement,
 };
 use crate::error::StepError;
+use crate::reconstruct::{
+    canonical_split, classify_chain, fit_tol, plan_edge_merges, ChainGeom, ChainPlan,
+    EdgeMergePlan, SegEnd,
+};
 
 use vcad_kernel_geom::{
     BilinearSurface, ConeSurface, CylinderSurface, Plane, SphereSurface, SurfaceKind, TorusSurface,
 };
-use vcad_kernel_math::{Dir3, Vec3};
+use vcad_kernel_math::{Dir3, Point3, Vec3};
 use vcad_kernel_nurbs::BSplineSurface;
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{EdgeId, FaceId, HalfEdgeId, LoopId, Orientation, VertexId};
@@ -86,16 +90,6 @@ pub fn write_step_solids_to_buffer(solids: &[(&BRepSolid, &str)]) -> Result<Vec<
     assemble_file(&entities)
 }
 
-/// Write several named BRepSolids to a single STEP file on disk.
-pub fn write_step_solids(
-    solids: &[(&BRepSolid, &str)],
-    path: impl AsRef<Path>,
-) -> Result<(), StepError> {
-    let buffer = write_step_solids_to_buffer(solids)?;
-    std::fs::write(path, buffer)?;
-    Ok(())
-}
-
 /// Append the AP214 product structure + representation context that anchor
 /// the solids for conforming importers: SI units (mm), uncertainty, one
 /// PRODUCT, and an ADVANCED_BREP_SHAPE_REPRESENTATION holding every solid.
@@ -151,6 +145,10 @@ fn write_product_anchor(entities: &mut Vec<String>, next_id: &mut u64, solid_ids
     entities.push(format!(
         "#{sol_u} = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );"
     ));
+    // 1e-6 is the spec-conventional distance accuracy, and it is honest again:
+    // circular boundaries are reconstructed as CIRCLE edges before writing
+    // (see reconstruct.rs), so edges lie on their faces' analytic surfaces
+    // exactly instead of deviating by the tessellation chord sagitta.
     let unc = id();
     entities.push(format!(
         "#{unc} = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.0E-6),#{len_u},'distance_accuracy_value','');"
@@ -169,6 +167,16 @@ fn write_product_anchor(entities: &mut Vec<String>, next_id: &mut u64, solid_ids
     entities.push(format!(
         "#{sdr} = SHAPE_DEFINITION_REPRESENTATION(#{pds},#{absr});"
     ));
+}
+
+/// Write several named BRepSolids to a single STEP file on disk.
+pub fn write_step_solids(
+    solids: &[(&BRepSolid, &str)],
+    path: impl AsRef<Path>,
+) -> Result<(), StepError> {
+    let buffer = write_step_solids_to_buffer(solids)?;
+    std::fs::write(path, buffer)?;
+    Ok(())
 }
 
 /// Wrap entity lines in the ISO-10303-21 header/footer.
@@ -220,6 +228,10 @@ struct StepWriter<'a> {
     face_bound_map: HashMap<FaceId, u64>,
     /// Maps vcad FaceId to STEP face ID.
     face_map: HashMap<FaceId, u64>,
+    /// Analytic edge reconstruction plan (chord chains → LINE/CIRCLE edges).
+    plan: EdgeMergePlan,
+    /// STEP edge IDs for each chain's segments, in chain-forward order.
+    chain_step: Vec<Vec<u64>>,
 }
 
 impl<'a> StepWriter<'a> {
@@ -236,6 +248,8 @@ impl<'a> StepWriter<'a> {
             loop_map: HashMap::new(),
             face_bound_map: HashMap::new(),
             face_map: HashMap::new(),
+            plan: EdgeMergePlan::default(),
+            chain_step: Vec::new(),
         }
     }
 
@@ -250,6 +264,9 @@ impl<'a> StepWriter<'a> {
     }
 
     fn write_entities(&mut self, name: &str) -> Result<u64, StepError> {
+        // Reconstruct analytic edges (chord chains → LINE/CIRCLE) up front so
+        // write_edges/write_loops can consult the plan.
+        self.plan = plan_edge_merges(self.solid);
         // Write all geometry and topology
         self.write_points()?;
         self.write_surfaces()?;
@@ -490,34 +507,93 @@ impl<'a> StepWriter<'a> {
     fn write_edges(&mut self) -> Result<(), StepError> {
         let topo = &self.solid.topology;
 
-        for (edge_id, edge) in &topo.edges {
-            // Get the half-edge to determine vertices
-            let he = &topo.half_edges[edge.half_edge];
-            let start_vid = he.origin;
-            let end_vid = topo.half_edge_dest(edge.half_edge);
+        let edge_ids: Vec<EdgeId> = topo.edges.keys().collect();
+        for edge_id in edge_ids {
+            if self.plan.edge_chain.contains_key(&edge_id) {
+                continue; // replaced by a reconstructed chain segment
+            }
+            let he = self.solid.topology.edges[edge_id].half_edge;
+            let start_vid = self.solid.topology.half_edges[he].origin;
+            let end_vid = self.solid.topology.half_edge_dest(he);
             let step_edge_id = self.write_line_edge_curve(start_vid, end_vid);
             self.edge_map.insert(edge_id, step_edge_id);
         }
 
+        // Emit one LINE or CIRCLE edge per reconstructed chain segment.
+        let plan = std::mem::take(&mut self.plan);
+        for chain in &plan.chains {
+            let mut seg_ids = Vec::with_capacity(chain.segments.len());
+            // Synthesized split vertices (closed single-edge circles) are
+            // minted once per chain and shared between its segments.
+            let mut synth_vertex_ids: Vec<Option<u64>> = vec![None; chain.synth_points.len()];
+            for seg in &chain.segments {
+                let (start_vertex, start_pt) =
+                    self.resolve_seg_end(seg.start, chain, &mut synth_vertex_ids);
+                let (end_vertex, _end_pt) =
+                    self.resolve_seg_end(seg.end, chain, &mut synth_vertex_ids);
+                let id = match &chain.geom {
+                    ChainGeom::Line => {
+                        let end_pt = match seg.end {
+                            SegEnd::Topo(v) => self.solid.topology.vertices[v].point,
+                            SegEnd::Synth(i) => chain.synth_points[i],
+                        };
+                        self.write_line_edge_between(start_vertex, end_vertex, start_pt, end_pt)
+                    }
+                    ChainGeom::Arc {
+                        center,
+                        radius,
+                        normal,
+                    } => self.write_arc_edge_curve(
+                        start_vertex,
+                        end_vertex,
+                        start_pt,
+                        *center,
+                        *radius,
+                        *normal,
+                    ),
+                };
+                seg_ids.push(id);
+            }
+            self.chain_step.push(seg_ids);
+        }
+        self.plan = plan;
+
         Ok(())
     }
 
-    /// Emit a straight EDGE_CURVE between two vcad vertices and return its ID.
-    ///
-    /// Used by `write_edges` for proper edges and by `write_loops` to synthesize
-    /// edges for orphan half-edges (those whose `parent_edge` link was severed
-    /// by the boolean sewing pipeline — see crates/vcad-kernel-booleans/src/sew.rs).
-    /// The geometry is approximated as a line segment regardless of the
-    /// underlying surface's curvature; this matches `write_edges`'s existing
-    /// limitation and keeps the writer's contract simple.
-    fn write_line_edge_curve(&mut self, start_vid: VertexId, end_vid: VertexId) -> u64 {
-        let topo = &self.solid.topology;
-        let start_vertex = self.vertex_map[&start_vid];
-        let end_vertex = self.vertex_map[&end_vid];
+    /// Resolve a segment endpoint to a STEP vertex ID and its 3D point,
+    /// minting a VERTEX_POINT for synthesized split vertices on first use.
+    fn resolve_seg_end(
+        &mut self,
+        end: SegEnd,
+        chain: &ChainPlan,
+        synth_ids: &mut [Option<u64>],
+    ) -> (u64, Point3) {
+        match end {
+            SegEnd::Topo(v) => (self.vertex_map[&v], self.solid.topology.vertices[v].point),
+            SegEnd::Synth(i) => {
+                let p = chain.synth_points[i];
+                if let Some(id) = synth_ids[i] {
+                    return (id, p);
+                }
+                let point_id = self.alloc_id();
+                self.emit(point_id, &write_cartesian_point(&p, ""));
+                let vertex_id = self.alloc_id();
+                self.emit(vertex_id, &write_vertex_point("", point_id));
+                synth_ids[i] = Some(vertex_id);
+                (vertex_id, p)
+            }
+        }
+    }
 
-        let start_point = topo.vertices[start_vid].point;
-        let end_point = topo.vertices[end_vid].point;
-
+    /// Emit a straight EDGE_CURVE between two STEP vertices at given points.
+    fn write_line_edge_between(
+        &mut self,
+        start_vertex: u64,
+        end_vertex: u64,
+        start_point: Point3,
+        end_point: Point3,
+    ) -> u64 {
         let dir_vec = end_point - start_point;
         let magnitude = dir_vec.norm();
         let dir = if magnitude > 1e-15 {
@@ -550,36 +626,160 @@ impl<'a> StepWriter<'a> {
         step_edge_id
     }
 
+    /// Emit an EDGE_CURVE over a CIRCLE from `start` counterclockwise about
+    /// `normal` to the end vertex. The circle's ref direction is placed at the
+    /// start point, so the edge parameterization begins at the start vertex.
+    fn write_arc_edge_curve(
+        &mut self,
+        start_vertex: u64,
+        end_vertex: u64,
+        start_point: Point3,
+        center: Point3,
+        radius: f64,
+        normal: Dir3,
+    ) -> u64 {
+        let ref_dir = Dir3::new_normalize(start_point - center);
+        let placement = AxisPlacement {
+            location: center,
+            axis: Some(normal),
+            ref_direction: Some(ref_dir),
+        };
+        let placement_id = self
+            .write_axis_placement(&placement)
+            .expect("axis placement emission is infallible");
+
+        let circle_id = self.alloc_id();
+        self.emit(
+            circle_id,
+            &format!("CIRCLE('', #{}, {:.15E})", placement_id, radius),
+        );
+
+        let step_edge_id = self.alloc_id();
+        let entity = write_edge_curve("", start_vertex, end_vertex, circle_id, true);
+        self.emit(step_edge_id, &entity);
+        step_edge_id
+    }
+
+    /// Emit a straight EDGE_CURVE between two vcad vertices and return its ID.
+    ///
+    /// Used by `write_edges` for proper edges and by `write_loops` to synthesize
+    /// edges for orphan half-edges (those whose `parent_edge` link was severed
+    /// by the boolean sewing pipeline — see crates/vcad-kernel-booleans/src/sew.rs).
+    /// The geometry is approximated as a line segment regardless of the
+    /// underlying surface's curvature; this matches `write_edges`'s existing
+    /// limitation and keeps the writer's contract simple.
+    fn write_line_edge_curve(&mut self, start_vid: VertexId, end_vid: VertexId) -> u64 {
+        let start_vertex = self.vertex_map[&start_vid];
+        let end_vertex = self.vertex_map[&end_vid];
+        let start_point = self.solid.topology.vertices[start_vid].point;
+        let end_point = self.solid.topology.vertices[end_vid].point;
+        self.write_line_edge_between(start_vertex, end_vertex, start_point, end_point)
+    }
+
     fn write_loops(&mut self) -> Result<(), StepError> {
         // Collect loops first so we can borrow self mutably inside.
         let loop_ids: Vec<LoopId> = self.solid.topology.loops.keys().collect();
+        let plan = std::mem::take(&mut self.plan);
+
+        let chain_of = |he_id: HalfEdgeId, topo: &vcad_kernel_topo::Topology| -> Option<usize> {
+            topo.half_edges[he_id]
+                .edge
+                .and_then(|e| plan.edge_chain.get(&e).copied())
+        };
 
         for loop_id in loop_ids {
             let he_ids: Vec<HalfEdgeId> = self.solid.topology.loop_half_edges(loop_id).collect();
+            let n = he_ids.len();
+
+            // Degenerate "slit" loop on a cylindrical face: exactly two
+            // half-edges that are twins of one axis-parallel seam edge. The
+            // boolean sewing pipeline loses the circular boundaries of a full
+            // cylindrical band, leaving a zero-area loop; rebuild the two
+            // circles from the surface so the face is properly bounded.
+            if n == 2 {
+                if let Some(el_id) = self.try_write_slit_cylinder_loop(loop_id, &he_ids) {
+                    self.loop_map.insert(loop_id, el_id);
+                    continue;
+                }
+            }
+
+            // Rotate so the walk never starts in the middle of a chain run
+            // (a chain's edges appear as one cyclic block — validated during
+            // planning) or an orphan half-edge run. If the whole loop is one
+            // chain or all-orphan, 0 is fine (handled as a closed run).
+            let is_orphan = |he: HalfEdgeId, topo: &vcad_kernel_topo::Topology| {
+                topo.half_edges[he].edge.is_none()
+            };
+            let mut start = 0;
+            for i in 0..n {
+                let cur = chain_of(he_ids[i], &self.solid.topology);
+                let prev = chain_of(he_ids[(i + n - 1) % n], &self.solid.topology);
+                let mid_chain = cur.is_some() && cur == prev;
+                let mid_orphan = is_orphan(he_ids[i], &self.solid.topology)
+                    && is_orphan(he_ids[(i + n - 1) % n], &self.solid.topology);
+                if !(mid_chain || mid_orphan) {
+                    start = i;
+                    break;
+                }
+            }
+            let rotated: Vec<HalfEdgeId> = (0..n).map(|i| he_ids[(start + i) % n]).collect();
 
             let mut oriented_edge_ids = Vec::new();
+            let mut i = 0;
+            while i < n {
+                let he_id = rotated[i];
+                if let Some(ci) = chain_of(he_id, &self.solid.topology) {
+                    // Consume the whole chain run and emit its segments.
+                    let chain = &plan.chains[ci];
+                    let run_len = chain.edges.len();
+                    let forward = self.chain_run_is_forward(chain, &rotated[i..], run_len);
+                    let seg_ids = self.chain_step[ci].clone();
+                    if forward {
+                        for sid in seg_ids {
+                            let oe_id = self.alloc_id();
+                            self.emit(oe_id, &write_oriented_edge("", sid, true));
+                            oriented_edge_ids.push(oe_id);
+                        }
+                    } else {
+                        for sid in seg_ids.into_iter().rev() {
+                            let oe_id = self.alloc_id();
+                            self.emit(oe_id, &write_oriented_edge("", sid, false));
+                            oriented_edge_ids.push(oe_id);
+                        }
+                    }
+                    i += run_len;
+                    continue;
+                }
 
-            for he_id in he_ids {
+                if self.solid.topology.half_edges[he_id].edge.is_none() {
+                    // Orphan half-edge — boolean sewing leaves these when face
+                    // boundaries can't be paired (curved-vs-polygonal mismatch).
+                    // Gather the maximal consecutive orphan run and try to
+                    // reconstruct it as one LINE or CIRCLE; fall back to
+                    // per-half-edge line segments.
+                    let mut run_len = 1;
+                    while i + run_len < n
+                        && self.solid.topology.half_edges[rotated[i + run_len]]
+                            .edge
+                            .is_none()
+                    {
+                        run_len += 1;
+                    }
+                    let run = &rotated[i..i + run_len];
+                    let edge_ids = self.write_orphan_run(run, run_len == n);
+                    for sid in edge_ids {
+                        let oe_id = self.alloc_id();
+                        self.emit(oe_id, &write_oriented_edge("", sid, true));
+                        oriented_edge_ids.push(oe_id);
+                    }
+                    i += run_len;
+                    continue;
+                }
+
                 let he = &self.solid.topology.half_edges[he_id];
-                let (step_edge_id, orientation) = match he.edge {
-                    Some(edge_id) => {
-                        let step_edge_id = self.edge_map[&edge_id];
-                        let edge = &self.solid.topology.edges[edge_id];
-                        let orientation = edge.half_edge == he_id;
-                        (step_edge_id, orientation)
-                    }
-                    None => {
-                        // Orphan half-edge — boolean sewing leaves these when face
-                        // boundaries can't be paired (curved-vs-polygonal mismatch).
-                        // Synthesize a one-off line edge so the loop can still be
-                        // emitted; orientation is forward since this he is the
-                        // synthetic edge's only half-edge.
-                        let start_vid = he.origin;
-                        let end_vid = self.solid.topology.half_edge_dest(he_id);
-                        let step_edge_id = self.write_line_edge_curve(start_vid, end_vid);
-                        (step_edge_id, true)
-                    }
-                };
+                let edge_id = he.edge.expect("checked above");
+                let step_edge_id = self.edge_map[&edge_id];
+                let orientation = self.solid.topology.edges[edge_id].half_edge == he_id;
 
                 let oe_id = self.alloc_id();
                 let entity = write_oriented_edge("", step_edge_id, orientation);
@@ -587,6 +787,7 @@ impl<'a> StepWriter<'a> {
                 self.oriented_edge_map.insert(he_id, oe_id);
 
                 oriented_edge_ids.push(oe_id);
+                i += 1;
             }
 
             let el_id = self.alloc_id();
@@ -595,7 +796,273 @@ impl<'a> StepWriter<'a> {
             self.loop_map.insert(loop_id, el_id);
         }
 
+        self.plan = plan;
         Ok(())
+    }
+
+    /// Whether a loop's run of half-edges traverses the chain in its forward
+    /// (as-emitted) direction.
+    fn chain_run_is_forward(&self, chain: &ChainPlan, run: &[HalfEdgeId], run_len: usize) -> bool {
+        let topo = &self.solid.topology;
+        if chain.edges.len() == 1 {
+            // Single closed edge: direction is the canonical half-edge's, by
+            // the same convention the plan used to orient the circle.
+            return topo.edges[chain.edges[0]].half_edge == run[0];
+        }
+        let first_origin = topo.half_edges[run[0]].origin;
+        if !chain.closed {
+            return first_origin == chain.vertices[0];
+        }
+        // Closed multi-edge chain: compare consecutive origins to chain order.
+        let k = chain.vertices.len();
+        let j = chain
+            .vertices
+            .iter()
+            .position(|v| *v == first_origin)
+            .expect("run origin must be a chain vertex");
+        debug_assert!(run_len >= 2);
+        let second_origin = topo.half_edges[run[1]].origin;
+        second_origin == chain.vertices[(j + 1) % k]
+    }
+
+    /// Emit STEP edges for a maximal run of orphan half-edges, reconstructing
+    /// the run as one LINE or CIRCLE when the whole run verifies as such
+    /// (falling back to per-half-edge line segments otherwise). Returns the
+    /// STEP edge IDs in traversal order; all are traversal-forward.
+    ///
+    /// Orphan half-edges have no twins, so the two loops sharing a boundary
+    /// each emit their own edges (as they always have); classification is
+    /// purely point-based and the closed-circle split vertices are canonical,
+    /// so both sides reconstruct identical geometry for importers to sew.
+    fn write_orphan_run(&mut self, run: &[HalfEdgeId], closed: bool) -> Vec<u64> {
+        // Chords along a tessellated smooth curve turn by a small angle per
+        // step; corners (tangent discontinuities) turn sharply. Splitting at
+        // sharp turns is symmetric under traversal reversal, keeping the two
+        // sides of a boundary consistent. cos(40°): full circles tessellated
+        // with ≥ 9 segments survive as one piece.
+        const COS_SHARP: f64 = 0.766;
+
+        let vids: Vec<VertexId> = {
+            let topo = &self.solid.topology;
+            let mut v: Vec<VertexId> = run.iter().map(|he| topo.half_edges[*he].origin).collect();
+            if !closed {
+                v.push(topo.half_edge_dest(*run.last().unwrap()));
+            }
+            v
+        };
+        let points: Vec<Point3> = vids
+            .iter()
+            .map(|v| self.solid.topology.vertices[*v].point)
+            .collect();
+        let n_v = vids.len();
+
+        let sharp = |prev: Point3, cur: Point3, next: Point3| -> bool {
+            let a = cur - prev;
+            let b = next - cur;
+            let (na, nb) = (a.norm(), b.norm());
+            na < 1e-12 || nb < 1e-12 || a.dot(b) / (na * nb) < COS_SHARP
+        };
+
+        if closed {
+            // A closed run is the entire loop (maximality), so cyclic
+            // rotation of the emitted edges is harmless.
+            let corners: Vec<usize> = (0..n_v)
+                .filter(|&i| {
+                    sharp(
+                        points[(i + n_v - 1) % n_v],
+                        points[i],
+                        points[(i + 1) % n_v],
+                    )
+                })
+                .collect();
+            if corners.is_empty() {
+                if let Some(ChainGeom::Arc {
+                    center,
+                    radius,
+                    normal,
+                }) = classify_chain(&points, true)
+                {
+                    // Full circle: split at canonical (direction-independent)
+                    // vertices so both sides of the boundary agree.
+                    let (a, b) = canonical_split(&points);
+                    let arc = |w: &mut Self, s: usize, e: usize| {
+                        let sv = w.vertex_map[&vids[s]];
+                        let ev = w.vertex_map[&vids[e]];
+                        w.write_arc_edge_curve(sv, ev, points[s], center, radius, normal)
+                    };
+                    // Traversal order is a → b → a (a < b or not, the two
+                    // arcs form the same cycle).
+                    return vec![arc(self, a, b), arc(self, b, a)];
+                }
+                return self.write_orphan_fallback(run);
+            }
+            // Segment cyclically between corners, starting at the first one.
+            let mut out = Vec::new();
+            for (k, &c) in corners.iter().enumerate() {
+                let next_c = corners[(k + 1) % corners.len()];
+                let span = if next_c > c {
+                    next_c - c
+                } else {
+                    n_v - c + next_c
+                };
+                let piece_vids: Vec<VertexId> = (0..=span).map(|j| vids[(c + j) % n_v]).collect();
+                let piece_pts: Vec<Point3> = (0..=span).map(|j| points[(c + j) % n_v]).collect();
+                let piece_hes: Vec<HalfEdgeId> = (0..span).map(|j| run[(c + j) % n_v]).collect();
+                out.extend(self.write_orphan_piece(&piece_hes, &piece_vids, &piece_pts));
+            }
+            return out;
+        }
+
+        // Open run: pieces between the endpoints and any sharp corners.
+        let mut bounds = vec![0usize];
+        for i in 1..n_v - 1 {
+            if sharp(points[i - 1], points[i], points[i + 1]) {
+                bounds.push(i);
+            }
+        }
+        bounds.push(n_v - 1);
+        let mut out = Vec::new();
+        for w in bounds.windows(2) {
+            let (s, e) = (w[0], w[1]);
+            out.extend(self.write_orphan_piece(&run[s..e], &vids[s..=e], &points[s..=e]));
+        }
+        out
+    }
+
+    /// Rebuild a degenerate slit loop (a seam edge and its twin as the only
+    /// boundary of a full cylindrical band face) by inserting the band's two
+    /// boundary circles, each split at a synthesized antipodal vertex.
+    /// Returns the STEP EDGE_LOOP id on success.
+    fn try_write_slit_cylinder_loop(
+        &mut self,
+        loop_id: LoopId,
+        he_ids: &[HalfEdgeId],
+    ) -> Option<u64> {
+        let topo = &self.solid.topology;
+        let (a, b) = (he_ids[0], he_ids[1]);
+        if topo.half_edges[a].twin != Some(b) || topo.half_edges[a].edge.is_none() {
+            return None;
+        }
+        let face_id = topo.loops[loop_id].face?;
+        let face = &topo.faces[face_id];
+        let surface = &self.solid.geometry.surfaces[face.surface_index];
+        if surface.surface_type() != SurfaceKind::Cylinder {
+            return None;
+        }
+        let cyl = surface.as_any().downcast_ref::<CylinderSurface>()?;
+        let axis = *cyl.axis.as_ref();
+
+        let p_a0 = topo.vertices[topo.half_edges[a].origin].point;
+        let p_a1 = topo.vertices[topo.half_edge_dest(a)].point;
+        let seam = p_a1 - p_a0;
+        let seam_len = seam.norm();
+        if seam_len < 1e-9 || seam.cross(axis).norm() > fit_tol(seam_len) {
+            return None; // not an axis-parallel seam
+        }
+
+        // Sign conventions: the loop winds CCW about the face's outward
+        // normal. At the band end reached along +axis the boundary circle
+        // runs CCW about (-outward_radial x sign) — combined: the traversal
+        // normal is axis * (-s_n * s_d) where s_n = +1 for an outward-radial
+        // face normal and s_d = +1 at the +axis end.
+        let s_n: f64 = if face.orientation == Orientation::Forward {
+            1.0
+        } else {
+            -1.0
+        };
+
+        let edge_id = topo.half_edges[a].edge.expect("checked above");
+        let step_line_id = self.edge_map[&edge_id];
+        let canonical_is_a = self.solid.topology.edges[edge_id].half_edge == a;
+
+        let mut oriented: Vec<u64> = Vec::new();
+        // Emit: a, circle at dest(a), b, circle at dest(b).
+        for this_he in [a, b] {
+            let orientation = if this_he == a {
+                canonical_is_a
+            } else {
+                !canonical_is_a
+            };
+            let oe_id = self.alloc_id();
+            self.emit(oe_id, &write_oriented_edge("", step_line_id, orientation));
+            oriented.push(oe_id);
+
+            let v_end = self.solid.topology.half_edge_dest(this_he);
+            let p_end = self.solid.topology.vertices[v_end].point;
+            let p_other =
+                self.solid.topology.vertices[self.solid.topology.half_edges[this_he].origin].point;
+            let s_d = (p_end - p_other).dot(axis).signum();
+            let normal = Dir3::new_normalize(axis * (-s_n * s_d));
+
+            let center = cyl.center + axis * (p_end - cyl.center).dot(axis);
+            let radius = (p_end - center).norm();
+            if (radius - cyl.radius).abs() > fit_tol(cyl.radius) {
+                return None;
+            }
+            let antipode = center + (center - p_end);
+
+            let sv = self.vertex_map[&v_end];
+            let anti_point_id = self.alloc_id();
+            self.emit(anti_point_id, &write_cartesian_point(&antipode, ""));
+            let anti_vertex_id = self.alloc_id();
+            self.emit(anti_vertex_id, &write_vertex_point("", anti_point_id));
+
+            let arc1 = self.write_arc_edge_curve(sv, anti_vertex_id, p_end, center, radius, normal);
+            let arc2 =
+                self.write_arc_edge_curve(anti_vertex_id, sv, antipode, center, radius, normal);
+            for arc in [arc1, arc2] {
+                let oe_id = self.alloc_id();
+                self.emit(oe_id, &write_oriented_edge("", arc, true));
+                oriented.push(oe_id);
+            }
+        }
+
+        let el_id = self.alloc_id();
+        self.emit(el_id, &write_edge_loop("", &oriented));
+        Some(el_id)
+    }
+
+    /// Emit one smooth orphan piece: a single LINE or CIRCLE arc if the whole
+    /// piece verifies as one, else per-half-edge lines.
+    fn write_orphan_piece(
+        &mut self,
+        hes: &[HalfEdgeId],
+        vids: &[VertexId],
+        points: &[Point3],
+    ) -> Vec<u64> {
+        if hes.len() >= 2 {
+            match classify_chain(points, false) {
+                Some(ChainGeom::Line) => {
+                    return vec![
+                        self.write_line_edge_curve(*vids.first().unwrap(), *vids.last().unwrap())
+                    ];
+                }
+                Some(ChainGeom::Arc {
+                    center,
+                    radius,
+                    normal,
+                }) => {
+                    let sv = self.vertex_map[vids.first().unwrap()];
+                    let ev = self.vertex_map[vids.last().unwrap()];
+                    return vec![
+                        self.write_arc_edge_curve(sv, ev, points[0], center, radius, normal)
+                    ];
+                }
+                None => {}
+            }
+        }
+        self.write_orphan_fallback(hes)
+    }
+
+    /// One line edge per orphan half-edge (the pre-reconstruction behavior).
+    fn write_orphan_fallback(&mut self, hes: &[HalfEdgeId]) -> Vec<u64> {
+        hes.iter()
+            .map(|he_id| {
+                let start_vid = self.solid.topology.half_edges[*he_id].origin;
+                let end_vid = self.solid.topology.half_edge_dest(*he_id);
+                self.write_line_edge_curve(start_vid, end_vid)
+            })
+            .collect()
     }
 
     fn write_faces(&mut self) -> Result<(), StepError> {
@@ -942,7 +1409,7 @@ mod tests {
             content
         );
         assert!(
-            !content.contains("PLANE("),
+            !content.contains("PLANE('"),
             "B-spline surface should NOT be written as PLANE"
         );
     }
@@ -970,7 +1437,7 @@ mod tests {
         let content = String::from_utf8_lossy(&buffer);
 
         assert!(
-            content.contains("PLANE("),
+            content.contains("PLANE('"),
             "Planar bilinear should be written as PLANE"
         );
         assert!(
@@ -1006,7 +1473,7 @@ mod tests {
             "Non-planar bilinear should be written as B_SPLINE_SURFACE_WITH_KNOTS"
         );
         assert!(
-            !content.contains("PLANE("),
+            !content.contains("PLANE('"),
             "Non-planar bilinear should NOT be written as PLANE"
         );
     }

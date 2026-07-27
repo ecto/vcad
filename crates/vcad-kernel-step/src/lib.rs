@@ -48,6 +48,7 @@ mod entities;
 mod error;
 mod pmi;
 mod reader;
+mod reconstruct;
 mod writer;
 
 pub use assembly::{

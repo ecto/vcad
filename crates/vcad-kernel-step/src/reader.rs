@@ -18,6 +18,17 @@ use vcad_kernel_topo::{EdgeId, HalfEdgeId, LoopId, Orientation, ShellType, Topol
 /// Number of intermediate points to sample along a curved edge (arc or B-spline).
 const CURVE_SAMPLE_COUNT: usize = 8;
 
+/// Angular resolution for sampling circular arcs: aim for 64 segments per
+/// full turn (matching the kernel's usual tessellation density), so a
+/// semicircular arc doesn't collapse to a 9-gon.
+const ARC_SEGMENTS_PER_TURN: f64 = 64.0;
+
+/// Intermediate sample count for a circular arc of the given sweep (radians).
+fn arc_sample_count(sweep: f64) -> usize {
+    let segments = (sweep.abs() * ARC_SEGMENTS_PER_TURN / std::f64::consts::TAU).ceil() as usize;
+    segments.saturating_sub(1).clamp(CURVE_SAMPLE_COUNT, 128)
+}
+
 /// Hard ceilings on how much topology we will try to parse from a single
 /// STEP solid. They exist purely to keep a malicious file from pinning the
 /// reader in a multi-hour allocation loop; legitimate CAD models come
@@ -564,7 +575,7 @@ impl<'a> StepReader<'a> {
             -s
         };
 
-        let n = CURVE_SAMPLE_COUNT;
+        let n = arc_sample_count(sweep);
         let mut mid_vids = Vec::with_capacity(n);
         for i in 1..=n {
             let frac = i as f64 / (n + 1) as f64;
