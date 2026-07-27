@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-26-step-analytic-circle-edges",
+  "version": "0.9.4",
+  "date": "2026-07-26",
+  "category": "fix",
+  "title": "STEP export: curved faces survive third-party import",
+  "summary": "Circular edges now export as analytic CIRCLEs instead of chord polylines, so importers like Shapr3D keep cylinder walls and annular faces at the spec 1e-6 accuracy.",
+  "features": ["step", "export", "kernel"]
+}
