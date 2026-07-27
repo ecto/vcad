@@ -577,6 +577,14 @@ fn validate_loop_consecutiveness(solid: &BRepSolid, plan: &mut EdgeMergePlan) {
             }
         }
         for (ci, (count, blocks)) in counts {
+            // blocks == 0 can only happen when EVERY half-edge in the loop
+            // belongs to this chain (any non-member creates a transition), so
+            // it is exactly the whole-loop case. The count guard applies in
+            // both arms on purpose: a whole-loop occurrence with
+            // count != edges.len() is a loop traversing chain edges more than
+            // once (e.g. both half-edges of an edge in one slit-shaped loop),
+            // which write_loops' run consumption cannot represent — the chain
+            // must be dropped there, not kept.
             let whole_loop = count == n && blocks == 0; // loop is entirely this chain
             if !(whole_loop || blocks == 1) || count != plan.chains[ci].edges.len() {
                 dead[ci] = true;
