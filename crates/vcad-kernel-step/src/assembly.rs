@@ -725,7 +725,7 @@ END-ISO-10303-21;
         // One instance
         assert_eq!(asm.instances.len(), 1);
         let inst = &asm.instances[0];
-        assert_eq!(inst.parent_id.is_some(), true);
+        assert!(inst.parent_id.is_some());
         // Transform: placed 20 mm along X
         assert!((inst.transform.origin[0] - 20.0).abs() < 1e-6);
         assert!(inst.transform.origin[1].abs() < 1e-6);
