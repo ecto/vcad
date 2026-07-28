@@ -16,6 +16,8 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  McpError,
+  ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import { commandRegistry, getPcbNodeIds } from "@vcad/core";
@@ -1281,7 +1283,11 @@ export async function createServer(
       };
     }
 
-    throw new Error(`Unknown resource: ${uri}`);
+    // InvalidParams, not a bare Error: an unreadable `uri` is a bad argument,
+    // not a server fault. MCP 2026-07-28 renumbered resource-not-found from
+    // -32002 to -32602 for exactly this reason; raising it as an McpError here
+    // means both eras report it correctly instead of collapsing to -32603.
+    throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
   });
 
   // True when the connected client declared the MCP Apps UI extension at

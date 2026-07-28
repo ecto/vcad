@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-28-mcp-2026-07-28-protocol",
+  "version": "0.9.4",
+  "date": "2026-07-28",
+  "category": "feat",
+  "title": "MCP 2026-07-28 protocol support",
+  "summary": "The vcad MCP server now speaks the stateless 2026-07-28 revision — server/discover, per-request protocol metadata, no initialize handshake — alongside every earlier revision.",
+  "features": ["mcp"],
+  "mcpTools": []
+}

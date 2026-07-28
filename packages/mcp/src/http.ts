@@ -27,6 +27,7 @@ import { flushTelemetry } from "./telemetry.js";
 import { handleLiveRequest } from "./live-route.js";
 import { handleArtifactRequest } from "./artifact-route.js";
 import { sessionStoreInfo } from "./session-store.js";
+import { isModernMessage, handleModernRequest } from "./protocol-2026.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -108,7 +109,58 @@ async function handleMcpRequest(
   // assumeUiClient: this stateless path builds a fresh Server per request,
   // so the UI-extension capability from `initialize` is never visible here —
   // attach the inline `_meta` preview unconditionally (see ServerContext).
-  const server = await createServer(eng, { user, assumeUiClient: true });
+  const makeServer = () => createServer(eng, { user, assumeUiClient: true });
+
+  // Dual-era: a request that declares its own protocol version (or asks for
+  // `server/discover`) speaks MCP 2026-07-28 and is served by the modern
+  // handler; `initialize`-based traffic falls through to the SDK transport.
+  if (req.method === "POST") {
+    const body = await readBody(req);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error" },
+        }),
+      );
+      return;
+    }
+
+    if (isModernMessage(parsed, req.headers)) {
+      const { status, body: out } = await handleModernRequest(parsed, {
+        createServer: makeServer,
+        headers: req.headers,
+      });
+      if (out === null) {
+        res.writeHead(status);
+        res.end();
+        return;
+      }
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(out));
+      return;
+    }
+
+    await handleLegacyMcpRequest(req, res, makeServer, parsed);
+    return;
+  }
+
+  await handleLegacyMcpRequest(req, res, makeServer);
+}
+
+/** The pre-2026 (`initialize`-handshake) path, on the SDK's own transport. */
+async function handleLegacyMcpRequest(
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  makeServer: () => Promise<Awaited<ReturnType<typeof createServer>>>,
+  parsed?: unknown,
+): Promise<void> {
+  const server = await makeServer();
 
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session tracking
@@ -118,10 +170,7 @@ async function handleMcpRequest(
   await server.connect(transport);
 
   try {
-    // Parse body for POST requests
-    if (req.method === "POST") {
-      const body = await readBody(req);
-      const parsed = JSON.parse(body);
+    if (parsed !== undefined) {
       await transport.handleRequest(req, res, parsed);
     } else {
       await transport.handleRequest(req, res);

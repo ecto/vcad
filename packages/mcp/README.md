@@ -14,6 +14,31 @@ Or add to your MCP configuration directly:
 claude mcp add vcad --command "npx @vcad/mcp"
 ```
 
+## Protocol revisions
+
+The server is **dual-era**: it speaks the stateless `2026-07-28` revision and
+every `initialize`-handshake revision back to `2024-11-05`, on the same
+endpoint and the same stdio process. Clients need no configuration change.
+
+Modern (`2026-07-28`) requests are recognized by the per-request metadata they
+carry (`_meta['io.modelcontextprotocol/protocolVersion']`) or by asking for
+`server/discover`; everything else stays on the SDK's legacy path. Supported
+modern surface: `server/discover`, `tools/list`, `tools/call`,
+`resources/list`, `resources/templates/list`, `resources/read`, `prompts/*`,
+`completion/complete`, plus `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name`
+header validation and `ttlMs` / `cacheScope` cache hints on list results.
+
+vcad needed no architectural change to go stateless: cross-call state has
+always ridden on a server-minted `document_id` passed as an ordinary tool
+argument — the exact pattern the revision prescribes — and the HTTP transport
+was already session-free.
+
+Not implemented yet, and reported honestly rather than silently accepted:
+SSE response streams for in-flight `notifications/progress`,
+`subscriptions/listen` (nothing stateful to subscribe to), MRTR
+`InputRequiredResult` (URL-mode elicitation degrades to a dismissed prompt),
+and the Tasks extension. See `src/protocol-2026.ts`.
+
 ## Tool packs
 
 The surface is a small always-on core — the make → see → measure → verify →
