@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { Engine } from "@vcad/engine";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createSchematic, placeComponents } from "../tools/ecad.js";
 import { createServer } from "../server.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
 import type { Order } from "../fabricate/types.js";
@@ -580,6 +583,116 @@ describe("subscriptions/listen", () => {
     );
     expect(seen.length).toBe(count);
   });
+});
+
+describe("progress notifications", () => {
+  /** Minimal routable board: two resistors, one net, placed. */
+  async function makeBoard(): Promise<string> {
+    const resistor = (ref: string, x: number) => ({
+      ref,
+      value: "1k",
+      footprint: "Resistor_SMD:R_0805",
+      x,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive", x: -5, y: 0 },
+        { number: "2", name: "~", type: "Passive", x: 5, y: 0 },
+      ],
+    });
+    const created = await createSchematic({
+      components: [resistor("R1", 0), resistor("R2", 20)],
+      nets: { SIG: ["R1.2", "R2.1"] },
+    });
+    const id = (
+      JSON.parse(
+        (created as { content: Array<{ text: string }> }).content[0]!.text,
+      ) as { document_id: string }
+    ).document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    return id;
+  }
+
+  it("streams notifications/progress to the modern hook before the final result", async () => {
+    const id = await makeBoard();
+    const notifications: Array<Record<string, unknown>> = [];
+    let resultSeen = false;
+    let progressBeforeResult = 0;
+    const res = await handleModernRequest(
+      request(1, "tools/call", {
+        name: "route_nets",
+        arguments: { document_id: id },
+      }),
+      {
+        createServer: makeServer,
+        headers: headersFor("tools/call", "route_nets"),
+        onNotification: (n) => {
+          notifications.push(n);
+          if (!resultSeen && n.method === "notifications/progress") {
+            progressBeforeResult++;
+          }
+        },
+      },
+    );
+    resultSeen = true;
+    expect(res.status).toBe(200);
+    expect((res.body as JsonRpcResult).result?.resultType).toBe("complete");
+    const progress = notifications.filter(
+      (n) => n.method === "notifications/progress",
+    );
+    // The bridge injects a progressToken, so route_nets' stage milestones
+    // flow even though a modern client has no way to send a token itself.
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progressBeforeResult).toBe(progress.length);
+    const params = progress[0]!.params as Record<string, unknown>;
+    expect(typeof params.progress).toBe("number");
+    expect(typeof params.message).toBe("string");
+  }, 120_000);
+
+  it("delivers SDK progress notifications to a legacy client that sent a progressToken", async () => {
+    const id = await makeBoard();
+    const server = await makeServer();
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: "legacy-progress-test", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    await Promise.all([client.connect(clientT), server.connect(serverT)]);
+    const updates: Array<{ progress: number; message?: string }> = [];
+    const res = await client.callTool(
+      { name: "route_nets", arguments: { document_id: id } },
+      undefined,
+      { onprogress: (p) => updates.push(p), timeout: 120_000 },
+    );
+    expect(res.isError).toBeFalsy();
+    expect(updates.length).toBeGreaterThan(0);
+    expect(typeof updates[0]!.progress).toBe("number");
+    await client.close();
+    await server.close();
+  }, 120_000);
+
+  it("emits nothing for a legacy client without a progressToken", async () => {
+    const id = await makeBoard();
+    const server = await makeServer();
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const client = new Client(
+      { name: "legacy-no-token", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    await Promise.all([client.connect(clientT), server.connect(serverT)]);
+    const seen: string[] = [];
+    client.fallbackNotificationHandler = async (n) => {
+      seen.push(n.method);
+    };
+    const res = await client.callTool(
+      { name: "route_nets", arguments: { document_id: id } },
+      undefined,
+      { timeout: 120_000 },
+    );
+    expect(res.isError).toBeFalsy();
+    expect(seen.filter((m) => m === "notifications/progress")).toHaveLength(0);
+    await client.close();
+    await server.close();
+  }, 120_000);
 });
 
 describe("resources", () => {

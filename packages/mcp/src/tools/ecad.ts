@@ -110,7 +110,7 @@ import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
 import type { FabFile } from "@vcad/engine";
-import { behavior, type ToolDef } from "./tool-def.js";
+import { behavior, type ToolContext, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
@@ -3191,7 +3191,8 @@ const POWER_NET_RE =
   /(^|[_\-/])(A?D?GND|VCC|VDD[A]?|VBAT|VBUS|VIN|VOUT|VSYS|VREF|PWR|POWER|\d+V\d*)(\d*)([_\-/]|$)/i;
 
 /** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
-export async function routeNets(args: Record<string, unknown>) {
+export async function routeNets(args: Record<string, unknown>, toolCtx?: ToolContext) {
+  const progress = toolCtx?.progress;
   const ctx = resolveDocInput(args);
   const doc = ctx.doc;
   const traceWidth = (args.trace_width as number) || undefined;
@@ -3214,6 +3215,7 @@ export async function routeNets(args: Record<string, unknown>) {
   // Receipt: snapshot DRC before the route so the after-diff can attribute
   // exactly what this call fixed and what it introduced.
   const wantReceipt = Boolean(args.receipt);
+  if (wantReceipt) progress?.(0, undefined, "snapshotting pre-route DRC");
   const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
 
   // Synthesize a netlist from pad assignments so the kernel ratsnest can
@@ -3445,6 +3447,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   let routedSomething = false;
   if (strategy === "auto") {
+    progress?.(0, undefined, "routing all nets (negotiated whole-board pass)");
     const result = await routeAll(pcb, width, routeFilter, effort);
     routedSomething =
       result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
@@ -3456,9 +3459,11 @@ export async function routeNets(args: Record<string, unknown>) {
         ? routeFilter
         : [...netConnections.keys()].filter((n) => !preservedNets.has(n));
     const tiers = [...new Set(universe.map(tierOf))].sort((a, b) => a - b);
-    for (const tier of tiers) {
+    for (let ti = 0; ti < tiers.length; ti++) {
+      const tier = tiers[ti]!;
       const nets = universe.filter((n) => tierOf(n) === tier);
       if (nets.length === 0) continue;
+      progress?.(ti, tiers.length, `routing tier ${ti + 1}/${tiers.length} (${nets.length} net(s))`);
       const result = await routeAll(pcb, width, nets, effort);
       if (
         result.traces.length > 0 ||
@@ -3512,6 +3517,7 @@ export async function routeNets(args: Record<string, unknown>) {
     { groups_before: number; groups_after: number; action: "repaired-by-retry" | "rolled_back" }
   > = {};
   if (islandsBefore && copperBefore) {
+    progress?.(0, undefined, "verifying net connectivity");
     const before = islandsBefore;
     const worseNets = async (nets: Iterable<string>): Promise<Map<string, number> | null> => {
       const counts = await netIslandCounts(pcb, nets);
@@ -3535,6 +3541,7 @@ export async function routeNets(args: Record<string, unknown>) {
       if (retrySet.size > 0) {
         pcb.traces = pcb.traces.filter((t) => !retrySet.has(t.net) || t.source === "manual");
         pcb.vias = pcb.vias.filter((v) => !retrySet.has(v.net) || v.source === "manual");
+        progress?.(0, undefined, `re-routing ${retrySet.size} net(s) with regressed connectivity`);
         const retried = await routeAll(pcb, width, [...retrySet], effort);
         applyRoute(retried);
       }
@@ -14087,7 +14094,7 @@ export const toolDefs: ToolDef[] = [
       "nets come back in `plane_stitched`. Mutates the session document " +
       "(pass document_id).",
     inputSchema: routeNetsSchema,
-    handler: (a) => routeNets(a) as ToolResult | Promise<ToolResult>,
+    handler: (a, c) => routeNets(a, c) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {

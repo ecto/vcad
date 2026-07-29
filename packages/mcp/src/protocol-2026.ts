@@ -746,6 +746,15 @@ export async function handleModernRequest(
         // The revision removed the log-level RPC: notifications/message flows
         // only when this request carried a logLevel in `_meta`.
         if (nm === "notifications/message" && !wantsLogs) return;
+        // A progress notification from a task-owned bridge also mirrors into
+        // the task record's statusMessage, so `tasks/get` pollers see the
+        // same milestones the notification stream carries.
+        if (nm === "notifications/progress" && bridgeRef) {
+          const tctx = taskInputHooks.get(bridgeRef);
+          if (tctx && tctx.record.status === "working") {
+            touchTask(tctx.record, undefined, progressStatusMessage(tctx.record.toolName, n));
+          }
+        }
         opts.onNotification?.(n);
       },
       onServerRequest,
@@ -776,6 +785,11 @@ export async function handleModernRequest(
       version: "0.0.0",
     };
     const forwarded = stripModernFields(params);
+    // The modern revision has no progressToken opt-in — progress streams on
+    // the request's SSE response whenever the server has something to say. The
+    // bridged SDK server, however, is token-gated (legacy spec), so inject one
+    // on the forwarded call unless the client supplied its own.
+    if (method === "tools/call") ensureProgressToken(forwarded);
 
     // ── Tasks path: return the handle now, finish in the background ──
     if (asTask) {
@@ -878,6 +892,38 @@ function stripModernFields(
     else out._meta = rest;
   }
   return out;
+}
+
+/** Sentinel token the bridge injects so the token-gated legacy server emits
+ *  progress for a modern request that never had a way to ask. */
+const BRIDGE_PROGRESS_TOKEN = "modern-bridge-progress";
+
+/** Ensure a forwarded `tools/call` carries a `progressToken`. */
+function ensureProgressToken(forwarded: Record<string, unknown>): void {
+  const meta =
+    forwarded._meta && typeof forwarded._meta === "object"
+      ? { ...(forwarded._meta as Record<string, unknown>) }
+      : {};
+  if (meta.progressToken === undefined) meta.progressToken = BRIDGE_PROGRESS_TOKEN;
+  forwarded._meta = meta;
+}
+
+/** One-line task status from a `notifications/progress` payload. */
+function progressStatusMessage(
+  toolName: string,
+  n: Record<string, unknown>,
+): string {
+  const p = (n.params ?? {}) as Record<string, unknown>;
+  const message = typeof p.message === "string" ? p.message : undefined;
+  const progress = typeof p.progress === "number" ? p.progress : undefined;
+  const total = typeof p.total === "number" ? p.total : undefined;
+  const counter =
+    progress !== undefined
+      ? total !== undefined
+        ? ` (${progress}/${total})`
+        : ` (${progress})`
+      : "";
+  return `${message ?? `running ${toolName}`}${counter}`;
 }
 
 // ── Tasks execution ──────────────────────────────────────────────
