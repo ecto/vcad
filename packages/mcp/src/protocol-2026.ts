@@ -410,7 +410,22 @@ function touchTask(t: TaskRecord, status?: TaskStatus, message?: string): void {
     if (t.statusMessage !== undefined) stored.statusMessage = t.statusMessage;
     if (t.result !== undefined) stored.result = t.result;
     if (t.error !== undefined) stored.error = t.error;
-    void createTaskStore().save(stored);
+    const persist = createTaskStore()
+      .save(stored)
+      .finally(() => pendingPersists.delete(persist));
+    pendingPersists.add(persist);
+  }
+}
+
+/** In-flight terminal-record writes. Tracked so a caller (tests, shutdown)
+ *  can await them — the store itself never throws, so these only ever
+ *  resolve. */
+const pendingPersists = new Set<Promise<void>>();
+
+/** Await every in-flight terminal-record persist. */
+export async function flushTaskPersists(): Promise<void> {
+  while (pendingPersists.size > 0) {
+    await Promise.all([...pendingPersists]);
   }
 }
 

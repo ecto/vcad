@@ -23,6 +23,7 @@ import {
   isModernMessage,
   handleModernRequest,
   taskIdBootToken,
+  flushTaskPersists,
 } from "../protocol-2026.js";
 
 /**
@@ -665,8 +666,7 @@ describe("task durability (restart survival)", () => {
 
   it("hydrates a terminal task from the durable store after a simulated restart", async () => {
     const taskId = await runTaskToTerminal();
-    // Give the fire-and-forget persist a beat to land on disk.
-    await new Promise((r) => setTimeout(r, 100));
+    await flushTaskPersists(); // wait for the terminal record to land on disk
     resetTasksForTest(); // wipe the warm cache = the restart
     const got = await call(
       request(200, "tasks/get", { taskId }),
