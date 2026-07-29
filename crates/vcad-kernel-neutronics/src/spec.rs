@@ -29,7 +29,9 @@ use crate::geometry::{Geometry, Layer};
 use crate::groups::group_of_energy_ev;
 use crate::materials;
 use crate::tally::Estimate;
-use crate::transport::{run, ConfigError, RunConfig, RunResult, Source};
+use crate::transport::{
+    run, ConfigError, RunConfig, RunResult, Source, TransportProgress, TransportRun,
+};
 
 /// A literal value or the name of a document parameter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -403,6 +405,57 @@ pub fn evaluate(
         })
         .collect();
     Ok((doses, result))
+}
+
+/// Stepwise form of [`evaluate`]: resolve once, transport whole batches
+/// under a budget via the inner [`TransportRun`], then assemble the same
+/// `(doses, result)` pair — bit-identical to the one-shot (each batch
+/// owns an independent RNG stream).
+pub struct EvaluateRun {
+    resolved: ResolvedShield,
+    run: TransportRun,
+}
+
+impl EvaluateRun {
+    /// Resolve the spec and set up the transport tallies.
+    pub fn new(spec: &ShieldSpec, params: &BTreeMap<String, f64>) -> Result<Self, SpecError> {
+        let resolved = spec.resolve(params)?;
+        let run = TransportRun::new(&resolved.config)
+            .map_err(|e: ConfigError| SpecError::Config(e.to_string()))?;
+        Ok(EvaluateRun { resolved, run })
+    }
+
+    /// Batches transported so far.
+    pub fn batches_done(&self) -> usize {
+        self.run.batches_done()
+    }
+
+    /// Total batches this run will transport.
+    pub fn total_batches(&self) -> usize {
+        self.run.total_batches()
+    }
+
+    /// Transport up to `budget` whole batches (min 1).
+    pub fn advance(&mut self, budget: usize) -> TransportProgress {
+        self.run.advance(budget)
+    }
+
+    /// Assemble the same payload [`evaluate`] returns (advance to
+    /// completion first).
+    pub fn finish(self) -> (Vec<DetectorDose>, RunResult, ResolvedShield) {
+        let result = self.run.finish();
+        let doses = self
+            .resolved
+            .detector_regions
+            .iter()
+            .map(|(label, region)| DetectorDose {
+                label: label.clone(),
+                dose_usv_per_h: result
+                    .dose_rate_usv_per_h(*region, self.resolved.source_rate_n_per_s),
+            })
+            .collect();
+        (doses, result, self.resolved)
+    }
 }
 
 /// The compass pass: d(dose at `detector_label`)/d(named thickness

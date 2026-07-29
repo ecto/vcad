@@ -143,6 +143,120 @@ pub fn maximize(
     }
 }
 
+/// A multi-start FD-ascent plan over the box `[lo, hi]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultiStart {
+    /// Lower bounds per variable.
+    pub lo: Vec<f64>,
+    /// Upper bounds per variable.
+    pub hi: Vec<f64>,
+    /// Explicit first start point; when present it replaces the first
+    /// seed fraction's point.
+    pub explicit_start: Option<Vec<f64>>,
+    /// Seed fractions of the box, one start each (e.g. `[0.2, 0.5, 0.8]`).
+    pub seed_fractions: Vec<f64>,
+    /// Ascent options shared by every start.
+    pub opts: FdOptions,
+}
+
+impl MultiStart {
+    /// The start point for start index `k`.
+    fn x0(&self, k: usize) -> Vec<f64> {
+        if k == 0 {
+            if let Some(x0) = &self.explicit_start {
+                return x0.clone();
+            }
+        }
+        let f = self.seed_fractions[k];
+        self.lo
+            .iter()
+            .zip(&self.hi)
+            .map(|(a, b)| a + f * (b - a))
+            .collect()
+    }
+}
+
+/// Stepwise driver for a multi-start [`maximize`] search: each
+/// [`MultiStartRun::advance_one`] runs exactly one complete start, so a
+/// host can stream per-start progress. The one-shot
+/// [`multi_start_maximize`] is implemented on top, making the two paths
+/// identical by construction.
+#[derive(Debug, Clone)]
+pub struct MultiStartRun {
+    plan: MultiStart,
+    /// Per-start results, in start order.
+    starts: Vec<FdResult>,
+    best: Option<usize>,
+}
+
+impl MultiStartRun {
+    /// Set up the run. Panics if the plan has no seed fractions.
+    pub fn new(plan: MultiStart) -> Self {
+        assert!(
+            !plan.seed_fractions.is_empty(),
+            "multi-start needs at least one seed fraction"
+        );
+        MultiStartRun {
+            plan,
+            starts: Vec::new(),
+            best: None,
+        }
+    }
+
+    /// Starts completed so far.
+    pub fn starts_done(&self) -> usize {
+        self.starts.len()
+    }
+
+    /// Total starts this run will perform.
+    pub fn total_starts(&self) -> usize {
+        self.plan.seed_fractions.len()
+    }
+
+    /// Run the next start to completion against `f`. Returns the just-
+    /// finished start's result, or `None` when every start already ran.
+    pub fn advance_one(&mut self, f: &mut dyn FnMut(&[f64]) -> f64) -> Option<&FdResult> {
+        let k = self.starts.len();
+        if k >= self.total_starts() {
+            return None;
+        }
+        let x0 = self.plan.x0(k);
+        let r = maximize(f, &x0, &self.plan.lo, &self.plan.hi, &self.plan.opts);
+        let better = self
+            .best
+            .map(|b| r.value > self.starts[b].value)
+            .unwrap_or(true);
+        self.starts.push(r);
+        if better {
+            self.best = Some(k);
+        }
+        self.starts.last()
+    }
+
+    /// Per-start results so far, in start order.
+    pub fn starts(&self) -> &[FdResult] {
+        &self.starts
+    }
+
+    /// The best start so far (`None` before the first `advance_one`).
+    pub fn best(&self) -> Option<&FdResult> {
+        self.best.map(|b| &self.starts[b])
+    }
+}
+
+/// One-shot multi-start maximize: every start in [`MultiStart`] run to
+/// completion via [`MultiStartRun`]. Returns `(per-start results, best
+/// index)`.
+pub fn multi_start_maximize(
+    f: &mut dyn FnMut(&[f64]) -> f64,
+    plan: MultiStart,
+) -> (Vec<FdResult>, usize) {
+    let mut run = MultiStartRun::new(plan);
+    while run.advance_one(f).is_some() {}
+    let best = run.best.expect("at least one start ran");
+    (run.starts, best)
+}
+
 /// An objective that returns its value and gradient together.
 pub type ValueAndGradFn = dyn FnMut(&[f64]) -> (f64, Vec<f64>);
 
@@ -224,6 +338,34 @@ pub fn maximize_with_gradient(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stepwise_multi_start_matches_the_one_shot() {
+        // Multimodal 1D objective; three seeds land in different basins.
+        let obj = |x: &[f64]| (3.0 * x[0]).sin() + 0.5 * x[0];
+        let plan = MultiStart {
+            lo: vec![0.0],
+            hi: vec![6.0],
+            explicit_start: None,
+            seed_fractions: vec![0.2, 0.5, 0.8],
+            opts: FdOptions::default(),
+        };
+        let (one_shot, best_idx) = multi_start_maximize(&mut { obj }, plan.clone());
+        let mut run = MultiStartRun::new(plan);
+        let mut f = obj;
+        let mut n = 0;
+        while run.advance_one(&mut f).is_some() {
+            n += 1;
+            assert_eq!(run.starts_done(), n);
+        }
+        assert_eq!(n, 3);
+        // Bit-identical per start and same winner.
+        assert_eq!(run.starts(), &one_shot[..]);
+        assert_eq!(
+            run.best().unwrap().value.to_bits(),
+            one_shot[best_idx].value.to_bits()
+        );
+    }
 
     #[test]
     fn gradient_driven_ascent_climbs() {

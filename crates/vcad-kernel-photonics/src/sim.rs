@@ -959,6 +959,41 @@ mod tests {
     use super::*;
     use crate::waveform::Waveform;
 
+    /// Chunked stepping (`run(a)` then `run(b)`) must be bit-identical to one
+    /// `run(a + b)` — the contract the stepwise MCP progress seam relies on.
+    #[test]
+    fn chunked_run_matches_one_shot_run() {
+        let n = 40;
+        let build = || {
+            let mut sim = Simulation::new(GridSpec::new(n, n, 0.05), Polarization::Tm);
+            sim.set_cpml(crate::CpmlSpec::uniform(8));
+            sim.add_source(Source::point(n / 2, n / 2, Waveform::gaussian(2.0, 0.6)));
+            let f = sim.add_flux(crate::monitor::FluxSpec::Vertical {
+                i: n - 12,
+                j0: 10,
+                j1: n - 10,
+                freqs: vec![2.0],
+            });
+            (sim, f)
+        };
+        let (mut one_shot, f1) = build();
+        one_shot.run(150);
+        let (mut chunked, f2) = build();
+        chunked.run(37);
+        chunked.run(63);
+        chunked.run(50);
+        for i in 0..=n {
+            for j in 0..=n {
+                assert_eq!(
+                    one_shot.ez_at(i, j).to_bits(),
+                    chunked.ez_at(i, j).to_bits(),
+                    "field diverged at ({i},{j})"
+                );
+            }
+        }
+        assert_eq!(one_shot.flux_power(f1), chunked.flux_power(f2));
+    }
+
     /// A centered point source in a symmetric vacuum PEC box must produce
     /// exactly symmetric fields — mirror and transpose. Catches staggering
     /// and sign bugs at machine precision.

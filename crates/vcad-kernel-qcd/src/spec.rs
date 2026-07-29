@@ -260,131 +260,262 @@ impl SimSpec {
 }
 
 /// Run a validated spec to completion.
+///
+/// Implemented as an unbounded [`SimRun`] drive, so the one-shot and
+/// chunked paths are identical by construction.
 pub fn run(spec: &SimSpec) -> Result<SimResult, SpecError> {
-    spec.validate()?;
-    match spec.gauge {
-        Gauge::Su2 => run_generic::<Su2>(spec),
-        Gauge::Su3 => run_generic::<Su3>(spec),
-    }
+    let mut run = SimRun::new(spec)?;
+    run.advance(usize::MAX);
+    run.finish()
 }
 
-fn run_generic<G: GaugeGroup>(spec: &SimSpec) -> Result<SimResult, SpecError> {
-    let mut rng = Rng::seeded(spec.seed);
-    let mut lat: Lattice<G> = if spec.hot_start {
-        Lattice::hot(spec.dims, &mut rng)
-    } else {
-        Lattice::cold(spec.dims)
-    };
+/// What a bounded [`SimRun::advance`] call concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunProgress {
+    /// Budget exhausted; more sweeps remain. Call `advance` again.
+    Running,
+    /// All sweeps done; take the result with [`SimRun::finish`].
+    Done,
+}
 
-    let sweep = |lat: &mut Lattice<G>, rng: &mut Rng| {
-        heatbath_sweep(lat, spec.beta, rng);
-        for _ in 0..spec.overrelax_per_heatbath {
-            overrelax_sweep(lat, rng);
+/// In-flight state of one gauge-group-specific run.
+struct RunState<G: GaugeGroup> {
+    spec: SimSpec,
+    rng: Rng,
+    lat: Lattice<G>,
+    sym_loops: Vec<(usize, usize)>,
+    tmp_loops: Vec<(usize, usize)>,
+    plaq_series: Vec<f64>,
+    sym_series: Vec<Vec<f64>>,
+    tmp_series: Vec<Vec<f64>>,
+    poly_series: Vec<f64>,
+    flux: Option<FluxTubeAccumulator>,
+    /// Compound sweeps (thermalization + measurement) completed so far.
+    sweeps_done: usize,
+}
+
+impl<G: GaugeGroup> RunState<G> {
+    fn new(spec: &SimSpec) -> Self {
+        let mut rng = Rng::seeded(spec.seed);
+        let lat: Lattice<G> = if spec.hot_start {
+            Lattice::hot(spec.dims, &mut rng)
+        } else {
+            Lattice::cold(spec.dims)
+        };
+        let sym_loops: Vec<(usize, usize)> = (1..=spec.max_wilson_extent)
+            .flat_map(|r| (1..=spec.max_wilson_extent).map(move |t| (r, t)))
+            .filter(|&(r, t)| r <= t) // W(r,t) = W(t,r) by plane averaging
+            .collect();
+        let max_temporal_t = spec.dims[3] / 2;
+        let tmp_loops: Vec<(usize, usize)> = if spec.measure_temporal_loops {
+            (1..=spec.max_wilson_extent)
+                .flat_map(|r| (1..=max_temporal_t).map(move |t| (r, t)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let sym_series = vec![Vec::new(); sym_loops.len()];
+        let tmp_series = vec![Vec::new(); tmp_loops.len()];
+        let flux = spec
+            .flux_tube
+            .map(|ft| FluxTubeAccumulator::new(spec.dims, ft.separation));
+        RunState {
+            spec: spec.clone(),
+            rng,
+            lat,
+            sym_loops,
+            tmp_loops,
+            plaq_series: Vec::with_capacity(spec.measurement_sweeps),
+            sym_series,
+            tmp_series,
+            poly_series: Vec::new(),
+            flux,
+            sweeps_done: 0,
         }
-    };
-
-    for _ in 0..spec.thermalization_sweeps {
-        sweep(&mut lat, &mut rng);
     }
 
-    let sym_loops: Vec<(usize, usize)> = (1..=spec.max_wilson_extent)
-        .flat_map(|r| (1..=spec.max_wilson_extent).map(move |t| (r, t)))
-        .filter(|&(r, t)| r <= t) // W(r,t) = W(t,r) by plane averaging
-        .collect();
-    let max_temporal_t = spec.dims[3] / 2;
-    let tmp_loops: Vec<(usize, usize)> = if spec.measure_temporal_loops {
-        (1..=spec.max_wilson_extent)
-            .flat_map(|r| (1..=max_temporal_t).map(move |t| (r, t)))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    fn total_sweeps(&self) -> usize {
+        self.spec.thermalization_sweeps + self.spec.measurement_sweeps
+    }
 
-    let mut plaq_series = Vec::with_capacity(spec.measurement_sweeps);
-    let mut sym_series: Vec<Vec<f64>> = vec![Vec::new(); sym_loops.len()];
-    let mut tmp_series: Vec<Vec<f64>> = vec![Vec::new(); tmp_loops.len()];
-    let mut poly_series: Vec<f64> = Vec::new();
-    let mut flux = spec
-        .flux_tube
-        .map(|ft| FluxTubeAccumulator::new(spec.dims, ft.separation));
+    fn sweep(&mut self) {
+        heatbath_sweep(&mut self.lat, self.spec.beta, &mut self.rng);
+        for _ in 0..self.spec.overrelax_per_heatbath {
+            overrelax_sweep(&mut self.lat, &mut self.rng);
+        }
+    }
 
-    for _ in 0..spec.measurement_sweeps {
-        sweep(&mut lat, &mut rng);
-        plaq_series.push(lat.average_plaquette());
-        let measured: Lattice<G> = match &spec.smear {
-            Some(s) => ape_smear_spatial_n(&lat, s.alpha, s.iterations),
-            None => lat.clone(),
+    fn advance(&mut self, budget: usize) -> RunProgress {
+        let total = self.total_sweeps();
+        let mut left = budget.max(1);
+        while self.sweeps_done < total && left > 0 {
+            self.sweep();
+            if self.sweeps_done >= self.spec.thermalization_sweeps {
+                self.measure();
+            }
+            self.sweeps_done += 1;
+            left -= 1;
+        }
+        if self.sweeps_done < total {
+            RunProgress::Running
+        } else {
+            RunProgress::Done
+        }
+    }
+
+    fn measure(&mut self) {
+        self.plaq_series.push(self.lat.average_plaquette());
+        let measured: Lattice<G> = match &self.spec.smear {
+            Some(s) => ape_smear_spatial_n(&self.lat, s.alpha, s.iterations),
+            None => self.lat.clone(),
         };
-        for (i, &(r, t)) in sym_loops.iter().enumerate() {
-            sym_series[i].push(measured.wilson_loop(r, t));
+        for (i, &(r, t)) in self.sym_loops.iter().enumerate() {
+            self.sym_series[i].push(measured.wilson_loop(r, t));
         }
-        for (i, &(r, t)) in tmp_loops.iter().enumerate() {
-            tmp_series[i].push(measured.wilson_loop_temporal(r, t));
+        for (i, &(r, t)) in self.tmp_loops.iter().enumerate() {
+            self.tmp_series[i].push(measured.wilson_loop_temporal(r, t));
         }
-        if spec.measure_polyakov {
+        if self.spec.measure_polyakov {
             // |volume-average L| per configuration: the finite-volume
             // order parameter (⟨L⟩ itself averages to 0 by center
             // symmetry in the confined phase).
-            let (re, im) = crate::fields::polyakov_field(&lat);
+            let (re, im) = crate::fields::polyakov_field(&self.lat);
             let n = re.len() as f64;
             let mre = re.iter().sum::<f64>() / n;
             let mim = im.iter().sum::<f64>() / n;
-            poly_series.push((mre * mre + mim * mim).sqrt());
+            self.poly_series.push((mre * mre + mim * mim).sqrt());
         }
-        if let Some(acc) = flux.as_mut() {
-            acc.measure(&lat);
+        if let Some(acc) = self.flux.as_mut() {
+            acc.measure(&self.lat);
         }
     }
 
-    // validate() guarantees >= 2 bins, so jackknife cannot fail here.
-    let jk = |series: &[f64]| jackknife(series, spec.bin_size).expect("validated binning");
-    let plaquette = jk(&plaq_series);
-    let collect = |pairs: &[(usize, usize)], series: &[Vec<f64>]| {
-        pairs
-            .iter()
-            .zip(series)
-            .map(|(&(r, t), s)| WilsonLoop { r, t, value: jk(s) })
-            .collect::<Vec<_>>()
-    };
-    let wilson_loops = collect(&sym_loops, &sym_series);
-    let temporal_loops = collect(&tmp_loops, &tmp_series);
-    let polyakov_abs = spec.measure_polyakov.then(|| jk(&poly_series));
-    let flux_tube = flux.map(|acc| {
-        acc.profile(spec.bin_size)
-            .expect("validated binning for flux profile")
-    });
+    fn finish(mut self) -> Result<SimResult, SpecError> {
+        let total_sweeps = self.total_sweeps();
+        let flux = self.flux.take();
+        let spec = &self.spec;
+        // validate() guarantees >= 2 bins, so jackknife cannot fail here.
+        let jk = |series: &[f64]| jackknife(series, spec.bin_size).expect("validated binning");
+        let plaquette = jk(&self.plaq_series);
+        let collect = |pairs: &[(usize, usize)], series: &[Vec<f64>]| {
+            pairs
+                .iter()
+                .zip(series)
+                .map(|(&(r, t), s)| WilsonLoop { r, t, value: jk(s) })
+                .collect::<Vec<_>>()
+        };
+        let wilson_loops = collect(&self.sym_loops, &self.sym_series);
+        let temporal_loops = collect(&self.tmp_loops, &self.tmp_series);
+        let polyakov_abs = spec.measure_polyakov.then(|| jk(&self.poly_series));
+        let flux_tube = flux.map(|acc| {
+            acc.profile(spec.bin_size)
+                .expect("validated binning for flux profile")
+        });
 
-    let (snapshot_out, topological_charge) = match spec.snapshot_cooling {
-        None => (None, None),
-        Some(n_cool) => {
-            let mut cooled = lat.clone();
-            for _ in 0..n_cool {
-                cool_sweep(&mut cooled);
+        let (snapshot_out, topological_charge) = match spec.snapshot_cooling {
+            None => (None, None),
+            Some(n_cool) => {
+                let mut cooled = self.lat.clone();
+                for _ in 0..n_cool {
+                    cool_sweep(&mut cooled);
+                }
+                let snap = snapshot(&cooled);
+                let q = if n_cool >= 1 {
+                    topo_charge_if_su2(&cooled)
+                } else {
+                    None
+                };
+                (Some(snap), q)
             }
-            let snap = snapshot(&cooled);
-            let q = if n_cool >= 1 {
-                topo_charge_if_su2(&cooled)
-            } else {
-                None
-            };
-            (Some(snap), q)
-        }
-    };
+        };
 
-    let total_sweeps = spec.thermalization_sweeps + spec.measurement_sweeps;
-    Ok(SimResult {
-        plaquette,
-        wilson_loops,
-        temporal_loops,
-        polyakov_abs,
-        flux_tube,
-        snapshot: snapshot_out,
-        topological_charge,
-        provenance: Provenance {
-            spec: spec.clone(),
-            total_sweeps,
-        },
-    })
+        Ok(SimResult {
+            plaquette,
+            wilson_loops,
+            temporal_loops,
+            polyakov_abs,
+            flux_tube,
+            snapshot: snapshot_out,
+            topological_charge,
+            provenance: Provenance {
+                spec: self.spec.clone(),
+                total_sweeps,
+            },
+        })
+    }
+}
+
+enum RunInner {
+    Su2(Box<RunState<Su2>>),
+    Su3(Box<RunState<Su3>>),
+}
+
+/// Stepwise driver for a lattice gauge run: [`SimRun::new`] validates the
+/// spec and initializes the lattice (RNG state lives inside, so chunked
+/// runs are bit-identical to [`run`]), each [`SimRun::advance`] performs up
+/// to a budget of compound sweeps, and [`SimRun::finish`] assembles the
+/// [`SimResult`]. A host can surface progress between `advance` calls.
+pub struct SimRun {
+    inner: RunInner,
+}
+
+impl SimRun {
+    /// Validate the spec and initialize the run.
+    pub fn new(spec: &SimSpec) -> Result<Self, SpecError> {
+        spec.validate()?;
+        let inner = match spec.gauge {
+            Gauge::Su2 => RunInner::Su2(Box::new(RunState::new(spec))),
+            Gauge::Su3 => RunInner::Su3(Box::new(RunState::new(spec))),
+        };
+        Ok(SimRun { inner })
+    }
+
+    /// Compound sweeps completed so far.
+    pub fn sweeps_done(&self) -> usize {
+        match &self.inner {
+            RunInner::Su2(s) => s.sweeps_done,
+            RunInner::Su3(s) => s.sweeps_done,
+        }
+    }
+
+    /// Total compound sweeps this run will perform.
+    pub fn total_sweeps(&self) -> usize {
+        match &self.inner {
+            RunInner::Su2(s) => s.total_sweeps(),
+            RunInner::Su3(s) => s.total_sweeps(),
+        }
+    }
+
+    /// Perform up to `budget` compound sweeps (min 1).
+    pub fn advance(&mut self, budget: usize) -> RunProgress {
+        match &mut self.inner {
+            RunInner::Su2(s) => s.advance(budget),
+            RunInner::Su3(s) => s.advance(budget),
+        }
+    }
+
+    /// Assemble the result. Call only after `advance` reported
+    /// [`RunProgress::Done`]; finishing early would jackknife a
+    /// truncated series, so it is an error.
+    pub fn finish(self) -> Result<SimResult, SpecError> {
+        let (done, total) = (self.sweeps_done(), self.total_sweeps());
+        if done < total {
+            return Err(SpecError::StarvedStatistics {
+                measurements: done.saturating_sub(match &self.inner {
+                    RunInner::Su2(s) => s.spec.thermalization_sweeps,
+                    RunInner::Su3(s) => s.spec.thermalization_sweeps,
+                }),
+                bin_size: match &self.inner {
+                    RunInner::Su2(s) => s.spec.bin_size,
+                    RunInner::Su3(s) => s.spec.bin_size,
+                },
+            });
+        }
+        match self.inner {
+            RunInner::Su2(s) => s.finish(),
+            RunInner::Su3(s) => s.finish(),
+        }
+    }
 }
 
 /// Topological charge for SU(2) lattices; `None` for other groups
@@ -455,6 +586,33 @@ pub(crate) mod tests {
             s.validate(),
             Err(SpecError::BadFluxTubeSeparation { .. })
         ));
+    }
+
+    #[test]
+    fn chunked_run_matches_the_one_shot() {
+        // Small odd budget so chunk boundaries land mid-thermalization
+        // and mid-measurement; RNG state lives in the run, so the
+        // result must be bit-identical to the one-shot path.
+        let mut spec = base_spec();
+        spec.measure_polyakov = true;
+        spec.flux_tube = Some(FluxTubeSpec { separation: 1 });
+        let one_shot = run(&spec).unwrap();
+        let mut chunked = SimRun::new(&spec).unwrap();
+        let mut calls = 0;
+        while chunked.advance(7) == RunProgress::Running {
+            calls += 1;
+            assert!(chunked.sweeps_done() <= chunked.total_sweeps());
+        }
+        assert!(calls > 2, "budget too generous to exercise chunking");
+        assert_eq!(chunked.finish().unwrap(), one_shot);
+    }
+
+    #[test]
+    fn early_finish_is_refused() {
+        let spec = base_spec();
+        let mut r = SimRun::new(&spec).unwrap();
+        assert_eq!(r.advance(3), RunProgress::Running);
+        assert!(r.finish().is_err());
     }
 
     #[test]

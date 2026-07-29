@@ -1,0 +1,22 @@
+{
+  "id": "2026-07-29-kernel-chunked-progress",
+  "version": "0.9.4",
+  "date": "2026-07-29",
+  "category": "feat",
+  "title": "Live progress from long-running kernel tools",
+  "summary": "Nine kernel-bound tools now stream real notifications/progress while they run, instead of going silent for minutes and reporting everything at the end.",
+  "features": [
+    "mcp"
+  ],
+  "mcpTools": [
+    "fab_prep",
+    "topology_optimize",
+    "simulate_flow",
+    "simulate_photonics",
+    "simulate_charged_particles",
+    "optimize_electrodes",
+    "simulate_neutron_shield",
+    "simulate_lattice_gauge",
+    "minimize_energy"
+  ]
+}

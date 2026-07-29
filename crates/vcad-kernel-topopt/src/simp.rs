@@ -31,48 +31,95 @@ fn stiffness_scale(x: f64, penalty: f64) -> f64 {
     E_MIN + x.powf(penalty) * (1.0 - E_MIN)
 }
 
-/// Run the SIMP loop on a prepared FE system.
-pub fn optimize_densities(domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -> SimpResult {
-    let nact = sys.active_elems.len();
-    let vf = spec.volume_fraction.clamp(0.01, 0.99);
+/// What one [`SimpState::step`] concluded — the convergence signal a host can
+/// narrate between iterations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SimpStepStatus {
+    /// The loop is finished (converged or iteration budget spent).
+    pub done: bool,
+    /// 1-based iteration that just ran (0 if `step` was called after done).
+    pub iteration: usize,
+    /// Compliance after this iteration (lower = stiffer).
+    pub compliance: f64,
+    /// Max density change this iteration (compared against the tolerance).
+    pub change: f64,
+}
 
-    // Densities indexed by active-element position.
-    let mut x = vec![vf; nact];
-    let mut u = vec![0.0f64; sys.ndof];
-    let mut history = Vec::with_capacity(spec.max_iterations);
+/// Mutable state of the SIMP loop, stepped one iteration at a time so a host
+/// can surface progress between iterations. [`optimize_densities`] drives this
+/// to completion, so the stepped and one-shot paths are identical by
+/// construction.
+pub struct SimpState {
+    x: Vec<f64>,
+    u: Vec<f64>,
+    history: Vec<f64>,
+    act_of_elem: Vec<u32>,
+    scales: Vec<f64>,
+    dc: Vec<f64>,
+    cg_max: usize,
+    converged: bool,
+    iterations: usize,
+    done: bool,
+}
 
-    // Map grid element index -> active index for the filter.
-    let mut act_of_elem = vec![u32::MAX; domain.num_elements()];
-    for (ai, &e) in sys.active_elems.iter().enumerate() {
-        act_of_elem[e as usize] = ai as u32;
+impl SimpState {
+    /// Prepare the loop state for a domain/FE-system/spec triple.
+    pub fn new(domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -> Self {
+        let nact = sys.active_elems.len();
+        let vf = spec.volume_fraction.clamp(0.01, 0.99);
+
+        // Map grid element index -> active index for the filter.
+        let mut act_of_elem = vec![u32::MAX; domain.num_elements()];
+        for (ai, &e) in sys.active_elems.iter().enumerate() {
+            act_of_elem[e as usize] = ai as u32;
+        }
+
+        Self {
+            // Densities indexed by active-element position.
+            x: vec![vf; nact],
+            u: vec![0.0f64; sys.ndof],
+            history: Vec::with_capacity(spec.max_iterations),
+            act_of_elem,
+            scales: vec![0.0f64; nact],
+            dc: vec![0.0f64; nact],
+            // Solver budget: warm-started PCG needs a full-accuracy solve only on
+            // the first iteration; after that the displacement field tracks the
+            // slowly-changing densities, so a tight cap keeps large grids tractable
+            // (approximate solves are standard practice for OC updates — the
+            // sensitivity signs, not their last digits, drive the design).
+            cg_max: (sys.ndof / 2).clamp(500, 4_000),
+            converged: false,
+            iterations: 0,
+            done: false,
+        }
     }
 
-    // Solver budget: warm-started PCG needs a full-accuracy solve only on
-    // the first iteration; after that the displacement field tracks the
-    // slowly-changing densities, so a tight cap keeps large grids tractable
-    // (approximate solves are standard practice for OC updates — the
-    // sensitivity signs, not their last digits, drive the design).
-    let cg_max = (sys.ndof / 2).clamp(500, 4_000);
+    /// Run one SIMP iteration: FE solve, sensitivities, filter, OC update.
+    pub fn step(&mut self, domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -> SimpStepStatus {
+        if self.done || self.iterations >= spec.max_iterations {
+            self.done = true;
+            return SimpStepStatus {
+                done: true,
+                iteration: 0,
+                compliance: self.history.last().copied().unwrap_or(0.0),
+                change: 0.0,
+            };
+        }
+        let nact = sys.active_elems.len();
+        let vf = spec.volume_fraction.clamp(0.01, 0.99);
+        self.iterations += 1;
 
-    let mut converged = false;
-    let mut iterations = 0;
-    let mut scales = vec![0.0f64; nact];
-    let mut dc = vec![0.0f64; nact];
-
-    for it in 0..spec.max_iterations {
-        iterations = it + 1;
-
-        for (s, &xi) in scales.iter_mut().zip(&x) {
+        for (s, &xi) in self.scales.iter_mut().zip(&self.x) {
             *s = stiffness_scale(xi, spec.penalty);
         }
-        sys.solve(&scales, &mut u, 1e-5, cg_max);
+        sys.solve(&self.scales, &mut self.u, 1e-5, self.cg_max);
 
         // Compliance and element sensitivities.
         let mut compliance = 0.0;
         for (ai, dofs) in sys.edofs.iter().enumerate() {
             let mut ue = [0.0f64; 24];
             for (k, &d) in dofs.iter().enumerate() {
-                ue[k] = u[d as usize];
+                ue[k] = self.u[d as usize];
             }
             // ce = ueᵀ · KE · ue (unit-E element strain energy measure).
             let mut ce = 0.0;
@@ -84,14 +131,20 @@ pub fn optimize_densities(domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -
                 }
                 ce += ue[r] * acc;
             }
-            compliance += scales[ai] * ce;
-            dc[ai] = -spec.penalty * x[ai].powf(spec.penalty - 1.0) * (1.0 - E_MIN) * ce;
+            compliance += self.scales[ai] * ce;
+            self.dc[ai] = -spec.penalty * self.x[ai].powf(spec.penalty - 1.0) * (1.0 - E_MIN) * ce;
         }
-        history.push(compliance);
+        self.history.push(compliance);
 
         // Mesh-independency (sensitivity) filter, computed on the fly over
         // the voxel neighborhood within `filter_radius`.
-        let dcn = filter_sensitivities(domain, &act_of_elem, &x, &dc, spec.filter_radius);
+        let dcn = filter_sensitivities(
+            domain,
+            &self.act_of_elem,
+            &self.x,
+            &self.dc,
+            spec.filter_radius,
+        );
 
         // Optimality-criteria update with bisection on the volume multiplier.
         let (mut l1, mut l2) = (0.0f64, 1e9f64);
@@ -101,9 +154,9 @@ pub fn optimize_densities(domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -
             let mut vol = 0.0;
             for ai in 0..nact {
                 let b = (-dcn[ai]).max(0.0) / lmid;
-                let cand = x[ai] * b.sqrt();
-                let lo = (x[ai] - MOVE).max(X_MIN);
-                let hi = (x[ai] + MOVE).min(1.0);
+                let cand = self.x[ai] * b.sqrt();
+                let lo = (self.x[ai] - MOVE).max(X_MIN);
+                let hi = (self.x[ai] + MOVE).min(1.0);
                 let xn = cand.clamp(lo, hi);
                 xnew[ai] = xn;
                 vol += xn;
@@ -115,31 +168,51 @@ pub fn optimize_densities(domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -
             }
         }
 
-        let change = x
+        let change = self
+            .x
             .iter()
             .zip(&xnew)
             .map(|(a, b)| (a - b).abs())
             .fold(0.0f64, f64::max);
-        x.copy_from_slice(&xnew);
+        self.x.copy_from_slice(&xnew);
 
         if change < spec.tolerance {
-            converged = true;
-            break;
+            self.converged = true;
+            self.done = true;
+        } else if self.iterations >= spec.max_iterations {
+            self.done = true;
+        }
+        SimpStepStatus {
+            done: self.done,
+            iteration: self.iterations,
+            compliance,
+            change,
         }
     }
 
-    // Expand to full grid indexing.
-    let mut densities = vec![0.0f64; domain.num_elements()];
-    for (ai, &e) in sys.active_elems.iter().enumerate() {
-        densities[e as usize] = x[ai];
+    /// Expand the converged density field to full grid indexing and package
+    /// the diagnostics.
+    pub fn finish(self, domain: &Domain, sys: &FeSystem) -> SimpResult {
+        let mut densities = vec![0.0f64; domain.num_elements()];
+        for (ai, &e) in sys.active_elems.iter().enumerate() {
+            densities[e as usize] = self.x[ai];
+        }
+        SimpResult {
+            densities,
+            compliance_history: self.history,
+            iterations: self.iterations,
+            converged: self.converged,
+        }
     }
+}
 
-    SimpResult {
-        densities,
-        compliance_history: history,
-        iterations,
-        converged,
-    }
+/// Run the SIMP loop on a prepared FE system (the one-shot form of
+/// [`SimpState`]; kept as the reference driver for parity tests).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn optimize_densities(domain: &Domain, sys: &FeSystem, spec: &TopoOptSpec) -> SimpResult {
+    let mut state = SimpState::new(domain, sys, spec);
+    while !state.step(domain, sys, spec).done {}
+    state.finish(domain, sys)
 }
 
 /// Classic sensitivity filter: weighted average of `x·dc` over neighbors

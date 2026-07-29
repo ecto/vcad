@@ -189,6 +189,7 @@ export {
   getPcbDfmPack,
   tryRunDrc,
   runFabPrep,
+  runFabPrepChunked,
   critiqueRoute,
   netContinuity,
   runErc,
@@ -330,6 +331,7 @@ export {
   writeXyz,
   inspectMolecule,
   minimizeEnergy,
+  minimizeEnergyChunked,
   homogenizeMaterial,
   buildReceipt as buildMoleculeReceipt,
 } from "./atoms.js";
@@ -337,6 +339,7 @@ export type {
   MoleculeReport,
   MdObservation,
   MinimizeResult as AtomsMinimizeResult,
+  MinimizeChunkStatus,
   MdConfig,
   MaterialCard,
 } from "./atoms.js";
@@ -594,6 +597,19 @@ export interface KernelModule {
     positions: Float32Array,
     indices: Uint32Array,
   ) => unknown;
+  /** Stepwise SIMP topology optimization (one iteration per step() call). */
+  TopoOptRun?: {
+    beginBox(
+      specJson: string,
+      minX: number,
+      minY: number,
+      minZ: number,
+      maxX: number,
+      maxY: number,
+      maxZ: number,
+    ): TopoOptRunHandle;
+    beginMesh(specJson: string, positions: Float32Array, indices: Uint32Array): TopoOptRunHandle;
+  };
   /** Charged-particle optics simulation (DeviceSpec/params/options JSON). */
   particleSimulate?: (
     specJson: string,
@@ -606,6 +622,18 @@ export interface KernelModule {
     paramsJson: string,
     optimizeJson: string,
   ) => unknown;
+  /** Stepwise charged-particle simulation (chunked particle-trace loop). */
+  ParticleRun?: new (
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => ChunkedRunHandle<SimChunkStatus>;
+  /** Stepwise electrode optimization (one FD-ascent start per advance). */
+  ParticleOptimizeRun?: new (
+    specJson: string,
+    paramsJson: string,
+    optimizeJson: string,
+  ) => StartRunHandle<ParticleOptChunkStatus>;
   /** Tolerance stackup analysis (StackupSpec/params/options JSON). */
   toleranceAnalyze?: (
     specJson: string,
@@ -631,6 +659,14 @@ export interface KernelModule {
     optionsJson: string,
     includeFields: boolean,
   ) => unknown;
+  /** Stepwise LBM flow solve (chunked timestep loop). */
+  FlowRun?: new (
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+  ) => ChunkedRunHandle<FlowChunkStatus>;
+  /** Stepwise FDTD photonics run (chunked timestep loop). */
+  PhotonicsRun?: new (specJson: string, optionsJson: string) => ChunkedRunHandle<SimChunkStatus>;
   /** Semantic entity-level diff of two `.vcad` documents (JSON strings). */
   documentDiff?: (oldJson: string, newJson: string) => unknown;
   /** Apply a `DocumentDiff` to a document, returning the patched document. */
@@ -691,8 +727,15 @@ export interface KernelModule {
   photonicsSimulate?: (specJson: string, optionsJson: string) => unknown;
   /** Monte Carlo neutron shielding run (ShieldSpec/params JSON). */
   neutronicsSimulate?: (specJson: string, paramsJson: string) => unknown;
+  /** Stepwise neutron shielding run (chunked batch loop). */
+  NeutronicsRun?: new (
+    specJson: string,
+    paramsJson: string,
+  ) => ChunkedRunHandle<SimChunkStatus>;
   /** Lattice gauge theory Monte Carlo run (SimSpec JSON). */
   latticeGaugeSimulate?: (specJson: string) => unknown;
+  /** Stepwise lattice gauge run (chunked Monte Carlo sweep loop). */
+  LatticeGaugeRun?: new (specJson: string) => ChunkedRunHandle<SimChunkStatus>;
   /** Static structural analysis of a box solid. */
   analyzeStaticsBox?: (
     specJson: string,
@@ -816,6 +859,77 @@ export interface TopoOptResult {
   grid: [number, number, number];
   /** Voxel edge length in mm. */
   voxelSize: number;
+}
+
+/** Generic handle on a kernel stepwise-run class (advance/finish/free). */
+export interface ChunkedRunHandle<S> {
+  advance(budget: number): S;
+  finish(): unknown;
+  free?(): void;
+}
+
+/** Per-chunk status from the stepwise LBM flow solve. */
+export interface FlowChunkStatus {
+  converged: boolean;
+  steps: number;
+  max_steps: number;
+  residual: number;
+}
+
+/** Per-chunk status from a fixed-step stepwise simulation run. */
+export interface SimChunkStatus {
+  done: boolean;
+  steps: number;
+  total: number;
+}
+
+/** Per-start status from the stepwise electrode optimization. */
+export interface ParticleOptChunkStatus {
+  done: boolean;
+  steps: number;
+  total: number;
+  /** The just-finished start's best objective (absent once done). */
+  value?: number;
+}
+
+/** Handle on a kernel stepwise-run class that advances one unit per call. */
+export interface StartRunHandle<S> {
+  advance(): S;
+  finish(): unknown;
+  free?(): void;
+}
+
+/** Per-iteration status from the stepwise topology-opt run. */
+export interface TopoOptStepStatus {
+  done: boolean;
+  iteration: number;
+  compliance: number;
+  change: number;
+}
+
+/** Handle on the kernel's stepwise `TopoOptRun` class. */
+export interface TopoOptRunHandle {
+  maxIterations(): number;
+  step(): TopoOptStepStatus;
+  finish(): unknown;
+  free?(): void;
+}
+
+/** Pump a stepwise topo-opt run to completion, narrating between kernel calls. */
+function driveTopoOptRun(
+  run: TopoOptRunHandle,
+  onStep?: (status: TopoOptStepStatus) => void,
+): TopoOptResult {
+  try {
+    for (;;) {
+      const status = run.step();
+      onStep?.(status);
+      if (status.done) break;
+    }
+    return run.finish() as TopoOptResult;
+  } finally {
+    run.free?.();
+  }
 }
 
 /**
@@ -1076,8 +1190,11 @@ export class Engine {
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
       topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
+      TopoOptRun: (wasmModule as Record<string, unknown>).TopoOptRun as KernelModule["TopoOptRun"],
       particleSimulate: (wasmModule as Record<string, unknown>).particleSimulate as KernelModule["particleSimulate"],
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
+      ParticleRun: (wasmModule as Record<string, unknown>).ParticleRun as KernelModule["ParticleRun"],
+      ParticleOptimizeRun: (wasmModule as Record<string, unknown>).ParticleOptimizeRun as KernelModule["ParticleOptimizeRun"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
       thermalSolveTransient: (wasmModule as Record<string, unknown>).thermalSolveTransient as KernelModule["thermalSolveTransient"],
@@ -1096,8 +1213,12 @@ export class Engine {
       emSimulate: (wasmModule as Record<string, unknown>).emSimulate as KernelModule["emSimulate"],
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
       photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
+      FlowRun: (wasmModule as Record<string, unknown>).FlowRun as KernelModule["FlowRun"],
+      PhotonicsRun: (wasmModule as Record<string, unknown>).PhotonicsRun as KernelModule["PhotonicsRun"],
       neutronicsSimulate: (wasmModule as Record<string, unknown>).neutronicsSimulate as KernelModule["neutronicsSimulate"],
+      NeutronicsRun: (wasmModule as Record<string, unknown>).NeutronicsRun as KernelModule["NeutronicsRun"],
       latticeGaugeSimulate: (wasmModule as Record<string, unknown>).latticeGaugeSimulate as KernelModule["latticeGaugeSimulate"],
+      LatticeGaugeRun: (wasmModule as Record<string, unknown>).LatticeGaugeRun as KernelModule["LatticeGaugeRun"],
       analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
       analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
@@ -1383,6 +1504,68 @@ export class Engine {
   }
 
   /**
+   * Chunked form of {@link particleSimulate}: the field solve happens up
+   * front, then the deterministic launch-grid ensemble is traced in
+   * budgeted particle chunks, invoking `onChunk` between kernel calls so
+   * a host can stream progress. Each particle depends only on its index,
+   * so the result is bit-identical to the one-shot. Falls back to the
+   * one-shot on an older kernel.
+   */
+  particleSimulateChunked(
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+    onChunk?: (status: SimChunkStatus) => void,
+    chunkParticles = 8,
+  ): unknown {
+    const Runner = this.kernel.ParticleRun;
+    if (typeof Runner !== "function") {
+      return this.particleSimulate(specJson, paramsJson, optionsJson);
+    }
+    const run = new Runner(specJson, paramsJson, optionsJson);
+    try {
+      for (;;) {
+        const status = run.advance(chunkParticles) as SimChunkStatus;
+        onChunk?.(status);
+        if (status.done) break;
+      }
+      return run.finish();
+    } finally {
+      run.free?.();
+    }
+  }
+
+  /**
+   * Chunked form of {@link particleOptimize}: each chunk runs one
+   * complete FD-ascent start, invoking `onChunk` between kernel calls so
+   * a host can stream per-start progress (which start, its objective).
+   * Deterministic — identical to the one-shot by construction. Falls
+   * back to the one-shot on an older kernel.
+   */
+  particleOptimizeChunked(
+    specJson: string,
+    paramsJson: string,
+    optimizeJson: string,
+    onChunk?: (status: ParticleOptChunkStatus) => void,
+  ): unknown {
+    const Runner = this.kernel.ParticleOptimizeRun;
+    if (typeof Runner !== "function") {
+      return this.particleOptimize(specJson, paramsJson, optimizeJson);
+    }
+    const run = new Runner(specJson, paramsJson, optimizeJson);
+    try {
+      for (;;) {
+        const status = run.advance() as ParticleOptChunkStatus;
+        onChunk?.(status);
+        if (status.done) break;
+      }
+      return run.finish();
+    } finally {
+      run.free?.();
+    }
+  }
+
+  /**
    * Tolerance stackup analysis: worst-case, RSS, seeded Monte Carlo, and
    * exact sensitivities over a linear assembly chain, plus predicted
    * receipt claims. Inputs are JSON strings (StackupSpec, named parameter
@@ -1462,6 +1645,64 @@ export class Engine {
       );
     }
     return fn(specJson, optionsJson, includeFields);
+  }
+
+  /**
+   * Chunked form of {@link simulateFlow}: runs the LBM timestep loop in
+   * budgeted chunks, invoking `onChunk` between kernel calls so a host can
+   * stream progress. Bit-identical result (steadiness checks key off the
+   * absolute step count). Falls back to the one-shot on an older kernel.
+   */
+  simulateFlowChunked(
+    specJson: string,
+    optionsJson: string,
+    includeFields: boolean,
+    onChunk?: (status: FlowChunkStatus) => void,
+    chunkSteps = 2000,
+  ): unknown {
+    const Runner = this.kernel.FlowRun;
+    if (typeof Runner !== "function") {
+      return this.simulateFlow(specJson, optionsJson, includeFields);
+    }
+    const run = new Runner(specJson, optionsJson, includeFields);
+    try {
+      for (;;) {
+        const status = run.advance(chunkSteps) as FlowChunkStatus;
+        onChunk?.(status);
+        if (status.converged) break;
+      }
+      return run.finish();
+    } finally {
+      run.free?.();
+    }
+  }
+
+  /**
+   * Chunked form of {@link photonicsSimulate}; see {@link simulateFlowChunked}.
+   * FDTD stepping is sequential-stateful, so `run(a)` then `run(b)` is exactly
+   * `run(a+b)` — chunking exists only to surface progress between slices.
+   */
+  photonicsSimulateChunked(
+    specJson: string,
+    optionsJson: string,
+    onChunk?: (status: SimChunkStatus) => void,
+    chunkSteps = 500,
+  ): unknown {
+    const Runner = this.kernel.PhotonicsRun;
+    if (typeof Runner !== "function") {
+      return this.photonicsSimulate(specJson, optionsJson);
+    }
+    const run = new Runner(specJson, optionsJson);
+    try {
+      for (;;) {
+        const status = run.advance(chunkSteps) as SimChunkStatus;
+        onChunk?.(status);
+        if (status.done) break;
+      }
+      return run.finish();
+    } finally {
+      run.free?.();
+    }
   }
 
   private circuitFn<K extends keyof KernelModule>(name: K): NonNullable<KernelModule[K]> {
@@ -1633,6 +1874,36 @@ export class Engine {
   }
 
   /**
+   * Chunked form of {@link neutronicsSimulate}: transports the Monte
+   * Carlo batch loop in budgeted chunks, invoking `onChunk` between
+   * kernel calls so a host can stream progress. Each batch owns an
+   * independent RNG stream, so the result is bit-identical to the
+   * one-shot. Falls back to the one-shot on an older kernel.
+   */
+  neutronicsSimulateChunked(
+    specJson: string,
+    paramsJson: string,
+    onChunk?: (status: SimChunkStatus) => void,
+    chunkBatches = 2,
+  ): unknown {
+    const Runner = this.kernel.NeutronicsRun;
+    if (typeof Runner !== "function") {
+      return this.neutronicsSimulate(specJson, paramsJson);
+    }
+    const run = new Runner(specJson, paramsJson);
+    try {
+      for (;;) {
+        const status = run.advance(chunkBatches) as SimChunkStatus;
+        onChunk?.(status);
+        if (status.done) break;
+      }
+      return run.finish();
+    } finally {
+      run.free?.();
+    }
+  }
+
+  /**
    * Lattice gauge theory Monte Carlo (quenched SU(2)/SU(3) Wilson
    * action): plaquette, Wilson loops, string tension, Polyakov order
    * parameter, flux-tube profile, field snapshots — jackknife errors
@@ -1646,6 +1917,35 @@ export class Engine {
       );
     }
     return fn(specJson);
+  }
+
+  /**
+   * Chunked form of {@link latticeGaugeSimulate}: runs the Monte Carlo
+   * sweep loop in budgeted chunks, invoking `onChunk` between kernel
+   * calls so a host can stream progress. RNG state lives in the kernel
+   * run, so the result is bit-identical to the one-shot. Falls back to
+   * the one-shot on an older kernel.
+   */
+  latticeGaugeSimulateChunked(
+    specJson: string,
+    onChunk?: (status: SimChunkStatus) => void,
+    chunkSweeps = 10,
+  ): unknown {
+    const Runner = this.kernel.LatticeGaugeRun;
+    if (typeof Runner !== "function") {
+      return this.latticeGaugeSimulate(specJson);
+    }
+    const run = new Runner(specJson);
+    try {
+      for (;;) {
+        const status = run.advance(chunkSweeps) as SimChunkStatus;
+        onChunk?.(status);
+        if (status.done) break;
+      }
+      return run.finish();
+    } finally {
+      run.free?.();
+    }
   }
 
   topologyOptimizeBox(
@@ -1668,6 +1968,48 @@ export class Engine {
       max[1],
       max[2],
     ) as TopoOptResult;
+  }
+
+  /**
+   * Chunked form of {@link topologyOptimizeBox}: one SIMP iteration per kernel
+   * call, invoking `onStep` between calls so a host can stream convergence
+   * progress. Bit-identical result — the kernel one-shot is implemented on the
+   * same run type. Falls back to the one-shot on an older kernel.
+   */
+  topologyOptimizeBoxChunked(
+    min: [number, number, number],
+    max: [number, number, number],
+    spec: TopoOptSpec,
+    onStep?: (status: TopoOptStepStatus) => void,
+  ): TopoOptResult {
+    const Runner = this.kernel.TopoOptRun;
+    if (!Runner || typeof Runner.beginBox !== "function") {
+      return this.topologyOptimizeBox(min, max, spec);
+    }
+    const run = Runner.beginBox(
+      JSON.stringify(spec),
+      min[0],
+      min[1],
+      min[2],
+      max[0],
+      max[1],
+      max[2],
+    );
+    return driveTopoOptRun(run, onStep);
+  }
+
+  /** Chunked form of {@link topologyOptimizeMesh}; see {@link topologyOptimizeBoxChunked}. */
+  topologyOptimizeMeshChunked(
+    mesh: TriangleMesh,
+    spec: TopoOptSpec,
+    onStep?: (status: TopoOptStepStatus) => void,
+  ): TopoOptResult {
+    const Runner = this.kernel.TopoOptRun;
+    if (!Runner || typeof Runner.beginMesh !== "function") {
+      return this.topologyOptimizeMesh(mesh, spec);
+    }
+    const run = Runner.beginMesh(JSON.stringify(spec), mesh.positions, mesh.indices);
+    return driveTopoOptRun(run, onStep);
   }
 
   /**

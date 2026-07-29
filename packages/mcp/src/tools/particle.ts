@@ -196,10 +196,23 @@ export const toolDefs: ToolDef[] = [
     inputSchema: simulateChargedParticlesSchema,
     handler: (args, ctx) => {
       const a = args as Json;
-      const out = ctx.engine.particleSimulate(
+      // The kernel loop is chunked (a budget of traced particles per
+      // call), so progress notifications flush between chunks instead of
+      // bursting at the end. Bit-identical to the one-shot path.
+      const out = ctx.engine.particleSimulateChunked(
         JSON.stringify(a.spec),
         JSON.stringify(a.parameters ?? {}),
         JSON.stringify(a.options ?? {}),
+        ctx.progress
+          ? (s) =>
+              ctx.progress?.(
+                s.steps,
+                s.total,
+                s.done
+                  ? `traced ${s.total} particles`
+                  : `tracing particle ${s.steps}/${s.total}`,
+              )
+          : undefined,
       );
       return textResult(out);
     },
@@ -220,13 +233,29 @@ export const toolDefs: ToolDef[] = [
     inputSchema: optimizeElectrodesSchema,
     handler: (args, ctx) => {
       const a = args as Json;
-      const out = ctx.engine.particleOptimize(
+      // One complete FD-ascent start per kernel call, so progress (which
+      // start, its objective) flushes between starts. Identical to the
+      // one-shot path by construction.
+      const out = ctx.engine.particleOptimizeChunked(
         JSON.stringify(a.spec),
         JSON.stringify(a.parameters ?? {}),
         JSON.stringify({
           variables: a.variables,
           ...(a.options as Json | undefined),
         }),
+        ctx.progress
+          ? (s) =>
+              ctx.progress?.(
+                s.steps,
+                s.total,
+                s.done
+                  ? `search done: ${s.total} starts`
+                  : `start ${s.steps}/${s.total} finished` +
+                    (typeof s.value === "number"
+                      ? ` (sigma-v ${s.value.toExponential(2)} m^3/s)`
+                      : ""),
+              )
+          : undefined,
       );
       return textResult(out);
     },

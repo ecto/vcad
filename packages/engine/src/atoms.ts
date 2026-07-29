@@ -116,6 +116,11 @@ interface WasmMdSim {
   moleculeJson(): string;
   free(): void;
 }
+interface WasmAtomsMinimizeRun {
+  advance(budget: number): string;
+  finish(): string;
+  free(): void;
+}
 interface AtomsWasm {
   atoms_parse_xyz(text: string): string;
   atoms_write_xyz(json: string): string;
@@ -124,6 +129,22 @@ interface AtomsWasm {
   atoms_homogenize(molJson: string, cfgJson: string): string;
   atoms_build_receipt(m: string, ff: string, run: string, p: string, o: string): string;
   MdSim: new (moleculeJson: string, configJson: string) => WasmMdSim;
+  /** Stepwise minimizer; absent on older kernel builds. */
+  AtomsMinimizeRun?: new (
+    molJson: string,
+    cfgJson: string,
+    maxIters: number,
+    forceTol: number,
+  ) => WasmAtomsMinimizeRun;
+}
+
+/** Per-chunk status from the stepwise energy minimization. */
+export interface MinimizeChunkStatus {
+  done: boolean;
+  steps: number;
+  total: number;
+  energy: number;
+  maxForce: number;
 }
 
 /** Resolve the kernel WASM module through the shared singleton. */
@@ -170,6 +191,39 @@ export async function minimizeEnergy(
   const wasm = await ensureWasm();
   const out = wasm.atoms_minimize(JSON.stringify(mol), JSON.stringify(config), maxIters, forceTol);
   return JSON.parse(out) as { result: MinimizeResult; molecule: MoleculeSystem };
+}
+
+/**
+ * Chunked form of {@link minimizeEnergy}: runs the FIRE iteration loop in
+ * budgeted chunks, invoking `onChunk` between kernel calls so a host can
+ * stream progress. All FIRE state lives in the kernel run, so the result
+ * is bit-identical to the one-shot. Falls back to the one-shot on an
+ * older kernel.
+ */
+export async function minimizeEnergyChunked(
+  mol: MoleculeSystem,
+  config: MdConfig = {},
+  maxIters = 2000,
+  forceTol = 1e-4,
+  onChunk?: (status: MinimizeChunkStatus) => void,
+  chunkIters = 100,
+): Promise<{ result: MinimizeResult; molecule: MoleculeSystem }> {
+  const wasm = await ensureWasm();
+  const Runner = wasm.AtomsMinimizeRun;
+  if (typeof Runner !== "function") {
+    return minimizeEnergy(mol, config, maxIters, forceTol);
+  }
+  const run = new Runner(JSON.stringify(mol), JSON.stringify(config), maxIters, forceTol);
+  try {
+    for (;;) {
+      const status = JSON.parse(run.advance(chunkIters)) as MinimizeChunkStatus;
+      onChunk?.(status);
+      if (status.done) break;
+    }
+    return JSON.parse(run.finish()) as { result: MinimizeResult; molecule: MoleculeSystem };
+  } finally {
+    run.free?.();
+  }
 }
 
 /**

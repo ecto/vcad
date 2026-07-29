@@ -168,273 +168,357 @@ pub struct Solution {
     pub wall_heat_walls_only_w: Option<f64>,
 }
 
-/// Run the lattice to steady state.
-pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, SolveError> {
-    model.validate()?;
+/// What a bounded [`FlowStepper::advance`] call concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlowProgress {
+    /// Budget exhausted; the field is not steady yet. Call `advance` again.
+    Running,
+    /// The field went steady; take the result with [`FlowStepper::into_solution`].
+    Converged,
+}
 
-    let (nx, ny, nz) = (
-        model.divisions[0] as isize,
-        model.divisions[1] as isize,
-        model.divisions[2] as isize,
-    );
-    let n = (nx * ny * nz) as usize;
-    let dx_m = model.voxel_mm() / 1000.0;
+/// Stepwise driver for the steady LBM solve: [`FlowStepper::new`] builds the
+/// lattice, each [`FlowStepper::advance`] runs up to a budget of timesteps, so
+/// a host can surface progress (steps, residual) between chunks.
+/// [`solve_steady`] drives this to completion, so the chunked and one-shot
+/// paths are identical by construction — chunk boundaries cannot change the
+/// result because steadiness checks key off the absolute step count.
+pub struct FlowStepper {
+    model: FlowModel,
+    opts: SolveOptions,
+    scaling: Scaling,
+    omega: f64,
+    force_prefactor: f64,
+    u_in_lat: [f64; 3],
+    rho_out_lat: f64,
+    a_lat: [f64; 3],
+    buoy_lat_per_k: [f64; 3],
+    t_ref_buoy: f64,
+    t_scale: f64,
+    has_buoyancy: bool,
+    omega_g: Option<f64>,
+    temp: Vec<f64>,
+    temp_prev: Vec<f64>,
+    g: Vec<f64>,
+    g_new: Vec<f64>,
+    q_wall_lat: f64,
+    q_inlet_lat: f64,
+    q_outlet_lat: f64,
+    f: Vec<f64>,
+    f_new: Vec<f64>,
+    vel: Vec<[f64; 3]>,
+    rho: Vec<f64>,
+    vel_prev: Vec<[f64; 3]>,
+    steps: usize,
+    residual: f64,
+    dx_m: f64,
+    u_floor: f64,
+    solution: Option<Solution>,
+}
 
-    let inlet_speed = norm(model.inlet_velocity_m_s);
-    let u_ref = match opts.u_ref_m_s {
-        Some(u) if u > 0.0 => u,
-        _ if inlet_speed > 0.0 => inlet_speed,
-        _ => return Err(SolveError::NoReference),
-    };
-    let scaling = Scaling::derive(dx_m, model.fluid.kinematic_viscosity_m2_s(), u_ref)?;
-    let tau = scaling.tau;
-    let omega = 1.0 / tau;
-    let force_prefactor = 1.0 - 0.5 * omega;
+impl FlowStepper {
+    /// Validate the model, derive the unit scaling, and initialize the lattice.
+    pub fn new(model: &FlowModel, opts: &SolveOptions) -> Result<Self, SolveError> {
+        model.validate()?;
 
-    let u_in_lat = [
-        scaling.velocity_to_lattice(model.inlet_velocity_m_s[0]),
-        scaling.velocity_to_lattice(model.inlet_velocity_m_s[1]),
-        scaling.velocity_to_lattice(model.inlet_velocity_m_s[2]),
-    ];
-    let c_lat = scaling.dx_m / scaling.dt_s;
-    let rho_out_lat =
-        1.0 + model.outlet_gauge_pa / (CS2 * model.fluid.density_kg_m3 * c_lat * c_lat);
-    let a_lat = [
-        scaling.accel_to_lattice(model.body_force_n_m3[0] / model.fluid.density_kg_m3),
-        scaling.accel_to_lattice(model.body_force_n_m3[1] / model.fluid.density_kg_m3),
-        scaling.accel_to_lattice(model.body_force_n_m3[2] / model.fluid.density_kg_m3),
-    ];
+        let (nx, ny, nz) = (
+            model.divisions[0] as isize,
+            model.divisions[1] as isize,
+            model.divisions[2] as isize,
+        );
+        let n = (nx * ny * nz) as usize;
+        let dx_m = model.voxel_mm() / 1000.0;
 
-    // Thermal transport setup (M1/M3).
-    let thermal = model.thermal;
-    let (buoy_lat_per_k, t_ref_buoy, t_scale) = if let Some(t) = &thermal {
-        let alpha_lat = t.diffusivity_m2_s * scaling.dt_s / (scaling.dx_m * scaling.dx_m);
-        // Scalar relaxation time must sit in the same validated window
-        // as the flow lattice.
-        let tau_g = 3.0 * alpha_lat + 0.5;
-        if !(crate::lattice::TAU_MIN..=crate::lattice::TAU_MAX).contains(&tau_g) {
-            return Err(SolveError::ThermalUnstable { alpha_lat });
-        }
-        // Buoyant acceleration per kelvin: a = −g·β·(T − T_ref).
-        let (bl, tref) = match t.buoyancy {
-            Some(b) => (
-                [
-                    scaling.accel_to_lattice(-b.gravity_m_s2[0] * b.beta_per_k),
-                    scaling.accel_to_lattice(-b.gravity_m_s2[1] * b.beta_per_k),
-                    scaling.accel_to_lattice(-b.gravity_m_s2[2] * b.beta_per_k),
-                ],
-                b.t_ref_c,
-            ),
-            None => ([0.0; 3], 0.0),
+        let inlet_speed = norm(model.inlet_velocity_m_s);
+        let u_ref = match opts.u_ref_m_s {
+            Some(u) if u > 0.0 => u,
+            _ if inlet_speed > 0.0 => inlet_speed,
+            _ => return Err(SolveError::NoReference),
         };
-        let mut spread = (t.inlet_temp_c - t.initial_temp_c).abs();
-        if let Some(w) = t.wall_temp_c {
-            spread = spread
-                .max((w - t.initial_temp_c).abs())
-                .max((w - t.inlet_temp_c).abs());
-        }
-        if let Some(st) = &model.solid_temp_c {
-            for v in st.iter().filter(|v| v.is_finite()) {
-                spread = spread
-                    .max((v - t.initial_temp_c).abs())
-                    .max((v - t.inlet_temp_c).abs());
-            }
-        }
-        (bl, tref, spread.max(1e-9))
-    } else {
-        ([0.0; 3], 0.0, 1.0)
-    };
-    let has_buoyancy = buoy_lat_per_k.iter().any(|b| *b != 0.0);
-    let mut temp: Vec<f64> = match &thermal {
-        Some(t) => vec![t.initial_temp_c; n],
-        None => Vec::new(),
-    };
-    let mut temp_prev = temp.clone();
-    // Second distribution for the temperature scalar (the FV route was
-    // tried and rejected: cell-centered upwind advection on the LBM
-    // velocity field violates the maximum principle near the inlet
-    // because its discrete divergence differs from the lattice's; the
-    // double-distribution scalar inherits the lattice's continuity).
-    // g carries θ = T − T_inlet so boundary fluxes are baseline-free.
-    let omega_g = thermal.map(|t| {
-        1.0 / (3.0 * t.diffusivity_m2_s * scaling.dt_s / (scaling.dx_m * scaling.dx_m) + 0.5)
-    });
-    let mut g: Vec<f64> = match &thermal {
-        Some(t) => {
-            let theta0 = t.initial_temp_c - t.inlet_temp_c;
-            let mut g = vec![0.0; n * Q];
-            for x in 0..n {
-                for q in 0..Q {
-                    g[x * Q + q] = W[q] * theta0;
-                }
-            }
-            g
-        }
-        None => Vec::new(),
-    };
-    let mut g_new = g.clone();
-    // Boundary θ-exchange accumulators (per step, lattice units):
-    // Dirichlet walls, inlet, outlet — the audit's second route.
-    let mut q_wall_lat = 0.0f64;
-    let mut q_inlet_lat = 0.0f64;
-    let mut q_outlet_lat = 0.0f64;
+        let scaling = Scaling::derive(dx_m, model.fluid.kinematic_viscosity_m2_s(), u_ref)?;
+        let tau = scaling.tau;
+        let omega = 1.0 / tau;
+        let force_prefactor = 1.0 - 0.5 * omega;
 
-    let cells = &model.cells;
-    let mut f: Vec<f64> = vec![0.0; n * Q];
-    let feq0 = equilibrium(1.0, [0.0; 3]);
-    for x in 0..n {
-        f[x * Q..(x + 1) * Q].copy_from_slice(&feq0);
-    }
-    let mut f_new = f.clone();
-    let mut vel = vec![[0.0f64; 3]; n];
-    let mut rho = vec![1.0f64; n];
-    let mut vel_prev = vel.clone();
+        let u_in_lat = [
+            scaling.velocity_to_lattice(model.inlet_velocity_m_s[0]),
+            scaling.velocity_to_lattice(model.inlet_velocity_m_s[1]),
+            scaling.velocity_to_lattice(model.inlet_velocity_m_s[2]),
+        ];
+        let c_lat = scaling.dx_m / scaling.dt_s;
+        let rho_out_lat =
+            1.0 + model.outlet_gauge_pa / (CS2 * model.fluid.density_kg_m3 * c_lat * c_lat);
+        let a_lat = [
+            scaling.accel_to_lattice(model.body_force_n_m3[0] / model.fluid.density_kg_m3),
+            scaling.accel_to_lattice(model.body_force_n_m3[1] / model.fluid.density_kg_m3),
+            scaling.accel_to_lattice(model.body_force_n_m3[2] / model.fluid.density_kg_m3),
+        ];
 
-    let idx = |i: isize, j: isize, k: isize| -> usize { ((k * ny + j) * nx + i) as usize };
-
-    let mut steps = 0usize;
-    let mut residual = f64::INFINITY;
-    let u_floor = scaling.u_lattice.max(1e-12);
-
-    while steps < opts.max_steps {
-        // Smoothstep inlet ramp: avoids the impulsive-start shock.
-        let s = if opts.ramp_steps == 0 {
-            1.0
-        } else {
-            let t = ((steps + 1) as f64 / opts.ramp_steps as f64).min(1.0);
-            t * t * (3.0 - 2.0 * t)
-        };
-        let u_in_now = [u_in_lat[0] * s, u_in_lat[1] * s, u_in_lat[2] * s];
-
-        // Collision (fluid cells only), macroscopic update included.
-        for x in 0..n {
-            if cells[x] != Cell::Fluid {
-                continue;
+        // Thermal transport setup (M1/M3).
+        let thermal = model.thermal;
+        let (buoy_lat_per_k, t_ref_buoy, t_scale) = if let Some(t) = &thermal {
+            let alpha_lat = t.diffusivity_m2_s * scaling.dt_s / (scaling.dx_m * scaling.dx_m);
+            // Scalar relaxation time must sit in the same validated window
+            // as the flow lattice.
+            let tau_g = 3.0 * alpha_lat + 0.5;
+            if !(crate::lattice::TAU_MIN..=crate::lattice::TAU_MAX).contains(&tau_g) {
+                return Err(SolveError::ThermalUnstable { alpha_lat });
             }
-            // Scalar moment first: θ from g, so buoyancy sees this
-            // step's temperature.
-            if let (Some(t), Some(_)) = (&thermal, omega_g) {
-                let gx = &g[x * Q..(x + 1) * Q];
-                let theta: f64 = gx.iter().sum();
-                temp[x] = theta + t.inlet_temp_c;
-            }
-            let fx = &mut f[x * Q..(x + 1) * Q];
-            let mut r = 0.0;
-            let mut m = [0.0f64; 3];
-            for (i, fi) in fx.iter().enumerate() {
-                r += fi;
-                m[0] += fi * C[i][0] as f64;
-                m[1] += fi * C[i][1] as f64;
-                m[2] += fi * C[i][2] as f64;
-            }
-            // Per-cell acceleration: global body force plus Boussinesq
-            // buoyancy when a temperature field is coupled in.
-            let a_cell = if has_buoyancy {
-                let dtc = temp[x] - t_ref_buoy;
-                [
-                    a_lat[0] + buoy_lat_per_k[0] * dtc,
-                    a_lat[1] + buoy_lat_per_k[1] * dtc,
-                    a_lat[2] + buoy_lat_per_k[2] * dtc,
-                ]
-            } else {
-                a_lat
+            // Buoyant acceleration per kelvin: a = −g·β·(T − T_ref).
+            let (bl, tref) = match t.buoyancy {
+                Some(b) => (
+                    [
+                        scaling.accel_to_lattice(-b.gravity_m_s2[0] * b.beta_per_k),
+                        scaling.accel_to_lattice(-b.gravity_m_s2[1] * b.beta_per_k),
+                        scaling.accel_to_lattice(-b.gravity_m_s2[2] * b.beta_per_k),
+                    ],
+                    b.t_ref_c,
+                ),
+                None => ([0.0; 3], 0.0),
             };
-            let u = [
-                (m[0] + 0.5 * a_cell[0] * r) / r,
-                (m[1] + 0.5 * a_cell[1] * r) / r,
-                (m[2] + 0.5 * a_cell[2] * r) / r,
-            ];
-            rho[x] = r;
-            vel[x] = u;
-            let feq = equilibrium(r, u);
-            for i in 0..Q {
-                let cu = C[i][0] as f64 * u[0] + C[i][1] as f64 * u[1] + C[i][2] as f64 * u[2];
-                let ca = C[i][0] as f64 * a_cell[0]
-                    + C[i][1] as f64 * a_cell[1]
-                    + C[i][2] as f64 * a_cell[2];
-                let ua = u[0] * a_cell[0] + u[1] * a_cell[1] + u[2] * a_cell[2];
-                let guo = force_prefactor * W[i] * r * (3.0 * (ca - ua) + 9.0 * cu * ca);
-                fx[i] += -omega * (fx[i] - feq[i]) + guo;
+            let mut spread = (t.inlet_temp_c - t.initial_temp_c).abs();
+            if let Some(w) = t.wall_temp_c {
+                spread = spread
+                    .max((w - t.initial_temp_c).abs())
+                    .max((w - t.inlet_temp_c).abs());
             }
-            // Scalar BGK collision toward w_i·θ·(1 + 3c·u).
-            if let (Some(t), Some(og)) = (&thermal, omega_g) {
-                let gx = &mut g[x * Q..(x + 1) * Q];
-                let theta = temp[x] - t.inlet_temp_c;
-                for (i, gi) in gx.iter_mut().enumerate() {
-                    let cu = C[i][0] as f64 * u[0] + C[i][1] as f64 * u[1] + C[i][2] as f64 * u[2];
-                    let geq = W[i] * theta * (1.0 + 3.0 * cu);
-                    *gi += -og * (*gi - geq);
+            if let Some(st) = &model.solid_temp_c {
+                for v in st.iter().filter(|v| v.is_finite()) {
+                    spread = spread
+                        .max((v - t.initial_temp_c).abs())
+                        .max((v - t.inlet_temp_c).abs());
                 }
             }
-        }
-
-        // Streaming (pull) with boundary rules.
-        for k in 0..nz {
-            for j in 0..ny {
-                for i in 0..nx {
-                    let x = idx(i, j, k);
-                    if cells[x] != Cell::Fluid {
-                        continue;
-                    }
-                    let dst = &mut f_new[x * Q..(x + 1) * Q];
+            (bl, tref, spread.max(1e-9))
+        } else {
+            ([0.0; 3], 0.0, 1.0)
+        };
+        let has_buoyancy = buoy_lat_per_k.iter().any(|b| *b != 0.0);
+        let temp: Vec<f64> = match &thermal {
+            Some(t) => vec![t.initial_temp_c; n],
+            None => Vec::new(),
+        };
+        let temp_prev = temp.clone();
+        // Second distribution for the temperature scalar (the FV route was
+        // tried and rejected: cell-centered upwind advection on the LBM
+        // velocity field violates the maximum principle near the inlet
+        // because its discrete divergence differs from the lattice's; the
+        // double-distribution scalar inherits the lattice's continuity).
+        // g carries θ = T − T_inlet so boundary fluxes are baseline-free.
+        let omega_g = thermal.map(|t| {
+            1.0 / (3.0 * t.diffusivity_m2_s * scaling.dt_s / (scaling.dx_m * scaling.dx_m) + 0.5)
+        });
+        let g: Vec<f64> = match &thermal {
+            Some(t) => {
+                let theta0 = t.initial_temp_c - t.inlet_temp_c;
+                let mut g = vec![0.0; n * Q];
+                for x in 0..n {
                     for q in 0..Q {
-                        let (mut si, mut sj, mut sk) = (
-                            i - C[q][0] as isize,
-                            j - C[q][1] as isize,
-                            k - C[q][2] as isize,
-                        );
-                        let mut outside = false;
-                        for (axis, s, nmax) in
-                            [(0usize, &mut si, nx), (1, &mut sj, ny), (2, &mut sk, nz)]
-                        {
-                            if *s < 0 || *s >= nmax {
-                                if model.periodic[axis] {
-                                    *s = (*s + nmax) % nmax;
-                                } else {
-                                    outside = true;
-                                }
-                            }
-                        }
-                        let src_kind = if outside {
-                            Cell::Solid
-                        } else {
-                            cells[idx(si, sj, sk)]
-                        };
-                        dst[q] = match src_kind {
-                            Cell::Fluid => f[idx(si, sj, sk) * Q + q],
-                            Cell::Solid => f[x * Q + OPP[q]],
-                            Cell::Inlet => {
-                                let cu = C[q][0] as f64 * u_in_now[0]
-                                    + C[q][1] as f64 * u_in_now[1]
-                                    + C[q][2] as f64 * u_in_now[2];
-                                f[x * Q + OPP[q]] + 6.0 * W[q] * cu
-                            }
-                            Cell::Outlet => {
-                                let u = vel[x];
-                                let cu = C[q][0] as f64 * u[0]
-                                    + C[q][1] as f64 * u[1]
-                                    + C[q][2] as f64 * u[2];
-                                let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
-                                -f[x * Q + OPP[q]]
-                                    + 2.0 * W[q] * rho_out_lat * (1.0 + 4.5 * cu * cu - 1.5 * uu)
-                            }
-                        };
+                        g[x * Q + q] = W[q] * theta0;
+                    }
+                }
+                g
+            }
+            None => Vec::new(),
+        };
+        let g_new = g.clone();
+        // Boundary θ-exchange accumulators (per step, lattice units):
+        // Dirichlet walls, inlet, outlet — the audit's second route.
+        let q_wall_lat = 0.0f64;
+        let q_inlet_lat = 0.0f64;
+        let q_outlet_lat = 0.0f64;
+
+        let mut f: Vec<f64> = vec![0.0; n * Q];
+        let feq0 = equilibrium(1.0, [0.0; 3]);
+        for x in 0..n {
+            f[x * Q..(x + 1) * Q].copy_from_slice(&feq0);
+        }
+        let f_new = f.clone();
+        let vel = vec![[0.0f64; 3]; n];
+        let rho = vec![1.0f64; n];
+        let vel_prev = vel.clone();
+        let u_floor = scaling.u_lattice.max(1e-12);
+
+        Ok(Self {
+            model: model.clone(),
+            opts: *opts,
+            scaling,
+            omega,
+            force_prefactor,
+            u_in_lat,
+            rho_out_lat,
+            a_lat,
+            buoy_lat_per_k,
+            t_ref_buoy,
+            t_scale,
+            has_buoyancy,
+            omega_g,
+            temp,
+            temp_prev,
+            g,
+            g_new,
+            q_wall_lat,
+            q_inlet_lat,
+            q_outlet_lat,
+            f,
+            f_new,
+            vel,
+            rho,
+            vel_prev,
+            steps: 0,
+            residual: f64::INFINITY,
+            dx_m,
+            u_floor,
+            solution: None,
+        })
+    }
+
+    /// Timesteps taken so far.
+    pub fn steps(&self) -> usize {
+        self.steps
+    }
+
+    /// Last steadiness residual observed (∞ before the first check).
+    pub fn residual(&self) -> f64 {
+        self.residual
+    }
+
+    /// The hard step budget this solve fails at.
+    pub fn max_steps(&self) -> usize {
+        self.opts.max_steps
+    }
+
+    /// The converged solution, once `advance` has reported [`FlowProgress::Converged`].
+    pub fn into_solution(self) -> Option<Solution> {
+        self.solution
+    }
+
+    /// Run up to `budget` timesteps. Returns [`FlowProgress::Converged`] once
+    /// the field is steady; errors exactly as the one-shot solve does
+    /// (divergence, or the step budget running out before steadiness).
+    pub fn advance(&mut self, budget: usize) -> Result<FlowProgress, SolveError> {
+        if self.solution.is_some() {
+            return Ok(FlowProgress::Converged);
+        }
+        let opts = self.opts;
+        let scaling = self.scaling;
+        let omega = self.omega;
+        let force_prefactor = self.force_prefactor;
+        let u_in_lat = self.u_in_lat;
+        let rho_out_lat = self.rho_out_lat;
+        let a_lat = self.a_lat;
+        let buoy_lat_per_k = self.buoy_lat_per_k;
+        let t_ref_buoy = self.t_ref_buoy;
+        let t_scale = self.t_scale;
+        let has_buoyancy = self.has_buoyancy;
+        let omega_g = self.omega_g;
+        let dx_m = self.dx_m;
+        let u_floor = self.u_floor;
+        let Self {
+            model,
+            temp,
+            temp_prev,
+            g,
+            g_new,
+            q_wall_lat,
+            q_inlet_lat,
+            q_outlet_lat,
+            f,
+            f_new,
+            vel,
+            rho,
+            vel_prev,
+            steps,
+            residual,
+            solution,
+            ..
+        } = self;
+        let (nx, ny, nz) = (
+            model.divisions[0] as isize,
+            model.divisions[1] as isize,
+            model.divisions[2] as isize,
+        );
+        let n = (nx * ny * nz) as usize;
+        let thermal = model.thermal;
+        let cells = &model.cells;
+        let idx = |i: isize, j: isize, k: isize| -> usize { ((k * ny + j) * nx + i) as usize };
+        let mut ran = 0usize;
+
+        while *steps < opts.max_steps && ran < budget {
+            ran += 1;
+            // Smoothstep inlet ramp: avoids the impulsive-start shock.
+            let s = if opts.ramp_steps == 0 {
+                1.0
+            } else {
+                let t = ((*steps + 1) as f64 / opts.ramp_steps as f64).min(1.0);
+                t * t * (3.0 - 2.0 * t)
+            };
+            let u_in_now = [u_in_lat[0] * s, u_in_lat[1] * s, u_in_lat[2] * s];
+
+            // Collision (fluid cells only), macroscopic update included.
+            for x in 0..n {
+                if cells[x] != Cell::Fluid {
+                    continue;
+                }
+                // Scalar moment first: θ from g, so buoyancy sees this
+                // step's temperature.
+                if let (Some(t), Some(_)) = (&thermal, omega_g) {
+                    let gx = &g[x * Q..(x + 1) * Q];
+                    let theta: f64 = gx.iter().sum();
+                    temp[x] = theta + t.inlet_temp_c;
+                }
+                let fx = &mut f[x * Q..(x + 1) * Q];
+                let mut r = 0.0;
+                let mut m = [0.0f64; 3];
+                for (i, fi) in fx.iter().enumerate() {
+                    r += fi;
+                    m[0] += fi * C[i][0] as f64;
+                    m[1] += fi * C[i][1] as f64;
+                    m[2] += fi * C[i][2] as f64;
+                }
+                // Per-cell acceleration: global body force plus Boussinesq
+                // buoyancy when a temperature field is coupled in.
+                let a_cell = if has_buoyancy {
+                    let dtc = temp[x] - t_ref_buoy;
+                    [
+                        a_lat[0] + buoy_lat_per_k[0] * dtc,
+                        a_lat[1] + buoy_lat_per_k[1] * dtc,
+                        a_lat[2] + buoy_lat_per_k[2] * dtc,
+                    ]
+                } else {
+                    a_lat
+                };
+                let u = [
+                    (m[0] + 0.5 * a_cell[0] * r) / r,
+                    (m[1] + 0.5 * a_cell[1] * r) / r,
+                    (m[2] + 0.5 * a_cell[2] * r) / r,
+                ];
+                rho[x] = r;
+                vel[x] = u;
+                let feq = equilibrium(r, u);
+                for i in 0..Q {
+                    let cu = C[i][0] as f64 * u[0] + C[i][1] as f64 * u[1] + C[i][2] as f64 * u[2];
+                    let ca = C[i][0] as f64 * a_cell[0]
+                        + C[i][1] as f64 * a_cell[1]
+                        + C[i][2] as f64 * a_cell[2];
+                    let ua = u[0] * a_cell[0] + u[1] * a_cell[1] + u[2] * a_cell[2];
+                    let guo = force_prefactor * W[i] * r * (3.0 * (ca - ua) + 9.0 * cu * ca);
+                    fx[i] += -omega * (fx[i] - feq[i]) + guo;
+                }
+                // Scalar BGK collision toward w_i·θ·(1 + 3c·u).
+                if let (Some(t), Some(og)) = (&thermal, omega_g) {
+                    let gx = &mut g[x * Q..(x + 1) * Q];
+                    let theta = temp[x] - t.inlet_temp_c;
+                    for (i, gi) in gx.iter_mut().enumerate() {
+                        let cu =
+                            C[i][0] as f64 * u[0] + C[i][1] as f64 * u[1] + C[i][2] as f64 * u[2];
+                        let geq = W[i] * theta * (1.0 + 3.0 * cu);
+                        *gi += -og * (*gi - geq);
                     }
                 }
             }
-        }
-        std::mem::swap(&mut f, &mut f_new);
 
-        // Thermal scalar streaming (M1): pull the g distribution with
-        // boundary rules mirroring the flow lattice — bounce-back =
-        // adiabatic wall, anti-bounce-back = Dirichlet surface (inlet
-        // theta = 0, isothermal walls theta_w), copy-own = zero-gradient
-        // outlet. Per-step boundary theta-exchange is accumulated as the
-        // audit's link-level route.
-        if let Some(t) = &thermal {
-            q_wall_lat = 0.0;
-            q_inlet_lat = 0.0;
-            q_outlet_lat = 0.0;
+            // Streaming (pull) with boundary rules.
             for k in 0..nz {
                 for j in 0..ny {
                     for i in 0..nx {
@@ -442,6 +526,7 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
                         if cells[x] != Cell::Fluid {
                             continue;
                         }
+                        let dst = &mut f_new[x * Q..(x + 1) * Q];
                         for q in 0..Q {
                             let (mut si, mut sj, mut sk) = (
                                 i - C[q][0] as isize,
@@ -460,118 +545,202 @@ pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, 
                                     }
                                 }
                             }
-                            let g_out = g[x * Q + OPP[q]];
                             let src_kind = if outside {
                                 Cell::Solid
                             } else {
                                 cells[idx(si, sj, sk)]
                             };
-                            let val = match src_kind {
-                                Cell::Fluid => g[idx(si, sj, sk) * Q + q],
-                                Cell::Solid => {
-                                    let wall_theta = if outside {
-                                        t.wall_temp_c.map(|w| w - t.inlet_temp_c)
-                                    } else {
-                                        let sx = idx(si, sj, sk);
-                                        model
-                                            .solid_temp_c
-                                            .as_ref()
-                                            .map(|st| st[sx])
-                                            .filter(|v| v.is_finite())
-                                            .or(t.wall_temp_c)
-                                            .map(|w| w - t.inlet_temp_c)
-                                    };
-                                    match wall_theta {
-                                        // Dirichlet: anti-bounce-back.
-                                        Some(tw) => {
-                                            let v = -g_out + 2.0 * W[q] * tw;
-                                            q_wall_lat += v - g_out;
-                                            v
-                                        }
-                                        // Adiabatic: bounce-back (link
-                                        // nets exactly zero).
-                                        None => g_out,
-                                    }
-                                }
+                            dst[q] = match src_kind {
+                                Cell::Fluid => f[idx(si, sj, sk) * Q + q],
+                                Cell::Solid => f[x * Q + OPP[q]],
                                 Cell::Inlet => {
-                                    // Dirichlet theta = 0 at the inlet
-                                    // surface, moving at the (ramped)
-                                    // inlet velocity.
                                     let cu = C[q][0] as f64 * u_in_now[0]
                                         + C[q][1] as f64 * u_in_now[1]
                                         + C[q][2] as f64 * u_in_now[2];
-                                    let v = -g_out + 2.0 * W[q] * 0.0 * (1.0 + 3.0 * cu);
-                                    q_inlet_lat += v - g_out;
-                                    v
+                                    f[x * Q + OPP[q]] + 6.0 * W[q] * cu
                                 }
                                 Cell::Outlet => {
-                                    // Zero-gradient: copy own
-                                    // post-collision value.
-                                    let v = g[x * Q + q];
-                                    q_outlet_lat += g_out - v;
-                                    v
+                                    let u = vel[x];
+                                    let cu = C[q][0] as f64 * u[0]
+                                        + C[q][1] as f64 * u[1]
+                                        + C[q][2] as f64 * u[2];
+                                    let uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+                                    -f[x * Q + OPP[q]]
+                                        + 2.0
+                                            * W[q]
+                                            * rho_out_lat
+                                            * (1.0 + 4.5 * cu * cu - 1.5 * uu)
                                 }
                             };
-                            g_new[x * Q + q] = val;
                         }
                     }
                 }
             }
-            std::mem::swap(&mut g, &mut g_new);
-        }
-        steps += 1;
+            std::mem::swap(f, f_new);
 
-        if steps.is_multiple_of(opts.check_every) && steps >= opts.ramp_steps {
-            let mut max_delta = 0.0f64;
-            let mut max_tdelta = 0.0f64;
-            let mut finite = true;
-            for x in 0..n {
-                if cells[x] != Cell::Fluid {
-                    continue;
-                }
-                let (u, p) = (vel[x], vel_prev[x]);
-                for a in 0..3 {
-                    if !u[a].is_finite() {
-                        finite = false;
+            // Thermal scalar streaming (M1): pull the g distribution with
+            // boundary rules mirroring the flow lattice — bounce-back =
+            // adiabatic wall, anti-bounce-back = Dirichlet surface (inlet
+            // theta = 0, isothermal walls theta_w), copy-own = zero-gradient
+            // outlet. Per-step boundary theta-exchange is accumulated as the
+            // audit's link-level route.
+            if let Some(t) = &thermal {
+                *q_wall_lat = 0.0;
+                *q_inlet_lat = 0.0;
+                *q_outlet_lat = 0.0;
+                for k in 0..nz {
+                    for j in 0..ny {
+                        for i in 0..nx {
+                            let x = idx(i, j, k);
+                            if cells[x] != Cell::Fluid {
+                                continue;
+                            }
+                            for q in 0..Q {
+                                let (mut si, mut sj, mut sk) = (
+                                    i - C[q][0] as isize,
+                                    j - C[q][1] as isize,
+                                    k - C[q][2] as isize,
+                                );
+                                let mut outside = false;
+                                for (axis, s, nmax) in
+                                    [(0usize, &mut si, nx), (1, &mut sj, ny), (2, &mut sk, nz)]
+                                {
+                                    if *s < 0 || *s >= nmax {
+                                        if model.periodic[axis] {
+                                            *s = (*s + nmax) % nmax;
+                                        } else {
+                                            outside = true;
+                                        }
+                                    }
+                                }
+                                let g_out = g[x * Q + OPP[q]];
+                                let src_kind = if outside {
+                                    Cell::Solid
+                                } else {
+                                    cells[idx(si, sj, sk)]
+                                };
+                                let val = match src_kind {
+                                    Cell::Fluid => g[idx(si, sj, sk) * Q + q],
+                                    Cell::Solid => {
+                                        let wall_theta = if outside {
+                                            t.wall_temp_c.map(|w| w - t.inlet_temp_c)
+                                        } else {
+                                            let sx = idx(si, sj, sk);
+                                            model
+                                                .solid_temp_c
+                                                .as_ref()
+                                                .map(|st| st[sx])
+                                                .filter(|v| v.is_finite())
+                                                .or(t.wall_temp_c)
+                                                .map(|w| w - t.inlet_temp_c)
+                                        };
+                                        match wall_theta {
+                                            // Dirichlet: anti-bounce-back.
+                                            Some(tw) => {
+                                                let v = -g_out + 2.0 * W[q] * tw;
+                                                *q_wall_lat += v - g_out;
+                                                v
+                                            }
+                                            // Adiabatic: bounce-back (link
+                                            // nets exactly zero).
+                                            None => g_out,
+                                        }
+                                    }
+                                    Cell::Inlet => {
+                                        // Dirichlet theta = 0 at the inlet
+                                        // surface, moving at the (ramped)
+                                        // inlet velocity.
+                                        let cu = C[q][0] as f64 * u_in_now[0]
+                                            + C[q][1] as f64 * u_in_now[1]
+                                            + C[q][2] as f64 * u_in_now[2];
+                                        let v = -g_out + 2.0 * W[q] * 0.0 * (1.0 + 3.0 * cu);
+                                        *q_inlet_lat += v - g_out;
+                                        v
+                                    }
+                                    Cell::Outlet => {
+                                        // Zero-gradient: copy own
+                                        // post-collision value.
+                                        let v = g[x * Q + q];
+                                        *q_outlet_lat += g_out - v;
+                                        v
+                                    }
+                                };
+                                g_new[x * Q + q] = val;
+                            }
+                        }
                     }
-                    max_delta = max_delta.max((u[a] - p[a]).abs());
                 }
+                std::mem::swap(g, g_new);
+            }
+            *steps += 1;
+
+            if steps.is_multiple_of(opts.check_every) && *steps >= opts.ramp_steps {
+                let mut max_delta = 0.0f64;
+                let mut max_tdelta = 0.0f64;
+                let mut finite = true;
+                for x in 0..n {
+                    if cells[x] != Cell::Fluid {
+                        continue;
+                    }
+                    let (u, p) = (vel[x], vel_prev[x]);
+                    for a in 0..3 {
+                        if !u[a].is_finite() {
+                            finite = false;
+                        }
+                        max_delta = max_delta.max((u[a] - p[a]).abs());
+                    }
+                    if thermal.is_some() {
+                        if !temp[x].is_finite() {
+                            finite = false;
+                        }
+                        max_tdelta = max_tdelta.max((temp[x] - temp_prev[x]).abs());
+                    }
+                }
+                if !finite {
+                    return Err(SolveError::Diverged { step: *steps });
+                }
+                *residual = (max_delta / u_floor).max(max_tdelta / t_scale);
+                vel_prev.copy_from_slice(vel);
                 if thermal.is_some() {
-                    if !temp[x].is_finite() {
-                        finite = false;
-                    }
-                    max_tdelta = max_tdelta.max((temp[x] - temp_prev[x]).abs());
+                    temp_prev.copy_from_slice(temp);
+                }
+                if *residual < opts.steady_tol {
+                    *solution = Some(finish(
+                        model,
+                        &scaling,
+                        *steps,
+                        *residual,
+                        vel,
+                        rho,
+                        temp,
+                        (*q_wall_lat, *q_inlet_lat, *q_outlet_lat),
+                        dx_m,
+                    ));
+                    return Ok(FlowProgress::Converged);
                 }
             }
-            if !finite {
-                return Err(SolveError::Diverged { step: steps });
-            }
-            residual = (max_delta / u_floor).max(max_tdelta / t_scale);
-            vel_prev.copy_from_slice(&vel);
-            if thermal.is_some() {
-                temp_prev.copy_from_slice(&temp);
-            }
-            if residual < opts.steady_tol {
-                return Ok(finish(
-                    model,
-                    &scaling,
-                    steps,
-                    residual,
-                    &vel,
-                    &rho,
-                    &temp,
-                    (q_wall_lat, q_inlet_lat, q_outlet_lat),
-                    dx_m,
-                ));
-            }
         }
-    }
 
-    Err(SolveError::NotConverged {
-        steps,
-        residual,
-        tol: opts.steady_tol,
-    })
+        if *steps >= opts.max_steps {
+            return Err(SolveError::NotConverged {
+                steps: *steps,
+                residual: *residual,
+                tol: opts.steady_tol,
+            });
+        }
+        Ok(FlowProgress::Running)
+    }
+}
+
+/// Run the lattice to steady state.
+pub fn solve_steady(model: &FlowModel, opts: &SolveOptions) -> Result<Solution, SolveError> {
+    let mut stepper = FlowStepper::new(model, opts)?;
+    match stepper.advance(usize::MAX)? {
+        FlowProgress::Converged => Ok(stepper
+            .into_solution()
+            .expect("Converged advance stores the solution")),
+        FlowProgress::Running => unreachable!("an unbounded advance either converges or errors"),
+    }
 }
 
 /// Assemble the SI solution from the converged lattice fields.
@@ -1039,6 +1208,27 @@ mod tests {
         m.inlet_velocity_m_s = [u, 0.0, 0.0];
         m.thermal = Some(crate::model::ThermalTransport::AIR_20C);
         m
+    }
+
+    /// Driving the stepper in small chunks (the streamed-progress path) must
+    /// produce exactly the one-shot solution on the same model.
+    #[test]
+    fn chunked_stepper_matches_the_one_shot_solve() {
+        let m = thermal_duct(20, 5, 0.08);
+        let opts = SolveOptions::default();
+        let one_shot = solve_steady(&m, &opts).expect("one-shot duct");
+
+        let mut stepper = FlowStepper::new(&m, &opts).expect("stepper");
+        let mut chunks = 0usize;
+        loop {
+            match stepper.advance(500).expect("advance") {
+                FlowProgress::Converged => break,
+                FlowProgress::Running => chunks += 1,
+            }
+        }
+        assert!(chunks >= 2, "the solve must have visibly chunked");
+        let stepped = stepper.into_solution().expect("solution");
+        assert_eq!(one_shot, stepped);
     }
 
     /// M1: adiabatic duct conserves enthalpy — outlet temperature equals

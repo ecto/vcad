@@ -195,6 +195,94 @@ pub fn atoms_minimize(
     serde_json::to_string(&out).map_err(err)
 }
 
+/// Stepwise energy minimization: the FIRE iteration loop in budgeted
+/// chunks so a host can stream progress between kernel calls. All FIRE
+/// state lives in the run, so the result is bit-identical to
+/// `atoms_minimize`.
+///
+/// Usage: `new AtomsMinimizeRun(molJson, cfgJson, maxIters, forceTol)` →
+/// `advance(budget)` (iterations) until `{done: true}` → `finish()` for
+/// the same `{ result, molecule }` JSON `atoms_minimize` returns.
+#[wasm_bindgen]
+pub struct AtomsMinimizeRun {
+    ff: Box<dyn ForceField>,
+    sys: AtomSystem,
+    run: Option<crate::minimize::MinimizeRun>,
+}
+
+#[wasm_bindgen]
+impl AtomsMinimizeRun {
+    /// Parse the molecule/config, build the force field, and perform the
+    /// initial force evaluation.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        molecule_json: &str,
+        config_json: &str,
+        max_iters: usize,
+        force_tol: f64,
+    ) -> Result<AtomsMinimizeRun, JsValue> {
+        let mol: MoleculeSystem = serde_json::from_str(molecule_json).map_err(err)?;
+        let cfg: MdConfig = parse_config(config_json)?;
+        let mut sys = AtomSystem::from_ir(&mol).map_err(err)?;
+        let ff = build_force_field(&cfg, &sys);
+        let opts = MinimizeOptions {
+            max_iters,
+            force_tol,
+            ..Default::default()
+        };
+        let run = crate::minimize::MinimizeRun::new(ff.as_ref(), &mut sys, &opts);
+        Ok(AtomsMinimizeRun {
+            ff,
+            sys,
+            run: Some(run),
+        })
+    }
+
+    /// Run up to `budget` FIRE iterations. Returns
+    /// `{ done, steps, total, energy, maxForce }` JSON (steps =
+    /// iterations performed, total = the iteration budget).
+    pub fn advance(&mut self, budget: usize) -> Result<String, JsValue> {
+        let run = self
+            .run
+            .as_mut()
+            .ok_or_else(|| err("AtomsMinimizeRun already finished"))?;
+        let done = run.advance(self.ff.as_ref(), &mut self.sys, budget.max(1));
+        serde_json::to_string(&serde_json::json!({
+            "done": done,
+            "steps": run.iters(),
+            "total": run.max_iters(),
+            "energy": run.energy(),
+            "maxForce": run.max_force(),
+        }))
+        .map_err(err)
+    }
+
+    /// Assemble the same `{ result, molecule }` JSON `atoms_minimize`
+    /// returns (advance to completion first). The run is consumed.
+    pub fn finish(&mut self) -> Result<String, JsValue> {
+        let run = self
+            .run
+            .take()
+            .ok_or_else(|| err("AtomsMinimizeRun already finished"))?;
+        if !run.done() {
+            return Err(err(
+                "AtomsMinimizeRun has not finished — call advance() to completion first",
+            ));
+        }
+        let res = run.finish(&mut self.sys);
+        let out = serde_json::json!({
+            "result": {
+                "converged": res.converged,
+                "iters": res.iters,
+                "energy": res.energy,
+                "maxForce": res.max_force,
+            },
+            "molecule": self.sys.to_ir(),
+        });
+        serde_json::to_string(&out).map_err(err)
+    }
+}
+
 /// Homogenize a periodic structure into bulk material properties — density,
 /// cubic elastic constants, and VRH isotropic moduli — as a `MaterialCard`
 /// JSON. The atoms → continuum bridge: the returned density (kg/m³) and
