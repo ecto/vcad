@@ -4,7 +4,9 @@
   "date": "2026-07-28",
   "category": "feat",
   "title": "MCP 2026-07-28 protocol support",
-  "summary": "The vcad MCP server now speaks the stateless 2026-07-28 revision — server/discover, per-request protocol metadata, no initialize handshake — alongside every earlier revision.",
-  "features": ["mcp"],
+  "summary": "The vcad MCP server now fully speaks the stateless 2026-07-28 revision \u2014 server/discover, MRTR, the Tasks extension, subscriptions/listen, and streamed progress \u2014 alongside every earlier revision.",
+  "features": [
+    "mcp"
+  ],
   "mcpTools": []
 }

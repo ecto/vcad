@@ -21,23 +21,39 @@ every `initialize`-handshake revision back to `2024-11-05`, on the same
 endpoint and the same stdio process. Clients need no configuration change.
 
 Modern (`2026-07-28`) requests are recognized by the per-request metadata they
-carry (`_meta['io.modelcontextprotocol/protocolVersion']`) or by asking for
-`server/discover`; everything else stays on the SDK's legacy path. Supported
-modern surface: `server/discover`, `tools/list`, `tools/call`,
-`resources/list`, `resources/templates/list`, `resources/read`, `prompts/*`,
-`completion/complete`, plus `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name`
-header validation and `ttlMs` / `cacheScope` cache hints on list results.
+carry (`_meta['io.modelcontextprotocol/protocolVersion']`) or by using a
+modern-only method (`server/discover`, `subscriptions/listen`, `tasks/*`);
+everything else stays on the SDK's legacy path. The modern surface:
+
+- `server/discover`, `tools/list`, `tools/call`, `resources/*`, `prompts/*`,
+  `completion/complete`, with `resultType` on every result, `serverInfo` in
+  result `_meta`, and `ttlMs` / `cacheScope` cache hints on list results.
+- `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` header–body validation
+  (`HeaderMismatch` −32020, base64 sentinel decoding included).
+- **MRTR** — a URL-mode elicitation raised mid-call (e.g. `authorize_spend`
+  spend approval) terminates the request with an `input_required` result;
+  retry the same call with `inputResponses: { input_1: {...} }` to complete.
+- **Tasks extension** (`io.modelcontextprotocol/tasks`) — clients that declare
+  it get a `resultType: "task"` handle from known long-running tools
+  (`route_nets`, `topology_optimize`, `simulate_*`, `export_video`, …) and
+  poll `tasks/get` / feed elicitations via `tasks/update` / cancel with
+  `tasks/cancel`. Tasks live in process memory with a 30-minute TTL — the
+  same durability as the instance serving them.
+- **`subscriptions/listen`** — a long-lived SSE stream (HTTP) or channel
+  subscription (stdio) honoring `toolsListChanged` (fires when
+  `set_tool_packs` re-shapes the surface) and Tasks `taskIds`. Prompt and
+  resource lists are static, so those types are omitted from the
+  acknowledgment rather than faked.
+- Request-scoped `notifications/progress` / `notifications/message` stream on
+  the request's SSE response (a `tools/call` reply upgrades from JSON to SSE
+  the moment the first notification arrives); `notifications/message` is
+  gated on the request's `_meta['io.modelcontextprotocol/logLevel']`, as the
+  revision requires.
 
 vcad needed no architectural change to go stateless: cross-call state has
 always ridden on a server-minted `document_id` passed as an ordinary tool
 argument — the exact pattern the revision prescribes — and the HTTP transport
-was already session-free.
-
-Not implemented yet, and reported honestly rather than silently accepted:
-SSE response streams for in-flight `notifications/progress`,
-`subscriptions/listen` (nothing stateful to subscribe to), MRTR
-`InputRequiredResult` (URL-mode elicitation degrades to a dismissed prompt),
-and the Tasks extension. See `src/protocol-2026.ts`.
+was already session-free. See `src/protocol-2026.ts`.
 
 ## Tool packs
 

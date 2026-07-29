@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { Engine } from "@vcad/engine";
 import { createServer } from "../server.js";
+import { InMemoryFabricateStore } from "../fabricate/store.js";
+import type { Order } from "../fabricate/types.js";
 import {
   PROTOCOL_2026,
+  TASKS_EXTENSION,
+  handleModernListen,
+  resetTasksForTest,
   SUPPORTED_PROTOCOL_VERSIONS,
   META_PROTOCOL_VERSION,
   META_CLIENT_INFO,
@@ -284,16 +289,6 @@ describe("removed and unimplemented methods", () => {
     expect(body.error!.message).toContain("2025-11-25");
   });
 
-  it("reports subscriptions/listen as unimplemented rather than silently accepting", async () => {
-    const { status, body } = await call(
-      request(1, "subscriptions/listen"),
-      headersFor("subscriptions/listen"),
-    );
-    expect(status).toBe(404);
-    expect(body.error!.code).toBe(-32601);
-    expect(body.error!.message).toMatch(/stateless/);
-  });
-
   it("acknowledges a notification with 202 and no body", async () => {
     const res = await handleModernRequest(
       { jsonrpc: "2.0", method: "notifications/whatever", params: { _meta: META } },
@@ -308,6 +303,282 @@ describe("removed and unimplemented methods", () => {
       createServer: makeServer,
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("MRTR (multi round-trip requests)", () => {
+  // `authorize_spend` raises a URL-mode elicitation when the client declares
+  // `elicitation.url` — the one server-initiated request vcad makes. Under
+  // MRTR the first call must terminate with `input_required` carrying the
+  // ElicitRequest, and the retry (same params + inputResponses) completes.
+  async function seedOrder(orderId: string): Promise<void> {
+    const now = new Date().toISOString();
+    const order: Order = {
+      order_id: orderId,
+      document_id: "doc_mrtr",
+      quote_id: `q_${orderId}`,
+      state: "QUOTED",
+      fab: "digitalmetal",
+      fab_order_ref: null,
+      amount_total_minor: 5000,
+      currency: "USD",
+      ship_to: null,
+      events: [{ state: "QUOTED", at: now, note: "quote" }],
+      created_at: now,
+      updated_at: now,
+    };
+    await new InMemoryFabricateStore().saveOrder(order, 4000, "local");
+  }
+
+  function elicitingRequest(
+    id: number,
+    orderId: string,
+    inputResponses?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const params: Record<string, unknown> = {
+      name: "authorize_spend",
+      arguments: { order_id: orderId },
+      _meta: {
+        ...META,
+        [META_CLIENT_CAPABILITIES]: { elicitation: { url: {} } },
+      },
+    };
+    if (inputResponses) params.inputResponses = inputResponses;
+    return { jsonrpc: "2.0", id, method: "tools/call", params };
+  }
+
+  it("returns input_required with the elicitation, then completes on retry", async () => {
+    process.env.VCAD_FABRICATE_ORDERING = "1";
+    try {
+      await seedOrder("ord_mrtr_1");
+      const first = await call(
+        elicitingRequest(1, "ord_mrtr_1"),
+        headersFor("tools/call", "authorize_spend"),
+      );
+      expect(first.status).toBe(200);
+      const r1 = first.body.result!;
+      expect(r1.resultType).toBe("input_required");
+      const reqs = r1.inputRequests as Record<
+        string,
+        { method: string; params: { mode?: string; url?: string } }
+      >;
+      expect(Object.keys(reqs)).toEqual(["input_1"]);
+      expect(reqs.input_1.method).toBe("elicitation/create");
+      expect(reqs.input_1.params.mode).toBe("url");
+      expect(reqs.input_1.params.url).toMatch(/vcad\.io\/authorize\//);
+
+      // Retry: a NEW request id, original params, plus the gathered responses.
+      const retry = await call(
+        elicitingRequest(2, "ord_mrtr_1", { input_1: { action: "decline" } }),
+        headersFor("tools/call", "authorize_spend"),
+      );
+      expect(retry.status).toBe(200);
+      const r2 = retry.body.result!;
+      expect(r2.resultType).toBe("complete");
+      const out = JSON.parse((r2.content as { text: string }[])[0].text);
+      expect(out.status).toBe("revoked"); // decline revokes — the input landed
+    } finally {
+      delete process.env.VCAD_FABRICATE_ORDERING;
+    }
+  });
+
+  it("never raises input_required for a client without the elicitation capability", async () => {
+    process.env.VCAD_FABRICATE_ORDERING = "1";
+    try {
+      await seedOrder("ord_mrtr_2");
+      const msg = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "authorize_spend",
+          arguments: { order_id: "ord_mrtr_2" },
+          _meta: META, // no elicitation capability declared
+        },
+      };
+      const { body } = await call(msg, headersFor("tools/call", "authorize_spend"));
+      // The tool falls back to its out-of-band approval note.
+      expect(body.result!.resultType).toBe("complete");
+    } finally {
+      delete process.env.VCAD_FABRICATE_ORDERING;
+    }
+  });
+});
+
+describe("tasks extension", () => {
+  const TASK_META = {
+    ...META,
+    [META_CLIENT_CAPABILITIES]: { extensions: { [TASKS_EXTENSION]: {} } },
+  };
+
+  it("is advertised in server/discover capabilities", async () => {
+    const { body } = await call(
+      request("d", "server/discover"),
+      headersFor("server/discover"),
+    );
+    const caps = body.result!.capabilities as {
+      extensions: Record<string, unknown>;
+    };
+    expect(caps.extensions[TASKS_EXTENSION]).toEqual({});
+  });
+
+  it("returns a task handle for a long-running tool when the client opts in, pollable to terminal", async () => {
+    resetTasksForTest();
+    // route_nets against a nonexistent document finishes fast but still
+    // exercises the full task lifecycle: handle now, result via tasks/get.
+    const created = await call(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "route_nets",
+          arguments: { document_id: "doc_does_not_exist" },
+          _meta: TASK_META,
+        },
+      },
+      headersFor("tools/call", "route_nets"),
+    );
+    expect(created.status).toBe(200);
+    const handle = created.body.result!;
+    expect(handle.resultType).toBe("task");
+    const taskId = handle.taskId as string;
+    expect(taskId).toMatch(/^task_/);
+    expect(handle.status).toBe("working");
+    expect(handle.pollIntervalMs).toBeGreaterThan(0);
+
+    // Poll to terminal.
+    let status = "working";
+    let final: Record<string, unknown> | undefined;
+    for (let i = 0; i < 100 && (status === "working" || status === "input_required"); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      const got = await call(
+        request(10 + i, "tasks/get", { taskId }),
+        headersFor("tasks/get"),
+      );
+      expect(got.status).toBe(200);
+      final = got.body.result!;
+      status = final.status as string;
+    }
+    // Tool-level errors are still a COMPLETED task whose result carries
+    // isError — same as a synchronous call; `failed` is for JSON-RPC faults.
+    expect(status).toBe("completed");
+    expect((final!.result as { isError?: boolean }).isError).toBe(true);
+  });
+
+  it("never returns a task to a client that did not declare the extension", async () => {
+    const { body } = await call(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "route_nets",
+          arguments: { document_id: "doc_does_not_exist" },
+          _meta: META,
+        },
+      },
+      headersFor("tools/call", "route_nets"),
+    );
+    expect(body.result!.resultType).toBe("complete");
+  });
+
+  it("reports an unknown taskId as invalid params", async () => {
+    const { body } = await call(
+      request(1, "tasks/get", { taskId: "task_nope" }),
+      headersFor("tasks/get"),
+    );
+    expect(body.error!.code).toBe(-32602);
+  });
+
+  it("acknowledges tasks/cancel and marks the task cancelled", async () => {
+    resetTasksForTest();
+    const created = await call(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "route_nets",
+          arguments: { document_id: "doc_does_not_exist" },
+          _meta: TASK_META,
+        },
+      },
+      headersFor("tools/call", "route_nets"),
+    );
+    const taskId = created.body.result!.taskId as string;
+    const cancelled = await call(
+      request(2, "tasks/cancel", { taskId }),
+      headersFor("tasks/cancel"),
+    );
+    expect(cancelled.body.result!.resultType).toBe("complete");
+    const got = await call(
+      request(3, "tasks/get", { taskId }),
+      headersFor("tasks/get"),
+    );
+    // Cooperative: either the cancel landed first or the (fast) tool already
+    // finished — both are terminal, neither is `failed`.
+    expect(["cancelled", "completed"]).toContain(got.body.result!.status);
+  });
+});
+
+describe("subscriptions/listen", () => {
+  it("acknowledges only honored types, then delivers toolsListChanged on a pack flip", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const handle = handleModernListen(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "subscriptions/listen",
+        params: {
+          _meta: META,
+          notifications: {
+            toolsListChanged: true,
+            promptsListChanged: true, // unsupported — must be dropped from ack
+            resourceSubscriptions: ["file:///x"],
+          },
+        },
+      },
+      { send: (m) => seen.push(m as Record<string, unknown>) },
+    );
+
+    // Acknowledgment first, honoring only what can actually fire.
+    expect(seen).toHaveLength(1);
+    expect(seen[0].method).toBe("notifications/subscriptions/acknowledged");
+    const ackParams = seen[0].params as {
+      _meta: Record<string, unknown>;
+      notifications: Record<string, unknown>;
+    };
+    expect(ackParams._meta["io.modelcontextprotocol/subscriptionId"]).toBe(7);
+    expect(ackParams.notifications).toEqual({ toolsListChanged: true });
+
+    // A pack flip through the modern path fires the notification.
+    await call(
+      request(1, "tools/call", {
+        name: "set_tool_packs",
+        arguments: { enable: ["dfm"] },
+      }),
+      headersFor("tools/call", "set_tool_packs"),
+    );
+    expect(
+      seen.some((m) => m.method === "notifications/tools/list_changed"),
+    ).toBe(true);
+    const note = seen.find(
+      (m) => m.method === "notifications/tools/list_changed",
+    )!.params as { _meta: Record<string, unknown> };
+    expect(note._meta["io.modelcontextprotocol/subscriptionId"]).toBe(7);
+
+    // After close, further flips are silent.
+    handle.close();
+    const count = seen.length;
+    await call(
+      request(2, "tools/call", {
+        name: "set_tool_packs",
+        arguments: { enable: ["dfm"] },
+      }),
+      headersFor("tools/call", "set_tool_packs"),
+    );
+    expect(seen.length).toBe(count);
   });
 });
 

@@ -27,7 +27,11 @@ import { flushTelemetry } from "./telemetry.js";
 import { handleLiveRequest } from "./live-route.js";
 import { handleArtifactRequest } from "./artifact-route.js";
 import { sessionStoreInfo } from "./session-store.js";
-import { isModernMessage, handleModernRequest } from "./protocol-2026.js";
+import {
+  isModernMessage,
+  handleModernRequest,
+  handleModernListen,
+} from "./protocol-2026.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -132,17 +136,7 @@ async function handleMcpRequest(
     }
 
     if (isModernMessage(parsed, req.headers)) {
-      const { status, body: out } = await handleModernRequest(parsed, {
-        createServer: makeServer,
-        headers: req.headers,
-      });
-      if (out === null) {
-        res.writeHead(status);
-        res.end();
-        return;
-      }
-      res.writeHead(status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(out));
+      await handleModernHttp(req, res, parsed, makeServer);
       return;
     }
 
@@ -151,6 +145,98 @@ async function handleMcpRequest(
   }
 
   await handleLegacyMcpRequest(req, res, makeServer);
+}
+
+/** Write one JSON-RPC message as an SSE event. */
+function sseWrite(
+  res: import("node:http").ServerResponse,
+  message: unknown,
+): void {
+  res.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
+}
+
+/** Open an SSE response stream (headers only; events follow). */
+function sseOpen(res: import("node:http").ServerResponse): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // Tell reverse proxies (nginx) not to buffer, or events arrive in bursts.
+    "X-Accel-Buffering": "no",
+  });
+}
+
+/**
+ * Serve one modern (MCP 2026-07-28) request over HTTP.
+ *
+ * Response shape by method:
+ *  - `subscriptions/listen` → a long-lived SSE stream: acknowledgment first,
+ *    then opted-in change notifications, kept alive with SSE comments until
+ *    the client closes the stream (which is the cancellation signal).
+ *  - `tools/call` → a single JSON object, upgraded to an SSE response stream
+ *    the moment the tool emits a request-scoped notification
+ *    (`notifications/progress`, `notifications/message`) — the notification(s)
+ *    then precede the final response on the stream.
+ *  - everything else → a single `application/json` object.
+ */
+async function handleModernHttp(
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+  parsed: unknown,
+  makeServer: () => Promise<Awaited<ReturnType<typeof createServer>>>,
+): Promise<void> {
+  const method = (parsed as { method?: string } | null)?.method;
+
+  if (method === "subscriptions/listen") {
+    sseOpen(res);
+    const handle = handleModernListen(parsed, {
+      send: (m) => sseWrite(res, m),
+    });
+    // SSE comment keep-alive so intermediaries don't reap the quiet stream.
+    const keepAlive = setInterval(() => res.write(":\n\n"), 25_000);
+    keepAlive.unref();
+    req.on("close", () => {
+      clearInterval(keepAlive);
+      handle.close();
+      res.end();
+    });
+    return;
+  }
+
+  // The stream is opened lazily, on the first request-scoped notification:
+  // that keeps validation failures (400 with a JSON-RPC error body, as the
+  // spec requires) on the plain-JSON path, while a tool that emits progress
+  // gets a real SSE response stream. Both response shapes are ones the client
+  // MUST support.
+  let streamOpen = false;
+  const { status, body: out } = await handleModernRequest(parsed, {
+    createServer: makeServer,
+    headers: req.headers,
+    onNotification:
+      method === "tools/call"
+        ? (n) => {
+            if (!streamOpen) {
+              sseOpen(res);
+              streamOpen = true;
+            }
+            sseWrite(res, n);
+          }
+        : undefined,
+  });
+
+  if (streamOpen) {
+    if (out !== null) sseWrite(res, out);
+    res.end();
+    return;
+  }
+
+  if (out === null) {
+    res.writeHead(status);
+    res.end();
+    return;
+  }
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(out));
 }
 
 /** The pre-2026 (`initialize`-handshake) path, on the SDK's own transport. */
