@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-29-durable-task-records",
+  "version": "0.9.4",
+  "date": "2026-07-29",
+  "category": "fix",
+  "title": "Task handles survive server restarts",
+  "summary": "Finished MCP task records persist across restarts, and a taskId orphaned mid-run reports the restart honestly instead of 'Unknown taskId'.",
+  "features": ["mcp", "tasks", "durability"],
+  "mcpTools": []
+}

@@ -1,6 +1,11 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import nodePath from "node:path";
 import { Engine } from "@vcad/engine";
 import { createServer } from "../server.js";
+import { currentBootToken } from "../tools/session-core.js";
+import { FileTaskStore, taskDir } from "../task-store.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
 import type { Order } from "../fabricate/types.js";
 import {
@@ -17,6 +22,7 @@ import {
   ERR_UNSUPPORTED_PROTOCOL_VERSION,
   isModernMessage,
   handleModernRequest,
+  taskIdBootToken,
 } from "../protocol-2026.js";
 
 /**
@@ -589,5 +595,170 @@ describe("resources", () => {
       headersFor("resources/read", "ui://vcad/does-not-exist"),
     );
     expect(body.error!.code).toBe(-32602);
+  });
+});
+
+describe("task durability (restart survival)", () => {
+  const TASK_META = {
+    ...META,
+    [META_CLIENT_CAPABILITIES]: { extensions: { [TASKS_EXTENSION]: {} } },
+  };
+
+  let tmpDir: string;
+  let savedEnv: Record<string, string | undefined>;
+  const ENV_KEYS = [
+    "VCAD_MCP_SESSION_DIR",
+    "VCAD_MCP_DISK_SESSIONS",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  ] as const;
+
+  beforeEach(async () => {
+    savedEnv = {};
+    for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
+    for (const k of ENV_KEYS) delete process.env[k];
+    tmpDir = await fs.mkdtemp(nodePath.join(os.tmpdir(), "vcad-task-store-"));
+    process.env.VCAD_MCP_SESSION_DIR = tmpDir;
+    resetTasksForTest();
+  });
+  afterEach(async () => {
+    for (const k of ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Run route_nets as a task and poll it to terminal; returns the taskId. */
+  async function runTaskToTerminal(): Promise<string> {
+    const created = await call(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "route_nets",
+          arguments: { document_id: "doc_does_not_exist" },
+          _meta: TASK_META,
+        },
+      },
+      headersFor("tools/call", "route_nets"),
+    );
+    const taskId = created.body.result!.taskId as string;
+    let status = "working";
+    for (let i = 0; i < 100 && (status === "working" || status === "input_required"); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      const got = await call(
+        request(10 + i, "tasks/get", { taskId }),
+        headersFor("tasks/get"),
+      );
+      status = got.body.result!.status as string;
+    }
+    expect(status).toBe("completed");
+    return taskId;
+  }
+
+  it("embeds the current boot token in minted taskIds", async () => {
+    const taskId = await runTaskToTerminal();
+    expect(taskIdBootToken(taskId)).toBe(currentBootToken());
+  });
+
+  it("hydrates a terminal task from the durable store after a simulated restart", async () => {
+    const taskId = await runTaskToTerminal();
+    // Give the fire-and-forget persist a beat to land on disk.
+    await new Promise((r) => setTimeout(r, 100));
+    resetTasksForTest(); // wipe the warm cache = the restart
+    const got = await call(
+      request(200, "tasks/get", { taskId }),
+      headersFor("tasks/get"),
+    );
+    expect(got.status).toBe(200);
+    expect(got.body.result!.status).toBe("completed");
+    expect((got.body.result!.result as { isError?: boolean }).isError).toBe(true);
+  });
+
+  it("reports a prior-boot taskId with no durable record as failed-by-restart", async () => {
+    // A boot token that cannot be ours (tokens are 4 base64url chars).
+    const foreign = currentBootToken() === "ZZZZ" ? "YYYY" : "ZZZZ";
+    const taskId = `task_${foreign}_deadbeef`;
+    const got = await call(
+      request(1, "tasks/get", { taskId }),
+      headersFor("tasks/get"),
+    );
+    expect(got.status).toBe(200);
+    expect(got.body.error).toBeUndefined();
+    expect(got.body.result!.status).toBe("failed");
+    expect(got.body.result!.statusMessage).toMatch(/server restarted/i);
+    // update/cancel have nothing to act on: same explanation, as an error.
+    const cancelled = await call(
+      request(2, "tasks/cancel", { taskId }),
+      headersFor("tasks/cancel"),
+    );
+    expect(cancelled.body.error!.code).toBe(-32602);
+    expect(cancelled.body.error!.message).toMatch(/restarted/i);
+  });
+
+  it("still reports a same-boot unknown taskId as invalid params (a typo, not a restart)", async () => {
+    const { body } = await call(
+      request(1, "tasks/get", { taskId: `task_${currentBootToken()}_nope` }),
+      headersFor("tasks/get"),
+    );
+    expect(body.error!.code).toBe(-32602);
+    expect(body.error!.message).toMatch(/minted by this server process/);
+  });
+
+  it("treats an expired stored record as a miss (TTL still prunes)", async () => {
+    const store = new FileTaskStore(taskDir());
+    const taskId = `task_${currentBootToken()}_expired1`;
+    await store.save({
+      taskId,
+      status: "completed",
+      createdAt: new Date().toISOString(),
+      lastUpdatedAt: new Date().toISOString(),
+      expiresAt: Date.now() - 1_000,
+      toolName: "route_nets",
+      result: { resultType: "complete" },
+    });
+    expect(await store.load(taskId)).toBeNull();
+    const { body } = await call(
+      request(1, "tasks/get", { taskId }),
+      headersFor("tasks/get"),
+    );
+    expect(body.error!.code).toBe(-32602);
+  });
+
+  it("notes on the handle when the store is not durable", async () => {
+    process.env.VCAD_MCP_DISK_SESSIONS = "0"; // force the in-memory store
+    const created = await call(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "route_nets",
+          arguments: { document_id: "doc_does_not_exist" },
+          _meta: TASK_META,
+        },
+      },
+      headersFor("tools/call", "route_nets"),
+    );
+    expect(created.body.result!.statusMessage).toMatch(/not survive a server restart/);
+  });
+
+  it("omits the durability note when the store is durable", async () => {
+    const created = await call(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "route_nets",
+          arguments: { document_id: "doc_does_not_exist" },
+          _meta: TASK_META,
+        },
+      },
+      headersFor("tools/call", "route_nets"),
+    );
+    expect(created.body.result!.statusMessage).not.toMatch(/not survive/);
   });
 });
