@@ -19,7 +19,7 @@
     "pipeline": "node --loader ts-node/esm src/cli.ts pipeline"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.0",
+    "@ai-sdk/anthropic": "^4.0.23",
     "@ai-sdk/gateway": "^3.0.0",
     "@ai-sdk/openai": "^3.0.24",
     "@vcad/engine": "*",
