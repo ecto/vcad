@@ -307,4 +307,25 @@ describe("fix_drc — safe fixers resolve their seeded violations", () => {
     expect(res.fix_count).toBe(0);
     expect(res.after.violations).toBe(res.before.violations);
   });
+
+  it("reports progress through ctx.progress when wired", async () => {
+    const id = await placedBoard();
+    out(await routeNets({ document_id: id }));
+    const pcb = boardPcb(id);
+    const spot = freeSpot(pcb);
+    out(await addVia({ document_id: id, net: "DUP", position: spot }));
+    out(await addVia({ document_id: id, net: "DUP", position: { x: spot.x + 0.1, y: spot.y } }));
+
+    const messages: string[] = [];
+    const stubCtx = {
+      progress: (_c: number, _t: number | undefined, message?: string) => {
+        if (message) messages.push(message);
+      },
+    } as unknown as import("../tools/tool-def.js").ToolContext;
+    const res = out(await fixDrc({ document_id: id }, stubCtx));
+    expect(res.success).toBe(true);
+    expect(messages.some((m) => m.includes("running initial DRC"))).toBe(true);
+    expect(messages.some((m) => m.includes("verifying fix"))).toBe(true);
+    expect(messages.some((m) => m.includes("running final DRC"))).toBe(true);
+  });
 });

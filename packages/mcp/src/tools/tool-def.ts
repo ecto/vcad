@@ -71,6 +71,17 @@ export interface ToolContext {
       elicitationId: string;
     }): Promise<{ action: "accept" | "decline" | "cancel" }>;
   };
+  /**
+   * Report progress on the in-flight call. Injected per request by the
+   * CallTool dispatch when the client asked for progress (a `progressToken`
+   * in the request's `_meta` — the modern bridge injects one so 2026-07-28
+   * clients get streamed progress without asking); absent otherwise, so
+   * emitting is always `ctx.progress?.(…)`. Fire-and-forget: delivery is
+   * best-effort and must never affect the tool's result. Only report real
+   * milestones (a frame rendered, a routing pass finished) — never invent
+   * synthetic ticks around one opaque kernel call.
+   */
+  progress?: (current: number, total?: number, message?: string) => void;
 }
 
 /** A tool's implementation. `args` is the raw MCP argument object. */

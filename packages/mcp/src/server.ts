@@ -1348,8 +1348,34 @@ export async function createServer(
   };
 
   // Handle tool calls
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
+
+    // Per-request progress reporter (notifications/progress). Only wired when
+    // the client asked for it by sending a `progressToken` in the request's
+    // `_meta` (the spec's opt-in; the modern 2026-07-28 bridge injects one so
+    // its SSE stream always carries progress). Fire-and-forget: a failed send
+    // must never fail the tool call.
+    const progressToken = request.params._meta?.progressToken;
+    const callCtx: ToolContext =
+      progressToken === undefined
+        ? ctx
+        : {
+            ...ctx,
+            progress: (current, total, message) => {
+              void extra
+                .sendNotification({
+                  method: "notifications/progress",
+                  params: {
+                    progressToken,
+                    progress: current,
+                    ...(total !== undefined ? { total } : {}),
+                    ...(message !== undefined ? { message } : {}),
+                  },
+                })
+                .catch(() => {});
+            },
+          };
 
     if (disabledTools.has(name)) {
       const pack = dispatchMap.get(name)?.pack;
@@ -1451,7 +1477,7 @@ export async function createServer(
         return refusal;
       }
 
-      const result = await def.handler(args, ctx);
+      const result = await def.handler(args, callCtx);
 
       // ── MCP Apps: attach preview handle for geometry tools ──────
       // The viewer fetches the actual GLB via the app-only `get_preview_glb`

@@ -529,6 +529,7 @@ export function buildSequenceGlb(
   timeline: Timeline,
   frames: SequenceFrame[],
   engine: Engine,
+  onProgress?: (current: number, total?: number, message?: string) => void,
 ): { glb: Uint8Array; stats: Record<string, unknown> } | null {
   const channels: GlbAnimationChannel[] = [];
   const meshes: GlbMesh[] = [];
@@ -646,6 +647,7 @@ export function buildSequenceGlb(
     geoSamples = sampled.length;
     const labels = buildPartLabels(doc);
     for (let k = 0; k < sampled.length; k++) {
+      onProgress?.(k, sampled.length, `evaluating geometry sample ${k + 1}/${sampled.length}`);
       const frame = sampled[k]!;
       const posed = poseDocument(doc, frame);
       let scene;
@@ -746,10 +748,11 @@ export async function renderSequence(
     );
   }
 
-  const built = buildSequenceGlb(doc, timeline, frames, ctx.engine);
+  const built = buildSequenceGlb(doc, timeline, frames, ctx.engine, ctx.progress);
   if (!built) return err("document has no previewable geometry to animate.");
 
   const wantVerify = args.verify !== false;
+  if (wantVerify) ctx.progress?.(frames.length, frames.length, "verifying clearance specs");
   const verification = wantVerify
     ? verifySequenceClearance(doc, frames, ctx.engine)
     : null;
@@ -1145,6 +1148,7 @@ export async function exportVideo(
   };
 
   for (let i = 0; i < frames.length; i++) {
+    ctx.progress?.(i, frames.length, `rendering frame ${i + 1}/${frames.length}`);
     const frame = frames[i]!;
     const posed = poseDocument(doc, frame);
     let svg: string;
@@ -1212,6 +1216,7 @@ export async function exportVideo(
     }
   }
   if (!size) return err("no frames rendered.");
+  ctx.progress?.(frames.length, frames.length, "encoding video");
 
   let bytes: Buffer;
   let mime: string;

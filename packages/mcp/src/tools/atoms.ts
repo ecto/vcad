@@ -25,7 +25,7 @@ import {
   renderAssetSummary,
   withRenderAssets,
 } from "./render-assets.js";
-import { behavior, type ToolDef } from "./tool-def.js";
+import { behavior, type ToolContext, type ToolDef } from "./tool-def.js";
 import { okPretty as ok, toolResult, type ToolResult } from "./tool-result.js";
 
 /** render_molecule may return an image block (PNG) alongside text, so it needs a
@@ -229,12 +229,24 @@ export async function minimizeEnergyTool(input: unknown): Promise<ToolResult> {
 }
 
 /** Run molecular dynamics and return the trajectory endpoint. */
-export async function mdRun(input: unknown): Promise<ToolResult> {
+export async function mdRun(input: unknown, toolCtx?: ToolContext): Promise<ToolResult> {
   try {
     const args = input as { molecule: MoleculeSystem; config?: MdConfig; steps: number };
     const env = await MdEnv.create(args.molecule, args.config ?? {});
     try {
-      const observation = env.run(args.steps);
+      // MD stepping is sequential-stateful, so run(a) then run(b) is exactly
+      // run(a+b) — chunking exists only to surface progress between slices.
+      const total = Math.max(1, Math.round(args.steps));
+      const chunk = toolCtx?.progress ? Math.max(1, Math.ceil(total / 10)) : total;
+      let done = 0;
+      let observation = env.run(Math.min(chunk, total));
+      done += Math.min(chunk, total);
+      while (done < total) {
+        toolCtx?.progress?.(done, total, `MD step ${done}/${total}`);
+        const n = Math.min(chunk, total - done);
+        observation = env.run(n);
+        done += n;
+      }
       const molecule = env.molecule();
       return ok({ observation, molecule });
     } finally {
@@ -281,7 +293,7 @@ function scaleMolecule(mol: MoleculeSystem, s: number): MoleculeSystem {
  * geometry-objective realization of the loop; the energy-objective inverse
  * design (gradients through the simulation) lives in the Rust `inverse` module.
  */
-export async function designMaterial(input: unknown): Promise<ToolResult> {
+export async function designMaterial(input: unknown, toolCtx?: ToolContext): Promise<ToolResult> {
   try {
     const args = input as {
       molecule: MoleculeSystem;
@@ -318,6 +330,7 @@ export async function designMaterial(input: unknown): Promise<ToolResult> {
     let s = 1.0;
     let prop = await measure(base);
     for (let it = 0; it < 60; it++) {
+      toolCtx?.progress?.(it, 60, `bisection iteration ${it + 1}: property ${prop.toFixed(4)} → target ${args.target}`);
       s = 0.5 * (lo + hi);
       prop = await measure(scaleMolecule(base, s));
       const tooSmall = increasing ? prop < args.target : prop > args.target;
@@ -586,7 +599,7 @@ export const toolDefs: ToolDef[] = [
     description:
       "Run molecular dynamics (velocity-Verlet, optional Berendsen thermostat) for N steps and return the final observation (energies, temperature, max force) and the evolved structure.",
     inputSchema: mdRunSchema,
-    handler: (a) => mdRun(a),
+    handler: (a, c) => mdRun(a, c),
     behavior: behavior({}),
   },
   {
@@ -595,7 +608,7 @@ export const toolDefs: ToolDef[] = [
     description:
       "Inverse design: search an isotropic scale factor that drives a geometric property (nearest-neighbor distance or radius of gyration) to a target value, returning the reshaped molecule and a receipt. The energy-objective inverse design (gradients through the simulation) lives in the Rust kernel.",
     inputSchema: designMaterialSchema,
-    handler: (a) => designMaterial(a),
+    handler: (a, c) => designMaterial(a, c),
     behavior: behavior({}),
   },
   {

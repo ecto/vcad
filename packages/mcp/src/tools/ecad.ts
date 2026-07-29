@@ -110,7 +110,7 @@ import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
 import type { FabFile } from "@vcad/engine";
-import { behavior, type ToolDef } from "./tool-def.js";
+import { behavior, type ToolContext, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
@@ -3191,7 +3191,8 @@ const POWER_NET_RE =
   /(^|[_\-/])(A?D?GND|VCC|VDD[A]?|VBAT|VBUS|VIN|VOUT|VSYS|VREF|PWR|POWER|\d+V\d*)(\d*)([_\-/]|$)/i;
 
 /** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
-export async function routeNets(args: Record<string, unknown>) {
+export async function routeNets(args: Record<string, unknown>, toolCtx?: ToolContext) {
+  const progress = toolCtx?.progress;
   const ctx = resolveDocInput(args);
   const doc = ctx.doc;
   const traceWidth = (args.trace_width as number) || undefined;
@@ -3214,6 +3215,7 @@ export async function routeNets(args: Record<string, unknown>) {
   // Receipt: snapshot DRC before the route so the after-diff can attribute
   // exactly what this call fixed and what it introduced.
   const wantReceipt = Boolean(args.receipt);
+  if (wantReceipt) progress?.(0, undefined, "snapshotting pre-route DRC");
   const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
 
   // Synthesize a netlist from pad assignments so the kernel ratsnest can
@@ -3445,6 +3447,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   let routedSomething = false;
   if (strategy === "auto") {
+    progress?.(0, undefined, "routing all nets (negotiated whole-board pass)");
     const result = await routeAll(pcb, width, routeFilter, effort);
     routedSomething =
       result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
@@ -3456,9 +3459,11 @@ export async function routeNets(args: Record<string, unknown>) {
         ? routeFilter
         : [...netConnections.keys()].filter((n) => !preservedNets.has(n));
     const tiers = [...new Set(universe.map(tierOf))].sort((a, b) => a - b);
-    for (const tier of tiers) {
+    for (let ti = 0; ti < tiers.length; ti++) {
+      const tier = tiers[ti]!;
       const nets = universe.filter((n) => tierOf(n) === tier);
       if (nets.length === 0) continue;
+      progress?.(ti, tiers.length, `routing tier ${ti + 1}/${tiers.length} (${nets.length} net(s))`);
       const result = await routeAll(pcb, width, nets, effort);
       if (
         result.traces.length > 0 ||
@@ -3512,6 +3517,7 @@ export async function routeNets(args: Record<string, unknown>) {
     { groups_before: number; groups_after: number; action: "repaired-by-retry" | "rolled_back" }
   > = {};
   if (islandsBefore && copperBefore) {
+    progress?.(0, undefined, "verifying net connectivity");
     const before = islandsBefore;
     const worseNets = async (nets: Iterable<string>): Promise<Map<string, number> | null> => {
       const counts = await netIslandCounts(pcb, nets);
@@ -3535,6 +3541,7 @@ export async function routeNets(args: Record<string, unknown>) {
       if (retrySet.size > 0) {
         pcb.traces = pcb.traces.filter((t) => !retrySet.has(t.net) || t.source === "manual");
         pcb.vias = pcb.vias.filter((v) => !retrySet.has(v.net) || v.source === "manual");
+        progress?.(0, undefined, `re-routing ${retrySet.size} net(s) with regressed connectivity`);
         const retried = await routeAll(pcb, width, [...retrySet], effort);
         applyRoute(retried);
       }
@@ -4037,7 +4044,8 @@ export async function routeDiffPair(args: Record<string, unknown>) {
 }
 
 /** Length-match a group of nets by meandering the shorter ones, committing the copper. */
-export async function lengthMatchTraces(args: Record<string, unknown>) {
+export async function lengthMatchTraces(args: Record<string, unknown>, toolCtx?: ToolContext) {
+  const progress = toolCtx?.progress;
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -4054,6 +4062,7 @@ export async function lengthMatchTraces(args: Record<string, unknown>) {
     return fail("style must be 'trombone' or 'sawtooth'");
   }
 
+  progress?.(0, undefined, `length-matching ${nets.length} net(s)`);
   const result = await kernelMatchTraceLengths(pcb, nets, {
     target_length: args.target_length as number | undefined,
     tolerance: args.tolerance as number | undefined,
@@ -4099,6 +4108,9 @@ export async function lengthMatchTraces(args: Record<string, unknown>) {
   // Commit: each tuned net's replacement copper supplants ALL of its straight
   // traces (the meanders re-emit the untouched spans too).
   const tuned = result.nets.filter((n) => n.tuned && n.new_traces && n.new_traces.length > 0);
+  if (tuned.length > 0) {
+    progress?.(0, undefined, `verifying DRC delta for ${tuned.length} tuned net(s)`);
+  }
   const touched = new Set(tuned.map((n) => n.net));
   const newPoints: Vec2[] = tuned.flatMap((n) =>
     (n.new_traces ?? []).flatMap((t) => [t.start, t.end]),
@@ -13594,7 +13606,8 @@ type FixAttempt = { ok: true; delta: DrcDelta } | { ok: false; reason: string };
  * new violation. Fail-closed: refuses to run without the kernel DRC engine,
  * and an unverifiable board is never reported as fixed.
  */
-export async function fixDrc(args: Record<string, unknown>) {
+export async function fixDrc(args: Record<string, unknown>, toolCtx?: ToolContext) {
+  const progress = toolCtx?.progress;
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -13613,6 +13626,7 @@ export async function fixDrc(args: Record<string, unknown>) {
   const effort = Math.min(100, Math.max(0.1, Number(args.reroute_effort) || 4));
   const maxFixes = Math.max(1, Math.round(Number(args.max_fixes as number) || 50));
 
+  progress?.(0, undefined, "running initial DRC");
   const before = await drcPcb(pcb, "full", 20);
   if (!before.success) return ecadUnverifiable("fix_drc", before);
   const viols = before.details ?? [];
@@ -13630,10 +13644,12 @@ export async function fixDrc(args: Record<string, unknown>) {
 
   /** Apply `mutate` under a drc_delta capture; revert (restore the saved
    *  copper arrays) unless the delta proves no new violations. */
+  let fixAttempts = 0;
   const applyVerified = async (
     bounds: { min: Vec2; max: Vec2 } | "full",
     mutate: () => void,
   ): Promise<FixAttempt> => {
+    progress?.(++fixAttempts, undefined, `verifying fix ${fixAttempts} (${fixed.length} applied so far)`);
     const savedTraces = pcb.traces;
     const savedVias = pcb.vias;
     const cap = await beginDrcDelta(pcb, bounds);
@@ -13956,6 +13972,7 @@ export async function fixDrc(args: Record<string, unknown>) {
       budget--;
       continue;
     }
+    progress?.(++fixAttempts, undefined, `re-routing net '${net}' (${fixed.length} fix(es) applied so far)`);
     const savedTraces = pcb.traces;
     const savedVias = pcb.vias;
     const cap = await beginDrcDelta(pcb, "full");
@@ -14000,6 +14017,7 @@ export async function fixDrc(args: Record<string, unknown>) {
   }
 
   // Final fail-closed accounting: the after snapshot is the receipt's anchor.
+  if (!dryRun) progress?.(0, undefined, "running final DRC");
   const after = dryRun ? before : await drcPcb(pcb, "full", 20);
   const brief = (s: DrcSummary) => ({
     violations: s.violations,
@@ -14087,7 +14105,7 @@ export const toolDefs: ToolDef[] = [
       "nets come back in `plane_stitched`. Mutates the session document " +
       "(pass document_id).",
     inputSchema: routeNetsSchema,
-    handler: (a) => routeNets(a) as ToolResult | Promise<ToolResult>,
+    handler: (a, c) => routeNets(a, c) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
@@ -14491,7 +14509,7 @@ export const toolDefs: ToolDef[] = [
       "and what was skipped with the reason. `dry_run` plans without " +
       "mutating. Mutates the session document (pass document_id).",
     inputSchema: fixDrcSchema,
-    handler: (a) => fixDrc(a) as ToolResult | Promise<ToolResult>,
+    handler: (a, c) => fixDrc(a, c) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
@@ -14585,7 +14603,7 @@ export const toolDefs: ToolDef[] = [
       "check_only:true measures and verdicts without touching copper. Mutating " +
       "runs carry drc_delta.",
     inputSchema: lengthMatchTracesSchema,
-    handler: (a) => lengthMatchTraces(a) as ToolResult | Promise<ToolResult>,
+    handler: (a, c) => lengthMatchTraces(a, c) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
   },
   {
