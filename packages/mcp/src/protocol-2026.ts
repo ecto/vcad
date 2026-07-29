@@ -33,9 +33,13 @@
  *     client declares it, calls to known long-running tools return a
  *     `CreateTaskResult` immediately and finish in the background; clients
  *     poll `tasks/get`, feed elicitations via `tasks/update`, and cancel
- *     cooperatively via `tasks/cancel`. Tasks live in process memory with a
- *     TTL — durable for the life of the stdio process or warm HTTP instance,
- *     which is exactly the durability vcad sessions already have.
+ *     cooperatively via `tasks/cancel`. Live tasks sit in process memory with
+ *     a TTL; terminal records (completed/failed/cancelled) also persist to the
+ *     durable task store (task-store.ts — same env gating as vcad sessions),
+ *     and `tasks/get` hydrates from it on a cache miss. An in-flight task
+ *     cannot survive a restart (its bridge dies with the process): its taskId
+ *     carries the minting boot token, so a poll after a restart reports an
+ *     honest `failed`-by-restart status instead of an unknown-id error.
  *   - `subscriptions/listen`: a long-lived notification stream serving
  *     `toolsListChanged` (fired when `set_tool_packs` re-shapes the surface)
  *     and `notifications/tasks` for subscribed task ids.
@@ -49,6 +53,9 @@ import { randomUUID } from "node:crypto";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { currentBootToken } from "./tools/session-core.js";
+import { isSessionStoreDurable } from "./session-store.js";
+import { createTaskStore, type StoredTask } from "./task-store.js";
 
 /** The protocol revision this module implements. */
 export const PROTOCOL_2026 = "2026-07-28";
@@ -387,6 +394,47 @@ function touchTask(t: TaskRecord, status?: TaskStatus, message?: string): void {
   if (message !== undefined) t.statusMessage = message;
   t.lastUpdatedAt = new Date().toISOString();
   bus.emit(EVT_TASK, detailedTask(t));
+  // Terminal states are the serializable part of a task's life: persist them
+  // so `tasks/get` still answers after a restart. Best-effort by contract —
+  // the store never throws, and an in-flight task cannot be persisted at all
+  // (its bridge dies with the process; the boot token in the id covers it).
+  if (t.status === "completed" || t.status === "failed" || t.status === "cancelled") {
+    const stored: StoredTask = {
+      taskId: t.taskId,
+      status: t.status,
+      createdAt: t.createdAt,
+      lastUpdatedAt: t.lastUpdatedAt,
+      expiresAt: t.expiresAt,
+      toolName: t.toolName,
+    };
+    if (t.statusMessage !== undefined) stored.statusMessage = t.statusMessage;
+    if (t.result !== undefined) stored.result = t.result;
+    if (t.error !== undefined) stored.error = t.error;
+    const persist = createTaskStore()
+      .save(stored)
+      .finally(() => pendingPersists.delete(persist));
+    pendingPersists.add(persist);
+  }
+}
+
+/** In-flight terminal-record writes. Tracked so a caller (tests, shutdown)
+ *  can await them — the store itself never throws, so these only ever
+ *  resolve. */
+const pendingPersists = new Set<Promise<void>>();
+
+/** Await every in-flight terminal-record persist. */
+export async function flushTaskPersists(): Promise<void> {
+  while (pendingPersists.size > 0) {
+    await Promise.all([...pendingPersists]);
+  }
+}
+
+/** Extract the boot-token segment of a taskId, or null for a foreign-format
+ *  id. Mirrors session-core's sessionIdBootToken: a token that isn't ours
+ *  means the minting process is gone (restart, or another instance). */
+export function taskIdBootToken(taskId: string): string | null {
+  const m = /^task_([A-Za-z0-9_-]{4})_/.exec(taskId);
+  return m ? m[1] : null;
 }
 
 /** The wire shape of a task: base fields plus status-specific ones inlined. */
@@ -781,6 +829,14 @@ export async function handleModernRequest(
     if (asTask) {
       pruneTasks();
       const record = createTaskRecord(params.name as string);
+      // Durability honesty, mirroring the session-minting tools: when nothing
+      // survives a restart, say so on the handle instead of implying the TTL
+      // is the only way to lose it.
+      if (!isSessionStoreDurable()) {
+        record.statusMessage =
+          `${record.statusMessage} (note: this server's task store is ` +
+          `in-memory only — this handle will not survive a server restart)`;
+      }
       const owned = bridge; // background closure owns the bridge from here
       bridge = undefined;
       runTaskInBackground(record, owned, method, forwarded, inputResponses);
@@ -885,7 +941,10 @@ function stripModernFields(
 function createTaskRecord(toolName: string): TaskRecord {
   const now = new Date().toISOString();
   const record: TaskRecord = {
-    taskId: `task_${randomUUID().slice(0, 13)}`,
+    // The minting process's boot token rides in the id (same scheme as
+    // session ids): after a restart, an orphaned in-flight taskId is
+    // mechanically separable from a typo.
+    taskId: `task_${currentBootToken()}_${randomUUID().slice(0, 13)}`,
     status: "working",
     statusMessage: `running ${toolName}`,
     createdAt: now,
@@ -986,21 +1045,95 @@ export function taskElicitation(
   });
 }
 
-function handleTaskMethod(
+/** Re-cache a durably-stored terminal record as a resident TaskRecord so
+ *  subsequent polls are warm. Terminal by construction: no pending inputs, no
+ *  bridge to dispose. */
+function rehydrateTask(stored: StoredTask): TaskRecord {
+  const record: TaskRecord = {
+    taskId: stored.taskId,
+    status: stored.status,
+    statusMessage: stored.statusMessage,
+    createdAt: stored.createdAt,
+    lastUpdatedAt: stored.lastUpdatedAt,
+    expiresAt: stored.expiresAt,
+    toolName: stored.toolName,
+    inputRequests: {},
+    pendingInputs: new Map(),
+    result: stored.result,
+    error: stored.error,
+    cancelRequested: false,
+  };
+  tasks.set(record.taskId, record);
+  return record;
+}
+
+/**
+ * A taskId from a previous boot with no durable terminal record: the process
+ * died with the tool call in flight (a background bridge cannot survive a
+ * restart), so the task's true outcome is "failed". `tasks/get` reports
+ * exactly that; `tasks/update` / `tasks/cancel` have nothing to act on and
+ * error with the same explanation.
+ */
+function orphanedTaskResponse(
+  id: string | number,
+  method: string,
+  taskId: string,
+): ModernResponse {
+  const message =
+    `The server restarted while this task was running: taskId '${taskId}' was ` +
+    `minted by a previous server process (this one booted as ` +
+    `'${currentBootToken()}') and its in-flight tool call did not survive the ` +
+    `restart. Re-issue the original tools/call to run it again.`;
+  if (method === "tasks/get") {
+    const now = new Date().toISOString();
+    const result: Record<string, unknown> = {
+      resultType: "complete",
+      taskId,
+      status: "failed",
+      statusMessage: message,
+      createdAt: now,
+      lastUpdatedAt: now,
+      ttlMs: TASK_TTL_MS,
+      pollIntervalMs: TASK_POLL_INTERVAL_MS,
+      error: { code: ERR_INTERNAL, message },
+    };
+    return { status: 200, body: { jsonrpc: "2.0", id, result } };
+  }
+  return {
+    status: 200,
+    body: errorResponse(id, ERR_INVALID_PARAMS, message),
+  };
+}
+
+async function handleTaskMethod(
   id: string | number,
   method: string,
   params: Record<string, unknown>,
-): ModernResponse {
+): Promise<ModernResponse> {
   pruneTasks();
   const taskId = typeof params.taskId === "string" ? params.taskId : "";
-  const record = tasks.get(taskId);
+  let record = tasks.get(taskId);
   if (!record) {
+    // Cache miss: hydrate from the durable store before reporting unknown —
+    // a task that finished before a restart still has its terminal record.
+    const stored = await createTaskStore().load(taskId);
+    if (stored) record = rehydrateTask(stored);
+  }
+  if (!record) {
+    const mintToken = taskIdBootToken(taskId);
+    if (mintToken !== null && mintToken !== currentBootToken()) {
+      // Orphaned by a restart: the id was minted by a process that is gone
+      // and no terminal record survived, so the call died mid-run. Report an
+      // honest `failed` task, not an unknown-id error — the remediation is
+      // to re-issue the call, not to fix the argument.
+      return orphanedTaskResponse(id, method, taskId);
+    }
     return {
       status: 200,
       body: errorResponse(
         id,
         ERR_INVALID_PARAMS,
-        `Unknown taskId '${taskId}' — expired, cancelled long ago, or from a previous server instance`,
+        `Unknown taskId '${taskId}' — expired, cancelled long ago, or mistyped (it was minted by this server process)`,
       ),
     };
   }
