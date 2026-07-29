@@ -301,144 +301,224 @@ fn refused(pcb: &Pcb, opts: &FabPrepOptions, why: String) -> FabPrepOutcome {
     }
 }
 
-/// Run the whole fab-prep pipeline against `pcb`, mutating it in place.
-///
-/// Never panics on a difficult board: a run that cannot converge returns a
-/// report with `converged: false` and the offenders named, and it is the
-/// caller's job (see [`package::write_fab_package`]) not to ship it.
-pub fn run_fab_prep(pcb: &mut Pcb, opts: &FabPrepOptions) -> FabPrepOutcome {
-    // 0. Waivers. A name that matches no rule is refused outright: a typo in a
-    //    safety valve that silently does nothing is worse than no valve.
-    let known: BTreeSet<String> = delta::ALL_RULES.iter().map(delta::rule_name).collect();
-    let (accepted, unknown): (BTreeSet<String>, Vec<String>) = {
-        let mut ok = BTreeSet::new();
-        let mut bad = Vec::new();
-        for r in &opts.accept_rules {
-            match known.iter().find(|k| k.eq_ignore_ascii_case(r)) {
-                Some(k) => {
-                    ok.insert(k.clone());
-                }
-                None => bad.push(r.clone()),
-            }
-        }
-        (ok, bad)
-    };
+/// What one call to [`FabPrepSession::round`] concluded — enough for a caller
+/// to narrate progress between rounds without holding the receipt yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RoundStatus {
+    /// The fix loop is finished (converged or blocked); call
+    /// [`FabPrepSession::finish`] next.
+    pub done: bool,
+    /// 1-based number of the round that just ran, or of the check that ended
+    /// the loop.
+    pub round: usize,
+    /// Route-attributable violations at the start of this round.
+    pub attributable: usize,
+    /// Total rounds the session may still run, including this one.
+    pub max_rounds: usize,
+}
 
-    if !unknown.is_empty() {
-        return refused(
-            pcb,
-            opts,
-            format!(
-                "unrecognised rule name(s) in the waiver list: {}. Valid names: {}",
-                unknown.join(", "),
-                known.iter().cloned().collect::<Vec<_>>().join(", ")
-            ),
+/// Stepwise driver for the fab-prep pipeline.
+///
+/// [`FabPrepSession::begin`] runs waiver validation, calibration, the stripped
+/// baseline and the up-front verdict pass; each [`FabPrepSession::round`] runs
+/// one strip-and-re-route iteration; [`FabPrepSession::finish`] restores the
+/// best board if the loop wandered, prunes, and builds the receipt.
+///
+/// [`run_fab_prep`] is implemented on top of this driver, so the chunked path
+/// and the one-shot path are the same code — a caller that steps the session
+/// (to surface progress between rounds) gets a bit-identical outcome.
+pub struct FabPrepSession {
+    opts: FabPrepOptions,
+    accepted: BTreeSet<String>,
+    calibration: CalibrationReport,
+    baseline: Vec<vcad_ecad_pcb::drc::DrcViolation>,
+    entry_connectivity: usize,
+    initial_verdict: Option<VerdictSummary>,
+    rounds: Vec<RoundSummary>,
+    blocker: Option<String>,
+    converged: bool,
+    previous: Option<(BTreeSet<String>, usize)>,
+    best: Option<(usize, Pcb)>,
+    non_improving: usize,
+    round_index: usize,
+    done: bool,
+}
+
+/// Consecutive rounds allowed to not improve before the loop gives up. One
+/// bad round can be a productive intermediate; two in a row is wandering.
+const MAX_NON_IMPROVING: usize = 2;
+
+impl FabPrepSession {
+    /// Set up a run: validate waivers, calibrate (opt-in), measure the
+    /// stripped-board baseline and arrival connectivity, and route or certify
+    /// whatever the board arrived unrouted.
+    ///
+    /// A refusal (an unrecognised waiver name) comes back as `Err` carrying the
+    /// same non-converging [`FabPrepOutcome`] the one-shot path reports.
+    pub fn begin(pcb: &mut Pcb, opts: &FabPrepOptions) -> Result<Self, Box<FabPrepOutcome>> {
+        // 0. Waivers. A name that matches no rule is refused outright: a typo in a
+        //    safety valve that silently does nothing is worse than no valve.
+        let known: BTreeSet<String> = delta::ALL_RULES.iter().map(delta::rule_name).collect();
+        let (accepted, unknown): (BTreeSet<String>, Vec<String>) = {
+            let mut ok = BTreeSet::new();
+            let mut bad = Vec::new();
+            for r in &opts.accept_rules {
+                match known.iter().find(|k| k.eq_ignore_ascii_case(r)) {
+                    Some(k) => {
+                        ok.insert(k.clone());
+                    }
+                    None => bad.push(r.clone()),
+                }
+            }
+            (ok, bad)
+        };
+
+        if !unknown.is_empty() {
+            return Err(Box::new(refused(
+                pcb,
+                opts,
+                format!(
+                    "unrecognised rule name(s) in the waiver list: {}. Valid names: {}",
+                    unknown.join(", "),
+                    known.iter().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            )));
+        }
+
+        // 1. Rule calibration, before anything is measured — the baseline and the
+        //    final must be judged under identical rules or the delta is fiction.
+        let calibration = if opts.calibrate_rules {
+            calibrate::calibrate_rules(pcb)
+        } else {
+            CalibrationReport::default()
+        };
+
+        // 2. Baseline: the same board, same rules, with every trace and via
+        //    removed. This is the floor the fixture arrives with.
+        let baseline = {
+            let mut stripped = pcb.clone();
+            stripped.traces.clear();
+            stripped.trace_arcs.clear();
+            stripped.vias.clear();
+            check_drc(&stripped)
+        };
+        log::info!(
+            "fab-prep: fixture baseline = {} violations (stripped board)",
+            baseline.len()
         );
+
+        // 2b. Connectivity as the board arrived. The fix loop strips nets to clear
+        //     violations, which means it has a trivially "successful" move available
+        //     to it: delete the copper and the geometric violation goes with it. The
+        //     resulting board is DRC-clean and electrically useless. Recording what
+        //     the netlist realized on arrival lets the verdict refuse that trade.
+        let entry_connectivity = connectivity_count(&check_drc(pcb));
+
+        // 3. Route or certify whatever the board arrived unrouted.
+        let initial_verdict = opts.route_remaining.then(|| {
+            let v = verdict::route_remaining(pcb, opts.verdict);
+            log::info!(
+                "fab-prep: verdict ladder routed {} / proved-infeasible {} / unknown {}",
+                v.routed,
+                v.proved_infeasible,
+                v.unknown
+            );
+            v
+        });
+
+        Ok(Self {
+            opts: opts.clone(),
+            accepted,
+            calibration,
+            baseline,
+            entry_connectivity,
+            initial_verdict,
+            rounds: Vec::new(),
+            blocker: None,
+            converged: false,
+            previous: None,
+            // A round strips whole nets and hands them back to the router, so a round
+            // whose re-route fails leaves the board sparser than it found it. Left
+            // unguarded the loop can wander downhill for its whole round budget and
+            // return a board materially worse than the one it was given. Keep the best
+            // board seen and restore it if the loop never converges: fab-prep may fail
+            // to improve a board, but it must never hand back a worse one.
+            best: None,
+            non_improving: 0,
+            round_index: 0,
+            done: false,
+        })
     }
 
-    // 1. Rule calibration, before anything is measured — the baseline and the
-    //    final must be judged under identical rules or the delta is fiction.
-    let calibration = if opts.calibrate_rules {
-        calibrate::calibrate_rules(pcb)
-    } else {
-        CalibrationReport::default()
-    };
+    /// One iteration of the fix loop: census the route-attributable offenders,
+    /// strip their nets, hand them back to the (session-probed) ladder,
+    /// re-check. Returns `done: true` once the loop has converged or blocked.
+    pub fn round(&mut self, pcb: &mut Pcb) -> RoundStatus {
+        let max_rounds = self.opts.max_rounds;
+        if self.done || self.round_index > max_rounds {
+            self.done = true;
+            return RoundStatus {
+                done: true,
+                round: self.round_index,
+                attributable: 0,
+                max_rounds,
+            };
+        }
+        let round = self.round_index;
+        let status = |done: bool, attributable: usize| RoundStatus {
+            done,
+            round: round + 1,
+            attributable,
+            max_rounds,
+        };
 
-    // 2. Baseline: the same board, same rules, with every trace and via
-    //    removed. This is the floor the fixture arrives with.
-    let baseline = {
-        let mut stripped = pcb.clone();
-        stripped.traces.clear();
-        stripped.trace_arcs.clear();
-        stripped.vias.clear();
-        check_drc(&stripped)
-    };
-    log::info!(
-        "fab-prep: fixture baseline = {} violations (stripped board)",
-        baseline.len()
-    );
-
-    // 2b. Connectivity as the board arrived. The fix loop strips nets to clear
-    //     violations, which means it has a trivially "successful" move available
-    //     to it: delete the copper and the geometric violation goes with it. The
-    //     resulting board is DRC-clean and electrically useless. Recording what
-    //     the netlist realized on arrival lets the verdict refuse that trade.
-    let entry_connectivity = connectivity_count(&check_drc(pcb));
-
-    // 3. Route or certify whatever the board arrived unrouted.
-    let initial_verdict = opts.route_remaining.then(|| {
-        let v = verdict::route_remaining(pcb, opts.verdict);
-        log::info!(
-            "fab-prep: verdict ladder routed {} / proved-infeasible {} / unknown {}",
-            v.routed,
-            v.proved_infeasible,
-            v.unknown
-        );
-        v
-    });
-
-    // 4. The fix loop: census the route-attributable offenders, strip their
-    //    nets, hand them back to the (session-probed) ladder, re-check.
-    let mut rounds: Vec<RoundSummary> = Vec::new();
-    let mut blocker: Option<String> = None;
-    let mut converged = false;
-    let mut previous: Option<(BTreeSet<String>, usize)> = None;
-    // A round strips whole nets and hands them back to the router, so a round
-    // whose re-route fails leaves the board sparser than it found it. Left
-    // unguarded the loop can wander downhill for its whole round budget and
-    // return a board materially worse than the one it was given. Keep the best
-    // board seen and restore it if the loop never converges: fab-prep may fail
-    // to improve a board, but it must never hand back a worse one.
-    let mut best: Option<(usize, Pcb)> = None;
-    let mut non_improving = 0usize;
-    /// Consecutive rounds allowed to not improve before the loop gives up. One
-    /// bad round can be a productive intermediate; two in a row is wandering.
-    const MAX_NON_IMPROVING: usize = 2;
-
-    for round in 0..=opts.max_rounds {
         let now = check_drc(pcb);
-        let regression = connectivity_count(&now).saturating_sub(entry_connectivity);
-        let delta = DrcDelta::compute(&baseline, &now, &accepted);
+        let regression = connectivity_count(&now).saturating_sub(self.entry_connectivity);
+        let delta = DrcDelta::compute(&self.baseline, &now, &self.accepted);
         let attributable = delta.route_attributable_fixable;
         if attributable == 0 && regression == 0 {
-            converged = true;
-            best = None;
-            break;
+            self.converged = true;
+            self.best = None;
+            self.done = true;
+            return status(true, attributable);
         }
         // Score a candidate board on both axes at once. Scoring on
         // `attributable` alone would rank "stripped the net, never re-routed
         // it" as the best board on offer.
         let score = attributable + regression;
-        match &best {
-            Some((n, _)) if *n <= score => non_improving += 1,
+        match &self.best {
+            Some((n, _)) if *n <= score => self.non_improving += 1,
             _ => {
-                non_improving = 0;
-                best = Some((score, pcb.clone()));
+                self.non_improving = 0;
+                self.best = Some((score, pcb.clone()));
             }
         }
         if attributable == 0 {
             // Geometrically clean, but the loop got there by removing copper.
-            blocker = Some(format!(
+            self.blocker = Some(format!(
                 "the board is geometrically clean but {regression} more net(s) are unconnected or \
                  islanded than when it arrived — the loop cleared violations by removing copper it \
                  could not re-route, which is not a fix"
             ));
-            break;
+            self.done = true;
+            return status(true, attributable);
         }
-        if non_improving >= MAX_NON_IMPROVING {
-            blocker = Some(format!(
+        if self.non_improving >= MAX_NON_IMPROVING {
+            self.blocker = Some(format!(
                 "the fix loop stopped improving — {MAX_NON_IMPROVING} consecutive rounds failed to \
                  beat the best board seen"
             ));
-            break;
+            self.done = true;
+            return status(true, attributable);
         }
-        if round == opts.max_rounds {
+        if round == max_rounds {
             // Blockers say why the loop STOPPED and never restate the count —
             // `headline()` owns that number, and a blocker carrying a stale
             // count (the prune below can still change it) reads as a
             // contradiction in the receipt.
-            blocker = Some(format!("the round limit ({}) was reached", opts.max_rounds));
-            break;
+            self.blocker = Some(format!("the round limit ({max_rounds}) was reached"));
+            self.done = true;
+            return status(true, attributable);
         }
 
         // Only nets that actually own copper can be stripped and re-routed. An
@@ -464,27 +544,29 @@ pub fn run_fab_prep(pcb: &mut Pcb, opts: &FabPrepOptions) -> FabPrepOutcome {
             .filter(|n| with_copper.contains(n))
             .collect();
         if offending.is_empty() {
-            blocker = Some(
+            self.blocker = Some(
                 "the remaining offenders name no net carrying board-level copper — the \
                  strip-and-re-route loop cannot reach them"
                     .to_string(),
             );
-            break;
+            self.done = true;
+            return status(true, attributable);
         }
         // Oscillation guard: the same net set failing to reduce the count means
         // the ladder is returning the same copper. Stop and report rather than
         // burning the remaining rounds on it.
-        if let Some((prev_nets, prev_count)) = &previous {
+        if let Some((prev_nets, prev_count)) = &self.previous {
             if prev_nets == &offending && attributable >= *prev_count {
-                blocker = Some(format!(
+                self.blocker = Some(format!(
                     "the fix loop stalled: round {round} re-stripped the same {} net(s) without \
                      reducing the count",
                     offending.len()
                 ));
-                break;
+                self.done = true;
+                return status(true, attributable);
             }
         }
-        previous = Some((offending.clone(), attributable));
+        self.previous = Some((offending.clone(), attributable));
 
         let (stripped_traces, _arcs, stripped_vias) = verdict::strip_nets(pcb, &offending);
         log::info!(
@@ -493,8 +575,8 @@ pub fn run_fab_prep(pcb: &mut Pcb, opts: &FabPrepOptions) -> FabPrepOutcome {
             round + 1,
             offending.len()
         );
-        let verdict = verdict::route_remaining(pcb, opts.verdict);
-        rounds.push(RoundSummary {
+        let verdict = verdict::route_remaining(pcb, self.opts.verdict);
+        self.rounds.push(RoundSummary {
             round: round + 1,
             attributable_before: attributable,
             offending_nets: offending.into_iter().collect(),
@@ -502,82 +584,120 @@ pub fn run_fab_prep(pcb: &mut Pcb, opts: &FabPrepOptions) -> FabPrepOutcome {
             stripped_vias,
             verdict,
         });
+        self.round_index += 1;
+        status(false, attributable)
     }
 
-    // 4b. The loop ended without converging: hand back the best board it saw
-    //     rather than whatever the last (failed) round happened to leave.
-    let mut restored_best = false;
-    if !converged {
-        if let Some((best_score, board)) = best {
-            let now = check_drc(pcb);
-            let score = DrcDelta::compute(&baseline, &now, &accepted).route_attributable_fixable
-                + connectivity_count(&now).saturating_sub(entry_connectivity);
-            if best_score < score {
-                log::info!(
-                    "fab-prep: restoring the best board seen (score {best_score} vs {score})"
-                );
-                *pcb = board;
-                restored_best = true;
-            }
-        }
-    }
-
-    // 5. Prune copper that reaches no pad or pour of its net. Removing copper
-    //    can only remove geometric violations, so this cannot invalidate a
-    //    convergence reached above — but the final DRC below is what the
-    //    receipt reports either way.
-    let (pruned_traces, pruned_vias) = if opts.prune_dangling {
-        vcad_ecad_pcb::drc::prune_dangling_copper(pcb)
-    } else {
-        (0, 0)
-    };
-
-    // 6. Final DRC and the delta that is the receipt.
-    let violations = check_drc(pcb);
-    let delta = DrcDelta::compute(&baseline, &violations, &accepted);
-    let connectivity = Connectivity {
-        on_arrival: entry_connectivity,
-        on_completion: connectivity_count(&violations),
-    };
-    // The prune runs after the loop's last check, so re-derive convergence from
-    // the numbers actually being reported rather than trusting the loop's flag.
-    let converged =
-        converged && delta.route_attributable_fixable == 0 && connectivity.regression() == 0;
-    if converged {
-        blocker = None;
-    } else if blocker.is_none() {
-        blocker = Some(if connectivity.regression() > 0 {
-            format!(
-                "{} more net(s) are unconnected or islanded than when the board arrived",
-                connectivity.regression()
-            )
-        } else {
-            "violations appeared in the post-prune check".to_string()
-        });
-    }
-    if restored_best {
-        if let Some(why) = &mut blocker {
-            why.push_str(" (the best board the loop saw was restored)");
-        }
-    }
-
-    FabPrepOutcome {
-        report: FabPrepReport {
-            converged,
-            blocker,
-            calibration_requested: opts.calibrate_rules,
+    /// Restore the best board if the loop wandered, prune dangling copper, run
+    /// the final DRC, and build the receipt.
+    pub fn finish(self, pcb: &mut Pcb) -> FabPrepOutcome {
+        let Self {
+            opts,
+            accepted,
             calibration,
+            baseline,
+            entry_connectivity,
             initial_verdict,
             rounds,
-            pruned_traces,
-            pruned_vias,
-            connectivity,
-            accepted_rules: accepted.iter().cloned().collect(),
-            delta,
-            board: BoardStats::of(pcb),
-        },
-        violations,
+            mut blocker,
+            converged,
+            best,
+            ..
+        } = self;
+
+        // 4b. The loop ended without converging: hand back the best board it saw
+        //     rather than whatever the last (failed) round happened to leave.
+        let mut restored_best = false;
+        if !converged {
+            if let Some((best_score, board)) = best {
+                let now = check_drc(pcb);
+                let score = DrcDelta::compute(&baseline, &now, &accepted)
+                    .route_attributable_fixable
+                    + connectivity_count(&now).saturating_sub(entry_connectivity);
+                if best_score < score {
+                    log::info!(
+                        "fab-prep: restoring the best board seen (score {best_score} vs {score})"
+                    );
+                    *pcb = board;
+                    restored_best = true;
+                }
+            }
+        }
+
+        // 5. Prune copper that reaches no pad or pour of its net. Removing copper
+        //    can only remove geometric violations, so this cannot invalidate a
+        //    convergence reached above — but the final DRC below is what the
+        //    receipt reports either way.
+        let (pruned_traces, pruned_vias) = if opts.prune_dangling {
+            vcad_ecad_pcb::drc::prune_dangling_copper(pcb)
+        } else {
+            (0, 0)
+        };
+
+        // 6. Final DRC and the delta that is the receipt.
+        let violations = check_drc(pcb);
+        let delta = DrcDelta::compute(&baseline, &violations, &accepted);
+        let connectivity = Connectivity {
+            on_arrival: entry_connectivity,
+            on_completion: connectivity_count(&violations),
+        };
+        // The prune runs after the loop's last check, so re-derive convergence from
+        // the numbers actually being reported rather than trusting the loop's flag.
+        let converged =
+            converged && delta.route_attributable_fixable == 0 && connectivity.regression() == 0;
+        if converged {
+            blocker = None;
+        } else if blocker.is_none() {
+            blocker = Some(if connectivity.regression() > 0 {
+                format!(
+                    "{} more net(s) are unconnected or islanded than when the board arrived",
+                    connectivity.regression()
+                )
+            } else {
+                "violations appeared in the post-prune check".to_string()
+            });
+        }
+        if restored_best {
+            if let Some(why) = &mut blocker {
+                why.push_str(" (the best board the loop saw was restored)");
+            }
+        }
+
+        FabPrepOutcome {
+            report: FabPrepReport {
+                converged,
+                blocker,
+                calibration_requested: opts.calibrate_rules,
+                calibration,
+                initial_verdict,
+                rounds,
+                pruned_traces,
+                pruned_vias,
+                connectivity,
+                accepted_rules: accepted.iter().cloned().collect(),
+                delta,
+                board: BoardStats::of(pcb),
+            },
+            violations,
+        }
     }
+}
+
+/// Run the whole fab-prep pipeline against `pcb`, mutating it in place.
+///
+/// Never panics on a difficult board: a run that cannot converge returns a
+/// report with `converged: false` and the offenders named, and it is the
+/// caller's job (see [`package::write_fab_package`]) not to ship it.
+///
+/// This is the one-shot form of [`FabPrepSession`]; callers that want to
+/// observe progress between rounds drive the session directly.
+pub fn run_fab_prep(pcb: &mut Pcb, opts: &FabPrepOptions) -> FabPrepOutcome {
+    let mut session = match FabPrepSession::begin(pcb, opts) {
+        Ok(s) => s,
+        Err(outcome) => return *outcome,
+    };
+    while !session.round(pcb).done {}
+    session.finish(pcb)
 }
 
 #[cfg(test)]
@@ -861,6 +981,52 @@ mod tests {
             "the refusal must name the typo and the valid options: {:?}",
             report.blocker
         );
+    }
+
+    /// Driving the session round-by-round (the streamed-progress path) must
+    /// produce exactly the outcome of the one-shot call on the same board.
+    #[test]
+    fn stepwise_session_matches_the_one_shot_run() {
+        let mut make = || {
+            let mut pcb = test_board();
+            with_smd_pad(&mut pcb, "R1", "1", 2.0, 2.0, "A");
+            with_smd_pad(&mut pcb, "R1", "2", 8.0, 2.0, "A");
+            with_smd_pad(&mut pcb, "R2", "1", 5.0, 0.5, "B");
+            with_smd_pad(&mut pcb, "R2", "2", 5.0, 4.0, "B");
+            with_trace(&mut pcb, "A", 2.0, 2.0, 8.0, 2.0);
+            with_trace(&mut pcb, "B", 5.0, 0.5, 5.0, 4.0);
+            pcb
+        };
+        let opts = FabPrepOptions {
+            route_remaining: false,
+            prune_dangling: false,
+            max_rounds: 2,
+            ..Default::default()
+        };
+
+        let mut one_shot_pcb = make();
+        let one_shot = run_fab_prep(&mut one_shot_pcb, &opts);
+
+        let mut stepped_pcb = make();
+        let mut session = FabPrepSession::begin(&mut stepped_pcb, &opts).expect("no refusal");
+        let mut statuses = Vec::new();
+        loop {
+            let s = session.round(&mut stepped_pcb);
+            statuses.push(s);
+            if s.done {
+                break;
+            }
+        }
+        let stepped = session.finish(&mut stepped_pcb);
+
+        assert_eq!(one_shot.report, stepped.report);
+        assert_eq!(one_shot.violations, stepped.violations);
+        assert_eq!(
+            serde_json::to_string(&one_shot_pcb).unwrap(),
+            serde_json::to_string(&stepped_pcb).unwrap()
+        );
+        assert!(statuses.len() >= 2, "the loop must have visibly stepped");
+        assert!(statuses.last().unwrap().done);
     }
 
     #[test]

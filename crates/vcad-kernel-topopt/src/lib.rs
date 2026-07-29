@@ -157,26 +157,88 @@ fn validate(spec: &TopoOptSpec) -> Result<(), TopoOptError> {
     Ok(())
 }
 
+pub use simp::SimpStepStatus;
+
+/// Stepwise topology-optimization run: one SIMP iteration per [`TopoOptRun::step`],
+/// so a host can surface convergence progress (compliance, density change)
+/// between iterations. [`optimize`] drives this to completion, so the stepped
+/// and one-shot paths produce identical results by construction.
+pub struct TopoOptRun {
+    domain: Domain,
+    sys: fea::FeSystem,
+    spec: TopoOptSpec,
+    state: simp::SimpState,
+}
+
+impl TopoOptRun {
+    /// Validate the spec and build the FE system for a prepared domain.
+    pub fn begin(domain: Domain, spec: TopoOptSpec) -> Result<Self, TopoOptError> {
+        validate(&spec)?;
+        let sys = fea::FeSystem::build(&domain, spec.poisson, &spec.loads, &spec.supports)?;
+        let state = simp::SimpState::new(&domain, &sys, &spec);
+        Ok(Self {
+            domain,
+            sys,
+            spec,
+            state,
+        })
+    }
+
+    /// Begin inside an axis-aligned box design domain (see [`optimize_box`]).
+    pub fn begin_box(
+        min: [f64; 3],
+        max: [f64; 3],
+        spec: TopoOptSpec,
+    ) -> Result<Self, TopoOptError> {
+        if (0..3).any(|a| !(max[a] - min[a]).is_finite() || max[a] - min[a] <= 0.0) {
+            return Err(TopoOptError::InvalidSpec(
+                "domain box must have positive size on every axis".into(),
+            ));
+        }
+        let domain = Domain::from_bbox(min, max, spec.resolution);
+        Self::begin(domain, spec)
+    }
+
+    /// Begin inside an existing solid's tessellation (see [`optimize_mesh`]).
+    pub fn begin_mesh(mesh: &TriangleMesh, spec: TopoOptSpec) -> Result<Self, TopoOptError> {
+        let domain = Domain::from_mesh(mesh, spec.resolution);
+        Self::begin(domain, spec)
+    }
+
+    /// Total SIMP iterations this run may execute.
+    pub fn max_iterations(&self) -> usize {
+        self.spec.max_iterations
+    }
+
+    /// Run one SIMP iteration; `done` once converged or the budget is spent.
+    pub fn step(&mut self) -> SimpStepStatus {
+        self.state.step(&self.domain, &self.sys, &self.spec)
+    }
+
+    /// Extract the optimized surface mesh and package the result.
+    pub fn finish(self) -> TopoOptResult {
+        let simp = self.state.finish(&self.domain, &self.sys);
+        let nact = self.domain.num_active().max(1) as f64;
+        let volume_fraction_achieved = simp.densities.iter().sum::<f64>() / nact;
+        let mesh =
+            extract::extract_mesh(&self.domain, &simp.densities, self.spec.smooth_iterations);
+        TopoOptResult {
+            mesh,
+            compliance_history: simp.compliance_history,
+            iterations: simp.iterations,
+            converged: simp.converged,
+            volume_fraction_achieved,
+            grid: [self.domain.nx, self.domain.ny, self.domain.nz],
+            voxel_size: self.domain.h,
+        }
+    }
+}
+
 /// Run topology optimization on a prepared design domain.
 pub fn optimize(domain: &Domain, spec: &TopoOptSpec) -> Result<TopoOptResult, TopoOptError> {
-    validate(spec)?;
-    let sys = fea::FeSystem::build(domain, spec.poisson, &spec.loads, &spec.supports)?;
-    let simp = simp::optimize_densities(domain, &sys, spec);
-
-    let nact = domain.num_active().max(1) as f64;
-    let volume_fraction_achieved = simp.densities.iter().sum::<f64>() / nact;
-
-    let mesh = extract::extract_mesh(domain, &simp.densities, spec.smooth_iterations);
-
-    Ok(TopoOptResult {
-        mesh,
-        compliance_history: simp.compliance_history,
-        iterations: simp.iterations,
-        converged: simp.converged,
-        volume_fraction_achieved,
-        grid: [domain.nx, domain.ny, domain.nz],
-        voxel_size: domain.h,
-    })
+    let mut run = TopoOptRun::begin(domain.clone(), spec.clone())?;
+    while !run.step().done {}
+    Ok(run.finish())
 }
 
 /// Optimize within an axis-aligned box design domain.
@@ -232,6 +294,39 @@ mod tests {
         spec.max_iterations = 15;
         spec.volume_fraction = 0.35;
         spec
+    }
+
+    /// Driving the run one step at a time (the streamed-progress path) must
+    /// produce exactly the one-shot result on the same problem.
+    #[test]
+    fn stepwise_run_matches_the_one_shot_optimize() {
+        let mut spec = bracket_spec();
+        spec.resolution = 12;
+        spec.max_iterations = 6;
+        let one_shot = optimize_box([0.0; 3], [24.0, 6.0, 12.0], &spec).unwrap();
+
+        let mut run = TopoOptRun::begin_box([0.0; 3], [24.0, 6.0, 12.0], spec.clone()).unwrap();
+        let mut steps = 0;
+        loop {
+            let s = run.step();
+            assert!(s.compliance.is_finite());
+            steps += 1;
+            if s.done {
+                break;
+            }
+        }
+        let stepped = run.finish();
+
+        assert_eq!(steps, one_shot.iterations);
+        assert_eq!(one_shot.compliance_history, stepped.compliance_history);
+        assert_eq!(one_shot.iterations, stepped.iterations);
+        assert_eq!(one_shot.converged, stepped.converged);
+        assert_eq!(one_shot.mesh.vertices, stepped.mesh.vertices);
+        assert_eq!(one_shot.mesh.indices, stepped.mesh.indices);
+        assert_eq!(
+            one_shot.volume_fraction_achieved,
+            stepped.volume_fraction_achieved
+        );
     }
 
     #[test]

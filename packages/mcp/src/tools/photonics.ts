@@ -175,9 +175,15 @@ export const toolDefs: ToolDef[] = [
     },
     handler: (args, ctx) => {
       const a = args as Json;
-      const out = ctx.engine.photonicsSimulate(
+      // The kernel loop is chunked (a budget of FDTD timesteps per call), so
+      // progress notifications flush between chunks instead of bursting at
+      // the end. Bit-identical to the one-shot path.
+      const out = ctx.engine.photonicsSimulateChunked(
         JSON.stringify(a.spec),
         JSON.stringify(a.options ?? {}),
+        ctx.progress
+          ? (s) => ctx.progress?.(s.steps, s.total, `FDTD step ${s.steps}/${s.total}`)
+          : undefined,
       );
       return textResult(out);
     },

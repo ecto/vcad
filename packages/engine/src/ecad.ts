@@ -429,6 +429,60 @@ export async function runFabPrep(
   }
 }
 
+/** Per-round status from the stepwise fab-prep driver. */
+export interface FabPrepRoundStatus {
+  done: boolean;
+  round: number;
+  attributable: number;
+  max_rounds: number;
+}
+
+/**
+ * Chunked form of {@link runFabPrep}: drives the kernel's stepwise
+ * `FabPrepRun` session one strip-and-re-route round at a time, invoking
+ * `onRound` between kernel calls so a host can stream progress while the
+ * Node event loop is unblocked. Bit-identical outcome to the one-shot call —
+ * `run_fab_prep` is implemented on the same kernel session type. Falls back
+ * to the one-shot path on a kernel that predates `FabPrepRun`.
+ */
+export async function runFabPrepChunked(
+  pcb: Pcb,
+  options?: FabPrepOptions,
+  onRound?: (status: FabPrepRoundStatus) => void | Promise<void>,
+): Promise<EcadProbe<{ report: FabPrepReport; pcb: Pcb }>> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) {
+    return { ok: false, reason: "unavailable", message: "ECAD kernel WASM not loaded" };
+  }
+  const Runner = (wasm as { FabPrepRun?: new (pcb: string, opts?: string) => FabPrepRunHandle })
+    .FabPrepRun;
+  if (typeof Runner !== "function") {
+    return runFabPrep(pcb, options);
+  }
+  try {
+    const run = new Runner(JSON.stringify(pcb), options ? JSON.stringify(options) : undefined);
+    try {
+      for (;;) {
+        const status = run.round() as FabPrepRoundStatus;
+        await onRound?.(status);
+        if (status.done) break;
+      }
+      const out = run.finish() as { report: FabPrepReport; pcb: Pcb };
+      return { ok: true, value: out };
+    } finally {
+      run.free?.();
+    }
+  } catch (e) {
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+interface FabPrepRunHandle {
+  round(): unknown;
+  finish(): unknown;
+  free?(): void;
+}
+
 // ---------------------------------------------------------------------------
 // PCB Design-for-Manufacturing (fab-profile capability checks)
 // ---------------------------------------------------------------------------

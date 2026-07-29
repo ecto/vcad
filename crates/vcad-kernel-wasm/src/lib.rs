@@ -769,6 +769,105 @@ pub fn topology_optimize_mesh(
     topopt_response(result)
 }
 
+/// Stepwise SIMP topology optimization: the same pipeline as
+/// `topologyOptimizeBox` / `topologyOptimizeMesh`, split so a host can run one
+/// SIMP iteration per call and emit progress (compliance, density change)
+/// between iterations. Bit-identical to the one-shot calls — they are
+/// implemented on the same run type.
+///
+/// Usage: `TopoOptRun.beginBox(...)` or `.beginMesh(...)` → `step()` until
+/// `{done: true}` → `finish()` for the `WasmTopoOptResult`.
+#[wasm_bindgen(js_name = TopoOptRun)]
+pub struct WasmTopoOptRun {
+    run: Option<vcad_kernel::vcad_kernel_topopt::TopoOptRun>,
+}
+
+#[wasm_bindgen(js_class = TopoOptRun)]
+impl WasmTopoOptRun {
+    /// Begin inside an axis-aligned box design domain.
+    #[wasm_bindgen(js_name = beginBox)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_box(
+        spec_json: &str,
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+    ) -> Result<WasmTopoOptRun, JsError> {
+        let spec: vcad_kernel::vcad_kernel_topopt::TopoOptSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+        let run = vcad_kernel::vcad_kernel_topopt::TopoOptRun::begin_box(
+            [min_x, min_y, min_z],
+            [max_x, max_y, max_z],
+            spec,
+        )
+        .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(WasmTopoOptRun { run: Some(run) })
+    }
+
+    /// Begin inside an existing (closed) evaluated mesh.
+    #[wasm_bindgen(js_name = beginMesh)]
+    pub fn begin_mesh(
+        spec_json: &str,
+        positions: &[f32],
+        indices: &[u32],
+    ) -> Result<WasmTopoOptRun, JsError> {
+        let spec: vcad_kernel::vcad_kernel_topopt::TopoOptSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+        let mut mesh = vcad_kernel_tessellate::TriangleMesh::new();
+        mesh.vertices = positions.to_vec();
+        mesh.indices = indices.to_vec();
+        let run = vcad_kernel::vcad_kernel_topopt::TopoOptRun::begin_mesh(&mesh, spec)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(WasmTopoOptRun { run: Some(run) })
+    }
+
+    /// Total SIMP iterations this run may execute.
+    #[wasm_bindgen(js_name = maxIterations)]
+    pub fn max_iterations(&self) -> Result<u32, JsError> {
+        let run = self
+            .run
+            .as_ref()
+            .ok_or_else(|| JsError::new("TopoOptRun already finished"))?;
+        Ok(run.max_iterations() as u32)
+    }
+
+    /// One SIMP iteration. Returns `{ done, iteration, compliance, change }`.
+    pub fn step(&mut self) -> Result<JsValue, JsError> {
+        let run = self
+            .run
+            .as_mut()
+            .ok_or_else(|| JsError::new("TopoOptRun already finished"))?;
+        let s = run.step();
+        #[derive(Serialize)]
+        struct Status {
+            done: bool,
+            iteration: u32,
+            compliance: f64,
+            change: f64,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            done: s.done,
+            iteration: s.iteration as u32,
+            compliance: s.compliance,
+            change: s.change,
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Extract the optimized mesh; returns a `WasmTopoOptResult`. The run is
+    /// consumed; further calls error.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        let run = self
+            .run
+            .take()
+            .ok_or_else(|| JsError::new("TopoOptRun already finished"))?;
+        topopt_response(run.finish())
+    }
+}
+
 /// Result of a static structural analysis solve (see
 /// `vcad_kernel_topopt::analyze`). Two-tier contract: at coarse resolution
 /// this is the fast `predicted` path; the same solver at fine resolution is
@@ -6098,6 +6197,87 @@ mod ecad_wasm {
         .map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Stepwise fab-prep driver: the same pipeline as `ecadFabPrep`, split so a
+    /// host can pump the strip-and-re-route loop one round at a time and emit
+    /// progress between rounds. The construct-round-finish sequence is
+    /// bit-identical to the one-shot call (`run_fab_prep` is implemented on the
+    /// same session type).
+    ///
+    /// Usage: `new FabPrepRun(pcbJson, optsJson)` → `round()` until
+    /// `{done: true}` → `finish()` for `{ report, pcb }`.
+    #[wasm_bindgen]
+    pub struct FabPrepRun {
+        pcb: Pcb,
+        session: Option<vcad_ecad_fabprep::FabPrepSession>,
+        /// Set when `begin` refused the run (bad waiver name): `round()` is a
+        /// no-op and `finish()` returns this outcome, matching the one-shot.
+        refusal: Option<vcad_ecad_fabprep::FabPrepOutcome>,
+    }
+
+    #[wasm_bindgen]
+    impl FabPrepRun {
+        /// Start a run: waiver validation, opt-in calibration, the stripped
+        /// baseline DRC, and the up-front verdict pass all happen here.
+        #[wasm_bindgen(constructor)]
+        pub fn new(pcb_json: &str, options_json: Option<String>) -> Result<FabPrepRun, JsError> {
+            let mut pcb: Pcb =
+                serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+            let opts: vcad_ecad_fabprep::FabPrepOptions = match options_json.as_deref() {
+                None | Some("") | Some("null") => Default::default(),
+                Some(json) => {
+                    serde_json::from_str(json).map_err(|e| JsError::new(&e.to_string()))?
+                }
+            };
+            let (session, refusal) = match vcad_ecad_fabprep::FabPrepSession::begin(&mut pcb, &opts)
+            {
+                Ok(s) => (Some(s), None),
+                Err(outcome) => (None, Some(*outcome)),
+            };
+            Ok(FabPrepRun {
+                pcb,
+                session,
+                refusal,
+            })
+        }
+
+        /// Run one strip-and-re-route round. Returns
+        /// `{ done, round, attributable, max_rounds }`.
+        pub fn round(&mut self) -> Result<JsValue, JsError> {
+            let status = match &mut self.session {
+                Some(s) => s.round(&mut self.pcb),
+                None => vcad_ecad_fabprep::RoundStatus {
+                    done: true,
+                    round: 0,
+                    attributable: 0,
+                    max_rounds: 0,
+                },
+            };
+            serde_wasm_bindgen::to_value(&status).map_err(|e| JsError::new(&e.to_string()))
+        }
+
+        /// Prune, final DRC, receipt. Returns `{ report, pcb }` — the same
+        /// shape as `ecadFabPrep`. The run is consumed; further calls error.
+        pub fn finish(&mut self) -> Result<JsValue, JsError> {
+            let outcome = match (self.session.take(), self.refusal.take()) {
+                (Some(s), _) => s.finish(&mut self.pcb),
+                (None, Some(r)) => r,
+                (None, None) => {
+                    return Err(JsError::new("FabPrepRun already finished"));
+                }
+            };
+            #[derive(serde::Serialize)]
+            struct Out<'a> {
+                report: &'a vcad_ecad_fabprep::FabPrepReport,
+                pcb: &'a Pcb,
+            }
+            serde_wasm_bindgen::to_value(&Out {
+                report: &outcome.report,
+                pcb: &self.pcb,
+            })
+            .map_err(|e| JsError::new(&e.to_string()))
+        }
+    }
+
     /// Audit one net's routing without mutating anything: length, via/layer
     /// count, the closest approach to other-net copper (via the router oracle),
     /// and any clearance/short/unconnected DRC issues it's involved in. The
@@ -8033,12 +8213,21 @@ struct WasmParticleSim {
 /// (fail-closed: unbound names error), `options_json` a
 /// [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
 /// unified-receipt claims (basis `predicted` — Provisional by contract).
-#[wasm_bindgen(js_name = particleSimulate)]
-pub fn particle_simulate(
+/// Shared setup for the one-shot and stepwise particle simulations:
+/// parse, resolve, solve the fields, and derive the trace options.
+struct ParticleSimSetup {
+    device: vcad_kernel::vcad_kernel_particle::device::Device,
+    sol: vcad_kernel::vcad_kernel_particle::poisson::Solution,
+    sol_tol: f64,
+    topts: vcad_kernel::vcad_kernel_particle::trace::TraceOptions,
+    opts: ParticleSimOptions,
+}
+
+fn particle_sim_setup(
     spec_json: &str,
     params_json: &str,
     options_json: &str,
-) -> Result<JsValue, JsError> {
+) -> Result<ParticleSimSetup, JsError> {
     use vcad_kernel::vcad_kernel_particle as pk;
     let spec: pk::spec::DeviceSpec =
         serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
@@ -8059,7 +8248,6 @@ pub fn particle_simulate(
     let sopts = pk::poisson::SolveOptions::default();
     let sol = pk::poisson::solve(&device, opts.nr, opts.nz, &sopts)
         .map_err(|e| JsError::new(&e.to_string()))?;
-    let fields = pk::field::FieldMap::new(&device, &sol);
     let mut topts = pk::trace::TraceOptions {
         max_passes: opts.max_passes,
         ..Default::default()
@@ -8073,19 +8261,34 @@ pub fn particle_simulate(
             ),
         });
     }
-    let tracer = pk::trace::Tracer::new(&device, &fields, &sol, topts);
-    let stats = pk::fom::stats(&tracer.launch_ensemble(pk::trace::DEUTERON, opts.particles));
+    Ok(ParticleSimSetup {
+        device,
+        sol,
+        sol_tol: sopts.tol,
+        topts,
+        opts,
+    })
+}
+
+/// Assemble the `particleSimulate` payload from a traced ensemble —
+/// shared by the one-shot and stepwise paths.
+fn particle_sim_readout(
+    setup: &ParticleSimSetup,
+    outcomes: &[vcad_kernel::vcad_kernel_particle::trace::TraceOutcome],
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_particle as pk;
+    let stats = pk::fom::stats(outcomes);
     let op = pk::receipt::OperatingPoint {
-        ion_current_a: opts.ion_current_a,
-        d2_pressure_mtorr: opts.d2_pressure_mtorr,
-        temperature_k: opts.temperature_k,
+        ion_current_a: setup.opts.ion_current_a,
+        d2_pressure_mtorr: setup.opts.d2_pressure_mtorr,
+        temperature_k: setup.opts.temperature_k,
     };
     let claim_set = pk::receipt::predicted_claims(
         &stats,
-        &sol,
-        &topts,
-        sopts.tol,
-        device.max_potential_drop_v(),
+        &setup.sol,
+        &setup.topts,
+        setup.sol_tol,
+        setup.device.max_potential_drop_v(),
         &op,
     );
     let receipt_claims = pk::receipt::design_claims(&claim_set);
@@ -8093,12 +8296,113 @@ pub fn particle_simulate(
         stats,
         claim_set,
         receipt_claims,
-        geometric_transparency: pk::fom::geometric_transparency(&device),
+        geometric_transparency: pk::fom::geometric_transparency(&setup.device),
     };
     // json_compatible: maps serialize as plain objects (a JS `Map` would
     // vanish under JSON.stringify on the TS side).
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen(js_name = particleSimulate)]
+pub fn particle_simulate(
+    spec_json: &str,
+    params_json: &str,
+    options_json: &str,
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_particle as pk;
+    let setup = particle_sim_setup(spec_json, params_json, options_json)?;
+    let fields = pk::field::FieldMap::new(&setup.device, &setup.sol);
+    let tracer = pk::trace::Tracer::new(&setup.device, &fields, &setup.sol, setup.topts);
+    let outcomes = tracer.launch_ensemble(pk::trace::DEUTERON, setup.opts.particles);
+    particle_sim_readout(&setup, &outcomes)
+}
+
+/// Stepwise charged-particle simulation: the field solve happens in the
+/// constructor, then the deterministic launch-grid ensemble is traced in
+/// budgeted particle chunks so a host can stream progress. Each particle
+/// depends only on its index, so the result is bit-identical to
+/// `particleSimulate`.
+///
+/// Usage: `new ParticleRun(specJson, paramsJson, optionsJson)` →
+/// `advance(budget)` (particles) until `{done: true}` → `finish()`.
+#[wasm_bindgen(js_name = ParticleRun)]
+pub struct WasmParticleRun {
+    setup: Option<ParticleSimSetup>,
+    outcomes: Vec<vcad_kernel::vcad_kernel_particle::trace::TraceOutcome>,
+    total: usize,
+}
+
+#[wasm_bindgen(js_class = ParticleRun)]
+impl WasmParticleRun {
+    /// Parse, resolve, and solve the device's fields.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        spec_json: &str,
+        params_json: &str,
+        options_json: &str,
+    ) -> Result<WasmParticleRun, JsError> {
+        let setup = particle_sim_setup(spec_json, params_json, options_json)?;
+        // launch_ensemble clamps to >= 2 particles; mirror it here so the
+        // chunked grid is the same grid.
+        let total = setup.opts.particles.max(2);
+        Ok(WasmParticleRun {
+            setup: Some(setup),
+            outcomes: Vec::with_capacity(total),
+            total,
+        })
+    }
+
+    /// Trace up to `budget` particles. Returns `{ done, steps, total }`
+    /// (steps = particles traced).
+    pub fn advance(&mut self, budget: u32) -> Result<JsValue, JsError> {
+        use vcad_kernel::vcad_kernel_particle as pk;
+        let setup = self
+            .setup
+            .as_ref()
+            .ok_or_else(|| JsError::new("ParticleRun already finished"))?;
+        let start = self.outcomes.len();
+        if start < self.total {
+            let end = (start + budget.max(1) as usize).min(self.total);
+            let fields = pk::field::FieldMap::new(&setup.device, &setup.sol);
+            let tracer = pk::trace::Tracer::new(&setup.device, &fields, &setup.sol, setup.topts);
+            self.outcomes.extend(tracer.launch_ensemble_range(
+                pk::trace::DEUTERON,
+                self.total,
+                start,
+                end,
+            ));
+        }
+        #[derive(serde::Serialize)]
+        struct Status {
+            done: bool,
+            steps: usize,
+            total: usize,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            done: self.outcomes.len() >= self.total,
+            steps: self.outcomes.len(),
+            total: self.total,
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Assemble the same payload `particleSimulate` returns. Errors
+    /// unless the whole ensemble was traced. The run is consumed.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        if self.outcomes.len() < self.total {
+            return Err(JsError::new(&format!(
+                "ParticleRun has only traced {} of {} particles — call advance() to completion first",
+                self.outcomes.len(),
+                self.total
+            )));
+        }
+        let setup = self
+            .setup
+            .take()
+            .ok_or_else(|| JsError::new("ParticleRun already finished"))?;
+        particle_sim_readout(&setup, &self.outcomes)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -8220,6 +8524,19 @@ pub fn particle_optimize(
             .mean_ddn_sigma_v_m3
     };
 
+    let plan = particle_opt_plan(&oopts, lo, hi);
+    let (starts, best_idx) = pk::optimize::multi_start_maximize(&mut objective, plan);
+    particle_opt_readout(&names, &starts, best_idx, evals_total)
+}
+
+/// The multi-start plan for `particleOptimize` — shared by the one-shot
+/// and stepwise paths so both search the same seed grid.
+fn particle_opt_plan(
+    oopts: &ParticleOptOptions,
+    lo: Vec<f64>,
+    hi: Vec<f64>,
+) -> vcad_kernel::vcad_kernel_particle::optimize::MultiStart {
+    use vcad_kernel::vcad_kernel_particle as pk;
     let seed_fractions: Vec<f64> = if oopts.multi_start {
         vec![0.2, 0.5, 0.8]
     } else {
@@ -8230,39 +8547,180 @@ pub fn particle_optimize(
         .iter()
         .map(|v| v.start)
         .collect::<Option<Vec<f64>>>();
-
-    let fd = pk::optimize::FdOptions {
-        max_iters: oopts.max_iters,
-        ..pk::optimize::FdOptions::default()
-    };
-    let mut best: Option<pk::optimize::FdResult> = None;
-    let mut starts = Vec::new();
-    for (k, f) in seed_fractions.iter().enumerate() {
-        let x0: Vec<f64> = if k == 0 && explicit.is_some() {
-            explicit.clone().unwrap()
-        } else {
-            lo.iter().zip(&hi).map(|(a, b)| a + f * (b - a)).collect()
-        };
-        let r = pk::optimize::maximize(&mut objective, &x0, &lo, &hi, &fd);
-        starts.push(WasmParticleOptStart {
-            params: names.iter().cloned().zip(r.x.iter().copied()).collect(),
-            value: r.value,
-        });
-        let better = best.as_ref().map(|b| r.value > b.value).unwrap_or(true);
-        if better {
-            best = Some(r);
-        }
+    pk::optimize::MultiStart {
+        lo,
+        hi,
+        explicit_start: explicit,
+        seed_fractions,
+        opts: pk::optimize::FdOptions {
+            max_iters: oopts.max_iters,
+            ..pk::optimize::FdOptions::default()
+        },
     }
-    let best = best.expect("at least one start");
+}
+
+/// Assemble the `particleOptimize` payload — shared by the one-shot and
+/// stepwise paths.
+fn particle_opt_readout(
+    names: &[String],
+    starts: &[vcad_kernel::vcad_kernel_particle::optimize::FdResult],
+    best_idx: usize,
+    evals_total: usize,
+) -> Result<JsValue, JsError> {
+    let best = &starts[best_idx];
     let out = WasmParticleOpt {
         best_params: names.iter().cloned().zip(best.x.iter().copied()).collect(),
         best_sigma_v_m3: best.value,
         evals: evals_total,
-        history: best.history,
-        starts,
+        history: best.history.clone(),
+        starts: starts
+            .iter()
+            .map(|r| WasmParticleOptStart {
+                params: names.iter().cloned().zip(r.x.iter().copied()).collect(),
+                value: r.value,
+            })
+            .collect(),
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Stepwise electrode optimization: each `advance()` call runs exactly
+/// one complete FD-ascent start, so a host can stream per-start progress
+/// (which start, its objective value). Deterministic — identical to
+/// `particleOptimize` by construction (both drive the kernel's
+/// multi-start runner over the same plan).
+///
+/// Usage: `new ParticleOptimizeRun(specJson, paramsJson, optimizeJson)`
+/// → `advance()` until `{done: true}` → `finish()`.
+#[wasm_bindgen(js_name = ParticleOptimizeRun)]
+pub struct WasmParticleOptimizeRun {
+    spec: vcad_kernel::vcad_kernel_particle::spec::DeviceSpec,
+    base: std::collections::BTreeMap<String, f64>,
+    names: Vec<String>,
+    nr: usize,
+    nz: usize,
+    particles: usize,
+    max_passes: u32,
+    run: Option<vcad_kernel::vcad_kernel_particle::optimize::MultiStartRun>,
+    evals_total: usize,
+}
+
+#[wasm_bindgen(js_class = ParticleOptimizeRun)]
+impl WasmParticleOptimizeRun {
+    /// Parse the spec/params/plan and set up the search.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        spec_json: &str,
+        params_json: &str,
+        optimize_json: &str,
+    ) -> Result<WasmParticleOptimizeRun, JsError> {
+        use vcad_kernel::vcad_kernel_particle as pk;
+        let spec: pk::spec::DeviceSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+        let base: std::collections::BTreeMap<String, f64> = if params_json.trim().is_empty() {
+            Default::default()
+        } else {
+            serde_json::from_str(params_json)
+                .map_err(|e| JsError::new(&format!("bad params: {e}")))?
+        };
+        let oopts: ParticleOptOptions = serde_json::from_str(optimize_json)
+            .map_err(|e| JsError::new(&format!("bad optimize options: {e}")))?;
+        if oopts.variables.is_empty() {
+            return Err(JsError::new("optimize requires at least one variable"));
+        }
+        let lo: Vec<f64> = oopts.variables.iter().map(|v| v.lo).collect();
+        let hi: Vec<f64> = oopts.variables.iter().map(|v| v.hi).collect();
+        let names: Vec<String> = oopts.variables.iter().map(|v| v.name.clone()).collect();
+        let plan = particle_opt_plan(&oopts, lo, hi);
+        Ok(WasmParticleOptimizeRun {
+            spec,
+            base,
+            names,
+            nr: oopts.nr,
+            nz: oopts.nz,
+            particles: oopts.particles,
+            max_passes: oopts.max_passes,
+            run: Some(pk::optimize::MultiStartRun::new(plan)),
+            evals_total: 0,
+        })
+    }
+
+    /// Run the next complete FD-ascent start. Returns
+    /// `{ done, steps, total, value }` — `value` is the just-finished
+    /// start's best objective (D-D sigma-v, m^3/s), absent once done.
+    pub fn advance(&mut self) -> Result<JsValue, JsError> {
+        use vcad_kernel::vcad_kernel_particle as pk;
+        let run = self
+            .run
+            .as_mut()
+            .ok_or_else(|| JsError::new("ParticleOptimizeRun already finished"))?;
+        let (spec, base, names) = (&self.spec, &self.base, &self.names);
+        let (nr, nz, particles, max_passes) = (self.nr, self.nz, self.particles, self.max_passes);
+        let evals_total = &mut self.evals_total;
+        let mut objective = |x: &[f64]| -> f64 {
+            let mut p = base.clone();
+            for (name, value) in names.iter().zip(x) {
+                p.insert(name.clone(), *value);
+            }
+            *evals_total += 1;
+            let Ok(device) = spec.resolve(&p) else {
+                return 0.0;
+            };
+            let Ok(sol) =
+                pk::poisson::solve(&device, nr, nz, &pk::poisson::SolveOptions::default())
+            else {
+                return 0.0;
+            };
+            let fields = pk::field::FieldMap::new(&device, &sol);
+            let topts = pk::trace::TraceOptions {
+                max_passes,
+                ..Default::default()
+            };
+            let tracer = pk::trace::Tracer::new(&device, &fields, &sol, topts);
+            pk::fom::stats(&tracer.launch_ensemble(pk::trace::DEUTERON, particles))
+                .mean_ddn_sigma_v_m3
+        };
+        let value = run.advance_one(&mut objective).map(|r| r.value);
+        #[derive(serde::Serialize)]
+        struct Status {
+            done: bool,
+            steps: usize,
+            total: usize,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            value: Option<f64>,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            done: run.starts_done() >= run.total_starts(),
+            steps: run.starts_done(),
+            total: run.total_starts(),
+            value,
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Assemble the same payload `particleOptimize` returns. Errors
+    /// unless every start ran. The run is consumed.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        let run = self
+            .run
+            .take()
+            .ok_or_else(|| JsError::new("ParticleOptimizeRun already finished"))?;
+        if run.starts_done() < run.total_starts() {
+            return Err(JsError::new(&format!(
+                "ParticleOptimizeRun has only run {} of {} starts — call advance() to completion first",
+                run.starts_done(),
+                run.total_starts()
+            )));
+        }
+        let best = run.best().expect("at least one start ran").clone();
+        let starts = run.starts().to_vec();
+        let best_idx = starts
+            .iter()
+            .position(|r| r == &best)
+            .expect("best came from starts");
+        particle_opt_readout(&self.names, &starts, best_idx, self.evals_total)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -8666,6 +9124,129 @@ pub fn simulate_flow(
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Stepwise steady-flow solve: the same solve as `simulateFlow`, split so a
+/// host can pump the LBM timestep loop in chunks and emit progress (steps,
+/// residual) between chunks. Bit-identical to the one-shot call — chunk
+/// boundaries cannot change the result because steadiness checks key off the
+/// absolute step count.
+///
+/// Usage: `new FlowRun(specJson, optionsJson, includeFields)` →
+/// `advance(budget)` until `{converged: true}` → `finish()` for the same
+/// payload `simulateFlow` returns.
+#[wasm_bindgen]
+pub struct FlowRun {
+    model: vcad_kernel::vcad_kernel_flow::model::FlowModel,
+    opts: vcad_kernel::vcad_kernel_flow::solve::SolveOptions,
+    stepper: Option<vcad_kernel::vcad_kernel_flow::solve::FlowStepper>,
+    include_fields: bool,
+}
+
+#[wasm_bindgen]
+impl FlowRun {
+    /// Parse and resolve the spec, derive the scaling, initialize the lattice.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        spec_json: &str,
+        options_json: &str,
+        include_fields: bool,
+    ) -> Result<FlowRun, JsError> {
+        use vcad_kernel::vcad_kernel_flow as fl;
+        let spec: fl::spec::FlowSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+        let opts: fl::solve::SolveOptions =
+            if options_json.trim().is_empty() || options_json.trim() == "{}" {
+                Default::default()
+            } else {
+                serde_json::from_str(options_json)
+                    .map_err(|e| JsError::new(&format!("bad options: {e}")))?
+            };
+        let model = spec.resolve().map_err(|e| JsError::new(&e.to_string()))?;
+        let n_voxels: usize = model.divisions.iter().product();
+        if n_voxels > 2_000_000 {
+            return Err(JsError::new(&format!(
+                "grid too large for the MCP tier: {n_voxels} voxels (cap 2,000,000) — lower `divisions`"
+            )));
+        }
+        let stepper =
+            fl::solve::FlowStepper::new(&model, &opts).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(FlowRun {
+            model,
+            opts,
+            stepper: Some(stepper),
+            include_fields,
+        })
+    }
+
+    /// Run up to `budget` timesteps. Returns
+    /// `{ converged, steps, max_steps, residual }`; errors exactly as the
+    /// one-shot solve does (divergence, budget exhausted without steadiness).
+    pub fn advance(&mut self, budget: u32) -> Result<JsValue, JsError> {
+        use vcad_kernel::vcad_kernel_flow::solve::FlowProgress;
+        let stepper = self
+            .stepper
+            .as_mut()
+            .ok_or_else(|| JsError::new("FlowRun already finished"))?;
+        let progress = stepper
+            .advance(budget.max(1) as usize)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        #[derive(serde::Serialize)]
+        struct Status {
+            converged: bool,
+            steps: usize,
+            max_steps: usize,
+            residual: f64,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            converged: matches!(progress, FlowProgress::Converged),
+            steps: stepper.steps(),
+            max_steps: stepper.max_steps(),
+            residual: stepper.residual(),
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Assemble the same payload `simulateFlow` returns. Errors unless a prior
+    /// `advance` reported convergence. The run is consumed; further calls error.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        use vcad_kernel::vcad_kernel_flow as fl;
+        let stepper = self
+            .stepper
+            .take()
+            .ok_or_else(|| JsError::new("FlowRun already finished"))?;
+        let sol = stepper
+            .into_solution()
+            .ok_or_else(|| JsError::new("FlowRun has not converged — call advance() first"))?;
+        let model = &self.model;
+        let claim_set = fl::receipt::predicted_claims(model, &sol, &self.opts, None);
+        let receipt_claims = fl::receipt::design_claims(&claim_set);
+        let fields = self.include_fields.then(|| WasmFlowFields {
+            velocity_m_s: sol.velocity_m_s.clone(),
+            gauge_pressure_pa: sol.gauge_pressure_pa.clone(),
+            temperature_c: sol.temperature_c.clone(),
+        });
+        let out = WasmFlowSolve {
+            divisions: model.divisions,
+            voxel_mm: model.voxel_mm(),
+            scaling: sol.scaling,
+            steps: sol.steps,
+            steady_residual: sol.steady_residual,
+            pressure_drop_pa: sol.pressure_drop_pa,
+            inlet_flow_m3_s: sol.inlet_flow_m3_s,
+            outlet_flow_m3_s: sol.outlet_flow_m3_s,
+            mass_balance_residual: sol.mass_balance_residual,
+            max_speed_m_s: sol.max_speed_m_s,
+            outlet_temp_c: sol.outlet_temp_c,
+            heat_pickup_w: sol.heat_pickup_w,
+            wall_heat_w: sol.wall_heat_w,
+            claim_set,
+            receipt_claims,
+            fields,
+        };
+        let ser = serde_wasm_bindgen::Serializer::json_compatible();
+        serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -9787,12 +10368,27 @@ struct WasmPhotonicsSim {
     receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
 }
 
-/// Forward 2D TM FDTD run of a rect-composed photonic device: slab-mode
-/// line source, input + output flux monitors, transmission spectrum, and
-/// predicted claims (the splitter claim family; a single-output device
-/// reads arm B as zero).
-#[wasm_bindgen(js_name = photonicsSimulate)]
-pub fn photonics_simulate(spec_json: &str, options_json: &str) -> Result<JsValue, JsError> {
+/// Everything a forward photonics run needs between setup and the flux
+/// readout: the built simulation, its monitors, and the readout inputs.
+/// Shared by the one-shot `photonicsSimulate` and the stepwise
+/// `PhotonicsRun`, so the two paths are identical by construction.
+struct PhotonicsSetup {
+    sim: vcad_kernel::vcad_kernel_photonics::Simulation,
+    f_in: vcad_kernel::vcad_kernel_photonics::FluxId,
+    f_outs: Vec<vcad_kernel::vcad_kernel_photonics::FluxId>,
+    freqs: Vec<f64>,
+    f0: f64,
+    n_eff: f64,
+    delta: f64,
+    nx: usize,
+    ny: usize,
+    wavelength_um: f64,
+    n_core: f64,
+    steps: usize,
+}
+
+/// Validate the spec/options and assemble the simulation (no timesteps run).
+fn photonics_setup(spec_json: &str, options_json: &str) -> Result<PhotonicsSetup, JsError> {
     use vcad_kernel::vcad_kernel_photonics as ph;
     let spec: WasmPhotonicsSpec =
         serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
@@ -9936,8 +10532,39 @@ pub fn photonics_simulate(spec_json: &str, options_json: &str) -> Result<JsValue
             freqs: freqs.clone(),
         }));
     }
-    sim.run(opts.steps);
+    Ok(PhotonicsSetup {
+        sim,
+        f_in,
+        f_outs,
+        freqs,
+        f0,
+        n_eff: mode.n_eff,
+        delta,
+        nx,
+        ny,
+        wavelength_um: spec.wavelength_um,
+        n_core: spec.n_core,
+        steps: opts.steps,
+    })
+}
 
+/// Read the monitors and price the claims (after all timesteps have run).
+fn photonics_finish(setup: PhotonicsSetup) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_photonics as ph;
+    let PhotonicsSetup {
+        sim,
+        f_in,
+        f_outs,
+        freqs,
+        f0,
+        n_eff,
+        delta,
+        nx,
+        ny,
+        wavelength_um,
+        n_core,
+        steps,
+    } = setup;
     let p_in = sim.flux_power(f_in);
     let p_a = sim.flux_power(f_outs[0]);
     let p_b = f_outs.get(1).map(|id| sim.flux_power(*id));
@@ -9949,21 +10576,98 @@ pub fn photonics_simulate(spec_json: &str, options_json: &str) -> Result<JsValue
             p_arm_b: p_b.as_ref().map(|p| p[i].1).unwrap_or(0.0),
         })
         .collect();
-    let provenance =
-        ph::receipt::SolverProvenance::from_sim(&sim, spec.wavelength_um, spec.n_core, opts.steps);
+    let provenance = ph::receipt::SolverProvenance::from_sim(&sim, wavelength_um, n_core, steps);
     let claim_set = ph::receipt::splitter_claims(&meas, f0, provenance, None)
         .map_err(|e| JsError::new(&e.to_string()))?;
     let receipt_claims = ph::receipt::design_claims(&claim_set);
     let out = WasmPhotonicsSim {
         grid: [nx, ny],
         delta_um: delta,
-        n_eff: mode.n_eff,
+        n_eff,
         freqs,
         claim_set,
         receipt_claims,
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Forward 2D TM FDTD run of a rect-composed photonic device: slab-mode
+/// line source, input + output flux monitors, transmission spectrum, and
+/// predicted claims (the splitter claim family; a single-output device
+/// reads arm B as zero).
+#[wasm_bindgen(js_name = photonicsSimulate)]
+pub fn photonics_simulate(spec_json: &str, options_json: &str) -> Result<JsValue, JsError> {
+    let mut setup = photonics_setup(spec_json, options_json)?;
+    let steps = setup.steps;
+    setup.sim.run(steps);
+    photonics_finish(setup)
+}
+
+/// Stepwise forward FDTD run: the same simulation as `photonicsSimulate`,
+/// split so a host can pump the timestep loop in chunks and emit progress
+/// between chunks. `run(a)` then `run(b)` is exactly `run(a+b)`, so the
+/// chunked result is bit-identical to the one-shot call.
+///
+/// Usage: `new PhotonicsRun(specJson, optionsJson)` → `advance(budget)` until
+/// `{done: true}` → `finish()` for the same payload `photonicsSimulate`
+/// returns.
+#[wasm_bindgen]
+pub struct PhotonicsRun {
+    setup: Option<PhotonicsSetup>,
+    steps_done: usize,
+}
+
+#[wasm_bindgen]
+impl PhotonicsRun {
+    /// Validate and assemble the simulation (no timesteps run yet).
+    #[wasm_bindgen(constructor)]
+    pub fn new(spec_json: &str, options_json: &str) -> Result<PhotonicsRun, JsError> {
+        Ok(PhotonicsRun {
+            setup: Some(photonics_setup(spec_json, options_json)?),
+            steps_done: 0,
+        })
+    }
+
+    /// Run up to `budget` FDTD timesteps. Returns `{ done, steps, total }`.
+    pub fn advance(&mut self, budget: u32) -> Result<JsValue, JsError> {
+        let setup = self
+            .setup
+            .as_mut()
+            .ok_or_else(|| JsError::new("PhotonicsRun already finished"))?;
+        let total = setup.steps;
+        let n = (budget.max(1) as usize).min(total - self.steps_done.min(total));
+        setup.sim.run(n);
+        self.steps_done += n;
+        #[derive(serde::Serialize)]
+        struct Status {
+            done: bool,
+            steps: usize,
+            total: usize,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            done: self.steps_done >= total,
+            steps: self.steps_done,
+            total,
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Read the monitors and price the claims. Errors unless every timestep
+    /// has run. The run is consumed; further calls error.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        let setup = self
+            .setup
+            .take()
+            .ok_or_else(|| JsError::new("PhotonicsRun already finished"))?;
+        if self.steps_done < setup.steps {
+            return Err(JsError::new(&format!(
+                "PhotonicsRun has only run {} of {} steps — call advance() to completion first",
+                self.steps_done, setup.steps
+            )));
+        }
+        photonics_finish(setup)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -10002,8 +10706,19 @@ struct WasmNeutronicsSim {
 /// `spec_json` is a `vcad_kernel_neutronics::spec::ShieldSpec` (named
 /// parameters allowed; histories/batches/seed ride inside its `run`
 /// block), `params_json` a `{name: value}` map binding them.
-#[wasm_bindgen(js_name = neutronicsSimulate)]
-pub fn neutronics_simulate(spec_json: &str, params_json: &str) -> Result<JsValue, JsError> {
+/// Parse the spec/params and apply the MCP-tier history cap — shared by
+/// the one-shot and stepwise paths so they gate identically.
+#[allow(clippy::type_complexity)]
+fn neutronics_setup(
+    spec_json: &str,
+    params_json: &str,
+) -> Result<
+    (
+        vcad_kernel::vcad_kernel_neutronics::spec::ShieldSpec,
+        std::collections::BTreeMap<String, f64>,
+    ),
+    JsError,
+> {
     use vcad_kernel::vcad_kernel_neutronics as nk;
     let spec: nk::spec::ShieldSpec =
         serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
@@ -10021,14 +10736,21 @@ pub fn neutronics_simulate(spec_json: &str, params_json: &str) -> Result<JsValue
             "too many histories for the MCP tier: {total_requested} (cap 5,000,000) — error bars scale as 1/sqrt(N)"
         )));
     }
-    let (doses, result) =
-        nk::spec::evaluate(&spec, &params).map_err(|e| JsError::new(&e.to_string()))?;
-    let resolved = spec
-        .resolve(&params)
+    Ok((spec, params))
+}
+
+/// Assemble the `neutronicsSimulate` payload — shared by the one-shot
+/// and stepwise paths.
+fn neutronics_readout(
+    spec: &vcad_kernel::vcad_kernel_neutronics::spec::ShieldSpec,
+    params: &std::collections::BTreeMap<String, f64>,
+    detector_regions: &[(String, usize)],
+    doses: &[vcad_kernel::vcad_kernel_neutronics::spec::DetectorDose],
+    result: &vcad_kernel::vcad_kernel_neutronics::transport::RunResult,
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_neutronics as nk;
+    let claim_set = nk::receipt::claims_from_run(spec, detector_regions, doses, result, params)
         .map_err(|e| JsError::new(&e.to_string()))?;
-    let claim_set =
-        nk::receipt::claims_from_run(&spec, &resolved.detector_regions, &doses, &result, &params)
-            .map_err(|e| JsError::new(&e.to_string()))?;
     let receipt_claims = nk::receipt::design_claims(&claim_set);
     let out = WasmNeutronicsSim {
         detectors: doses
@@ -10054,6 +10776,88 @@ pub fn neutronics_simulate(spec_json: &str, params_json: &str) -> Result<JsValue
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen(js_name = neutronicsSimulate)]
+pub fn neutronics_simulate(spec_json: &str, params_json: &str) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_neutronics as nk;
+    let (spec, params) = neutronics_setup(spec_json, params_json)?;
+    let (doses, result) =
+        nk::spec::evaluate(&spec, &params).map_err(|e| JsError::new(&e.to_string()))?;
+    let resolved = spec
+        .resolve(&params)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    neutronics_readout(&spec, &params, &resolved.detector_regions, &doses, &result)
+}
+
+/// Stepwise Monte Carlo neutron shielding run: the batch loop in budgeted
+/// chunks so a host can stream progress. Each batch owns an independent
+/// RNG stream, so the result is bit-identical to `neutronicsSimulate`.
+///
+/// Usage: `new NeutronicsRun(specJson, paramsJson)` → `advance(budget)`
+/// (batches) until `{done: true}` → `finish()` for the one-shot payload.
+#[wasm_bindgen(js_name = NeutronicsRun)]
+pub struct WasmNeutronicsRun {
+    spec: vcad_kernel::vcad_kernel_neutronics::spec::ShieldSpec,
+    params: std::collections::BTreeMap<String, f64>,
+    run: Option<vcad_kernel::vcad_kernel_neutronics::spec::EvaluateRun>,
+}
+
+#[wasm_bindgen(js_class = NeutronicsRun)]
+impl WasmNeutronicsRun {
+    /// Parse and gate the spec, resolve it, set up the tallies.
+    #[wasm_bindgen(constructor)]
+    pub fn new(spec_json: &str, params_json: &str) -> Result<WasmNeutronicsRun, JsError> {
+        use vcad_kernel::vcad_kernel_neutronics as nk;
+        let (spec, params) = neutronics_setup(spec_json, params_json)?;
+        let run =
+            nk::spec::EvaluateRun::new(&spec, &params).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(WasmNeutronicsRun {
+            spec,
+            params,
+            run: Some(run),
+        })
+    }
+
+    /// Transport up to `budget` whole batches. Returns
+    /// `{ done, steps, total }` (steps = batches transported).
+    pub fn advance(&mut self, budget: u32) -> Result<JsValue, JsError> {
+        use vcad_kernel::vcad_kernel_neutronics::transport::TransportProgress;
+        let run = self
+            .run
+            .as_mut()
+            .ok_or_else(|| JsError::new("NeutronicsRun already finished"))?;
+        let progress = run.advance(budget.max(1) as usize);
+        #[derive(serde::Serialize)]
+        struct Status {
+            done: bool,
+            steps: usize,
+            total: usize,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            done: matches!(progress, TransportProgress::Done),
+            steps: run.batches_done(),
+            total: run.total_batches(),
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Assemble the same payload `neutronicsSimulate` returns (advance to
+    /// completion first). The run is consumed.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        let run = self
+            .run
+            .take()
+            .ok_or_else(|| JsError::new("NeutronicsRun already finished"))?;
+        let (doses, result, resolved) = run.finish();
+        neutronics_readout(
+            &self.spec,
+            &self.params,
+            &resolved.detector_regions,
+            &doses,
+            &result,
+        )
+    }
 }
 
 // =============================================================================
@@ -10118,8 +10922,11 @@ struct WasmLatticeGaugeOut {
 /// binned-jackknife mean ± error, deterministic per seed.
 ///
 /// `spec_json` is a `vcad_kernel_qcd::spec::SimSpec`.
-#[wasm_bindgen(js_name = latticeGaugeSimulate)]
-pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
+/// Parse the spec and apply the MCP-tier cost gate — shared by the
+/// one-shot and stepwise paths so they gate identically.
+fn lattice_gauge_setup(
+    spec_json: &str,
+) -> Result<vcad_kernel::vcad_kernel_qcd::spec::SimSpec, JsError> {
     use vcad_kernel::vcad_kernel_qcd as qcd;
     let spec: qcd::spec::SimSpec =
         serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
@@ -10153,7 +10960,15 @@ pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
              so a smaller honest run beats a truncated big one."
         )));
     }
-    let result = qcd::spec::run(&spec).map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(spec)
+}
+
+/// Assemble the `latticeGaugeSimulate` payload from a finished run —
+/// shared by the one-shot and stepwise paths.
+fn lattice_gauge_readout(
+    result: vcad_kernel::vcad_kernel_qcd::spec::SimResult,
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_qcd as qcd;
     let creutz_ratios = qcd::analysis::creutz_ratios(&result.wilson_loops);
     let static_potential = qcd::analysis::static_potential(&result.temporal_loops);
     let cornell_fit = qcd::analysis::fit_cornell(&static_potential);
@@ -10171,4 +10986,70 @@ pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
     };
     let ser = serde_wasm_bindgen::Serializer::json_compatible();
     serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen(js_name = latticeGaugeSimulate)]
+pub fn lattice_gauge_simulate(spec_json: &str) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_qcd as qcd;
+    let spec = lattice_gauge_setup(spec_json)?;
+    let result = qcd::spec::run(&spec).map_err(|e| JsError::new(&e.to_string()))?;
+    lattice_gauge_readout(result)
+}
+
+/// Stepwise lattice gauge run: the Monte Carlo sweep loop in budgeted
+/// chunks so a host can stream progress between kernel calls. RNG state
+/// lives in the run, so the result is bit-identical to
+/// `latticeGaugeSimulate`.
+///
+/// Usage: `new LatticeGaugeRun(specJson)` → `advance(budget)` (sweeps)
+/// until `{done: true}` → `finish()` for the one-shot payload.
+#[wasm_bindgen(js_name = LatticeGaugeRun)]
+pub struct WasmLatticeGaugeRun {
+    run: Option<vcad_kernel::vcad_kernel_qcd::spec::SimRun>,
+}
+
+#[wasm_bindgen(js_class = LatticeGaugeRun)]
+impl WasmLatticeGaugeRun {
+    /// Parse and gate the spec, initialize the lattice and RNG.
+    #[wasm_bindgen(constructor)]
+    pub fn new(spec_json: &str) -> Result<WasmLatticeGaugeRun, JsError> {
+        use vcad_kernel::vcad_kernel_qcd as qcd;
+        let spec = lattice_gauge_setup(spec_json)?;
+        let run = qcd::spec::SimRun::new(&spec).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(WasmLatticeGaugeRun { run: Some(run) })
+    }
+
+    /// Perform up to `budget` compound sweeps. Returns
+    /// `{ done, steps, total }` (steps = sweeps completed).
+    pub fn advance(&mut self, budget: u32) -> Result<JsValue, JsError> {
+        use vcad_kernel::vcad_kernel_qcd::spec::RunProgress;
+        let run = self
+            .run
+            .as_mut()
+            .ok_or_else(|| JsError::new("LatticeGaugeRun already finished"))?;
+        let progress = run.advance(budget.max(1) as usize);
+        #[derive(serde::Serialize)]
+        struct Status {
+            done: bool,
+            steps: usize,
+            total: usize,
+        }
+        serde_wasm_bindgen::to_value(&Status {
+            done: matches!(progress, RunProgress::Done),
+            steps: run.sweeps_done(),
+            total: run.total_sweeps(),
+        })
+        .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Assemble the same payload `latticeGaugeSimulate` returns. Errors
+    /// unless `advance` reported done. The run is consumed.
+    pub fn finish(&mut self) -> Result<JsValue, JsError> {
+        let run = self
+            .run
+            .take()
+            .ok_or_else(|| JsError::new("LatticeGaugeRun already finished"))?;
+        let result = run.finish().map_err(|e| JsError::new(&e.to_string()))?;
+        lattice_gauge_readout(result)
+    }
 }

@@ -61,7 +61,7 @@ import {
   exportKicadSch,
   tryExportFabFiles,
   tryRunDrc,
-  runFabPrep as kernelRunFabPrep,
+  runFabPrepChunked as kernelRunFabPrep,
   tryPcbPreviewMeshes,
   resolveFootprint,
   generateNetlist,
@@ -5643,7 +5643,8 @@ function detectUnsupportedFeatures(pcb: Pcb): UnsupportedFeature[] {
  * offenders named, and `export_gerber`'s clean-DRC gate still stands: this is the
  * supported way to GET clean, never a way around the gate.
  */
-export async function fabPrep(args: Record<string, unknown>) {
+export async function fabPrep(args: Record<string, unknown>, toolCtx?: ToolContext) {
+  const progress = toolCtx?.progress;
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5673,7 +5674,18 @@ export async function fabPrep(args: Record<string, unknown>) {
     },
   };
 
-  const out = await kernelRunFabPrep(pcb, options);
+  // The kernel loop is stepwise (one strip-and-re-route round per call), so
+  // progress notifications flush between rounds instead of bursting at the
+  // end. Bit-identical to the one-shot path — same kernel session type.
+  const out = await kernelRunFabPrep(pcb, options, (status) => {
+    progress?.(
+      Math.min(status.round, status.max_rounds + 1),
+      status.max_rounds + 1,
+      status.done
+        ? `fab_prep: fix loop finished after ${status.round} check(s)`
+        : `fab_prep round ${status.round}/${status.max_rounds}: ${status.attributable} route-attributable violation(s)`,
+    );
+  });
   if (!out.ok) {
     return ecadError(`fab_prep could not run: ${out.message}`);
   }
@@ -14677,7 +14689,7 @@ export const toolDefs: ToolDef[] = [
       "otherwise, and `export_gerber`'s clean-DRC gate still stands — this is " +
       "the supported way to GET clean, not a way around it.",
     inputSchema: fabPrepSchema,
-    handler: (a) => fabPrep(a) as ToolResult | Promise<ToolResult>,
+    handler: (a, c) => fabPrep(a, c) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
   {

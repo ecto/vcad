@@ -135,9 +135,23 @@ export const toolDefs: ToolDef[] = [
     },
     handler: (args, ctx) => {
       const a = args as Json;
-      const out = ctx.engine.neutronicsSimulate(
+      // The kernel loop is chunked (a budget of MC batches per call), so
+      // progress notifications flush between chunks instead of bursting at
+      // the end. Each batch owns an independent RNG stream — bit-identical
+      // to the one-shot path.
+      const out = ctx.engine.neutronicsSimulateChunked(
         JSON.stringify(a.spec),
         JSON.stringify(a.parameters ?? {}),
+        ctx.progress
+          ? (s) =>
+              ctx.progress?.(
+                s.steps,
+                s.total,
+                s.done
+                  ? `transport done: ${s.total} batches`
+                  : `transport batch ${s.steps}/${s.total}`,
+              )
+          : undefined,
       );
       return textResult(out);
     },

@@ -315,54 +315,138 @@ fn sample_row(row: &[f64; N_GROUPS], u: f64) -> usize {
 }
 
 /// Run the Monte Carlo. Deterministic in `config` (including seed).
+///
+/// Implemented as an unbounded [`TransportRun`] drive, so the one-shot
+/// and chunked paths are identical by construction.
 pub fn run(config: &RunConfig) -> Result<RunResult, ConfigError> {
-    config.geometry.validate().map_err(ConfigError::Geometry)?;
-    let kind = match (&config.geometry, config.source) {
-        (Geometry::Sphere(_), Source::IsotropicPoint) => GeomKind::Sphere,
-        (Geometry::Slab(_), Source::BeamPlusX | Source::IsotropicHalfSpace) => GeomKind::Slab,
-        _ => return Err(ConfigError::SourceGeometryMismatch),
-    };
-    if config.source_group >= N_GROUPS {
-        return Err(ConfigError::BadSourceGroup(config.source_group));
+    let mut run = TransportRun::new(config)?;
+    run.advance(usize::MAX);
+    Ok(run.finish())
+}
+
+/// What a bounded [`TransportRun::advance`] call concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportProgress {
+    /// Budget exhausted; more batches remain. Call `advance` again.
+    Running,
+    /// All batches done; take the result with [`TransportRun::finish`].
+    Done,
+}
+
+/// Stepwise driver for the Monte Carlo: [`TransportRun::new`] validates
+/// the config, each [`TransportRun::advance`] transports up to a budget
+/// of whole batches (each batch owns an independent RNG stream, so
+/// chunked runs are bit-identical to [`run`]), and
+/// [`TransportRun::finish`] assembles the [`RunResult`].
+pub struct TransportRun {
+    config: RunConfig,
+    kind: GeomKind,
+    bounds: Vec<f64>,
+    n_regions: usize,
+    volumes: Vec<f64>,
+    h_factors: [f64; N_GROUPS],
+    flux_b: Vec<Vec<[f64; N_GROUPS]>>,
+    dose_b: Vec<Vec<f64>>,
+    current_b: Vec<Vec<[f64; N_GROUPS]>>,
+    absorbed_b: Vec<f64>,
+    leak_out_b: Vec<f64>,
+    leak_back_b: Vec<f64>,
+    th_frac_b: Vec<f64>,
+    th_cols_b: Vec<f64>,
+    th_r2_b: Vec<f64>,
+    truncated: u64,
+    balance_max_dev: f64,
+    batches_done: usize,
+}
+
+impl TransportRun {
+    /// Validate the config and set up the tallies.
+    pub fn new(config: &RunConfig) -> Result<Self, ConfigError> {
+        config.geometry.validate().map_err(ConfigError::Geometry)?;
+        let kind = match (&config.geometry, config.source) {
+            (Geometry::Sphere(_), Source::IsotropicPoint) => GeomKind::Sphere,
+            (Geometry::Slab(_), Source::BeamPlusX | Source::IsotropicHalfSpace) => GeomKind::Slab,
+            _ => return Err(ConfigError::SourceGeometryMismatch),
+        };
+        if config.source_group >= N_GROUPS {
+            return Err(ConfigError::BadSourceGroup(config.source_group));
+        }
+        if config.batches < 2 || config.histories_per_batch == 0 {
+            return Err(ConfigError::DegenerateStatistics);
+        }
+
+        let bounds = config.geometry.boundaries_cm();
+        let n_regions = config.geometry.region_count();
+        let volumes: Vec<f64> = (0..n_regions)
+            .map(|i| config.geometry.region_volume_cc(i))
+            .collect();
+        let h_factors = group_dose_factors_psv_cm2();
+        let nb = config.batches;
+        Ok(TransportRun {
+            config: config.clone(),
+            kind,
+            bounds,
+            n_regions,
+            volumes,
+            h_factors,
+            flux_b: vec![vec![[0.0f64; N_GROUPS]; n_regions]; nb],
+            dose_b: vec![vec![0.0f64; n_regions]; nb],
+            current_b: vec![vec![[0.0f64; N_GROUPS]; n_regions]; nb],
+            absorbed_b: vec![0.0f64; nb],
+            leak_out_b: vec![0.0f64; nb],
+            leak_back_b: vec![0.0f64; nb],
+            th_frac_b: vec![0.0f64; nb],
+            th_cols_b: vec![0.0f64; nb],
+            th_r2_b: vec![0.0f64; nb],
+            truncated: 0,
+            balance_max_dev: 0.0,
+            batches_done: 0,
+        })
     }
-    if config.batches < 2 || config.histories_per_batch == 0 {
-        return Err(ConfigError::DegenerateStatistics);
+
+    /// Batches transported so far.
+    pub fn batches_done(&self) -> usize {
+        self.batches_done
     }
 
-    let bounds = config.geometry.boundaries_cm();
-    let n_regions = config.geometry.region_count();
-    let mats: Vec<_> = config
-        .geometry
-        .layers()
-        .iter()
-        .map(|l| &l.material)
-        .collect();
-    let volumes: Vec<f64> = (0..n_regions)
-        .map(|i| config.geometry.region_volume_cc(i))
-        .collect();
-    let h_factors = group_dose_factors_psv_cm2();
-    let hpb = config.histories_per_batch;
+    /// Total batches this run will transport.
+    pub fn total_batches(&self) -> usize {
+        self.config.batches
+    }
 
-    // Per-batch reduced values.
-    let nb = config.batches;
-    let mut flux_b = vec![vec![[0.0f64; N_GROUPS]; n_regions]; nb];
-    let mut dose_b = vec![vec![0.0f64; n_regions]; nb];
-    let mut current_b = vec![vec![[0.0f64; N_GROUPS]; n_regions]; nb];
-    let mut absorbed_b = vec![0.0f64; nb];
-    let mut leak_out_b = vec![0.0f64; nb];
-    let mut leak_back_b = vec![0.0f64; nb];
-    let mut th_frac_b = vec![0.0f64; nb];
-    let mut th_cols_b = vec![0.0f64; nb];
-    let mut th_r2_b = vec![0.0f64; nb];
-    let mut truncated: u64 = 0;
-    let mut balance_max_dev: f64 = 0.0;
+    /// Transport up to `budget` whole batches (min 1).
+    pub fn advance(&mut self, budget: usize) -> TransportProgress {
+        let total = self.config.batches;
+        let mut left = budget.max(1);
+        while self.batches_done < total && left > 0 {
+            self.run_batch(self.batches_done);
+            self.batches_done += 1;
+            left -= 1;
+        }
+        if self.batches_done < total {
+            TransportProgress::Running
+        } else {
+            TransportProgress::Done
+        }
+    }
 
-    for (batch, ((flux, dose), current)) in flux_b
-        .iter_mut()
-        .zip(dose_b.iter_mut())
-        .zip(current_b.iter_mut())
-        .enumerate()
-    {
+    /// Transport one batch on its own RNG stream and reduce its tallies.
+    fn run_batch(&mut self, batch: usize) {
+        let config = &self.config;
+        let kind = self.kind;
+        let bounds = &self.bounds;
+        let n_regions = self.n_regions;
+        let mats: Vec<_> = config
+            .geometry
+            .layers()
+            .iter()
+            .map(|l| &l.material)
+            .collect();
+        let hpb = config.histories_per_batch;
+        let flux = &mut self.flux_b[batch];
+        let dose = &mut self.dose_b[batch];
+        let current = &mut self.current_b[batch];
+
         let mut rng = Rng::stream(config.seed, batch as u64);
         let mut track = vec![[0.0f64; N_GROUPS]; n_regions];
         let mut cur = vec![[0.0f64; N_GROUPS]; n_regions];
@@ -479,93 +563,105 @@ pub fn run(config: &RunConfig) -> Result<RunResult, ConfigError> {
         let h = hpb as f64;
         for r in 0..n_regions {
             for g in 0..N_GROUPS {
-                flux[r][g] = track[r][g] / (volumes[r] * h);
+                flux[r][g] = track[r][g] / (self.volumes[r] * h);
                 current[r][g] = cur[r][g] / h;
-                dose[r] += h_factors[g] * flux[r][g];
+                dose[r] += self.h_factors[g] * flux[r][g];
             }
         }
-        absorbed_b[batch] = absorbed as f64 / h;
-        leak_out_b[batch] = leak_out as f64 / h;
-        leak_back_b[batch] = leak_back as f64 / h;
+        self.absorbed_b[batch] = absorbed as f64 / h;
+        self.leak_out_b[batch] = leak_out as f64 / h;
+        self.leak_back_b[batch] = leak_back as f64 / h;
         let live = h - batch_trunc as f64;
         if live > 0.0 {
             let dev = ((absorbed + leak_out + leak_back) as f64 / live - 1.0).abs();
-            balance_max_dev = balance_max_dev.max(dev);
+            self.balance_max_dev = self.balance_max_dev.max(dev);
         }
-        th_frac_b[batch] = th_count as f64 / h;
-        th_cols_b[batch] = if th_count > 0 {
+        self.th_frac_b[batch] = th_count as f64 / h;
+        self.th_cols_b[batch] = if th_count > 0 {
             th_cols as f64 / th_count as f64
         } else {
             0.0
         };
-        th_r2_b[batch] = if th_count > 0 {
+        self.th_r2_b[batch] = if th_count > 0 {
             th_r2 / th_count as f64
         } else {
             0.0
         };
-        truncated += batch_trunc;
+        self.truncated += batch_trunc;
     }
 
-    // Assemble estimates.
-    let mut flux_per_source = Vec::with_capacity(n_regions);
-    let mut dose_per_source_psv = Vec::with_capacity(n_regions);
-    let mut net_outward_current = Vec::with_capacity(n_regions);
-    let mut col = vec![0.0f64; nb];
-    for r in 0..n_regions {
-        let mut fg: [Estimate; N_GROUPS] = [Estimate::from_batches(&[0.0, 0.0]); N_GROUPS];
-        let mut cg: [Estimate; N_GROUPS] = [Estimate::from_batches(&[0.0, 0.0]); N_GROUPS];
-        for g in 0..N_GROUPS {
-            for b in 0..nb {
-                col[b] = flux_b[b][r][g];
+    /// Assemble the result from the transported batches. Callable once
+    /// `advance` has reported [`TransportProgress::Done`]; the batch
+    /// estimates are only honest over the full batch count, so finishing
+    /// early panics (a programming error, not a physics outcome).
+    pub fn finish(self) -> RunResult {
+        assert_eq!(
+            self.batches_done, self.config.batches,
+            "TransportRun::finish called before all batches were transported"
+        );
+        let config = &self.config;
+        let n_regions = self.n_regions;
+        let nb = config.batches;
+        let mut flux_per_source = Vec::with_capacity(n_regions);
+        let mut dose_per_source_psv = Vec::with_capacity(n_regions);
+        let mut net_outward_current = Vec::with_capacity(n_regions);
+        let mut col = vec![0.0f64; nb];
+        for r in 0..n_regions {
+            let mut fg: [Estimate; N_GROUPS] = [Estimate::from_batches(&[0.0, 0.0]); N_GROUPS];
+            let mut cg: [Estimate; N_GROUPS] = [Estimate::from_batches(&[0.0, 0.0]); N_GROUPS];
+            for g in 0..N_GROUPS {
+                for (b, c) in col.iter_mut().enumerate() {
+                    *c = self.flux_b[b][r][g];
+                }
+                fg[g] = Estimate::from_batches(&col);
+                for (b, c) in col.iter_mut().enumerate() {
+                    *c = self.current_b[b][r][g];
+                }
+                cg[g] = Estimate::from_batches(&col);
             }
-            fg[g] = Estimate::from_batches(&col);
-            for b in 0..nb {
-                col[b] = current_b[b][r][g];
+            flux_per_source.push(fg);
+            net_outward_current.push(cg);
+            for (b, c) in col.iter_mut().enumerate() {
+                *c = self.dose_b[b][r];
             }
-            cg[g] = Estimate::from_batches(&col);
+            dose_per_source_psv.push(Estimate::from_batches(&col));
         }
-        flux_per_source.push(fg);
-        net_outward_current.push(cg);
-        for b in 0..nb {
-            col[b] = dose_b[b][r];
-        }
-        dose_per_source_psv.push(Estimate::from_batches(&col));
-    }
 
-    let thermalization = if kind == GeomKind::Sphere {
-        Some(Thermalization {
-            fraction: Estimate::from_batches(&th_frac_b),
-            mean_collisions: Estimate::from_batches(&th_cols_b),
-            mean_r2_cm2: Estimate::from_batches(&th_r2_b),
-        })
-    } else {
-        None
-    };
+        let thermalization = if self.kind == GeomKind::Sphere {
+            Some(Thermalization {
+                fraction: Estimate::from_batches(&self.th_frac_b),
+                mean_collisions: Estimate::from_batches(&self.th_cols_b),
+                mean_r2_cm2: Estimate::from_batches(&self.th_r2_b),
+            })
+        } else {
+            None
+        };
 
-    Ok(RunResult {
-        flux_per_source,
-        dose_per_source_psv,
-        net_outward_current,
-        absorbed: Estimate::from_batches(&absorbed_b),
-        leaked_out: Estimate::from_batches(&leak_out_b),
-        leaked_back: Estimate::from_batches(&leak_back_b),
-        balance_max_dev,
-        truncated_histories: truncated,
-        total_histories: (config.batches * hpb) as u64,
-        thermalization,
-        provenance: RunProvenance {
-            seed: config.seed,
-            histories_per_batch: hpb,
-            batches: config.batches,
-            max_collisions: config.max_collisions,
-            groups: N_GROUPS,
-            energy_model: match config.energy_model {
-                EnergyModel::Multigroup => "multigroup".to_string(),
-                EnergyModel::ExactKinematics => "exact-kinematics".to_string(),
+        RunResult {
+            flux_per_source,
+            dose_per_source_psv,
+            net_outward_current,
+            absorbed: Estimate::from_batches(&self.absorbed_b),
+            leaked_out: Estimate::from_batches(&self.leak_out_b),
+            leaked_back: Estimate::from_batches(&self.leak_back_b),
+            balance_max_dev: self.balance_max_dev,
+            truncated_histories: self.truncated,
+            total_histories: (config.batches * config.histories_per_batch) as u64,
+            thermalization,
+            provenance: RunProvenance {
+                seed: config.seed,
+                histories_per_batch: config.histories_per_batch,
+                batches: config.batches,
+                max_collisions: config.max_collisions,
+                groups: N_GROUPS,
+                energy_model: match config.energy_model {
+                    EnergyModel::Multigroup => "multigroup".to_string(),
+                    EnergyModel::ExactKinematics => "exact-kinematics".to_string(),
+                },
+                library: LIBRARY_VERSION.to_string(),
             },
-            library: LIBRARY_VERSION.to_string(),
-        },
-    })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -609,6 +705,54 @@ mod tests {
         let c3 = RunConfig::new(g(), Source::IsotropicPoint, 500, 54321);
         let r3 = run(&c3).unwrap();
         assert_ne!(r1.flux_per_source[0][0].mean, r3.flux_per_source[0][0].mean);
+    }
+
+    #[test]
+    fn chunked_run_matches_the_one_shot() {
+        let g = || {
+            Geometry::Sphere(vec![
+                Layer::new(crate::materials::water(), 100.0),
+                Layer::new(crate::materials::air(), 50.0),
+            ])
+        };
+        let c = RunConfig::new(g(), Source::IsotropicPoint, 300, 99);
+        let one_shot = run(&c).unwrap();
+        let mut chunked = TransportRun::new(&c).unwrap();
+        let mut calls = 0;
+        while chunked.advance(3) == TransportProgress::Running {
+            calls += 1;
+        }
+        assert!(calls > 2, "budget too generous to exercise chunking");
+        let r = chunked.finish();
+        // Bit-identical: every batch owns an independent RNG stream, so
+        // chunk boundaries cannot perturb the physics.
+        for reg in 0..2 {
+            for gr in 0..N_GROUPS {
+                assert_eq!(
+                    one_shot.flux_per_source[reg][gr].mean.to_bits(),
+                    r.flux_per_source[reg][gr].mean.to_bits()
+                );
+                assert_eq!(
+                    one_shot.flux_per_source[reg][gr].rse.to_bits(),
+                    r.flux_per_source[reg][gr].rse.to_bits()
+                );
+            }
+            assert_eq!(
+                one_shot.dose_per_source_psv[reg].mean.to_bits(),
+                r.dose_per_source_psv[reg].mean.to_bits()
+            );
+        }
+        assert_eq!(one_shot.absorbed.mean.to_bits(), r.absorbed.mean.to_bits());
+        assert_eq!(
+            one_shot.leaked_out.mean.to_bits(),
+            r.leaked_out.mean.to_bits()
+        );
+        assert_eq!(
+            one_shot.balance_max_dev.to_bits(),
+            r.balance_max_dev.to_bits()
+        );
+        assert_eq!(one_shot.truncated_histories, r.truncated_histories);
+        assert_eq!(one_shot.provenance, r.provenance);
     }
 
     #[test]

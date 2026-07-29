@@ -175,7 +175,23 @@ export const toolDefs: ToolDef[] = [
     },
     handler: (args, ctx) => {
       const a = args as Record<string, unknown>;
-      const out = ctx.engine.latticeGaugeSimulate(JSON.stringify(a.spec));
+      // The kernel loop is chunked (a budget of compound sweeps per call),
+      // so progress notifications flush between chunks instead of bursting
+      // at the end. RNG state lives in the kernel run — bit-identical to
+      // the one-shot path.
+      const out = ctx.engine.latticeGaugeSimulateChunked(
+        JSON.stringify(a.spec),
+        ctx.progress
+          ? (s) =>
+              ctx.progress?.(
+                s.steps,
+                s.total,
+                s.done
+                  ? `Monte Carlo done: ${s.total} sweeps`
+                  : `Monte Carlo sweep ${s.steps}/${s.total}`,
+              )
+          : undefined,
+      );
       return textResult(out);
     },
     behavior: behavior({}),

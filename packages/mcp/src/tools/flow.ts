@@ -234,10 +234,25 @@ export const toolDefs: ToolDef[] = [
     },
     handler: (args, ctx) => {
       const a = args as Json;
-      const out = ctx.engine.simulateFlow(
+      // The kernel loop is chunked (a budget of LBM timesteps per call), so
+      // progress notifications flush between chunks instead of bursting at
+      // the end. Bit-identical to the one-shot path.
+      const out = ctx.engine.simulateFlowChunked(
         JSON.stringify(a.spec),
         JSON.stringify(a.options ?? {}),
         !!a.include_fields,
+        ctx.progress
+          ? (s) =>
+              ctx.progress?.(
+                Math.min(s.steps, s.max_steps),
+                s.max_steps,
+                s.converged
+                  ? `LBM steady after ${s.steps} steps (residual ${s.residual.toExponential(2)})`
+                  : `LBM step ${s.steps}/${s.max_steps}, residual ${
+                      Number.isFinite(s.residual) ? s.residual.toExponential(2) : "—"
+                    }`,
+              )
+          : undefined,
       );
       return textResult(out);
     },

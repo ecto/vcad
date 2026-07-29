@@ -474,9 +474,30 @@ impl<'a> Tracer<'a> {
 
     /// Launch `n` particles at rest on the launch shell, on a deterministic
     /// grid of polar angles (uniform in cos θ), and trace each.
+    ///
+    /// Implemented over [`Self::launch_ensemble_range`], so a chunked
+    /// drive over subranges is bit-identical by construction.
     pub fn launch_ensemble(&self, species: Species, n: usize) -> Vec<TraceOutcome> {
         let n = n.max(2);
-        (0..n)
+        self.launch_ensemble_range(species, n, 0, n)
+    }
+
+    /// Trace the particles `start..end` of the same deterministic
+    /// `n`-particle launch grid [`Self::launch_ensemble`] uses. Each
+    /// particle depends only on `(k, n)`, so concatenating range results
+    /// reproduces the full ensemble bit-identically — the seam the
+    /// chunked WASM driver stands on. `n` is clamped to ≥ 2 exactly as
+    /// in `launch_ensemble`; `end` is clamped to `n`.
+    pub fn launch_ensemble_range(
+        &self,
+        species: Species,
+        n: usize,
+        start: usize,
+        end: usize,
+    ) -> Vec<TraceOutcome> {
+        let n = n.max(2);
+        let end = end.min(n);
+        (start..end)
             .map(|k| {
                 let c = -self.opts.launch_cos_max
                     + 2.0 * self.opts.launch_cos_max * k as f64 / (n - 1) as f64;
@@ -570,6 +591,33 @@ mod tests {
                 o.fate,
                 o.core_passes
             );
+        }
+    }
+
+    #[test]
+    fn chunked_ensemble_ranges_match_the_one_shot() {
+        // Concatenated launch_ensemble_range chunks must reproduce
+        // launch_ensemble bit-identically (each particle depends only on
+        // its index and the ensemble size).
+        let device = Device::classic_fusor(120.0, 40.0, 5, 1.0, -30_000.0);
+        let sol = solve(&device, 61, 121, &SolveOptions::default()).unwrap();
+        let fields = FieldMap::new(&device, &sol);
+        let tracer = Tracer::new(&device, &fields, &sol, TraceOptions::default());
+        let n = 9;
+        let one_shot = tracer.launch_ensemble(DEUTERON, n);
+        let mut chunked = Vec::new();
+        let mut start = 0;
+        while start < n {
+            let end = (start + 4).min(n);
+            chunked.extend(tracer.launch_ensemble_range(DEUTERON, n, start, end));
+            start = end;
+        }
+        assert_eq!(one_shot.len(), chunked.len());
+        for (a, b) in one_shot.iter().zip(&chunked) {
+            assert_eq!(a.fate, b.fate);
+            assert_eq!(a.core_passes, b.core_passes);
+            assert_eq!(a.ddn_sigma_v_m3.to_bits(), b.ddn_sigma_v_m3.to_bits());
+            assert_eq!(a.energy_drift_rel.to_bits(), b.energy_drift_rel.to_bits());
         }
     }
 

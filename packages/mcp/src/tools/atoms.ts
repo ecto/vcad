@@ -13,7 +13,7 @@ import type { MoleculeSystem } from "@vcad/ir";
 import {
   parseXyz,
   inspectMolecule,
-  minimizeEnergy,
+  minimizeEnergyChunked,
   homogenizeMaterial,
   buildMoleculeReceipt,
   MdEnv,
@@ -198,7 +198,10 @@ export async function inspectMoleculeTool(input: unknown): Promise<ToolResult> {
 }
 
 /** Relax a structure to a local energy minimum. */
-export async function minimizeEnergyTool(input: unknown): Promise<ToolResult> {
+export async function minimizeEnergyTool(
+  input: unknown,
+  toolCtx?: ToolContext,
+): Promise<ToolResult> {
   try {
     const args = input as {
       molecule: MoleculeSystem;
@@ -206,11 +209,24 @@ export async function minimizeEnergyTool(input: unknown): Promise<ToolResult> {
       max_iters?: number;
       force_tol?: number;
     };
-    const { result, molecule } = await minimizeEnergy(
+    // The kernel loop is chunked (a budget of FIRE iterations per call),
+    // so progress notifications flush between chunks instead of bursting
+    // at the end. Bit-identical to the one-shot path.
+    const { result, molecule } = await minimizeEnergyChunked(
       args.molecule,
       args.config ?? {},
       args.max_iters ?? 2000,
       args.force_tol ?? 1e-4,
+      toolCtx?.progress
+        ? (s) =>
+            toolCtx.progress?.(
+              s.steps,
+              s.total,
+              s.done
+                ? `FIRE finished at iteration ${s.steps} (max force ${s.maxForce.toExponential(2)} eV/A)`
+                : `FIRE iteration ${s.steps}/${s.total}, max force ${s.maxForce.toExponential(2)} eV/A`,
+            )
+        : undefined,
     );
     const receipt = await buildMoleculeReceipt(
       args.molecule,
@@ -590,7 +606,7 @@ export const toolDefs: ToolDef[] = [
     description:
       "Relax a structure to a local energy minimum with FIRE. Force field via config (Lennard-Jones default, harmonic bonds, Coulomb, or the ML-potential stub). Returns the relaxed molecule, a result summary (energy, max force, convergence), and a reproducibility receipt.",
     inputSchema: minimizeEnergySchema,
-    handler: (a) => minimizeEnergyTool(a),
+    handler: (a, ctx) => minimizeEnergyTool(a, ctx),
     behavior: behavior({}),
   },
   {

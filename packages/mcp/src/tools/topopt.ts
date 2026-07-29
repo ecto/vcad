@@ -197,6 +197,7 @@ const round5 = (v: number) => Number(v.toPrecision(5));
 export function topologyOptimizeTool(
   args: Record<string, unknown>,
   engine: Engine,
+  progress?: (current: number, total?: number, message?: string) => void,
 ): { content: Array<{ type: "text"; text: string }> } {
   const a = args as TopoArgs;
 
@@ -239,15 +240,31 @@ export function topologyOptimizeTool(
   let sourceName: string | undefined;
   let sourceMaterial: string | undefined;
   let sourceRootIndex = -1;
+  // The kernel loop is stepwise (one SIMP iteration per call), so progress
+  // notifications flush between iterations instead of bursting at the end.
+  const totalIters = a.max_iterations ?? 40;
+  const onStep = progress
+    ? (s: { done: boolean; iteration: number; compliance: number; change: number }) => {
+        if (s.iteration > 0) {
+          progress(
+            s.iteration,
+            totalIters,
+            `SIMP iteration ${s.iteration}/${totalIters}: compliance ${Number(
+              s.compliance.toPrecision(5),
+            )}, change ${Number(s.change.toPrecision(3))}`,
+          );
+        }
+      }
+    : undefined;
   if (a.part) {
     const resolved = resolvePartMesh(doc, engine, a.part);
     sourceName = resolved.name;
     sourceMaterial = resolved.material;
     sourceRootIndex = resolved.rootIndex;
-    result = engine.topologyOptimizeMesh(resolved.mesh, spec);
+    result = engine.topologyOptimizeMeshChunked(resolved.mesh, spec, onStep);
   } else {
     const box = a.domain_box!;
-    result = engine.topologyOptimizeBox(box.min, box.max, spec);
+    result = engine.topologyOptimizeBoxChunked(box.min, box.max, spec, onStep);
   }
 
   const triangles = result.mesh.indices.length / 3;
@@ -335,7 +352,7 @@ export const toolDefs: ToolDef[] = [
       "history and achieved volume fraction are reported. Deterministic for a given spec. " +
       "Cost scales with resolution³ — start at the default 48 and refine.",
     inputSchema: topologyOptimizeSchema,
-    handler: (args, ctx) => topologyOptimizeTool(args, ctx.engine),
+    handler: (args, ctx) => topologyOptimizeTool(args, ctx.engine, ctx.progress),
     behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
 ];
