@@ -302,7 +302,7 @@ function setCors(
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Authorization, Content-Type, mcp-session-id, Last-Event-ID, mcp-protocol-version",
+      "Authorization, Content-Type, mcp-session-id, Last-Event-ID, mcp-protocol-version, mcp-method, mcp-name",
     );
     res.setHeader(
       "Access-Control-Expose-Headers",
