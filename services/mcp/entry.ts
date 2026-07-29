@@ -19,6 +19,9 @@ import {
   flushTelemetry,
   handleLiveRequest,
   handleArtifactRequest,
+  isModernMessage,
+  handleModernRequest,
+  listenClosureResponse,
   flushArtifacts,
   artifactStoreInfo,
 } from "@vcad/mcp/server";
@@ -187,7 +190,88 @@ export default async function handler(
     // assumeUiClient: stateless per-request Server — the UI-extension
     // capability from `initialize` never reaches tools/call, so attach the
     // inline `_meta` preview unconditionally (see ServerContext in @vcad/mcp).
-    const server = await createServer(engine, { user, assumeUiClient: true });
+    const makeServer = () =>
+      createServer(engine, { user, assumeUiClient: true });
+
+    // ── MCP 2026-07-28 (dual-era) ─────────────────────────────────
+    // A request carrying modern per-request `_meta` (or a modern-only
+    // method) is served by the modern handler; legacy `initialize` traffic
+    // falls through to the SDK transport below. Mirrors http.ts, minus SSE:
+    // Vercel buffers responses (see enableJsonResponse below), so replies
+    // are always single JSON objects here. That also means
+    // `subscriptions/listen` cannot hold a stream open on this deployment —
+    // answer it with the spec's graceful-closure response (the empty result
+    // that tells the client the subscription ended cleanly, deliverable
+    // over stdio or the standalone HTTP server instead).
+    if (req.method === "POST") {
+      const rawBody = await readRequestBody(req);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch {
+        sendJson(res, 400, {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error" },
+        });
+        return;
+      }
+
+      if (isModernMessage(parsed, req.headers)) {
+        try {
+          const method = (parsed as { method?: string } | null)?.method;
+          if (method === "subscriptions/listen") {
+            sendJson(res, 200, listenClosureResponse(parsed));
+            return;
+          }
+          const { status, body } = await handleModernRequest(parsed, {
+            createServer: makeServer,
+            headers: req.headers,
+          });
+          if (body === null) {
+            res.writeHead(status);
+            res.end();
+          } else {
+            sendJson(res, status, body);
+          }
+        } finally {
+          await Promise.all([flushTelemetry(), flushArtifacts()]);
+        }
+        return;
+      }
+
+      await handleLegacyMcp(req, res, makeServer, parsed);
+      return;
+    }
+
+    await handleLegacyMcp(req, res, makeServer);
+  } catch (err) {
+    console.error("[vcad-mcp] Error:", err);
+    if (!res.headersSent) {
+      sendJson(res, 500, { error: "Internal server error" });
+    }
+  }
+}
+
+/** Read a POST body as a UTF-8 string (bounded by Vercel's own body limits). */
+function readRequestBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
+/** The pre-2026 (`initialize`-handshake) path on the SDK's own transport. */
+async function handleLegacyMcp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  makeServer: () => ReturnType<typeof createServer>,
+  parsedBody?: unknown,
+): Promise<void> {
+  try {
+    const server = await makeServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // return JSON instead of SSE — Vercel buffers responses and adds Content-Length which breaks SSE streaming
@@ -196,7 +280,14 @@ export default async function handler(
     await server.connect(transport);
 
     try {
-      await transport.handleRequest(req, res);
+      // The POST body stream was already consumed by the dual-era router, so
+      // hand the parsed body through — the SDK skips its own read when given
+      // one. GET/DELETE pass no body.
+      if (parsedBody !== undefined) {
+        await transport.handleRequest(req, res, parsedBody);
+      } else {
+        await transport.handleRequest(req, res);
+      }
     } finally {
       // Drain PostHog captures AND pending durable artifact writes before
       // the serverless instance can freeze — an in-flight fetch is killed

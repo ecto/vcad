@@ -90,6 +90,14 @@ import { getStaleness } from "./edge-config.js";
 // server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
 export { handleArtifactRequest } from "./artifact-route.js";
+// MCP 2026-07-28 dual-era front end, re-exported for the transport entries
+// (http.ts here; services/mcp/entry.ts on Vercel) so both route modern
+// requests identically.
+export {
+  isModernMessage,
+  handleModernRequest,
+  listenClosureResponse,
+} from "./protocol-2026.js";
 export { flushArtifacts, artifactStoreInfo } from "./tools/artifact-store.js";
 import {
   getViewerHtml,
