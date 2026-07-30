@@ -109,39 +109,48 @@ fn front_view_shows_near_geometry_and_back_view_hides_it() {
     // Small block in front of it (y ∈ [0, 10]), centered on the slab.
     push_box(&mut mesh, [5.0, 0.0, 5.0], [15.0, 10.0, 15.0]);
 
-    // In the Front view the small block projects to the square
-    // x ∈ [5, 15], y ∈ [5, 15]; the slab's own edges lie on x ∈ {0, 20},
-    // y ∈ {0, 20}, so any edge strictly inside the square belongs to the
-    // block and must be visible.
+    // The block projects into a square at drawing y ∈ [5, 15] in both
+    // views; drawing x ∈ [5, 15] in Front (world +X maps to drawing +X)
+    // and x ∈ [-15, -5] in Back (world +X maps to drawing -X). The slab's
+    // own edges lie on x ∈ {0, 20} (Front) / {0, -20} (Back) and
+    // y ∈ {0, 20} — outside the square in both — so anything reaching into
+    // it belongs to the block.
+    let in_square =
+        |x: f64, y: f64, x_lo: f64, x_hi: f64| x > x_lo && x < x_hi && y > 4.9 && y < 15.1;
+
     let front = project_mesh(&mesh, ViewDirection::Front);
-    let inside = |x: f64, y: f64, lo: f64, hi: f64| x > lo && x < hi && y > lo && y < hi;
     let block_edge_visible = front.edges.iter().any(|e| {
         e.visibility == Visibility::Visible
-            && inside(e.start.x, e.start.y, 4.9, 15.1)
-            && inside(e.end.x, e.end.y, 4.9, 15.1)
+            && in_square(e.start.x, e.start.y, 4.9, 15.1)
+            && in_square(e.end.x, e.end.y, 4.9, 15.1)
     });
     assert!(
         block_edge_visible,
         "Front view: near block should have visible edges (is the view rendered from the back?)",
     );
 
-    // In the Back view the block sits behind the slab: same square but at
-    // x ∈ [-15, -5] (world +X maps to drawing -X). Everything there must
-    // be hidden.
+    // In the Back view the block sits behind the slab, so every edge of it
+    // must be hidden. Match on *either* endpoint landing in the square: a
+    // wider net than requiring both, so an edge that only partly overlaps
+    // it cannot slip past the check.
     let back = project_mesh(&mesh, ViewDirection::Back);
-    let block_edge_visible_from_back = back.edges.iter().any(|e| {
-        e.visibility == Visibility::Visible
-            && e.start.x > -15.1
-            && e.start.x < -4.9
-            && e.start.y > 4.9
-            && e.start.y < 15.1
-            && e.end.x > -15.1
-            && e.end.x < -4.9
-            && e.end.y > 4.9
-            && e.end.y < 15.1
-    });
+    let block_edges: Vec<_> = back
+        .edges
+        .iter()
+        .filter(|e| {
+            in_square(e.start.x, e.start.y, -15.1, -4.9) || in_square(e.end.x, e.end.y, -15.1, -4.9)
+        })
+        .collect();
+    // Guards against the check silently matching nothing (e.g. if the
+    // world → paper axis mapping regressed and the block moved elsewhere).
     assert!(
-        !block_edge_visible_from_back,
+        !block_edges.is_empty(),
+        "Back view: expected the block's edges at drawing x in [-15, -5]",
+    );
+    assert!(
+        block_edges
+            .iter()
+            .all(|e| e.visibility == Visibility::Hidden),
         "Back view: block is occluded by the slab and must be hidden",
     );
 }
