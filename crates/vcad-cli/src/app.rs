@@ -915,6 +915,40 @@ impl App {
         Ok(())
     }
 
+    /// Default export target: the open file with a new extension, or
+    /// `untitled.<ext>` in the working directory when nothing is open.
+    fn default_export_path(&self, ext: &str) -> PathBuf {
+        match &self.file_path {
+            Some(p) => p.with_extension(ext),
+            None => PathBuf::from(format!("untitled.{ext}")),
+        }
+    }
+
+    /// Export to GLB via the shared CLI writer; outcome lands in the status line.
+    pub fn export_glb(&mut self, path: &PathBuf) {
+        match crate::write_glb(&self.document, path) {
+            Ok(count) => self.set_status(format!(
+                "Exported GLB ({count} mesh{}) to {}",
+                if count == 1 { "" } else { "es" },
+                path.display()
+            )),
+            Err(e) => self.set_status(format!("GLB export failed: {e}")),
+        }
+    }
+
+    /// Export to STEP via the shared CLI writer; mesh-only refusals and other
+    /// errors surface in the status line.
+    pub fn export_step(&mut self, path: &PathBuf) {
+        match crate::write_step(&self.document, path) {
+            Ok(count) => self.set_status(format!(
+                "Exported STEP ({count} solid{}) to {}",
+                if count == 1 { "" } else { "s" },
+                path.display()
+            )),
+            Err(e) => self.set_status(format!("STEP export failed: {e}")),
+        }
+    }
+
     /// Evaluate the document to get meshes.
     pub fn evaluate(&mut self) -> Result<()> {
         self.meshes = evaluate_document(&self.document)?;
@@ -1141,10 +1175,21 @@ impl App {
             "export" => {
                 if let Some(path) = parts.get(1) {
                     let path = PathBuf::from(path);
-                    self.export_stl(&path)?;
-                    self.set_status(format!("Exported to {}", path.display()));
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    match ext.as_str() {
+                        "glb" => self.export_glb(&path),
+                        "step" | "stp" => self.export_step(&path),
+                        _ => {
+                            self.export_stl(&path)?;
+                            self.set_status(format!("Exported to {}", path.display()));
+                        }
+                    }
                 } else {
-                    self.set_status("Usage: export <path.stl>");
+                    self.set_status("Usage: export <path.stl|.glb|.step>");
                 }
             }
             "undo" => self.undo()?,
@@ -1166,8 +1211,20 @@ impl App {
                 self.set_status("New document");
             }
             "open" => self.set_status("Open: drag a .vcad file into the terminal"),
-            "export_glb" => self.set_status("Export GLB: not yet implemented in TUI"),
-            "export_step" => self.set_status("Export STEP: not yet implemented in TUI"),
+            "export_glb" => {
+                let path = parts
+                    .get(1)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.default_export_path("glb"));
+                self.export_glb(&path);
+            }
+            "export_step" => {
+                let path = parts
+                    .get(1)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.default_export_path("step"));
+                self.export_step(&path);
+            }
             "select_all" => {
                 let ids: Vec<_> = self.get_parts().into_iter().map(|(id, _)| id).collect();
                 self.selected = ids.into_iter().collect();

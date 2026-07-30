@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-30-cli-tui-glb-step-export",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "feat",
+  "title": "CLI and TUI GLB/STEP export",
+  "summary": "vcad export now writes .glb files, and the TUI's Export GLB/STEP menu actions work, sharing the CLI's kernel-backed writers.",
+  "features": ["cli", "tui", "export", "glb", "step"]
+}
