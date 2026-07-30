@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-29-fk-render-pivot",
+  "version": "0.9.4",
+  "date": "2026-07-29",
+  "category": "fix",
+  "title": "Jointed parts pivot at their anchor when rendered",
+  "summary": "Kinematic playback rotated a jointed child about the world origin instead of its joint anchor; renders at nonzero joint angles are now correct.",
+  "features": ["assembly", "kinematics", "animation", "rendering"],
+  "mcpTools": ["export_video", "render_sequence", "animate", "render_view"]
+}

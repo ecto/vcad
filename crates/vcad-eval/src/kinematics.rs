@@ -373,6 +373,48 @@ mod tests {
         );
     }
 
+    /// Apply a solved world transform to a part-local point.
+    fn world_point(t: &Transform3D, p: Vec3) -> Vec3 {
+        vec3_add(&t.translation, &mat_vec3(&euler_to_matrix(&t.rotation), &p))
+    }
+
+    /// The defining invariant: the child's anchor point lands on the parent's
+    /// anchor point at *every* joint angle. A zero anchor cannot distinguish
+    /// "rotate about the anchor" from "rotate about the world origin", so
+    /// this pins a nonzero parent anchor and a nonzero child anchor together.
+    #[test]
+    fn anchor_points_stay_coincident_at_every_angle() {
+        for state in [0.0, -30.0, 45.0, 137.0] {
+            let mut doc = doc_with_instance_transform(state);
+            let child_anchor = Vec3::new(3.0, -2.0, 7.0);
+            doc.joints.as_mut().expect("joints")[0].child_anchor = child_anchor;
+            let expect = doc.joints.as_ref().unwrap()[0].parent_anchor; // parent is ground-identity
+            let world = solve_forward_kinematics(&doc);
+            let arm = world.get("arm").expect("arm solved");
+
+            let anchor = world_point(arm, child_anchor);
+            assert!(
+                (anchor.x - expect.x).abs() < 1e-9
+                    && (anchor.y - expect.y).abs() < 1e-9
+                    && (anchor.z - expect.z).abs() < 1e-9,
+                "state {state}: anchor at {anchor:?}, want {expect:?}"
+            );
+
+            // And the pivot really is the anchor, not the world origin: a
+            // material point keeps its distance to the anchor, not to (0,0,0).
+            let probe = world_point(arm, Vec3::new(0.0, 0.0, 0.0));
+            let d_anchor = ((probe.x - expect.x).powi(2)
+                + (probe.y - expect.y).powi(2)
+                + (probe.z - expect.z).powi(2))
+            .sqrt();
+            let want = (3.0f64.powi(2) + 2.0f64.powi(2) + 7.0f64.powi(2)).sqrt();
+            assert!(
+                (d_anchor - want).abs() < 1e-9,
+                "state {state}: |probe - anchor| = {d_anchor}, want {want}"
+            );
+        }
+    }
+
     #[test]
     fn root_instance_keeps_own_transform() {
         let mut doc = doc_with_instance_transform(0.0);

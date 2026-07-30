@@ -771,15 +771,18 @@ fn focus_mask(scene: &[SceneSolid], focus: &str) -> Result<Vec<bool>, String> {
 /// IR `Transform3D` → kernel `Transform`, matching the evaluator's
 /// convention: scale, then Rx·Ry·Rz (applied x-first), then translation.
 fn transform3d_to_kernel(t: &vcad_ir::Transform3D) -> Transform {
-    Transform::scale(t.scale.x, t.scale.y, t.scale.z)
-        .then(&Transform::rotation_x(t.rotation.x.to_radians()))
-        .then(&Transform::rotation_y(t.rotation.y.to_radians()))
+    // `Transform::then` composes self·other with column vectors, so `other`
+    // acts on the point FIRST. The intended world placement is
+    // T · Rz · Ry · Rx · S (scale first, translation last — matching the
+    // Rz·Ry·Rx euler convention `vcad_eval::kinematics` emits), so the chain
+    // reads outermost-first. Chaining the other way rotated the translation
+    // itself, which swung a jointed child about the world origin instead of
+    // about its parent anchor.
+    Transform::translation(t.translation.x, t.translation.y, t.translation.z)
         .then(&Transform::rotation_z(t.rotation.z.to_radians()))
-        .then(&Transform::translation(
-            t.translation.x,
-            t.translation.y,
-            t.translation.z,
-        ))
+        .then(&Transform::rotation_y(t.rotation.y.to_radians()))
+        .then(&Transform::rotation_x(t.rotation.x.to_radians()))
+        .then(&Transform::scale(t.scale.x, t.scale.y, t.scale.z))
 }
 
 // ─── canonicalized per-solid mesh ─────────────────────────────────────────
@@ -3982,6 +3985,42 @@ mod raytrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world transform must rotate the geometry about the transform's own
+    /// origin and *then* translate — never rotate the translation itself.
+    ///
+    /// Regression: the chain was built scale→Rx→Ry→Rz→T, but
+    /// `Transform::then` composes `self·other` (other acts first), so the
+    /// translation was applied first and the rotation then swung it about
+    /// the world origin. A revolute child anchored at z=94 detached from its
+    /// parent and orbited the origin at radius 94 — invisible at state 0,
+    /// where the rotation is identity.
+    #[test]
+    fn world_transform_rotates_about_its_own_origin() {
+        let t = vcad_ir::Transform3D {
+            translation: vcad_ir::Vec3::new(0.0, 0.0, 94.0),
+            rotation: vcad_ir::Vec3::new(0.0, -30.0, 0.0),
+            scale: vcad_ir::Vec3::new(1.0, 1.0, 1.0),
+        };
+        let k = transform3d_to_kernel(&t);
+
+        // The transform's origin is the pivot: it maps to the translation.
+        let pivot = k.apply_point(&vcad_kernel::vcad_kernel_math::Point3::new(0.0, 0.0, 0.0));
+        assert!(
+            (pivot.x).abs() < 1e-9 && (pivot.z - 94.0).abs() < 1e-9,
+            "pivot moved: {pivot:?}"
+        );
+
+        // A point 58mm below the pivot swings to R·(0,0,-58) + (0,0,94).
+        let tip = k.apply_point(&vcad_kernel::vcad_kernel_math::Point3::new(0.0, 0.0, -58.0));
+        let (s, c) = (-30.0_f64).to_radians().sin_cos();
+        assert!((tip.x - (-58.0 * s)).abs() < 1e-9, "tip.x = {}", tip.x);
+        assert!(
+            (tip.z - (-58.0 * c + 94.0)).abs() < 1e-9,
+            "tip.z = {}",
+            tip.z
+        );
+    }
 
     /// Pins the handedness of every [`View`]'s screen basis.
     ///
