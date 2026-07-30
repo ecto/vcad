@@ -1,5 +1,14 @@
 # Photorealistic Rendering
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+| Owner | @cam |
+
+> Verified against repo 2026-07-30. Shipped: path tracing landed natively — CPU path tracer + `vcad-render --photoreal` (`crates/vcad-render/src/photoreal.rs`), HDRI environment lighting with importance sampling (`envmap.rs`, `--env`/`--env-rotation`), and a GPU viewport path tracer sharing one `bsdf.wgsl` with the CLI; video/turntable export exists via the MCP `animate`/`render_sequence`/`export_video` tools. Not shipped: cloud rendering service (LuxCoreRender/render farm), OIDN denoising, measured-material (MERL/MaterialX) import.
+
 ## Overview
 
 Lower priority but adds polish. vcad already has a WebGPU ray tracing foundation in `vcad-kernel-raytrace` that can be extended to full path tracing rather than embedding a third-party engine.

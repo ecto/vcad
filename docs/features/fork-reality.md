@@ -2,6 +2,17 @@
 
 **Score: 66/100** | **Priority: #24**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+| Owner | `unassigned` |
+| Priority | `p3` |
+| Effort | `xl` |
+
+> Verified against repo 2026-07-30. Added missing Status table; no image-to-model vision pipeline exists in the codebase (URDF import exists, but nothing image-driven).
+
 ## Overview
 
 See a cool robot on Twitter? Paste the image. vcad generates a parametric model. Go from inspiration to simulation in 30 seconds.

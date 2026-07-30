@@ -11,6 +11,8 @@ Quick access to all commands via a searchable keyboard-driven interface.
 | Priority | `p1` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Shipped: `packages/app/src/components/CommandPalette.tsx`, command registry in `packages/app/src/hooks/useAppCommands.ts` (⌘K).
+
 ## Problem
 
 Menu-based navigation is slow. Users need to:

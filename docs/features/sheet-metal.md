@@ -1,5 +1,14 @@
 # Sheet Metal Design
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+| Owner | @cam |
+
+> Verified against repo 2026-07-30. Core is live in `crates/vcad-kernel-sheet` (base/edge flange, hem, jog, relief, unfold/flatten, bend table, nesting, bend sequence, materials, shop profiles, cost, DFM/manufacturability) plus MCP tools `sheet_metal_create`/`_unfold`/`_check`/`_bend_table`/`_nest`/`_sequence`/`_cost`/`_materials`/`_suggest_fix` and `flat_pattern_from_solid` (flat pattern from an ordinary solid). SendCutSend DXF/STEP export shipped as documented below. Not shipped: form tools (louver/emboss/lance/rib/dimple), miter flange, unfold/refold as modeling ops.
+
 ## Overview
 
 Sheet metal design is a common manufacturing workflow for enclosures, brackets, chassis, and similar parts. Unlike solid modeling where material is added or removed from a volume, sheet metal operates on a constant-thickness shell that can be bent, folded, and formed. The key output is a **flat pattern** that can be laser/plasma cut from stock and then bent on a press brake.

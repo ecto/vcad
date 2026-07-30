@@ -6,11 +6,13 @@ Generate parametric CAD models from natural language descriptions.
 
 | Field | Value |
 |-------|-------|
-| State | `proposed` |
+| State | `in-progress` |
 | Owner | `unassigned` |
 | Priority | `p0` |
 | Effort | `xl` (7 weeks) |
 | Target | Q2 2025 |
+
+> Verified against repo 2026-07-30. Corrected `proposed` → `in-progress`: `crates/vcad-ir/src/vcode.rs`, the `packages/training` cad0 pipeline (models on HuggingFace campedersen/cad0), and browser inference (`packages/app/src/lib/browser-inference.ts`, command-palette entry) exist; `crates/cad0` (Candle Rust inference) does not.
 
 ## Problem
 

@@ -11,6 +11,8 @@ Type-to-filter with smart matching for navigating complex feature trees.
 | Priority | `p2` |
 | Effort | `s` |
 
+> Verified against repo 2026-07-30. Still unimplemented — no `featureSearchQuery` in `packages/core/src/stores/ui-store.ts`; state `proposed` is accurate.
+
 ## Problem
 
 Long feature lists become hard to scan in complex models. A 200-feature assembly turns the feature tree into a wall of text. Users waste time:

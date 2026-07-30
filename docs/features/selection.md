@@ -11,6 +11,8 @@ Select and manipulate parts in the viewport.
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30.
+
 ## Problem
 
 Users need to identify which parts to operate on before performing any action. Without a selection system, operations like transforms, booleans, and deletions have no target. This is foundational to any CAD workflow.

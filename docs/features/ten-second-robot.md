@@ -2,6 +2,15 @@
 
 **Score: 75/100** | **Priority: #15**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+| Owner | `unassigned` |
+
+> Verified against repo 2026-07-30. NL→robot generation is not implemented; however, the physics substrate exists: `create_robot_env`/`gym_*` MCP tools and assembly joints are shipped.
+
 ## Overview
 
 From nothing to a simulating robot in 10 seconds. A user types "two-finger gripper on a 3-DOF arm" and the viewport populates with a complete robotic arm and gripper, physics already running, joints highlighted and ready to control.

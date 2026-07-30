@@ -11,6 +11,8 @@ Highlight affected geometry in the 3D viewport when hovering over features in th
 | Priority | `p1` |
 | Effort | `s` |
 
+> Verified against repo 2026-07-30. Still unbuilt — no `hoveredFeatureId` state exists in the app stores.
+
 ## Problem
 
 The feature tree lists operations like "Cut-Extrude3" or "Fillet2" with no visual feedback until you click. Users are forced to:

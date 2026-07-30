@@ -6,10 +6,12 @@ Add text geometry to the IR for personalized parts (embossing and engraving).
 
 | Field | Value |
 |-------|-------|
-| State | `in-progress` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p2` |
 | Effort | `l` |
+
+> Verified against repo 2026-07-30. Corrected `in-progress` → `shipped`: `crates/vcad-kernel-text` exists, `Text2D` variant in `crates/vcad-ir/src/lib.rs`, `textExtrude` WASM binding, and `Text2D` handling in `packages/engine/src/evaluate.ts`.
 
 ## Problem
 
@@ -222,13 +224,13 @@ pub fn textBounds(
 
 ### Phase 1: IR Types (`xs`)
 
-- [ ] Add `TextAlignment` enum to `vcad-ir`
-- [ ] Add `Text2D` variant to `CsgOp` in `vcad-ir`
-- [ ] Mirror types in `packages/ir/src/index.ts`
+- [x] Add `TextAlignment` enum to `vcad-ir`
+- [x] Add `Text2D` variant to `CsgOp` in `vcad-ir`
+- [x] Mirror types in `packages/ir/src/index.ts`
 
 ### Phase 2: Kernel Crate (`m`)
 
-- [ ] Create `vcad-kernel-text` crate structure
+- [x] Create `vcad-kernel-text` crate structure
 - [ ] Implement `FontRegistry` with embedded Open Sans
 - [ ] Implement glyph outline extraction using `ttf-parser`
 - [ ] Implement contour → `SketchProfile` conversion
@@ -237,9 +239,9 @@ pub fn textBounds(
 
 ### Phase 3: Integration (`m`)
 
-- [ ] Add `vcad-kernel-text` to `vcad-kernel` workspace
-- [ ] Add WASM bindings (`textExtrude`, `registerFont`, `textBounds`)
-- [ ] Update `evaluate.ts` to handle `Text2D` in Extrude
+- [x] Add `vcad-kernel-text` to `vcad-kernel` workspace
+- [x] Add WASM bindings (`textExtrude`, `registerFont`, `textBounds`)
+- [x] Update `evaluate.ts` to handle `Text2D` in Extrude
 - [ ] Test emboss workflow (Text2D → Extrude → Union)
 - [ ] Test engrave workflow (Text2D → Extrude → Difference)
 
@@ -252,10 +254,10 @@ pub fn textBounds(
 
 ## Acceptance Criteria
 
-- [ ] `Text2D` IR node can be created and serialized
-- [ ] Text renders correctly with built-in sans-serif font
-- [ ] Extruding text produces valid mesh geometry
-- [ ] Boolean operations work with text solids (emboss/engrave)
+- [x] `Text2D` IR node can be created and serialized
+- [x] Text renders correctly with built-in sans-serif font
+- [x] Extruding text produces valid mesh geometry
+- [x] Boolean operations work with text solids (emboss/engrave)
 - [ ] Custom fonts can be registered and used in browser
 - [ ] `textBounds()` returns accurate dimensions
 

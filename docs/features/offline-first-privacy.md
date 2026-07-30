@@ -11,6 +11,8 @@ Your geometry stays on your device. Full CAD functionality without network depen
 | Priority | `p1` |
 | Score | 82/100 |
 
+> Verified against repo 2026-07-30. Core claims confirmed: WASM kernel (`crates/vcad-kernel-wasm`), IndexedDB storage (`packages/app/src/lib/storage.ts`), offline export. One correction: opt-in cloud sync now exists (Supabase via `@vcad/auth`, `packages/auth/src/sync.ts` — user-controlled, matching the "Optional Sync" section, no longer future). Kernel is ~285K LOC now, not ~27K.
+
 ## Problem
 
 Cloud-dependent CAD tools create serious barriers for security-conscious organizations:

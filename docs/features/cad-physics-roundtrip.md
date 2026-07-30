@@ -2,6 +2,14 @@
 
 **Score: 87/100** | **Priority: #3**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. The CAD→physics direction is shipped (`crates/vcad-kernel-physics`, `packages/engine` PhysicsEnv, `create_robot_env`/`gym_*` MCP tools build sims directly from the parametric assembly); the live edit-with-preserved-sim-state round-trip described below is not verified as implemented.
+
 ## Overview
 
 Parametric geometry stays live through simulation. Change a dimension, and the physics world updates immediately. No re-export, no mesh reimport, no manual synchronization.

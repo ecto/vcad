@@ -11,6 +11,8 @@ Programmatic access to vcad without the UI for automation, CI/CD, and AI integra
 | Priority | `p1` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Two corrections: (1) the Ink/React JS CLI (`packages/cli`, `npx @vcad/cli`) no longer exists — the TUI now lives in the Rust CLI (`vcad tui` / `vcad repl` in `crates/vcad-cli`); (2) the surface described here is a small subset of what shipped — the Rust CLI also has `import-step`, `import-urdf`, `render`, `fab-prep`, and the MCP server exposes 100+ tools (see CLAUDE.md), not just the three listed.
+
 ## Problem
 
 CAD tools are traditionally GUI-only, forcing manual workflows for repetitive tasks:

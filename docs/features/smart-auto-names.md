@@ -11,6 +11,8 @@ Generate descriptive feature names automatically from parameters and context.
 | Priority | `p1` |
 | Effort | `s` |
 
+> Verified against repo 2026-07-30. Still `proposed`: no `packages/engine/src/naming.ts` and no `nameSource` field exist.
+
 ## Problem
 
 CAD features get meaningless auto-generated names:

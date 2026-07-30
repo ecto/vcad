@@ -6,10 +6,12 @@ Click a feature to expand it inline, showing key parameters for direct editing w
 
 | Field | Value |
 |-------|-------|
-| State | `proposed` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p2` |
 | Effort | `m` |
+
+> Verified against repo 2026-07-30. Shipped: `FeatureTree.tsx` expands features inline (`inlineExpandedIds`) with scrub-input dimensions, position, rotation, and material sections (`InlineProperties.tsx`, `ScrubInput`). Implementation diverged from this spec: edits apply directly to the document (no separate ghost-preview/`previewParams` layer, no `expandedFeatureId` in ui-store).
 
 ## Problem
 
@@ -134,12 +136,12 @@ interface UiState {
 
 - [ ] Add `expandedFeatureId` to ui-store (`xs`)
 - [ ] Add `previewParams` state for live preview (`xs`)
-- [ ] Add expand/collapse interaction to FeatureTree (`s`)
+- [x] Add expand/collapse interaction to FeatureTree (`s`)
 
 ### Phase 2: Parameter Inputs
 
-- [ ] Create inline parameter editor component (`s`)
-- [ ] Implement scrub input for numeric values (reuse existing) (`xs`)
+- [x] Create inline parameter editor component (`s`)
+- [x] Implement scrub input for numeric values (reuse existing) (`xs`)
 - [ ] Implement dropdown for enum values (`xs`)
 - [ ] Add validation and error display (`s`)
 
@@ -157,8 +159,8 @@ interface UiState {
 
 ## Acceptance Criteria
 
-- [ ] Clicking a feature expands to show its key parameters inline
-- [ ] Scrubbing a numeric value updates the viewport in real-time
+- [x] Clicking a feature expands to show its key parameters inline
+- [x] Scrubbing a numeric value updates the viewport in real-time
 - [ ] Pressing Enter commits the change and updates the document
 - [ ] Pressing Escape reverts to the previous value
 - [ ] Invalid values show an error message and prevent commit

@@ -11,6 +11,8 @@ A timeline scrubber that lets users drag through feature history and see the mod
 | Priority | `p1` |
 | Effort | `m` |
 
+> Verified against repo 2026-07-30. Still `proposed`: no `TimelineScrubber.tsx`/`timelineIndex` feature-history scrubbing exists. (Not to be confused with the shipped animation timeline `AnimationTimeline.tsx`, which scrubs simulation time, not feature history.)
+
 ## Problem
 
 Users cannot easily visualize how a model was built step-by-step. Understanding the construction history of a complex part requires mentally reconstructing each operation, which is error-prone and time-consuming. This is especially problematic when:

@@ -11,6 +11,8 @@ AI-assisted health monitoring that proactively warns, detects waste, and suggest
 | Priority | `p3` |
 | Effort | `l` |
 
+> Verified against repo 2026-07-30. Still unbuilt as described (no health badges/`HealthCheck` in the app). Note: manufacturing DFM checks — listed here as a future enhancement — shipped separately via the `dfm_check`/`dfm_suggest_fix` MCP tools and `lib/dfm` rule packs.
+
 ## Problem
 
 Traditional CAD workflows surface problems too late:

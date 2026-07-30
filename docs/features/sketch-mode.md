@@ -11,6 +11,8 @@ Draw constrained 2D profiles for 3D operations like extrude, revolve, sweep, and
 | Priority | `p0` |
 | Effort | `n/a` (complete) |
 
+> Verified against repo 2026-07-30. Kernel LM solver in `crates/vcad-kernel-constraints`; `packages/core/src/stores/sketch-store.ts` delegates solving to the kernel via `solveSketchSegments` (WASM).
+
 ## Problem
 
 3D modeling operations need 2D input profiles:

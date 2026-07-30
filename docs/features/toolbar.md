@@ -4,6 +4,8 @@ The tab-based bottom toolbar organizes vcad's tools into logical groups, auto-sw
 
 **Status:** `shipped` | **Priority:** p0
 
+> Verified against repo 2026-07-30. Note: the component is now `ToolPalette.tsx` (plus `MobileToolPalette.tsx`), not `BottomToolbar.tsx`, and the tab set has grown beyond this doc (e.g. `sketch`, `build`, `circuit` tabs in `ui-store.ts`).
+
 ---
 
 ## Design
@@ -211,6 +213,6 @@ No direct keyboard shortcuts for tab switching (use mouse/touch).
 
 ## Implementation
 
-- **Component:** `packages/app/src/components/BottomToolbar.tsx`
+- **Component:** `packages/app/src/components/ToolPalette.tsx` (mobile: `MobileToolPalette.tsx`)
 - **State:** `toolbarExpanded`, `toolbarTab` in `packages/core/src/stores/ui-store.ts`
 - **Persistence:** `vcad:toolbarExpanded` in localStorage
