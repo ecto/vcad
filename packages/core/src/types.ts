@@ -385,7 +385,7 @@ export type ConstraintTool =
   | "equal";
 
 /** Constraint status for visual feedback */
-export type ConstraintStatus = "under" | "solved" | "over" | "error";
+export type ConstraintStatus = "under" | "solved" | "over" | "error" | "pending";
 
 /** Sketch editing state */
 export interface SketchState {

@@ -174,6 +174,7 @@ function SketchTreeSection() {
             constraintStatus === "error" && "text-red-400",
             constraintStatus === "over" && "text-orange-400",
             constraintStatus === "under" && "text-yellow-400/70",
+            constraintStatus === "pending" && "text-neutral-500",
           )}
           title={`${constraints.length} constraint${constraints.length === 1 ? "" : "s"} · ${constraintStatus}`}
         >
