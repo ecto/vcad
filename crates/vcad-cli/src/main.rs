@@ -641,7 +641,12 @@ fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
             println!("Exported STL to {}", output.display());
         }
         "glb" => {
-            println!("GLB export not yet implemented in CLI");
+            let count = write_glb(&doc, output)?;
+            println!(
+                "Exported GLB ({count} mesh{}) to {}",
+                if count == 1 { "" } else { "es" },
+                output.display()
+            );
         }
         "step" | "stp" => {
             export_step(&doc, output)?;
@@ -734,7 +739,96 @@ fn export_stl_bytes(vertices: &[f32], indices: &[u32]) -> Result<Vec<u8>> {
     Ok(data)
 }
 
+/// Write the evaluated document to a binary GLB at `output`. Returns the
+/// number of meshes written. Print-free so the TUI can surface the result
+/// in its status line.
+fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
+    use vcad_kernel_export::{build_glb, GlbMeshSpec, GlbSpec};
+
+    let opts = vcad_eval::EvalOptions {
+        skip_clash_detection: true,
+        ..Default::default()
+    };
+    let scene = vcad_eval::evaluate_document(doc, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut f32_data: Vec<f32> = Vec::new();
+    let mut u32_data: Vec<u32> = Vec::new();
+    let mut meshes = Vec::new();
+    for (i, part) in scene.parts.iter().enumerate() {
+        if part.mesh.positions.is_empty() || part.mesh.indices.is_empty() {
+            continue;
+        }
+        let pos_off = f32_data.len();
+        f32_data.extend_from_slice(&part.mesh.positions);
+        let normals = part.mesh.normals.as_ref().map(|n| {
+            let off = f32_data.len();
+            f32_data.extend_from_slice(n);
+            [off, n.len()]
+        });
+        let idx_off = u32_data.len();
+        u32_data.extend_from_slice(&part.mesh.indices);
+        let name = doc
+            .roots
+            .get(i)
+            .and_then(|r| doc.nodes.get(&r.root))
+            .and_then(|n| n.name.clone())
+            .unwrap_or_else(|| format!("part_{}", i + 1));
+        meshes.push(GlbMeshSpec {
+            name,
+            positions: [pos_off, part.mesh.positions.len()],
+            indices: [idx_off, part.mesh.indices.len()],
+            normals,
+            color: [0.71, 0.71, 0.75],
+            metallic: 0.1,
+            roughness: 0.7,
+            emissive: None,
+            emissive_strength: None,
+            clearcoat: None,
+            clearcoat_roughness: None,
+            alpha: None,
+            transform: None,
+            mesh_key: None,
+        });
+    }
+    if meshes.is_empty() {
+        anyhow::bail!("Document has no geometry to export");
+    }
+
+    let count = meshes.len();
+    let scene_name = output
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("vcad")
+        .to_string();
+    let glb = build_glb(
+        &GlbSpec {
+            name: scene_name,
+            meshes,
+            animation: None,
+        },
+        &f32_data,
+        &u32_data,
+    )
+    .map_err(|e| anyhow::anyhow!("GLB build failed: {e}"))?;
+    std::fs::write(output, glb)?;
+    Ok(count)
+}
+
 fn export_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
+    let count = write_step(doc, output)?;
+    println!(
+        "Exported STEP ({} solid{}) to {}",
+        count,
+        if count == 1 { "" } else { "s" },
+        output.display()
+    );
+    Ok(())
+}
+
+/// Write the evaluated document to AP214 STEP at `output`. Returns the number
+/// of solids written. Mesh-only roots are refused by name (existing policy);
+/// print-free so the TUI can surface the error in its status line.
+fn write_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
     use vcad_kernel::Solid;
 
     // Evaluate the document through the kernel: booleans, transforms,
@@ -787,13 +881,10 @@ fn export_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
     let refs: Vec<(&Solid, &str)> = named.iter().map(|(s, n)| (*s, n.as_str())).collect();
     let buffer = Solid::solids_to_step_buffer(&refs)?;
     std::fs::write(output, buffer)?;
-    println!(
-        "Exported STEP ({} solid{}) to {}",
-        roots.len(),
-        if roots.len() == 1 { "" } else { "s" },
-        output.display()
-    );
-    Ok(())
+    // Count what was actually serialized rather than what was evaluated, so
+    // the caller's message can't drift from the file if the guard above ever
+    // stops rejecting every solid-less root.
+    Ok(named.len())
 }
 
 fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Result<()> {
@@ -1817,5 +1908,60 @@ fn parse_vec3(s: &str) -> Result<vcad_ir::Vec3> {
             Ok(vcad_ir::Vec3::new(x, y, z))
         }
         _ => anyhow::bail!("Expected 'x,y,z' or single value, got '{}'", s),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vcad_ir::{CsgOp, Document, Node, SceneEntry, Vec3};
+
+    fn cube_doc() -> Document {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("Cube 1".to_string()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "default".to_string(),
+            visible: None,
+        });
+        doc
+    }
+
+    #[test]
+    fn write_glb_produces_valid_glb() {
+        let doc = cube_doc();
+        let out = std::env::temp_dir().join("vcad_cli_test_export.glb");
+        let count = write_glb(&doc, &out).expect("GLB export failed");
+        assert_eq!(count, 1);
+        let bytes = std::fs::read(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        // GLB header: magic "glTF", version 2, total length == file length.
+        assert!(bytes.len() > 12);
+        assert_eq!(&bytes[0..4], b"glTF");
+        assert_eq!(u32::from_le_bytes(bytes[4..8].try_into().unwrap()), 2);
+        assert_eq!(
+            u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize,
+            bytes.len()
+        );
+    }
+
+    #[test]
+    fn write_step_produces_ap214_file() {
+        let doc = cube_doc();
+        let out = std::env::temp_dir().join("vcad_cli_test_export.step");
+        let count = write_step(&doc, &out).expect("STEP export failed");
+        assert_eq!(count, 1);
+        let text = std::fs::read_to_string(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        assert!(text.starts_with("ISO-10303-21"));
     }
 }
