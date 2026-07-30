@@ -1954,6 +1954,87 @@ mod tests {
         );
     }
 
+    /// Parse the JSON chunk out of a GLB.
+    fn glb_json(bytes: &[u8]) -> serde_json::Value {
+        let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        assert_eq!(&bytes[16..20], b"JSON");
+        serde_json::from_slice(&bytes[20..20 + len]).expect("GLB JSON chunk did not parse")
+    }
+
+    /// Every mesh after the first reads its geometry from a non-zero offset
+    /// into the shared f32/u32 buffers, so a misread span (element index vs.
+    /// byte offset, say) corrupts all but the first part while leaving the
+    /// GLB structurally valid. Two cubes 100mm apart pin each part's own
+    /// POSITION accessor bounds to the cube it was built from.
+    #[test]
+    fn write_glb_keeps_per_mesh_spans_distinct() {
+        let mut doc = cube_doc();
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("Cube 2".to_string()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            3,
+            Node {
+                id: 3,
+                name: Some("Shifted".to_string()),
+                op: CsgOp::Translate {
+                    child: 2,
+                    offset: Vec3::new(100.0, 0.0, 0.0),
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 3,
+            material: "default".to_string(),
+            visible: None,
+        });
+
+        let out = std::env::temp_dir().join("vcad_cli_test_export_multi.glb");
+        let count = write_glb(&doc, &out).expect("GLB export failed");
+        let bytes = std::fs::read(&out).unwrap();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(count, 2);
+
+        let json = glb_json(&bytes);
+        let meshes = json["meshes"].as_array().expect("no meshes");
+        assert_eq!(meshes.len(), 2);
+
+        // Read each mesh's POSITION accessor bounds back out.
+        let bounds = |mesh: &serde_json::Value| -> (f64, f64) {
+            let acc = mesh["primitives"][0]["attributes"]["POSITION"]
+                .as_u64()
+                .expect("no POSITION accessor") as usize;
+            let acc = &json["accessors"][acc];
+            (
+                acc["min"][0].as_f64().unwrap(),
+                acc["max"][0].as_f64().unwrap(),
+            )
+        };
+        let (min0, max0) = bounds(&meshes[0]);
+        let (min1, max1) = bounds(&meshes[1]);
+
+        // First cube spans x∈[0,10]; the translated one x∈[100,110].
+        assert!(
+            max0 < 50.0,
+            "first mesh should not be the shifted cube: {max0}"
+        );
+        assert!(
+            min1 > 50.0,
+            "second mesh lost its translation — spans likely misread: min={min1}"
+        );
+        assert!(
+            (max1 - min1 - (max0 - min0)).abs() < 1e-3,
+            "cubes differ in size"
+        );
+    }
+
     #[test]
     fn write_step_produces_ap214_file() {
         let doc = cube_doc();
