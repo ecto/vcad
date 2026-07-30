@@ -577,10 +577,19 @@ export const useSketchStore = create<SketchStore>((set, get) => {
       getKernelWasm()
         .then(() => {
           const s = get();
-          if (s.active && s.constraintStatus === "pending") s.solveSketch();
+          if (!s.active || s.constraintStatus !== "pending") return;
+          try {
+            s.solveSketch();
+          } catch (err) {
+            // The retry itself blew up. Surface it rather than leaving the
+            // sketch parked in "pending" forever with no visible reason.
+            console.warn("[sketch] solver error after hydration:", err);
+            set({ solved: false, constraintStatus: "error" });
+          }
         })
         .catch(() => {
-          // Kernel never hydrated (headless/tests) — stay pending.
+          // Kernel never hydrated (headless/tests) — stay pending. Nothing
+          // was solved and nothing is coming, which "pending" says honestly.
         });
       return;
     }
