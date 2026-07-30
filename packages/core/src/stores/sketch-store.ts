@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Vec2, Vec3, SketchSegment2D, SketchConstraint } from "@vcad/ir";
 import type { SketchPlane, SketchState, ConstraintTool, ConstraintStatus, FaceInfo } from "../types.js";
 import { computePlaneFromFace, getSketchPlaneDirections } from "../types.js";
-import { getKernelWasmSync } from "../wasm-singleton.js";
+import { getKernelWasm, getKernelWasmSync } from "../wasm-singleton.js";
 import { buildRectangle, buildCircle } from "../sketch-math.js";
 
 /** A saved profile snapshot for loft operations */
@@ -570,10 +570,18 @@ export const useSketchStore = create<SketchStore>((set, get) => {
     } | null;
 
     if (!wasm || typeof wasm.solveSketchSegments !== "function") {
-      // WASM not hydrated yet (e.g. tests) — mark solved without touching
-      // segments. The UI will show "solved" feedback but won't apply any
-      // geometric updates.
-      set({ solved: true, constraintStatus: "solved" });
+      // WASM not hydrated yet (e.g. during boot, or in tests) — no solve
+      // actually ran, so report "pending" rather than lying with "solved",
+      // and re-run automatically once the kernel module is available.
+      set({ solved: false, constraintStatus: "pending" });
+      getKernelWasm()
+        .then(() => {
+          const s = get();
+          if (s.active && s.constraintStatus === "pending") s.solveSketch();
+        })
+        .catch(() => {
+          // Kernel never hydrated (headless/tests) — stay pending.
+        });
       return;
     }
 
