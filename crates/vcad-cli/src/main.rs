@@ -881,7 +881,10 @@ fn write_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
     let refs: Vec<(&Solid, &str)> = named.iter().map(|(s, n)| (*s, n.as_str())).collect();
     let buffer = Solid::solids_to_step_buffer(&refs)?;
     std::fs::write(output, buffer)?;
-    Ok(roots.len())
+    // Count what was actually serialized rather than what was evaluated, so
+    // the caller's message can't drift from the file if the guard above ever
+    // stops rejecting every solid-less root.
+    Ok(named.len())
 }
 
 fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Result<()> {
