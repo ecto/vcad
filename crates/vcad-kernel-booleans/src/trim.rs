@@ -287,18 +287,68 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             }
         }
 
+        // A frozen full-wrap wall (crate::freeze rewrote the analytic seam
+        // loop into two dense canonical rings) also spans the full U range:
+        // every vertex sits on one of two v-levels and the u samples cover
+        // the whole circle with no gap. The general UV-polygon fallback
+        // cannot represent that annular domain (any seam cut tears the
+        // rings into a self-overlapping polygon), so route it through the
+        // same V-range test as the analytic 2-vertex loop.
+        let frozen_full_band = std::env::var("VCAD_NO_VBAND").is_err() && unique_verts.len() >= 8
+            && surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+                .is_some_and(|cyl| {
+                    let axis = cyl.axis.as_ref();
+                    let vs: Vec<f64> =
+                        unique_verts.iter().map(|p| (*p - cyl.center).dot(axis)).collect();
+                    let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    if v_max - v_min < 1e-9 {
+                        return false;
+                    }
+                    if !vs
+                        .iter()
+                        .all(|v| (v - v_min).abs() < 1e-6 || (v - v_max).abs() < 1e-6)
+                    {
+                        return false;
+                    }
+                    let ref_dir = cyl.ref_dir.as_ref();
+                    let y_dir = axis.cross(ref_dir);
+                    let mut us: Vec<f64> = unique_verts
+                        .iter()
+                        .map(|p| {
+                            let d = *p - cyl.center;
+                            let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+                            if u < 0.0 {
+                                u + 2.0 * std::f64::consts::PI
+                            } else {
+                                u
+                            }
+                        })
+                        .collect();
+                    us.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let mut max_gap = us[0] + 2.0 * std::f64::consts::PI - us[us.len() - 1];
+                    for w in us.windows(2) {
+                        max_gap = max_gap.max(w[1] - w[0]);
+                    }
+                    max_gap < std::f64::consts::FRAC_PI_2
+                });
+
         // If we have only 2 unique vertices (standard full cylinder lateral face)
         // then the face spans the full U range and we only need to check V
-        if unique_verts.len() == 2 {
+        if unique_verts.len() == 2 || frozen_full_band {
             // Get V range from the two seam vertices
             if let Some(cyl) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
             {
-                let v0 = (unique_verts[0] - cyl.center).dot(cyl.axis.as_ref());
-                let v1 = (unique_verts[1] - cyl.center).dot(cyl.axis.as_ref());
-                let v_min = v0.min(v1);
-                let v_max = v0.max(v1);
+                let vs: Vec<f64> = unique_verts
+                    .iter()
+                    .map(|p| (*p - cyl.center).dot(cyl.axis.as_ref()))
+                    .collect();
+                let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+                let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
                 let test_v = test_uv.y; // V coordinate
 
                 // For a full cylinder, just check V is in range

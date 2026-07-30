@@ -1109,6 +1109,8 @@ fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Ve
         return Vec::new();
     }
     let n = outer_verts.len();
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let is_plane = surface.surface_type() == SurfaceKind::Plane;
     let mut probes = Vec::with_capacity(n);
     for i in 0..n {
         let a = outer_verts[i];
@@ -1116,7 +1118,18 @@ fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Ve
         let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
         // Nudge 20% toward centroid to land strictly inside the face.
         let dir = centroid - mid;
-        probes.push(mid + 0.2 * dir);
+        let p = mid + 0.2 * dir;
+        if is_plane {
+            probes.push(p);
+        } else {
+            // On a curved face the straight-line nudge leaves the surface —
+            // on a frozen full-wrap cylinder wall it drags far-side ring
+            // midpoints deep into the interior (or into a bore void).
+            // Re-project onto the carrying surface so probes stay ON the
+            // face they are meant to sample.
+            let uv = crate::trim::project_point_to_uv(surface.as_ref(), &p);
+            probes.push(surface.evaluate(uv));
+        }
     }
     probes
 }
@@ -1139,7 +1152,25 @@ pub fn classify_face(
     let sample = face_sample_point(brep, face_id);
     let oriented_normal = face_oriented_normal(brep, face_id);
     let mut probes = vec![sample];
-    probes.extend(extra_probe_points(brep, face_id, sample));
+    {
+        // Dense frozen boundaries yield hundreds of edge-midpoint probes;
+        // subsample for cost, and drop any probe that does not actually lie
+        // on the face (the straight-line "nudge toward centroid" can cross
+        // an inner-loop hole on an annular cap, sampling void instead of
+        // face and misclassifying the whole face).
+        let extra = extra_probe_points(brep, face_id, sample);
+        if std::env::var("VCAD_OLD_PROBES").is_ok() {
+            probes.extend(extra);
+        } else {
+            let stride = extra.len().div_ceil(24).max(1);
+            probes.extend(
+                extra
+                    .into_iter()
+                    .step_by(stride)
+                    .filter(|p| crate::trim::point_in_face(brep, face_id, p)),
+            );
+        }
+    }
 
     if let Some(c) = find_coincident_classification(brep, face_id, &probes, other) {
         return c;
@@ -1148,9 +1179,28 @@ pub fn classify_face(
     // Test every probe: classify `Inside` only when *every* probe's
     // interior-side offset lies inside the other solid; any `Outside` probe
     // implies the face has material on the result's boundary.
+    //
+    // On a curved face the offset direction must be the LOCAL surface
+    // normal at each probe: a frozen full-wrap cylinder wall carries probes
+    // all around the circumference, and offsetting them by one global face
+    // normal pushes far-side probes outward (or tangentially), reading a
+    // genuinely interior wall as Outside.
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let is_plane = surface.surface_type() == SurfaceKind::Plane;
     let eps = 1e-4;
     for p in &probes {
-        let inward = *p - eps * oriented_normal;
+        let normal = if is_plane || std::env::var("VCAD_OLD_NORMAL").is_ok() {
+            oriented_normal
+        } else {
+            let uv = crate::trim::project_point_to_uv(surface.as_ref(), p);
+            let n = *surface.normal(uv).as_ref();
+            match face.orientation {
+                vcad_kernel_topo::Orientation::Forward => n,
+                vcad_kernel_topo::Orientation::Reversed => -n,
+            }
+        };
+        let inward = *p - eps * normal;
         if !point_in_mesh(&inward, other_mesh) {
             return FaceClassification::Outside;
         }

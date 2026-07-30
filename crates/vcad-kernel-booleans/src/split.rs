@@ -3052,13 +3052,32 @@ pub fn split_cylindrical_face(
     segments: u32,
 ) -> SplitResult {
     let wavy = crate::cyl_band::face_is_wavy_band(brep, face_id);
+    // A dense (frozen-polyline) loop must not reach the legacy circle
+    // splitter: it re-emits analytic seam loops sampled on the raw
+    // `segments` grid, silently thawing a frozen boundary back into one
+    // that can never conform with its sag-dense neighbors. The band
+    // machinery preserves the loop's own columns. (Line splits stay
+    // legacy-first: the legacy line splitter emits canonical dense chains
+    // itself and handles full-face seam bookkeeping the band path lacks.)
+    let dense = brep.topology.loop_len(brep.topology.faces[face_id].outer_loop) > 6;
     match curve {
         IntersectionCurve::Circle(circle) => {
-            if wavy {
-                return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, true)
-                    .unwrap_or(SplitResult {
+            if wavy || dense {
+                // `require_wavy` only when the face really is wavy: a dense
+                // frozen band is rectangular (constant-v rings) and must
+                // still be split by the band machinery. When the band path
+                // declines (e.g. the circle grazes a band edge), fall
+                // through to the legacy splitter rather than giving up.
+                if let Some(r) =
+                    crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, wavy)
+                {
+                    return r;
+                }
+                if wavy {
+                    return SplitResult {
                         sub_faces: vec![face_id],
-                    });
+                    };
+                }
             }
             let result = split_cylindrical_face_by_circle(brep, face_id, circle);
             if result.sub_faces.len() >= 2 {
@@ -3072,11 +3091,17 @@ pub fn split_cylindrical_face(
                 .unwrap_or(result)
         }
         IntersectionCurve::Line(line) => {
-            if wavy {
-                return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, true)
-                    .unwrap_or(SplitResult {
+            if wavy || dense {
+                if let Some(r) =
+                    crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, wavy)
+                {
+                    return r;
+                }
+                if wavy {
+                    return SplitResult {
                         sub_faces: vec![face_id],
-                    });
+                    };
+                }
             }
             let result = split_cylindrical_face_by_line(brep, face_id, line, segments);
             if result.sub_faces.len() >= 2 {
@@ -3157,14 +3182,47 @@ pub fn is_circular_disk_face(brep: &BRepSolid, face_id: FaceId) -> bool {
         return false;
     }
 
-    // Check if it has a single vertex (circular boundary)
+    // Check if it has a single vertex (analytic circular boundary) or a
+    // dense frozen ring (canonical polyline from crate::freeze) — every
+    // vertex equidistant from the plane origin.
     let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
-    if loop_hes.len() != 1 {
+    if loop_hes.len() != 1 && !is_frozen_ring(brep, face_id) {
         return false;
     }
 
     // No inner loops
     face.inner_loops.is_empty()
+}
+
+/// True when the face's outer loop is a dense ring of vertices equidistant
+/// from the plane origin — the canonical polyline `crate::freeze` writes in
+/// place of an analytic full-circle boundary. 8+ vertices distinguishes a
+/// frozen ring from box faces and low-count polygons that happen to be
+/// cyclic.
+fn is_frozen_ring(brep: &BRepSolid, face_id: FaceId) -> bool {
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let plane = match surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
+        Some(p) => p,
+        None => return false,
+    };
+    let center = plane.origin;
+    let mut radius: Option<f64> = None;
+    let mut count = 0usize;
+    for he in brep.topology.loop_half_edges(face.outer_loop) {
+        let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
+        let r = (p - center).norm();
+        match radius {
+            None => radius = Some(r),
+            Some(r0) => {
+                if (r - r0).abs() > 1e-6_f64.max(r0 * 1e-9) {
+                    return false;
+                }
+            }
+        }
+        count += 1;
+    }
+    count >= 8 && std::env::var("VCAD_NO_RING").is_err()
 }
 
 /// Get the circle parameters of a circular disk face.
@@ -3179,9 +3237,11 @@ pub fn get_disk_circle_params(
 
     let plane = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>()?;
 
-    // Get the seam vertex - this is on the circle at angle 0
+    // Get the seam vertex - this is on the circle at angle 0. A dense
+    // frozen ring qualifies too: all its vertices are equidistant from the
+    // plane origin, so the first one fixes the radius.
     let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
-    if loop_hes.len() != 1 {
+    if loop_hes.len() != 1 && !is_frozen_ring(brep, face_id) {
         return None;
     }
 

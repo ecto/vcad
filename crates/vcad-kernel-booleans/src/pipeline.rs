@@ -471,6 +471,16 @@ pub(crate) fn brep_boolean(
     let mut a = solid_a.clone();
     let mut b = solid_b.clone();
 
+    // Freeze analytic full-circle edges into canonical polylines so the
+    // whole pipeline works on one concrete boundary representation (see
+    // crate::freeze). Without this, results that keep an untouched analytic
+    // face are watertight only by resolution coincidence, and any further
+    // boolean on them cannot conform.
+    if std::env::var("VCAD_NO_FREEZE").is_err() {
+        crate::freeze::freeze_circle_loops(&mut a, segments);
+        crate::freeze::freeze_circle_loops(&mut b, segments);
+    }
+
     // 1. Find candidate face pairs via AABB filtering
     let pairs = bbox::find_candidate_face_pairs(&a, &b);
     debug_bool!("\n--- Stage 1: AABB filtering ---");
@@ -871,6 +881,73 @@ pub(crate) fn brep_boolean(
     // Tessellate each solid once and reuse for classification
     let mesh_b = tessellate_brep(&b, segments);
     let mesh_a = tessellate_brep(&a, segments);
+    #[cfg(feature = "debug-boolean")]
+    {
+        let open = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> usize {
+            let quantum = 1e-5;
+            let vkey = |vi: usize| -> [i64; 3] {
+                let mut k = [0i64; 3];
+                for c in 0..3 {
+                    k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+                }
+                k
+            };
+            let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+                std::collections::HashMap::new();
+            for t in 0..mesh.indices.len() / 3 {
+                for k in 0..3 {
+                    let x = vkey(mesh.indices[t * 3 + k] as usize);
+                    let y = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+                    if x == y {
+                        continue;
+                    }
+                    if x < y {
+                        *net.entry((x, y)).or_default() += 1;
+                    } else {
+                        *net.entry((y, x)).or_default() -= 1;
+                    }
+                }
+            }
+            let mut locs: Vec<_> = net
+                .iter()
+                .filter(|(_, &n)| n != 0)
+                .map(|((x, y), _)| (*x, *y))
+                .collect();
+            locs.sort();
+            for (x, y) in locs.iter().take(12) {
+                debug_bool!(
+                    "    open ({:.4},{:.4},{:.4})->({:.4},{:.4},{:.4})",
+                    x[0] as f64 * quantum,
+                    x[1] as f64 * quantum,
+                    x[2] as f64 * quantum,
+                    y[0] as f64 * quantum,
+                    y[1] as f64 * quantum,
+                    y[2] as f64 * quantum
+                );
+            }
+            net.values().map(|n| n.unsigned_abs() as usize).sum()
+        };
+        debug_bool!(
+            "post-split meshes: A open={} B open={}",
+            open(&mesh_a),
+            open(&mesh_b)
+        );
+        let params = vcad_kernel_tessellate::TessellationParams::from_segments(segments);
+        for (fid, _kind, fmesh) in vcad_kernel_tessellate::tessellate_brep_by_face(&a, &params) {
+            let step: Vec<f64> = fmesh
+                .vertices
+                .chunks(3)
+                .take(4)
+                .map(|c| (c[1] as f64).atan2(c[0] as f64))
+                .collect();
+            debug_bool!(
+                "  A face {:?}: {} tris, first angles {:?}",
+                fid,
+                fmesh.indices.len() / 3,
+                step
+            );
+        }
+    }
     let classes_a = classify::classify_all_faces_with_mesh(&a, &b, &mesh_b);
     let classes_b = classify::classify_all_faces_with_mesh(&b, &a, &mesh_a);
 
