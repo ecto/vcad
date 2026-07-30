@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-30-drafting-views-unmirrored",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "fix",
+  "title": "Drafting views are no longer mirrored",
+  "summary": "All six orthographic views (and isometric) in 2D drawings drew a mirror image from the opposite side of the part; they now follow third-angle convention, so shop drawings match the part.",
+  "features": ["drafting", "drawings"],
+  "mcpTools": []
+}
