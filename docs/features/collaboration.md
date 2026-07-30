@@ -1,5 +1,15 @@
 # Real-Time Cloud Collaboration
 
+> **This document is a design spec; a real-time collaboration implementation has since shipped and diverged from it.** The shipped system uses a custom CRDT engine with Supabase Realtime broadcast channels — not Yjs as specced below. See `packages/app/src/hooks/useCollabSync.ts`, `packages/app/src/stores/collab-session-store.ts`, `packages/auth/src/sync.ts` (`joinCollabChannel`), plus XR presence (`xr-presence-store.ts`).
+
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+
+> Verified against repo 2026-07-30. State row added; shipped via custom CRDT + Supabase Realtime rather than the Yjs architecture described below.
+
 Technical specification for real-time collaboration in vcad using CRDT-based synchronization.
 
 ## Overview

@@ -2,6 +2,15 @@
 
 **Score: 85/100** | **Priority: High**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+| Owner | @cam |
+
+> Verified against repo 2026-07-30. `SceneSettings` exists in `crates/vcad-ir/src/lib.rs`; `updateEnvironment`/`addLight`/`updatePostProcessing` live in `packages/core/src/stores/document-store.ts` (not a separate scene store). Bloom remains unshipped ("coming soon" below is still accurate).
+
 ## Overview
 
 Scene settings provide unified control over lighting, environment, backgrounds, and post-processing effects in vcad. The same scene configuration renders identically in the viewport and exports—no more "it looks different when I export" surprises.

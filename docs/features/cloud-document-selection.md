@@ -6,10 +6,12 @@ Browse and open cloud documents without full sync.
 
 | Field | Value |
 |-------|-------|
-| State | `in-progress` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p1` |
 | Effort | `m` |
+
+> Verified against repo 2026-07-30. State corrected `in-progress` → `shipped`: `listCloudDocuments()`/`fetchCloudDocument()` live in `packages/auth/src/sync.ts` and are wired into `packages/app/src/components/DocumentPicker.tsx` (cloud-only rows, download-on-open, offline fallback).
 
 ## Problem
 
@@ -123,22 +125,22 @@ export async function fetchCloudDocument(cloudId: string): Promise<string>
 
 ### Phase 1: API Functions (`s`)
 
-- [ ] Add `listCloudDocuments()` to `sync.ts` (metadata-only query)
-- [ ] Add `fetchCloudDocument()` for on-demand download
-- [ ] Export functions from `@vcad/auth`
+- [x] Add `listCloudDocuments()` to `sync.ts` (metadata-only query)
+- [x] Add `fetchCloudDocument()` for on-demand download
+- [x] Export functions from `@vcad/auth`
 
 ### Phase 2: DocumentPicker Update (`m`)
 
-- [ ] Add cloud document state and loading indicator
-- [ ] Implement document merging logic
-- [ ] Update `DocumentRow` to show cloud-only indicator
-- [ ] Add download-on-open handler for cloud-only docs
-- [ ] Handle loading state during download
+- [x] Add cloud document state and loading indicator
+- [x] Implement document merging logic
+- [x] Update `DocumentRow` to show cloud-only indicator
+- [x] Add download-on-open handler for cloud-only docs
+- [x] Handle loading state during download
 
 ### Phase 3: Offline Handling (`xs`)
 
-- [ ] Detect offline state
-- [ ] Graceful fallback to local-only view
+- [x] Detect offline state
+- [x] Graceful fallback to local-only view
 - [ ] Show offline indicator
 
 ## Acceptance Criteria

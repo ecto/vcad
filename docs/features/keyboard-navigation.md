@@ -6,10 +6,12 @@ Full keyboard control for power users in the feature tree.
 
 | Field | Value |
 |-------|-------|
-| State | `proposed` |
+| State | `in-progress` |
 | Owner | `unassigned` |
 | Priority | `p2` |
 | Effort | `s` |
+
+> Verified against repo 2026-07-30. Core navigation shipped, implemented in `packages/app/src/hooks/useKeyboardShortcuts.ts` (not FeatureTree.tsx as planned): j/k/arrow tree navigation with `treeFocusedPartId` in ui-store, Enter to select, Backspace/Delete with confirmation dialog, Tab cycles focus zones (viewport/tree/property). Not shipped: Shift+j/k multi-select extend, `r` rename key, `/` search focus, gg/G jumps, ARIA tree attributes.
 
 ## Problem
 
@@ -155,14 +157,14 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
 - [ ] Add `featureTreeFocused` state to ui-store (`xs`)
 - [ ] Add `selectionAnchor` state for shift-extend selection (`xs`)
-- [ ] Add keyboard event handler to FeatureTree (`s`)
-- [ ] Implement j/k and arrow key navigation (`xs`)
+- [x] Add keyboard event handler (in `useKeyboardShortcuts.ts`) (`s`)
+- [x] Implement j/k and arrow key navigation (`xs`)
 - [ ] Add visual focus indicator styles (`xs`)
 
 ### Phase 2: Actions
 
 - [ ] Wire up Enter to edit feature (`xs`)
-- [ ] Wire up Delete/Backspace with confirmation dialog (`s`)
+- [x] Wire up Delete/Backspace with confirmation dialog (`s`)
 - [ ] Implement inline rename with `r` key (`s`)
 - [ ] Implement Space to toggle expand/collapse (`xs`)
 - [ ] Wire up `/` to focus search input (`xs`)
@@ -189,9 +191,9 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
 ## Acceptance Criteria
 
-- [ ] `j/k` and arrow keys navigate feature tree
+- [x] `j/k` and arrow keys navigate feature tree
 - [ ] `Enter` opens edit mode for selected feature
-- [ ] `Delete` prompts confirmation, then removes feature
+- [x] `Delete` prompts confirmation, then removes feature
 - [ ] `r` starts inline rename
 - [ ] `Space` expands/collapses groups
 - [ ] `/` focuses search input

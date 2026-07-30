@@ -2,6 +2,14 @@
 
 **Score: 75/100** | **Priority: #21** | **Category: The Endgame**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+
+> Verified against repo 2026-07-30. Prerequisites exist (physics gym MCP tools, `packages/training` ML pipeline), but no world-model training system is implemented.
+
 ## Overview
 
 Train world models on vcad's unified parametric CAD + physics simulation. Unlike video-based world models (Sora, Genie) or mesh-based simulators (Isaac), vcad provides **semantic structure**: joints, constraints, parameters, and ground-truth physics. The world model learns not just dynamics, but *how design affects dynamics*.

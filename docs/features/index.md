@@ -2,6 +2,8 @@
 
 Product management source of truth for vcad features. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to write and maintain feature specs.
 
+> Verified against repo 2026-07-30 (partial pass): states corrected for physics-simulation, urdf-support, inline-parameter-editing, keyboard-navigation, parallel-wasm-workers, one-click-rl-training, living-spec, instant-physicality. Other rows unverified in this pass.
+
 **Mission: Become the best free CAD of all time — better than SolidWorks, Parasolid, CATIA.**
 
 ---
@@ -22,7 +24,7 @@ Capabilities uniquely enabled by our Rust/WASM architecture that competitors can
 | 5 | **85** | [Isomorphic Kernel](./isomorphic-kernel.md) | `partial` | Same Rust → WASM, native, WASI |
 | 7 | **83** | [Browser-Native CAD](./browser-native.md) | `shipped` | Full CAD in browser, no install |
 | 8 | **82** | [Offline-First Privacy](./offline-first-privacy.md) | `shipped` | Geometry never leaves browser |
-| 9 | **81** | [Parallel WASM Workers](./parallel-wasm-workers.md) | `planned` | Background compute, responsive UI |
+| 9 | **81** | [Parallel WASM Workers](./parallel-wasm-workers.md) | `in-progress` | Background compute, responsive UI |
 | 10 | **80** | [WASM Physics Integration](./wasm-physics-integration.md) | `planned` | phyz in browser — **P0** |
 
 ### Physics-First CAD (The Paradigm Shift)
@@ -56,7 +58,7 @@ First-class robotics simulation and machine learning.
 | Rank | Score | Feature | Status | Spec |
 |------|-------|---------|--------|------|
 | 20 | **70** | [Multiplayer Physics](./multiplayer-physics.md) | `proposed` | Real-time collaborative simulation |
-| 23 | **67** | [One-Click RL Training](./one-click-rl-training.md) | `proposed` | `vcad train` — no Isaac setup |
+| 23 | **67** | [One-Click RL Training](./one-click-rl-training.md) | `in-progress` | Gym env + MCP tools shipped; `vcad train` pending |
 
 ### The End Game
 
@@ -64,9 +66,9 @@ Closing the loop from design to reality — and beyond.
 
 | Rank | Score | Feature | Status | Spec |
 |------|-------|---------|--------|------|
-| 16 | **74** | [Living Spec](./living-spec.md) | `proposed` | .vcad = executable specification |
+| 16 | **74** | [Living Spec](./living-spec.md) | `in-progress` | Assertions + receipts shipped via MCP |
 | 21 | **75** | [CAD-Native World Model](./cad-native-world-model.md) | `proposed` | Train world models on parametric CAD + physics |
-| 29 | **61** | [Instant Physicality](./instant-physicality.md) | `proposed` | Click "Order Parts" → quote |
+| 29 | **61** | [Instant Physicality](./instant-physicality.md) | `in-progress` | BOM/quote/order shipped via MCP |
 
 ### Implementation Priority
 
@@ -182,8 +184,8 @@ Robotics interoperability and physics simulation.
 
 | Feature | Status | Priority | Effort | Spec |
 |---------|--------|----------|--------|------|
-| [URDF Import/Export](./urdf-support.md) | `proposed` | p1 | s | Standard robotics format |
-| [Physics Simulation & Gym](./physics-simulation.md) | `planned` | p2 | l | phyz physics, RL training |
+| [URDF Import/Export](./urdf-support.md) | `shipped` | p1 | s | Standard robotics format (`vcad-kernel-urdf`) |
+| [Physics Simulation & Gym](./physics-simulation.md) | `shipped` | p2 | l | phyz physics, gym MCP tools |
 
 ---
 
@@ -214,13 +216,13 @@ Make vcad's feature tree legendary — better than SolidWorks, Fusion, Onshape.
 
 | Feature | Status | Priority | Effort | Spec |
 |---------|--------|----------|--------|------|
-| [Inline Parameter Editing](./inline-parameter-editing.md) | `proposed` | p2 | m | Edit params in tree |
+| [Inline Parameter Editing](./inline-parameter-editing.md) | `shipped` | p2 | m | Edit params in tree |
 
 ### Tier 5: Power User Features
 
 | Feature | Status | Priority | Effort | Spec |
 |---------|--------|----------|--------|------|
-| [Keyboard Navigation](./keyboard-navigation.md) | `proposed` | p2 | s | j/k vim-style navigation |
+| [Keyboard Navigation](./keyboard-navigation.md) | `in-progress` | p2 | s | j/k vim-style navigation |
 | [Search & Filter](./search-filter.md) | `proposed` | p2 | s | Type to filter features |
 | [Drag-Drop Reordering](./drag-drop-reordering.md) | `proposed` | p3 | m | Reorder with impact preview |
 | [Feature Grouping](./feature-grouping.md) | `proposed` | p3 | s | Organize into folders |

@@ -21,17 +21,19 @@ This isn't incremental improvement. This is **category creation**.
 
 **Audit (2026-02-02):** Status legend — ✅ verified in repo, ⚠️ partial/limited, ❌ not found.
 
+> Verified against repo 2026-07-30. Several Feb 2026 audit rows/notes were stale and are corrected below (fillets, constraint solver, URDF). The repo has also grown well past this snapshot — see root CLAUDE.md for the current crate list (~90 crates, ~285K LOC Rust) including CAM, sheet metal, topology optimization, PCB/ECAD, and many analysis solvers not reflected in this table.
+
 | Phase | Component | Status |
 |-------|-----------|--------|
 | 1 | Topology + Geometry + Primitives + Tessellation | ✅ |
 | 2 | Boolean Operations | ✅ |
 | 3 | Surface Transforms | ✅ |
 | 4 | NURBS | ✅ |
-| 5 | Fillets & Chamfers | ⚠️ |
+| 5 | Fillets & Chamfers | ✅ |
 | 6 | Sketch-Based Operations (extrude/revolve) | ✅ |
 | 7 | Sketch IR + UI Integration | ✅ |
 | 8 | Shell + Pattern Operations | ⚠️ |
-| 9 | Constraint Solver | ⚠️ |
+| 9 | Constraint Solver | ✅ |
 | 10 | STEP Import/Export | ⚠️ |
 | 11 | Sweep + Loft (Kernel) | ✅ |
 | 12 | Sweep + Loft UI Integration | ✅ |
@@ -42,20 +44,20 @@ This isn't incremental improvement. This is **category creation**.
 | 17 | GPU Acceleration (wgpu) | ⚠️ |
 | 18 | Direct BRep Ray Tracing | ✅ |
 | 19 | Physics Simulation (phyz) | ✅ |
-| 20 | URDF Import | ⚠️ |
+| 20 | URDF Import | ✅ |
 | 21 | Text-to-CAD Training Pipeline | ✅ |
 
-**Audit notes (repo evidence):**
-- Fillet/chamfer is planar-face only.
+**Audit notes (repo evidence; corrected 2026-07-30):**
+- ~~Fillet/chamfer is planar-face only.~~ Stale as of 2026-07-30: `crates/vcad-kernel-fillet` now includes curved-face fillets, torus blend surfaces, rolling-ball fillets (`rolling_ball.rs`), and spherical vertex blends (`fillet_curved.rs`).
 - Shell is mesh-based; planar B-rep offset only.
-- Constraint solver exists in kernel, but app uses a simplified constraint solve.
-- STEP import/export supports limited surface types and requires B-rep; booleans convert to mesh.
-- URDF import stores mesh links as STEP imports and approximates planar/floating joints.
+- ~~Constraint solver exists in kernel, but app uses a simplified constraint solve.~~ Stale as of 2026-07-30: the app delegates to the kernel Levenberg-Marquardt solver via the WASM `solveSketchSegments` binding (`packages/core/src/stores/sketch-store.ts`).
+- STEP import/export supports limited surface types and requires B-rep; booleans convert to mesh. (2026-07-30: STEP has since gained AP214 product anchors and analytic CIRCLE edge reconstruction at export.)
+- ~~URDF import stores mesh links as STEP imports and approximates planar/floating joints.~~ 2026-07-30: URDF import and export are both shipped (`crates/vcad-kernel-urdf` reader + writer, CLI `import-urdf` and URDF export).
 - GPU acceleration currently used for mesh processing and ray tracing.
 
-**Kernel crates:** math, topo, geom, primitives, tessellate, booleans, nurbs, fillet, sketch, sweep, shell, constraints, step, drafting, gpu, raytrace, physics, urdf
+**Kernel crates:** math, topo, geom, primitives, tessellate, booleans, nurbs, fillet, sketch, sweep, shell, constraints, step, drafting, gpu, raytrace, physics, urdf — plus (2026-07-30) cam, stocksim, topopt, dfm, export, acoustics, thermal, em, and many more; see root CLAUDE.md for the full ~90-crate list.
 
-**Kernel stats:** ~40K lines Rust (src only, excludes `vcad-kernel-wasm`)
+**Kernel stats:** ~285K lines Rust as of 2026-07-30 (the ~40K figure was the Feb 2026 snapshot)
 
 **App features:**
 - React + Three.js viewport with standard and ray-traced render modes
@@ -219,12 +221,12 @@ vcad-pcb/
 |---------|--------|-------|-----|---------|---------|---------|----------|
 | AI Text-to-CAD | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | **✅** |
 | Point Cloud → CAD | 🔶 | 🔶 | 🔶 | ❌ | ❌ | ❌ | ❌ |
-| Generative Design | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Generative Design | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | **✅** (2026: `vcad-kernel-topopt`) |
 | Real-Time Collab | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Local-First | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ | **✅** |
 | Open Source | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | **✅** |
 | API-First | 🔶 | ❌ | ❌ | ✅ | ❌ | 🔶 | **✅** |
-| PCB Integration | 🔶 | ❌ | ❌ | ❌ | ❌ | 🔶 | ❌ |
+| PCB Integration | 🔶 | ❌ | ❌ | ❌ | ❌ | 🔶 | **✅** (2026: full ECAD stack) |
 | GPU Acceleration | ❌ | ❌ | 🔶 | ❌ | ❌ | ❌ | **✅** |
 | Direct BRep Rendering | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | **✅** |
 | Physics Simulation | 🔶 | ❌ | ✅ | ❌ | ❌ | ❌ | **✅** |
@@ -263,13 +265,13 @@ vcad-pcb/
 16. ❌ **Presence indicators** — cursors, selections
 17. ❌ **Version branching** — git-like history
 
-### Phase F: PCB MVP (Not Started)
-18. ❌ **PCB IR types** — components, nets, layers
-19. ❌ **Basic autorouter** — A* with congestion
-20. ❌ **KiCad import** — leverage existing designs
+### Phase F: PCB MVP ✅ (corrected 2026-07-30 — shipped and far beyond MVP)
+18. ✅ **PCB IR types** — components, nets, layers
+19. ✅ **Autorouter** — negotiation-based routing with DRC fix loop (`fab_prep`, `route_nets`)
+20. ✅ **KiCad import/export** — `import_kicad`, `export_kicad` project bundles, plus Gerber export and full DRC
 
 ### Phase G: Future
-21. ❌ **Topology optimization** — SIMP + marching cubes
+21. ✅ **Topology optimization** — shipped 2026: `vcad-kernel-topopt` (SIMP, voxel FEA, surface nets) + `topology_optimize` MCP tool
 22. ❌ **PDF export** — from 2D drafting views
 23. ❌ **Plugin system** — Rust traits + WASM
 

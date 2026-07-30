@@ -1,5 +1,18 @@
 # FEA (Finite Element Analysis) + Lattice Optimization
 
+> **Superseded by a shipped implementation that diverged from this design.** Structural FEA shipped as `crates/vcad-kernel-fea` (structured lattice tet fill + matrix-free CG solve + fail-closed convergence receipts — not the Bowyer-Watson/Delaunay + nalgebra-sparse design below), surfaced in the app's Analyze mode and the `analyze_structure` MCP tool. Density-based optimization shipped separately as `crates/vcad-kernel-topopt` (SIMP, `topology_optimize` MCP tool). The `vcad-kernel-lattice` TPMS crate and the `run_fea`/`optimize_lattice`/`generate_lattice` MCP tools described here were never built. See `docs/fea-m0.md`.
+
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` (core FEA; lattice infill not built) |
+| Owner | `n/a` |
+| Priority | `p1` |
+| Effort | `n/a` |
+
+> Verified against repo 2026-07-30. Added missing Status table; doc's design diverged from shipped code (see banner above).
+
 ## Overview
 
 vcad implements a pure-Rust, browser-native FEA system with integrated lattice optimization. This is the first step toward "design at any scale" — enabling users to define loads and constraints, then automatically optimize internal structure for weight reduction.

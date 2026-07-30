@@ -6,10 +6,12 @@ Confetti, greeting, and sync toast to celebrate new user sign-ups.
 
 | Field | Value |
 |-------|-------|
-| State | `in-progress` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p1` |
 | Effort | `s` |
+
+> Verified against repo 2026-07-30. Corrected `in-progress` → `shipped`: `packages/auth/src/stores/sign-in-delight-store.ts`, `packages/app/src/components/SignInDelight.tsx`, `vcad:celebrate-sign-in` listener in `CelebrationOverlay.tsx`, and dispatch in `AuthProvider.tsx` all exist.
 
 ## Problem
 
@@ -93,15 +95,15 @@ interface SignInDelightState {
 
 ### Phase 1: Store and Provider (`xs`)
 
-- [ ] Create `sign-in-delight-store.ts` with persist middleware
-- [ ] Export store from `@vcad/auth` package
-- [ ] Add first-sign-in detection to `AuthProvider.tsx`
+- [x] Create `sign-in-delight-store.ts` with persist middleware
+- [x] Export store from `@vcad/auth` package
+- [x] Add first-sign-in detection to `AuthProvider.tsx`
 
 ### Phase 2: Celebration Components (`s`)
 
-- [ ] Add `vcad:celebrate-sign-in` event listener to `CelebrationOverlay.tsx`
-- [ ] Create `SignInDelight.tsx` component for sync toast
-- [ ] Wire up in `App.tsx`
+- [x] Add `vcad:celebrate-sign-in` event listener to `CelebrationOverlay.tsx`
+- [x] Create `SignInDelight.tsx` component for sync toast
+- [x] Wire up in `App.tsx`
 
 ### Phase 3: Polish (`xs`)
 

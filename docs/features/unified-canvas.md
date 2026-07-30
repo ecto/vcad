@@ -2,6 +2,14 @@
 
 **Score: 86/100** | **Priority: #4**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. Vision doc; State row added. Pieces are real in the app (single viewport with physics simulation, chat panel, property panel, timeline/playback), but inline code blocks attached to geometry and the fully unified history+simulation timeline scrubber described below are not shipped.
+
 ## Overview
 
 One infinite canvas where geometry, physics, code, and conversation all live together. No modes, no exports, no "save and open in another tool." The entire design-simulate-iterate loop happens in a single viewport.

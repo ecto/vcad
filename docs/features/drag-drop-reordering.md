@@ -11,6 +11,8 @@ Drag-and-drop reordering with live preview showing the full impact before the dr
 | Priority | `p3` |
 | Effort | `m` |
 
+> Verified against repo 2026-07-30. Still unbuilt — no `reorderFeature` action or drag state exists in the app stores.
+
 ## Problem
 
 Moving features in the parametric history tree is risky:

@@ -1,5 +1,18 @@
 # Generative Design (Topology Optimization)
 
+> **Superseded by a shipped implementation that diverged from this design.** Topology optimization shipped as `crates/vcad-kernel-topopt` (SIMP with voxel FEA + surface-nets extraction), exposed via the `topology_optimize` MCP tool — the result lands in the document as a frozen mesh part. The WebGPU/cloud-FEA architecture, MMA optimizer, manufacturing constraints, NURBS BRep reconstruction, and the `create_topology_optimization`/`run_topology_optimization`/`get_topology_result` MCP tools described below were never built.
+
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` (as `vcad-kernel-topopt`; this design largely superseded) |
+| Owner | `n/a` |
+| Priority | `p2` |
+| Effort | `n/a` |
+
+> Verified against repo 2026-07-30. Added missing Status table and banner pointing at the real implementation.
+
 AI-driven topology optimization for vcad. Define a design space and loading conditions, then optimize material distribution to minimize weight while meeting structural requirements.
 
 ## Overview
