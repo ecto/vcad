@@ -107,7 +107,8 @@ fn check_edge_visibility(
 ///
 /// A point is occluded if there's a front-facing triangle that:
 /// 1. Contains the point's 2D projection
-/// 2. Is in front of the point (smaller depth value)
+/// 2. Is in front of the point (larger depth value — depth increases
+///    toward the viewer)
 fn is_point_occluded(
     _point_3d: Point3,
     point_2d: Point2,
@@ -128,8 +129,8 @@ fn is_point_occluded(
         let (t2_2d, t2_depth) = view_matrix.project(tri.v2);
 
         // Quick depth check: if triangle is entirely behind the point, skip
-        let min_tri_depth = t0_depth.min(t1_depth).min(t2_depth);
-        if min_tri_depth >= point_depth - EPSILON {
+        let max_tri_depth = t0_depth.max(t1_depth).max(t2_depth);
+        if max_tri_depth <= point_depth + EPSILON {
             continue;
         }
 
@@ -142,8 +143,8 @@ fn is_point_occluded(
         if let Some(interp_depth) =
             interpolate_depth_at_point(point_2d, t0_2d, t1_2d, t2_2d, t0_depth, t1_depth, t2_depth)
         {
-            // Check if triangle is in front of the point
-            if interp_depth < point_depth - EPSILON {
+            // Check if triangle is in front of the point (closer to viewer)
+            if interp_depth > point_depth + EPSILON {
                 return true;
             }
         }
