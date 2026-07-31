@@ -394,19 +394,39 @@ impl Axis {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Limit {
     /// Lower limit (radians for revolute, meters for prismatic).
-    #[serde(rename = "@lower", default, deserialize_with = "ws_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@lower",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub lower: Option<f64>,
 
     /// Upper limit.
-    #[serde(rename = "@upper", default, deserialize_with = "ws_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@upper",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub upper: Option<f64>,
 
     /// Maximum effort (Nm for revolute, N for prismatic).
-    #[serde(rename = "@effort", default, deserialize_with = "ws_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@effort",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub effort: Option<f64>,
 
     /// Maximum velocity (rad/s for revolute, m/s for prismatic).
-    #[serde(rename = "@velocity", default, deserialize_with = "ws_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@velocity",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub velocity: Option<f64>,
 }
 
@@ -414,11 +434,21 @@ pub struct Limit {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Dynamics {
     /// Viscous damping coefficient.
-    #[serde(rename = "@damping", default, deserialize_with = "ws_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@damping",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub damping: Option<f64>,
 
     /// Static friction (Coulomb).
-    #[serde(rename = "@friction", default, deserialize_with = "ws_f64_opt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@friction",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub friction: Option<f64>,
 }
 

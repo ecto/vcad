@@ -1387,9 +1387,11 @@ fn find_imported_mesh(
             // already rewritten these nodes to `ImportedMesh`, so this arm
             // never fires there.
             #[cfg(not(target_arch = "wasm32"))]
-            CsgOp::MeshImport { path, scale: urdf_scale } => {
-                let (positions, indices, normals) =
-                    load_mesh_import(path, urdf_scale.as_ref())?;
+            CsgOp::MeshImport {
+                path,
+                scale: urdf_scale,
+            } => {
+                let (positions, indices, normals) = load_mesh_import(path, urdf_scale.as_ref())?;
                 return Some(ImportedMeshData {
                     positions,
                     indices,
@@ -1426,10 +1428,7 @@ type LoadedMeshBuffers = (Vec<f64>, Vec<u32>, Option<Vec<f64>>);
 /// to stderr) when the file is missing or unparseable so callers fall back
 /// to the no-geometry path rather than erroring the whole document.
 #[cfg(not(target_arch = "wasm32"))]
-fn load_mesh_import(
-    path: &str,
-    urdf_scale: Option<&vcad_ir::Vec3>,
-) -> Option<LoadedMeshBuffers> {
+fn load_mesh_import(path: &str, urdf_scale: Option<&vcad_ir::Vec3>) -> Option<LoadedMeshBuffers> {
     let file = std::fs::File::open(path)
         .map_err(|e| eprintln!("MeshImport: cannot open {path}: {e}"))
         .ok()?;
@@ -1450,11 +1449,20 @@ fn load_mesh_import(
         positions.push(v[2] as f64 * sz);
     }
 
+    let n_verts = stl.vertices.len();
     let mut indices = Vec::with_capacity(stl.faces.len() * 3);
-    let mut normals = vec![0.0_f64; stl.vertices.len() * 3];
+    let mut normals = vec![0.0_f64; n_verts * 3];
     for tri in &stl.faces {
         let [a, b, c] = tri.vertices;
+        // A malformed STL can reference vertices past the vertex table;
+        // drop such faces instead of panicking on the index below.
+        if a >= n_verts || b >= n_verts || c >= n_verts {
+            continue;
+        }
         indices.extend([a as u32, b as u32, c as u32]);
+        // Spread the face normal onto each vertex it touches; later faces
+        // overwrite earlier for shared vertices — flat-ish shading, same
+        // trade-off as the physics STL loader.
         for &vi in &tri.vertices {
             normals[vi * 3] = tri.normal[0] as f64;
             normals[vi * 3 + 1] = tri.normal[1] as f64;

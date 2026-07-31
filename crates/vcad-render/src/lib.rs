@@ -733,18 +733,12 @@ fn evaluate_assembly_instances(
                         .find(|pd| pd.id == inst.part_def_id)
                         .filter(|pd| !pd.mesh.indices.is_empty())
                         .map(|pd| {
-                            Solid::from_mesh(
-                                vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
-                                    vertices: pd.mesh.positions.clone(),
-                                    indices: pd.mesh.indices.clone(),
-                                    normals: pd.mesh.normals.clone().unwrap_or_default(),
-                                    face_kinds: pd
-                                        .mesh
-                                        .face_kinds
-                                        .clone()
-                                        .unwrap_or_default(),
-                                },
-                            )
+                            Solid::from_mesh(vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+                                vertices: pd.mesh.positions.clone(),
+                                indices: pd.mesh.indices.clone(),
+                                normals: pd.mesh.normals.clone().unwrap_or_default(),
+                                face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                            })
                         })
                 })
             })
