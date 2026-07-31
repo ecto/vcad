@@ -106,6 +106,28 @@ fn probe(src: &str, segments: u32) {
             }
         }
     }
+    if let Some(brep) = solid.as_brep() {
+        let params = vcad_kernel_tessellate::TessellationParams::from_segments(segments);
+        for (fid, kind, fmesh) in vcad_kernel_tessellate::tessellate_brep_by_face(brep, &params) {
+            let zmin = fmesh
+                .vertices
+                .chunks(3)
+                .map(|c| c[2] as f64)
+                .fold(f64::MAX, f64::min);
+            let zmax = fmesh
+                .vertices
+                .chunks(3)
+                .map(|c| c[2] as f64)
+                .fold(f64::MIN, f64::max);
+            if zmin < -0.01 || zmax > 13.01 {
+                let nv = brep.topology.loop_len(brep.topology.faces[fid].outer_loop);
+                println!(
+                    "PHANTOM {fid:?} {kind:?} nv={nv} tess z[{zmin:.3},{zmax:.3}] tris {}",
+                    fmesh.indices.len() / 3
+                );
+            }
+        }
+    }
     let mesh = solid.to_mesh(segments);
     let quantum = 1e-5;
     let vkey = |vi: usize| -> [i64; 3] {
@@ -155,7 +177,7 @@ fn probe(src: &str, segments: u32) {
 #[test]
 fn zz_probe_rotated_blades() {
     let mut src = String::from("[cylinder 22.5 13]");
-    for ang in [0.0] {
+    for ang in [0.0, 90.0] {
         src = format!(
             "[union [rotate 0 0 {ang} [translate 21.50 0 0 [rotate 39.29 0 0 \
                [cube 23.50 0.5 12.57]]]] {src}]"

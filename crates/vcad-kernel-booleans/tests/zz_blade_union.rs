@@ -117,3 +117,60 @@ fn zz_two_flat_blades_sequential() {
     let open = net.values().filter(|&&n| n != 0).count();
     assert_eq!(open, 0, "{open} open edges after two sequential flat unions");
 }
+
+#[test]
+fn zz_two_rotated_blades_sequential() {
+    let cyl = make_cylinder(22.5, 13.0, 32);
+    let mk = |ang: f64| -> BRepSolid {
+        let mut b = make_cube(23.5, 0.5, 12.57);
+        let t = Transform::rotation_z(ang.to_radians())
+            .then(&Transform::translation(21.5, 0.0, 0.0))
+            .then(&Transform::rotation_x(39.29_f64.to_radians()));
+        transform_brep(&mut b, &t);
+        b
+    };
+    let BooleanResult::BRep(u1) =
+        boolean_op(&mk(0.0), &cyl, BooleanOp::Union, 64).expect("boolean 1");
+    for (_vid, v) in &u1.topology.vertices {
+        assert!(
+            v.point.z > -1.0 && v.point.z < 14.0,
+            "phantom vertex in u1 at {:?}",
+            v.point
+        );
+    }
+    let BooleanResult::BRep(u2) =
+        boolean_op(&mk(90.0), &u1, BooleanOp::Union, 64).expect("boolean 2");
+    // No vertex may leave the model's z-range: phantom band geometry shows
+    // up as wall vertices far outside [0, 13].
+    let mut bad = std::collections::HashSet::new();
+    for (vid, v) in &u2.topology.vertices {
+        if !(v.point.z > -1.0 && v.point.z < 14.0) {
+            bad.insert(vid);
+        }
+    }
+    if !bad.is_empty() {
+        for (fid, face) in u2.topology.faces.iter() {
+            let hes: Vec<_> = u2.topology.loop_half_edges(face.outer_loop).collect();
+            if hes.iter().any(|&he| bad.contains(&u2.topology.half_edges[he].origin)) {
+                let pts: Vec<_> = hes
+                    .iter()
+                    .map(|&he| {
+                        let p = u2.topology.vertices[u2.topology.half_edges[he].origin].point;
+                        (
+                            (p.x * 100.0).round() / 100.0,
+                            (p.y * 100.0).round() / 100.0,
+                            (p.z * 100.0).round() / 100.0,
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "PHANTOM FACE {fid:?} {:?} nv={} pts {:?}",
+                    u2.geometry.surfaces[face.surface_index].surface_type(),
+                    pts.len(),
+                    &pts[..pts.len().min(12)]
+                );
+            }
+        }
+        panic!("{} phantom vertices", bad.len());
+    }
+}

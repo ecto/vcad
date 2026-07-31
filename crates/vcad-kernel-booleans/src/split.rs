@@ -78,6 +78,45 @@ fn cut_polyline_between(
     if rev {
         via.reverse();
     }
+    // On a CLOSED polyline the direct parameter walk lo→hi may be the long
+    // way around (the cut interval straddles the parameter seam): walking
+    // it drags far-side samples — points nowhere near this face — into the
+    // cut edge and mints phantom geometry. Take the wrap-around complement
+    // when it is shorter.
+    let closed = points.len() > 3 && (points[0] - points[points.len() - 1]).norm() < 1e-9;
+    if closed {
+        let path_len = |pts: &[Point3], a: &Point3, b: &Point3| -> f64 {
+            let mut total = 0.0;
+            let mut prev = *a;
+            for p in pts {
+                total += (*p - prev).norm();
+                prev = *p;
+            }
+            total + (*b - prev).norm()
+        };
+        let direct = path_len(&via, entry_point, exit_point);
+        let mut wrap: Vec<Point3> = points
+            .iter()
+            .enumerate()
+            .take(points.len() - 1) // skip the duplicated closing point
+            .filter(|(i, _)| (*i as f64) < lo - 1e-9 || (*i as f64) > hi + 1e-9)
+            .map(|(_, p)| *p)
+            .collect();
+        // Complement travels hi → end → start → lo; order it from the exit
+        // side: rotate so it starts just after `hi`.
+        let pivot = wrap
+            .iter()
+            .position(|p| project(p) > hi)
+            .unwrap_or(0);
+        wrap.rotate_left(pivot);
+        if rev {
+            wrap.reverse();
+        }
+        let wrapped = path_len(&wrap, entry_point, exit_point);
+        if wrapped + 1e-9 < direct {
+            return wrap;
+        }
+    }
     via
 }
 
@@ -273,6 +312,23 @@ pub fn split_face_by_curve(
     // coincide with existing vertices)
     let loop1_points = remove_consecutive_duplicates(&loop1_points, 1e-6);
     let loop2_points = remove_consecutive_duplicates(&loop2_points, 1e-6);
+    {
+        let zr = |pts: &[Point3]| {
+            (
+                pts.iter().map(|p| p.z).fold(f64::MAX, f64::min),
+                pts.iter().map(|p| p.z).fold(f64::MIN, f64::max),
+            )
+        };
+        let (fz0, fz1) = zr(&loop_verts);
+        let (a0, a1) = zr(&loop1_points);
+        let (b0, b1) = zr(&loop2_points);
+        if a0 < fz0 - 1.0 || a1 > fz1 + 1.0 || b0 < fz0 - 1.0 || b1 > fz1 + 1.0 {
+            split_dbg!(
+                "sfbc RANGE: face z[{fz0:.2},{fz1:.2}] loops z[{a0:.2},{a1:.2}]/[{b0:.2},{b1:.2}] entry {entry_point:?} exit {exit_point:?} via {} pts",
+                via.len()
+            );
+        }
+    }
 
     // Need at least 3 vertices for a valid face
     if loop1_points.len() < 3 || loop2_points.len() < 3 {
@@ -388,6 +444,9 @@ pub(crate) fn find_or_create_vertex(
     point: &Point3,
     tolerance: f64,
 ) -> vcad_kernel_topo::VertexId {
+    if std::env::var("VCAD_VERTEX_TRAP").is_ok() && (point.z < -1.0 || point.z > 14.0) {
+        panic!("vertex trap: {point:?}");
+    }
     // Snap small values to exactly 0 to avoid floating point artifacts
     let snapped = snap_point(*point);
 
@@ -1559,6 +1618,17 @@ pub fn split_planar_face_by_arc(
             min_d = min_d.min((mid - (a + t * ab)).norm());
         }
         split_dbg!("arc guard: mid {mid:?} min_d {min_d:.2e} nv {n}");
+        let fz0 = loop_verts.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+        let fz1 = loop_verts.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+        let az0 = arc_points_3d.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+        let az1 = arc_points_3d.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+        if az0 < fz0 - 1.0 || az1 > fz1 + 1.0 {
+            split_dbg!(
+                "arc RANGE: face z[{fz0:.2},{fz1:.2}] arc z[{az0:.2},{az1:.2}] start {:?} end {:?}",
+                inside_start.point,
+                inside_end.point
+            );
+        }
         // Tolerance covers the ≤5 µm chord sag between the true circle and
         // a previously inserted arc polyline; a fresh cut hugging the
         // boundary this closely would only mint a sub-sag sliver anyway.

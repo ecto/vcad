@@ -730,6 +730,29 @@ pub(crate) fn split_band_by_profile(
     if below.is_empty() || above.is_empty() {
         return None;
     }
+    // Range validation: every output chain value must stay within the
+    // parent band's v-range (children are subsets). A value outside it is
+    // an envelope/region bug about to become phantom geometry.
+    {
+        let v_min = band.lo.iter().map(|p| p.1).fold(f64::MAX, f64::min) - 1e-6;
+        let v_max = band.hi.iter().map(|p| p.1).fold(f64::MIN, f64::max) + 1e-6;
+        for b in below.iter().chain(above.iter()) {
+            for p in b.lo.iter().chain(b.hi.iter()) {
+                if p.1 < v_min || p.1 > v_max {
+                    band_dbg!(
+                        "RANGE BUG: child v {:.4} outside parent [{:.4},{:.4}] at u {:.4}; parent lo {} hi {} pts, full_wrap {}",
+                        p.1,
+                        v_min,
+                        v_max,
+                        p.0,
+                        band.lo.len(),
+                        band.hi.len(),
+                        band.full_wrap
+                    );
+                }
+            }
+        }
+    }
     // Also require the split to actually change the geometry: if the below
     // side reproduces the whole band, nothing was cut.
     let below_area: f64 = below.iter().map(band_area).sum();
@@ -929,8 +952,34 @@ pub(crate) fn realize_bands(
     let orientation = brep.topology.faces[parent].orientation;
     let shell = brep.topology.faces[parent].shell;
 
+    #[allow(unused_variables)]
+    let parent_v_range = {
+        let mut mn = f64::MAX;
+        let mut mx = f64::MIN;
+        for he in brep.topology.loop_half_edges(brep.topology.faces[parent].outer_loop) {
+            let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
+            let v = (p - cyl.center).dot(cyl.axis.as_ref());
+            mn = mn.min(v);
+            mx = mx.max(v);
+        }
+        (mn, mx)
+    };
     let mut new_faces = Vec::with_capacity(bands.len());
     for band in bands {
+        for p in band.lo.iter().chain(band.hi.iter()) {
+            if p.1 < parent_v_range.0 - 1e-6 || p.1 > parent_v_range.1 + 1e-6 {
+                band_dbg!(
+                    "REALIZE RANGE BUG: v {:.4} outside parent [{:.4},{:.4}] at u {:.4}; lo {} hi {} wrap {}",
+                    p.1,
+                    parent_v_range.0,
+                    parent_v_range.1,
+                    p.0,
+                    band.lo.len(),
+                    band.hi.len(),
+                    band.full_wrap
+                );
+            }
+        }
         // Each chain is emitted VERBATIM — its vertices are exactly the
         // parent chain / profile / cut vertices the neighboring faces also
         // carry, which is the whole point of the chain representation.

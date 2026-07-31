@@ -96,10 +96,23 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
                 None
             }
         };
-        let he_normal: Vec3 = if let Some(n) = ccw_about(he_id) {
-            n
-        } else if let Some(n) = twin.and_then(ccw_about) {
-            -n
+        // A ring on a cylinder is ALWAYS perpendicular to the axis; the
+        // bordering planar face's stored normal may only choose the SIGN.
+        // Using the plane normal directly tilts the ring wherever the twin
+        // is an oblique face (a blade plane grazing the wall), sweeping
+        // phantom vertices far outside the solid.
+        let sign_of = |n: Vec3| -> Option<f64> {
+            let d = n.dot(&axis);
+            if d.abs() > 0.1 {
+                Some(d.signum())
+            } else {
+                None
+            }
+        };
+        let he_normal: Vec3 = if let Some(s) = ccw_about(he_id).and_then(sign_of) {
+            axis * s
+        } else if let Some(s) = twin.and_then(ccw_about).and_then(sign_of) {
+            axis * -s
         } else {
             // Wall-only circle (e.g. an inner bore after a difference):
             // lower ring +u, upper ring −u, matching `make_cylinder`.
