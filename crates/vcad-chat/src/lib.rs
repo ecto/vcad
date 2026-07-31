@@ -11,7 +11,7 @@
 //! - [`stream`]   — HTTP client + NDJSON stream parser
 //! - [`executor`] — `execute_crud`, port of `executeCrud`
 //! - [`auth`]     — token storage and refresh
-//! - [`state`]    — [`ChatSession`] and [`Message`] types
+//! - `state`    — `ChatSession` and `Message` types
 //!
 //! The TS reference lives in `packages/core/src/commands/registry.ts`,
 //! `packages/app/src/lib/chat-api.ts`, and `api/chat.ts`.

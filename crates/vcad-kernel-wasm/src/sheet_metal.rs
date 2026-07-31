@@ -531,7 +531,7 @@ struct NestedDxfResult {
 
 /// Produce one layered DXF per stock sheet for a set of nested parts.
 ///
-/// `placements_json` is an array of [`NestedPlacementDto`]; each chain
+/// `placements_json` is an array of `NestedPlacementDto`; each chain
 /// is independently evaluated into a flat pattern, then translated /
 /// rotated according to its placement before being written to the
 /// sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`

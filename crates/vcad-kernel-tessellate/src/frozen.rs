@@ -22,7 +22,7 @@
 //!    — a changed signature means the perturbation crossed a topology change
 //!    (a subgradient) and node correspondence is meaningless, so this is a
 //!    hard error, never a silent wrong answer — then re-emit node positions
-//!    under the frozen recipes in `f64` (the stock [`TriangleMesh`] is `f32`,
+//!    under the frozen recipes in `f64` (the stock `TriangleMesh` is `f32`,
 //!    which is far too coarse for a central-difference oracle at `h ≈ 1e-6`).
 //!
 //! Node recipes reference topology entities by *canonical traversal index*
@@ -911,7 +911,7 @@ impl PointGrid {
 /// nodes from adjacent faces are merged (same quantum as the stock weld) so
 /// the frozen mesh shares vertices across face seams.
 ///
-/// The cross-face dedup is already spatial-hashed ([`PointGrid`]-style, since
+/// The cross-face dedup is already spatial-hashed (`PointGrid`-style, since
 /// the M0–M2 hardening). The remaining per-face topology-vertex
 /// classification scans a face's boundary loop, which is topology-bounded
 /// (not a function of tessellation density), so it is not a hot spot — see
@@ -1163,7 +1163,7 @@ pub fn capture_plan(
 /// position. A nearest match farther than the tolerance is
 /// [`FrozenError::CorrespondenceLost`].
 ///
-/// The `TopoVertex` resolution is grid-accelerated ([`PointGrid`]) — turning
+/// The `TopoVertex` resolution is grid-accelerated (`PointGrid`) — turning
 /// the per-node scan over all rebuilt vertices (`O(nodes · vertices)`, the one
 /// genuinely quadratic scan in the seam once dedup was hashed) into O(1)
 /// amortized. Because a node's anchor sits ~1e-6 mm from its rebuilt vertex

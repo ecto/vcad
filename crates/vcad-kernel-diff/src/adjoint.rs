@@ -54,7 +54,7 @@ use vcad_kernel_geom::SurfaceKind;
 /// Every scalar shape parameter a surface kind exposes gets its **own**
 /// slot — the torus in particular has two independent radii, so overloading
 /// a single `radius` slot would price a major- and a minor-radius parameter
-/// against each other. The [`ScalarSlot`] enum names them; the translation
+/// against each other. The `ScalarSlot` enum names them; the translation
 /// slot (ℝ³) is shared by every kind.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SurfaceCotangent {

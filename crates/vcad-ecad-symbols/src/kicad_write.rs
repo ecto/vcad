@@ -917,7 +917,7 @@ fn arc_points(center: Vec2, radius: f64, start_deg: f64, end_deg: f64) -> (Vec2,
 /// point rather than a pixel-match of KiCad's built-in symbol artwork.
 ///
 /// Recognizable part classes (resistors, capacitors, diodes/LEDs,
-/// inductors, transistors — see [`symbol_artwork`]) get real schematic
+/// inductors, transistors — see `symbol_artwork`) get real schematic
 /// artwork; anything else keeps the generic rectangular body.
 ///
 /// When the stored component positions are degenerate (all at one point, or

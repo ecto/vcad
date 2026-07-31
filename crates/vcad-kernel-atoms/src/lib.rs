@@ -14,7 +14,7 @@
 //! ## Layers
 //! - [`system::AtomSystem`] — the simulator's working state, built from the IR.
 //! - [`potential`] — composable force-field terms behind the [`potential::ForceField`] trait.
-//! - [`integrate`] / [`minimize`] — velocity-Verlet dynamics and FIRE relaxation.
+//! - [`integrate`] / [`minimize`](mod@minimize) — velocity-Verlet dynamics and FIRE relaxation.
 //! - [`fd`] — the finite-difference oracle every force term is validated against.
 //! - [`mlip`] — ML-potential adapter (the near-DFT force engine seam).
 //! - [`inverse`] — property-target inverse design.

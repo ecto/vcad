@@ -55,7 +55,7 @@ const MAGNET: AirGapSpec = AirGapSpec {
     teeth: None,
 };
 
-/// Air-gap flux density (T) used as the plant constant, computed from [`MAGNET`]
+/// Air-gap flux density (T) used as the plant constant, computed from `MAGNET`
 /// by the first-order reluctance-network model in `vcad_ecad_sim::airgap`.
 ///
 /// The flux is a *constant* with respect to the design variables (`outer_r`,

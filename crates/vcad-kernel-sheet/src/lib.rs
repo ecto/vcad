@@ -9,7 +9,7 @@
 //!
 //! This buys us **lossless bidirectional unfold**: because the bend metadata
 //! (radius, angle, K-factor) lives on the bend itself rather than being
-//! reconstructed from cylindrical face geometry, [`unfold`] and [`refold`] are
+//! reconstructed from cylindrical face geometry, [`unfold()`] and [`refold()`] are
 //! exact inverses by construction. See [`unfold::unfold`] and [`unfold::refold`].
 //!
 //! # Foundation tier

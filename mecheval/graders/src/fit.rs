@@ -102,7 +102,7 @@ fn aggregate_solid(snap: &EvalSnapshot) -> Option<Solid> {
     Some(iter.fold(first, |acc, s| acc.union(s)))
 }
 
-/// Same as [`aggregate_solid`] but for the candidate snapshot. Pulled
+/// Same as `aggregate_solid` but for the candidate snapshot. Pulled
 /// out so the grader's main loop can build it once and share across
 /// every fit check.
 pub fn aggregate_candidate(snap: &EvalSnapshot) -> Option<Solid> {

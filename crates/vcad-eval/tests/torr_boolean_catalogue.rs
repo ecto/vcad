@@ -303,7 +303,6 @@ fn a1_pattern_child_boolean_gross() {
 /// to r45 via an annulus tool. Untrimmed total = 23 × 147.6975 = 3397.04;
 /// trimmed = 23 × 146.3205 = 3365.37.
 #[test]
-#[ignore = "known remaining: trim executes but overshoots ~1.1% (3329.8 vs 3365.4; field baseline returned the untrimmed 3397). Sliver-boundary placement on sampled ellipse curves."]
 fn a1_pattern_child_boolean_sliver() {
     let i = inspect(&format!(
         "[circular-pattern 0 0 0  0 0 1  23 360 \
@@ -324,7 +323,6 @@ fn a1_pattern_child_boolean_sliver() {
 /// ≈3365 expected), asymmetric bbox — some instances trimmed, some not,
 /// some corrupted.
 #[test]
-#[ignore = "known remaining: -5.8% (3171.7 vs 3365.4; field baseline -63%). Per-instance trim-boundary error accumulates across 23 rotated ellipse cuts."]
 fn a2_boolean_over_pattern_doc10() {
     let i = inspect(
         "[difference [translate 0 0 96.89 [difference [cylinder 45.0 14.05] \
@@ -358,7 +356,6 @@ fn a2_boolean_over_pattern_doc10() {
 /// must lose its outer half. Per-blade kept ≈ 51.35 (numeric, r30 clip of
 /// the flat blade = 53.41... computed for the FLAT blade below).
 #[test]
-#[ignore = "known remaining: +4.0% (444.5 vs 427.3). Analytic wall split positions vs tessellated-mesh classification disagree at the r30 trim boundary."]
 fn a2_boolean_over_pattern_gross() {
     // flat blade ∩ r<30: ∫ y∈[0,0.5] (√(900−y²) − 21.5) dy × 12.57 = 53.4138
     let per_blade = 53.4138;
