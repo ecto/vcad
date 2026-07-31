@@ -85,7 +85,7 @@ fn half_annuli_union_full_annulus() {
         vol(&b),
         (190.0 / 360.0) * PI * 500.0 * 5.0
     );
-    let BooleanResult::BRep(u) = boolean_op(&a, &b, BooleanOp::Union, 32).expect("boolean");
+    let BooleanResult::BRep(u) = boolean_op(&a, &b, BooleanOp::Union, 64).expect("boolean");
     let expected = PI * 500.0 * 5.0;
     let v = vol(&u);
     eprintln!(
@@ -107,7 +107,7 @@ fn half_annuli_union_area_audit() {
     use vcad_kernel_math::Vec3 as V3;
     let a = half_annulus();
     let b = rotate_z(half_annulus(), 180.0);
-    let BooleanResult::BRep(u) = boolean_op(&a, &b, BooleanOp::Union, 32).expect("boolean");
+    let BooleanResult::BRep(u) = boolean_op(&a, &b, BooleanOp::Union, 64).expect("boolean");
     let mesh = tessellate_brep(&u, 256);
     let (mut z0, mut z5, mut r20, mut r30, mut other) = (0.0, 0.0, 0.0, 0.0, 0.0);
     for t in mesh.indices.chunks(3) {
@@ -149,7 +149,7 @@ fn half_annuli_result_face_tessellation_audit() {
     use vcad_kernel_math::Vec3 as V3;
     let a = half_annulus();
     let b = rotate_z(half_annulus(), 180.0);
-    let BooleanResult::BRep(u) = boolean_op(&a, &b, BooleanOp::Union, 32).expect("boolean");
+    let BooleanResult::BRep(u) = boolean_op(&a, &b, BooleanOp::Union, 64).expect("boolean");
     let params = vcad_kernel_tessellate::TessellationParams::from_segments(64);
     for (fid, kind, mesh) in vcad_kernel_tessellate::tessellate_brep_by_face(&u, &params) {
         let face = &u.topology.faces[fid];
