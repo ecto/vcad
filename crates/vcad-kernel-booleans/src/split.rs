@@ -4054,21 +4054,43 @@ pub(crate) fn split_thin_face_at_curve_vertices(
         }
         best
     };
+    // Candidate endpoints: TOPOLOGY vertices (they were inserted by the
+    // neighboring faces' splits and are not yet part of THIS face's loop)
+    // lying on both the cut curve and this face's boundary polyline, but
+    // not coincident with the loop's own corners.
     const ON_CURVE_TOL: f64 = 6e-3;
-    let hits: Vec<usize> = (0..n)
-        .filter(|&i| dist_to_curve(&loop_verts[i]) < ON_CURVE_TOL)
-        .collect();
+    let dist_to_boundary = |p: &Point3| -> f64 {
+        let mut best = f64::INFINITY;
+        for k in 0..n {
+            let e0 = loop_verts[k];
+            let e1 = loop_verts[(k + 1) % n];
+            let ab = e1 - e0;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - e0).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            best = best.min((*p - (e0 + t * ab)).norm());
+        }
+        best
+    };
+    let mut hits: Vec<Point3> = Vec::new();
+    for (_vid, v) in &brep.topology.vertices {
+        let p = v.point;
+        if dist_to_curve(&p) < ON_CURVE_TOL
+            && dist_to_boundary(&p) < ON_CURVE_TOL
+            && !loop_verts.iter().any(|q| (*q - p).norm() < 1e-6)
+            && !hits.iter().any(|q| (*q - p).norm() < 1e-6)
+        {
+            hits.push(p);
+        }
+    }
+    split_dbg!("thin-face fallback: {face_id:?} nv={n} hits {}", hits.len());
     if hits.len() != 2 {
         return None;
     }
-    let (i, j) = (hits[0], hits[1]);
-    // The two vertices must not be adjacent along the loop (a boundary edge
-    // already runs between adjacent ones) and the chord must be a genuine
-    // sub-sample cut.
-    if j == i + 1 || (i == 0 && j == n - 1) {
-        return None;
-    }
-    let (a, b) = (loop_verts[i], loop_verts[j]);
+    let (a, b) = (hits[0], hits[1]);
     let chord = (b - a).norm();
     let sample_step = (curve_pts[1] - curve_pts[0]).norm().max(1e-9);
     if chord < 1e-6 || chord > 2.0 * sample_step {

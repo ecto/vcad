@@ -296,5 +296,22 @@ fn zz_two_rotated_blades_sequential() {
             }
         }
     }
-    assert!(opens.len() <= 4, "{} mesh open edges", opens.len());
+    assert!(opens.is_empty(), "{} mesh open edges", opens.len());
+}
+
+#[test]
+fn zz_one_rotated_blade() {
+    let cyl = make_cylinder(22.5, 13.0, 32);
+    let mut b = make_cube(23.5, 0.5, 12.57);
+    let t = Transform::translation(21.5, 0.0, 0.0)
+        .then(&Transform::rotation_x(39.29_f64.to_radians()));
+    transform_brep(&mut b, &t);
+    let BooleanResult::BRep(u) = boolean_op(&b, &cyl, BooleanOp::Union, 32).expect("boolean");
+    let mut unpaired = 0;
+    for (_h, he) in &u.topology.half_edges {
+        if he.loop_id.is_some() && he.twin.is_none() {
+            unpaired += 1;
+        }
+    }
+    assert_eq!(unpaired, 0, "{unpaired} unpaired half-edges");
 }

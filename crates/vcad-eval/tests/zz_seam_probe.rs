@@ -211,7 +211,7 @@ fn probe(src: &str, segments: u32) {
 #[test]
 fn zz_probe_rotated_blades() {
     let mut src = String::from("[cylinder 22.5 13]");
-    for ang in [0.0, 90.0] {
+    for ang in [0.0, 90.0, 180.0, 270.0] {
         src = format!(
             "[union [rotate 0 0 {ang} [translate 21.50 0 0 [rotate 39.29 0 0 \
                [cube 23.50 0.5 12.57]]]] {src}]"

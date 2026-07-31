@@ -822,6 +822,7 @@ pub(crate) fn brep_boolean(
                     face_a,
                     segs_a.len()
                 );
+                let mut recorded_a = false;
                 for seg in &segs_a {
                     let entry = evaluate_curve(single_curve, seg.t_start);
                     let exit = evaluate_curve(single_curve, seg.t_end);
@@ -838,6 +839,39 @@ pub(crate) fn brep_boolean(
                 );
                     if len > 1e-6 {
                         results_a.push((single_curve.clone(), entry, exit));
+                        recorded_a = true;
+                    }
+                }
+                // A sampled curve that grazes the face (only zero-length
+                // trims — the crossing is narrower than the curve's sample
+                // spacing) still gets recorded: the split stage's thin-face
+                // fallback can recover the cut from the exact crossing
+                // vertices the neighboring faces provide.
+                if !recorded_a {
+                    if let ssi::IntersectionCurve::Sampled(pts) = single_curve {
+                        // Whether the trim produced zero-length intervals or
+                        // nothing at all, a curve passing within one sample
+                        // step of the face may still cross it between
+                        // samples — leave the decision to the split stage's
+                        // thin-face fallback.
+                        let aabb = bbox::face_aabb(&a, face_a);
+                        let step = if pts.len() > 1 {
+                            (pts[1] - pts[0]).norm()
+                        } else {
+                            0.0
+                        };
+                        let near = pts.iter().any(|p| {
+                            p.x > aabb.min.x - step
+                                && p.x < aabb.max.x + step
+                                && p.y > aabb.min.y - step
+                                && p.y < aabb.max.y + step
+                                && p.z > aabb.min.z - step
+                                && p.z < aabb.max.z + step
+                        });
+                        if near {
+                            let entry = pts[0];
+                            results_a.push((single_curve.clone(), entry, entry));
+                        }
                     }
                 }
 
@@ -848,6 +882,7 @@ pub(crate) fn brep_boolean(
                     face_b,
                     segs_b.len()
                 );
+                let mut recorded_b = false;
                 for seg in &segs_b {
                     let entry = evaluate_curve(single_curve, seg.t_start);
                     let exit = evaluate_curve(single_curve, seg.t_end);
@@ -864,6 +899,31 @@ pub(crate) fn brep_boolean(
                 );
                     if len > 1e-6 {
                         results_b.push((single_curve.clone(), entry, exit));
+                        recorded_b = true;
+                    }
+                }
+                // See the A-side counterpart: grazing sampled curves stay
+                // recorded so the thin-face fallback can decide.
+                if !recorded_b {
+                    if let ssi::IntersectionCurve::Sampled(pts) = single_curve {
+                        let aabb = bbox::face_aabb(&b, face_b);
+                        let step = if pts.len() > 1 {
+                            (pts[1] - pts[0]).norm()
+                        } else {
+                            0.0
+                        };
+                        let near = pts.iter().any(|p| {
+                            p.x > aabb.min.x - step
+                                && p.x < aabb.max.x + step
+                                && p.y > aabb.min.y - step
+                                && p.y < aabb.max.y + step
+                                && p.z > aabb.min.z - step
+                                && p.z < aabb.max.z + step
+                        });
+                        if near {
+                            let entry = pts[0];
+                            results_b.push((single_curve.clone(), entry, entry));
+                        }
                     }
                 }
 
