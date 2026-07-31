@@ -89,6 +89,22 @@ describe("labelObservation", () => {
     expect(out.joints).toEqual([{ id: "a", position: 5, velocity: 6 }]);
   });
 
+  it("omits rather than mis-attributes a multi-DOF joint with no counts", () => {
+    // An older kernel exposes jointIds() but not jointSlotCounts(), so the
+    // fallback assumes one slot per joint. With a Free joint present that
+    // assumption is wrong — the tiling guard must catch it (1 !== 6) and drop
+    // the view, never hand back a labeled value that isn't the joint's.
+    const out = labelObservation(
+      obs([1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]),
+      ["base"],
+      [],
+      null,
+    );
+    expect(out.joints).toBeUndefined();
+    // The bare arrays remain intact and correct regardless.
+    expect(out.joint_positions).toHaveLength(6);
+  });
+
   it("omits the view entirely when joint ids are unavailable", () => {
     const out = labelObservation(obs([1], [2]), null, [], null);
     expect(out.joints).toBeUndefined();
