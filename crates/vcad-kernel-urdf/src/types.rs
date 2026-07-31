@@ -2,7 +2,21 @@
 //!
 //! These types mirror the URDF XML schema for parsing.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserialize an `f64` attribute, tolerating surrounding whitespace
+/// (real-world URDFs, e.g. Booster K1, emit values like `" -0.000001"`).
+fn ws_f64<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    let s = String::deserialize(d)?;
+    s.trim().parse().map_err(serde::de::Error::custom)
+}
+
+/// Like [`ws_f64`] but for optional attributes.
+fn ws_f64_opt<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    let s = Option::<String>::deserialize(d)?;
+    s.map(|s| s.trim().parse().map_err(serde::de::Error::custom))
+        .transpose()
+}
 
 /// Root URDF robot element.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -106,7 +120,7 @@ pub struct Inertial {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Mass {
     /// Mass value in kg.
-    #[serde(rename = "@value")]
+    #[serde(rename = "@value", deserialize_with = "ws_f64")]
     pub value: f64,
 }
 
@@ -114,22 +128,22 @@ pub struct Mass {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Inertia {
     /// Ixx component.
-    #[serde(rename = "@ixx")]
+    #[serde(rename = "@ixx", deserialize_with = "ws_f64")]
     pub ixx: f64,
     /// Ixy component.
-    #[serde(rename = "@ixy")]
+    #[serde(rename = "@ixy", deserialize_with = "ws_f64")]
     pub ixy: f64,
     /// Ixz component.
-    #[serde(rename = "@ixz")]
+    #[serde(rename = "@ixz", deserialize_with = "ws_f64")]
     pub ixz: f64,
     /// Iyy component.
-    #[serde(rename = "@iyy")]
+    #[serde(rename = "@iyy", deserialize_with = "ws_f64")]
     pub iyy: f64,
     /// Iyz component.
-    #[serde(rename = "@iyz")]
+    #[serde(rename = "@iyz", deserialize_with = "ws_f64")]
     pub iyz: f64,
     /// Izz component.
-    #[serde(rename = "@izz")]
+    #[serde(rename = "@izz", deserialize_with = "ws_f64")]
     pub izz: f64,
 }
 
@@ -215,11 +229,11 @@ impl BoxGeom {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CylinderGeom {
     /// Radius in meters.
-    #[serde(rename = "@radius")]
+    #[serde(rename = "@radius", deserialize_with = "ws_f64")]
     pub radius: f64,
 
     /// Length (height) in meters.
-    #[serde(rename = "@length")]
+    #[serde(rename = "@length", deserialize_with = "ws_f64")]
     pub length: f64,
 }
 
@@ -227,7 +241,7 @@ pub struct CylinderGeom {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SphereGeom {
     /// Radius in meters.
-    #[serde(rename = "@radius")]
+    #[serde(rename = "@radius", deserialize_with = "ws_f64")]
     pub radius: f64,
 }
 
@@ -380,19 +394,39 @@ impl Axis {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Limit {
     /// Lower limit (radians for revolute, meters for prismatic).
-    #[serde(rename = "@lower", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@lower",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub lower: Option<f64>,
 
     /// Upper limit.
-    #[serde(rename = "@upper", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@upper",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub upper: Option<f64>,
 
     /// Maximum effort (Nm for revolute, N for prismatic).
-    #[serde(rename = "@effort", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@effort",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub effort: Option<f64>,
 
     /// Maximum velocity (rad/s for revolute, m/s for prismatic).
-    #[serde(rename = "@velocity", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@velocity",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub velocity: Option<f64>,
 }
 
@@ -400,11 +434,21 @@ pub struct Limit {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Dynamics {
     /// Viscous damping coefficient.
-    #[serde(rename = "@damping", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@damping",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub damping: Option<f64>,
 
     /// Static friction (Coulomb).
-    #[serde(rename = "@friction", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@friction",
+        default,
+        deserialize_with = "ws_f64_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub friction: Option<f64>,
 }
 

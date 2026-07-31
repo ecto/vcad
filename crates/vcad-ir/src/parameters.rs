@@ -4,7 +4,7 @@
 //! values are either literal numbers or expression strings. Operation fields
 //! can be bound to expressions via the [`Bindings`] sidecar — a map from
 //! (node id, field path) to [`Expr`]. At evaluation time, the
-//! [`resolve`](Bindings::resolve) pass evaluates every parameter and binding
+//! `resolve` pass evaluates every parameter and binding
 //! and returns concrete `f64` values.
 //!
 //! Why a sidecar? It keeps the kernel, mesh, and WASM pipelines oblivious

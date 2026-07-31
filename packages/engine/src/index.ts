@@ -325,6 +325,7 @@ export type {
   PhysicsDomainRandomization,
   PhysicsObservationNoise,
   PhysicsTerminationConfig,
+  PhysicsGroundOptions,
   ActionType as PhysicsActionType,
 } from "./physics.js";
 

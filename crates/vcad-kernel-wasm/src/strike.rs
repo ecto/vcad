@@ -1,5 +1,5 @@
 //! WASM binding for the structural strike simulation
-//! ([`vcad_kernel_acoustics::strike`]).
+//! (`vcad_kernel_acoustics::strike`).
 //!
 //! Single JSON-over-the-boundary entry point, like `sheet_metal`: the MCP
 //! server (and any other host) sends a [`strike::StrikeInput`] as JSON and

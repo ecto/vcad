@@ -113,6 +113,18 @@ export interface PhysicsEnvConfig {
 /** Action types for controlling joints */
 export type ActionType = "torque" | "position" | "velocity";
 
+/** Ground-plane contact configuration for a physics environment. */
+export interface PhysicsGroundOptions {
+  /** Whether ground contact is active (default: true) */
+  enabled?: boolean;
+  /** Ground plane height in meters — the plane is z = height (default: 0) */
+  height?: number;
+  /** Coulomb friction coefficient of the ground (default: 0.8) */
+  friction?: number;
+  /** Restitution: 0 = inelastic rest, 1 = elastic bounce (default: 0) */
+  restitution?: number;
+}
+
 /** Options for creating a physics environment */
 export interface PhysicsEnvOptions {
   /** Instance IDs to track as end effectors */
@@ -129,6 +141,13 @@ export interface PhysicsEnvOptions {
    * than silently dropping the config).
    */
   config?: PhysicsEnvConfig;
+
+  /**
+   * Ground-plane contact. Defaults to enabled at z = 0 with friction 0.8.
+   * A kernel WASM predating ground contact ignores these extra constructor
+   * arguments and runs contact-free, as before.
+   */
+  ground?: PhysicsGroundOptions;
 }
 
 /**
@@ -233,20 +252,35 @@ export class PhysicsEnv {
     }
 
     const docJson = JSON.stringify(document);
-    // The 5th (config JSON) constructor arg postdates some shipped kernel
-    // builds; extra args are ignored by older wasm-bindgen glue, so probe for
-    // a same-vintage binding (resetSeeded) and fail closed instead of
-    // silently dropping a requested config. The structural cast keeps
-    // typecheck green against a checked-in .d.ts that may predate it.
+    // Both the config-JSON and ground arguments postdate some shipped kernel
+    // builds; extra args are ignored by older wasm-bindgen glue. The
+    // structural cast keeps typecheck green against a checked-in .d.ts that
+    // may predate them. An older WASM silently runs contact-free (its
+    // previous behavior) — but a dropped `config` would silently disable
+    // randomization, so create() probes for a same-vintage binding
+    // (resetSeeded) and fails closed instead.
     const configJson = options.config ? JSON.stringify(options.config) : null;
-    const sim = new (module.PhysicsSim as unknown as new (
-      ...args: unknown[]
-    ) => WasmPhysicsSim)(
+    const Sim = module.PhysicsSim as unknown as new (
+      docJson: string,
+      endEffectorIds: string[],
+      dt: number | null,
+      substeps: number | null,
+      configJson?: string | null,
+      groundEnabled?: boolean | null,
+      groundHeight?: number | null,
+      groundFriction?: number | null,
+      groundRestitution?: number | null,
+    ) => WasmPhysicsSim;
+    const sim = new Sim(
       docJson,
       options.endEffectorIds,
       options.dt ?? null,
       options.substeps ?? null,
       configJson,
+      options.ground?.enabled ?? null,
+      options.ground?.height ?? null,
+      options.ground?.friction ?? null,
+      options.ground?.restitution ?? null,
     );
 
     if (

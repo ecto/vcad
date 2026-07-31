@@ -3,7 +3,7 @@
 //! Measures the routed copper itself (no simulation): per-group length skew,
 //! intra-pair skew, differential coupled-length fraction, and SI-net via
 //! counts, each judged against explicit bounds. These are `basis: "verified"`
-//! claims in the [`vcad-receipt`] sense — the oracle (geometric measurement
+//! claims in the `vcad-receipt` sense — the oracle (geometric measurement
 //! over the actual board copper) ran for real. What they do NOT claim is
 //! spelled out per-claim: no impedance verification (analytic tables are
 //! `predicted`, emitted separately), no crosstalk, no eye simulation.
@@ -184,7 +184,7 @@ fn leg_copper_is_starved(pcb: &Pcb, net: &str) -> bool {
 /// Note the asymmetry, which matters when reading a high value: the denominator
 /// is P's own length, so a short P beside a long N scores near 1.0. Callers that
 /// need "these two legs run together" must also check the legs are comparable in
-/// length — [`si_claims`] gates on [`leg_copper_is_starved`] first for exactly
+/// length — [`si_claims`] gates on `leg_copper_is_starved` first for exactly
 /// this reason.
 ///
 /// Exposed as `router::pair_coupled_fraction` so reports can name the pairs
@@ -565,7 +565,7 @@ mod tests {
 }
 
 /// Bridge into the unified `vcad.receipt/1` schema: every SI claim becomes a
-/// [`ReceiptClaim`] with `basis: Measured` — the geometric oracle ran over
+/// `ReceiptClaim` with `basis: Measured` — the geometric oracle ran over
 /// the actual board copper — under the [`RECEIPT_DOMAIN`] domain. Broken
 /// bounds are `Fail` claims, not omissions: the receipt is fail-closed.
 pub fn to_receipt_claims(set: &SiClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {

@@ -249,7 +249,7 @@ pub fn render_svg_annotated(
         .map_err(|e| JsError::new(&e))
 }
 
-/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
 /// surface in one call: arbitrary camera, part focus, section cutaway,
 /// changed-part highlight, and engineering annotations. This is the superset
 /// the MCP `render_view` "agent eyes" path drives; the narrower
@@ -305,7 +305,7 @@ pub fn render_svg_camera(
     vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }
 
-/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
 /// surface expressed as one JSON options object — the forward-compatible
 /// companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
 /// so new render options never need another positional-arg binding.
@@ -3231,7 +3231,7 @@ pub fn import_step_buffer_with_report(data: &[u8]) -> Result<JsValue, JsError> {
 }
 
 /// Import a URDF (Unified Robot Description Format) file and return a
-/// serialised vcad [`Document`].
+/// serialised vcad `Document`.
 ///
 /// Browsers cannot resolve `package://` URIs or relative mesh paths
 /// against the user's filesystem, so any `<mesh>` reference in the URDF
@@ -3956,7 +3956,7 @@ impl RayTracer {
     ///
     /// # Note
     /// This function is async to support WASM's single-threaded environment.
-    /// In JavaScript, it returns a Promise<Uint8Array>.
+    /// In JavaScript, it returns a `Promise<Uint8Array>`.
     pub async fn render(
         &self,
         camera: Vec<f64>,
@@ -4309,13 +4309,22 @@ impl PhysicsSim {
     /// * `substeps` - Number of physics substeps per step (default: 4)
     /// * `config_json` - Optional JSON `EnvConfig`: domain randomization,
     ///   observation noise, termination conditions, base instance id
+    /// * `ground_enabled` - Ground-plane contact at z = `ground_height` (default: true)
+    /// * `ground_height` - Ground plane height in meters (default: 0)
+    /// * `ground_friction` - Ground Coulomb friction coefficient (default: 0.8)
+    /// * `ground_restitution` - Ground restitution, 0 = inelastic (default: 0)
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         doc_json: &str,
         end_effector_ids: Vec<String>,
         dt: Option<f32>,
         substeps: Option<u32>,
         config_json: Option<String>,
+        ground_enabled: Option<bool>,
+        ground_height: Option<f64>,
+        ground_friction: Option<f64>,
+        ground_restitution: Option<f64>,
     ) -> Result<PhysicsSim, JsError> {
         let doc = vcad_ir::Document::from_json(doc_json)
             .map_err(|e| JsError::new(&format!("Invalid document JSON: {}", e)))?;
@@ -4326,11 +4335,20 @@ impl PhysicsSim {
             _ => vcad_kernel_physics::EnvConfig::default(),
         };
 
+        let defaults = vcad_kernel_physics::GroundConfig::default();
+        let ground = vcad_kernel_physics::GroundConfig {
+            enabled: ground_enabled.unwrap_or(defaults.enabled),
+            height: ground_height.unwrap_or(defaults.height),
+            friction: ground_friction.unwrap_or(defaults.friction),
+            restitution: ground_restitution.unwrap_or(defaults.restitution),
+        };
+
         let env = vcad_kernel_physics::RobotEnv::new_with_config(
             doc,
             end_effector_ids,
             dt,
             substeps,
+            Some(ground),
             config,
         )
         .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
@@ -5813,7 +5831,7 @@ mod cam_wasm {
     /// Generate a height field from mesh using drop-cutter algorithm.
     ///
     /// # Arguments
-    /// * `vertices_json` - Vertex array as JSON [[x,y,z], ...]
+    /// * `vertices_json` - Vertex array as JSON `[[x,y,z], ...]`
     /// * `indices_json` - Triangle indices as JSON [i0, i1, i2, ...]
     /// * `tool_json` - Tool definition as JSON
     /// * `bounds_json` - Bounds [min_x, min_y, max_x, max_y] as JSON
@@ -6343,7 +6361,7 @@ mod ecad_wasm {
 
     /// Route a net with the push-and-shove router.
     ///
-    /// Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+    /// Unlike `ecad_route_net` (grid/wave BFS), this routes in
     /// continuous coordinate space and detours around existing copper on other
     /// nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
     /// and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
@@ -6373,7 +6391,7 @@ mod ecad_wasm {
 
     /// Route a net with the avoiding A* maze router.
     ///
-    /// Unlike [`Self::ecad_route_net_shove`] (which detours around static
+    /// Unlike `ecad_route_net_shove` (which detours around static
     /// inflated bounding boxes of other-net *traces*), this searches a grid and
     /// tests every step against the exact clearance oracle, so the route avoids
     /// *all* copper on `layer` — traces, pads, and vias. Every returned segment
@@ -7323,7 +7341,7 @@ pub fn parse_vcad_file(content: &str) -> Result<JsValue, JsError> {
 
 /// Derive parts from a Document (as JSON).
 ///
-/// Returns a JSON-serialized Vec<PartInfo>.
+/// Returns a JSON-serialized `Vec<PartInfo>`.
 #[wasm_bindgen(js_name = deriveParts)]
 pub fn derive_parts(doc_json: &str) -> Result<JsValue, JsError> {
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
@@ -8115,7 +8133,7 @@ struct WasmParticleSim {
 /// `spec_json` is a `vcad_kernel_particle::spec::DeviceSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them
 /// (fail-closed: unbound names error), `options_json` a
-/// [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
+/// `ParticleSimOptions`. Returns stats + `vcad.particle-claims/1` set +
 /// unified-receipt claims (basis `predicted` — Provisional by contract).
 #[wasm_bindgen(js_name = particleSimulate)]
 pub fn particle_simulate(
@@ -8433,7 +8451,7 @@ struct WasmToleranceAnalysis {
 /// `spec_json` is a `vcad_kernel_tolerance::spec::StackupSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them
 /// (fail-closed: unbound names error), `options_json` a
-/// [`ToleranceOptions`]. Returns all three analyses +
+/// `ToleranceOptions`. Returns all three analyses +
 /// `vcad.tolerance-claims/1` + unified-receipt claims (basis `predicted`).
 #[wasm_bindgen(js_name = toleranceAnalyze)]
 pub fn tolerance_analyze(
@@ -8582,7 +8600,7 @@ struct WasmThermalSolve {
 ///
 /// `spec_json` is a `vcad_kernel_thermal::spec::ThermalSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them,
-/// `options_json` a [`ThermalOptions`].
+/// `options_json` a `ThermalOptions`.
 #[wasm_bindgen(js_name = thermalSolve)]
 pub fn thermal_solve(
     spec_json: &str,
@@ -8789,7 +8807,7 @@ struct WasmThermalTransient {
 /// `spec_json` is a `ThermalSpec` (every material needs
 /// `heat_capacity_j_m3k`), `transient_json` a
 /// `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
-/// `{name: value}` map, `options_json` a [`ThermalOptions`].
+/// `{name: value}` map, `options_json` a `ThermalOptions`.
 #[wasm_bindgen(js_name = thermalSolveTransient)]
 pub fn thermal_solve_transient(
     spec_json: &str,
@@ -9011,7 +9029,7 @@ fn sample_fields_to_vertices(
 /// predicted claim is emitted.
 ///
 /// `spec_json` is a `vcad_kernel_fea::spec::FeaSpec` (material, loads,
-/// supports, resolution), `options_json` a [`FeaOptions`].
+/// supports, resolution), `options_json` a `FeaOptions`.
 #[wasm_bindgen(js_name = feaAnalyzeMesh)]
 pub fn fea_analyze_mesh(
     spec_json: &str,
@@ -9387,7 +9405,7 @@ fn em_solve_options(opts: &EmSimOptions) -> vcad_kernel::vcad_kernel_em::grid::S
 /// allowed), `planar_magnetostatics` (`PlanarSpec`, named parameters
 /// allowed), or `electrostatics` (a literal-only electrode/dielectric
 /// DTO — the crate has no serde seam for that class yet). `params_json`
-/// binds named parameters; `options_json` is [`EmSimOptions`].
+/// binds named parameters; `options_json` is `EmSimOptions`.
 #[wasm_bindgen(js_name = emSimulate)]
 pub fn em_simulate(
     spec_json: &str,
@@ -9716,7 +9734,7 @@ struct WasmAntennaAnalysis {
 ///
 /// `spec_json` is a `vcad_kernel_antenna::spec::AntennaSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them,
-/// `options_json` an [`AntennaOptions`] (the frequency `band` is
+/// `options_json` an `AntennaOptions` (the frequency `band` is
 /// required).
 #[wasm_bindgen(js_name = antennaAnalyze)]
 pub fn antenna_analyze(

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-30-boolean-trim-overshoot-fix",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "fix",
+  "title": "Boolean trim overshoot on curved trim boundaries",
+  "summary": "Booleans that trim parts against cylindrical boundaries (e.g. pattern blades cut to a radius) no longer over- or under-trim: split boundaries land on the true intersection and thin slivers classify reliably.",
+  "features": ["kernel", "booleans"],
+  "mcpTools": []
+}

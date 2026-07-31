@@ -378,7 +378,7 @@ pub fn compare(
 /// Same fail-closed contract as [`predicted_claims`]: `opts` must be what
 /// the run used, the model is the **base** (pre-schedule) model, and every
 /// claim carries `basis: "predicted"`. Series data stays on the
-/// [`TransientSolution`]; the claims capture the quantities a recipe is
+/// `TransientSolution`; the claims capture the quantities a recipe is
 /// judged by — the peak, the endpoint, how far the endpoint sits from
 /// steady, and the integrated energy audit.
 pub fn transient_claims(

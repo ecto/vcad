@@ -99,7 +99,7 @@ impl Transform {
     /// Composed entirely from existing primitives:
     /// `T(p0) · R⁻¹ · Scale(1, 1, −1) · R · T(−p0)`, where `R` rotates
     /// `plane_normal` onto `+Z`. The determinant of the upper-left 3×3 is
-    /// −1, so callers like [`Solid::apply_transform`] will detect the
+    /// −1, so callers like `Solid::apply_transform` will detect the
     /// orientation flip and reverse face / triangle winding to preserve
     /// outward normals.
     pub fn reflection(plane_origin: Point3, plane_normal: Vec3) -> Self {

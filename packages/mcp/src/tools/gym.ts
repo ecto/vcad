@@ -124,6 +124,57 @@ const INLINE_DOC_DESC =
   "(e.g. a cold serverless instance). Exactly one of `document_id` or " +
   "`document` must be given.";
 
+/** Shared ground-plane schema fragment for the two env-creating tools. */
+const GROUND_SCHEMA_PROPS = {
+  ground_enabled: {
+    type: "boolean" as const,
+    description:
+      "Ground-plane contact between robot collision shapes and a horizontal " +
+      "plane at z = ground_height. Default: true. Set false for the old " +
+      "contact-free dynamics (bodies fall forever).",
+  },
+  ground_height: {
+    type: "number" as const,
+    description: "Ground plane height in meters (default: 0)",
+  },
+  ground_friction: {
+    type: "number" as const,
+    description: "Ground Coulomb friction coefficient (default: 0.8)",
+  },
+  ground_restitution: {
+    type: "number" as const,
+    description:
+      "Ground restitution: 0 = inelastic rest, 1 = elastic bounce (default: 0)",
+  },
+};
+
+/** Ground-config args shared by create_robot_env and batch_create_envs. */
+interface GroundArgs {
+  ground_enabled?: boolean;
+  ground_height?: number;
+  ground_friction?: number;
+  ground_restitution?: number;
+}
+
+/** Fold the flat ground_* args into the engine's ground options, or undefined
+ *  when none were passed (the engine then applies its own defaults). */
+function resolveGroundOptions(args: GroundArgs) {
+  if (
+    args.ground_enabled === undefined &&
+    args.ground_height === undefined &&
+    args.ground_friction === undefined &&
+    args.ground_restitution === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    enabled: args.ground_enabled,
+    height: args.ground_height,
+    friction: args.ground_friction,
+    restitution: args.ground_restitution,
+  };
+}
+
 const SESSION_DOC_DESC =
   "Session id of the assembly to simulate (from open_document / " +
   "create_cad_loon). Preferred: the env binds to this same session, so no " +
@@ -280,6 +331,7 @@ export const createRobotEnvSchema = {
         "`base_instance_id`: instance used for base pose/velocity observations " +
         "(default: the ground instance).",
     },
+    ...GROUND_SCHEMA_PROPS,
   },
   required: ["end_effector_ids"],
 };
@@ -360,7 +412,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
     substeps?: number;
     max_steps?: number;
     config?: import("@vcad/engine").PhysicsEnvConfig;
-  };
+  } & GroundArgs;
 
   // Check if physics is available
   const available = await isPhysicsAvailable();
@@ -392,6 +444,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       substeps: args.substeps,
       maxSteps: args.max_steps,
       config: args.config,
+      ground: resolveGroundOptions(args),
     });
 
     simulations.set(envId, env);
@@ -452,6 +505,15 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       // Echo the env config so the caller can see what randomization /
       // noise / termination the env was armed with.
       config: args.config ?? null,
+      // Ground-contact contract, echoed so the caller knows there is a
+      // floor: robot collision shapes rest on the plane z = ground_height
+      // instead of falling forever.
+      ground: {
+        enabled: args.ground_enabled ?? true,
+        height: args.ground_height ?? 0,
+        friction: args.ground_friction ?? 0.8,
+        restitution: args.ground_restitution ?? 0,
+      },
     };
 
     return {
@@ -680,6 +742,7 @@ export const batchCreateEnvsSchema = {
       type: "number" as const,
       description: "Maximum episode length (default: 1000)",
     },
+    ...GROUND_SCHEMA_PROPS,
   },
   required: ["n_envs", "end_effector_ids"],
 };
@@ -731,7 +794,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
     dt?: number;
     substeps?: number;
     max_steps?: number;
-  };
+  } & GroundArgs;
 
   const available = await isPhysicsAvailable();
   if (!available) {
@@ -759,6 +822,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
       dt: args.dt,
       substeps: args.substeps,
       maxSteps: args.max_steps,
+      ground: resolveGroundOptions(args),
     };
 
     // Create N environments in parallel
@@ -919,6 +983,8 @@ export const toolDefs: ToolDef[] = [
       "(per-link mass, joint friction, PD gains, actuator latency, initial state), " +
       "gaussian observation noise, and termination conditions (base height/tilt, " +
       "joint limits). " +
+      "A ground plane at z = 0 (friction 0.8) is on by default, so dropped bodies land " +
+      "and legged assemblies can touch a floor — tune or disable it via the ground_* params. " +
       "Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     inputSchema: createRobotEnvSchema,
     handler: (a) => createRobotEnv(a),
