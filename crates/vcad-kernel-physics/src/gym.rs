@@ -674,6 +674,11 @@ impl RobotEnv {
         self.max_steps = max_steps;
     }
 
+    /// The maximum episode length (steps before truncation).
+    pub fn max_steps(&self) -> u32 {
+        self.max_steps
+    }
+
     /// Joint ids in observation order (document order).
     ///
     /// Joints map onto `Observation::joint_positions` / `joint_velocities` by

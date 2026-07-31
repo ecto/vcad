@@ -133,6 +133,18 @@ pub struct PhysicsWorld {
     // that cannot move (welded to the world through Fixed joints only) —
     // contacts on those would contribute empty Jacobian rows.
     contact_geometries: Vec<Option<Geometry>>,
+
+    // Per-body, body-frame support points for mesh colliders — the only
+    // vertices that can be the deepest point of a plane contact. Precomputed
+    // once (see `colliders::support_points`) so the per-substep candidate
+    // scan doesn't walk the whole tessellation. `None` for bodies with no
+    // contact geometry or a non-mesh collider.
+    contact_support: Vec<Option<Vec<Vec3>>>,
+
+    // True when any joint is Free — i.e. the document describes a
+    // floating-base robot. Gates gravity-compensation feedforward (see
+    // `apply_motor_torques`).
+    has_floating_base: bool,
 }
 
 impl PhysicsWorld {
@@ -461,6 +473,17 @@ impl PhysicsWorld {
             .enumerate()
             .map(|(i, b)| if movable[i] { b.geometry.clone() } else { None })
             .collect();
+        let contact_support: Vec<Option<Vec<Vec3>>> = contact_geometries
+            .iter()
+            .map(|g| match g {
+                Some(Geometry::Mesh { vertices, .. }) => {
+                    Some(crate::colliders::support_points(vertices))
+                }
+                _ => None,
+            })
+            .collect();
+
+        let has_floating_base = joint_kinds.values().any(|k| matches!(k, JointKind::Free));
 
         let state = model.default_state();
 
@@ -489,6 +512,8 @@ impl PhysicsWorld {
             gain_scale: 1.0,
             ground: GroundConfig::disabled(),
             contact_geometries,
+            contact_support,
+            has_floating_base,
         };
 
         // Seed the initial configuration from the authored joint states.
@@ -668,7 +693,10 @@ impl PhysicsWorld {
             // World-frame candidate support points.
             let candidates: Vec<Vec3> = match geom {
                 Geometry::Mesh { vertices, .. } => {
-                    vertices.iter().map(|v| e_t.mul_vec(*v) + pos).collect()
+                    // Precomputed support points when available (every mesh
+                    // collider built here); the raw vertex cloud otherwise.
+                    let src = self.contact_support[i].as_deref().unwrap_or(vertices);
+                    src.iter().map(|v| e_t.mul_vec(*v) + pos).collect()
                 }
                 Geometry::Box { half_extents } => {
                     let he = half_extents;
@@ -811,10 +839,21 @@ impl PhysicsWorld {
             return;
         }
 
-        let needs_gravity_comp = self
-            .motors
-            .values()
-            .any(|m| !matches!(m.mode, MotorMode::Torque));
+        // Gravity feedforward is only meaningful on a *fixed*-base model.
+        // `rnea` with `qdd = 0` solves for the torques that hold the robot
+        // static assuming the root is bolted to the world; on a floating
+        // base those torques also carry the 6-DOF base wrench the ground is
+        // supposed to supply. Feeding them to the joints of a robot that is
+        // actually free (or airborne) injects that wrench as internal
+        // torque, and the base tumbles — a K1 held at its rest pose spun to
+        // 90° of tilt in 0.22 s. Real floating-base controllers (MuJoCo /
+        // Isaac PD actuators, on which every published locomotion policy is
+        // trained) run plain PD for this reason.
+        let needs_gravity_comp = !self.has_floating_base
+            && self
+                .motors
+                .values()
+                .any(|m| !matches!(m.mode, MotorMode::Torque));
         let tau_g = if needs_gravity_comp {
             let saved_v = self.state.v.clone();
             for i in 0..self.state.v.len() {

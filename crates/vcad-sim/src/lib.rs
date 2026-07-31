@@ -15,6 +15,8 @@
 
 mod batch;
 mod error;
+/// Reinforcement learning: derivative-free policy search over `RobotEnv`.
+pub mod rl;
 mod single;
 
 pub use batch::BatchSimPipeline;

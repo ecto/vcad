@@ -197,3 +197,70 @@ fn urdf_floating_base_falls() {
         end[2] - start[2]
     );
 }
+
+/// Gravity-compensation feedforward must be off on a floating base.
+///
+/// `rnea` at `qdd = 0` solves for the torques that hold a robot static with
+/// its root *bolted to the world*; those torques include the 6-DOF wrench the
+/// ground is supposed to supply. Handing them to a floating-base robot's
+/// joints injects that wrench internally and the base tumbles — a Booster K1
+/// commanded to hold its rest pose spun to 90° of tilt in 0.22 s of sim time.
+/// Here: an airborne floating base whose one actuated limb is servoed to its
+/// rest pose feels no external moment, so it must fall without rotating.
+#[test]
+fn floating_base_position_servo_adds_no_gravity_feedforward() {
+    let mut doc = free_base_doc();
+    // Hang an arm off the torso on a Y-axis revolute — the joint gravity
+    // compensation would load the hardest.
+    let extra: Document = serde_json::from_value(serde_json::json!({
+        "version": "0.1",
+        "nodes": {"2": {"id": 2, "op": {"type": "Cube", "size": {"x": 200.0, "y": 30.0, "z": 30.0}}}},
+        "roots": [],
+        "materials": {},
+        "part_materials": {},
+        "partDefs": {"arm": {"id": "arm", "name": "arm", "root": 2}},
+        "instances": [],
+        "joints": []
+    }))
+    .unwrap();
+    doc.nodes.extend(extra.nodes);
+    doc.part_defs
+        .as_mut()
+        .unwrap()
+        .extend(extra.part_defs.unwrap());
+    doc.instances.as_mut().unwrap().push(
+        serde_json::from_value(serde_json::json!({"id": "arm_inst", "partDefId": "arm"})).unwrap(),
+    );
+    doc.joints.as_mut().unwrap().push(
+        serde_json::from_value(serde_json::json!({
+            "id": "shoulder", "parentInstanceId": "torso_inst", "childInstanceId": "arm_inst",
+            "parentAnchor": {"x": 0.0, "y": 0.0, "z": 100.0},
+            "childAnchor": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "kind": {"type": "Revolute", "axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+                     "limits": [-90.0, 90.0]},
+            "state": 0.0
+        }))
+        .unwrap(),
+    );
+
+    let mut env = RobotEnv::new(
+        doc,
+        vec!["arm_inst".into()],
+        Some(1.0 / 240.0),
+        Some(4),
+        Some(GroundConfig::disabled()),
+    )
+    .expect("build env");
+    env.reset();
+
+    let mut max_tilt: f64 = 0.0;
+    for _ in 0..30 {
+        let r = env.step_full(Action::PositionTarget(vec![0.0; env.action_dim()]));
+        max_tilt = max_tilt.max(r.info.base_tilt_deg.unwrap_or(0.0));
+    }
+    assert!(
+        max_tilt < 1.0,
+        "airborne floating base rotated {max_tilt:.2}° while its servo held the \
+         rest pose — gravity feedforward is leaking the base wrench into the joints"
+    );
+}
