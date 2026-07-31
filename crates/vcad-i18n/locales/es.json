@@ -343,6 +343,7 @@
   "joint.slider": "Deslizante",
   "joint.cylindrical": "Cilíndrica",
   "joint.ball": "Esférica",
+  "joint.free": "Libre",
   "joint.suffix": "Unión",
 
   "tree.scene": "Escena",

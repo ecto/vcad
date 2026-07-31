@@ -343,6 +343,7 @@
   "joint.slider": "Schuif",
   "joint.cylindrical": "Cilindrisch",
   "joint.ball": "Kogel",
+  "joint.free": "Vrij",
   "joint.suffix": "Verbinding",
 
   "tree.scene": "Scène",
