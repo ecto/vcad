@@ -2,6 +2,14 @@
 
 **Score: 74/100** | **Priority: #16**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. The executable-validation core shipped through the MCP server rather than a `vcad test` CLI: labeled clearance assertions persist on the document (`check_clearance`) and re-verify as Holds/Stale/Violated via `build_receipt`/`verify_receipt` (fail-closed schema in `crates/vcad-receipt`), plus a `verify_spec` MCP tool. The YAML test schema and `vcad test` CLI/browser runners described below do not exist.
+
 ## Overview
 
 The `.vcad` file IS the specification. It contains geometry, assembly, motion sequences, physics validation, and test cases — all in one runnable file. No separate PDFs, drawings, or spec documents.
@@ -153,8 +161,8 @@ vcad files are programs that describe objects. They don't just say what somethin
 | Parametric geometry in .vcad | Complete |
 | Assembly with joints | Complete |
 | Motion sequences | Complete |
-| Test definition schema | Planned |
-| Test execution engine | Planned |
+| Test definition schema | Partial — clearance assertions + receipt schema (`vcad-receipt`), not the YAML schema above |
+| Test execution engine | Partial — `build_receipt`/`verify_receipt`/`verify_spec` MCP tools |
 | CLI test runner | Planned |
 | Browser test runner | Planned |
 

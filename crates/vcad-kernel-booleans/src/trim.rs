@@ -27,7 +27,7 @@
 //! - t_range = 17.7 * 2 ≈ 35.5
 //! - Sampled t from -35.5 to +35.5
 //! - Points sampled: X from 35.5 to -35.5
-//! - MISSED the face entirely (X=[34,46] requires t≈-34 to -46)
+//! - MISSED the face entirely (X=\[34,46\] requires t≈-34 to -46)
 //!
 //! Fixed approach:
 //! - Use ray-AABB intersection to find t values where line enters/exits face bounds

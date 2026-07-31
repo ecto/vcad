@@ -53,7 +53,7 @@ impl WasmKeybindings {
     /// Returns a JSON array describing every registered command. The TS UI
     /// (command palette, keyboard prefs) reads this once at startup.
     ///
-    /// Each entry is a [`CommandView`] — a flattened, owned projection of
+    /// Each entry is a `CommandView` — a flattened, owned projection of
     /// `Command` that serde can serialize (the source struct uses `&'static
     /// str` and a non-serializable `ModeScope` enum).
     #[wasm_bindgen(js_name = commandsJson)]
@@ -125,7 +125,7 @@ impl WasmKeybindings {
         self.inner.save_overrides()
     }
 
-    /// Load overrides previously returned by [`save_overrides`]. Malformed
+    /// Load overrides previously returned by [`Self::save_overrides`]. Malformed
     /// entries are skipped — the caller never sees a parse failure for
     /// stale config.
     #[wasm_bindgen(js_name = loadOverrides)]

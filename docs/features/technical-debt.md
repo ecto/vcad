@@ -12,6 +12,8 @@ Safety fixes, module refactoring, and performance optimization to reduce risk an
 | Effort | `s` |
 | Shipped | 2025-01 |
 
+> Verified against repo 2026-07-30. Corrections: `partial_cmp().unwrap()` grep returns 0 hits; booleans split into `api.rs`/`pipeline.rs`/`mesh/` etc., but layout differs from the proposed `ssi//split/` directories and `lib.rs` is ~1,956 lines (not under 500).
+
 ## Problem
 
 The codebase has accumulated technical debt that creates risk and slows development:
@@ -212,7 +214,7 @@ const newDoc = {
 - [x] All tests pass: `cargo test --workspace`
 - [x] No `partial_cmp().unwrap()` calls remain (grep returns empty)
 - [x] No `downcast_ref().unwrap()` in STEP writer (use Result)
-- [x] Boolean module lib.rs under 500 lines
+- [ ] Boolean module lib.rs under 500 lines (still ~1,956 lines as of 2026-07-30)
 - [x] Document store node lookups are O(1)
 - [x] Transform mutations use shallow clone (verified via benchmark)
 

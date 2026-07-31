@@ -2,6 +2,14 @@
 
 **Score: 61/100** | **Priority: #29**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. A substantial slice shipped via MCP tools (`packages/mcp`): BOM generation (`bom_create`/`bom_add_line`/`bom_export`), manufacturing quotes (`quote_manufacturing`), COTS sourcing (`search_mechanical_parts`, `search_electronic_parts`, `find_alternatives`), and ordering (`place_order`, `authorize_spend`, `list_orders`, `get_order_status`, `get_order_feed` — see `packages/mcp/src/fabricate/broker.ts`). Not shipped: in-app "Order Parts" button, motor/fastener auto-selection from joint loads, generated assembly instructions.
+
 ## Overview
 
 Click "Order Parts" and get a quote for real parts. 3D printed links, CNC brackets, motors, fasteners — all spec'd and priced. The bridge from simulation to reality.

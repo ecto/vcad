@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-30-sketch-solve-pending-status",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "fix",
+  "title": "Honest sketch solve status before kernel loads",
+  "summary": "Solving a sketch before the kernel WASM finishes loading now shows a dimmed 'pending' badge and re-solves automatically once it loads, instead of falsely showing 'solved'.",
+  "features": ["sketch", "constraints"]
+}

@@ -14,7 +14,7 @@
 //!
 //! 1. **One closed exterior per part.** Panel outlines and bend-allowance
 //!    strips are unioned into a single silhouette (see
-//!    [`crate::silhouette`]); no disjoint per-panel regions, no
+//!    [`crate::silhouette()`]); no disjoint per-panel regions, no
 //!    allowance-width gaps that read as "open entities".
 //! 2. **Dashed bend lines.** Services detect bend lines by *linetype =
 //!    dashed*, not by layer name or color. Every bend `LINE` carries the

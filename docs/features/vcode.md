@@ -6,11 +6,13 @@ Terse text format for CAD operations that reduces token usage for AI models and 
 
 | Field | Value |
 |-------|-------|
-| State | `proposed` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p0` |
 | Effort | `xs` (2-3 days) |
 | Target | Phase 1 of cad0 |
+
+> Verified against repo 2026-07-30. Correction: State was `proposed` but the core format is shipped — `crates/vcad-ir/src/vcode.rs` (`to_vcode`/`from_vcode`), TypeScript `toVCode`/`fromVCode` in `packages/ir/src/index.ts`, a WASM `to_vcode` binding in `crates/vcad-kernel-wasm/src/lib.rs`, and consumers in `packages/mcp` (`share.ts`, `loon-macros.ts`) and `packages/training`. Not shipped as spec'd: a dedicated `create_cad_vcode` MCP tool and a standalone `packages/ir/src/vcode.ts` file (lives in `index.ts` instead).
 
 ## Problem
 
@@ -332,19 +334,19 @@ pub fn ir_from_vcode(compact: &str) -> Result<String, JsValue> {
 
 ### Phase 1: Core Parser (Rust)
 
-- [ ] Create `crates/vcad-ir/src/vcode.rs` module (`xs`)
-- [ ] Implement `to_vcode()` for all `CsgOp` variants (`s`)
-- [ ] Implement `from_vcode()` parser (`s`)
+- [x] Create `crates/vcad-ir/src/vcode.rs` module (`xs`)
+- [x] Implement `to_vcode()` for all `CsgOp` variants (`s`)
+- [x] Implement `from_vcode()` parser (`s`)
 - [ ] Add sketch block parsing (SK...END) (`xs`)
 - [ ] Add comprehensive unit tests (`xs`)
-- [ ] Export from `lib.rs` (`xs`)
+- [x] Export from `lib.rs` (`xs`)
 
 ### Phase 2: WASM & TypeScript
 
-- [ ] Add WASM bindings `ir_to_vcode`, `ir_from_vcode` (`xs`)
+- [x] Add WASM bindings `ir_to_vcode`, `ir_from_vcode` (`xs`)
 - [ ] Create `packages/ir/src/vcode.ts` (`s`)
 - [ ] Add TypeScript tests (`xs`)
-- [ ] Update `@vcad/ir` exports (`xs`)
+- [x] Update `@vcad/ir` exports (`xs`)
 
 ### Phase 3: Integration
 

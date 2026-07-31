@@ -51,7 +51,7 @@ use crate::vec3::Vec3;
 ///
 /// One plane is a single mirror. Two planes form a cavity whose image series is
 /// infinite, exactly like facing mirrors; it is truncated at
-/// [`IronStack::max_reflections`] and the residual is reported by
+/// `IronStack::max_reflections` and the residual is reported by
 /// [`IronStack::tail_fraction`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct IronStack {
@@ -100,7 +100,7 @@ impl IronStack {
     ///
     /// Zero for an alternating-pole rotor, one for a lone magnet. The two-plane
     /// image series converges only near zero — see the module note. Values above
-    /// ~0.05 mean the result depends on [`IronStack::max_reflections`] and must
+    /// ~0.05 mean the result depends on `IronStack::max_reflections` and must
     /// not be quoted.
     pub fn balance_residual(sources: &[Filament]) -> f64 {
         let mut net = Vec3::ZERO;
@@ -191,7 +191,7 @@ impl IronStack {
     /// `probe`, for `source`.
     ///
     /// This is the truncation error of the image series: if it is not small, the
-    /// answer depends on [`IronStack::max_reflections`] and should not be quoted.
+    /// answer depends on `IronStack::max_reflections` and should not be quoted.
     pub fn tail_fraction(&self, source: &Filament, probe: Vec3) -> f64 {
         if self.planes_z.is_empty() {
             return 0.0;

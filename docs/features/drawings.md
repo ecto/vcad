@@ -1,5 +1,16 @@
 # 2D Technical Drawings
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+| Owner | `unassigned` |
+| Priority | `p2` |
+| Effort | `l` |
+
+> Verified against repo 2026-07-30. Parts of this spec have shipped in `vcad-kernel-drafting`: title blocks, BOM with balloons (`sheet.rs`), PDF export (`pdf.rs`), offset sections, and DXF output. Weld symbols, surface finish symbols, auxiliary views, and broken views remain unbuilt.
+
 ## Overview
 
 Professionals need complete documentation for manufacturing, inspection, and assembly. vcad already has foundational 2D drafting capabilities in `vcad-kernel-drafting`. This specification extends those capabilities to support full production-ready technical drawings with comprehensive GD&T, weld symbols, surface finish annotations, and standards-compliant output.

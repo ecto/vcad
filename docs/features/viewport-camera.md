@@ -11,6 +11,8 @@
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. All listed implementation files exist (`Viewport.tsx`, `ViewportContent.tsx`, `TransformGizmo.tsx`, `GridPlane.tsx`, `camera-settings-store.ts`, `useCameraControls.ts`, `camera-controls.ts`). Note: a ray-traced viewport render mode also exists beyond what this doc covers.
+
 ## Problem
 
 CAD users need to view their models from any angle to:

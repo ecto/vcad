@@ -5,7 +5,7 @@
 //! This module runs the arrow the other way — it takes the **triangle mesh
 //! of a solid that was modelled some other way** (extruded sketch, boolean,
 //! imported STEP) and reconstructs the panel/bend graph, so the existing
-//! [`unfold`](crate::unfold) → [`silhouette`](crate::silhouette) →
+//! [`unfold()`](crate::unfold()) → [`silhouette()`](crate::silhouette()) →
 //! [`dxf`](crate::dxf) pipeline can emit a fab-ready flat pattern for it.
 //!
 //! This is the mechanical counterpart of `board_from_solid`: solid in,

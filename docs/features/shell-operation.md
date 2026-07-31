@@ -11,6 +11,8 @@ Hollow out solid geometry by offsetting faces inward, creating thin-walled parts
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Shell op present in `crates/vcad-kernel-shell`, `CsgOp::Shell` in vcad-ir, evaluated in `packages/engine/src/evaluate.ts`.
+
 ## Problem
 
 Creating hollow parts (enclosures, containers, housings) is a fundamental CAD operation. Without a shell command, users must:

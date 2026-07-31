@@ -2,7 +2,7 @@
 /* eslint-disable */
 
 /**
- * A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
+ * A live circuit simulation. Build from a `CircuitSpec` JSON, then `step`.
  */
 export class CircuitSim {
     free(): void;
@@ -248,7 +248,7 @@ export class RayTracer {
      *
      * # Note
      * This function is async to support WASM's single-threaded environment.
-     * In JavaScript, it returns a Promise<Uint8Array>.
+     * In JavaScript, it returns a `Promise<Uint8Array>`.
      */
     render(camera: Float64Array, target: Float64Array, up: Float64Array, width: number, height: number, fov: number): Promise<Uint8Array>;
     /**
@@ -1020,7 +1020,7 @@ export class WasmKeybindings {
      * Returns a JSON array describing every registered command. The TS UI
      * (command palette, keyboard prefs) reads this once at startup.
      *
-     * Each entry is a [`CommandView`] — a flattened, owned projection of
+     * Each entry is a `CommandView` — a flattened, owned projection of
      * `Command` that serde can serialize (the source struct uses `&'static
      * str` and a non-serializable `ModeScope` enum).
      */
@@ -1032,7 +1032,7 @@ export class WasmKeybindings {
      */
     conflictsJson(mode_name: string): string;
     /**
-     * Load overrides previously returned by [`save_overrides`]. Malformed
+     * Load overrides previously returned by [`Self::save_overrides`]. Malformed
      * entries are skipped — the caller never sees a parse failure for
      * stale config.
      */
@@ -1197,7 +1197,7 @@ export function analyzeStaticsMesh(spec_json: string, positions: Float32Array, i
  *
  * `spec_json` is a `vcad_kernel_antenna::spec::AntennaSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them,
- * `options_json` an [`AntennaOptions`] (the frequency `band` is
+ * `options_json` an `AntennaOptions` (the frequency `band` is
  * required).
  */
 export function antennaAnalyze(spec_json: string, params_json: string, options_json: string): any;
@@ -1300,7 +1300,7 @@ export function calibrationFingerprintDocument(doc_json: string): string;
  * Generate a height field from mesh using drop-cutter algorithm.
  *
  * # Arguments
- * * `vertices_json` - Vertex array as JSON [[x,y,z], ...]
+ * * `vertices_json` - Vertex array as JSON `[[x,y,z], ...]`
  * * `indices_json` - Triangle indices as JSON [i0, i1, i2, ...]
  * * `tool_json` - Tool definition as JSON
  * * `bounds_json` - Bounds [min_x, min_y, max_x, max_y] as JSON
@@ -1488,7 +1488,7 @@ export function circuitDcOperatingPoint(spec_json: string): any;
  *
  * * `sch_json` — JSON-serialized `SchematicSheet` (same shape as
  *   `ecadGenerateNetlist` takes).
- * * `options_json` — JSON [`MapOptions`] (`{}` for defaults).
+ * * `options_json` — JSON `MapOptions` (`{}` for defaults).
  *
  * Returns `{ok: true, devices, nodeOfNet, deviceOfRef, ...}` on success, or
  * `{ok: false, blockers: [{reference, message}]}` when any component can't
@@ -1594,7 +1594,7 @@ export function decimateMeshGpu(positions: Float32Array, indices: Uint32Array, t
 /**
  * Derive parts from a Document (as JSON).
  *
- * Returns a JSON-serialized Vec<PartInfo>.
+ * Returns a JSON-serialized `Vec<PartInfo>`.
  */
 export function deriveParts(doc_json: string): any;
 
@@ -2085,7 +2085,7 @@ export function ecadRouteNet(pcb_json: string, net: string, start_x: number, sta
 /**
  * Route a net with the avoiding A* maze router.
  *
- * Unlike [`Self::ecad_route_net_shove`] (which detours around static
+ * Unlike `ecad_route_net_shove` (which detours around static
  * inflated bounding boxes of other-net *traces*), this searches a grid and
  * tests every step against the exact clearance oracle, so the route avoids
  * *all* copper on `layer` — traces, pads, and vias. Every returned segment
@@ -2097,7 +2097,7 @@ export function ecadRouteNetMaze(pcb_json: string, layer: string, net: string, s
 /**
  * Route a net with the push-and-shove router.
  *
- * Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+ * Unlike `ecad_route_net` (grid/wave BFS), this routes in
  * continuous coordinate space and detours around existing copper on other
  * nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
  * and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
@@ -2148,7 +2148,7 @@ export function ecadVerifySubstitution(pcb_json: string, reference: string, cand
  * allowed), `planar_magnetostatics` (`PlanarSpec`, named parameters
  * allowed), or `electrostatics` (a literal-only electrode/dielectric
  * DTO — the crate has no serde seam for that class yet). `params_json`
- * binds named parameters; `options_json` is [`EmSimOptions`].
+ * binds named parameters; `options_json` is `EmSimOptions`.
  */
 export function emSimulate(spec_json: string, params_json: string, options_json: string): any;
 
@@ -2388,7 +2388,7 @@ export function exprParse(src: string): any;
  * predicted claim is emitted.
  *
  * `spec_json` is a `vcad_kernel_fea::spec::FeaSpec` (material, loads,
- * supports, resolution), `options_json` a [`FeaOptions`].
+ * supports, resolution), `options_json` a `FeaOptions`.
  */
 export function feaAnalyzeMesh(spec_json: string, options_json: string, positions: Float32Array, indices: Uint32Array): any;
 
@@ -2531,8 +2531,18 @@ export function get_tool_schemas(): string;
 export function importStepBuffer(data: Uint8Array): any;
 
 /**
+ * Import solids from STEP file bytes, reporting skipped faces.
+ *
+ * Like [`import_step_buffer`], but returns `{ meshes, report, summary }`
+ * where `report` lists, per solid, any faces omitted because their surface
+ * type is unsupported (the imported geometry has holes there), and
+ * `summary` is a ready-to-display warning string (null when clean).
+ */
+export function importStepBufferWithReport(data: Uint8Array): any;
+
+/**
  * Import a URDF (Unified Robot Description Format) file and return a
- * serialised vcad [`Document`].
+ * serialised vcad `Document`.
  *
  * Browsers cannot resolve `package://` URIs or relative mesh paths
  * against the user's filesystem, so any `<mesh>` reference in the URDF
@@ -2625,7 +2635,7 @@ export function nestSheetMetalParts(parts_json: string, params_json: string): st
 /**
  * Produce one layered DXF per stock sheet for a set of nested parts.
  *
- * `placements_json` is an array of [`NestedPlacementDto`]; each chain
+ * `placements_json` is an array of `NestedPlacementDto`; each chain
  * is independently evaluated into a flat pattern, then translated /
  * rotated according to its placement before being written to the
  * sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`
@@ -2783,7 +2793,7 @@ export function particleOptimize(spec_json: string, params_json: string, optimiz
  * `spec_json` is a `vcad_kernel_particle::spec::DeviceSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them
  * (fail-closed: unbound names error), `options_json` a
- * [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
+ * `ParticleSimOptions`. Returns stats + `vcad.particle-claims/1` set +
  * unified-receipt claims (basis `predicted` — Provisional by contract).
  */
 export function particleSimulate(spec_json: string, params_json: string, options_json: string): any;
@@ -2931,7 +2941,7 @@ export function render_svg(vcad_json: string, scale: number): string;
 export function render_svg_annotated(vcad_json: string, scale: number, view: string, axes: boolean, labels: boolean, dims: boolean): string;
 
 /**
- * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
  * surface in one call: arbitrary camera, part focus, section cutaway,
  * changed-part highlight, and engineering annotations. This is the superset
  * the MCP `render_view` "agent eyes" path drives; the narrower
@@ -2951,7 +2961,7 @@ export function render_svg_annotated(vcad_json: string, scale: number, view: str
 export function render_svg_camera(vcad_json: string, scale: number, view: string, focus: string | null | undefined, axes: boolean, labels: boolean, dims: boolean, section?: string | null, highlight_json?: string | null): string;
 
 /**
- * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
  * surface expressed as one JSON options object — the forward-compatible
  * companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
  * so new render options never need another positional-arg binding.
@@ -3217,7 +3227,7 @@ export function textBounds(text: string, height: number, font?: string | null, l
  *
  * `spec_json` is a `vcad_kernel_thermal::spec::ThermalSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them,
- * `options_json` a [`ThermalOptions`].
+ * `options_json` a `ThermalOptions`.
  */
 export function thermalSolve(spec_json: string, params_json: string, options_json: string): any;
 
@@ -3231,7 +3241,7 @@ export function thermalSolve(spec_json: string, params_json: string, options_jso
  * `spec_json` is a `ThermalSpec` (every material needs
  * `heat_capacity_j_m3k`), `transient_json` a
  * `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
- * `{name: value}` map, `options_json` a [`ThermalOptions`].
+ * `{name: value}` map, `options_json` a `ThermalOptions`.
  */
 export function thermalSolveTransient(spec_json: string, transient_json: string, params_json: string, options_json: string): any;
 
@@ -3259,7 +3269,7 @@ export function toVCode(doc_json: string): string;
  * `spec_json` is a `vcad_kernel_tolerance::spec::StackupSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them
  * (fail-closed: unbound names error), `options_json` a
- * [`ToleranceOptions`]. Returns all three analyses +
+ * `ToleranceOptions`. Returns all three analyses +
  * `vcad.tolerance-claims/1` + unified-receipt claims (basis `predicted`).
  */
 export function toleranceAnalyze(spec_json: string, params_json: string, options_json: string): any;
@@ -3343,6 +3353,7 @@ export interface InitOutput {
     readonly get_kernel_version: () => [number, number];
     readonly get_tool_schemas: () => [number, number];
     readonly importStepBuffer: (a: number, b: number) => [number, number, number];
+    readonly importStepBufferWithReport: (a: number, b: number) => [number, number, number];
     readonly importUrdfBuffer: (a: number, b: number) => [number, number, number, number];
     readonly init: () => void;
     readonly initGpu: () => any;
@@ -3483,103 +3494,6 @@ export interface InitOutput {
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly getCompiledModule: () => any;
-    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
-    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
-    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
-    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
-    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
-    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
-    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
-    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
-    readonly analyzeForPrinting: (a: number) => [number, number, number];
-    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
-    readonly circuitAcResponse: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly circuitDcOperatingPoint: (a: number, b: number) => [number, number, number];
-    readonly circuitFromSchematic: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitSensitivities: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly circuitTransient: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitTune: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitsim_dt: (a: number) => number;
-    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
-    readonly circuitsim_observe: (a: number) => [number, number, number];
-    readonly circuitsim_reset: (a: number) => void;
-    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
-    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
-    readonly ecadAirgapFluxDensity: (a: number, b: number) => [number, number, number];
-    readonly ecadAirgapSolve: (a: number, b: number) => [number, number, number];
-    readonly ecadBuildReceipt: (a: number, b: number) => [number, number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckDrcInRegion: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
-    readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
-    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
-    readonly ecadFabPrep: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
-    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadJellybeanManifest: () => [number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadLengthMatch: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadNetContinuity: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadPartsManifest: () => [number, number];
-    readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
-    readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
-    readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
-    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSearchParts: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
-    readonly exportKicadProject: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
-    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly getSlicerPrinterProfiles: () => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
-    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
-    readonly sliceresult_filamentGrams: (a: number) => number;
-    readonly sliceresult_filamentMm: (a: number) => number;
-    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
-    readonly sliceresult_layerCount: (a: number) => number;
-    readonly sliceresult_printTimeSeconds: (a: number) => number;
-    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
-    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly slicersettings_new: () => number;
-    readonly isSlicerAvailable: () => number;
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -3723,6 +3637,103 @@ export interface InitOutput {
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
+    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
+    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
+    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
+    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
+    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
+    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
+    readonly analyzeForPrinting: (a: number) => [number, number, number];
+    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
+    readonly circuitAcResponse: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly circuitDcOperatingPoint: (a: number, b: number) => [number, number, number];
+    readonly circuitFromSchematic: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitSensitivities: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly circuitTransient: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitTune: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
+    readonly ecadAirgapFluxDensity: (a: number, b: number) => [number, number, number];
+    readonly ecadAirgapSolve: (a: number, b: number) => [number, number, number];
+    readonly ecadBuildReceipt: (a: number, b: number) => [number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckDrcInRegion: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
+    readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
+    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
+    readonly ecadFabPrep: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
+    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadJellybeanManifest: () => [number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadLengthMatch: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadNetContinuity: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadPartsManifest: () => [number, number];
+    readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
+    readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
+    readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
+    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSearchParts: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
+    readonly exportKicadProject: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
+    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly getSlicerPrinterProfiles: () => [number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
+    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
+    readonly sliceresult_filamentGrams: (a: number) => number;
+    readonly sliceresult_filamentMm: (a: number) => number;
+    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
+    readonly sliceresult_layerCount: (a: number) => number;
+    readonly sliceresult_printTimeSeconds: (a: number) => number;
+    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
+    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly slicersettings_new: () => number;
+    readonly isSlicerAvailable: () => number;
     readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];

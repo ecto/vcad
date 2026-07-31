@@ -11,6 +11,8 @@ Create technical drawings with orthographic projections and dimensions for manuf
 | Priority | `p0` |
 | Effort | `n/a` (complete) |
 
+> Verified against repo 2026-07-30. Several "future enhancements" have since shipped (DXF/PDF export, drawing sheets with title blocks, BOM with balloons) — see `crates/vcad-kernel-drafting/src/{sheet.rs,pdf.rs}`.
+
 ## Problem
 
 Manufacturing and engineering workflows require professional technical drawings:
@@ -342,11 +344,11 @@ All tasks complete:
 
 ## Future Enhancements
 
-- [ ] DXF export for CAM software and legacy CAD compatibility
-- [ ] PDF export for documentation and sharing
-- [ ] Notes and balloons for part callouts and instructions
-- [ ] BOM generation with part numbers and quantities
-- [ ] Drawing sheets with title blocks and borders
+- [x] DXF export for CAM software and legacy CAD compatibility
+- [x] PDF export for documentation and sharing (`crates/vcad-kernel-drafting/src/pdf.rs`)
+- [x] Notes and balloons for part callouts and instructions (`BomBalloon` in `sheet.rs`)
+- [x] BOM generation with part numbers and quantities (`BomRow` in `sheet.rs`)
+- [x] Drawing sheets with title blocks and borders (`TitleBlock` in `sheet.rs`)
 - [ ] Multiple views on single sheet with automatic alignment
 - [ ] Centerlines and center marks for cylindrical features
 - [ ] Break lines for long parts that don't fit on sheet

@@ -1,7 +1,7 @@
 //! Parametric IPC-7351 package generator for vcad.
 //!
 //! A [`vcad_ir::ecad::PackageClass`] is the single source of truth for an
-//! electronic part's *physical* package. [`derive`] turns it — in one pass —
+//! electronic part's *physical* package. [`derive()`] turns it — in one pass —
 //! into a PCB land pattern, a schematic symbol, and a real 3D body, all sharing
 //! one pin numbering so they cannot disagree. This is the "generate, don't
 //! aggregate" core: standard packages get infinite coverage from parametric

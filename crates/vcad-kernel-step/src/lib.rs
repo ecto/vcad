@@ -60,7 +60,10 @@ pub use pmi::{
     read_step_pmi, read_step_pmi_from_buffer, DimensionKind, StepDatum, StepDimension, StepPmi,
     StepTolerance,
 };
-pub use reader::{read_step, read_step_from_buffer};
+pub use reader::{
+    read_step, read_step_from_buffer, read_step_from_buffer_with_report, read_step_with_report,
+    ReadResult, SkippedFace, SolidImportReport, StepImportReport,
+};
 pub use writer::{
     write_step, write_step_solids, write_step_solids_to_buffer, write_step_to_buffer,
 };

@@ -11,6 +11,8 @@ Combine solids with union, difference, and intersection operations.
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Shipped: `crates/vcad-kernel-booleans` (4-stage pipeline: AABB filter, surface-surface intersection, face classification, sewing).
+
 ## Problem
 
 Simple primitive shapes (boxes, cylinders, spheres, cones) cannot represent real-world geometry. Users need to combine these shapes into complex forms:

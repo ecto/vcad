@@ -1,5 +1,15 @@
 # CAM (Computer-Aided Manufacturing)
 
+> **This document is a pre-implementation spec; CAM has since shipped.** See `crates/vcad-kernel-cam` (2.5D toolpaths, tools, operations, dropcutter, G-code post-processors in `src/post/` — GRBL, LinuxCNC) and `crates/vcad-kernel-stocksim` (octree-SDF stock simulation). The design diverged from this spec: there is no separate `vcad-kernel-gcode` crate (posts live inside `vcad-kernel-cam`). App-side state lives in `packages/app/src/stores/cam-store.ts`.
+
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+
+> Verified against repo 2026-07-30. State row added; "most critical missing feature" framing below is stale.
+
 ## Overview
 
 CAM is the most critical missing feature in vcad. It blocks users who design parts with the intent to manufacture them physically. Without CAM, users must export to external software (Fusion 360 CAM, Mastercam, etc.) to generate toolpaths and G-code.

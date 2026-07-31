@@ -15,7 +15,7 @@
 //! order-of-magnitude dose rates — exactly the design questions.
 //!
 //! Scattering model: isotropic-in-CM elastic scattering off free nuclei.
-//! Group-transfer matrices are derived in [`transfer_row`] from the exact
+//! Group-transfer matrices are derived in `transfer_row` from the exact
 //! single-collision energy kernel (E′ uniform on [αE, E], α=((A−1)/(A+1))²)
 //! averaged over a flat-in-lethargy flux across the source group — the
 //! standard multigroup construction, computed numerically at build time so

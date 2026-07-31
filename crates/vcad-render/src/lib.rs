@@ -620,11 +620,28 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
         .iter()
         .filter(|r| r.visible != Some(false))
         .collect();
+    // Part-definition prototype roots: a URDF import pushes each link's
+    // geometry both as a scene root AND as a part-def referenced by a
+    // world-placed instance. Drawing the root too would pile every link
+    // untransformed at the origin on top of the FK-placed assembly.
+    let proto_roots: std::collections::HashSet<vcad_ir::NodeId> =
+        match (&parsed.document.part_defs, &parsed.document.instances) {
+            (Some(defs), Some(insts)) if !insts.is_empty() => {
+                defs.values().map(|d| d.root).collect()
+            }
+            _ => Default::default(),
+        };
     let mut solids: Vec<SceneSolid> = scene
         .parts
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
+            if visible_roots
+                .get(i)
+                .is_some_and(|r| proto_roots.contains(&r.root))
+            {
+                return None;
+            }
             // A root whose chain bottoms out in an `ImportedMesh` (frozen
             // topology-optimization results, drag-dropped STL/GLB) carries
             // no `Solid` — the evaluator has no path from a triangle soup
@@ -665,7 +682,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     // definition once and place a transformed copy per instance. Without
     // this, an assembly-only document (no scene roots) rendered as
     // "no solids produced" despite being perfectly valid.
-    solids.extend(evaluate_assembly_instances(&parsed.document)?);
+    solids.extend(evaluate_assembly_instances(&parsed.document, &scene)?);
     Ok(solids)
 }
 
@@ -673,7 +690,10 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
 /// tinted solids. Part-definition solids are evaluated once and shared;
 /// per-instance world poses come from forward kinematics, falling back to
 /// the instance's static transform.
-fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid>, String> {
+fn evaluate_assembly_instances(
+    doc: &vcad_ir::Document,
+    scene: &vcad_eval::EvaluatedScene,
+) -> Result<Vec<SceneSolid>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
         return Ok(Vec::new());
     };
@@ -703,6 +723,24 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
                         .flatten()
                 }))
                 .unwrap_or(None)
+                // No BRep (mesh-imported part, e.g. a URDF link's STL):
+                // wrap the evaluated triangle mesh, same as the roots path.
+                .or_else(|| {
+                    scene
+                        .part_defs
+                        .as_ref()?
+                        .iter()
+                        .find(|pd| pd.id == inst.part_def_id)
+                        .filter(|pd| !pd.mesh.indices.is_empty())
+                        .map(|pd| {
+                            Solid::from_mesh(vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+                                vertices: pd.mesh.positions.clone(),
+                                indices: pd.mesh.indices.clone(),
+                                normals: pd.mesh.normals.clone().unwrap_or_default(),
+                                face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                            })
+                        })
+                })
             })
             .clone();
         let Some(solid) = solid else { continue };
@@ -771,15 +809,18 @@ fn focus_mask(scene: &[SceneSolid], focus: &str) -> Result<Vec<bool>, String> {
 /// IR `Transform3D` → kernel `Transform`, matching the evaluator's
 /// convention: scale, then Rx·Ry·Rz (applied x-first), then translation.
 fn transform3d_to_kernel(t: &vcad_ir::Transform3D) -> Transform {
-    Transform::scale(t.scale.x, t.scale.y, t.scale.z)
-        .then(&Transform::rotation_x(t.rotation.x.to_radians()))
-        .then(&Transform::rotation_y(t.rotation.y.to_radians()))
+    // `Transform::then` composes self·other with column vectors, so `other`
+    // acts on the point FIRST. The intended world placement is
+    // T · Rz · Ry · Rx · S (scale first, translation last — matching the
+    // Rz·Ry·Rx euler convention `vcad_eval::kinematics` emits), so the chain
+    // reads outermost-first. Chaining the other way rotated the translation
+    // itself, which swung a jointed child about the world origin instead of
+    // about its parent anchor.
+    Transform::translation(t.translation.x, t.translation.y, t.translation.z)
         .then(&Transform::rotation_z(t.rotation.z.to_radians()))
-        .then(&Transform::translation(
-            t.translation.x,
-            t.translation.y,
-            t.translation.z,
-        ))
+        .then(&Transform::rotation_y(t.rotation.y.to_radians()))
+        .then(&Transform::rotation_x(t.rotation.x.to_radians()))
+        .then(&Transform::scale(t.scale.x, t.scale.y, t.scale.z))
 }
 
 // ─── canonicalized per-solid mesh ─────────────────────────────────────────
@@ -3982,6 +4023,42 @@ mod raytrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world transform must rotate the geometry about the transform's own
+    /// origin and *then* translate — never rotate the translation itself.
+    ///
+    /// Regression: the chain was built scale→Rx→Ry→Rz→T, but
+    /// `Transform::then` composes `self·other` (other acts first), so the
+    /// translation was applied first and the rotation then swung it about
+    /// the world origin. A revolute child anchored at z=94 detached from its
+    /// parent and orbited the origin at radius 94 — invisible at state 0,
+    /// where the rotation is identity.
+    #[test]
+    fn world_transform_rotates_about_its_own_origin() {
+        let t = vcad_ir::Transform3D {
+            translation: vcad_ir::Vec3::new(0.0, 0.0, 94.0),
+            rotation: vcad_ir::Vec3::new(0.0, -30.0, 0.0),
+            scale: vcad_ir::Vec3::new(1.0, 1.0, 1.0),
+        };
+        let k = transform3d_to_kernel(&t);
+
+        // The transform's origin is the pivot: it maps to the translation.
+        let pivot = k.apply_point(&vcad_kernel::vcad_kernel_math::Point3::new(0.0, 0.0, 0.0));
+        assert!(
+            (pivot.x).abs() < 1e-9 && (pivot.z - 94.0).abs() < 1e-9,
+            "pivot moved: {pivot:?}"
+        );
+
+        // A point 58mm below the pivot swings to R·(0,0,-58) + (0,0,94).
+        let tip = k.apply_point(&vcad_kernel::vcad_kernel_math::Point3::new(0.0, 0.0, -58.0));
+        let (s, c) = (-30.0_f64).to_radians().sin_cos();
+        assert!((tip.x - (-58.0 * s)).abs() < 1e-9, "tip.x = {}", tip.x);
+        assert!(
+            (tip.z - (-58.0 * c + 94.0)).abs() < 1e-9,
+            "tip.z = {}",
+            tip.z
+        );
+    }
 
     /// Pins the handedness of every [`View`]'s screen basis.
     ///

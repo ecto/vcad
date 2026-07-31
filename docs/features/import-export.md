@@ -6,10 +6,12 @@ Exchange geometry with other CAD tools, 3D printers, and renderers.
 
 | Field | Value |
 |-------|-------|
-| State | `shipped` (partial UI) |
+| State | `shipped` |
 | Owner | @cam |
 | Priority | `p0` |
 | Effort | n/a (core complete) |
+
+> Verified against repo 2026-07-30. Corrections: STEP export is no longer primitives-only — full multi-body BRep export with analytic edge reconstruction shipped (`crates/vcad-kernel-step`, `packages/core/src/utils/export-step.ts`); web STEP export is wired (no longer "coming soon"); STEP import via drag-drop/file picker shipped in the app (`App.tsx` accepts `.step/.stp`); DXF export shipped (drafting + sheet metal). The "shipped (partial UI)" caveats below are stale.
 
 ## Problem
 
@@ -33,7 +35,7 @@ Multiple format support covering the primary use cases:
 |--------|---------|--------|
 | **STL** | 3D printing, mesh exchange | Shipped |
 | **GLB** | Game engines, renderers, web viewers | Shipped |
-| **STEP** | CAD exchange (AP214 B-rep) | Shipped (primitives only) |
+| **STEP** | CAD exchange (AP214 B-rep) | Shipped (full B-rep, multi-body) |
 
 ### Import Formats
 
@@ -166,10 +168,10 @@ Supports both ASCII and binary STL formats. Deduplicates vertices using position
 
 ### Remaining
 
-- [ ] Web UI for STEP import drag-and-drop (`s`)
-- [ ] Wire STEP export to web app (currently disabled) (`s`)
-- [ ] DXF export for 2D drawings (`m`)
-- [ ] PDF export for drawings (`m`)
+- [x] Web UI for STEP import drag-and-drop (`s`)
+- [x] Wire STEP export to web app (`s`)
+- [x] DXF export for 2D drawings (`m`)
+- [x] PDF export for drawings (`m`)
 - [ ] Export progress indicator for large models (`xs`)
 - [ ] Custom filename on export (`xs`)
 
@@ -182,8 +184,8 @@ Supports both ASCII and binary STL formats. Deduplicates vertices using position
 - [x] Web app "Export GLB" downloads valid GLB loadable in Three.js/Blender
 - [x] STL import parses both ASCII and binary formats
 - [x] STEP parser handles common AP214 entities (planes, cylinders, spheres, cones)
-- [ ] Web app can import STEP files via file picker or drag-and-drop
-- [ ] 2D drawings can export to DXF for laser cutting
+- [x] Web app can import STEP files via file picker or drag-and-drop
+- [x] 2D drawings can export to DXF for laser cutting
 
 ## Future Enhancements
 

@@ -6,11 +6,13 @@ Standard robotics format support for interoperability with ROS, Gazebo, and othe
 
 | Field | Value |
 |-------|-------|
-| State | `proposed` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p1` |
 | Effort | `s` (1 week) |
 | Target | Robotics Phase 1 |
+
+> Verified against repo 2026-07-30. Correction: State was `proposed` but this is shipped — `crates/vcad-kernel-urdf` exists (`reader.rs`, `writer.rs`, `types.rs`, `error.rs`), the CLI has `import-urdf` (`ImportUrdf` in `crates/vcad-cli/src/main.rs`) and URDF export (`export_urdf`), and root CLAUDE.md lists `vcad-kernel-urdf` (URDF robot description import) as a workspace crate. Task checkboxes below ticked where verifiably implemented; sections describing the crate as future work are historical design notes.
 
 ## Problem
 
@@ -271,34 +273,34 @@ enum Commands {
 
 ### Phase 1: Core Types and Parsing
 
-- [ ] Create `vcad-kernel-urdf` crate with Cargo.toml (`xs`)
-- [ ] Define URDF types in `types.rs` (`s`)
-- [ ] Implement XML parser in `reader.rs` (`s`)
-- [ ] Add `read_urdf()` and `read_urdf_from_str()` functions (`xs`)
+- [x] Create `vcad-kernel-urdf` crate with Cargo.toml (`xs`)
+- [x] Define URDF types in `types.rs` (`s`)
+- [x] Implement XML parser in `reader.rs` (`s`)
+- [x] Add `read_urdf()` and `read_urdf_from_str()` functions (`xs`)
 
 ### Phase 2: Import Conversion
 
-- [ ] Map URDF joints to vcad JointKind (`s`)
-- [ ] Map URDF geometry to vcad primitives (`s`)
-- [ ] Build vcad Document from UrdfRobot (`s`)
+- [x] Map URDF joints to vcad JointKind (`s`)
+- [x] Map URDF geometry to vcad primitives (`s`)
+- [x] Build vcad Document from UrdfRobot (`s`)
 - [ ] Handle mesh file references (store as metadata) (`xs`)
 
 ### Phase 3: Export
 
-- [ ] Implement `writer.rs` with XML serialization (`s`)
-- [ ] Map vcad joints back to URDF joint types (`xs`)
+- [x] Implement `writer.rs` with XML serialization (`s`)
+- [x] Map vcad joints back to URDF joint types (`xs`)
 - [ ] Generate mesh files for complex geometry (`m`)
-- [ ] Add `write_urdf()` and `write_urdf_to_string()` functions (`xs`)
+- [x] Add `write_urdf()` and `write_urdf_to_string()` functions (`xs`)
 
 ### Phase 4: CLI Integration
 
-- [ ] Add `import-urdf` command to CLI (`xs`)
-- [ ] Add `--format urdf` option to `export` command (`xs`)
+- [x] Add `import-urdf` command to CLI (`xs`)
+- [x] Add `--format urdf` option to `export` command (`xs`)
 - [ ] Add `--mesh-dir` and `--ros-pkg-path` flags (`xs`)
 
 ### Phase 5: Testing
 
-- [ ] Add unit tests with minimal URDF samples (`s`)
+- [x] Add unit tests with minimal URDF samples (`s`)
 - [ ] Test round-trip with Franka Panda URDF (`s`)
 - [ ] Test round-trip with UR5 URDF (`s`)
 - [ ] Add integration tests to CI (`xs`)

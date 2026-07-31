@@ -11,6 +11,8 @@ Make parametric dependencies visible and warn before destructive actions.
 | Priority | `p2` |
 | Effort | `m` |
 
+> Verified against repo 2026-07-30. Still `proposed` — no dependency graph, hover tooltip, or delete-confirm implementation found in `packages/app/src`.
+
 ## Problem
 
 Parametric models have hidden dependencies. A fillet depends on an edge, which depends on a boolean, which depends on a sketch. Users discover these relationships only when something breaks—delete a sketch and watch 12 features fail with cryptic "reference lost" errors.

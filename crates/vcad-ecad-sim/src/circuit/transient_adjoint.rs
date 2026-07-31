@@ -4,7 +4,7 @@
 //! This extends the transposed-network method (Director & Rohrer, "The
 //! generalized adjoint network and network sensitivities", IEEE Trans.
 //! Circuit Theory CT-16, 1969) from a single solve to the whole transient:
-//! the discrete adjoint of exactly the time-stepping scheme [`CircuitEnv`]
+//! the discrete adjoint of exactly the time-stepping scheme `CircuitEnv`
 //! runs, so the gradient is exact to machine precision **for the trajectory
 //! as discretized** — the standard discrete-adjoint (backpropagation-through-
 //! the-solver) framing, the same contract the particle crate's adjoint keeps.
@@ -54,7 +54,7 @@
 //!
 //! The forward pass here is the adjoint's own (linear devices only, one
 //! LU per step, first step always backward Euler exactly like
-//! [`CircuitEnv::step`]), storing the full trajectory `x_1..x_N`. Storage is
+//! `CircuitEnv::step`), storing the full trajectory `x_1..x_N`. Storage is
 //! O(N·m) — fine at lumped-circuit scale; checkpointing is a scale problem
 //! this module does not have.
 //!
@@ -138,7 +138,7 @@ struct History {
 /// dJ/d(every device primary) of the weighted least-squares tracking
 /// objective `J = Σ_k w_k·(v_out(t_k) − target_k)²` over an `N`-step
 /// transient from the power-on state (`t_k = k·dt`, k = 1..N — the same
-/// trajectory [`CircuitEnv`] produces with the same `dt` and integrator).
+/// trajectory `CircuitEnv` produces with the same `dt` and integrator).
 ///
 /// Linear devices only (R, L, C, V, I) at this milestone; see
 /// [`TransientAdjointError::Unsupported`].

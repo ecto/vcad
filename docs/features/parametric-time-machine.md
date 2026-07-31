@@ -2,6 +2,15 @@
 
 **Score: 68/100** | **Priority: #22**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+| Owner | `unassigned` |
+
+> Verified against repo 2026-07-30. Vision doc — the continuous parameter↔physics loop, sweep recording, heatmaps, and Pareto optimizer described here are not implemented. Adjacent shipped pieces: property-panel scrub inputs (live parametric edits), `set_parameters`/`parameter_gradient`/`document_parameter_gradient` (analytic d(QoI)/d(parameter) via vcad-kernel-diff), and gym physics via MCP.
+
 ## Overview
 
 Every design is a point in a continuous parameter space. Drag sliders and watch physics respond in real-time. FEEL the design space, don't just calculate it.

@@ -2,6 +2,15 @@
 
 **Score: 89/100** | **Priority: #2**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+| Owner | `unassigned` |
+
+> Verified against repo 2026-07-30. The always-on paradigm described here is not shipped: no physics Web Worker / SharedArrayBuffer loop in `packages/app`, no automatic joint inference, no drop-under-gravity default. What has shipped is on-demand phyz simulation via `crates/vcad-kernel-physics` and the gym MCP tools (`create_robot_env`, `gym_step`, …) — see physics-simulation.md.
+
 ## Overview
 
 Physics is the default state of the world—no "run simulation" button required. Drop a part and it falls. Connect two parts and they're jointed. Drag a body and feel the inertia. The CAD environment *is* a physical world.

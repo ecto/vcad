@@ -2,6 +2,14 @@
 
 **Score: 84/100** | **Priority: #6**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+
+> Verified against repo 2026-07-30. No intent-inference pipeline, LLM intent parser, or confirmation UI exists in the app. (AI authoring does exist, but through the MCP server's explicit tool calls — a different mechanism than the in-app natural-language intent UX described here.)
+
 ## Overview
 
 Users express intent, not instructions. Instead of navigating menus and specifying parameters, users describe what they want: "I need a hinge here" or "This should swing open like a door." The system infers the appropriate joint type, axis, limits, and mounting points automatically.

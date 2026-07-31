@@ -11,6 +11,8 @@ Create basic 3D shapes (box, cylinder, sphere, cone) as parametric building bloc
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Correction: all four primitives live in `crates/vcad-kernel-primitives/src/lib.rs` — there are no separate `box.rs`/`cylinder.rs`/`sphere.rs`/`cone.rs` files.
+
 ## Problem
 
 Every 3D model starts from basic shapes. Without parametric primitives, users would need to:

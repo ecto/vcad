@@ -1,0 +1,13 @@
+{
+  "id": "2026-07-30-fillet-boolean-conformity",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "fix",
+  "title": "Booleans on filleted solids are watertight",
+  "summary": "Cuts that slice fillet blends now trim planar faces along the true arc (multi-crossing, inscribed, and tangent cases), so differences against filleted parts come out watertight with correct volume and outward windings.",
+  "features": [
+    "fillet",
+    "booleans"
+  ],
+  "mcpTools": []
+}

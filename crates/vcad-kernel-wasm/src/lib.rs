@@ -249,7 +249,7 @@ pub fn render_svg_annotated(
         .map_err(|e| JsError::new(&e))
 }
 
-/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
 /// surface in one call: arbitrary camera, part focus, section cutaway,
 /// changed-part highlight, and engineering annotations. This is the superset
 /// the MCP `render_view` "agent eyes" path drives; the narrower
@@ -305,7 +305,7 @@ pub fn render_svg_camera(
     vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }
 
-/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
 /// surface expressed as one JSON options object — the forward-compatible
 /// companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
 /// so new render options never need another positional-arg binding.
@@ -3150,8 +3150,88 @@ pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&meshes).map_err(|e| JsError::new(&e.to_string()))
 }
 
+#[derive(serde::Serialize)]
+struct WasmSkippedFace {
+    face_id: u64,
+    surface_id: u64,
+    reason: String,
+}
+
+#[derive(serde::Serialize)]
+struct WasmSolidImportReport {
+    solid_id: u64,
+    total_faces: usize,
+    skipped_faces: Vec<WasmSkippedFace>,
+    notes: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct WasmStepImportResult {
+    meshes: Vec<WasmMesh>,
+    report: Vec<WasmSolidImportReport>,
+    /// Human-readable warning summary; null when the import is clean.
+    summary: Option<String>,
+}
+
+/// Import solids from STEP file bytes, reporting skipped faces.
+///
+/// Like [`import_step_buffer`], but returns `{ meshes, report, summary }`
+/// where `report` lists, per solid, any faces omitted because their surface
+/// type is unsupported (the imported geometry has holes there), and
+/// `summary` is a ready-to-display warning string (null when clean).
+#[module("step")]
+#[wasm_bindgen(js_name = importStepBufferWithReport)]
+pub fn import_step_buffer_with_report(data: &[u8]) -> Result<JsValue, JsError> {
+    let (solids, report) = vcad_kernel::Solid::from_step_buffer_all_with_report(data)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+
+    let meshes: Vec<WasmMesh> = solids
+        .iter()
+        .map(|s| {
+            let mesh = s.to_mesh(16);
+            let normals = if mesh.normals.len() == mesh.vertices.len() {
+                Some(mesh.normals)
+            } else {
+                None
+            };
+            WasmMesh {
+                positions: mesh.vertices,
+                indices: mesh.indices,
+                normals,
+                face_kinds: None,
+            }
+        })
+        .collect();
+
+    let summary = report.summary();
+    let result = WasmStepImportResult {
+        meshes,
+        report: report
+            .solids
+            .into_iter()
+            .map(|s| WasmSolidImportReport {
+                solid_id: s.solid_id,
+                total_faces: s.total_faces,
+                skipped_faces: s
+                    .skipped_faces
+                    .into_iter()
+                    .map(|f| WasmSkippedFace {
+                        face_id: f.face_id,
+                        surface_id: f.surface_id,
+                        reason: f.reason,
+                    })
+                    .collect(),
+                notes: s.notes,
+            })
+            .collect(),
+        summary,
+    };
+
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Import a URDF (Unified Robot Description Format) file and return a
-/// serialised vcad [`Document`].
+/// serialised vcad `Document`.
 ///
 /// Browsers cannot resolve `package://` URIs or relative mesh paths
 /// against the user's filesystem, so any `<mesh>` reference in the URDF
@@ -3876,7 +3956,7 @@ impl RayTracer {
     ///
     /// # Note
     /// This function is async to support WASM's single-threaded environment.
-    /// In JavaScript, it returns a Promise<Uint8Array>.
+    /// In JavaScript, it returns a `Promise<Uint8Array>`.
     pub async fn render(
         &self,
         camera: Vec<f64>,
@@ -5729,7 +5809,7 @@ mod cam_wasm {
     /// Generate a height field from mesh using drop-cutter algorithm.
     ///
     /// # Arguments
-    /// * `vertices_json` - Vertex array as JSON [[x,y,z], ...]
+    /// * `vertices_json` - Vertex array as JSON `[[x,y,z], ...]`
     /// * `indices_json` - Triangle indices as JSON [i0, i1, i2, ...]
     /// * `tool_json` - Tool definition as JSON
     /// * `bounds_json` - Bounds [min_x, min_y, max_x, max_y] as JSON
@@ -6259,7 +6339,7 @@ mod ecad_wasm {
 
     /// Route a net with the push-and-shove router.
     ///
-    /// Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+    /// Unlike `ecad_route_net` (grid/wave BFS), this routes in
     /// continuous coordinate space and detours around existing copper on other
     /// nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
     /// and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
@@ -6289,7 +6369,7 @@ mod ecad_wasm {
 
     /// Route a net with the avoiding A* maze router.
     ///
-    /// Unlike [`Self::ecad_route_net_shove`] (which detours around static
+    /// Unlike `ecad_route_net_shove` (which detours around static
     /// inflated bounding boxes of other-net *traces*), this searches a grid and
     /// tests every step against the exact clearance oracle, so the route avoids
     /// *all* copper on `layer` — traces, pads, and vias. Every returned segment
@@ -7239,7 +7319,7 @@ pub fn parse_vcad_file(content: &str) -> Result<JsValue, JsError> {
 
 /// Derive parts from a Document (as JSON).
 ///
-/// Returns a JSON-serialized Vec<PartInfo>.
+/// Returns a JSON-serialized `Vec<PartInfo>`.
 #[wasm_bindgen(js_name = deriveParts)]
 pub fn derive_parts(doc_json: &str) -> Result<JsValue, JsError> {
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
@@ -8031,7 +8111,7 @@ struct WasmParticleSim {
 /// `spec_json` is a `vcad_kernel_particle::spec::DeviceSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them
 /// (fail-closed: unbound names error), `options_json` a
-/// [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
+/// `ParticleSimOptions`. Returns stats + `vcad.particle-claims/1` set +
 /// unified-receipt claims (basis `predicted` — Provisional by contract).
 #[wasm_bindgen(js_name = particleSimulate)]
 pub fn particle_simulate(
@@ -8349,7 +8429,7 @@ struct WasmToleranceAnalysis {
 /// `spec_json` is a `vcad_kernel_tolerance::spec::StackupSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them
 /// (fail-closed: unbound names error), `options_json` a
-/// [`ToleranceOptions`]. Returns all three analyses +
+/// `ToleranceOptions`. Returns all three analyses +
 /// `vcad.tolerance-claims/1` + unified-receipt claims (basis `predicted`).
 #[wasm_bindgen(js_name = toleranceAnalyze)]
 pub fn tolerance_analyze(
@@ -8498,7 +8578,7 @@ struct WasmThermalSolve {
 ///
 /// `spec_json` is a `vcad_kernel_thermal::spec::ThermalSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them,
-/// `options_json` a [`ThermalOptions`].
+/// `options_json` a `ThermalOptions`.
 #[wasm_bindgen(js_name = thermalSolve)]
 pub fn thermal_solve(
     spec_json: &str,
@@ -8705,7 +8785,7 @@ struct WasmThermalTransient {
 /// `spec_json` is a `ThermalSpec` (every material needs
 /// `heat_capacity_j_m3k`), `transient_json` a
 /// `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
-/// `{name: value}` map, `options_json` a [`ThermalOptions`].
+/// `{name: value}` map, `options_json` a `ThermalOptions`.
 #[wasm_bindgen(js_name = thermalSolveTransient)]
 pub fn thermal_solve_transient(
     spec_json: &str,
@@ -8927,7 +9007,7 @@ fn sample_fields_to_vertices(
 /// predicted claim is emitted.
 ///
 /// `spec_json` is a `vcad_kernel_fea::spec::FeaSpec` (material, loads,
-/// supports, resolution), `options_json` a [`FeaOptions`].
+/// supports, resolution), `options_json` a `FeaOptions`.
 #[wasm_bindgen(js_name = feaAnalyzeMesh)]
 pub fn fea_analyze_mesh(
     spec_json: &str,
@@ -9303,7 +9383,7 @@ fn em_solve_options(opts: &EmSimOptions) -> vcad_kernel::vcad_kernel_em::grid::S
 /// allowed), `planar_magnetostatics` (`PlanarSpec`, named parameters
 /// allowed), or `electrostatics` (a literal-only electrode/dielectric
 /// DTO — the crate has no serde seam for that class yet). `params_json`
-/// binds named parameters; `options_json` is [`EmSimOptions`].
+/// binds named parameters; `options_json` is `EmSimOptions`.
 #[wasm_bindgen(js_name = emSimulate)]
 pub fn em_simulate(
     spec_json: &str,
@@ -9632,7 +9712,7 @@ struct WasmAntennaAnalysis {
 ///
 /// `spec_json` is a `vcad_kernel_antenna::spec::AntennaSpec` (named
 /// parameters allowed), `params_json` a `{name: value}` map binding them,
-/// `options_json` an [`AntennaOptions`] (the frequency `band` is
+/// `options_json` an `AntennaOptions` (the frequency `band` is
 /// required).
 #[wasm_bindgen(js_name = antennaAnalyze)]
 pub fn antenna_analyze(

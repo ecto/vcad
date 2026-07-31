@@ -11,6 +11,8 @@ Create 3D solids from 2D sketches using extrude, revolve, sweep, and loft operat
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Extrude/revolve in `crates/vcad-kernel-sketch`, sweep/loft in `crates/vcad-kernel-sweep`, evaluated in `packages/engine/src/evaluate.ts`.
+
 ## Problem
 
 2D sketches alone cannot produce manufacturable parts. Users need to convert profile geometry into 3D solids to:

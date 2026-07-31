@@ -2,6 +2,14 @@
 
 **Score: 80/100** | **Priority: #10** | **Status: P0 Roadmap**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+
+> Verified against repo 2026-07-30. Correction: this shipped — `vcad-kernel-wasm` has a `physics` feature enabled by default (`crates/vcad-kernel-wasm/Cargo.toml`), exposes a `PhysicsSim` wasm-bindgen class, and `packages/engine/src/physics.ts` wraps it for the app (physics simulation runs in the browser today; MCP gym tools use real phyz). Not shipped as spec'd: the dedicated `physics-worker.ts` Web Worker wrapper (physics currently runs on the main thread) and the SIMD dual-binary fallback. The "WASM compilation ❌ Not started" row below is stale.
+
 ## Overview
 
 Compile vcad-kernel-physics (phyz) to WASM, enabling browser-based physics simulation. This is the foundation for all browser simulation features including robot control, physics-always-on UX, and multiplayer physics synchronization.
@@ -14,7 +22,7 @@ Compile vcad-kernel-physics (phyz) to WASM, enabling browser-based physics simul
 | phyz 0.23 integration | ✅ Complete |
 | Joint types (5) | ✅ Revolute, Prismatic, Fixed, Spherical, Generic |
 | Gym-style RobotEnv | ✅ Complete |
-| WASM compilation | ❌ Not started |
+| WASM compilation | ✅ Complete (`physics` feature in `vcad-kernel-wasm`, `PhysicsSim` bindings, `packages/engine/src/physics.ts`) |
 
 The native Rust implementation is fully functional with a gym-style interface for reinforcement learning. The physics crate integrates with the existing vcad-kernel ecosystem but has not yet been exposed to the browser.
 

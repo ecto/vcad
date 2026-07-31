@@ -11,6 +11,8 @@ Organize features into named groups (folders) for better model navigation.
 | Priority | `p3` |
 | Effort | `s` |
 
+> Verified against repo 2026-07-30. Still unbuilt — no `FeatureGroup` type or `featureGroups` state exists in the codebase.
+
 ## Problem
 
 The feature tree is a flat chronological list. As models grow, this becomes unwieldy:

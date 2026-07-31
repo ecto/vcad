@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-30-urdf-mesh-robots-render",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "fix",
+  "title": "Mesh-based URDF robots render and export correctly",
+  "summary": "URDF imports with STL meshes (Booster K1, Unitree G1) now render FK-placed instead of vanishing or piling at the origin; whitespace-padded URDF numbers parse.",
+  "features": ["urdf", "render", "assembly"]
+}

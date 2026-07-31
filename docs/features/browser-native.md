@@ -2,6 +2,14 @@
 
 **Score: 83/100** | **Priority: #7**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+
+> Verified against repo 2026-07-30. Shipped: Rust kernel compiled to WASM (`crates/vcad-kernel-wasm`, `packages/kernel-wasm`), full app at vcad.io (`packages/app`).
+
 ## Overview
 
 Full parametric CAD runs entirely in the browser. No download, no install, no plugins. Open a URL and start designing.

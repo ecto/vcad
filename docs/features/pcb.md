@@ -1,5 +1,16 @@
 # PCB/Electronics Design (ECAD)
 
+> **This plan is superseded by a diverged shipped implementation.** ECAD shipped, but not as specified below: it spans 12 `vcad-ecad-*` crates (`pcb`, `schematic`, `symbols`, `export`, `fabprep`, `parts`, `sim`, `verify`, `diff`, `package`, `source`, `diff-wasm`) with a **custom Rust autorouter** — Freerouting/Specctra DSN was never integrated — plus DRC, ERC, copper pours, impedance/SI, DFM, and Gerber/KiCad export. The MCP surface is far larger than the table below (`create_schematic`, `place_components`, `route_nets`, `route_diff_pair`, `run_drc`, `run_erc`, `fix_drc`, `fab_prep`, `export_gerber`, `export_kicad`, `import_kicad`, `import_eagle`, `board_from_solid`/`solid_from_board`, …). Treat the code and root CLAUDE.md as authoritative; the design details below are historical.
+
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+| Owner | @cam |
+
+> Verified against repo 2026-07-30.
+
 ## Overview
 
 PCB design support in vcad targets hardware and IoT users who need a unified MCAD-ECAD workflow. Rather than switching between separate mechanical and electronics tools, designers can work on enclosures, mounting, and circuit boards in a single environment with native 3D integration.

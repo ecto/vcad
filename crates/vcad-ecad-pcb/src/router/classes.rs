@@ -7,7 +7,7 @@
 //! *names*. This module recovers that intent:
 //!
 //! * [`classify_nets`] scans net names and produces a [`NetClassifier`]:
-//!   pair membership (via [`super::pair::pair_partner`] plus the USB
+//!   pair membership (via `pair_partner` plus the USB
 //!   `DP`/`DM` convention) and length-match groups (LPDDR4 CA/DQ buses per
 //!   channel, RGMII, and every pair intra-matched).
 //! * [`apply_classes`] realizes the classification as IR design rules — a
