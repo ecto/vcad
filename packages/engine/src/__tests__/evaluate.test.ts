@@ -218,9 +218,13 @@ describe("CSG operations", () => {
     //     cap arcs on the canonical angular grid, so the caps fan with
     //     their full vertex chains instead of coarse corner loops,
     //     44 → 112.
+    //   - the seam-freeze pass (PR #758) freezes analytic circle edges
+    //     into sag-dense canonical polylines at boolean entry, so the cap
+    //     rims and the wall rings they conform with carry the full
+    //     sag-grid vertex chains, 112 → 236.
     // Shape is unchanged — only tessellation density — and the bbox
     // assertions below still catch geometric regressions.
-    expect(tris).toBe(112);
+    expect(tris).toBe(236);
     expect(minX).toBeGreaterThanOrEqual(-0.1);
     expect(minY).toBeGreaterThanOrEqual(-0.1);
   });
