@@ -800,7 +800,12 @@ pub fn split_planar_face_by_circle(
         if circle_partially_inside_polygon(&loop_verts, circle) {
             return split_planar_face_by_arc(brep, face_id, circle, segments);
         }
-        // Circle doesn't intersect at all
+        // The circle doesn't cross this face, but it may be TANGENT to one
+        // of its edges from outside (the neighbor of a cell the circle is
+        // inscribed in). The inscribed split puts a vertex at every tangent
+        // point, so this face's straight edge must gain the same vertex or
+        // the shared boundary T-junctions and the shell zippers open.
+        insert_circle_tangent_vertices(brep, face_id, circle);
         return SplitResult {
             sub_faces: vec![face_id],
         };
@@ -1013,6 +1018,115 @@ pub fn split_planar_face_by_circle(
     }
 }
 
+/// Insert vertices into a planar face's outer loop where `circle` is
+/// tangent to one of its edges.
+///
+/// When a circle is inscribed in one grid cell (see
+/// `split_planar_face_inscribed_circle`), each tangent point becomes a
+/// loop vertex on that cell's sub-faces. The neighboring cell shares the
+/// tangent edge but never sees a split, so without the matching vertex the
+/// two sides tessellate different point schedules along the shared edge —
+/// a T-junction. This rebuilds the neighbor's loop with the tangent points
+/// inserted; the face itself is not split.
+fn insert_circle_tangent_vertices(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+) {
+    let tol = 1e-6;
+    let outer_loop = brep.topology.faces[face_id].outer_loop;
+    let loop_verts: Vec<Point3> = brep
+        .topology
+        .loop_half_edges(outer_loop)
+        .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+        .collect();
+    let n = loop_verts.len();
+    if n < 3 {
+        return;
+    }
+    let normal = circle.normal.into_inner();
+
+    // For each edge, the closest interior point to the circle center;
+    // tangency means that point sits on the circle (and in its plane).
+    let mut inserts: Vec<(usize, f64, Point3)> = Vec::new();
+    for i in 0..n {
+        let a = loop_verts[i];
+        let b = loop_verts[(i + 1) % n];
+        let ab = b - a;
+        let len2 = ab.norm_squared();
+        if len2 < 1e-18 {
+            continue;
+        }
+        let t = ((circle.center - a).dot(ab) / len2).clamp(0.0, 1.0);
+        // Endpoints are already vertices; only interior tangencies matter.
+        if !(1e-6..=(1.0 - 1e-6)).contains(&t) {
+            continue;
+        }
+        let foot = a + t * ab;
+        if (foot - circle.center).dot(normal).abs() > tol {
+            continue;
+        }
+        let d = foot - circle.center;
+        if ((d.norm()) - circle.radius).abs() > tol {
+            continue;
+        }
+        // Snap onto the exact circle so it merges with the tangent vertex
+        // the inscribed split creates on the other side of the edge.
+        let point = circle.center + circle.radius * (d / d.norm());
+        if (point - a).norm() < tol || (point - b).norm() < tol {
+            continue;
+        }
+        // Only ADOPT a tangent vertex the inscribed split already created;
+        // never mint one. A circle can be tangent to this edge without
+        // anything having been split across it — a cylinder grazing a cube
+        // face by ~1e-6 is tangent to within `tol` while the neighbor keeps
+        // its original two-vertex edge. Inserting there would put a vertex
+        // on one side of a shared edge and nothing on the other, which is
+        // the very T-junction this function exists to prevent.
+        let snapped = snap_point(point);
+        if !brep
+            .topology
+            .vertices
+            .values()
+            .any(|v| (v.point - snapped).norm() < tol)
+        {
+            continue;
+        }
+        inserts.push((i, t, point));
+    }
+    if inserts.is_empty() {
+        return;
+    }
+    inserts.sort_by(|x, y| {
+        (x.0 as f64 + x.1)
+            .partial_cmp(&(y.0 as f64 + y.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Rebuild the outer loop with the tangent vertices inserted. The old
+    // loop is left orphaned (no face references it), matching the
+    // degenerate-cap rebuild above.
+    let mut points: Vec<Point3> = Vec::with_capacity(n + inserts.len());
+    for (i, &v) in loop_verts.iter().enumerate() {
+        points.push(v);
+        for &(ei, _, p) in &inserts {
+            if ei == i {
+                points.push(p);
+            }
+        }
+    }
+    let vert_ids: Vec<_> = points
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tol))
+        .collect();
+    let hes: Vec<_> = vert_ids
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
+    let new_loop = brep.topology.add_loop(&hes);
+    brep.topology.faces[face_id].outer_loop = new_loop;
+}
+
 /// Check if a circle is FULLY inside a polygon (in 3D, assumes coplanar).
 ///
 /// Returns true only if the entire circle is contained within the polygon.
@@ -1129,7 +1243,6 @@ struct CirclePolygonIntersection {
     /// The edge index (starting vertex) where the intersection occurs.
     edge_index: usize,
     /// The parameter t along the edge (0 = start vertex, 1 = end vertex).
-    #[allow(dead_code)]
     t_along_edge: f64,
     /// The angle on the circle (0 to 2π).
     angle: f64,
@@ -1325,12 +1438,33 @@ pub fn split_planar_face_by_arc(
         v_axis,
     );
 
-    // Need exactly 2 intersections for a simple split
-    if intersections.len() != 2 {
-        // Complex case: more than 2 intersections, or circle doesn't cross edges
+    // Fewer than 2 crossings: the circle doesn't cross the boundary at all
+    // (fully inside/outside, handled by the caller) or only grazes it.
+    if intersections.len() < 2 {
         return SplitResult {
             sub_faces: vec![face_id],
         };
+    }
+
+    // More than 2 crossings (e.g. a fillet circle clipping a face corner
+    // crosses two adjacent edges twice each): trace the polygon∩disk and
+    // polygon∖disk regions generically so every boundary follows the true
+    // arc instead of leaving the face chorded (or unsplit) while the curved
+    // partner follows the circle.
+    if intersections.len() > 2 {
+        return split_planar_face_by_multi_arc(
+            brep,
+            face_id,
+            circle,
+            segments,
+            &loop_verts,
+            &poly_2d,
+            center_2d,
+            origin,
+            u_axis,
+            v_axis,
+            &intersections,
+        );
     }
 
     let int1 = &intersections[0];
@@ -1607,6 +1741,528 @@ pub fn split_planar_face_by_arc(
     }
 }
 
+/// Split a planar face along a circle that crosses its boundary at more
+/// than two points.
+///
+/// A circle can cross a polygon boundary 4+ times — the canonical case is a
+/// fillet circle clipping a face corner, crossing each of two adjacent edges
+/// twice. The two-crossing splitter can't express that, and leaving the face
+/// unsplit (or chorded) while the curved partner face follows the true arc
+/// zippers the sewn shell open along the seam.
+///
+/// This traces the regions of a Weiler–Atherton-style clip generically:
+/// crossings are visited in polygon-boundary order for the straight
+/// sections and in circle-angle order for the arcs, alternating
+/// entering/exiting. Each polygon∩disk region and each polygon∖disk region
+/// becomes its own sub-face; every arc section samples the shared circle via
+/// `canonical_arc_points`, so the neighboring curved face emits identical
+/// vertices and the seam conforms.
+///
+/// Falls back to returning the face unchanged (before any mutation) when the
+/// crossing pattern doesn't alternate cleanly (tangential grazing) or any
+/// traced region degenerates.
+#[allow(clippy::too_many_arguments)]
+fn split_planar_face_by_multi_arc(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    loop_verts: &[Point3],
+    poly_2d: &[(f64, f64)],
+    center_2d: (f64, f64),
+    origin: Point3,
+    u_axis: vcad_kernel_math::Vec3,
+    v_axis: vcad_kernel_math::Vec3,
+    intersections: &[CirclePolygonIntersection],
+) -> SplitResult {
+    let unchanged = SplitResult {
+        sub_faces: vec![face_id],
+    };
+    let n = loop_verts.len();
+    let m = intersections.len();
+    // Three contacts is the floor for either path: a triangular cell with an
+    // inscribed circle touches exactly three times. The crossing tracer needs
+    // more than that (and an even count) — but it is gated below, after the
+    // contacts are classified, so an odd all-tangency count still reaches the
+    // inscribed path instead of being rejected here for the tracer's reasons.
+    if m < 3 {
+        return unchanged;
+    }
+
+    // Boundary walk with crossings inserted: (2D point, vertex index or
+    // crossing index) in loop order. Crossings on one edge sort by t.
+    enum Node {
+        Vert(usize),
+        Cross(usize),
+    }
+    let mut seq: Vec<((f64, f64), Node)> = Vec::with_capacity(n + m);
+    for (vi, &p2) in poly_2d.iter().enumerate() {
+        seq.push((p2, Node::Vert(vi)));
+        let mut on_edge: Vec<usize> = (0..m)
+            .filter(|&ci| intersections[ci].edge_index == vi)
+            .collect();
+        on_edge.sort_by(|&a, &b| {
+            intersections[a]
+                .t_along_edge
+                .partial_cmp(&intersections[b].t_along_edge)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for ci in on_edge {
+            seq.push((intersections[ci].point_2d, Node::Cross(ci)));
+        }
+    }
+    let seq_len = seq.len();
+    let mut seq_pos = vec![usize::MAX; m];
+    for (k, (_, node)) in seq.iter().enumerate() {
+        if let Node::Cross(ci) = node {
+            seq_pos[*ci] = k;
+        }
+    }
+
+    // Classify each crossing: entering the disk iff the boundary immediately
+    // after it (midpoint to the next walk node) lies inside the circle.
+    let (cx, cy) = center_2d;
+    let inside_disk = |p: (f64, f64)| -> bool {
+        ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt() < circle.radius
+    };
+    // Probe the boundary just before and just after each contact point.
+    // A genuine crossing flips inside/outside; a tangential touch keeps the
+    // boundary outside (or inside) the disk on both sides.
+    let mut entering = vec![false; m];
+    let mut before_in = vec![false; m];
+    for ci in 0..m {
+        let k = seq_pos[ci];
+        let next = seq[(k + 1) % seq_len].0;
+        let prev = seq[(k + seq_len - 1) % seq_len].0;
+        let here = seq[k].0;
+        entering[ci] = inside_disk(((here.0 + next.0) / 2.0, (here.1 + next.1) / 2.0));
+        before_in[ci] = inside_disk(((here.0 + prev.0) / 2.0, (here.1 + prev.1) / 2.0));
+    }
+    let all_crossings = (0..m).all(|ci| entering[ci] != before_in[ci]);
+    let all_touch_outside = (0..m).all(|ci| !entering[ci] && !before_in[ci]);
+    if !all_crossings && all_touch_outside {
+        // Every contact is a tangency with the polygon staying outside the
+        // disk: the circle is inscribed in the face (e.g. a corner-sphere
+        // circle inside the cell that neighboring cylinder-line splits
+        // carved out). Split into the disk plus one sliver per tangent gap.
+        return split_planar_face_inscribed_circle(
+            brep,
+            face_id,
+            circle,
+            segments,
+            loop_verts,
+            poly_2d,
+            center_2d,
+            origin,
+            u_axis,
+            v_axis,
+            intersections,
+        );
+    }
+    if !all_crossings {
+        // Mixed crossings and tangencies — no clean alternation to trace.
+        return unchanged;
+    }
+    // Past here every contact is a genuine crossing, so the tracer's own
+    // preconditions apply: it walks enter/exit pairs, which needs at least
+    // two of each. An odd count means a graze slipped through the probes.
+    if m < 4 || !m.is_multiple_of(2) {
+        return unchanged;
+    }
+    // Alternation must hold both around the circle (intersections are
+    // angle-sorted) and along the boundary walk; anything else is a graze.
+    for ci in 0..m {
+        if entering[ci] == entering[(ci + 1) % m] {
+            return unchanged;
+        }
+    }
+    let boundary_order: Vec<usize> = seq
+        .iter()
+        .filter_map(|(_, node)| match node {
+            Node::Cross(ci) => Some(*ci),
+            Node::Vert(_) => None,
+        })
+        .collect();
+    let mut next_on_boundary = vec![usize::MAX; m];
+    for (k, &ci) in boundary_order.iter().enumerate() {
+        next_on_boundary[ci] = boundary_order[(k + 1) % m];
+    }
+    for k in 0..m {
+        if entering[boundary_order[k]] == entering[boundary_order[(k + 1) % m]] {
+            return unchanged;
+        }
+    }
+
+    // Polygon winding in the (u, v) frame decides arc travel direction:
+    // inside-disk region boundaries traverse the circle the same way the
+    // polygon winds; outside regions traverse it the opposite way.
+    let poly_area: f64 = {
+        let mut a = 0.0;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            a += poly_2d[i].0 * poly_2d[j].1 - poly_2d[j].0 * poly_2d[i].1;
+        }
+        a / 2.0
+    };
+    let poly_ccw = poly_area > 0.0;
+    let plane_normal = u_axis.cross(v_axis);
+
+    // Arc points from one crossing to another, travelling CCW (in the 2D
+    // face frame) when `ccw`; sampled on the circle's own raw-`segments`
+    // grid so the curved partner face emits identical vertices.
+    let circ_normal = circle.x_dir.into_inner().cross(circle.y_dir.into_inner());
+    let aligned = plane_normal.dot(circ_normal) > 0.0;
+    let arc_between = |from: usize, to: usize, ccw: bool| -> Vec<Point3> {
+        circle_frame_arc_points(
+            circle,
+            intersections[from].point,
+            intersections[to].point,
+            ccw == aligned,
+            segments,
+        )
+    };
+    // Neighbor crossing around the circle in the given travel direction
+    // (intersections are sorted by angle, so angle rank == index).
+    let next_on_circle = |ci: usize, ccw: bool| -> usize {
+        if ccw {
+            (ci + 1) % m
+        } else {
+            (ci + m - 1) % m
+        }
+    };
+
+    // Trace one region loop. `start` is a crossing where the polygon walk
+    // enters the region (entering crossing for disk-side regions, exiting
+    // for the outside). Returns None on an inconsistent pattern.
+    let trace = |start: usize, arcs_ccw: bool, visited: &mut [bool]| -> Option<Vec<Point3>> {
+        let mut points: Vec<Point3> = Vec::new();
+        let mut cur = start;
+        loop {
+            if visited[cur] {
+                return None;
+            }
+            visited[cur] = true;
+            // Straight section: walk the polygon boundary to the next crossing.
+            points.push(intersections[cur].point);
+            let mut k = (seq_pos[cur] + 1) % seq_len;
+            loop {
+                match seq[k].1 {
+                    Node::Vert(vi) => points.push(loop_verts[vi]),
+                    Node::Cross(ci) => {
+                        debug_assert_eq!(ci, next_on_boundary[cur]);
+                        // Arc section: follow the circle to the adjacent
+                        // crossing in the region's travel direction, where
+                        // the polygon walk re-enters the region.
+                        let nxt = next_on_circle(ci, arcs_ccw);
+                        let arc = arc_between(ci, nxt, arcs_ccw);
+                        points.extend(&arc[..arc.len() - 1]);
+                        cur = nxt;
+                        break;
+                    }
+                }
+                k = (k + 1) % seq_len;
+            }
+            if cur == start {
+                return Some(points);
+            }
+        }
+    };
+
+    // Trace every region before mutating anything, so an inconsistent
+    // pattern falls back to the unsplit face instead of a half-split shell.
+    let tolerance = 1e-6;
+    let min_area = 0.001;
+    let mut regions: Vec<Vec<Point3>> = Vec::new();
+    for pass in [true, false] {
+        // pass=true: disk-side regions (start at entering crossings);
+        // pass=false: outside regions (start at exiting crossings).
+        let arcs_ccw = if pass { poly_ccw } else { !poly_ccw };
+        let mut visited = vec![false; m];
+        for ci in 0..m {
+            if entering[ci] != pass || visited[ci] {
+                continue;
+            }
+            let Some(points) = trace(ci, arcs_ccw, &mut visited) else {
+                return unchanged;
+            };
+            let points = remove_consecutive_duplicates(&points, tolerance);
+            if points.len() < 3 {
+                return unchanged;
+            }
+            let area: f64 = {
+                let project = |p: &Point3| {
+                    let d = *p - origin;
+                    (d.dot(u_axis), d.dot(v_axis))
+                };
+                let pts_2d: Vec<_> = points.iter().map(project).collect();
+                let mut a = 0.0;
+                for i in 0..pts_2d.len() {
+                    let j = (i + 1) % pts_2d.len();
+                    a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+                }
+                (a / 2.0).abs()
+            };
+            if area < min_area {
+                return unchanged;
+            }
+            regions.push(points);
+        }
+    }
+    if regions.len() < 2 {
+        return unchanged;
+    }
+
+    finish_planar_regions(brep, face_id, circle, regions, origin, u_axis, v_axis)
+}
+
+/// Replace `face_id` with one sub-face per traced region.
+///
+/// Shared tail of the multi-crossing and inscribed-circle planar splitters:
+/// builds a face per region loop, moves them onto the parent's shell,
+/// re-homes the parent's inner loops (holes from prior booleans) onto
+/// whichever region contains them, removes the parent, and records the
+/// circle curve.
+fn finish_planar_regions(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    regions: Vec<Vec<Point3>>,
+    origin: Point3,
+    u_axis: vcad_kernel_math::Vec3,
+    v_axis: vcad_kernel_math::Vec3,
+) -> SplitResult {
+    let tolerance = 1e-6;
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+
+    let mut sub_faces = Vec::with_capacity(regions.len());
+    for points in &regions {
+        let verts: Vec<_> = points
+            .iter()
+            .map(|p| find_or_create_vertex(brep, p, tolerance))
+            .collect();
+        let hes: Vec<_> = verts
+            .iter()
+            .map(|&v| brep.topology.add_half_edge(v))
+            .collect();
+        let loop_id = brep.topology.add_loop(&hes);
+        sub_faces.push(brep.topology.add_face(loop_id, surface_index, orientation));
+    }
+
+    if let Some(shell_id) = brep.topology.faces[face_id].shell {
+        for &f in &sub_faces {
+            brep.topology.shells[shell_id].faces.push(f);
+            brep.topology.faces[f].shell = Some(shell_id);
+        }
+        brep.topology.shells[shell_id]
+            .faces
+            .retain(|&f| f != face_id);
+    }
+
+    let existing_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+    for lp in existing_inner {
+        let lp_verts: Vec<Point3> = brep
+            .topology
+            .loop_half_edges(lp)
+            .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+            .collect();
+        if lp_verts.is_empty() {
+            continue;
+        }
+        let test_pt = if lp_verts.len() == 1 {
+            lp_verts[0]
+        } else {
+            let nv = lp_verts.len() as f64;
+            Point3::new(
+                lp_verts.iter().map(|v| v.x).sum::<f64>() / nv,
+                lp_verts.iter().map(|v| v.y).sum::<f64>() / nv,
+                lp_verts.iter().map(|v| v.z).sum::<f64>() / nv,
+            )
+        };
+        let d = test_pt - origin;
+        let test_2d = (d.dot(u_axis), d.dot(v_axis));
+        for (ri, points) in regions.iter().enumerate() {
+            let region_2d: Vec<(f64, f64)> = points
+                .iter()
+                .map(|p| {
+                    let d = *p - origin;
+                    (d.dot(u_axis), d.dot(v_axis))
+                })
+                .collect();
+            if point_in_polygon_2d(test_2d.0, test_2d.1, &region_2d) {
+                brep.topology.faces[sub_faces[ri]].inner_loops.push(lp);
+                break;
+            }
+        }
+    }
+
+    brep.topology.faces.remove(face_id);
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+    SplitResult { sub_faces }
+}
+
+/// Split a planar face along a circle inscribed in it: the circle touches
+/// the boundary at 3+ tangent points but never crosses it.
+///
+/// Canonical case: a fillet's corner-sphere circle inside the square cell
+/// that the neighboring edge-cylinders' line splits carved out of a planar
+/// face — the circle is tangent to all four cell edges. The face splits into
+/// the disk (bounded by the full circle through the tangent points) plus one
+/// sliver per tangent gap (polygon walk between consecutive tangent points,
+/// closed by the arc back). Arcs sample the shared circle via
+/// `canonical_arc_points`, so the curved partner face conforms.
+///
+/// Falls back to the unsplit face (before any mutation) when the circle
+/// center is outside the polygon, the tangent points' boundary order
+/// disagrees with their circle order, or any region degenerates.
+#[allow(clippy::too_many_arguments)]
+fn split_planar_face_inscribed_circle(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    loop_verts: &[Point3],
+    poly_2d: &[(f64, f64)],
+    center_2d: (f64, f64),
+    origin: Point3,
+    u_axis: vcad_kernel_math::Vec3,
+    v_axis: vcad_kernel_math::Vec3,
+    intersections: &[CirclePolygonIntersection],
+) -> SplitResult {
+    let unchanged = SplitResult {
+        sub_faces: vec![face_id],
+    };
+    let n = loop_verts.len();
+    let m = intersections.len();
+    if m < 3 || !point_in_polygon_2d(center_2d.0, center_2d.1, poly_2d) {
+        return unchanged;
+    }
+
+    // Tangent points in boundary-walk order.
+    let mut border: Vec<usize> = (0..m).collect();
+    border.sort_by(|&a, &b| {
+        let ka = intersections[a].edge_index as f64 + intersections[a].t_along_edge;
+        let kb = intersections[b].edge_index as f64 + intersections[b].t_along_edge;
+        ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let poly_area: f64 = {
+        let mut a = 0.0;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            a += poly_2d[i].0 * poly_2d[j].1 - poly_2d[j].0 * poly_2d[i].1;
+        }
+        a / 2.0
+    };
+    let poly_ccw = poly_area > 0.0;
+    let plane_normal = u_axis.cross(v_axis);
+
+    // Boundary order must agree with circle-angle order (walking the
+    // boundary in the polygon's winding direction visits the tangent points
+    // in the same rotational order around the circle) — anything else means
+    // the contact pattern isn't a simple inscription.
+    // `intersections` is angle-sorted, so index == CCW angle rank.
+    for k in 0..m {
+        let a = border[k];
+        let b = border[(k + 1) % m];
+        let expect = if poly_ccw {
+            (a + 1) % m
+        } else {
+            (a + m - 1) % m
+        };
+        if b != expect {
+            return unchanged;
+        }
+    }
+
+    let circ_normal = circle.x_dir.into_inner().cross(circle.y_dir.into_inner());
+    let aligned = plane_normal.dot(circ_normal) > 0.0;
+    let arc_between = |from: usize, to: usize, ccw: bool| -> Vec<Point3> {
+        circle_frame_arc_points(
+            circle,
+            intersections[from].point,
+            intersections[to].point,
+            ccw == aligned,
+            segments,
+        )
+    };
+
+    let tolerance = 1e-6;
+    let min_area = 0.001;
+    let region_area = |points: &[Point3]| -> f64 {
+        let pts_2d: Vec<_> = points
+            .iter()
+            .map(|p| {
+                let d = *p - origin;
+                (d.dot(u_axis), d.dot(v_axis))
+            })
+            .collect();
+        let mut a = 0.0;
+        for i in 0..pts_2d.len() {
+            let j = (i + 1) % pts_2d.len();
+            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+        }
+        (a / 2.0).abs()
+    };
+
+    // Disk region: the full circle through the tangent points, traversed in
+    // the polygon's winding direction so the loop matches the parent's
+    // orientation convention.
+    let mut regions: Vec<Vec<Point3>> = Vec::with_capacity(m + 1);
+    let mut disk: Vec<Point3> = Vec::new();
+    for k in 0..m {
+        let (from, to) = if poly_ccw {
+            (k, (k + 1) % m)
+        } else {
+            (m - 1 - k, (m - k) % m)
+        };
+        let arc = arc_between(from, to, poly_ccw);
+        disk.extend(&arc[..arc.len() - 1]);
+    }
+    let disk = remove_consecutive_duplicates(&disk, tolerance);
+    if disk.len() < 3 || region_area(&disk) < min_area {
+        return unchanged;
+    }
+    regions.push(disk);
+
+    // Sliver regions: for consecutive tangent points A→B along the boundary,
+    // walk the polygon from A to B, then close along the arc B→A traversed
+    // against the polygon winding (the short way past the corner).
+    for k in 0..m {
+        let a = border[k];
+        let b = border[(k + 1) % m];
+        let mut points: Vec<Point3> = vec![intersections[a].point];
+        // Polygon vertices strictly between A and B along the walk.
+        let mut idx = (intersections[a].edge_index + 1) % n;
+        let stop = (intersections[b].edge_index + 1) % n;
+        // A and B on the same edge with B ahead of A means no vertex between.
+        let same_edge_forward = intersections[a].edge_index == intersections[b].edge_index
+            && intersections[b].t_along_edge >= intersections[a].t_along_edge;
+        if !same_edge_forward {
+            let mut steps = 0;
+            while idx != stop {
+                points.push(loop_verts[idx]);
+                idx = (idx + 1) % n;
+                steps += 1;
+                if steps > n {
+                    return unchanged;
+                }
+            }
+        }
+        let arc = arc_between(b, a, !poly_ccw);
+        points.extend(&arc[..arc.len() - 1]);
+        let points = remove_consecutive_duplicates(&points, tolerance);
+        if points.len() < 3 || region_area(&points) < min_area {
+            return unchanged;
+        }
+        regions.push(points);
+    }
+
+    finish_planar_regions(brep, face_id, circle, regions, origin, u_axis, v_axis)
+}
+
 /// Handle the tangent-inside case where a circle lies fully inside a polygon
 /// but is tangent to two polygon edges.
 ///
@@ -1711,8 +2367,10 @@ fn circle_partially_inside_polygon(
         v_axis,
     );
 
-    // Partial intersection means exactly 2 crossing points
-    intersections.len() == 2
+    // Partial intersection means the circle crosses the boundary: 2 crossings
+    // is the simple secant case; more (e.g. 4 when a fillet circle clips a
+    // corner across two adjacent edges) routes to the multi-arc splitter.
+    intersections.len() >= 2
 }
 
 /// Split a planar face along an intersection curve.
@@ -2030,6 +2688,17 @@ fn clip_spherical_face_by_circle(
             crossings.push((i, arc_crossing(&verts[i], &verts[j])));
         }
     }
+    if crossings.len() > 2 {
+        // A circle can cross a spherical polygon's boundary 4+ times (a
+        // cutter-plane circle traversing a fillet corner patch already
+        // clipped by the other cutter planes). Trace the regions generically
+        // instead of declining — the caller's whole-sphere fallback would
+        // REPLACE the patch with two full caps and resurface trimmed
+        // geometry.
+        return clip_spherical_face_multi(
+            brep, face_id, circle, segments, tolerance, &verts, &crossings,
+        );
+    }
     if crossings.len() != 2 {
         return None;
     }
@@ -2081,7 +2750,29 @@ fn clip_spherical_face_by_circle(
     } else if inside(alt) {
         alt
     } else {
-        return None;
+        // `point_in_face` can reject BOTH candidate midpoints (it is
+        // unreliable on a pristine analytic patch whose loop is only a
+        // few vertices). Declining here sends the face to the
+        // whole-sphere fallback, which throws its trim away — far worse
+        // than a heuristic. Pick the arc whose midpoint lies nearer the
+        // patch's own interior, proxied by the loop centroid projected
+        // onto the sphere.
+        let mut c = Vec3::zeros();
+        for v in &verts {
+            c += *v - center;
+        }
+        let c_norm = c.norm();
+        if c_norm < 1e-9 {
+            return None;
+        }
+        let interior = center + radius * (c / c_norm);
+        let d_main = (on_circle(a_ang + 0.5 * sweep) - interior).norm();
+        let d_alt = (on_circle(a_ang + 0.5 * alt) - interior).norm();
+        if d_main <= d_alt {
+            sweep
+        } else {
+            alt
+        }
     };
 
     // Sample the connector on the circle's CANONICAL grid — the same
@@ -2181,6 +2872,186 @@ fn clip_spherical_face_by_circle(
     Some(SplitResult {
         sub_faces: vec![face_id, face_b],
     })
+}
+
+/// Clip a spherical face whose boundary a circle crosses more than twice.
+///
+/// Same region tracing as `split_planar_face_by_multi_arc`, on the sphere:
+/// straight sections walk the sampled boundary polyline between crossings;
+/// at each crossing the trace continues along the one angle-adjacent circle
+/// arc whose midpoint lies inside the original face (exactly one of the two
+/// adjacent arcs does at a transversal crossing). Arc interiors ride the
+/// same θ = 2πk/segments circle-frame grid as the two-crossing clip's
+/// connector, so every neighbor bounded by this circle conforms.
+///
+/// Returns `Some` with the face unchanged — NOT `None` — when the pattern
+/// can't be traced (odd count, tangential grazing): the caller's fallback
+/// for `None` is the whole-sphere split, which would throw the patch's
+/// trim away and resurface deleted geometry.
+fn clip_spherical_face_multi(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    tolerance: f64,
+    verts: &[Point3],
+    crossings: &[(usize, Point3)],
+) -> Option<SplitResult> {
+    let unchanged = Some(SplitResult {
+        sub_faces: vec![face_id],
+    });
+    let m = crossings.len();
+    let n = verts.len();
+    if !m.is_multiple_of(2) {
+        return unchanged;
+    }
+
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+
+    let x_dir = circle.x_dir.into_inner();
+    let y_dir = circle.y_dir.into_inner();
+    let angle_of = |p: &Point3| -> f64 {
+        let d = *p - circle.center;
+        let a = d.dot(y_dir).atan2(d.dot(x_dir));
+        if a < 0.0 {
+            a + 2.0 * std::f64::consts::PI
+        } else {
+            a
+        }
+    };
+    let on_circle = |ang: f64| -> Point3 {
+        circle.center + circle.radius * (ang.cos() * x_dir + ang.sin() * y_dir)
+    };
+
+    // Crossings by circle angle. `crossings` itself is already in
+    // boundary-walk order (edges scanned in loop order, one sign change
+    // per segment).
+    let angles: Vec<f64> = crossings.iter().map(|(_, p)| angle_of(p)).collect();
+    let mut by_angle: Vec<usize> = (0..m).collect();
+    by_angle.sort_by(|&a, &b| {
+        angles[a]
+            .partial_cmp(&angles[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut angle_rank = vec![0usize; m];
+    for (rank, &ci) in by_angle.iter().enumerate() {
+        angle_rank[ci] = rank;
+    }
+
+    // For each angle-adjacent arc (rank k → rank k+1, increasing angle),
+    // does its midpoint lie inside the face? All probes run BEFORE any
+    // mutation.
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let arc_inside: Vec<bool> = (0..m)
+        .map(|k| {
+            let a = angles[by_angle[k]];
+            let b = angles[by_angle[(k + 1) % m]];
+            let span = (b - a).rem_euclid(two_pi);
+            let mid = on_circle(a + 0.5 * span);
+            crate::trim::point_in_face(brep, face_id, &mid)
+        })
+        .collect();
+    // At a transversal crossing exactly one adjacent arc is inside.
+    for &rank in angle_rank.iter().take(m) {
+        let after = arc_inside[rank];
+        let before = arc_inside[(rank + m - 1) % m];
+        if after == before {
+            return unchanged;
+        }
+    }
+
+    // Next crossing along the boundary walk.
+    let next_on_boundary = |ci: usize| (ci + 1) % m;
+
+    // Trace region loops.
+    let mut chain_used = vec![false; m];
+    let mut regions: Vec<Vec<Point3>> = Vec::new();
+    for start in 0..m {
+        if chain_used[start] {
+            continue;
+        }
+        let mut points: Vec<Point3> = Vec::new();
+        let mut cur = start;
+        let mut steps = 0;
+        loop {
+            steps += 1;
+            if steps > m + 1 {
+                return unchanged;
+            }
+            if chain_used[cur] {
+                return unchanged;
+            }
+            chain_used[cur] = true;
+            // Boundary chain: crossing `cur` → next crossing on the walk.
+            let nxt = next_on_boundary(cur);
+            points.push(crossings[cur].1);
+            let (e_cur, e_nxt) = (crossings[cur].0, crossings[nxt].0);
+            let mut i = (e_cur + 1) % n;
+            loop {
+                if i == (e_nxt + 1) % n {
+                    break;
+                }
+                points.push(verts[i]);
+                i = (i + 1) % n;
+            }
+            // Arc: continue along the one inside adjacent arc at `nxt`.
+            let rank = angle_rank[nxt];
+            let (to, ccw) = if arc_inside[rank] {
+                (by_angle[(rank + 1) % m], true)
+            } else {
+                (by_angle[(rank + m - 1) % m], false)
+            };
+            let arc =
+                circle_frame_arc_points(circle, crossings[nxt].1, crossings[to].1, ccw, segments);
+            points.extend(&arc[..arc.len() - 1]);
+            cur = to;
+            if cur == start {
+                break;
+            }
+        }
+        let points = remove_consecutive_duplicates(&points, tolerance);
+        if points.len() < 3 {
+            return unchanged;
+        }
+        regions.push(points);
+    }
+    if regions.len() < 2 {
+        return unchanged;
+    }
+
+    // Build the sub-faces: the first region reuses the original face.
+    let shell = brep.topology.faces[face_id].shell;
+    let mut sub_faces = Vec::with_capacity(regions.len());
+    for (ri, points) in regions.iter().enumerate() {
+        let vert_ids: Vec<_> = points
+            .iter()
+            .map(|p| find_or_create_vertex(brep, p, tolerance))
+            .collect();
+        let hes: Vec<_> = vert_ids
+            .iter()
+            .map(|&v| brep.topology.add_half_edge(v))
+            .collect();
+        let loop_id = brep.topology.add_loop(&hes);
+        if ri == 0 {
+            let f = &mut brep.topology.faces[face_id];
+            f.outer_loop = loop_id;
+            f.inner_loops.clear();
+            sub_faces.push(face_id);
+        } else {
+            let new_face = brep.topology.add_face(loop_id, surface_index, orientation);
+            if let Some(shell_id) = shell {
+                brep.topology.shells[shell_id].faces.push(new_face);
+                brep.topology.faces[new_face].shell = Some(shell_id);
+            }
+            sub_faces.push(new_face);
+        }
+    }
+
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+    Some(SplitResult { sub_faces })
 }
 
 /// Check if a face's underlying surface is a cylinder.
@@ -2578,6 +3449,88 @@ pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
         3
     };
     n.max(segments).clamp(3, 512)
+}
+
+/// Discretization of a circular arc on the circle's own raw-`segments`
+/// grid: θ_k = 2πk/segments in the circle's (x_dir, y_dir) frame.
+///
+/// This is the schedule `clip_spherical_face_by_circle` uses for its
+/// connector and the full-disk path uses for an inscribed hole — the
+/// convention for SPHERE-sourced circles. A planar split bordering such a
+/// circle must ride this grid; the sag-adaptive canonical grid
+/// (`canonical_arc_points`, the cylinder-wall convention) lands on
+/// different points and the seam zippers open. Returns `[start,
+/// interior…, end]`; `ccw` is travel counterclockwise about
+/// `x_dir × y_dir`.
+fn circle_frame_arc_points(
+    circle: &vcad_kernel_geom::Circle3d,
+    start: Point3,
+    end: Point3,
+    ccw: bool,
+    segments: u32,
+) -> Vec<Point3> {
+    use std::f64::consts::PI;
+    let x_dir = circle.x_dir.into_inner();
+    let y_dir = circle.y_dir.into_inner();
+    let angle_of = |p: Point3| -> f64 {
+        let d = p - circle.center;
+        let a = d.dot(y_dir).atan2(d.dot(x_dir));
+        if a < 0.0 {
+            a + 2.0 * PI
+        } else {
+            a
+        }
+    };
+    let a_start = angle_of(start);
+    let a_end = angle_of(end);
+    let span = if ccw {
+        (a_end - a_start).rem_euclid(2.0 * PI)
+    } else {
+        (a_start - a_end).rem_euclid(2.0 * PI)
+    };
+    // Coincident endpoints (or two points that project to the same angle)
+    // give a zero span, which would otherwise return the bare two-point
+    // `[start, end]` — a degenerate arc the caller can only discard. Say so
+    // here rather than leaving it to `remove_consecutive_duplicates` and the
+    // `len < 3` bail downstream.
+    if span <= 1e-12 {
+        return vec![start, end];
+    }
+    let n = segments.max(3);
+    let step = 2.0 * PI / n as f64;
+    let eps = 1e-9;
+    let mut pts = vec![start];
+    let mut idx = if ccw {
+        (a_start / step).floor() + 1.0
+    } else {
+        (a_start / step).ceil() - 1.0
+    };
+    loop {
+        let ang = idx * step;
+        let traveled = if ccw {
+            (ang - a_start).rem_euclid(2.0 * PI)
+        } else {
+            (a_start - ang).rem_euclid(2.0 * PI)
+        };
+        if traveled <= eps || traveled >= span - eps {
+            break;
+        }
+        let a = ang.rem_euclid(2.0 * PI);
+        let (sin_a, cos_a) = a.sin_cos();
+        pts.push(snap_point(
+            circle.center + circle.radius * (cos_a * x_dir + sin_a * y_dir),
+        ));
+        if ccw {
+            idx += 1.0;
+        } else {
+            idx -= 1.0;
+        }
+        if pts.len() > n as usize + 2 {
+            break; // safety
+        }
+    }
+    pts.push(end);
+    pts
 }
 
 /// Canonical, frame-independent discretization of a circular arc.
