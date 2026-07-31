@@ -1076,6 +1076,22 @@ fn insert_circle_tangent_vertices(
         if (point - a).norm() < tol || (point - b).norm() < tol {
             continue;
         }
+        // Only ADOPT a tangent vertex the inscribed split already created;
+        // never mint one. A circle can be tangent to this edge without
+        // anything having been split across it — a cylinder grazing a cube
+        // face by ~1e-6 is tangent to within `tol` while the neighbor keeps
+        // its original two-vertex edge. Inserting there would put a vertex
+        // on one side of a shared edge and nothing on the other, which is
+        // the very T-junction this function exists to prevent.
+        let snapped = snap_point(point);
+        if !brep
+            .topology
+            .vertices
+            .values()
+            .any(|v| (v.point - snapped).norm() < tol)
+        {
+            continue;
+        }
         inserts.push((i, t, point));
     }
     if inserts.is_empty() {
@@ -1764,9 +1780,12 @@ fn split_planar_face_by_multi_arc(
     };
     let n = loop_verts.len();
     let m = intersections.len();
-    if m < 4 || !m.is_multiple_of(2) {
-        // An odd crossing count means at least one tangential graze; the
-        // enter/exit alternation the tracer relies on doesn't hold.
+    // Three contacts is the floor for either path: a triangular cell with an
+    // inscribed circle touches exactly three times. The crossing tracer needs
+    // more than that (and an even count) — but it is gated below, after the
+    // contacts are classified, so an odd all-tangency count still reaches the
+    // inscribed path instead of being rejected here for the tracer's reasons.
+    if m < 3 {
         return unchanged;
     }
 
@@ -1842,6 +1861,12 @@ fn split_planar_face_by_multi_arc(
     }
     if !all_crossings {
         // Mixed crossings and tangencies — no clean alternation to trace.
+        return unchanged;
+    }
+    // Past here every contact is a genuine crossing, so the tracer's own
+    // preconditions apply: it walks enter/exit pairs, which needs at least
+    // two of each. An odd count means a graze slipped through the probes.
+    if m < 4 || !m.is_multiple_of(2) {
         return unchanged;
     }
     // Alternation must hold both around the circle (intersections are
@@ -3463,6 +3488,14 @@ fn circle_frame_arc_points(
     } else {
         (a_start - a_end).rem_euclid(2.0 * PI)
     };
+    // Coincident endpoints (or two points that project to the same angle)
+    // give a zero span, which would otherwise return the bare two-point
+    // `[start, end]` — a degenerate arc the caller can only discard. Say so
+    // here rather than leaving it to `remove_consecutive_duplicates` and the
+    // `len < 3` bail downstream.
+    if span <= 1e-12 {
+        return vec![start, end];
+    }
     let n = segments.max(3);
     let step = 2.0 * PI / n as f64;
     let eps = 1e-9;
