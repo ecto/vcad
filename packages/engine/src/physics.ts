@@ -61,6 +61,13 @@ export interface PhysicsEnvOptions {
    * arguments and runs contact-free, as before.
    */
   ground?: PhysicsGroundOptions;
+  /**
+   * Explicit per-joint PD gains keyed by joint id, overriding the
+   * inertia-scaled defaults for position/velocity servos on those joints.
+   * Gains are in physics units (N·m/rad and N·m·s/rad for revolute; N/m and
+   * N·s/m for prismatic). A kernel WASM predating setJointGains ignores them.
+   */
+  jointGains?: Record<string, { kp: number; kd: number }>;
 }
 
 /**
@@ -192,6 +199,17 @@ export class PhysicsEnv {
 
     if (options.maxSteps) {
       sim.setMaxSteps(options.maxSteps);
+    }
+
+    if (options.jointGains && Object.keys(options.jointGains).length > 0) {
+      // setJointGains postdates some shipped kernel builds; feature-detect so
+      // a stale WASM silently keeps its inertia-scaled defaults.
+      const maybeSetGains = (
+        sim as unknown as { setJointGains?: (json: string) => void }
+      ).setJointGains;
+      if (typeof maybeSetGains === "function") {
+        maybeSetGains.call(sim, JSON.stringify(options.jointGains));
+      }
     }
 
     return new PhysicsEnv(sim);

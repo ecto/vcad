@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-actuator-limits-gains",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "Actuator effort/velocity limits and per-joint PD gains",
+  "summary": "URDF effort/velocity limits now import, saturate simulated torques and velocity targets, and create_robot_env accepts per-joint PD gains.",
+  "features": ["physics", "urdf", "simulation", "robotics"],
+  "mcpTools": ["create_robot_env"]
+}

@@ -1269,7 +1269,7 @@ parent: number,
  */
 panel_id: number, 
 /**
- * Edge index in that panel's outline (0 = outline[0]→outline[1]).
+ * Edge index in that panel's outline (0 = outline\[0\]→outline\[1\]).
  */
 edge_index: number, 
 /**
@@ -2314,7 +2314,15 @@ axis: Vec3,
 /**
  * Optional angle limits in degrees.
  */
-limits?: [number, number], } | { "type": "Slider", 
+limits?: [number, number], 
+/**
+ * Optional actuator effort limit in N·m.
+ */
+effort_limit?: number, 
+/**
+ * Optional actuator velocity limit in deg/s.
+ */
+velocity_limit?: number, } | { "type": "Slider", 
 /**
  * Translation axis.
  */
@@ -2322,7 +2330,15 @@ axis: Vec3,
 /**
  * Optional position limits in mm.
  */
-limits?: [number, number], } | { "type": "Cylindrical", 
+limits?: [number, number], 
+/**
+ * Optional actuator effort limit in N.
+ */
+effort_limit?: number, 
+/**
+ * Optional actuator velocity limit in mm/s.
+ */
+velocity_limit?: number, } | { "type": "Cylindrical", 
 /**
  * Axis of rotation/translation.
  */

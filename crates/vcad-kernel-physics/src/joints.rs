@@ -116,7 +116,7 @@ pub(crate) fn vcad_joint_to_phyz(
 
             Ok(phyz_joint)
         }
-        JointKind::Slider { axis, limits } => {
+        JointKind::Slider { axis, limits, .. } => {
             // The slider's joint frame is part-aligned (identity
             // `joint_frame_rotation`), so the axis needs no re-expression.
             let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
@@ -234,6 +234,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis: VcadVec3::new(0.0, 0.0, 1.0),
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: 0.0,
         };
@@ -252,6 +254,8 @@ mod tests {
         let revolute = JointKind::Revolute {
             axis: VcadVec3::new(0.0, 0.0, 1.0),
             limits: None,
+            effort_limit: None,
+            velocity_limit: None,
         };
 
         // 90 degrees should become ~1.57 radians

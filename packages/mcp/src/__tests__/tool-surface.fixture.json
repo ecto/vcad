@@ -7041,6 +7041,25 @@
           "type": "number",
           "description": "Maximum episode length (default: 1000)"
         },
+        "joint_gains": {
+          "type": "object",
+          "description": "Per-joint PD gains keyed by joint id, e.g. { \"knee\": { \"kp\": 200, \"kd\": 8 } }. Overrides the inertia-scaled defaults for position/velocity servos on those joints. Units are physics units: N·m/rad and N·m·s/rad for revolute, N/m and N·s/m for prismatic.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "kp": {
+                "type": "number"
+              },
+              "kd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "kp",
+              "kd"
+            ]
+          }
+        },
         "ground_enabled": {
           "type": "boolean",
           "description": "Ground-plane contact between robot collision shapes and a horizontal plane at z = ground_height. Default: true. Set false for the old contact-free dynamics (bodies fall forever)."

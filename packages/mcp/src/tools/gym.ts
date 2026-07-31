@@ -313,6 +313,21 @@ export const createRobotEnvSchema = {
       type: "number" as const,
       description: "Maximum episode length (default: 1000)",
     },
+    joint_gains: {
+      type: "object" as const,
+      description:
+        'Per-joint PD gains keyed by joint id, e.g. { "knee": { "kp": 200, "kd": 8 } }. ' +
+        "Overrides the inertia-scaled defaults for position/velocity servos on those joints. " +
+        "Units are physics units: N\u00b7m/rad and N\u00b7m\u00b7s/rad for revolute, N/m and N\u00b7s/m for prismatic.",
+      additionalProperties: {
+        type: "object" as const,
+        properties: {
+          kp: { type: "number" as const },
+          kd: { type: "number" as const },
+        },
+        required: ["kp", "kd"],
+      },
+    },
     ...GROUND_SCHEMA_PROPS,
   },
   required: ["end_effector_ids"],
@@ -386,6 +401,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
     dt?: number;
     substeps?: number;
     max_steps?: number;
+    joint_gains?: Record<string, { kp: number; kd: number }>;
   } & GroundArgs;
 
   // Check if physics is available
@@ -418,6 +434,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       substeps: args.substeps,
       maxSteps: args.max_steps,
       ground: resolveGroundOptions(args),
+      jointGains: args.joint_gains,
     });
 
     simulations.set(envId, env);
@@ -475,6 +492,9 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       dt: args.dt ?? 1 / 240,
       substeps: args.substeps ?? 4,
       max_steps: args.max_steps ?? 1000,
+      // Echo explicit gains so the caller can see which joints run custom
+      // PD constants (the rest use inertia-scaled defaults).
+      joint_gains: args.joint_gains ?? null,
       // Ground-contact contract, echoed so the caller knows there is a
       // floor: robot collision shapes rest on the plane z = ground_height
       // instead of falling forever.

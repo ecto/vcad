@@ -300,7 +300,7 @@ fn build_phyz_model_joint(
 
             Ok(phyz_joint)
         }
-        JointKind::Slider { axis, limits } => {
+        JointKind::Slider { axis, limits, .. } => {
             // Slider joint frames are part-aligned, so the axis carries over
             // unchanged.
             let axis_vec = Vec3::new(axis.x, axis.y, axis.z).normalize();
