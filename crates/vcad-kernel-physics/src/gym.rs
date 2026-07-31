@@ -1435,6 +1435,59 @@ mod tests {
         }
     }
 
+    /// Observation noise and domain randomization share one `StdRng`, so a
+    /// step consumes draws that would otherwise feed the next episode's
+    /// randomization. `apply_episode_randomization` re-seeds from
+    /// `(seed, episode)` on every reset, which wipes that carry-over — but
+    /// only as long as the re-seed stays. Pin it: envs that took different
+    /// numbers of steps must still reproduce each other after re-seeding.
+    #[test]
+    fn step_count_does_not_leak_into_the_next_episode() {
+        let build = || {
+            let mut cfg = randomized_config();
+            // Noise on, so stepping definitely consumes RNG draws.
+            cfg.observation_noise = Some(ObservationNoise {
+                joint_pos_std: 0.5,
+                base_pos_std: 0.5,
+                ..Default::default()
+            });
+            RobotEnv::new_with_config(
+                create_simple_robot(),
+                vec!["link2_inst".to_string()],
+                None,
+                None,
+                Some(GroundConfig::disabled()),
+                cfg,
+            )
+            .unwrap()
+        };
+
+        let mut busy = build();
+        busy.reset_with_seed(5);
+        for _ in 0..7 {
+            busy.step(Action::Torque(vec![0.01, 0.01]));
+        }
+
+        let mut idle = build();
+        idle.reset_with_seed(5);
+
+        // Both re-seed the same stream; the 7 intervening steps must not
+        // shift `busy`'s next episode.
+        let a = busy.reset_with_seed(99);
+        let b = idle.reset_with_seed(99);
+        assert_eq!(
+            a.joint_positions, b.joint_positions,
+            "step count leaked into the next episode's randomization"
+        );
+
+        let (sa, _, _) = busy.step(Action::Torque(vec![0.01, 0.01]));
+        let (sb, _, _) = idle.step(Action::Torque(vec![0.01, 0.01]));
+        assert_eq!(
+            sa.joint_positions, sb.joint_positions,
+            "post-reset rollouts diverged despite identical seeds"
+        );
+    }
+
     /// `StepInfo` reports ground truth while the returned observation is
     /// noisy. The divergence is the contract, not a bug: reward and
     /// termination must not inherit sensor noise. Pinned so a later "make
