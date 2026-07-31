@@ -15,6 +15,15 @@ use crate::split::point_to_segment_dist_2d;
 use crate::trim::point_in_face;
 use crate::BooleanOp;
 
+
+macro_rules! cls_dbg {
+    ($($arg:tt)*) => {
+        if std::env::var("VCAD_CLS_DEBUG").is_ok() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// Classification of a face relative to another solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaceClassification {
@@ -1094,7 +1103,13 @@ fn find_coincident_cylinder_classification(
                     matched_forward = Some(*fwd);
                 }
             }
-            None => return None, // probe not covered — not fully coincident
+            None => {
+                cls_dbg!(
+                    "cyl-coincidence miss: probe {p:?} not in any of {} carrier faces",
+                    carrier_faces.len()
+                );
+                return None; // probe not covered — not fully coincident
+            }
         }
     }
     if checked == 0 {

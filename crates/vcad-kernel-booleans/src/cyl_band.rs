@@ -532,22 +532,27 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
     let b_below = probe_us
         .iter()
         .all(|&u| chain_interp(&chain_b, u) <= chain_interp(&chain_a, u) + V_EPS);
-    let first_run_ascended = !a_was_reversed_flag;
-    let (mut lo, mut hi, lo_is_first_run) = if a_below {
-        (chain_a, chain_b, true)
+    let _ = a_was_reversed_flag;
+    let (mut lo, mut hi) = if a_below {
+        (chain_a, chain_b)
     } else if b_below {
-        (chain_b, chain_a, false)
+        (chain_b, chain_a)
     } else {
         band_dbg!("parse_band: chains cross");
         return None;
     };
-    // Standard (outer-wall) cycles read as lo-ascending-then-hi-descending
-    // (any rotation thereof). The original loop's first run tells us which
-    // convention this face uses.
-    let reversed_winding = if lo_is_first_run {
-        !first_run_ascended
-    } else {
-        first_run_ascended
+    // Winding convention, start-phase-independent: the standard
+    // (outer-wall) cycle walks the lower chain ascending and the upper
+    // descending — counterclockwise in (u, v), positive shoelace area.
+    // Bores wind the other way. (Judging by "which run came first" breaks
+    // when the loop's starting half-edge sits mid-chain.)
+    let reversed_winding = {
+        let mut area2 = 0.0;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            area2 += unwrapped[i] * uvs[j].1 - unwrapped[j] * uvs[i].1;
+        }
+        area2 < 0.0
     };
     // Close residual end slack: both chains must span the same interval or
     // downstream splits clamp-extend the shorter one into phantom area. At
@@ -569,6 +574,14 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
             c.push((end_u, other_tail));
         }
     }
+    band_dbg!(
+        "parse: n {} full_wrap {} rev_wind {} lo[0] {:?} hi[0] {:?}",
+        n,
+        full_wrap,
+        reversed_winding,
+        lo[0],
+        hi[0]
+    );
     Some(CylBand { lo, hi, full_wrap, reversed_winding })
 }
 
@@ -1026,7 +1039,7 @@ pub(crate) fn realize_bands(
         // repair collapses the resulting zero-length half-edges later.
         let mut loop_pts: Vec<Point3> =
             Vec::with_capacity(band.lo.len() + band.hi.len());
-        if band.reversed_winding {
+        if band.reversed_winding && std::env::var("VCAD_NO_WINDING").is_err() {
             // Bore convention: lower chain descending, upper ascending.
             for &(u, v) in band.lo.iter().rev() {
                 loop_pts.push(point_at(cyl, u, v));
