@@ -6,7 +6,10 @@
 //! measured reflected inertia, so commands must stay bounded and converge.
 
 use vcad_ir::Document;
-use vcad_kernel_physics::{GroundConfig, PhysicsWorld, RobotEnv, GAIN_STABILITY_LIMIT};
+use vcad_kernel_physics::{
+    DomainRandomization, EnvConfig, GroundConfig, PhysicsWorld, Range, RobotEnv,
+    GAIN_STABILITY_LIMIT,
+};
 
 /// A mm-scale crank + slider: 40mm flywheel on a Y-axis revolute plus a
 /// vertical slider — the shape of an engine assembly.
@@ -237,5 +240,56 @@ fn unstable_gains_warn_and_clear_at_5x_substeps() {
         fine.check_gain_stability().is_empty(),
         "5x substeps should clear the warning, got {:?}",
         fine.check_gain_stability()
+    );
+}
+
+/// The check must price in domain randomization's worst case, not the scale
+/// sampled for the current episode: `pd_gain_scale` is re-drawn each reset,
+/// so gains checked before the first reset would otherwise pass and go
+/// unstable two episodes later.
+#[test]
+fn gain_check_uses_worst_case_randomized_gain_scale() {
+    let doc = mm_scale_doc();
+    let dt = 1.0 / 200.0f64;
+    let mut probe = PhysicsWorld::from_document(&doc).expect("world");
+    probe.set_joint_gains("crank", 1.0, 0.0);
+    let inertia = probe.check_gain_stability(dt)[0].reflected_inertia;
+    // Just inside the limit unscaled; a 2x gain scale puts omega*dt at 0.35.
+    let omega = 0.25 / dt;
+    let (kp, kd) = (inertia * omega * omega, 2.0 * inertia * omega);
+
+    let env = |randomize: bool| {
+        let config = EnvConfig {
+            randomization: randomize.then(|| DomainRandomization {
+                pd_gain_scale: Some(Range { min: 1.0, max: 4.0 }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut env = RobotEnv::new_with_config(
+            doc.clone(),
+            vec![],
+            Some(dt as f32),
+            Some(4),
+            Some(GroundConfig::disabled()),
+            config,
+        )
+        .expect("env");
+        env.set_joint_gains("crank", kp, kd);
+        env.check_gain_stability()
+    };
+
+    assert!(
+        env(false).is_empty(),
+        "omega*dt = 0.25 is inside the limit without randomization"
+    );
+    let warnings = env(true);
+    let crank = warnings
+        .iter()
+        .find(|w| w.joint_id == "crank")
+        .unwrap_or_else(|| panic!("4x gain scale should warn, got {warnings:?}"));
+    assert!(
+        (crank.omega_dt - 0.5).abs() < 1e-6,
+        "should report omega*dt at the worst-case 4x scale (sqrt(4)*0.25): {crank:?}"
     );
 }

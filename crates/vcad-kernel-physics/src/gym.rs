@@ -595,7 +595,20 @@ impl RobotEnv {
     /// that keeps the published gains intact. See
     /// [`PhysicsWorld::check_gain_stability`].
     pub fn check_gain_stability(&mut self) -> Vec<GainWarning> {
+        // Check the *worst case* the env can produce, not the scale that
+        // happens to be sampled right now: `pd_gain_scale` is re-drawn every
+        // episode, so a check run before the first reset would otherwise
+        // clear gains that go unstable two episodes later.
+        let restore = self.world.gain_scale();
+        let worst = self
+            .config
+            .randomization
+            .as_ref()
+            .and_then(|dr| dr.pd_gain_scale)
+            .map_or(restore, |range| range.max.max(range.min));
+        self.world.set_gain_scale(worst);
         let mut warnings = self.world.check_gain_stability(self.dt as f64);
+        self.world.set_gain_scale(restore);
         // The world reports a *multiplier*; report absolute substeps, which
         // is what the caller actually sets.
         for w in &mut warnings {

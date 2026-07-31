@@ -1281,6 +1281,11 @@ impl PhysicsWorld {
         self.gain_scale = scale;
     }
 
+    /// The current multiplier applied to PD motor gains.
+    pub fn gain_scale(&self) -> f64 {
+        self.gain_scale
+    }
+
     /// Add `dpos` / `dvel` (vcad units: degrees or mm) to a 1-DOF joint's
     /// position and velocity. No-op for Fixed joints. Call
     /// [`Self::refresh_kinematics`] after the last perturbation.
