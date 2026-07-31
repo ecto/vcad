@@ -65,9 +65,13 @@ const probeEnv = await createRobotEnv({
   end_effector_ids: ["link1_inst"],
 });
 const probeEnvId = probeEnv.isError ? null : json(probeEnv).env_id;
-const sim2real =
-  probeEnvId !== null && !gymReset({ env_id: probeEnvId, seed: 1 }).isError;
-if (probeEnvId) gymClose({ env_id: probeEnvId });
+let sim2real = false;
+try {
+  sim2real =
+    probeEnvId !== null && !gymReset({ env_id: probeEnvId, seed: 1 }).isError;
+} finally {
+  if (probeEnvId) gymClose({ env_id: probeEnvId });
+}
 if (!sim2real) {
   console.warn(
     "[gym-sim2real] loaded kernel WASM predates sim2real bindings — " +

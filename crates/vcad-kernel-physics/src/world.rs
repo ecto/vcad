@@ -930,9 +930,15 @@ impl PhysicsWorld {
             .collect()
     }
 
-    /// Get list of all instance IDs.
+    /// Get list of all instance IDs, sorted.
+    ///
+    /// The backing map is a `HashMap`, whose iteration order varies per
+    /// process. Sorting keeps callers that consume a seeded RNG per instance
+    /// (domain randomization) reproducible across runs.
     pub fn instance_ids(&self) -> Vec<String> {
-        self.instance_to_body.keys().cloned().collect()
+        let mut ids: Vec<String> = self.instance_to_body.keys().cloned().collect();
+        ids.sort();
+        ids
     }
 
     /// Evaluate a part's geometry to get a mesh.

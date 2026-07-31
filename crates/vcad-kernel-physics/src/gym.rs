@@ -417,7 +417,7 @@ impl RobotEnv {
             }
             self.world.step(self.dt);
             for pending in &mut self.pending_actions {
-                pending.0 -= 1;
+                pending.0 = pending.0.saturating_sub(1);
             }
         }
 
