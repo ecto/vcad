@@ -252,6 +252,26 @@ describe("VCode", () => {
     });
   });
 
+  describe("joints", () => {
+    it("round-trips a Free (6-DOF) joint through JFRE", () => {
+      const doc = fromVCode("JFRE base _ chassis 1 2 3 4 5 6");
+      expect(doc.joints).toHaveLength(1);
+      const joint = doc.joints[0];
+      expect(joint.id).toBe("base");
+      expect(joint.parentInstanceId).toBeNull();
+      expect(joint.childInstanceId).toBe("chassis");
+      expect(joint.parentAnchor).toEqual({ x: 1, y: 2, z: 3 });
+      expect(joint.childAnchor).toEqual({ x: 4, y: 5, z: 6 });
+      expect(joint.kind.type).toBe("Free");
+
+      expect(toVCode(doc)).toContain("JFRE base _ chassis 1 2 3 4 5 6");
+    });
+
+    it("rejects a JFRE line with too few args", () => {
+      expect(() => fromVCode("JFRE base _ chassis 1 2 3")).toThrow(VCodeParseError);
+    });
+  });
+
   describe("complex models", () => {
     it("parses flange with bolt holes", () => {
       const compact = `Y 25 5

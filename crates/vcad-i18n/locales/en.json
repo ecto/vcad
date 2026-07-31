@@ -343,6 +343,7 @@
   "joint.slider": "Slider",
   "joint.cylindrical": "Cylindrical",
   "joint.ball": "Ball",
+  "joint.free": "Free",
   "joint.suffix": "Joint",
 
   "tree.scene": "Scene",

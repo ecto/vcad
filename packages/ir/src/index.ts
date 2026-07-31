@@ -409,6 +409,7 @@ export function fromVCode(vcode: string): Document {
       case 'JSLD':
       case 'JCYL':
       case 'JBAL':
+      case 'JFRE':
         parseJoint(doc, opcode, parts, i);
         break;
 
@@ -923,6 +924,8 @@ function formatJoint(joint: Joint): string {
       return `JCYL ${escapeId(joint.id)} ${parent} ${child} ${pa.x} ${pa.y} ${pa.z} ${ca.x} ${ca.y} ${ca.z} ${joint.kind.axis.x} ${joint.kind.axis.y} ${joint.kind.axis.z}`;
     case 'Ball':
       return `JBAL ${escapeId(joint.id)} ${parent} ${child} ${pa.x} ${pa.y} ${pa.z} ${ca.x} ${ca.y} ${ca.z}`;
+    case 'Free':
+      return `JFRE ${escapeId(joint.id)} ${parent} ${child} ${pa.x} ${pa.y} ${pa.z} ${ca.x} ${ca.y} ${ca.z}`;
   }
 }
 
@@ -1186,6 +1189,21 @@ function parseJoint(doc: Document, opcode: string, parts: string[], line: number
         parentAnchor: { x: parseFloat(parts[4]), y: parseFloat(parts[5]), z: parseFloat(parts[6]) },
         childAnchor: { x: parseFloat(parts[7]), y: parseFloat(parts[8]), z: parseFloat(parts[9]) },
         kind: { type: 'Ball' },
+        state: 0,
+      });
+      break;
+    }
+    case 'JFRE': {
+      if (parts.length < 10) {
+        throw new VCodeParseError(line, `JFRE requires 9 args, got ${parts.length - 1}`);
+      }
+      doc.joints.push({
+        id: parseStringArg(parts[1]),
+        parentInstanceId: parseOptionalParent(parts[2]),
+        childInstanceId: parseStringArg(parts[3]),
+        parentAnchor: { x: parseFloat(parts[4]), y: parseFloat(parts[5]), z: parseFloat(parts[6]) },
+        childAnchor: { x: parseFloat(parts[7]), y: parseFloat(parts[8]), z: parseFloat(parts[9]) },
+        kind: { type: 'Free' },
         state: 0,
       });
       break;

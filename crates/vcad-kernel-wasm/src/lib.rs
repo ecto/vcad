@@ -4307,18 +4307,51 @@ impl PhysicsSim {
     /// * `end_effector_ids` - Array of instance IDs to track as end effectors
     /// * `dt` - Simulation timestep in seconds (default: 1/240)
     /// * `substeps` - Number of physics substeps per step (default: 4)
+    /// * `config_json` - Optional JSON `EnvConfig`: domain randomization,
+    ///   observation noise, termination conditions, base instance id
+    /// * `ground_enabled` - Ground-plane contact at z = `ground_height` (default: true)
+    /// * `ground_height` - Ground plane height in meters (default: 0)
+    /// * `ground_friction` - Ground Coulomb friction coefficient (default: 0.8)
+    /// * `ground_restitution` - Ground restitution, 0 = inelastic (default: 0)
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         doc_json: &str,
         end_effector_ids: Vec<String>,
         dt: Option<f32>,
         substeps: Option<u32>,
+        config_json: Option<String>,
+        ground_enabled: Option<bool>,
+        ground_height: Option<f64>,
+        ground_friction: Option<f64>,
+        ground_restitution: Option<f64>,
     ) -> Result<PhysicsSim, JsError> {
         let doc = vcad_ir::Document::from_json(doc_json)
             .map_err(|e| JsError::new(&format!("Invalid document JSON: {}", e)))?;
 
-        let env = vcad_kernel_physics::RobotEnv::new(doc, end_effector_ids, dt, substeps)
-            .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
+        let config: vcad_kernel_physics::EnvConfig = match config_json.as_deref() {
+            Some(json) if !json.trim().is_empty() => serde_json::from_str(json)
+                .map_err(|e| JsError::new(&format!("Invalid env config JSON: {}", e)))?,
+            _ => vcad_kernel_physics::EnvConfig::default(),
+        };
+
+        let defaults = vcad_kernel_physics::GroundConfig::default();
+        let ground = vcad_kernel_physics::GroundConfig {
+            enabled: ground_enabled.unwrap_or(defaults.enabled),
+            height: ground_height.unwrap_or(defaults.height),
+            friction: ground_friction.unwrap_or(defaults.friction),
+            restitution: ground_restitution.unwrap_or(defaults.restitution),
+        };
+
+        let env = vcad_kernel_physics::RobotEnv::new_with_config(
+            doc,
+            end_effector_ids,
+            dt,
+            substeps,
+            Some(ground),
+            config,
+        )
+        .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
 
         web_sys::console::log_1(
             &format!("[WASM] PhysicsSim created with {} joints", env.num_joints()).into(),
@@ -4336,24 +4369,26 @@ impl PhysicsSim {
         serde_wasm_bindgen::to_value(&obs).unwrap_or(JsValue::NULL)
     }
 
+    /// Reset with a new seed: re-seeds the domain-randomization stream
+    /// (episode counter rewinds to 0) and resets. Returns the initial
+    /// observation as JSON.
+    #[wasm_bindgen(js_name = resetSeeded)]
+    pub fn reset_seeded(&mut self, seed: u64) -> JsValue {
+        let obs = self.env.reset_with_seed(seed);
+        serde_wasm_bindgen::to_value(&obs).unwrap_or(JsValue::NULL)
+    }
+
     /// Step the simulation with a torque action.
     ///
     /// # Arguments
     /// * `torques` - Array of torques/forces for each joint (Nm or N)
     ///
     /// # Returns
-    /// Object with { observation, reward, done }
+    /// Object with { observation, reward, done, info }
     #[wasm_bindgen(js_name = stepTorque)]
     pub fn step_torque(&mut self, torques: Vec<f64>) -> JsValue {
         let action = vcad_kernel_physics::Action::Torque(torques);
-        let (obs, reward, done) = self.env.step(action);
-
-        let result = serde_json::json!({
-            "observation": obs,
-            "reward": reward,
-            "done": done
-        });
-
+        let result = self.env.step_full(action);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -4363,18 +4398,11 @@ impl PhysicsSim {
     /// * `targets` - Array of position targets for each joint (degrees or mm)
     ///
     /// # Returns
-    /// Object with { observation, reward, done }
+    /// Object with { observation, reward, done, info }
     #[wasm_bindgen(js_name = stepPosition)]
     pub fn step_position(&mut self, targets: Vec<f64>) -> JsValue {
         let action = vcad_kernel_physics::Action::PositionTarget(targets);
-        let (obs, reward, done) = self.env.step(action);
-
-        let result = serde_json::json!({
-            "observation": obs,
-            "reward": reward,
-            "done": done
-        });
-
+        let result = self.env.step_full(action);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -4384,18 +4412,11 @@ impl PhysicsSim {
     /// * `targets` - Array of velocity targets for each joint (deg/s or mm/s)
     ///
     /// # Returns
-    /// Object with { observation, reward, done }
+    /// Object with { observation, reward, done, info }
     #[wasm_bindgen(js_name = stepVelocity)]
     pub fn step_velocity(&mut self, targets: Vec<f64>) -> JsValue {
         let action = vcad_kernel_physics::Action::VelocityTarget(targets);
-        let (obs, reward, done) = self.env.step(action);
-
-        let result = serde_json::json!({
-            "observation": obs,
-            "reward": reward,
-            "done": done
-        });
-
+        let result = self.env.step_full(action);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -4416,12 +4437,23 @@ impl PhysicsSim {
 
     /// Joint ids in observation order (document `joints` order).
     ///
-    /// `joint_positions[i]` / `joint_velocities[i]` in every observation
-    /// correspond to `jointIds()[i]`. Action vector entries index
-    /// `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
+    /// Joints map onto `joint_positions` / `joint_velocities` by *slice*, not
+    /// by index: joint `i` owns the next `jointSlotCounts()[i]` entries. The
+    /// lists are the same length only when every joint is single-DOF. Action
+    /// vector entries index `actuatedJointIds()` instead, which drops zero-dof
+    /// (Fixed) joints.
     #[wasm_bindgen(js_name = jointIds)]
     pub fn joint_ids(&self) -> Vec<String> {
         self.env.joint_ids().to_vec()
+    }
+
+    /// Observation slots occupied by each joint in `jointIds()` order:
+    /// `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+    /// Free 6. Walk it as a cursor to split an observation into per-joint
+    /// slices.
+    #[wasm_bindgen(js_name = jointSlotCounts)]
+    pub fn joint_slot_counts(&self) -> Vec<usize> {
+        self.env.joint_slot_counts()
     }
 
     /// Actuated joint ids in action order (document order, Fixed joints
@@ -4471,6 +4503,7 @@ impl PhysicsSim {
         _end_effector_ids: Vec<String>,
         _dt: Option<f32>,
         _substeps: Option<u32>,
+        _config_json: Option<String>,
     ) -> Result<PhysicsSim, JsError> {
         Err(JsError::new(
             "Physics feature not enabled. Compile with --features physics",

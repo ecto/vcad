@@ -343,6 +343,7 @@
   "joint.slider": "Kayar",
   "joint.cylindrical": "Silindirik",
   "joint.ball": "Bilye",
+  "joint.free": "Serbest",
   "joint.suffix": "Eklem",
 
   "tree.scene": "Sahne",

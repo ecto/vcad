@@ -343,6 +343,7 @@
   "joint.slider": "슬라이더",
   "joint.cylindrical": "원통",
   "joint.ball": "볼",
+  "joint.free": "자유",
   "joint.suffix": "조인트",
 
   "tree.scene": "장면",

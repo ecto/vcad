@@ -49,23 +49,6 @@ macro_rules! debug_bool {
 /// it has to reject is 4e-7mm).
 const MIN_CROSSING_ARC: f64 = 1e-3;
 
-/// Largest curved-surface radius in a solid's geometry (0.0 when the solid
-/// is all-planar). Drives the classification tessellation density.
-fn max_curved_radius(brep: &BRepSolid) -> f64 {
-    let mut r = 0.0f64;
-    for s in &brep.geometry.surfaces {
-        let any = s.as_any();
-        if let Some(c) = any.downcast_ref::<vcad_kernel_geom::CylinderSurface>() {
-            r = r.max(c.radius.abs());
-        } else if let Some(sp) = any.downcast_ref::<vcad_kernel_geom::SphereSurface>() {
-            r = r.max(sp.radius.abs());
-        } else if let Some(t) = any.downcast_ref::<vcad_kernel_geom::TorusSurface>() {
-            r = r.max(t.major_radius.abs() + t.minor_radius.abs());
-        }
-    }
-    r
-}
-
 /// Handle boolean operations on non-overlapping solids.
 pub(crate) fn non_overlapping_boolean(
     solid_a: &BRepSolid,
@@ -1142,19 +1125,9 @@ pub(crate) fn brep_boolean(
     // cracks along the shared circles), so pick it per boolean from the
     // largest curved radius across both operands: a 45mm part classifies at
     // the 256 cap (~4e-3mm sag) while a fillet-scale solid stays cheap.
-    let cls_segments = {
-        let max_r = max_curved_radius(&a).max(max_curved_radius(&b));
-        const SAG: f64 = 1.5e-3;
-        let needed = if max_r > SAG {
-            let arg = (1.0 - SAG / max_r).clamp(-1.0, 1.0);
-            (std::f64::consts::PI / arg.acos()).ceil() as u32
-        } else {
-            0
-        };
-        needed.min(256).max(segments)
-    };
-    let mesh_b = tessellate_brep(&b, cls_segments);
-    let mesh_a = tessellate_brep(&a, cls_segments);
+    // Tessellate each solid once and reuse for classification.
+    let mesh_b = tessellate_brep(&b, segments);
+    let mesh_a = tessellate_brep(&a, segments);
     #[cfg(feature = "debug-boolean")]
     {
         let open = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> usize {

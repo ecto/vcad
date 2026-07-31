@@ -113,6 +113,10 @@ interface BatchGroup {
   /** Observation-order joint ids captured at creation (null on kernel builds
    *  predating `jointIds()`), used to label batch observations. */
   jointIds: string[] | null;
+  /** Observation slots per joint, in `jointIds` order (null on kernel builds
+   *  predating `jointSlotCounts()`). Needed to split multi-DOF joints out of
+   *  a batch observation. */
+  jointSlotCounts: number[] | null;
 }
 const batchGroups = new Map<string, BatchGroup>();
 
@@ -123,6 +127,57 @@ const INLINE_DOC_DESC =
   "session. Use this stateless path when no `document_id` is resident " +
   "(e.g. a cold serverless instance). Exactly one of `document_id` or " +
   "`document` must be given.";
+
+/** Shared ground-plane schema fragment for the two env-creating tools. */
+const GROUND_SCHEMA_PROPS = {
+  ground_enabled: {
+    type: "boolean" as const,
+    description:
+      "Ground-plane contact between robot collision shapes and a horizontal " +
+      "plane at z = ground_height. Default: true. Set false for the old " +
+      "contact-free dynamics (bodies fall forever).",
+  },
+  ground_height: {
+    type: "number" as const,
+    description: "Ground plane height in meters (default: 0)",
+  },
+  ground_friction: {
+    type: "number" as const,
+    description: "Ground Coulomb friction coefficient (default: 0.8)",
+  },
+  ground_restitution: {
+    type: "number" as const,
+    description:
+      "Ground restitution: 0 = inelastic rest, 1 = elastic bounce (default: 0)",
+  },
+};
+
+/** Ground-config args shared by create_robot_env and batch_create_envs. */
+interface GroundArgs {
+  ground_enabled?: boolean;
+  ground_height?: number;
+  ground_friction?: number;
+  ground_restitution?: number;
+}
+
+/** Fold the flat ground_* args into the engine's ground options, or undefined
+ *  when none were passed (the engine then applies its own defaults). */
+function resolveGroundOptions(args: GroundArgs) {
+  if (
+    args.ground_enabled === undefined &&
+    args.ground_height === undefined &&
+    args.ground_friction === undefined &&
+    args.ground_restitution === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    enabled: args.ground_enabled,
+    height: args.ground_height,
+    friction: args.ground_friction,
+    restitution: args.ground_restitution,
+  };
+}
 
 const SESSION_DOC_DESC =
   "Session id of the assembly to simulate (from open_document / " +
@@ -178,8 +233,15 @@ function resolveEnvDocument(args: {
  *  reconstruct the positional contract from `doc.joints`. */
 interface LabeledJoint {
   id: string;
+  /** First (and for single-DOF joints, only) position slot. */
   position: number;
+  /** First (and for single-DOF joints, only) velocity slot. */
   velocity: number;
+  /** Every position slot this joint owns — present only for multi-DOF joints
+   *  (Ball 3, Free 6), where `position` alone would hide the rest. */
+  positions?: number[];
+  /** Every velocity slot this joint owns; see `positions`. */
+  velocities?: number[];
 }
 
 /** An end effector's pose, keyed by the instance id it was requested under. */
@@ -210,19 +272,52 @@ type LabeledObservation = PhysicsObservation & {
  * `jointIds` is null on kernel builds predating `jointIds()`; the labeled
  * `joints` view is then omitted rather than guessed, and `joint_ids: null`
  * marks the gap explicitly.
+ *
+ * A joint owns a *slice* of the observation, not a single entry:
+ * `slotCounts[i]` consecutive values (Fixed 1, Revolute / Slider /
+ * Cylindrical 1, Ball 3, Free 6). Walking that cursor is what keeps the
+ * labeled view correct for multi-DOF joints — comparing total lengths
+ * instead would silently drop the whole view for any env holding a Ball or
+ * Free joint. When `slotCounts` is null (kernel predating
+ * `jointSlotCounts()`), fall back to one slot per joint, which is exact
+ * whenever the totals agree and is skipped otherwise.
  */
-function labelObservation(
+export function labelObservation(
   obs: PhysicsObservation,
   jointIds: string[] | null,
   endEffectorIds: string[],
+  slotCounts?: number[] | null,
 ): LabeledObservation {
   const labeled: LabeledObservation = { ...obs, joint_ids: jointIds };
-  if (jointIds && jointIds.length === obs.joint_positions.length) {
-    labeled.joints = jointIds.map((id, i) => ({
-      id,
-      position: obs.joint_positions[i],
-      velocity: obs.joint_velocities[i],
-    }));
+  if (jointIds) {
+    const counts =
+      slotCounts && slotCounts.length === jointIds.length
+        ? slotCounts
+        : jointIds.map(() => 1);
+    const total = counts.reduce((a, b) => a + b, 0);
+    // Only label when the cursor tiles the arrays exactly; a mismatch means
+    // the slot metadata and the observation disagree, and a partial labeling
+    // would mis-attribute values.
+    if (
+      total === obs.joint_positions.length &&
+      total === obs.joint_velocities.length
+    ) {
+      let cursor = 0;
+      labeled.joints = jointIds.map((id, i) => {
+        const n = counts[i];
+        const joint: LabeledJoint = {
+          id,
+          position: obs.joint_positions[cursor],
+          velocity: obs.joint_velocities[cursor],
+        };
+        if (n > 1) {
+          joint.positions = obs.joint_positions.slice(cursor, cursor + n);
+          joint.velocities = obs.joint_velocities.slice(cursor, cursor + n);
+        }
+        cursor += n;
+        return joint;
+      });
+    }
   }
   if (endEffectorIds.length === obs.end_effector_poses.length) {
     labeled.end_effectors = endEffectorIds.map((id, i) => ({
@@ -262,6 +357,25 @@ export const createRobotEnvSchema = {
       type: "number" as const,
       description: "Maximum episode length (default: 1000)",
     },
+    config: {
+      type: "object" as const,
+      description:
+        "Optional env config for sim2real training. " +
+        "`randomization`: seeded domain randomization applied on every reset — " +
+        "{mass_scale: {min, max} (per-link multiplicative, e.g. 0.9–1.1), " +
+        "friction_scale: {min, max} (per-joint friction/damping), " +
+        "pd_gain_scale: {min, max} (global PD gain), " +
+        "action_latency_steps: [min, max] (actuator delay in physics substeps, " +
+        "e.g. [2, 8]), joint_pos_perturb / joint_vel_perturb (uniform ± initial " +
+        "state, deg/mm)}. " +
+        "`observation_noise`: gaussian std-devs {joint_pos_std, joint_vel_std, " +
+        "base_pos_std, base_rot_std, base_vel_std}. " +
+        "`termination`: {base_height_below (m), base_tilt_above_deg, " +
+        "terminate_on_joint_limit}. " +
+        "`base_instance_id`: instance used for base pose/velocity observations " +
+        "(default: the ground instance).",
+    },
+    ...GROUND_SCHEMA_PROPS,
   },
   required: ["end_effector_ids"],
 };
@@ -296,6 +410,13 @@ export const gymResetSchema = {
     env_id: {
       type: "string" as const,
       description: "Environment ID returned by create_robot_env",
+    },
+    seed: {
+      type: "number" as const,
+      description:
+        "Optional new random seed. Re-seeds the domain-randomization stream " +
+        "(episode counter rewinds), so identical seeds reproduce identical " +
+        "randomized episodes.",
     },
   },
   required: ["env_id"],
@@ -334,7 +455,8 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
     dt?: number;
     substeps?: number;
     max_steps?: number;
-  };
+    config?: import("@vcad/engine").PhysicsEnvConfig;
+  } & GroundArgs;
 
   // Check if physics is available
   const available = await isPhysicsAvailable();
@@ -365,6 +487,8 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       dt: args.dt,
       substeps: args.substeps,
       maxSteps: args.max_steps,
+      config: args.config,
+      ground: resolveGroundOptions(args),
     });
 
     simulations.set(envId, env);
@@ -422,6 +546,18 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       dt: args.dt ?? 1 / 240,
       substeps: args.substeps ?? 4,
       max_steps: args.max_steps ?? 1000,
+      // Echo the env config so the caller can see what randomization /
+      // noise / termination the env was armed with.
+      config: args.config ?? null,
+      // Ground-contact contract, echoed so the caller knows there is a
+      // floor: robot collision shapes rest on the plane z = ground_height
+      // instead of falling forever.
+      ground: {
+        enabled: args.ground_enabled ?? true,
+        height: args.ground_height ?? 0,
+        friction: args.ground_friction ?? 0.8,
+        restitution: args.ground_restitution ?? 0,
+      },
     };
 
     return {
@@ -482,6 +618,7 @@ export function gymStep(input: unknown): GymResult {
         result.observation,
         env.jointIds,
         record?.endEffectorIds ?? [],
+        env.jointSlotCounts,
       ),
     };
 
@@ -499,7 +636,7 @@ export function gymStep(input: unknown): GymResult {
 
 /** Reset the environment to initial state */
 export function gymReset(input: unknown): GymResult {
-  const args = input as { env_id: string };
+  const args = input as { env_id: string; seed?: number };
 
   const env = simulations.get(args.env_id);
   if (!env) {
@@ -512,7 +649,7 @@ export function gymReset(input: unknown): GymResult {
   }
 
   try {
-    const observation = env.reset();
+    const observation = env.reset(args.seed);
 
     // A reset starts a fresh episode — drop the recorded rollout and bump
     // the epoch so the replay version token can't collide with an
@@ -535,6 +672,7 @@ export function gymReset(input: unknown): GymResult {
               observation,
               env.jointIds,
               record?.endEffectorIds ?? [],
+              env.jointSlotCounts,
             ),
             null,
             2,
@@ -577,6 +715,7 @@ export function gymObserve(input: unknown): GymResult {
               observation,
               env.jointIds,
               record?.endEffectorIds ?? [],
+              env.jointSlotCounts,
             ),
             null,
             2,
@@ -650,6 +789,7 @@ export const batchCreateEnvsSchema = {
       type: "number" as const,
       description: "Maximum episode length (default: 1000)",
     },
+    ...GROUND_SCHEMA_PROPS,
   },
   required: ["n_envs", "end_effector_ids"],
 };
@@ -701,7 +841,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
     dt?: number;
     substeps?: number;
     max_steps?: number;
-  };
+  } & GroundArgs;
 
   const available = await isPhysicsAvailable();
   if (!available) {
@@ -729,6 +869,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
       dt: args.dt,
       substeps: args.substeps,
       maxSteps: args.max_steps,
+      ground: resolveGroundOptions(args),
     };
 
     // Create N environments in parallel
@@ -745,6 +886,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
       document: doc,
       options: envOptions,
       jointIds: envs[0].jointIds,
+      jointSlotCounts: envs[0].jointSlotCounts,
     });
 
     const info = {
@@ -821,6 +963,7 @@ export function batchStep(input: unknown): GymResult {
           r.observation,
           group.jointIds,
           group.options.endEffectorIds,
+          group.jointSlotCounts,
         ),
       ),
       rewards: results.map((r) => r.reward),
@@ -859,6 +1002,7 @@ export function batchReset(input: unknown): GymResult {
         env.reset(),
         group.jointIds,
         group.options.endEffectorIds,
+        group.jointSlotCounts,
       ),
     );
     return {
@@ -885,6 +1029,12 @@ export const toolDefs: ToolDef[] = [
       "one of the two is required. " +
       "Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and " +
       "document_id (what the replay viewer and the other session tools bind to). " +
+      "Optional `config` arms sim2real training: seeded domain randomization " +
+      "(per-link mass, joint friction, PD gains, actuator latency, initial state), " +
+      "gaussian observation noise, and termination conditions (base height/tilt, " +
+      "joint limits). " +
+      "A ground plane at z = 0 (friction 0.8) is on by default, so dropped bodies land " +
+      "and legged assemblies can touch a floor — tune or disable it via the ground_* params. " +
       "Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     inputSchema: createRobotEnvSchema,
     handler: (a) => createRobotEnv(a),
@@ -899,7 +1049,10 @@ export const toolDefs: ToolDef[] = [
     description:
       "Step the physics simulation with an action. " +
       "action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). " +
-      "Returns observation (joint positions/velocities, end effector poses), reward, and done flag. " +
+      "Returns observation (joint positions/velocities, end effector poses, base " +
+      "pose+velocity), reward, done flag, and an `info` map with per-step reward " +
+      "inputs: base height/tilt, joint-limit violations, termination reason, and " +
+      "the episode's sampled actuator latency. " +
       "The observation carries both the bare positional arrays and id-keyed views: " +
       "`joints[i] = {id, position, velocity}` and `end_effectors[i] = {id, pose}`, so no " +
       "ordering has to be remembered.",
@@ -911,9 +1064,11 @@ export const toolDefs: ToolDef[] = [
     name: "gym_reset",
     pack: "physics",
     description:
-      "Reset the simulation environment to its initial state. Returns the initial " +
-      "observation, with joint values keyed by joint id (`joints`) and end effector " +
-      "poses keyed by instance id (`end_effectors`) alongside the bare arrays.",
+      "Reset the simulation environment to its initial state, re-drawing any " +
+      "configured domain randomization. Optional `seed` re-seeds the randomization " +
+      "stream for reproducible episodes. Returns the initial observation, with " +
+      "joint values keyed by joint id (`joints`) and end effector poses keyed by " +
+      "instance id (`end_effectors`) alongside the bare arrays.",
     inputSchema: gymResetSchema,
     handler: (a) => gymReset(a),
     behavior: behavior({}),

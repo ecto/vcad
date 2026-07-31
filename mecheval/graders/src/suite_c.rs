@@ -358,7 +358,16 @@ pub fn check_task_success(
 
     // Build a fresh RobotEnv (RobotEnv re-builds its own PhysicsWorld
     // internally, so the snapshot's world is unaffected).
-    let mut env = match RobotEnv::new(snap.doc.clone(), vec![tip_id.clone()], None, Some(4)) {
+    // Ground contact disabled: Suite C grades pure articulated dynamics of a
+    // fixed-base reacher; an implicit floor at z=0 would perturb rollouts of
+    // arms that dip below the base plane.
+    let mut env = match RobotEnv::new(
+        snap.doc.clone(),
+        vec![tip_id.clone()],
+        None,
+        Some(4),
+        Some(vcad_kernel_physics::GroundConfig::disabled()),
+    ) {
         Ok(e) => e,
         Err(e) => {
             return (
@@ -453,7 +462,7 @@ fn joint_ranges(snap: &AssemblySnapshot) -> Result<Vec<(f64, f64)>, String> {
             JointKind::Revolute { limits, .. } => limits.unwrap_or((-180.0, 180.0)),
             JointKind::Slider { limits, .. } => limits.unwrap_or((-200.0, 200.0)),
             JointKind::Cylindrical { .. } => (-180.0, 180.0),
-            JointKind::Ball | JointKind::Fixed => {
+            JointKind::Ball | JointKind::Fixed | JointKind::Free => {
                 return Err(format!(
                     "joint {} is {:?}; only 1-DOF Revolute/Slider/Cylindrical supported in IK",
                     jid, j.kind
