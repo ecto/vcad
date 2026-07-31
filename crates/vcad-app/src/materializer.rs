@@ -1265,10 +1265,14 @@ fn materialize_joint(doc: &mut Document, fid: FeatureId, feature: &FeatureState)
         "Revolute" => JointKind::Revolute {
             axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),
             limits,
+            effort_limit: None,
+            velocity_limit: None,
         },
         "Slider" => JointKind::Slider {
             axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),
             limits,
+            effort_limit: None,
+            velocity_limit: None,
         },
         "Cylindrical" => JointKind::Cylindrical {
             axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),

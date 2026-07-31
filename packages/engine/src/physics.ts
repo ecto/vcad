@@ -151,6 +151,13 @@ export interface PhysicsEnvOptions {
    * arguments and runs contact-free, as before.
    */
   ground?: PhysicsGroundOptions;
+  /**
+   * Explicit per-joint PD gains keyed by joint id, overriding the
+   * inertia-scaled defaults for position/velocity servos on those joints.
+   * Gains are in physics units (N·m/rad and N·m·s/rad for revolute; N/m and
+   * N·s/m for prismatic). A kernel WASM predating setJointGains ignores them.
+   */
+  jointGains?: Record<string, { kp: number; kd: number }>;
 }
 
 /**
@@ -243,9 +250,20 @@ export class PhysicsEnv {
     ).jointSlotCounts;
     const rawSlots =
       typeof maybeSlots === "function" ? maybeSlots.call(sim) : null;
+    // wasm-bindgen marshals `Vec<usize>` as a Uint32Array, not a plain Array
+    // (contrast `jointIds()`, a `Vec<String>`, which does come back as one).
+    // `Array.isArray` is false for a typed array, so guarding on it alone
+    // nulled the slot counts for every kernel build — and a null count falls
+    // back to one slot per joint, which drops the labeled `joints` view
+    // entirely for any Ball (3) or Free (6) joint.
+    const slots =
+      Array.isArray(rawSlots) ||
+      (ArrayBuffer.isView(rawSlots) && !(rawSlots instanceof DataView))
+        ? Array.from(rawSlots as ArrayLike<number>)
+        : null;
     this._jointSlotCounts =
-      Array.isArray(rawSlots) && rawSlots.every((n) => typeof n === "number")
-        ? (rawSlots as number[])
+      slots && slots.every((n) => typeof n === "number" && Number.isFinite(n))
+        ? slots
         : null;
   }
 
@@ -312,6 +330,17 @@ export class PhysicsEnv {
 
     if (options.maxSteps) {
       sim.setMaxSteps(options.maxSteps);
+    }
+
+    if (options.jointGains && Object.keys(options.jointGains).length > 0) {
+      // setJointGains postdates some shipped kernel builds; feature-detect so
+      // a stale WASM silently keeps its inertia-scaled defaults.
+      const maybeSetGains = (
+        sim as unknown as { setJointGains?: (json: string) => void }
+      ).setJointGains;
+      if (typeof maybeSetGains === "function") {
+        maybeSetGains.call(sim, JSON.stringify(options.jointGains));
+      }
     }
 
     return new PhysicsEnv(sim);

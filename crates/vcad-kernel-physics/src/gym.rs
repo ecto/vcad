@@ -259,6 +259,8 @@ pub struct RobotEnv {
     pending_actions: Vec<(u32, Action)>,
     /// Ground-plane contact configuration, reapplied on every reset.
     ground: GroundConfig,
+    /// Explicit per-joint PD gains `(kp, kd)`, reapplied on every reset.
+    joint_gains: std::collections::HashMap<String, (f64, f64)>,
 }
 
 /// Result of a single env step: observation plus reward, done, and the
@@ -343,6 +345,7 @@ impl RobotEnv {
             latency_substeps: 0,
             pending_actions: Vec::new(),
             ground,
+            joint_gains: std::collections::HashMap::new(),
         };
         // Apply episode-0 randomization to the freshly built world so the
         // very first rollout (before any explicit reset) is randomized too.
@@ -366,6 +369,9 @@ impl RobotEnv {
         self.world = PhysicsWorld::from_document(&self.initial_doc)
             .expect("gym reset: PhysicsWorld::from_document failed on a doc that was valid at construction — this should be unreachable");
         self.world.set_ground(self.ground);
+        for (joint_id, &(kp, kd)) in &self.joint_gains {
+            self.world.set_joint_gains(joint_id, kp, kd);
+        }
         self.joint_ids = self.world.joint_ids();
         self.actuated_joint_ids = self.world.actuated_joint_ids();
         self.current_step = 0;
@@ -563,6 +569,15 @@ impl RobotEnv {
             base_pose,
             base_velocity,
         }
+    }
+
+    /// Set explicit PD gains for a joint, overriding the inertia-scaled
+    /// defaults for position and velocity servos. Persists across
+    /// [`Self::reset`]. Gains are in physics units (N·m/rad and N·m·s/rad
+    /// for revolute; N/m and N·s/m for prismatic).
+    pub fn set_joint_gains(&mut self, joint_id: &str, kp: f64, kd: f64) {
+        self.joint_gains.insert(joint_id.to_string(), (kp, kd));
+        self.world.set_joint_gains(joint_id, kp, kd);
     }
 
     /// Apply configured gaussian observation noise, consuming RNG draws from
@@ -908,6 +923,8 @@ mod tests {
                 kind: JointKind::Revolute {
                     axis: Vec3::new(0.0, 1.0, 0.0),
                     limits: Some((-90.0, 90.0)),
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             },
@@ -921,6 +938,8 @@ mod tests {
                 kind: JointKind::Revolute {
                     axis: Vec3::new(0.0, 1.0, 0.0),
                     limits: Some((-90.0, 90.0)),
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             },
@@ -989,6 +1008,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis: Vec3::new(0.0, 1.0, 0.0),
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state,
         };
@@ -1105,6 +1126,8 @@ mod tests {
                 kind: JointKind::Revolute {
                     axis: Vec3::new(0.0, 0.0, 1.0),
                     limits: Some((-180.0, 180.0)),
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             },
@@ -1393,6 +1416,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis: Vec3::new(0.0, 1.0, 0.0),
                 limits: None,
+                effort_limit: None,
+                velocity_limit: None,
             },
             // Start horizontal so it has to swing down into the floor.
             state: 90.0,
@@ -1886,6 +1911,22 @@ mod tests {
             "expected joint1 at its limit, got {:?}",
             info.joint_limit_violations
         );
+    }
+
+    #[test]
+    fn test_joint_gains_persist_across_reset() {
+        let doc = create_simple_robot();
+        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None, None).unwrap();
+
+        env.set_joint_gains("joint1", 200.0, 5.0);
+        env.reset();
+
+        // The rebuilt world must carry the explicit gains: a position action
+        // installs a motor with kp/kd 200/5, not the inertia-scaled defaults.
+        env.step(Action::PositionTarget(vec![10.0, 0.0]));
+        let motor = env.world.motor("joint1").unwrap();
+        assert_eq!(motor.kp, 200.0);
+        assert_eq!(motor.kd, 5.0);
     }
 
     #[test]

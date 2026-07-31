@@ -295,6 +295,8 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
                     kind: JointKind::Revolute {
                         axis,
                         limits: Some((lo, hi)),
+                        effort_limit: None,
+                        velocity_limit: None,
                     },
                     state: 0.0,
                 }
@@ -320,6 +322,8 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
                     kind: JointKind::Slider {
                         axis,
                         limits: Some((lo, hi)),
+                        effort_limit: None,
+                        velocity_limit: None,
                     },
                     state: 0.0,
                 }
@@ -1783,7 +1787,7 @@ mod tests {
         assert_eq!(jts[0].parent_instance_id, Some("base-inst".into()));
         assert_eq!(jts[0].child_instance_id, "arm1-inst");
         match &jts[0].kind {
-            JointKind::Revolute { axis, limits } => {
+            JointKind::Revolute { axis, limits, .. } => {
                 assert_eq!(axis.y, 1.0);
                 assert_eq!(*limits, Some((-90.0, 90.0)));
             }

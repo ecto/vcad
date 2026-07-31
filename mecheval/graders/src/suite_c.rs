@@ -804,6 +804,8 @@ mod tests {
                 kind: JointKind::Revolute {
                     axis: VVec3::new(0.0, 1.0, 0.0),
                     limits: Some((-180.0, 180.0)),
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             },
@@ -817,6 +819,8 @@ mod tests {
                 kind: JointKind::Revolute {
                     axis: VVec3::new(0.0, 1.0, 0.0),
                     limits: Some((-180.0, 180.0)),
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             },

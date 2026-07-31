@@ -115,6 +115,8 @@ fn add_revolute(doc: &mut Document, id: &str, parent: &str, child: &str, anchor_
         kind: JointKind::Revolute {
             axis: V::new(1.0, 0.0, 0.0),
             limits: None,
+            effort_limit: None,
+            velocity_limit: None,
         },
         state: 0.0,
     });
@@ -284,6 +286,8 @@ fn double_pendulum_does_not_gain_energy() {
         kind: JointKind::Revolute {
             axis: V::new(1.0, 0.0, 0.0),
             limits: None,
+            effort_limit: None,
+            velocity_limit: None,
         },
         state: 0.0,
     });

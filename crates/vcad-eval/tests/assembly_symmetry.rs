@@ -222,7 +222,7 @@ fn prismatic_fixed_and_ball_joints_mirror() {
         assert!((j.parent_anchor.y - 3.0).abs() < 1e-12);
         assert!((j.child_anchor.x + 1.0).abs() < 1e-12);
         assert!((j.child_anchor.y - 2.0).abs() < 1e-12);
-        if let vcad_ir::JointKind::Slider { axis, limits } = &j.kind {
+        if let vcad_ir::JointKind::Slider { axis, limits, .. } = &j.kind {
             assert!(
                 (axis.x + 1.0).abs() < 1e-12 && (axis.y - 2.0).abs() < 1e-12,
                 "a prismatic axis mirrors as M·a, got {axis:?}"

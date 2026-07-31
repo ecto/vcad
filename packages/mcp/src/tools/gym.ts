@@ -357,6 +357,23 @@ export const createRobotEnvSchema = {
       type: "number" as const,
       description: "Maximum episode length (default: 1000)",
     },
+    joint_gains: {
+      type: "object" as const,
+      description:
+        'Per-joint PD gains keyed by joint id, e.g. { "knee": { "kp": 200, "kd": 8 } }. ' +
+        "Overrides the inertia-scaled defaults for position/velocity servos on those joints. " +
+        "Units are physics units: N\u00b7m/rad and N\u00b7m\u00b7s/rad for revolute, N/m and N\u00b7s/m for prismatic. " +
+        "`config.randomization.pd_gain_scale` still multiplies these, and a joint's " +
+        "effort_limit still caps the torque they produce.",
+      additionalProperties: {
+        type: "object" as const,
+        properties: {
+          kp: { type: "number" as const },
+          kd: { type: "number" as const },
+        },
+        required: ["kp", "kd"],
+      },
+    },
     config: {
       type: "object" as const,
       description:
@@ -455,6 +472,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
     dt?: number;
     substeps?: number;
     max_steps?: number;
+    joint_gains?: Record<string, { kp: number; kd: number }>;
     config?: import("@vcad/engine").PhysicsEnvConfig;
   } & GroundArgs;
 
@@ -489,6 +507,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       maxSteps: args.max_steps,
       config: args.config,
       ground: resolveGroundOptions(args),
+      jointGains: args.joint_gains,
     });
 
     simulations.set(envId, env);
@@ -546,6 +565,9 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       dt: args.dt ?? 1 / 240,
       substeps: args.substeps ?? 4,
       max_steps: args.max_steps ?? 1000,
+      // Echo explicit gains so the caller can see which joints run custom
+      // PD constants (the rest use inertia-scaled defaults).
+      joint_gains: args.joint_gains ?? null,
       // Echo the env config so the caller can see what randomization /
       // noise / termination the env was armed with.
       config: args.config ?? null,

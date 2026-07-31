@@ -89,6 +89,10 @@ pub struct PhysicsWorld {
     // Motor targets for PD control
     motors: HashMap<String, MotorTarget>,
 
+    // Explicit per-joint PD gains `(kp, kd)`. When present they override the
+    // inertia-scaled defaults for position/velocity servos on that joint.
+    joint_gains: HashMap<String, (f64, f64)>,
+
     // Mapping from vcad IDs to phyz indices
     instance_to_body: HashMap<String, usize>,
     joint_to_index: HashMap<String, usize>,
@@ -473,6 +477,7 @@ impl PhysicsWorld {
             model,
             state,
             motors: HashMap::new(),
+            joint_gains: HashMap::new(),
             instance_to_body,
             joint_to_index,
             joint_order,
@@ -719,6 +724,19 @@ impl PhysicsWorld {
         contacts
     }
 
+    /// The currently installed motor target for a joint, if any (tests).
+    #[cfg(test)]
+    pub(crate) fn motor(&self, joint_id: &str) -> Option<&MotorTarget> {
+        self.motors.get(joint_id)
+    }
+
+    /// Effort limit (N·m or N) authored on a joint kind, if any.
+    fn effort_limit_of(&self, joint_id: &str) -> Option<f64> {
+        self.joint_kinds
+            .get(joint_id)
+            .and_then(Self::joint_effort_limit)
+    }
+
     /// Clamp single-DOF joints to their limits after integration.
     ///
     /// phyz carries `Joint::limits` but its integrators never read them —
@@ -753,6 +771,27 @@ impl PhysicsWorld {
                     self.state.v[v_offset] = 0.0;
                 }
             }
+        }
+    }
+
+    /// Actuator effort limit (N·m for revolute, N for prismatic) authored on a
+    /// joint kind, if any. Already in physics units.
+    fn joint_effort_limit(kind: &JointKind) -> Option<f64> {
+        match kind {
+            JointKind::Revolute { effort_limit, .. } | JointKind::Slider { effort_limit, .. } => {
+                *effort_limit
+            }
+            _ => None,
+        }
+    }
+
+    /// Actuator velocity limit converted to physics units (rad/s for revolute,
+    /// m/s for prismatic). The IR stores it in vcad units (deg/s / mm/s).
+    fn joint_velocity_limit_physics(kind: &JointKind) -> Option<f64> {
+        match kind {
+            JointKind::Revolute { velocity_limit, .. } => velocity_limit.map(f64::to_radians),
+            JointKind::Slider { velocity_limit, .. } => velocity_limit.map(|v| v / 1000.0),
+            _ => None,
         }
     }
 
@@ -797,10 +836,25 @@ impl PhysicsWorld {
                 let position = self.state.q[q_offset];
                 let velocity = self.state.v[v_offset];
                 let ff = tau_g.as_ref().map_or(0.0, |t| t[v_offset]);
-                let torque = motor.compute_torque_with_feedforward(position, velocity, ff);
+                let mut torque = motor.compute_torque_with_feedforward(position, velocity, ff);
+                // Actuator effort saturation: no control mode (direct torque
+                // included) can exceed the joint's authored effort limit.
+                // Applied last, after gravity feedforward — the actuator has
+                // to produce the whole commanded torque, feedforward and all,
+                // so the ceiling binds the total rather than just the PD part.
+                if let Some(effort) = self.effort_limit_of(joint_id) {
+                    torque = torque.clamp(-effort, effort);
+                }
                 self.state.ctrl[v_offset] = torque;
             }
         }
+    }
+
+    /// Set explicit PD gains for a joint, overriding the inertia-scaled
+    /// defaults for position and velocity servos. Gains are in physics units
+    /// (N·m/rad and N·m·s/rad for revolute; N/m and N·s/m for prismatic).
+    pub fn set_joint_gains(&mut self, joint_id: &str, kp: f64, kd: f64) {
+        self.joint_gains.insert(joint_id.to_string(), (kp, kd));
     }
 
     /// Get the current state of all joints.
@@ -876,6 +930,19 @@ impl PhysicsWorld {
     /// Scaling by the measured inertia keeps the closed-loop natural
     /// frequency fixed (ω = 20 rad/s, ζ = 1) at every scale.
     fn position_gains(&mut self, joint_id: &str) -> (f64, f64, f64) {
+        if let Some(&(kp, kd)) = self.joint_gains.get(joint_id) {
+            // Explicit gains still ride domain randomization's gain_scale —
+            // randomizing actuator gains is meaningless if authoring them
+            // opts out of it.
+            let (kp, kd) = (kp * self.gain_scale, kd * self.gain_scale);
+            // Bound the clamp by the effort limit when the joint has one,
+            // else by the full-scale error torque.
+            let max_force = self
+                .effort_limit_of(joint_id)
+                .unwrap_or((kp * std::f64::consts::PI).max(1e-12))
+                .max(1e-12);
+            return (kp, kd, max_force);
+        }
         const OMEGA: f64 = 20.0;
         let i = self.reflected_inertia(joint_id);
         let kp = i * OMEGA * OMEGA * self.gain_scale;
@@ -921,13 +988,23 @@ impl PhysicsWorld {
             if joint_ndof(kind) == 0 || matches!(kind, JointKind::Free) {
                 return;
             }
-            let physics_target = convert_state_to_physics(kind, target);
+            let mut physics_target = convert_state_to_physics(kind, target);
+            // Actuator velocity saturation: the servo can only chase a target
+            // inside the joint's authored velocity limit.
+            if let Some(vmax) = Self::joint_velocity_limit_physics(kind) {
+                physics_target = physics_target.clamp(-vmax, vmax);
+            }
             // Velocity servo: τ = kd (v* − v). Track within ~1/ω seconds and
             // clamp at the torque needed to reach the target from rest in one
             // time constant, scaled to the joint's reflected inertia.
             const OMEGA: f64 = 40.0;
-            let i = self.reflected_inertia(joint_id);
-            let kd = i * OMEGA * self.gain_scale;
+            // Explicit per-joint gain when set, else inertia-scaled. Domain
+            // randomization's gain_scale multiplies either one: randomizing
+            // actuator gains is meaningless if authoring them opts out of it.
+            let kd = match self.joint_gains.get(joint_id) {
+                Some(&(_, kd)) => kd,
+                None => self.reflected_inertia(joint_id) * OMEGA,
+            } * self.gain_scale;
             let max_force = (kd * physics_target.abs().max(1.0) * 2.0).max(1e-12);
             self.motors.insert(
                 joint_id.to_string(),
@@ -1621,6 +1698,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis: VcadVec3::new(0.0, 0.0, 1.0),
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: 0.0,
         }]);
@@ -1698,6 +1777,96 @@ mod tests {
         let state = states.get("joint1").unwrap();
         // Position should be non-zero after commanding 45 degrees
         assert!(state.position.abs() > 0.0 || state.velocity.abs() > 0.0);
+    }
+
+    /// Rewrite the fixture's revolute joint with K1-knee actuator limits
+    /// (40 N·m effort, 12.5 rad/s velocity).
+    fn with_k1_knee_limits(mut doc: Document) -> Document {
+        let joints = doc.joints.as_mut().unwrap();
+        if let JointKind::Revolute {
+            effort_limit,
+            velocity_limit,
+            ..
+        } = &mut joints[0].kind
+        {
+            *effort_limit = Some(40.0);
+            *velocity_limit = Some(12.5_f64.to_degrees());
+        }
+        doc
+    }
+
+    #[test]
+    fn test_torque_action_saturates_at_effort_limit() {
+        // Booster K1 knee reference: a 1e6 N·m torque command must saturate
+        // at the joint's 40 N·m effort limit.
+        let doc = with_k1_knee_limits(create_test_document());
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        world.apply_joint_torque("joint1", 1e6);
+        world.step(1.0 / 240.0);
+
+        let states = world.get_joint_states();
+        let effort = states.get("joint1").unwrap().effort;
+        assert!(
+            (effort - 40.0).abs() < 1e-9,
+            "expected effort saturated at 40 N·m, got {effort}"
+        );
+
+        // And symmetric on the negative side.
+        world.apply_joint_torque("joint1", -1e6);
+        world.step(1.0 / 240.0);
+        let effort = world.get_joint_states().get("joint1").unwrap().effort;
+        assert!(
+            (effort + 40.0).abs() < 1e-9,
+            "expected effort saturated at -40 N·m, got {effort}"
+        );
+    }
+
+    #[test]
+    fn test_position_pd_output_respects_effort_limit() {
+        let doc = with_k1_knee_limits(create_test_document());
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        // Huge explicit gains guarantee an unsaturated PD output far above
+        // the effort limit at this position error.
+        world.set_joint_gains("joint1", 1e6, 1e3);
+        world.set_joint_position("joint1", 90.0);
+        world.step(1.0 / 240.0);
+
+        let effort = world.get_joint_states().get("joint1").unwrap().effort;
+        assert!(
+            effort.abs() <= 40.0 + 1e-9,
+            "PD output must be clamped to the 40 N·m effort limit, got {effort}"
+        );
+        assert!(effort.abs() > 39.0, "expected the clamp to be active");
+    }
+
+    #[test]
+    fn test_velocity_target_clamped_to_velocity_limit() {
+        let doc = with_k1_knee_limits(create_test_document());
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        // Command far beyond the 12.5 rad/s limit (in deg/s).
+        world.set_joint_velocity("joint1", 1e6);
+        let motor = world.motors.get("joint1").unwrap();
+        assert!(
+            (motor.target - 12.5).abs() < 1e-9,
+            "velocity target must clamp to 12.5 rad/s, got {}",
+            motor.target
+        );
+    }
+
+    #[test]
+    fn test_explicit_joint_gains_override_defaults() {
+        let doc = create_test_document();
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        world.set_joint_gains("joint1", 200.0, 5.0);
+        world.set_joint_position("joint1", 10.0);
+
+        let motor = world.motors.get("joint1").unwrap();
+        assert_eq!(motor.kp, 200.0);
+        assert_eq!(motor.kd, 5.0);
     }
 
     #[test]
@@ -1810,6 +1979,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis: VcadVec3::new(0.0, 1.0, 0.0),
                 limits: Some((-180.0, 180.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: 0.0,
         }]);
@@ -1919,6 +2090,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis,
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: 0.0,
         };
@@ -1994,6 +2167,8 @@ mod tests {
             joint.kind = JointKind::Revolute {
                 axis,
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             };
         }
         let world = PhysicsWorld::from_document(&doc).unwrap();
@@ -2039,6 +2214,8 @@ mod tests {
             joint.kind = JointKind::Revolute {
                 axis,
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             };
             joint.state = state;
         }

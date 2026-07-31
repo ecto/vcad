@@ -126,6 +126,8 @@ fn doc_with(n_pendula: usize, axis: V, first_state: f64) -> Document {
             kind: JointKind::Revolute {
                 axis,
                 limits: Some((-80.0, 80.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: if i == 0 { first_state } else { 0.0 },
         });

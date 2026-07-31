@@ -524,12 +524,12 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
 
             let (kind_str, axis, limits_json) = match &joint.kind {
                 JointKind::Fixed => ("Fixed", None, None),
-                JointKind::Revolute { axis, limits } => (
+                JointKind::Revolute { axis, limits, .. } => (
                     "Revolute",
                     Some([axis.x, axis.y, axis.z]),
                     limits.as_ref().and_then(|l| serde_json::to_string(l).ok()),
                 ),
-                JointKind::Slider { axis, limits } => (
+                JointKind::Slider { axis, limits, .. } => (
                     "Slider",
                     Some([axis.x, axis.y, axis.z]),
                     limits.as_ref().and_then(|l| serde_json::to_string(l).ok()),

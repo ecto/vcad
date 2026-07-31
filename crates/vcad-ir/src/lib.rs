@@ -115,6 +115,14 @@ pub enum JointKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         limits: Option<JointLimits>,
+        /// Optional actuator effort limit in N·m.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        effort_limit: Option<f64>,
+        /// Optional actuator velocity limit in deg/s.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        velocity_limit: Option<f64>,
     },
     /// Slider joint — translation along an axis.
     Slider {
@@ -124,6 +132,14 @@ pub enum JointKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         limits: Option<JointLimits>,
+        /// Optional actuator effort limit in N.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        effort_limit: Option<f64>,
+        /// Optional actuator velocity limit in mm/s.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        velocity_limit: Option<f64>,
     },
     /// Cylindrical joint — rotation and translation along an axis.
     Cylindrical {
@@ -2625,6 +2641,8 @@ mod tests {
             kind: JointKind::Revolute {
                 axis: Vec3::new(0.0, 0.0, 1.0),
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: 0.0,
         }]);
@@ -2671,6 +2689,8 @@ mod tests {
         let revolute = JointKind::Revolute {
             axis: Vec3::new(0.0, 0.0, 1.0),
             limits: Some((-180.0, 180.0)),
+            effort_limit: None,
+            velocity_limit: None,
         };
         let json = serde_json::to_string(&revolute).unwrap();
         assert!(json.contains(r#""type":"Revolute""#));
@@ -2683,6 +2703,8 @@ mod tests {
         let revolute_no_limits = JointKind::Revolute {
             axis: Vec3::new(1.0, 0.0, 0.0),
             limits: None,
+            effort_limit: None,
+            velocity_limit: None,
         };
         let json = serde_json::to_string(&revolute_no_limits).unwrap();
         assert!(!json.contains(r#""limits""#)); // skip_serializing_if works
@@ -2693,6 +2715,8 @@ mod tests {
         let slider = JointKind::Slider {
             axis: Vec3::new(1.0, 0.0, 0.0),
             limits: Some((0.0, 100.0)),
+            effort_limit: None,
+            velocity_limit: None,
         };
         let json = serde_json::to_string(&slider).unwrap();
         assert!(json.contains(r#""type":"Slider""#));

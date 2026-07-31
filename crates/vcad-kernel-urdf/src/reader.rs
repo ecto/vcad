@@ -793,6 +793,13 @@ impl<'a> UrdfReader<'a> {
                 JointKind::Revolute {
                     axis: Vec3::new(axis[0], axis[1], axis[2]),
                     limits,
+                    // URDF effort is already N·m; velocity is rad/s → deg/s
+                    effort_limit: joint.limit.as_ref().and_then(|l| l.effort),
+                    velocity_limit: joint
+                        .limit
+                        .as_ref()
+                        .and_then(|l| l.velocity)
+                        .map(f64::to_degrees),
                 }
             }
             "continuous" => {
@@ -805,6 +812,12 @@ impl<'a> UrdfReader<'a> {
                 JointKind::Revolute {
                     axis: Vec3::new(axis[0], axis[1], axis[2]),
                     limits: None,
+                    effort_limit: joint.limit.as_ref().and_then(|l| l.effort),
+                    velocity_limit: joint
+                        .limit
+                        .as_ref()
+                        .and_then(|l| l.velocity)
+                        .map(f64::to_degrees),
                 }
             }
             "prismatic" => {
@@ -825,6 +838,13 @@ impl<'a> UrdfReader<'a> {
                 JointKind::Slider {
                     axis: Vec3::new(axis[0], axis[1], axis[2]),
                     limits,
+                    // URDF effort is already N; velocity is m/s → mm/s
+                    effort_limit: joint.limit.as_ref().and_then(|l| l.effort),
+                    velocity_limit: joint
+                        .limit
+                        .as_ref()
+                        .and_then(|l| l.velocity)
+                        .map(|v| v * 1000.0),
                 }
             }
             "floating" => {
@@ -909,13 +929,51 @@ mod tests {
         let joint = &joints[0];
         assert_eq!(joint.id, "base_to_arm");
         match &joint.kind {
-            JointKind::Revolute { axis, limits } => {
+            JointKind::Revolute {
+                axis,
+                limits,
+                effort_limit,
+                velocity_limit,
+            } => {
                 assert!((axis.z - 1.0).abs() < 0.01);
                 assert!(limits.is_some());
                 let (lower, upper) = limits.unwrap();
                 // -1.57 rad ≈ -90 deg
                 assert!((lower - (-90.0)).abs() < 1.0);
                 assert!((upper - 90.0).abs() < 1.0);
+                // effort passes through in N·m; velocity 1 rad/s → deg/s
+                assert_eq!(*effort_limit, Some(10.0));
+                assert!((velocity_limit.unwrap() - 1.0_f64.to_degrees()).abs() < 1e-9);
+            }
+            _ => panic!("Expected Revolute joint"),
+        }
+    }
+
+    #[test]
+    fn test_parse_actuator_limits_k1_knee() {
+        // Booster K1 knee: 40 N·m effort, 12.5 rad/s velocity.
+        let urdf = r#"<?xml version="1.0"?>
+<robot name="k1_knee">
+    <link name="thigh"/>
+    <link name="shank"/>
+    <joint name="knee" type="revolute">
+        <parent link="thigh"/>
+        <child link="shank"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-0.1" upper="2.27" effort="40" velocity="12.5"/>
+    </joint>
+</robot>"#;
+
+        let doc = read_urdf_from_str(urdf).unwrap();
+        let joints = doc.joints.unwrap();
+        match &joints[0].kind {
+            JointKind::Revolute {
+                effort_limit,
+                velocity_limit,
+                ..
+            } => {
+                assert_eq!(*effort_limit, Some(40.0));
+                assert!((velocity_limit.unwrap() - 12.5_f64.to_degrees()).abs() < 1e-9);
             }
             _ => panic!("Expected Revolute joint"),
         }
@@ -939,7 +997,7 @@ mod tests {
         let joint = &joints[0];
 
         match &joint.kind {
-            JointKind::Revolute { axis, limits } => {
+            JointKind::Revolute { axis, limits, .. } => {
                 assert!((axis.y - 1.0).abs() < 0.01);
                 assert!(limits.is_none()); // Continuous has no limits
             }
@@ -1006,7 +1064,7 @@ mod tests {
         let joint = &joints[0];
 
         match &joint.kind {
-            JointKind::Slider { axis, limits } => {
+            JointKind::Slider { axis, limits, .. } => {
                 assert!((axis.x - 1.0).abs() < 0.01);
                 assert!(limits.is_some());
                 let (lower, upper) = limits.unwrap();

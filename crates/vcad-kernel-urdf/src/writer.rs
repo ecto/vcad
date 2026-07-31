@@ -434,27 +434,39 @@ impl<'a> UrdfWriter<'a> {
         // Convert joint type
         let (joint_type, axis, limit) = match &joint.kind {
             JointKind::Fixed => ("fixed".to_string(), None, None),
-            JointKind::Revolute { axis, limits } => {
+            JointKind::Revolute {
+                axis,
+                limits,
+                effort_limit,
+                velocity_limit,
+            } => {
                 let axis_str = Some(Axis {
                     xyz: format!("{} {} {}", axis.x, axis.y, axis.z),
                 });
                 let limit = limits.map(|(lower, upper)| Limit {
                     lower: Some(lower.to_radians()),
                     upper: Some(upper.to_radians()),
-                    effort: Some(100.0), // Default effort
-                    velocity: Some(1.0), // Default velocity
+                    effort: Some(effort_limit.unwrap_or(100.0)),
+                    // deg/s back to URDF rad/s
+                    velocity: Some(velocity_limit.map(f64::to_radians).unwrap_or(1.0)),
                 });
                 ("revolute".to_string(), axis_str, limit)
             }
-            JointKind::Slider { axis, limits } => {
+            JointKind::Slider {
+                axis,
+                limits,
+                effort_limit,
+                velocity_limit,
+            } => {
                 let axis_str = Some(Axis {
                     xyz: format!("{} {} {}", axis.x, axis.y, axis.z),
                 });
                 let limit = limits.map(|(lower, upper)| Limit {
                     lower: Some(lower / 1000.0), // mm to meters
                     upper: Some(upper / 1000.0),
-                    effort: Some(100.0),
-                    velocity: Some(0.5),
+                    effort: Some(effort_limit.unwrap_or(100.0)),
+                    // mm/s back to URDF m/s
+                    velocity: Some(velocity_limit.map(|v| v / 1000.0).unwrap_or(0.5)),
                 });
                 ("prismatic".to_string(), axis_str, limit)
             }

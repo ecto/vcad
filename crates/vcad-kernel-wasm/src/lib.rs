@@ -4360,6 +4360,26 @@ impl PhysicsSim {
         Ok(PhysicsSim { env })
     }
 
+    /// Set explicit per-joint PD gains, overriding the inertia-scaled
+    /// defaults for position and velocity servos.
+    ///
+    /// # Arguments
+    /// * `gains_json` - JSON object mapping joint id → `{ "kp": .., "kd": .. }`
+    #[wasm_bindgen(js_name = setJointGains)]
+    pub fn set_joint_gains(&mut self, gains_json: &str) -> Result<(), JsError> {
+        #[derive(serde::Deserialize)]
+        struct Gains {
+            kp: f64,
+            kd: f64,
+        }
+        let gains: std::collections::HashMap<String, Gains> = serde_json::from_str(gains_json)
+            .map_err(|e| JsError::new(&format!("Invalid joint gains JSON: {}", e)))?;
+        for (joint_id, g) in gains {
+            self.env.set_joint_gains(&joint_id, g.kp, g.kd);
+        }
+        Ok(())
+    }
+
     /// Reset the environment to initial state.
     ///
     /// Returns the initial observation as JSON.

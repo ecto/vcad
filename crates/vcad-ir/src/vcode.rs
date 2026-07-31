@@ -354,7 +354,7 @@ fn format_joint(output: &mut String, joint: &Joint) {
             )
             .unwrap();
         }
-        JointKind::Revolute { axis, limits } => {
+        JointKind::Revolute { axis, limits, .. } => {
             write!(
                 output,
                 "JREV {} {} {} {} {} {} {} {} {} {} {} {}",
@@ -377,7 +377,7 @@ fn format_joint(output: &mut String, joint: &Joint) {
             }
             writeln!(output).unwrap();
         }
-        JointKind::Slider { axis, limits } => {
+        JointKind::Slider { axis, limits, .. } => {
             write!(
                 output,
                 "JSLD {} {} {} {} {} {} {} {} {} {} {} {}",
@@ -1146,6 +1146,8 @@ fn parse_joint(
                         parse_f64(parts[12], line)?,
                     ),
                     limits,
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             });
@@ -1184,6 +1186,8 @@ fn parse_joint(
                         parse_f64(parts[12], line)?,
                     ),
                     limits,
+                    effort_limit: None,
+                    velocity_limit: None,
                 },
                 state: 0.0,
             });
@@ -3535,7 +3539,7 @@ GROUND i1"#;
         // Revolute without limits
         assert_eq!(joints[1].id, "j2");
         match &joints[1].kind {
-            JointKind::Revolute { axis, limits } => {
+            JointKind::Revolute { axis, limits, .. } => {
                 assert_eq!(*axis, Vec3::new(0.0, 0.0, 1.0));
                 assert!(limits.is_none());
             }
@@ -3554,7 +3558,7 @@ GROUND i1"#;
 
         // Slider with limits
         match &joints[3].kind {
-            JointKind::Slider { axis, limits } => {
+            JointKind::Slider { axis, limits, .. } => {
                 assert_eq!(*axis, Vec3::new(1.0, 0.0, 0.0));
                 assert_eq!(*limits, Some((0.0, 100.0)));
             }
@@ -3809,6 +3813,8 @@ CAM cam2 0 100 0 0 0 0"#;
             kind: JointKind::Revolute {
                 axis: Vec3::new(0.0, 0.0, 1.0),
                 limits: Some((-90.0, 90.0)),
+                effort_limit: None,
+                velocity_limit: None,
             },
             state: 0.0,
         }]);
