@@ -259,17 +259,25 @@ export class PhysicsSim {
      * * `end_effector_ids` - Array of instance IDs to track as end effectors
      * * `dt` - Simulation timestep in seconds (default: 1/240)
      * * `substeps` - Number of physics substeps per step (default: 4)
+     * * `ground_enabled` - Ground-plane contact at z = `ground_height` (default: true)
+     * * `ground_height` - Ground plane height in meters (default: 0)
+     * * `ground_friction` - Ground Coulomb friction coefficient (default: 0.8)
+     * * `ground_restitution` - Ground restitution, 0 = inelastic (default: 0)
      * @param {string} doc_json
      * @param {string[]} end_effector_ids
      * @param {number | null} [dt]
      * @param {number | null} [substeps]
+     * @param {boolean | null} [ground_enabled]
+     * @param {number | null} [ground_height]
+     * @param {number | null} [ground_friction]
+     * @param {number | null} [ground_restitution]
      */
-    constructor(doc_json, end_effector_ids, dt, substeps) {
+    constructor(doc_json, end_effector_ids, dt, substeps, ground_enabled, ground_height, ground_friction, ground_restitution) {
         const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArrayJsValueToWasm0(end_effector_ids, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.physicssim_new(ptr0, len0, ptr1, len1, isLikeNone(dt) ? 0x100000001 : Math.fround(dt), isLikeNone(substeps) ? 0x100000001 : (substeps) >>> 0);
+        const ret = wasm.physicssim_new(ptr0, len0, ptr1, len1, isLikeNone(dt) ? 0x100000001 : Math.fround(dt), isLikeNone(substeps) ? 0x100000001 : (substeps) >>> 0, isLikeNone(ground_enabled) ? 0xFFFFFF : ground_enabled ? 1 : 0, !isLikeNone(ground_height), isLikeNone(ground_height) ? 0 : ground_height, !isLikeNone(ground_friction), isLikeNone(ground_friction) ? 0 : ground_friction, !isLikeNone(ground_restitution), isLikeNone(ground_restitution) ? 0 : ground_restitution);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }

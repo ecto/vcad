@@ -53,4 +53,4 @@ pub use diff::{
 };
 pub use error::PhysicsError;
 pub use gym::{Action, Observation, RobotEnv};
-pub use world::{JointState, PhysicsWorld};
+pub use world::{GroundConfig, JointState, PhysicsWorld};
