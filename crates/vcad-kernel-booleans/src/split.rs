@@ -81,6 +81,15 @@ fn cut_polyline_between(
     via
 }
 
+
+macro_rules! split_dbg {
+    ($($arg:tt)*) => {
+        if std::env::var("VCAD_SPLIT_DEBUG").is_ok() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// Split a face along an intersection curve.
 ///
 /// The curve must already be trimmed to the face's domain. This function:
@@ -117,23 +126,102 @@ pub fn split_face_by_curve(
         };
     }
 
-    // Find the two edges where the curve enters and exits the face
-    let (entry_edge, entry_dist) = find_closest_edge_with_dist(&loop_verts, entry_point);
-    let (exit_edge, exit_dist) = find_closest_edge_with_dist(&loop_verts, exit_point);
+    // Find the two edges where the curve enters and exits the face. An
+    // endpoint that lands on (or near) a CORNER is within tolerance of two
+    // edges; picking the nearest edge independently for entry and exit can
+    // then assign both to the same edge and reject a perfectly valid cut.
+    // Instead collect every edge within slack of each endpoint and pick a
+    // DISTINCT pair with minimal combined distance when one exists.
+    let edge_candidates = |p: &Point3| -> Vec<(usize, f64)> {
+        let (best_e, best_d) = find_closest_edge_with_dist(&loop_verts, p);
+        let slack = (best_d * 1.5).max(1e-6);
+        let mut out = Vec::new();
+        for i in 0..loop_verts.len() {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % loop_verts.len()];
+            let ab = b - a;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            let d = (*p - (a + t * ab)).norm();
+            if d <= slack + 1e-9 {
+                out.push((i, d));
+            }
+        }
+        if out.is_empty() {
+            out.push((best_e, best_d));
+        }
+        out
+    };
+    let entry_cands = edge_candidates(entry_point);
+    let exit_cands = edge_candidates(exit_point);
+    let mut entry_edge = entry_cands[0].0;
+    let mut exit_edge = exit_cands[0].0;
+    let mut entry_dist = entry_cands[0].1;
+    let mut exit_dist = exit_cands[0].1;
+    let mut best_sum = f64::INFINITY;
+    let mut found_distinct = false;
+    for &(e1, d1) in &entry_cands {
+        for &(e2, d2) in &exit_cands {
+            if e1 == e2 {
+                continue;
+            }
+            if d1 + d2 < best_sum {
+                best_sum = d1 + d2;
+                entry_edge = e1;
+                exit_edge = e2;
+                entry_dist = d1;
+                exit_dist = d2;
+                found_distinct = true;
+            }
+        }
+    }
+    if !found_distinct {
+        entry_edge = entry_cands[0].0;
+        exit_edge = exit_cands[0].0;
+        entry_dist = entry_cands[0].1;
+        exit_dist = exit_cands[0].1;
+    }
 
     // If entry or exit point is too far from any edge, the split line doesn't cross this face
     let max_dist_tolerance = 1.0; // Allow some tolerance for numerical precision
     if entry_dist > max_dist_tolerance || exit_dist > max_dist_tolerance {
+        split_dbg!("sfbc: entry/exit off-boundary d=({entry_dist:.4},{exit_dist:.4})");
         return SplitResult {
             sub_faces: vec![face_id],
         };
     }
 
-    if entry_edge == exit_edge {
-        // Curve enters and exits on the same edge — can't split simply
+    if entry_edge == exit_edge || (*exit_point - *entry_point).norm() < 1e-6 {
+        // Curve enters and exits on the same edge, or grazes a single
+        // vertex — no real cut.
+        split_dbg!("sfbc: same-edge or zero cut (edges {entry_edge},{exit_edge})");
         return SplitResult {
             sub_faces: vec![face_id],
         };
+    }
+
+    // A cut whose midpoint lies ON the face boundary runs along an existing
+    // edge (two operand planes can share their intersection line with this
+    // face — e.g. a blade's tangent bottom plane and its side plane both
+    // cross an end cap along the same chord). Splitting again along that
+    // chord would emit a duplicate of the face plus a zero-area sliver.
+    {
+        let mid = Point3::new(
+            0.5 * (entry_point.x + exit_point.x),
+            0.5 * (entry_point.y + exit_point.y),
+            0.5 * (entry_point.z + exit_point.z),
+        );
+        let (_, mid_dist) = find_closest_edge_with_dist(&loop_verts, &mid);
+        if mid_dist < 1e-7 {
+            split_dbg!("sfbc: cut runs along boundary");
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
     }
 
     // Insert new vertices at entry and exit points
@@ -209,6 +297,7 @@ pub fn split_face_by_curve(
     let min_area = 0.001;
 
     if area1 < min_area || area2 < min_area {
+        split_dbg!("sfbc: degenerate areas {area1:.5} {area2:.5}");
         // One of the faces is degenerate (near-zero area)
         // This happens when the split line lies along an existing edge
         return SplitResult {
@@ -1748,6 +1837,14 @@ pub fn split_planar_face(
                 // Use the first two crossings as entry/exit
                 let actual_entry = crossings[0];
                 let actual_exit = crossings[1];
+                // A grazing line (both crossings at one vertex) is a
+                // zero-length cut: "splitting" would emit a copy of the
+                // face plus a degenerate sliver.
+                if (actual_exit - actual_entry).norm() < 1e-6 {
+                    return SplitResult {
+                        sub_faces: vec![face_id],
+                    };
+                }
                 split_face_by_curve(brep, face_id, curve, &actual_entry, &actual_exit)
             } else {
                 // Line doesn't cross the polygon boundary at two points
@@ -3069,7 +3166,7 @@ pub fn split_cylindrical_face(
                 // declines (e.g. the circle grazes a band edge), fall
                 // through to the legacy splitter rather than giving up.
                 if let Some(r) =
-                    crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, wavy)
+                    crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, wavy, segments)
                 {
                     return r;
                 }
@@ -3087,7 +3184,7 @@ pub fn split_cylindrical_face(
             // 4-corner rectangles; arc-extruded walls carry dense sampled
             // loops it refuses. Retry through the band machinery, which
             // parses any two-chain loop (rectangular included).
-            crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, false)
+            crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, false, segments)
                 .unwrap_or(result)
         }
         IntersectionCurve::Line(line) => {
@@ -3207,8 +3304,9 @@ fn is_frozen_ring(brep: &BRepSolid, face_id: FaceId) -> bool {
         None => return false,
     };
     let center = plane.origin;
+    let normal = *plane.normal_dir.as_ref();
     let mut radius: Option<f64> = None;
-    let mut count = 0usize;
+    let mut pts: Vec<Point3> = Vec::new();
     for he in brep.topology.loop_half_edges(face.outer_loop) {
         let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
         let r = (p - center).norm();
@@ -3220,9 +3318,43 @@ fn is_frozen_ring(brep: &BRepSolid, face_id: FaceId) -> bool {
                 }
             }
         }
-        count += 1;
+        pts.push(p);
     }
-    count >= 8 && std::env::var("VCAD_NO_RING").is_err()
+    if pts.len() < 8 {
+        return false;
+    }
+    // All vertices equidistant is necessary but NOT sufficient: a half-disk
+    // produced by a diameter cut has every vertex ON the circle too (the
+    // chord endpoints are ring vertices), and treating it as a full disk
+    // makes the next same-line split rebuild BOTH halves from the full
+    // circle — duplicate faces and phantom slivers. A genuine frozen ring
+    // walks the circle in uniform sag-scale steps; any large angular jump
+    // between consecutive loop vertices is a chord, not a ring edge.
+    let x_axis = {
+        let d = pts[0] - center;
+        let on = d - d.dot(&normal) * normal;
+        if on.norm() < 1e-9 {
+            return false;
+        }
+        on.normalize()
+    };
+    let y_axis = normal.cross(&x_axis);
+    let ang = |p: &Point3| -> f64 {
+        let d = *p - center;
+        d.dot(&y_axis).atan2(d.dot(&x_axis))
+    };
+    for w in 0..pts.len() {
+        let a = ang(&pts[w]);
+        let b = ang(&pts[(w + 1) % pts.len()]);
+        let mut d = (b - a).rem_euclid(2.0 * std::f64::consts::PI);
+        if d > std::f64::consts::PI {
+            d = 2.0 * std::f64::consts::PI - d;
+        }
+        if d > 0.2 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Get the circle parameters of a circular disk face.

@@ -421,8 +421,21 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
         })
     } else {
         // General case — ellipse
-        // Sample the intersection curve
-        let n_samples = 64;
+        // Sample the intersection curve at sag density: the samples become
+        // boundary polyline vertices on both operands, and every boundary
+        // in the frozen pipeline is held to the same ≤5 µm chord-sag
+        // standard (see split::arc_segments). A fixed 64 leaves visible
+        // chord-sag volume on large radii.
+        let n_samples = {
+            const SAG: f64 = 5e-3;
+            let r = cyl.radius.abs();
+            let n = if r > SAG {
+                (std::f64::consts::PI / (1.0 - SAG / r).clamp(-1.0, 1.0).acos()).ceil() as usize
+            } else {
+                64
+            };
+            n.clamp(64, 512)
+        };
         let mut points = Vec::with_capacity(n_samples);
 
         for i in 0..n_samples {

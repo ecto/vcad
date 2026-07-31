@@ -362,7 +362,18 @@ fn apply_splits_to_solid(
                         }
 
                         // Handle line curves on planar faces
-                        if let ssi::IntersectionCurve::Line(_) = &curve {
+                        if let ssi::IntersectionCurve::Line(_l) = &curve {
+                            debug_bool!(
+                                "  Split {} planar face {:?} by Line at ({:.2},{:.2},{:.2}) dir ({:.2},{:.2},{:.2})",
+                                solid_name,
+                                fid,
+                                _l.origin.x,
+                                _l.origin.y,
+                                _l.origin.z,
+                                _l.direction.x,
+                                _l.direction.y,
+                                _l.direction.z
+                            );
                             let result = split::split_planar_face(
                                 solid,
                                 fid,
@@ -370,6 +381,11 @@ fn apply_splits_to_solid(
                                 &Point3::origin(),
                                 &Point3::origin(),
                                 segments,
+                            );
+                            debug_bool!(
+                                "    -> planar Line split result: {} sub-faces {:?}",
+                                result.sub_faces.len(),
+                                result.sub_faces
                             );
                             if result.sub_faces.len() >= 2 {
                                 new_faces.extend(result.sub_faces);
@@ -868,10 +884,17 @@ pub(crate) fn brep_boolean(
 
     // Apply splits to both solids
     apply_splits_to_solid(&mut a, splits_a, segments, "A");
+    // Heal the T-junctions splitting leaves behind (stacked band pieces
+    // partition shared vertical boundaries at different heights, a pinch
+    // tangency stops one side's rim where the other continues). The
+    // classification stage ray-casts against these post-split meshes, and
+    // rays escaping through pre-repair cracks misclassify whole faces.
+    crate::repair::repair_topology(&mut a.topology, 1e-6);
     debug_bool!("\n--- Stage 2.5: After splits applied to A ---");
     debug_bool!("A now has {} faces", a.topology.faces.len());
 
     apply_splits_to_solid(&mut b, splits_b, segments, "B");
+    crate::repair::repair_topology(&mut b.topology, 1e-6);
 
     // 3. Classify all faces (including split sub-faces)
     debug_bool!("\n--- Stage 3: Classification ---");

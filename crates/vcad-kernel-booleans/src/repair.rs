@@ -25,7 +25,7 @@ pub fn repair_topology(topo: &mut Topology, tolerance: f64) {
     // it) makes both loops share the vertex, so the pieces pair by id.
     // Only still-unpaired half-edges are touched; the distortion is
     // bounded by the tolerance, i.e. tessellation-error scale.
-    const SEAM_SNAP_TOL: f64 = 1e-3;
+    const SEAM_SNAP_TOL: f64 = 8e-3;
     if tolerance < SEAM_SNAP_TOL && std::env::var("VCAD_NO_WELD").is_err() {
         split_edges_at_interior_vertices(topo, SEAM_SNAP_TOL);
         pair_half_edges(topo, tolerance);

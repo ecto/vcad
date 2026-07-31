@@ -1955,3 +1955,8 @@ mod tests {
         );
     }
 }
+
+/// Test-only export of the freeze pass.
+pub fn freeze_circle_loops_for_test(brep: &mut vcad_kernel_primitives::BRepSolid, segments: u32) {
+    freeze::freeze_circle_loops(brep, segments);
+}
