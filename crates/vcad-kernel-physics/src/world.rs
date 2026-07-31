@@ -1778,4 +1778,75 @@ mod tests {
             }
         }
     }
+
+    /// Movability propagation keys off `Joint::ndof() > 0`, so a body with
+    /// no parent (added via `add_free_body`) is movable only because phyz
+    /// gives a free joint 6 DOF. If that contract ever changes, free bodies
+    /// silently lose their contact geometry and fall through the floor — a
+    /// failure that surfaces as a confusing tunneling assertion elsewhere.
+    /// Pin it here so the breakage names itself.
+    #[test]
+    fn phyz_free_joint_has_dof_so_unparented_bodies_are_movable() {
+        let free = phyz::model::Joint::free(phyz::math::SpatialTransform::identity());
+        assert_eq!(
+            free.ndof(),
+            6,
+            "phyz free joint no longer reports 6 DOF; PhysicsWorld's movability \
+             propagation would exclude free bodies from ground contact"
+        );
+
+        // End-to-end: an instance with no joints becomes a free body and must
+        // come out of construction with contact geometry attached.
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: None,
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(100.0, 100.0, 100.0),
+                },
+            },
+        );
+        let mut part_defs = HashMap::new();
+        for id in ["crate", "anchor"] {
+            part_defs.insert(
+                id.to_string(),
+                PartDef {
+                    id: id.to_string(),
+                    name: None,
+                    root: 1,
+                    default_material: None,
+                    inertial: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(vec![
+            Instance {
+                id: "anchor_inst".to_string(),
+                part_def_id: "anchor".to_string(),
+                name: None,
+                tags: std::vec::Vec::new(),
+                transform: None,
+                material: None,
+            },
+            Instance {
+                id: "crate_inst".to_string(),
+                part_def_id: "crate".to_string(),
+                name: None,
+                tags: std::vec::Vec::new(),
+                transform: None,
+                material: None,
+            },
+        ]);
+        doc.joints = Some(std::vec::Vec::new());
+        doc.ground_instance_id = Some("anchor_inst".to_string());
+
+        let world = PhysicsWorld::from_document(&doc).unwrap();
+        assert!(
+            world.contact_geometries.iter().any(|g| g.is_some()),
+            "free body was built without contact geometry — it can never touch the ground"
+        );
+    }
 }
