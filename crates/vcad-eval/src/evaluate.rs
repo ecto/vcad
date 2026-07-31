@@ -1381,6 +1381,24 @@ fn find_imported_mesh(
                     scale,
                 });
             }
+            // Native only: a CLI-imported URDF references its STLs by
+            // absolute path (`MeshImport`). Load from disk here so render /
+            // export / info see real geometry; on wasm the browser flow has
+            // already rewritten these nodes to `ImportedMesh`, so this arm
+            // never fires there.
+            #[cfg(not(target_arch = "wasm32"))]
+            CsgOp::MeshImport { path, scale: urdf_scale } => {
+                let (positions, indices, normals) =
+                    load_mesh_import(path, urdf_scale.as_ref())?;
+                return Some(ImportedMeshData {
+                    positions,
+                    indices,
+                    normals,
+                    translate,
+                    rotate_deg,
+                    scale,
+                });
+            }
             CsgOp::Translate { child, offset } => {
                 translate = [offset.x, offset.y, offset.z];
                 current = *child;
@@ -1396,6 +1414,55 @@ fn find_imported_mesh(
             _ => return None,
         }
     }
+}
+
+/// Raw mesh buffers loaded from a `MeshImport` STL: positions, indices,
+/// optional per-vertex normals.
+#[cfg(not(target_arch = "wasm32"))]
+type LoadedMeshBuffers = (Vec<f64>, Vec<u32>, Option<Vec<f64>>);
+
+/// Load an STL referenced by a `MeshImport` node, converting URDF metres to
+/// millimetres and applying the URDF `<mesh scale>`. Returns `None` (logged
+/// to stderr) when the file is missing or unparseable so callers fall back
+/// to the no-geometry path rather than erroring the whole document.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_mesh_import(
+    path: &str,
+    urdf_scale: Option<&vcad_ir::Vec3>,
+) -> Option<LoadedMeshBuffers> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| eprintln!("MeshImport: cannot open {path}: {e}"))
+        .ok()?;
+    let mut reader = std::io::BufReader::new(file);
+    let stl = stl_io::read_stl(&mut reader)
+        .map_err(|e| eprintln!("MeshImport: cannot parse {path}: {e}"))
+        .ok()?;
+
+    let m_to_mm = 1000.0_f64;
+    let sx = urdf_scale.map(|s| s.x).unwrap_or(1.0) * m_to_mm;
+    let sy = urdf_scale.map(|s| s.y).unwrap_or(1.0) * m_to_mm;
+    let sz = urdf_scale.map(|s| s.z).unwrap_or(1.0) * m_to_mm;
+
+    let mut positions = Vec::with_capacity(stl.vertices.len() * 3);
+    for v in &stl.vertices {
+        positions.push(v[0] as f64 * sx);
+        positions.push(v[1] as f64 * sy);
+        positions.push(v[2] as f64 * sz);
+    }
+
+    let mut indices = Vec::with_capacity(stl.faces.len() * 3);
+    let mut normals = vec![0.0_f64; stl.vertices.len() * 3];
+    for tri in &stl.faces {
+        let [a, b, c] = tri.vertices;
+        indices.extend([a as u32, b as u32, c as u32]);
+        for &vi in &tri.vertices {
+            normals[vi * 3] = tri.normal[0] as f64;
+            normals[vi * 3 + 1] = tri.normal[1] as f64;
+            normals[vi * 3 + 2] = tri.normal[2] as f64;
+        }
+    }
+
+    Some((positions, indices, Some(normals)))
 }
 
 /// Apply transform to imported mesh positions and normals.
