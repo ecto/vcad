@@ -101,8 +101,11 @@ export function importStep(
   const arrayBuffer = new ArrayBuffer(fileBuffer.byteLength);
   new Uint8Array(arrayBuffer).set(fileBuffer);
 
-  // Import using the engine
-  const meshes = engine.importStep(arrayBuffer);
+  // Import using the engine — with the degradation report, so faces the
+  // kernel skipped (unsupported surface types) surface in the result
+  // instead of vanishing silently.
+  const { meshes, report, summary: importWarnings } =
+    engine.importStepWithReport(arrayBuffer);
 
   if (meshes.length === 0) {
     throw new Error("No geometry found in STEP file");
@@ -172,10 +175,24 @@ export function importStep(
     },
   };
 
+  const skippedFaces = report.reduce((sum, s) => sum + s.skipped_faces.length, 0);
   const summary = {
     bodies: meshes.length,
     total_triangles: meshes.reduce((sum, m) => sum + m.indices.length / 3, 0),
     total_vertices: meshes.reduce((sum, m) => sum + m.positions.length / 3, 0),
+    ...(skippedFaces > 0
+      ? {
+          warning: `${skippedFaces} face(s) skipped (unsupported surface types) — the imported geometry has holes where they were.\n${importWarnings ?? ""}`,
+          skipped_faces: report.flatMap((s) =>
+            s.skipped_faces.map((f) => ({
+              solid_id: s.solid_id,
+              face_id: f.face_id,
+              surface_id: f.surface_id,
+              reason: f.reason,
+            })),
+          ),
+        }
+      : {}),
   };
 
   // A real STEP import is megabytes of mesh JSON — far past the tool-output

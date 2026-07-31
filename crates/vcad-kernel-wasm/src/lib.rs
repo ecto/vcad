@@ -3150,6 +3150,86 @@ pub fn import_step_buffer(data: &[u8]) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&meshes).map_err(|e| JsError::new(&e.to_string()))
 }
 
+#[derive(serde::Serialize)]
+struct WasmSkippedFace {
+    face_id: u64,
+    surface_id: u64,
+    reason: String,
+}
+
+#[derive(serde::Serialize)]
+struct WasmSolidImportReport {
+    solid_id: u64,
+    total_faces: usize,
+    skipped_faces: Vec<WasmSkippedFace>,
+    notes: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct WasmStepImportResult {
+    meshes: Vec<WasmMesh>,
+    report: Vec<WasmSolidImportReport>,
+    /// Human-readable warning summary; null when the import is clean.
+    summary: Option<String>,
+}
+
+/// Import solids from STEP file bytes, reporting skipped faces.
+///
+/// Like [`import_step_buffer`], but returns `{ meshes, report, summary }`
+/// where `report` lists, per solid, any faces omitted because their surface
+/// type is unsupported (the imported geometry has holes there), and
+/// `summary` is a ready-to-display warning string (null when clean).
+#[module("step")]
+#[wasm_bindgen(js_name = importStepBufferWithReport)]
+pub fn import_step_buffer_with_report(data: &[u8]) -> Result<JsValue, JsError> {
+    let (solids, report) = vcad_kernel::Solid::from_step_buffer_all_with_report(data)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+
+    let meshes: Vec<WasmMesh> = solids
+        .iter()
+        .map(|s| {
+            let mesh = s.to_mesh(16);
+            let normals = if mesh.normals.len() == mesh.vertices.len() {
+                Some(mesh.normals)
+            } else {
+                None
+            };
+            WasmMesh {
+                positions: mesh.vertices,
+                indices: mesh.indices,
+                normals,
+                face_kinds: None,
+            }
+        })
+        .collect();
+
+    let summary = report.summary();
+    let result = WasmStepImportResult {
+        meshes,
+        report: report
+            .solids
+            .into_iter()
+            .map(|s| WasmSolidImportReport {
+                solid_id: s.solid_id,
+                total_faces: s.total_faces,
+                skipped_faces: s
+                    .skipped_faces
+                    .into_iter()
+                    .map(|f| WasmSkippedFace {
+                        face_id: f.face_id,
+                        surface_id: f.surface_id,
+                        reason: f.reason,
+                    })
+                    .collect(),
+                notes: s.notes,
+            })
+            .collect(),
+        summary,
+    };
+
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Import a URDF (Unified Robot Description Format) file and return a
 /// serialised vcad [`Document`].
 ///

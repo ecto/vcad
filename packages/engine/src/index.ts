@@ -484,12 +484,43 @@ export interface DrawingSheetSpec {
   bom?: BomRow[];
 }
 
+/** A face omitted during STEP import because its surface type is unsupported. */
+export interface StepSkippedFace {
+  face_id: number;
+  surface_id: number;
+  reason: string;
+}
+
+/** Per-solid STEP import degradation report. */
+export interface StepSolidImportReport {
+  solid_id: number;
+  total_faces: number;
+  skipped_faces: StepSkippedFace[];
+  notes: string[];
+}
+
+/** STEP import result with the degradation report alongside the meshes. */
+export interface StepImportResult {
+  meshes: TriangleMesh[];
+  /** Per-solid reports; empty when the kernel WASM predates the report API. */
+  report: StepSolidImportReport[];
+  /** Ready-to-display warning; null when the import dropped nothing. */
+  summary: string | null;
+}
+
 /** Type for the initialized kernel module */
 export interface KernelModule {
   Solid: typeof Solid;
   WasmAnnotationLayer: typeof WasmAnnotationLayer;
   projectMesh: (mesh: { positions: Float32Array; indices: Uint32Array }, viewDirection: string) => ProjectedView | null;
   importStepBuffer: (data: Uint8Array) => Array<{ positions: Float32Array; indices: Uint32Array }>;
+  /** Like importStepBuffer, but also reports faces skipped as unsupported.
+   * Optional: absent on kernel WASM builds older than the report API. */
+  importStepBufferWithReport?: (data: Uint8Array) => {
+    meshes: Array<{ positions: Float32Array; indices: Uint32Array }>;
+    report: StepSolidImportReport[];
+    summary: string | null;
+  };
   /** Export a document's scene roots to a STEP AP214 buffer (BRep-preserving). */
   documentToStepBuffer?: (docJson: string) => Uint8Array;
   /**
@@ -1046,6 +1077,7 @@ export class Engine {
       WasmAnnotationLayer: wasmModule.WasmAnnotationLayer,
       projectMesh: wasmModule.projectMesh,
       importStepBuffer: wasmModule.importStepBuffer,
+      importStepBufferWithReport: (wasmModule as Record<string, unknown>).importStepBufferWithReport as KernelModule["importStepBufferWithReport"],
       documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
@@ -1745,6 +1777,29 @@ export class Engine {
       positions: new Float32Array(m.positions),
       indices: new Uint32Array(m.indices),
     }));
+  }
+
+  /** Import solids from a STEP file buffer, reporting skipped faces.
+   *
+   * Faces whose surface type the kernel doesn't support are omitted from
+   * the meshes; the report identifies each one (STEP entity id + surface
+   * type). On kernel WASM builds that predate the report API, falls back
+   * to the bare import with an empty report.
+   */
+  importStepWithReport(data: ArrayBuffer): StepImportResult {
+    const bytes = new Uint8Array(data);
+    if (typeof this.kernel.importStepBufferWithReport !== "function") {
+      return { meshes: this.importStep(data), report: [], summary: null };
+    }
+    const result = this.kernel.importStepBufferWithReport(bytes);
+    return {
+      meshes: result.meshes.map((m) => ({
+        positions: new Float32Array(m.positions),
+        indices: new Uint32Array(m.indices),
+      })),
+      report: result.report,
+      summary: result.summary,
+    };
   }
 
   /**

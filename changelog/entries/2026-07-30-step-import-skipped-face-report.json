@@ -1,0 +1,14 @@
+{
+  "id": "2026-07-30-step-import-skipped-face-report",
+  "version": "0.9.4",
+  "date": "2026-07-30",
+  "category": "fix",
+  "title": "STEP import reports skipped faces",
+  "summary": "STEP import now reports faces skipped for unsupported surface types (entity id + surface type) instead of silently dropping them — surfaced in the CLI, the app's import toast, and the import_step MCP tool.",
+  "features": [
+    "step-import"
+  ],
+  "mcpTools": [
+    "import_step"
+  ]
+}

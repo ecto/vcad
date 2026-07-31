@@ -182,26 +182,65 @@ describe("handleArtifactRequest", () => {
 
 describe("import_step large-result offload", () => {
   const smallEngine = {
-    importStep: () => [
-      {
-        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
-        indices: new Uint32Array([0, 1, 2]),
-        normals: undefined,
-      },
-    ],
+    importStepWithReport: () => ({
+      meshes: [
+        {
+          positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+          indices: new Uint32Array([0, 1, 2]),
+          normals: undefined,
+        },
+      ],
+      report: [],
+      summary: null,
+    }),
   } as unknown as Engine;
 
   const bigEngine = {
-    importStep: () => [
-      {
-        positions: new Float32Array(40_000),
-        indices: new Uint32Array(40_000),
-        normals: undefined,
-      },
-    ],
+    importStepWithReport: () => ({
+      meshes: [
+        {
+          positions: new Float32Array(40_000),
+          indices: new Uint32Array(40_000),
+          normals: undefined,
+        },
+      ],
+      report: [],
+      summary: null,
+    }),
   } as unknown as Engine;
 
   const step64 = Buffer.from("x").toString("base64");
+
+  it("surfaces skipped faces from the import report", () => {
+    const dirtyEngine = {
+      importStepWithReport: () => ({
+        meshes: [
+          {
+            positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+            indices: new Uint32Array([0, 1, 2]),
+            normals: undefined,
+          },
+        ],
+        report: [
+          {
+            solid_id: 45,
+            total_faces: 3,
+            skipped_faces: [
+              { face_id: 29, surface_id: 40, reason: "DEGENERATE_TOROIDAL_SURFACE" },
+            ],
+            notes: [],
+          },
+        ],
+        summary: "solid #45: skipped 1 of 3 faces",
+      }),
+    } as unknown as Engine;
+    const res = importStep({ content_base64: step64, name: "holey" }, dirtyEngine);
+    const out = JSON.parse(res.content[0].text);
+    expect(out.summary.warning).toContain("1 face(s) skipped");
+    expect(out.summary.skipped_faces).toEqual([
+      { solid_id: 45, face_id: 29, surface_id: 40, reason: "DEGENERATE_TOROIDAL_SURFACE" },
+    ]);
+  });
 
   it("keeps a small import inline", () => {
     const res = importStep({ content_base64: step64, name: "tiny" }, smallEngine);

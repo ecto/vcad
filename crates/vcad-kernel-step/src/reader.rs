@@ -69,6 +69,93 @@ fn point_angle_on_circle(
     y.atan2(x)
 }
 
+/// A face omitted during import because its surface could not be parsed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkippedFace {
+    /// STEP `ADVANCED_FACE` entity id of the omitted face.
+    pub face_id: u64,
+    /// STEP entity id of the surface the face referenced.
+    pub surface_id: u64,
+    /// Why parsing failed — typically the unsupported surface type name.
+    pub reason: String,
+}
+
+/// Per-solid record of silent degradations applied during import.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SolidImportReport {
+    /// STEP `MANIFOLD_SOLID_BREP` entity id of the solid.
+    pub solid_id: u64,
+    /// Total faces the solid's shell declared in the file.
+    pub total_faces: usize,
+    /// Faces omitted because their surface type is unsupported. A non-empty
+    /// list means the imported solid has holes where these faces were.
+    pub skipped_faces: Vec<SkippedFace>,
+    /// Non-fatal approximations that don't remove geometry (e.g. curved
+    /// edges subdivided into chords).
+    pub notes: Vec<String>,
+}
+
+impl SolidImportReport {
+    /// True when the solid imported without dropping any faces.
+    pub fn is_clean(&self) -> bool {
+        self.skipped_faces.is_empty()
+    }
+}
+
+/// Whole-file import report: one entry per imported solid.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StepImportReport {
+    /// Per-solid reports, in the order the solids were returned.
+    pub solids: Vec<SolidImportReport>,
+}
+
+impl StepImportReport {
+    /// True when no solid dropped any faces.
+    pub fn is_clean(&self) -> bool {
+        self.solids.iter().all(|s| s.is_clean())
+    }
+
+    /// Total number of faces dropped across all solids.
+    pub fn total_skipped_faces(&self) -> usize {
+        self.solids.iter().map(|s| s.skipped_faces.len()).sum()
+    }
+
+    /// Human-readable warning summary, or `None` when the import is clean.
+    pub fn summary(&self) -> Option<String> {
+        if self.is_clean() {
+            return None;
+        }
+        let mut lines = Vec::new();
+        for s in &self.solids {
+            if s.skipped_faces.is_empty() {
+                continue;
+            }
+            lines.push(format!(
+                "solid #{}: skipped {} of {} faces (imported geometry has holes):",
+                s.solid_id,
+                s.skipped_faces.len(),
+                s.total_faces
+            ));
+            for f in &s.skipped_faces {
+                lines.push(format!(
+                    "  face #{} (surface #{}): {}",
+                    f.face_id, f.surface_id, f.reason
+                ));
+            }
+        }
+        Some(lines.join("\n"))
+    }
+}
+
+/// Result of a STEP read: the solids plus a report of any degradations.
+#[derive(Debug)]
+pub struct ReadResult {
+    /// The imported B-rep solids.
+    pub solids: Vec<BRepSolid>,
+    /// Per-solid import report (skipped faces, approximation notes).
+    pub report: StepImportReport,
+}
+
 /// Read STEP file from a path.
 ///
 /// # Arguments
@@ -77,10 +164,18 @@ fn point_angle_on_circle(
 ///
 /// # Returns
 ///
-/// A vector of B-rep solids found in the file.
+/// A vector of B-rep solids found in the file. Faces with unsupported
+/// surface types are silently omitted — use [`read_step_with_report`] to
+/// find out about them.
 pub fn read_step(path: impl AsRef<Path>) -> Result<Vec<BRepSolid>, StepError> {
+    read_step_with_report(path).map(|r| r.solids)
+}
+
+/// Read STEP file from a path, reporting skipped faces and other
+/// degradations alongside the solids.
+pub fn read_step_with_report(path: impl AsRef<Path>) -> Result<ReadResult, StepError> {
     let data = std::fs::read(path)?;
-    read_step_from_buffer(&data)
+    read_step_from_buffer_with_report(&data)
 }
 
 /// Read STEP file from a byte buffer.
@@ -91,8 +186,16 @@ pub fn read_step(path: impl AsRef<Path>) -> Result<Vec<BRepSolid>, StepError> {
 ///
 /// # Returns
 ///
-/// A vector of B-rep solids found in the file.
+/// A vector of B-rep solids found in the file. Faces with unsupported
+/// surface types are silently omitted — use
+/// [`read_step_from_buffer_with_report`] to find out about them.
 pub fn read_step_from_buffer(data: &[u8]) -> Result<Vec<BRepSolid>, StepError> {
+    read_step_from_buffer_with_report(data).map(|r| r.solids)
+}
+
+/// Read STEP file from a byte buffer, reporting skipped faces and other
+/// degradations alongside the solids.
+pub fn read_step_from_buffer_with_report(data: &[u8]) -> Result<ReadResult, StepError> {
     let step_file = Parser::parse(data)?;
     let mut reader = StepReader::new(&step_file);
     reader.read_all_solids()
@@ -103,7 +206,7 @@ pub fn read_step_from_buffer(data: &[u8]) -> Result<Vec<BRepSolid>, StepError> {
 /// Creates a fresh reader state so maps from other solids don't bleed in.
 pub(crate) fn read_solid_from_file(file: &StepFile, solid_id: u64) -> Result<BRepSolid, StepError> {
     let mut reader = StepReader::new(file);
-    reader.read_solid(solid_id)
+    reader.read_solid(solid_id).map(|(solid, _)| solid)
 }
 
 /// Context for reading STEP files and building B-rep solids.
@@ -175,7 +278,7 @@ impl<'a> StepReader<'a> {
         Some(ids)
     }
 
-    fn read_all_solids(&mut self) -> Result<Vec<BRepSolid>, StepError> {
+    fn read_all_solids(&mut self) -> Result<ReadResult, StepError> {
         let solid_ids: Vec<u64> = match self.anchored_solid_ids() {
             // Anchor present: read exactly what it references. Empty means the
             // product structure points at no solids — fail rather than rescue
@@ -198,6 +301,7 @@ impl<'a> StepReader<'a> {
         };
 
         let mut solids = Vec::new();
+        let mut report = StepImportReport::default();
         for entity_id in solid_ids {
             // Reset maps for each solid
             self.vertex_map.clear();
@@ -206,14 +310,18 @@ impl<'a> StepReader<'a> {
             self.surface_map.clear();
             self.subdivided_edges.clear();
 
-            let solid = self.read_solid(entity_id)?;
+            let (solid, solid_report) = self.read_solid(entity_id)?;
             solids.push(solid);
+            report.solids.push(solid_report);
         }
 
-        Ok(solids)
+        Ok(ReadResult { solids, report })
     }
 
-    pub(crate) fn read_solid(&mut self, solid_id: u64) -> Result<BRepSolid, StepError> {
+    pub(crate) fn read_solid(
+        &mut self,
+        solid_id: u64,
+    ) -> Result<(BRepSolid, SolidImportReport), StepError> {
         use std::collections::HashSet;
 
         let mut topo = Topology::new();
@@ -233,6 +341,11 @@ impl<'a> StepReader<'a> {
 
         // Track faces we skip due to unsupported surface types
         let mut skipped_faces: HashSet<u64> = HashSet::new();
+        let mut solid_report = SolidImportReport {
+            solid_id,
+            total_faces: step_shell.face_ids.len(),
+            ..Default::default()
+        };
 
         // First pass: collect all vertices and surfaces
         for &face_id in &step_shell.face_ids {
@@ -246,9 +359,15 @@ impl<'a> StepReader<'a> {
                         self.surface_map
                             .insert(step_face.surface_id, (idx, sense_flipped));
                     }
-                    Err(StepError::UnsupportedEntity(_)) => {
-                        // Skip this face - surface type not supported
+                    Err(StepError::UnsupportedEntity(reason)) => {
+                        // Skip this face — surface type not supported. Recorded
+                        // in the report so the omission is never silent.
                         skipped_faces.insert(face_id);
+                        solid_report.skipped_faces.push(SkippedFace {
+                            face_id,
+                            surface_id: step_face.surface_id,
+                            reason,
+                        });
                         continue;
                     }
                     Err(e) => return Err(e),
@@ -444,11 +563,24 @@ impl<'a> StepReader<'a> {
         let shell_id = topo.add_shell(vcad_face_ids, ShellType::Outer);
         let solid_id = topo.add_solid(shell_id);
 
-        Ok(BRepSolid {
-            topology: topo,
-            geometry: geom,
-            solid_id,
-        })
+        // Chord subdivision loses the analytic curve but not the geometry —
+        // note it once per solid rather than per face.
+        let subdivided = self.subdivided_edges.len() / 2;
+        if subdivided > 0 {
+            solid_report.notes.push(format!(
+                "{subdivided} curved edge{} approximated by chordal subdivision",
+                if subdivided == 1 { "" } else { "s" }
+            ));
+        }
+
+        Ok((
+            BRepSolid {
+                topology: topo,
+                geometry: geom,
+                solid_id,
+            },
+            solid_report,
+        ))
     }
 
     /// Subdivide a curved edge (circle, B-spline, or trimmed variant) into multiple
