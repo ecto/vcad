@@ -221,11 +221,28 @@ impl RobotEnv {
 
     /// Joint ids in observation order (document order).
     ///
-    /// `Observation::joint_positions[i]` / `joint_velocities[i]` index against
-    /// this list. Action vectors index against [`Self::actuated_joint_ids`],
-    /// which drops zero-dof (Fixed) joints.
+    /// Joints map onto `Observation::joint_positions` / `joint_velocities` by
+    /// *slice*, not by index: joint `i` owns the next
+    /// [`Self::joint_slot_counts`]`[i]` entries. The two lists have equal
+    /// length only when every joint is single-DOF. Action vectors index
+    /// against [`Self::actuated_joint_ids`], which drops zero-dof (Fixed)
+    /// joints.
     pub fn joint_ids(&self) -> &[String] {
         &self.joint_ids
+    }
+
+    /// Number of observation slots each joint in [`Self::joint_ids`] occupies,
+    /// in the same order: `max(1, ndof)` — Fixed = 1 (a zero slot), Revolute /
+    /// Slider / Cylindrical = 1, Ball = 3, Free = 6.
+    ///
+    /// Walk it as a cursor to split an observation back into per-joint
+    /// slices; the sum equals half of [`Self::observation_dim`] minus the
+    /// end-effector contribution.
+    pub fn joint_slot_counts(&self) -> Vec<usize> {
+        self.joint_ids
+            .iter()
+            .map(|id| self.world.joint_dof_count(id).max(1))
+            .collect()
     }
 
     /// Actuated joint ids in action order (document order, Fixed joints excluded).

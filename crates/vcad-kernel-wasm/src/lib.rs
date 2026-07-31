@@ -4434,12 +4434,23 @@ impl PhysicsSim {
 
     /// Joint ids in observation order (document `joints` order).
     ///
-    /// `joint_positions[i]` / `joint_velocities[i]` in every observation
-    /// correspond to `jointIds()[i]`. Action vector entries index
-    /// `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
+    /// Joints map onto `joint_positions` / `joint_velocities` by *slice*, not
+    /// by index: joint `i` owns the next `jointSlotCounts()[i]` entries. The
+    /// lists are the same length only when every joint is single-DOF. Action
+    /// vector entries index `actuatedJointIds()` instead, which drops zero-dof
+    /// (Fixed) joints.
     #[wasm_bindgen(js_name = jointIds)]
     pub fn joint_ids(&self) -> Vec<String> {
         self.env.joint_ids().to_vec()
+    }
+
+    /// Observation slots occupied by each joint in `jointIds()` order:
+    /// `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+    /// Free 6. Walk it as a cursor to split an observation into per-joint
+    /// slices.
+    #[wasm_bindgen(js_name = jointSlotCounts)]
+    pub fn joint_slot_counts(&self) -> Vec<usize> {
+        self.env.joint_slot_counts()
     }
 
     /// Actuated joint ids in action order (document order, Fixed joints
