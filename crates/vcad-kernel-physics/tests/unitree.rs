@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use vcad_kernel_physics::PhysicsWorld;
+use vcad_kernel_physics::{Action, GroundConfig, PhysicsWorld, RobotEnv};
 
 fn examples_dir() -> PathBuf {
     // CARGO_MANIFEST_DIR points at crates/vcad-kernel-physics; examples/ lives
@@ -119,4 +119,73 @@ fn unitree_go2_loads_and_steps() {
         }
     }
     assert_finite_states(&mut world, 60, "Go2");
+}
+
+/// The gym path with ground contact enabled on a real humanoid: PD position
+/// hold at the zero pose while the legs interact with a ground plane placed
+/// at knee height, at the documented near-divergence regime (1/240 s × 4
+/// substeps). The URDF base link is the fixed root here, so "standing" is a
+/// stability claim, not a balance claim: with contact impulses acting on a
+/// 23-DOF articulated chain every substep, nothing may go non-finite and no
+/// link may be driven through the floor.
+#[test]
+fn unitree_g1_pd_hold_with_ground_contact_stays_finite() {
+    let urdf_path = examples_dir().join("unitree-g1.urdf");
+    let doc = vcad_kernel_urdf::read_urdf(&urdf_path).expect("parse unitree-g1.urdf");
+    let instance_ids: Vec<String> = doc
+        .instances
+        .as_ref()
+        .expect("instances")
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+
+    // Find the lowest body origin so the plane can be placed where it
+    // actually intersects the dangling legs.
+    let mut probe = PhysicsWorld::from_document(&doc).expect("build PhysicsWorld");
+    let n_actuated = probe.actuated_joint_ids().len();
+    let zero_q = vec![0.0; n_actuated];
+    let poses = probe.forward_kinematics_at(&zero_q).expect("fk");
+    let min_z = poses
+        .values()
+        .map(|(p, _)| p[2])
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        min_z.is_finite() && min_z < 0.0,
+        "G1 legs should hang below the base"
+    );
+
+    let ground = GroundConfig {
+        enabled: true,
+        height: min_z + 0.05,
+        friction: 0.8,
+        restitution: 0.0,
+    };
+    let mut env =
+        RobotEnv::new(doc, instance_ids.clone(), None, None, Some(ground)).expect("RobotEnv");
+
+    let hold = vec![0.0; env.action_dim()];
+    for _ in 0..120 {
+        let (obs, _, _) = env.step(Action::PositionTarget(hold.clone()));
+        for (i, v) in obs.joint_velocities.iter().enumerate() {
+            assert!(
+                v.is_finite(),
+                "joint {i} velocity non-finite under PD+contact"
+            );
+        }
+        for (i, pose) in obs.end_effector_poses.iter().enumerate() {
+            assert!(
+                pose.iter().all(|c| c.is_finite()),
+                "instance {} pose non-finite",
+                instance_ids[i]
+            );
+            assert!(
+                pose[2] > ground.height - 0.2,
+                "instance {} driven through the floor: z = {} (floor {})",
+                instance_ids[i],
+                pose[2],
+                ground.height
+            );
+        }
+    }
 }

@@ -7010,7 +7010,7 @@
   {
     "name": "create_robot_env",
     "title": "Create Robot Env",
-    "description": "Create a physics simulation environment from a vcad assembly. Session-first: pass the `document_id` of the assembly already open — the env binds to that same session, so there is no IR round-trip and the sim can't run against a stale copy. Inline `document` IR is the stateless fallback; exactly one of the two is required. Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and document_id (what the replay viewer and the other session tools bind to). Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
+    "description": "Create a physics simulation environment from a vcad assembly. Session-first: pass the `document_id` of the assembly already open — the env binds to that same session, so there is no IR round-trip and the sim can't run against a stale copy. Inline `document` IR is the stateless fallback; exactly one of the two is required. Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and document_id (what the replay viewer and the other session tools bind to). A ground plane at z = 0 (friction 0.8) is on by default, so dropped bodies land and legged assemblies can touch a floor — tune or disable it via the ground_* params. Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7040,6 +7040,22 @@
         "max_steps": {
           "type": "number",
           "description": "Maximum episode length (default: 1000)"
+        },
+        "ground_enabled": {
+          "type": "boolean",
+          "description": "Ground-plane contact between robot collision shapes and a horizontal plane at z = ground_height. Default: true. Set false for the old contact-free dynamics (bodies fall forever)."
+        },
+        "ground_height": {
+          "type": "number",
+          "description": "Ground plane height in meters (default: 0)"
+        },
+        "ground_friction": {
+          "type": "number",
+          "description": "Ground Coulomb friction coefficient (default: 0.8)"
+        },
+        "ground_restitution": {
+          "type": "number",
+          "description": "Ground restitution: 0 = inelastic rest, 1 = elastic bounce (default: 0)"
         }
       },
       "required": [
@@ -7499,6 +7515,22 @@
         "max_steps": {
           "type": "number",
           "description": "Maximum episode length (default: 1000)"
+        },
+        "ground_enabled": {
+          "type": "boolean",
+          "description": "Ground-plane contact between robot collision shapes and a horizontal plane at z = ground_height. Default: true. Set false for the old contact-free dynamics (bodies fall forever)."
+        },
+        "ground_height": {
+          "type": "number",
+          "description": "Ground plane height in meters (default: 0)"
+        },
+        "ground_friction": {
+          "type": "number",
+          "description": "Ground Coulomb friction coefficient (default: 0.8)"
+        },
+        "ground_restitution": {
+          "type": "number",
+          "description": "Ground restitution: 0 = inelastic rest, 1 = elastic bounce (default: 0)"
         }
       },
       "required": [

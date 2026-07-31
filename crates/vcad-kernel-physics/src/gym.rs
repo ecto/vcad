@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use vcad_ir::Document;
 
 use crate::error::PhysicsError;
-use crate::world::PhysicsWorld;
+use crate::world::{GroundConfig, PhysicsWorld};
 
 /// Observation from the robot environment.
 ///
@@ -65,6 +65,8 @@ pub struct RobotEnv {
     initial_doc: Document,
     /// Random seed.
     seed: u64,
+    /// Ground-plane contact configuration, reapplied on every reset.
+    ground: GroundConfig,
 }
 
 impl RobotEnv {
@@ -76,13 +78,19 @@ impl RobotEnv {
     /// * `end_effector_ids` - Instance IDs to track as end effectors
     /// * `dt` - Base simulation timestep in seconds (default: 1/240)
     /// * `substeps` - Number of physics steps per environment step (default: 4)
+    /// * `ground` - Ground-plane contact config. `None` enables the default
+    ///   ground: plane at z = 0, friction 0.8, inelastic. Pass
+    ///   `Some(GroundConfig::disabled())` for the old contact-free dynamics.
     pub fn new(
         doc: Document,
         end_effector_ids: Vec<String>,
         dt: Option<f32>,
         substeps: Option<u32>,
+        ground: Option<GroundConfig>,
     ) -> Result<Self, PhysicsError> {
-        let world = PhysicsWorld::from_document(&doc)?;
+        let ground = ground.unwrap_or_default();
+        let mut world = PhysicsWorld::from_document(&doc)?;
+        world.set_ground(ground);
         let joint_ids = world.joint_ids();
         let actuated_joint_ids = world.actuated_joint_ids();
 
@@ -97,6 +105,7 @@ impl RobotEnv {
             current_step: 0,
             initial_doc: doc,
             seed: 0,
+            ground,
         })
     }
 
@@ -110,6 +119,7 @@ impl RobotEnv {
         // violation (e.g. a non-deterministic bug in PhysicsWorld::from_document).
         self.world = PhysicsWorld::from_document(&self.initial_doc)
             .expect("gym reset: PhysicsWorld::from_document failed on a doc that was valid at construction — this should be unreachable");
+        self.world.set_ground(self.ground);
         self.joint_ids = self.world.joint_ids();
         self.actuated_joint_ids = self.world.actuated_joint_ids();
         self.current_step = 0;
@@ -482,7 +492,7 @@ mod tests {
     #[test]
     fn joint_observation_order_matches_document_order() {
         let doc = create_three_joint_robot_reversed();
-        let env = RobotEnv::new(doc, vec!["link3_inst".to_string()], None, None).unwrap();
+        let env = RobotEnv::new(doc, vec!["link3_inst".to_string()], None, None, None).unwrap();
 
         // The contract: joint_ids() is doc.joints order, not BFS or HashMap
         // order. Before joint_order landed this permuted run-to-run.
@@ -607,6 +617,7 @@ mod tests {
             vec!["tip_inst".to_string(), "arm_inst".to_string()],
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -658,10 +669,271 @@ mod tests {
         env.step(Action::VelocityTarget(vec![10.0]));
     }
 
+    /// A free 100 mm cube dropped from 1 m plus the mandatory (fixed, and
+    /// therefore contact-exempt) ground instance parked off to the side.
+    fn create_drop_test_doc() -> Document {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: Some("anchor".to_string()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: Vec3::new(20.0, 20.0, 20.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            vcad_ir::Node {
+                id: 2,
+                name: Some("crate".to_string()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: Vec3::new(100.0, 100.0, 100.0),
+                },
+            },
+        );
+        let mut part_defs = HashMap::new();
+        for (root, name) in [(1, "anchor"), (2, "crate")] {
+            part_defs.insert(
+                name.to_string(),
+                PartDef {
+                    id: name.to_string(),
+                    name: None,
+                    root,
+                    default_material: None,
+                    inertial: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(vec![
+            Instance {
+                id: "anchor_inst".to_string(),
+                part_def_id: "anchor".to_string(),
+                name: None,
+                tags: std::vec::Vec::new(),
+                transform: Some(vcad_ir::Transform3D {
+                    translation: Vec3::new(1000.0, 0.0, 0.0),
+                    ..Default::default()
+                }),
+                material: None,
+            },
+            Instance {
+                id: "crate_inst".to_string(),
+                part_def_id: "crate".to_string(),
+                name: None,
+                tags: std::vec::Vec::new(),
+                // Cube spans z ∈ [0, 100] mm in its own frame; lift it 1 m.
+                transform: Some(vcad_ir::Transform3D {
+                    translation: Vec3::new(0.0, 0.0, 1000.0),
+                    ..Default::default()
+                }),
+                material: None,
+            },
+        ]);
+        doc.joints = Some(std::vec::Vec::new());
+        doc.ground_instance_id = Some("anchor_inst".to_string());
+        doc
+    }
+
+    /// The M0 acceptance test: a box dropped from 1 m must land on the
+    /// ground plane and come to rest — not tunnel through the world.
+    #[test]
+    fn free_box_drop_lands_and_rests() {
+        let doc = create_drop_test_doc();
+        // Default ground: on at z = 0, friction 0.8, inelastic.
+        let mut env = RobotEnv::new(doc, vec!["crate_inst".to_string()], None, None, None).unwrap();
+        env.set_max_steps(100_000);
+
+        let mut min_z = f64::INFINITY;
+        let mut last = env.observe();
+        assert!((last.end_effector_poses[0][2] - 1.0).abs() < 1e-6);
+
+        // 480 env steps × 4 substeps at 1/240 s = 8 s of sim time; the fall
+        // itself takes ~0.45 s.
+        for _ in 0..480 {
+            let (obs, _, _) = env.step(Action::Torque(vec![]));
+            let z = obs.end_effector_poses[0][2];
+            assert!(z.is_finite(), "box pose went non-finite");
+            min_z = min_z.min(z);
+            last = obs;
+        }
+
+        // Never tunneled: the body origin (cube bottom face) may dip a
+        // little below the plane while the solve catches it, but must not
+        // pass through.
+        assert!(
+            min_z > -0.05,
+            "box tunneled through the ground: min z = {min_z} m"
+        );
+        // At rest ON the floor: origin back within a couple of cm of z = 0
+        // (it started at 1 m, so this also proves it actually fell).
+        assert!(
+            last.end_effector_poses[0][2].abs() < 0.03,
+            "box did not come to rest on the floor: final z = {} m",
+            last.end_effector_poses[0][2]
+        );
+    }
+
+    /// The same drop with the ground disabled must fall straight through —
+    /// proving the previous test exercises contact rather than some other
+    /// floor the dynamics grew.
+    #[test]
+    fn free_box_drop_without_ground_falls_forever() {
+        let doc = create_drop_test_doc();
+        let mut env = RobotEnv::new(
+            doc,
+            vec!["crate_inst".to_string()],
+            None,
+            None,
+            Some(crate::world::GroundConfig::disabled()),
+        )
+        .unwrap();
+        env.set_max_steps(100_000);
+        let mut last_z = 1.0;
+        for _ in 0..480 {
+            let (obs, _, _) = env.step(Action::Torque(vec![]));
+            last_z = obs.end_effector_poses[0][2];
+        }
+        assert!(
+            last_z < -1.0,
+            "with ground disabled the box should keep falling, final z = {last_z} m"
+        );
+    }
+
+    /// Fixed base at height with a long pendulum arm: under gravity the arm
+    /// swings down and must come to rest ON the floor instead of swinging
+    /// through it. Also a stability check — a PD position hold is engaged
+    /// while the arm rests against the plane, and nothing may diverge.
+    fn create_pendulum_over_floor() -> Document {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: None,
+                op: vcad_ir::CsgOp::Cube {
+                    size: Vec3::new(60.0, 60.0, 60.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            vcad_ir::Node {
+                id: 2,
+                name: None,
+                op: vcad_ir::CsgOp::Cube {
+                    size: Vec3::new(20.0, 20.0, 300.0),
+                },
+            },
+        );
+        let mut part_defs = HashMap::new();
+        for (root, name) in [(1, "post"), (2, "arm")] {
+            part_defs.insert(
+                name.to_string(),
+                PartDef {
+                    id: name.to_string(),
+                    name: None,
+                    root,
+                    default_material: None,
+                    inertial: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(vec![
+            Instance {
+                id: "post_inst".to_string(),
+                part_def_id: "post".to_string(),
+                name: None,
+                tags: std::vec::Vec::new(),
+                // Post top face at z = 200 mm.
+                transform: Some(vcad_ir::Transform3D {
+                    translation: Vec3::new(0.0, 0.0, 140.0),
+                    ..Default::default()
+                }),
+                material: None,
+            },
+            Instance {
+                id: "arm_inst".to_string(),
+                part_def_id: "arm".to_string(),
+                name: None,
+                tags: std::vec::Vec::new(),
+                transform: None,
+                material: None,
+            },
+        ]);
+        // Pivot at the post top; the arm's own frame spans z ∈ [0, 300] mm
+        // and hangs from its top end — a 300 mm pendulum from a 200 mm-high
+        // pivot swings well below z = 0.
+        doc.joints = Some(vec![Joint {
+            id: "pivot".to_string(),
+            name: None,
+            parent_instance_id: Some("post_inst".to_string()),
+            child_instance_id: "arm_inst".to_string(),
+            parent_anchor: Vec3::new(0.0, 0.0, 60.0),
+            child_anchor: Vec3::new(10.0, 10.0, 300.0),
+            kind: JointKind::Revolute {
+                axis: Vec3::new(0.0, 1.0, 0.0),
+                limits: None,
+            },
+            // Start horizontal so it has to swing down into the floor.
+            state: 90.0,
+        }]);
+        doc.ground_instance_id = Some("post_inst".to_string());
+        doc
+    }
+
+    #[test]
+    fn pendulum_rests_on_floor_instead_of_swinging_through() {
+        let doc = create_pendulum_over_floor();
+        let mut env = RobotEnv::new(doc, vec!["arm_inst".to_string()], None, None, None).unwrap();
+        env.set_max_steps(100_000);
+
+        // Phase 1: passive swing under gravity. Track the arm's lowest
+        // pose-origin z (the origin is the arm's own frame corner; its
+        // lowest mesh point is what actually touches, so allow the ~20 mm
+        // arm cross-section plus contact slop).
+        let mut min_z = f64::INFINITY;
+        let mut last = env.observe();
+        for _ in 0..600 {
+            let (obs, _, _) = env.step(Action::Torque(vec![0.0]));
+            assert!(obs.joint_positions[0].is_finite());
+            min_z = min_z.min(obs.end_effector_poses[0][2]);
+            last = obs;
+        }
+        // A frictionless-through-floor swing would carry the origin to
+        // roughly -(300 + 200) mm below the pivot at the bottom of the arc.
+        assert!(
+            min_z > -0.06,
+            "arm swung through the floor: min origin z = {min_z} m"
+        );
+        // It ended up resting against the plane (not oscillating wildly).
+        assert!(
+            last.joint_velocities[0].abs() < 20.0,
+            "arm still moving fast after 10 s: {} deg/s",
+            last.joint_velocities[0]
+        );
+
+        // Phase 2: engage a PD hold at the resting pose while in contact —
+        // the explicit integrator must stay finite and the arm must stay
+        // above the floor.
+        let hold = last.joint_positions[0];
+        for _ in 0..240 {
+            let (obs, _, _) = env.step(Action::PositionTarget(vec![hold]));
+            assert!(
+                obs.joint_positions[0].is_finite() && obs.joint_velocities[0].is_finite(),
+                "PD hold in contact diverged"
+            );
+            assert!(obs.end_effector_poses[0][2] > -0.06);
+        }
+    }
+
     #[test]
     fn test_env_creation() {
         let doc = create_simple_robot();
-        let env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None).unwrap();
+        let env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None, None).unwrap();
 
         assert_eq!(env.num_joints(), 2);
         assert_eq!(env.action_dim(), 2);
@@ -670,7 +942,7 @@ mod tests {
     #[test]
     fn test_env_reset() {
         let doc = create_simple_robot();
-        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None).unwrap();
+        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None, None).unwrap();
 
         let obs = env.reset();
         assert_eq!(obs.joint_positions.len(), 2);
@@ -681,7 +953,7 @@ mod tests {
     #[test]
     fn test_env_step() {
         let doc = create_simple_robot();
-        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None).unwrap();
+        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None, None).unwrap();
 
         env.reset();
 
