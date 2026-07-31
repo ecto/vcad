@@ -138,6 +138,44 @@ fn zz_two_rotated_blades_sequential() {
             v.point
         );
     }
+    for (fid, face) in u1.topology.faces.iter() {
+        if u1.geometry.surfaces[face.surface_index].surface_type()
+            != vcad_kernel_geom::SurfaceKind::Cylinder
+        {
+            continue;
+        }
+        let pts: Vec<_> = u1
+            .topology
+            .loop_half_edges(face.outer_loop)
+            .map(|he| u1.topology.vertices[u1.topology.half_edges[he].origin].point)
+            .collect();
+        let zmin = pts.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+        let zmax = pts.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+        let umin = pts
+            .iter()
+            .map(|p| p.y.atan2(p.x))
+            .fold(f64::MAX, f64::min);
+        let umax = pts
+            .iter()
+            .map(|p| p.y.atan2(p.x))
+            .fold(f64::MIN, f64::max);
+        eprintln!(
+            "U1WALL {fid:?} nv={} z[{zmin:.3},{zmax:.3}] u[{umin:.3},{umax:.3}]",
+            pts.len()
+        );
+        if pts.len() == 58 || pts.len() == 21 {
+            let uv: Vec<_> = pts
+                .iter()
+                .map(|p| {
+                    (
+                        (p.y.atan2(p.x) * 1e3).round() / 1e3,
+                        (p.z * 1e3).round() / 1e3,
+                    )
+                })
+                .collect();
+            eprintln!("U1LOOP {uv:?}");
+        }
+    }
     let BooleanResult::BRep(u2) =
         boolean_op(&mk(90.0), &u1, BooleanOp::Union, 64).expect("boolean 2");
     // No vertex may leave the model's z-range: phantom band geometry shows
@@ -173,4 +211,90 @@ fn zz_two_rotated_blades_sequential() {
         }
         panic!("{} phantom vertices", bad.len());
     }
+    let mesh = vcad_kernel_tessellate::tessellate_brep(&u2, 64);
+    let quantum = 1e-5;
+    let vkey = |vi: usize| -> [i64; 3] {
+        let mut k = [0i64; 3];
+        for c in 0..3 {
+            k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+        }
+        k
+    };
+    let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+        std::collections::HashMap::new();
+    for t in 0..mesh.indices.len() / 3 {
+        for k in 0..3 {
+            let a = vkey(mesh.indices[t * 3 + k] as usize);
+            let b = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+            if a == b {
+                continue;
+            }
+            if a < b {
+                *net.entry((a, b)).or_default() += 1;
+            } else {
+                *net.entry((b, a)).or_default() -= 1;
+            }
+        }
+    }
+    let mut opens: Vec<_> = net
+        .iter()
+        .filter(|(_, &n)| n != 0)
+        .map(|((a, b), _)| (*a, *b))
+        .collect();
+    opens.sort();
+    for (a, b) in opens.iter().take(8) {
+        eprintln!(
+            "open ({:.4},{:.4},{:.4})->({:.4},{:.4},{:.4})",
+            a[0] as f64 * quantum,
+            a[1] as f64 * quantum,
+            a[2] as f64 * quantum,
+            b[0] as f64 * quantum,
+            b[1] as f64 * quantum,
+            b[2] as f64 * quantum
+        );
+    }
+    if opens.len() > 4 {
+        // Which faces' tessellations emit the phantom ring edges?
+        let params = vcad_kernel_tessellate::TessellationParams::from_segments(64);
+        for (fid, kind, fmesh) in
+            vcad_kernel_tessellate::tessellate_brep_by_face(&u2, &params)
+        {
+            let hits = fmesh
+                .vertices
+                .chunks(3)
+                .filter(|c| (c[2] as f64 - 10.8146).abs() < 1e-3 && (c[0] as f64) < -15.0)
+                .count();
+            if hits > 2 {
+                let nv = u2.topology.loop_len(u2.topology.faces[fid].outer_loop);
+                eprintln!("EMITTER {fid:?} {kind:?} nv={nv} ring-verts {hits}");
+            }
+        }
+        for (fid, face) in u2.topology.faces.iter() {
+            if u2.geometry.surfaces[face.surface_index].surface_type()
+                != vcad_kernel_geom::SurfaceKind::Cylinder
+            {
+                continue;
+            }
+            let pts: Vec<_> = u2
+                .topology
+                .loop_half_edges(face.outer_loop)
+                .map(|he| u2.topology.vertices[u2.topology.half_edges[he].origin].point)
+                .collect();
+            if pts.iter().any(|p| (p.z - 10.8146).abs() < 1e-3) {
+                let uv: Vec<_> = pts
+                    .iter()
+                    .map(|p| {
+                        let u = p.y.atan2(p.x);
+                        ((u * 1e3).round() / 1e3, (p.z * 1e3).round() / 1e3)
+                    })
+                    .collect();
+                if pts.len() > 100 {
+                    eprintln!("RINGFACE {fid:?} nv={} FULL {uv:?}", pts.len());
+                } else {
+                    eprintln!("RINGFACE {fid:?} nv={} {:?}", pts.len(), &uv[..uv.len().min(14)]);
+                }
+            }
+        }
+    }
+    assert!(opens.len() <= 4, "{} mesh open edges", opens.len());
 }

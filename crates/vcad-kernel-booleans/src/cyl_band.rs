@@ -497,7 +497,13 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
             .map(|w| w[1].0 - w[0].0)
             .fold(0.0f64, f64::max)
     };
-    let range_tol = (1.5 * max_step(&chain_a).max(max_step(&chain_b))).max(1e-6);
+    // Cap: a 2-point analytic chain has max_step = its whole span, which
+    // would make the tolerance unbounded and let a tiny wedge pair with a
+    // full-circle chain as a "band" (whose clamped interpolation then
+    // paints a phantom flat ring around the cylinder).
+    let range_tol = (1.5 * max_step(&chain_a).max(max_step(&chain_b)))
+        .max(1e-6)
+        .min(0.35);
     if (a0 - b0).abs() > range_tol || (a1 - b1).abs() > range_tol {
         band_dbg!(
             "parse_band: range mismatch a=[{a0:.6},{a1:.6}] b=[{b0:.6},{b1:.6}] tol {range_tol:.6}"
@@ -966,6 +972,19 @@ pub(crate) fn realize_bands(
     };
     let mut new_faces = Vec::with_capacity(bands.len());
     for band in bands {
+        // A band's chains must co-span its u-interval; a wedge paired with
+        // a (clamped) full ring is a malformed region that would realize
+        // as phantom geometry. Skip it — the area it claims is already
+        // covered by the well-formed siblings.
+        let span = |c: &Chain| c[c.len() - 1].0 - c[0].0;
+        if (span(&band.lo) - span(&band.hi)).abs() > 0.35 {
+            band_dbg!(
+                "realize: skipping malformed band lo span {:.3} hi span {:.3}",
+                span(&band.lo),
+                span(&band.hi)
+            );
+            continue;
+        }
         for p in band.lo.iter().chain(band.hi.iter()) {
             if p.1 < parent_v_range.0 - 1e-6 || p.1 > parent_v_range.1 + 1e-6 {
                 band_dbg!(

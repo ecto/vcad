@@ -107,6 +107,22 @@ fn probe(src: &str, segments: u32) {
         }
     }
     if let Some(brep) = solid.as_brep() {
+        for (fid, face) in &brep.topology.faces {
+            let pts: Vec<_> = brep
+                .topology
+                .loop_half_edges(face.outer_loop)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if pts.iter().any(|p| (p.z - 10.8146).abs() < 1e-3) {
+                let zmin = pts.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+                let zmax = pts.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+                println!(
+                    "Z1081 {fid:?} {:?} nv={} z[{zmin:.3},{zmax:.3}]",
+                    brep.geometry.surfaces[face.surface_index].surface_type(),
+                    pts.len()
+                );
+            }
+        }
         let params = vcad_kernel_tessellate::TessellationParams::from_segments(segments);
         for (fid, kind, fmesh) in vcad_kernel_tessellate::tessellate_brep_by_face(brep, &params) {
             let zmin = fmesh

@@ -50,6 +50,16 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
         if origin != dest {
             continue; // not a closed-curve edge
         }
+        // origin == dest alone is ambiguous: a PINCH DUPLICATE in a dense
+        // band loop (two consecutive half-edges sharing an origin, kept
+        // deliberately by realize_bands) looks identical from endpoints.
+        // A genuine analytic full-circle edge only occurs in the tiny
+        // legacy loops (1-he cap seam loops, ≤4-he wall rectangles);
+        // splicing a ring into a dense loop would thread a phantom
+        // full-circle polyline through the middle of the face.
+        if brep.topology.loop_len(loop_id) > 4 {
+            continue;
+        }
         let twin = he.twin;
 
         // Find the cylinder that carries this circle (own face or twin's).
@@ -133,7 +143,6 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
                 -axis
             }
         };
-        let _ = loop_id;
 
         // Canonical ring, CCW about `he_normal`; interior points only.
         let ring = canonical_arc_points(center, radius, he_normal, v_pt, v_pt, segments);

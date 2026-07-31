@@ -447,6 +447,12 @@ pub(crate) fn find_or_create_vertex(
     if std::env::var("VCAD_VERTEX_TRAP").is_ok() && (point.z < -1.0 || point.z > 14.0) {
         panic!("vertex trap: {point:?}");
     }
+    if std::env::var("VCAD_RING_TRAP").is_ok()
+        && (point.z - 8.8967).abs() < 1e-3
+        && point.x < -15.0
+    {
+        panic!("ring trap: {point:?}");
+    }
     // Snap small values to exactly 0 to avoid floating point artifacts
     let snapped = snap_point(*point);
 
@@ -2613,6 +2619,19 @@ fn split_conical_face_by_circle(
 /// 2. Creating new 3D vertices at the intersection points (on the seam)
 /// 3. Creating two new face loops that share the intersection edge
 /// 4. Removing the original face and adding the two new sub-faces
+pub fn split_cylindrical_face_by_circle_logged(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+) -> SplitResult {
+    split_dbg!(
+        "legacy circle split on face {face_id:?} nv={} at z {:.4}",
+        brep.topology.loop_len(brep.topology.faces[face_id].outer_loop),
+        circle.center.z
+    );
+    split_cylindrical_face_by_circle(brep, face_id, circle)
+}
+
 pub fn split_cylindrical_face_by_circle(
     brep: &mut BRepSolid,
     face_id: FaceId,
@@ -2973,6 +2992,10 @@ pub fn split_cylindrical_face_by_line(
     line: &vcad_kernel_geom::Line3d,
     segments: u32,
 ) -> SplitResult {
+    split_dbg!(
+        "legacy line split on face {face_id:?} nv={}",
+        brep.topology.loop_len(brep.topology.faces[face_id].outer_loop)
+    );
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
     let orientation = face.orientation;
@@ -3311,7 +3334,7 @@ pub fn split_cylindrical_face(
                     };
                 }
             }
-            let result = split_cylindrical_face_by_circle(brep, face_id, circle);
+            let result = split_cylindrical_face_by_circle_logged(brep, face_id, circle);
             if result.sub_faces.len() >= 2 {
                 return result;
             }
