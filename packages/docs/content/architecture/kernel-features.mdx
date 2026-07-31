@@ -4,7 +4,7 @@ description: "A catalog of everything the vcad BRep kernel can do, with rendered
 order: 2
 ---
 
-The vcad kernel is a purpose-built BRep (boundary representation) modeling kernel written in Rust — roughly 285K lines across 70+ focused crates, each owning one capability. This page catalogs every feature area, with examples authored in [loon](/reference/format) and rendered by the kernel's own pipeline: loon source → IR → BRep evaluation → tessellation → `vcad-render`. Every image below is the kernel's actual output.
+The vcad kernel is a purpose-built BRep (boundary representation) modeling kernel written in Rust — roughly 400K lines across 90 focused crates, each owning one capability. This page catalogs every feature area, with examples authored in [loon](/reference/format) and rendered by the kernel's own pipeline: loon source → IR → BRep evaluation → tessellation → `vcad-render`. Every image below is the kernel's actual output.
 
 ## Modeling Core
 
@@ -259,7 +259,40 @@ Honesty: the luminance edge-stopping weight is scaled by the estimator's own var
 
 ### Physics
 
-`vcad-kernel-physics` converts BRep assemblies into articulated rigid-body simulations (phyz): revolute, prismatic, cylindrical, ball, and fixed joints, with a gym-style `reset()` / `step(action)` / `observe()` interface for reinforcement learning — actions as torques, position targets, or velocity targets. The step includes ground contact: each part's convex collision geometry is tested against a configurable ground plane (height, Coulomb friction, restitution — on by default at z = 0) and resolved with a velocity-level projected Gauss-Seidel impulse solve over the coupled contact manifold, so dropped bodies land and rest and legged assemblies can push against a floor instead of falling through the world.
+`vcad-kernel-physics` converts BRep assemblies into articulated rigid-body simulations (phyz): revolute, prismatic, cylindrical, ball, fixed, and **free** (6-DOF floating base) joints, with a gym-style `reset()` / `step(action)` / `observe()` interface for reinforcement learning — actions as torques, position targets, or velocity targets. The step includes ground contact: each part's convex collision geometry is tested against a configurable ground plane (height, Coulomb friction, restitution — on by default at z = 0) and resolved with a velocity-level projected Gauss-Seidel impulse solve over the coupled contact manifold, so dropped bodies land and rest and legged assemblies can push against a floor instead of falling through the world.
+
+Only *support* points enter that per-substep contact scan. A vertex strictly inside a link's convex hull can never be the deepest point of a plane contact, so `colliders::support_points` keeps the extreme vertex in each of 256 Fibonacci-sphere directions and caches it per body. Every kept point is an original vertex — the reduction is a subset of the true hull vertices, so it cannot invent geometry or deepen a penetration — and on a 22-DOF humanoid it takes the candidate count from ~118 k to ~3 k, which is the difference between 19 and 8 900 env-steps/s. That is the difference between "the simulation runs" and "you can train against it."
+
+### Robot Learning
+
+`vcad-sim::rl` closes the loop from a robot description to a trained policy. The whole path is in-repo and headless:
+
+```bash
+vcad import-urdf K1_22dof_floating.urdf k1.vcad
+cargo run --release -p vcad-sim --example k1_stand -- k1.vcad 700
+```
+
+![The Booster K1 humanoid imported from URDF and rendered by the kernel](/assets/kernel/k1-urdf-import.jpg)
+
+That is the Booster K1 — 22 actuated joints, 19.666 kg, imported from the official URDF with its `<inertial>` blocks carried through unchanged (the mass is exact, not estimated from mesh volume) and drawn by the same renderer as every other figure on this page.
+
+**The env.** `RobotEnv::step_full` returns an observation, a reward slot, a done flag, and a `StepInfo` of ground-truth diagnostics — base height, tilt, joint-limit violations, the episode's sampled actuator latency. The kernel deliberately computes **no task reward** (it is always 0.0): rewards are a caller-supplied closure over `StepResult`, so no reward DSL leaks into the physics. `EnvConfig` carries domain randomization (per-link mass scale, PD gain scale, actuator latency in substeps, initial joint position/velocity perturbation), Gaussian observation noise, and termination conditions (base below a height, tilted past an angle, any joint at a limit).
+
+Observation noise perturbs `StepResult::observation` only, while `StepInfo` stays exact. That asymmetry is the point, and it is the usual privileged-information split: the policy trains against noisy sensors while the reward and the termination decision are computed from ground truth.
+
+**The observation layout has one sharp edge.** Joints map onto `joint_positions` / `joint_velocities` by *slice*, not by index — joint `i` owns the next `joint_slot_counts()[i]` entries. A Free joint contributes **6** slots and a Ball joint 3, so on a floating-base humanoid the actuated joint angles do not start at index 0 and indexing by joint number silently reads the wrong DOF. Walk the slot table (`rl::actuated_slots` does exactly this). The Free joint's own layout swaps order between position and velocity — `q = [x, y, z, rx, ry, rz]` but `v = [wx, wy, wz, vx, vy, vz]` — following phyz's Featherstone convention.
+
+**The trainer.** ARS (Augmented Random Search): a `LinearPolicy` over whitened features, updated from the top-`k` of `n` antithetic finite-difference directions, parallelized across directions with rayon. `EnvSpec` describes how to rebuild an identical env per rollout; `ArsConfig` carries the hyperparameters. It needs only rollouts — no gradients through contact — which is why it is the right first trainer for this seam.
+
+`rollouts_per_eval` is the setting that matters most and looks least important. On a randomized env a single rollout measures the *episode's draw* at least as much as the policy, so selecting the best-scoring iterate reliably picks a lucky sample: an iterate scoring 116.34 on its own evaluation averaged **7.93** across ten fresh seeds — no better than doing nothing. Averaging several draws, with the same seed set shared by the ±δ pair of every direction (common random numbers, so the draw cancels out of the difference driving the update), is the fix.
+
+**Where this actually stands.** On the K1 standing task, with 1 kHz physics / 50 Hz control and Booster-style randomization, the baseline of simply holding the rest pose scores 6.14 over 17 of 400 steps; the trained policy reaches a 10-seed mean of 12.33 over ~38 steps. Roughly double, and **it never survives a full episode**. Turning randomization off, the same trainer takes the task from 61 to 400/400 steps in ~800 iterations — but that policy collapses back to 39–67 steps the moment randomization returns, having memorized one trajectory. A deterministic gym env makes "survived the episode" a meaningless number, which is worth knowing before you trust one.
+
+<Callout type="warning" title="Two gotchas that cost an afternoon each">
+**Humanoid URDFs ship their floating base commented out.** Booster's `K1_22dof.urdf`, `K1_locomotion.urdf`, and most others carry the world link and `<joint type="floating">` inside an XML comment, because the convention is that the simulator supplies the base (the matching MJCF has `<joint type="free"/>`). vcad imports what the file says, so the root link becomes the ground instance and the robot is *welded to the world* — silently pinned, and useless for locomotion. Uncomment that block before importing. The Free joint's `parentAnchor.z` is what sets the spawn height, since `joint.state` is a scalar and meaningless for a 6-DOF joint.
+
+**Published PD gains assume an implicit integrator.** Gains from Isaac-based configs (booster_gym and friends: kp 200 hip/knee, 50 ankle) tear the robot apart in 0.2 s here — base tilt goes 0.1° → 4.65° → 49° in three steps, which looks exactly like a contact bug and is not one. This crate integrates explicitly, where a PD servo is stable only while ω·dt stays small for ω = √(kp / I_reflected); at dt = 5 ms the light joints land near ω·dt ≈ 0.7 and diverge. Run the physics at 1 kHz (`dt = 1/1000`, `substeps = 20`) and keep control at 50 Hz, and the same gains are well behaved. The kernel's own inertia-scaled defaults (ω = 20 rad/s, ζ = 1) are stable at any tick but far too soft to hold 20 kg — the K1 sinks through its knees instead of balancing.
+</Callout>
 
 ### Differentiable Geometry
 
