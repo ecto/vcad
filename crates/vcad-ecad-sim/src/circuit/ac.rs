@@ -14,7 +14,7 @@
 //!
 //! Complex arithmetic is hand-rolled as an `(re, im)` pair — no external
 //! dependency, and the dense complex LU is a line-for-line sibling of the
-//! real one in [`super::linalg`].
+//! real one in `linalg`.
 
 use super::dc::{operating_point, DcError, DcSolution};
 use super::devices::VT;

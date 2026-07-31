@@ -5,7 +5,7 @@
 //! export takes a JSON config plus source bytes and returns SVG (renders)
 //! or JSON (data). The pure core lives in this module so it compiles and
 //! tests natively; the `#[wasm_func]` shims are gated to `wasm32` in
-//! [`wasm`].
+//! `wasm`.
 //!
 //! Typst plugins are sandboxed and must be pure — no filesystem, network,
 //! or cross-call state — which these functions already are: string in,

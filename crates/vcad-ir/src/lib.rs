@@ -1117,8 +1117,8 @@ pub enum CsgOp {
     ///
     /// Sheet-metal ops bypass the regular Solid pipeline — the engine
     /// detects a sheet-metal root and routes the whole chain to
-    /// [`vcad_kernel_wasm::sheet_metal::evaluate_sheet_metal_chain`], which
-    /// builds a [`vcad_kernel_sheet::SheetMetalModel`] and returns a
+    /// `vcad_kernel_wasm::sheet_metal::evaluate_sheet_metal_chain`, which
+    /// builds a `vcad_kernel_sheet::SheetMetalModel` and returns a
     /// tessellated mesh + flat pattern.
     SheetMetalBaseFlangeRect {
         /// Width (mm), extends in +X.
@@ -1178,7 +1178,7 @@ pub enum CsgOp {
         parent: NodeId,
         /// Panel id within the parent's model (0 = root).
         panel_id: usize,
-        /// Edge index in that panel's outline (0 = outline[0]→outline[1]).
+        /// Edge index in that panel's outline (0 = outline\[0\]→outline\[1\]).
         edge_index: usize,
         /// Flange length perpendicular to the hinge edge (mm).
         length: f64,

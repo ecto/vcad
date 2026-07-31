@@ -20,14 +20,14 @@
 //! different places, each computed the correct way for its side of the seam:
 //!
 //! - **`dp_body/dθ`** — *exact*, from the differentiable seam. The frozen
-//!   plan plus a per-parameter [`ParamSeeding`] feeds
-//!   [`mass_properties_with_derivative`], which carries dual numbers through
+//!   plan plus a per-parameter `ParamSeeding` feeds
+//!   `mass_properties_with_derivative`, which carries dual numbers through
 //!   the polynomial mass-property integrals: every field's θ-derivative in
 //!   one pass, to machine precision. No remeshing, no topology risk.
 //!
 //! - **`∂J/∂p_body`** — two implementations of the same factor:
 //!   - **Adjoint (exact)** — [`rollout_gradient_adjoint`] hands a structured
-//!     rollout ([`AdjointRolloutSpec`]) to the **phyz trajectory adjoint**
+//!     rollout (`AdjointRolloutSpec`) to the **phyz trajectory adjoint**
 //!     (`phyz::diff`), which prices all `10·n_bodies` sensitivities in one
 //!     backward pass (dual-number lanes through a scalar-generic ABA — no
 //!     finite differences). Requires the rollout in structured form:
@@ -742,7 +742,7 @@ pub fn rollout_gradient_via_density(
 /// vcad-kernel-physics otherwise wraps phyz completely (no phyz types in
 /// public APIs). The adjoint-backed gradients are the exception: callers
 /// describe the rollout by *building a phyz model themselves*, so
-/// [`AdjointRolloutSpec`](interop::AdjointRolloutSpec) necessarily carries
+/// [`interop::AdjointRolloutSpec`] necessarily carries
 /// `phyz::Model` / `phyz::math::DVec`. Anything imported from here couples
 /// your code to phyz's API; the wrapped entry points
 /// ([`rollout_gradient_adjoint`], [`contact_rollout_gradient`]) are the

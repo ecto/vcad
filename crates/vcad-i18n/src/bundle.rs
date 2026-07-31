@@ -14,7 +14,7 @@ impl TranslationBundle {
     /// Load translations for the given language code.
     ///
     /// English is always embedded at compile time. Other locales are loaded
-    /// from JSON files embedded via `include_str!` in [`load_locale`].
+    /// from JSON files embedded via `include_str!` in `load_locale`.
     pub fn load(language: &str) -> Self {
         let english: HashMap<String, String> =
             serde_json::from_str(EN_JSON).expect("en.json must be valid");

@@ -8,7 +8,7 @@
 //!
 //! [`RouteSession`] wraps the same R-tree broadphase and the same exact
 //! [`CopperGeom::distance_to`] narrowphase the DRC clearance pass uses, plus the
-//! same [`NetTieGroups`] exemptions, behind three operations:
+//! same `NetTieGroups` exemptions, behind three operations:
 //!
 //! - [`RouteSession::probe`] — test a candidate geometry against existing copper
 //!   without mutating anything (the avoidance constraint).

@@ -1,7 +1,7 @@
 //! Parser for KiCad `.kicad_pcb` board files.
 //!
 //! Converts a `.kicad_pcb` S-expression file into a [`vcad_ir::ecad::Pcb`]
-//! struct.  Reuses the [`crate::sexpr`] S-expression parser.
+//! struct.  Reuses the `sexpr` S-expression parser.
 
 use std::collections::HashMap;
 

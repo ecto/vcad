@@ -245,7 +245,7 @@ fn surface_tag(surface: &dyn Surface) -> String {
 /// Every face the boolean keeps still lies on exactly one input surface (the
 /// splitter trims loops but reuses the carrying surfaces), so each result
 /// face is matched to the input faces whose surface is geometrically
-/// identical (within [`SURF_TOL`]). Fail-closed rules:
+/// identical (within `SURF_TOL`). Fail-closed rules:
 ///
 /// - candidates carrying more than one distinct input name (e.g. two flush
 ///   coplanar faces from A and B) → the result face stays anonymous;
@@ -310,7 +310,7 @@ pub fn propagate_boolean(
     map
 }
 
-/// Geometric identity of two surfaces within [`SURF_TOL`].
+/// Geometric identity of two surfaces within `SURF_TOL`.
 ///
 /// Kind-wise comparison of the analytic parameters that determine the point
 /// set (parameterization details like `ref_dir` are ignored; axis sign is
