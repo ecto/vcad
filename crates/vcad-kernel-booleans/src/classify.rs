@@ -28,6 +28,15 @@ pub enum FaceClassification {
     OnOpposite,
 }
 
+/// Most boundary probes to take for one face, on top of its interior
+/// sample point.
+///
+/// The probes exist to stop a single unlucky sample from deciding a face
+/// that straddles the other solid, so what matters is that they are spread
+/// around the boundary — not that there is one per vertex. Capping them
+/// decouples classification cost from tessellation density.
+const MAX_BOUNDARY_PROBES: usize = 24;
+
 /// How far a classification probe must sit from the other solid's boundary
 /// before its in/out verdict is trusted to veto (mm).
 ///
@@ -1121,9 +1130,19 @@ fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Ve
     if outer_verts.len() < 3 {
         return Vec::new();
     }
+    // One probe per boundary edge, but capped: probe count should follow
+    // how much confidence the vote needs, not how finely the boundary
+    // happens to be discretized. A band face cut by a sampled ellipse can
+    // carry hundreds of vertices, and since every probe costs a full
+    // point-in-mesh scan, one-probe-per-vertex made classification scale
+    // with tessellation density — 21x on the fillet corpus. Sampling the
+    // boundary at an even stride keeps the probes spread all the way
+    // around the face, which is what makes the vote robust.
     let n = outer_verts.len();
-    let mut probes = Vec::with_capacity(n);
-    for i in 0..n {
+    let count = n.min(MAX_BOUNDARY_PROBES);
+    let mut probes = Vec::with_capacity(count);
+    for k in 0..count {
+        let i = k * n / count;
         let a = outer_verts[i];
         let b = outer_verts[(i + 1) % n];
         let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
