@@ -13,8 +13,8 @@ use vcad_ir::{Document, InertialProperties, JointKind};
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
 use crate::error::PhysicsError;
 use crate::joints::{
-    convert_state_from_physics, convert_state_to_physics, joint_ndof, vcad_joint_to_phyz,
-    MotorMode, MotorTarget,
+    convert_q_dof_to_physics, convert_state_from_physics, convert_state_to_physics,
+    convert_v_dof_to_physics, joint_ndof, vcad_joint_to_phyz, MotorMode, MotorTarget,
 };
 
 /// Ground-plane contact configuration for a physics world.
@@ -1066,8 +1066,15 @@ impl PhysicsWorld {
             self.joint_q_offsets.get(joint_id),
             self.joint_v_offsets.get(joint_id),
         ) {
-            self.state.q[q_offset] += convert_state_to_physics(kind, dpos);
-            self.state.v[v_offset] += convert_state_to_physics(kind, dvel);
+            // Every DOF, not just the first: a Ball joint carries 3 and a Free
+            // joint 6, and perturbing only DOF 0 would silently apply a
+            // fraction of the requested randomization. The per-DOF converters
+            // also handle Free's swapped q/v layouts (q = [linear, rotation],
+            // v = [angular, linear]).
+            for k in 0..joint_ndof(kind) {
+                self.state.q[q_offset + k] += convert_q_dof_to_physics(kind, k, dpos);
+                self.state.v[v_offset + k] += convert_v_dof_to_physics(kind, k, dvel);
+            }
         }
     }
 
@@ -1630,6 +1637,32 @@ mod tests {
 
         assert_eq!(world.instance_ids().len(), 2);
         assert_eq!(world.joint_ids().len(), 1);
+    }
+
+    /// `perturb_joint_state` must move every DOF. Writing only `q[offset]`
+    /// left a Ball joint with a third of the requested initial-state
+    /// randomization and a Free joint with a sixth — silently, since the
+    /// caller sees no error and the episode just starts less varied than
+    /// asked for.
+    #[test]
+    fn perturb_moves_every_dof_of_a_multi_dof_joint() {
+        let mut doc = create_test_document();
+        doc.joints.as_mut().unwrap()[0].kind = JointKind::Ball;
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        let before = world.get_joint_dofs("joint1").expect("ball dofs").0;
+        assert_eq!(before.len(), 3, "Ball should expose 3 position DOFs");
+
+        world.perturb_joint_state("joint1", 4.0, 0.0);
+        let after = world.get_joint_dofs("joint1").expect("ball dofs").0;
+
+        for (k, (b, a)) in before.iter().zip(&after).enumerate() {
+            assert!(
+                (a - b - 4.0).abs() < 1e-9,
+                "DOF {k} moved by {}, expected 4.0 — perturbation applied to only part of the joint",
+                a - b
+            );
+        }
     }
 
     #[test]

@@ -299,6 +299,21 @@ pub fn convert_v_dof_from_physics(kind: &JointKind, dof: usize, value: f64) -> f
     }
 }
 
+/// Convert one **velocity (v)** DOF from vcad units to physics units.
+/// Inverse of [`convert_v_dof_from_physics`]; same swapped Free layout.
+pub fn convert_v_dof_to_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
+    match kind {
+        JointKind::Free => {
+            if dof < 3 {
+                value.to_radians()
+            } else {
+                value / 1000.0
+            }
+        }
+        _ => convert_state_to_physics(kind, value),
+    }
+}
+
 /// Get the number of DOFs for a vcad joint kind.
 pub fn joint_ndof(kind: &JointKind) -> usize {
     match kind {
