@@ -259,3 +259,8 @@ fn zz_probe_hub_only() {
         256,
     );
 }
+
+#[test]
+fn zz_probe_ring() {
+    probe("[difference [cylinder 8 12.57] [cylinder 22.5 12.57]]", 256);
+}

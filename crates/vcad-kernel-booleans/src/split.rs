@@ -816,17 +816,18 @@ pub fn split_planar_face_by_circle(
                 if circle_inside && cap_radius > 1e-12 {
                     let tolerance = 1e-6;
 
-                    // Generate circle vertices for the inner disk face
-                    let raw_circle_verts: Vec<Point3> = (0..segments)
-                        .map(|i| {
-                            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-                            let (sin_t, cos_t) = theta.sin_cos();
-                            circle.center
-                                + circle.radius
-                                    * (cos_t * circle.x_dir.into_inner()
-                                        + sin_t * circle.y_dir.into_inner())
-                        })
-                        .collect();
+                    // Generate circle vertices for the inner disk face on
+                    // the CANONICAL grid — the frozen cylinder wall bounded
+                    // by this same circle emits identical points, so the
+                    // hole rim and the wall ring conform exactly.
+                    let circle_normal =
+                        circle.x_dir.into_inner().cross(&circle.y_dir.into_inner());
+                    let raw_circle_verts: Vec<Point3> = canonical_circle_points(
+                        circle.center,
+                        circle.radius,
+                        circle_normal,
+                        segments,
+                    );
 
                     // The SSI circle's (x_dir, y_dir) frame is arbitrary, so
                     // the generated ring can wind either way. The tessellator
@@ -970,15 +971,14 @@ pub fn split_planar_face_by_circle(
 
     // Generate circle vertices in the SSI circle's own (x_dir, y_dir) frame;
     // the winding relative to the face is normalized below.
-    let raw_circle_verts: Vec<Point3> = (0..segments)
-        .map(|i| {
-            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-            let (sin_t, cos_t) = theta.sin_cos();
-            circle.center
-                + circle.radius
-                    * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
-        })
-        .collect();
+    // Canonical grid sampling — must match the frozen cylinder wall rings
+    // bounded by the same circle (see canonical_circle_points).
+    let raw_circle_verts: Vec<Point3> = canonical_circle_points(
+        circle.center,
+        circle.radius,
+        circle.x_dir.into_inner().cross(&circle.y_dir.into_inner()),
+        segments,
+    );
 
     // Compute the face's 2D coordinate system using the plane surface normal
     // instead of deriving from vertices, which can produce inconsistent normals
@@ -2091,6 +2091,8 @@ pub fn split_spherical_face_by_circle(
 
     // Generate the N shared circle vertices.
     let n = segments as usize;
+    // NOTE: sphere ring pairing relies on the circle's own frame — do NOT
+    // switch this to the canonical grid (see fillet-defects notes).
     let circle_verts: Vec<Point3> = (0..segments)
         .map(|i| {
             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
@@ -2843,6 +2845,50 @@ pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
 /// faces sharing an arc reproduce bit-identical interior points regardless
 /// of their own parameterizations. Returns `[start, interior…, end]`; travel
 /// is counterclockwise about `normal` from `start` to `end`.
+/// Canonical full-circle polyline: every grid point of the sag-dense
+/// canonical frame, CCW about `normal`. Any two faces sampling the same
+/// circle (a frozen wall ring, a cap hole boundary) get identical points.
+pub(crate) fn canonical_circle_points(
+    center: Point3,
+    radius: f64,
+    normal: vcad_kernel_math::Vec3,
+    segments: u32,
+) -> Vec<Point3> {
+    // Reuse the arc sampler with start == end: it returns
+    // [start, interior grid..., start]; drop the duplicated closing point.
+    let x_axis = {
+        // Same canonical-frame derivation as canonical_arc_points.
+        let mut n_hat = normal.normalize();
+        for c in [n_hat.x, n_hat.y, n_hat.z] {
+            if c.abs() > 1e-9 {
+                if c < 0.0 {
+                    n_hat = -n_hat;
+                }
+                break;
+            }
+        }
+        let cand = [
+            vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0),
+            vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0),
+            vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let e = cand
+            .into_iter()
+            .min_by(|a, b| {
+                a.dot(&n_hat)
+                    .abs()
+                    .partial_cmp(&b.dot(&n_hat).abs())
+                    .unwrap()
+            })
+            .unwrap();
+        (e - n_hat * e.dot(&n_hat)).normalize()
+    };
+    let seam = center + radius * x_axis;
+    let mut ring = canonical_arc_points(center, radius, normal, seam, seam, segments);
+    ring.pop();
+    ring
+}
+
 pub(crate) fn canonical_arc_points(
     center: Point3,
     radius: f64,
