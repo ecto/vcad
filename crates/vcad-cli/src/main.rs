@@ -281,6 +281,9 @@ enum Commands {
         /// the world — it can neither walk nor fall.
         #[arg(long)]
         floating_base: bool,
+        /// Link to attach the floating base to (default: the tree's root).
+        #[arg(long, value_name = "LINK", requires = "floating_base")]
+        floating_base_link: Option<String>,
         /// Initial base height in mm for `--floating-base`.
         #[arg(
             long,
@@ -495,6 +498,7 @@ fn main() -> Result<()> {
             log_every,
             package_roots,
             floating_base,
+            floating_base_link,
             spawn_height_mm,
         }) => {
             simulate_file(
@@ -504,6 +508,7 @@ fn main() -> Result<()> {
                 log_every,
                 &package_roots,
                 floating_base,
+                floating_base_link,
                 spawn_height_mm,
             )?;
         }
@@ -1175,6 +1180,7 @@ fn simulate_file(
     log_every: u32,
     package_roots: &[PathBuf],
     floating_base: bool,
+    floating_base_link: Option<String>,
     spawn_height_mm: f64,
 ) -> Result<()> {
     use vcad_kernel_physics::PhysicsWorld;
@@ -1192,6 +1198,7 @@ fn simulate_file(
                 package_roots: package_roots.to_vec(),
                 urdf_dir: input.parent().map(|p| p.to_path_buf()),
                 floating_base,
+                floating_base_link,
                 spawn_height_mm,
                 ..UrdfReadOptions::default()
             };
