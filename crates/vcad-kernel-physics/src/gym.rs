@@ -329,6 +329,10 @@ impl RobotEnv {
         };
         // Apply episode-0 randomization to the freshly built world so the
         // very first rollout (before any explicit reset) is randomized too.
+        // Unlike `reset`, this doesn't clear `pending_actions` first — it is
+        // `Vec::new()` here. A future from-snapshot constructor that
+        // pre-populates state would have to clear it, or episode-0 actions
+        // would inherit a stale delay line.
         env.apply_episode_randomization();
         Ok(env)
     }
@@ -1441,6 +1445,12 @@ mod tests {
     /// `(seed, episode)` on every reset, which wipes that carry-over — but
     /// only as long as the re-seed stays. Pin it: envs that took different
     /// numbers of steps must still reproduce each other after re-seeding.
+    ///
+    /// To confirm this test still bites, delete the re-seed outright. Do
+    /// *not* gate it on `episode == 0`: `reset_with_seed` sets `episode` to
+    /// `u64::MAX` and `reset` pre-increments to 0, so that guard still
+    /// re-seeds on every call and the test passes against code you think you
+    /// broke.
     #[test]
     fn step_count_does_not_leak_into_the_next_episode() {
         let build = || {
