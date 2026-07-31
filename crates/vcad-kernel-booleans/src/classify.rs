@@ -1093,6 +1093,27 @@ fn find_coincident_cylinder_classification(
         let hit = carrier_faces
             .iter()
             .find(|(fid, _)| point_in_face(other, *fid, p));
+        if hit.is_none() && std::env::var("VCAD_CLS_DEBUG").is_ok() {
+            for (fid, _) in &carrier_faces {
+                let verts: Vec<_> = other
+                    .topology
+                    .loop_half_edges(other.topology.faces[*fid].outer_loop)
+                    .map(|he| {
+                        let q = other.topology.vertices[other.topology.half_edges[he].origin]
+                            .point;
+                        (
+                            (q.y.atan2(q.x) * 1e3).round() / 1e3,
+                            (q.z * 1e2).round() / 1e2,
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "  carrier {fid:?} nv={} uv {:?}",
+                    verts.len(),
+                    &verts[..verts.len().min(10)]
+                );
+            }
+        }
         match hit {
             Some((_, fwd)) => {
                 if let Some(prev) = matched_forward {

@@ -47,6 +47,15 @@ use vcad_kernel_topo::FaceId;
 use crate::bbox;
 use crate::ssi::IntersectionCurve;
 
+
+macro_rules! trim_dbg {
+    ($($arg:tt)*) => {
+        if std::env::var("VCAD_CLS_DEBUG").is_ok() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// A trimmed segment of an intersection curve, expressed as a parameter range.
 #[derive(Debug, Clone)]
 pub struct TrimmedSegment {
@@ -131,6 +140,14 @@ pub fn point_in_polygon(point: &Point2, polygon: &[Point2]) -> bool {
 /// Projects the point into the face's (u,v) parameter space and tests
 /// against the face's trim loops.
 pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bool {
+    let r = point_in_face_inner(brep, face_id, point_3d);
+    if !r && std::env::var("VCAD_PIF_DEBUG").is_ok() {
+        eprintln!("pif FALSE {face_id:?} p {point_3d:?}");
+    }
+    r
+}
+
+fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bool {
     let topo = &brep.topology;
     let face = &topo.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
@@ -415,6 +432,11 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
 
         if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
         {
+            trim_dbg!(
+                "pif-cyl generic FALSE: test {:?} outer {:?}",
+                test_uv,
+                &outer_uv[..outer_uv.len().min(8)]
+            );
             return false;
         }
         for inner_uv in &inner_uv {
@@ -477,6 +499,11 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
 
         if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
         {
+            trim_dbg!(
+                "pif-cyl generic FALSE: test {:?} outer {:?}",
+                test_uv,
+                &outer_uv[..outer_uv.len().min(8)]
+            );
             return false;
         }
         for inner_uv in &inner_uv {
