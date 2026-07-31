@@ -16,5 +16,8 @@ phyz-model = { workspace = true }
 phyz-math = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+rand = { version = "0.8.5", default-features = false, features = ["std", "std_rng"] }
+rayon = "1.10"
 
 [dev-dependencies]
+serde_json = { workspace = true }

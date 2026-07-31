@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-floating-base-rl",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "Train locomotion policies on imported humanoids",
+  "summary": "ARS policy training over the physics gym, plus floating-base PD and contact-scan fixes that make a 22-DOF humanoid simulate at ~9k steps/s.",
+  "features": ["physics", "urdf", "reinforcement-learning", "humanoid"],
+  "mcpTools": ["create_robot_env", "gym_step", "import_urdf"]
+}

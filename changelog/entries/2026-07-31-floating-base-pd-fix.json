@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-floating-base-pd-fix",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "fix",
+  "title": "Floating-base robots no longer tumble under PD control",
+  "summary": "Gravity-compensation feedforward assumed a bolted-down root, injecting the base support wrench into the joints; it is now skipped for floating-base models.",
+  "features": ["physics", "humanoid"],
+  "mcpTools": ["create_robot_env", "gym_step"]
+}
