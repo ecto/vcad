@@ -509,14 +509,21 @@ export function App() {
         logger.info("step", `Buffer size: ${buffer.byteLength}`);
 
         logger.info("step", "Calling engine.importStepWithReport...");
-        const { meshes: rawMeshes, summary: importWarnings } = await runJob(
+        const {
+          meshes: rawMeshes,
+          report: importReport,
+          summary: importWarnings,
+        } = await runJob(
           { verb: `Importing ${file.name}` },
           () => engine.importStepWithReport(buffer),
         );
         logger.info("step", `Got meshes: ${rawMeshes.length}`);
-        if (importWarnings) {
-          logger.warn("step", importWarnings);
-          const skipped = importWarnings.match(/face #/g)?.length ?? 0;
+        const skipped = importReport.reduce(
+          (sum, s) => sum + s.skipped_faces.length,
+          0,
+        );
+        if (skipped > 0) {
+          logger.warn("step", importWarnings ?? `${skipped} face(s) skipped`);
           useNotificationStore.getState().addToast(
             `STEP import skipped ${skipped} face${skipped !== 1 ? "s" : ""} with unsupported surfaces — the geometry has holes there (see console)`,
             "warning",
