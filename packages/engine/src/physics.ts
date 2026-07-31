@@ -11,13 +11,16 @@ import type { PhysicsSim as WasmPhysicsSim } from "@vcad/kernel-wasm";
 /**
  * Observation from the physics simulation.
  *
- * Joint vectors are indexed by {@link PhysicsEnv.jointIds} order — the
- * document's `joints` array order.
+ * Joint vectors follow {@link PhysicsEnv.jointIds} order — the document's
+ * `joints` array order — but are grouped by *slice*, not one entry per joint:
+ * joint `i` owns the next {@link PhysicsEnv.jointSlotCounts}`[i]` entries
+ * (Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3, Free 6).
  */
 export interface PhysicsObservation {
-  /** Joint positions (degrees for revolute, mm for prismatic) */
+  /** Joint positions, flattened per DOF (degrees for rotational DOFs, mm for
+   *  translational ones) */
   joint_positions: number[];
-  /** Joint velocities (deg/s or mm/s) */
+  /** Joint velocities, flattened per DOF (deg/s or mm/s) */
   joint_velocities: number[];
   /** End effector poses as [x, y, z, qw, qx, qy, qz][] */
   end_effector_poses: Array<[number, number, number, number, number, number, number]>;
@@ -202,6 +205,7 @@ export class PhysicsEnv {
   private _observationDim: number;
   private _jointIds: string[] | null;
   private _actuatedJointIds: string[] | null;
+  private _jointSlotCounts: number[] | null;
 
   private constructor(sim: WasmPhysicsSim) {
     this.sim = sim;
@@ -231,6 +235,18 @@ export class PhysicsEnv {
     this._actuatedJointIds = Array.isArray(rawActuated)
       ? (rawActuated as string[])
       : null;
+    // Same story again for jointSlotCounts(), newer still. Null means "this
+    // kernel can't tell us the per-joint split"; callers then must not
+    // assume one slot per joint, since a Ball or Free joint occupies more.
+    const maybeSlots = (
+      sim as unknown as { jointSlotCounts?: () => unknown }
+    ).jointSlotCounts;
+    const rawSlots =
+      typeof maybeSlots === "function" ? maybeSlots.call(sim) : null;
+    this._jointSlotCounts =
+      Array.isArray(rawSlots) && rawSlots.every((n) => typeof n === "number")
+        ? (rawSlots as number[])
+        : null;
   }
 
   /**
@@ -308,11 +324,23 @@ export class PhysicsEnv {
 
   /**
    * Joint ids in observation order (document `joints` order), or null when
-   * the loaded kernel WASM predates `jointIds()`. Index `i` of
-   * `joint_positions` / `joint_velocities` corresponds to `jointIds[i]`.
+   * the loaded kernel WASM predates `jointIds()`.
+   *
+   * Joints map onto `joint_positions` / `joint_velocities` by *slice*, not by
+   * index: joint `i` owns the next `jointSlotCounts[i]` entries. Index `i`
+   * lines up with joint `i` only when every joint is single-DOF.
    */
   get jointIds(): string[] | null {
     return this._jointIds;
+  }
+
+  /**
+   * Observation slots occupied by each joint in `jointIds` order:
+   * `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+   * Free 6. Null when the loaded kernel WASM predates `jointSlotCounts()`.
+   */
+  get jointSlotCounts(): number[] | null {
+    return this._jointSlotCounts;
   }
 
   /**

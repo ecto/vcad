@@ -189,6 +189,16 @@ fn compute_joint_transform(joint: &Joint) -> Transform3D {
             }
         }
 
+        // A Free (6-DOF floating) joint has no meaningful scalar state; the
+        // document FK renders it at its zero pose — child placed at the
+        // parent anchor with identity rotation, exactly like Fixed. The
+        // dynamic pose lives in the physics state, not the document.
+        JointKind::Free => Transform3D {
+            translation: vec3_sub(&joint.parent_anchor, &joint.child_anchor),
+            rotation: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+        },
+
         JointKind::Ball => {
             let z_axis = Vec3::new(0.0, 0.0, 1.0);
             let rot_matrix = axis_angle_to_matrix(&z_axis, joint.state);

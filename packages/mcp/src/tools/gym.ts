@@ -113,6 +113,10 @@ interface BatchGroup {
   /** Observation-order joint ids captured at creation (null on kernel builds
    *  predating `jointIds()`), used to label batch observations. */
   jointIds: string[] | null;
+  /** Observation slots per joint, in `jointIds` order (null on kernel builds
+   *  predating `jointSlotCounts()`). Needed to split multi-DOF joints out of
+   *  a batch observation. */
+  jointSlotCounts: number[] | null;
 }
 const batchGroups = new Map<string, BatchGroup>();
 
@@ -229,8 +233,15 @@ function resolveEnvDocument(args: {
  *  reconstruct the positional contract from `doc.joints`. */
 interface LabeledJoint {
   id: string;
+  /** First (and for single-DOF joints, only) position slot. */
   position: number;
+  /** First (and for single-DOF joints, only) velocity slot. */
   velocity: number;
+  /** Every position slot this joint owns — present only for multi-DOF joints
+   *  (Ball 3, Free 6), where `position` alone would hide the rest. */
+  positions?: number[];
+  /** Every velocity slot this joint owns; see `positions`. */
+  velocities?: number[];
 }
 
 /** An end effector's pose, keyed by the instance id it was requested under. */
@@ -261,19 +272,52 @@ type LabeledObservation = PhysicsObservation & {
  * `jointIds` is null on kernel builds predating `jointIds()`; the labeled
  * `joints` view is then omitted rather than guessed, and `joint_ids: null`
  * marks the gap explicitly.
+ *
+ * A joint owns a *slice* of the observation, not a single entry:
+ * `slotCounts[i]` consecutive values (Fixed 1, Revolute / Slider /
+ * Cylindrical 1, Ball 3, Free 6). Walking that cursor is what keeps the
+ * labeled view correct for multi-DOF joints — comparing total lengths
+ * instead would silently drop the whole view for any env holding a Ball or
+ * Free joint. When `slotCounts` is null (kernel predating
+ * `jointSlotCounts()`), fall back to one slot per joint, which is exact
+ * whenever the totals agree and is skipped otherwise.
  */
-function labelObservation(
+export function labelObservation(
   obs: PhysicsObservation,
   jointIds: string[] | null,
   endEffectorIds: string[],
+  slotCounts?: number[] | null,
 ): LabeledObservation {
   const labeled: LabeledObservation = { ...obs, joint_ids: jointIds };
-  if (jointIds && jointIds.length === obs.joint_positions.length) {
-    labeled.joints = jointIds.map((id, i) => ({
-      id,
-      position: obs.joint_positions[i],
-      velocity: obs.joint_velocities[i],
-    }));
+  if (jointIds) {
+    const counts =
+      slotCounts && slotCounts.length === jointIds.length
+        ? slotCounts
+        : jointIds.map(() => 1);
+    const total = counts.reduce((a, b) => a + b, 0);
+    // Only label when the cursor tiles the arrays exactly; a mismatch means
+    // the slot metadata and the observation disagree, and a partial labeling
+    // would mis-attribute values.
+    if (
+      total === obs.joint_positions.length &&
+      total === obs.joint_velocities.length
+    ) {
+      let cursor = 0;
+      labeled.joints = jointIds.map((id, i) => {
+        const n = counts[i];
+        const joint: LabeledJoint = {
+          id,
+          position: obs.joint_positions[cursor],
+          velocity: obs.joint_velocities[cursor],
+        };
+        if (n > 1) {
+          joint.positions = obs.joint_positions.slice(cursor, cursor + n);
+          joint.velocities = obs.joint_velocities.slice(cursor, cursor + n);
+        }
+        cursor += n;
+        return joint;
+      });
+    }
   }
   if (endEffectorIds.length === obs.end_effector_poses.length) {
     labeled.end_effectors = endEffectorIds.map((id, i) => ({
@@ -574,6 +618,7 @@ export function gymStep(input: unknown): GymResult {
         result.observation,
         env.jointIds,
         record?.endEffectorIds ?? [],
+        env.jointSlotCounts,
       ),
     };
 
@@ -627,6 +672,7 @@ export function gymReset(input: unknown): GymResult {
               observation,
               env.jointIds,
               record?.endEffectorIds ?? [],
+              env.jointSlotCounts,
             ),
             null,
             2,
@@ -669,6 +715,7 @@ export function gymObserve(input: unknown): GymResult {
               observation,
               env.jointIds,
               record?.endEffectorIds ?? [],
+              env.jointSlotCounts,
             ),
             null,
             2,
@@ -839,6 +886,7 @@ export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
       document: doc,
       options: envOptions,
       jointIds: envs[0].jointIds,
+      jointSlotCounts: envs[0].jointSlotCounts,
     });
 
     const info = {
@@ -915,6 +963,7 @@ export function batchStep(input: unknown): GymResult {
           r.observation,
           group.jointIds,
           group.options.endEffectorIds,
+          group.jointSlotCounts,
         ),
       ),
       rewards: results.map((r) => r.reward),
@@ -953,6 +1002,7 @@ export function batchReset(input: unknown): GymResult {
         env.reset(),
         group.jointIds,
         group.options.endEffectorIds,
+        group.jointSlotCounts,
       ),
     );
     return {

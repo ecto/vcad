@@ -343,6 +343,7 @@
   "joint.slider": "Posuvný",
   "joint.cylindrical": "Válcový",
   "joint.ball": "Kulový",
+  "joint.free": "Volný",
   "joint.suffix": "kloub",
 
   "tree.scene": "Scéna",

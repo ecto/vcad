@@ -1274,6 +1274,7 @@ fn materialize_joint(doc: &mut Document, fid: FeatureId, feature: &FeatureState)
             axis: axis.unwrap_or(Vec3::new(0.0, 0.0, 1.0)),
         },
         "Ball" => JointKind::Ball,
+        "Free" => JointKind::Free,
         _ => JointKind::Fixed,
     };
 

@@ -343,6 +343,7 @@
   "joint.slider": "Поступательное",
   "joint.cylindrical": "Цилиндрическое",
   "joint.ball": "Сферическое",
+  "joint.free": "Свободное",
   "joint.suffix": "соединение",
 
   "tree.scene": "Сцена",

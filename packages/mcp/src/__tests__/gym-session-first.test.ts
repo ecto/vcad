@@ -158,7 +158,9 @@ describe("observation labeling", () => {
       // builds return joint_ids: null and the labeled view is omitted rather
       // than guessed.
       if (obs.joint_ids) {
-        expect(obs.joints).toHaveLength(obs.joint_positions.length);
+        // One labeled entry per joint — NOT per observation slot: a joint
+        // owns a slice, and only single-DOF joints make those counts equal.
+        expect(obs.joints).toHaveLength(obs.joint_ids.length);
         obs.joints.forEach(
           (j: { id: string; position: number; velocity: number }, i: number) => {
             expect(j.id).toBe(obs.joint_ids[i]);
@@ -170,6 +172,51 @@ describe("observation labeling", () => {
         expect(obs.joints).toBeUndefined();
       }
     }
+
+    gymClose({ env_id: info.env_id });
+  });
+
+  it("labels a multi-DOF (Free) joint by slice, not by index", async () => {
+    // A Free joint occupies 6 observation slots, so joint_positions is longer
+    // than joint_ids. Labeling that compared total lengths dropped the whole
+    // `joints` view for any env holding a Ball or Free joint.
+    const freeDoc = {
+      ...robotDoc,
+      joints: [
+        {
+          id: "base_joint",
+          name: "Floating base",
+          parentInstanceId: null,
+          childInstanceId: "link1_inst",
+          parentAnchor: { x: 0, y: 0, z: 0 },
+          childAnchor: { x: 0, y: 0, z: 0 },
+          kind: { type: "Free" },
+          state: 0,
+        },
+      ],
+    };
+    const id = registerSession(freeDoc as never);
+    const out = await createRobotEnv({
+      document_id: id,
+      end_effector_ids: ["link1_inst"],
+    });
+    const info = json(out);
+    if (info.error) return; // physics unavailable in this build
+
+    const obs = json(gymObserve({ env_id: info.env_id }));
+    if (!obs.joint_ids) return; // kernel predates jointIds()
+
+    expect(obs.joint_ids).toEqual(["base_joint"]);
+    expect(obs.joint_positions).toHaveLength(6);
+
+    // The regression: the labeled view must still be present.
+    expect(obs.joints).toBeDefined();
+    expect(obs.joints).toHaveLength(1);
+    expect(obs.joints[0].id).toBe("base_joint");
+    // ...and it must expose all six slots, not just the first.
+    expect(obs.joints[0].positions).toEqual(obs.joint_positions);
+    expect(obs.joints[0].velocities).toEqual(obs.joint_velocities);
+    expect(obs.joints[0].position).toBe(obs.joint_positions[0]);
 
     gymClose({ env_id: info.env_id });
   });
