@@ -1036,6 +1036,12 @@ fn find_coincident_cylinder_classification(
     const RADIUS_TOL: f64 = 1e-6;
     const AXIS_TOL: f64 = 1e-6;
 
+    // Collect ALL other-faces on the same carrier cylinder first: the other
+    // operand's coincident wall may be split into several pieces (frozen
+    // dense splits land differently per operand), and a probe set spanning
+    // two pieces must still read as coincident. Coverage is judged against
+    // the UNION of same-carrier faces.
+    let mut carrier_faces: Vec<(FaceId, bool)> = Vec::new();
     for (other_fid, other_face) in &other.topology.faces {
         let other_surf = &other.geometry.surfaces[other_face.surface_index];
         if other_surf.surface_type() != SurfaceKind::Cylinder {
@@ -1061,35 +1067,45 @@ fn find_coincident_cylinder_classification(
         if radial_offset.norm() > AXIS_TOL {
             continue; // parallel but different axis line
         }
+        let other_forward = other_face.orientation == vcad_kernel_topo::Orientation::Forward;
+        carrier_faces.push((other_fid, other_forward));
+    }
+    if carrier_faces.is_empty() {
+        return None;
+    }
 
-        // Same carrier surface. All on-face probes must land inside the
-        // other face's bounded region for full coincidence.
-        let mut checked = 0u32;
-        let mut fully_coincident = true;
-        for p in probes {
-            if !point_in_face(brep, face_id, p) {
-                continue;
-            }
-            checked += 1;
-            if !point_in_face(other, other_fid, p) {
-                fully_coincident = false;
-                break;
-            }
-        }
-        if checked == 0 || !fully_coincident {
+    let mut checked = 0u32;
+    let mut matched_forward: Option<bool> = None;
+    for p in probes {
+        if !point_in_face(brep, face_id, p) {
             continue;
         }
-
-        // Radial normals are sign-symmetric in the axis direction, so
-        // alignment reduces to the orientation flags.
-        let other_forward = other_face.orientation == vcad_kernel_topo::Orientation::Forward;
-        return Some(if self_forward == other_forward {
-            FaceClassification::OnSame
-        } else {
-            FaceClassification::OnOpposite
-        });
+        checked += 1;
+        let hit = carrier_faces
+            .iter()
+            .find(|(fid, _)| point_in_face(other, *fid, p));
+        match hit {
+            Some((_, fwd)) => {
+                if let Some(prev) = matched_forward {
+                    if prev != *fwd {
+                        return None; // mixed orientations under one face
+                    }
+                } else {
+                    matched_forward = Some(*fwd);
+                }
+            }
+            None => return None, // probe not covered — not fully coincident
+        }
     }
-    None
+    if checked == 0 {
+        return None;
+    }
+    let other_forward = matched_forward?;
+    Some(if self_forward == other_forward {
+        FaceClassification::OnSame
+    } else {
+        FaceClassification::OnOpposite
+    })
 }
 
 /// Generate additional probe points on a face for robust classification.

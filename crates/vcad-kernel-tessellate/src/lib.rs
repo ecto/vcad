@@ -3423,9 +3423,28 @@ fn tessellate_ruled_two_chain(
     // keep the refining grid path (whose cracks against neighbors are the
     // pre-existing sparse-loop behavior, not a regression).
     {
+        // Angle-PAIRED chains (same u columns on both rails — the
+        // miter-trimmed blend strips this path was built for) are verbatim-
+        // safe at any density: their rails ARE the neighboring faces'
+        // curves. Only unpaired chains need the density gate, where
+        // verbatim rendering of a sparse rail would lose real volume.
+        let paired = chain_a.len() == chain_b.len()
+            && chain_a
+                .iter()
+                .zip(chain_b.iter())
+                .all(|(a, b)| (a.0 - b.0).abs() <= RUN_EPS.max(1e-7));
         let sag_step = 2.0 * (1.0 - 5e-3 / cyl.radius.abs().max(1e-6)).clamp(-1.0, 1.0).acos();
         let target_step = 2.0 * PI / (target_segments.max(3) as f64);
-        let allowed = sag_step.max(target_step) * 1.05;
+        // Paired rails (miter-trimmed blend strips whose rails ARE the
+        // neighbors' curves) get generous slack — refusing them cracks the
+        // blend against its planar neighbors. Unpaired rails must be near
+        // render density or verbatim rendering loses real volume (sparse
+        // arc-extrusion walls keep the refining grid path).
+        let allowed = if paired {
+            sag_step.max(target_step) * 3.0
+        } else {
+            sag_step.max(target_step) * 1.05
+        };
         let max_du = |c: &[(f64, f64)]| {
             c.windows(2)
                 .map(|w| (w[1].0 - w[0].0).abs())
