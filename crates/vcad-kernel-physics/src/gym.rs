@@ -34,10 +34,15 @@ pub struct Observation {
 
 impl Observation {
     /// Create a zero observation with the given dimensions.
-    pub fn zeros(num_joints: usize, num_end_effectors: usize) -> Self {
+    ///
+    /// `joint_slots` is the flattened DOF count — the value
+    /// [`RobotEnv::observation_dim`] computes, not the number of joints. A
+    /// Free joint contributes 6 slots and a Ball joint 3, so passing a joint
+    /// count would under-size the vectors for any multi-DOF joint.
+    pub fn zeros(joint_slots: usize, num_end_effectors: usize) -> Self {
         Self {
-            joint_positions: vec![0.0; num_joints],
-            joint_velocities: vec![0.0; num_joints],
+            joint_positions: vec![0.0; joint_slots],
+            joint_velocities: vec![0.0; joint_slots],
             end_effector_poses: vec![[0.0; 7]; num_end_effectors],
         }
     }
