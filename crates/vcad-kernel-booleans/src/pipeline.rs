@@ -413,7 +413,42 @@ fn apply_splits_to_solid(
                             new_faces.push(cur);
                             continue;
                         }
-                        let segs = trim::trim_curve_to_face(&curve, cur, solid, 64);
+                        // A closed sampled curve whose parameter seam falls
+                        // INSIDE this face yields two half-intervals, each
+                        // with one endpoint floating mid-face at the seam —
+                        // neither is a splittable cut. Rotate the sample
+                        // list so it starts at a sample outside the face;
+                        // the interval then reads as one seam-free segment.
+                        let curve_for_face: ssi::IntersectionCurve =
+                            if let ssi::IntersectionCurve::Sampled(pts) = &curve {
+                                let closed = pts.len() > 2
+                                    && (pts[0] - pts[pts.len() - 1]).norm() < 1e-9;
+                                let seam_inside = closed
+                                    && trim::point_in_face(solid, cur, &pts[0]);
+                                if seam_inside {
+                                    let m = pts.len() - 1; // unique samples
+                                    match (0..m).find(|&k| {
+                                        !trim::point_in_face(solid, cur, &pts[k])
+                                    }) {
+                                        Some(k) => {
+                                            let mut rot: Vec<Point3> =
+                                                Vec::with_capacity(m + 1);
+                                            for j in 0..m {
+                                                rot.push(pts[(k + j) % m]);
+                                            }
+                                            rot.push(pts[k]);
+                                            ssi::IntersectionCurve::Sampled(rot)
+                                        }
+                                        None => curve.clone(),
+                                    }
+                                } else {
+                                    curve.clone()
+                                }
+                            } else {
+                                curve.clone()
+                            };
+                        let curve = &curve_for_face;
+                        let segs = trim::trim_curve_to_face(curve, cur, solid, 64);
                         debug_bool!(
                             "  Split {} face {:?}: re-trim got {} segs",
                             solid_name,
@@ -422,8 +457,8 @@ fn apply_splits_to_solid(
                         );
                         let mut split_applied = false;
                         for seg in &segs {
-                            let entry = evaluate_curve(&curve, seg.t_start);
-                            let exit = evaluate_curve(&curve, seg.t_end);
+                            let entry = evaluate_curve(curve, seg.t_start);
+                            let exit = evaluate_curve(curve, seg.t_end);
                             let len = (exit - entry).norm();
                             debug_bool!(
                                 "    -> entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
@@ -439,7 +474,7 @@ fn apply_splits_to_solid(
                                 continue;
                             }
                             let result =
-                                split::split_face_by_curve(solid, cur, &curve, &entry, &exit);
+                                split::split_face_by_curve(solid, cur, curve, &entry, &exit);
                             debug_bool!(
                                 "    -> split result: {} sub-faces {:?}",
                                 result.sub_faces.len(),

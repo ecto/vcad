@@ -463,6 +463,13 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
         if points.is_empty() {
             IntersectionCurve::Empty
         } else {
+            // Close the loop explicitly: the ellipse is periodic, and a
+            // polyline that stops one sample short of its start makes every
+            // downstream trim whose inside-interval runs through the seam
+            // end at the last sample — up to a full sample step (~1 mm)
+            // away from the face boundary it should land on.
+            let first = points[0];
+            points.push(first);
             IntersectionCurve::Sampled(points)
         }
     }

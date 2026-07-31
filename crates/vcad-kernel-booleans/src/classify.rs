@@ -1188,9 +1188,16 @@ pub fn classify_face(
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
     let is_plane = surface.surface_type() == SurfaceKind::Plane;
+    // Probes vote three ways: a probe whose ±eps offsets (along the local
+    // face normal) land on OPPOSITE sides of the other solid sits ON its
+    // boundary (a tangent edge, a grazing corner) and must abstain —
+    // counting it as Outside under the every-probe rule misclassifies any
+    // face that merely TOUCHES the other solid (e.g. a blade sliver whose
+    // edge lies in the target's cap plane).
     let eps = 1e-4;
+    let mut saw_inside = false;
     for p in &probes {
-        let normal = if is_plane || std::env::var("VCAD_OLD_NORMAL").is_ok() {
+        let normal = if is_plane {
             oriented_normal
         } else {
             let uv = crate::trim::project_point_to_uv(surface.as_ref(), p);
@@ -1200,12 +1207,20 @@ pub fn classify_face(
                 vcad_kernel_topo::Orientation::Reversed => -n,
             }
         };
-        let inward = *p - eps * normal;
-        if !point_in_mesh(&inward, other_mesh) {
+        let inward_in = point_in_mesh(&(*p - eps * normal), other_mesh);
+        let outward_in = point_in_mesh(&(*p + eps * normal), other_mesh);
+        if inward_in && outward_in {
+            saw_inside = true;
+        } else if !inward_in && !outward_in {
             return FaceClassification::Outside;
         }
+        // Split verdict: probe is on the boundary — abstain.
     }
-    FaceClassification::Inside
+    if saw_inside {
+        FaceClassification::Inside
+    } else {
+        FaceClassification::Outside
+    }
 }
 
 /// Classify all faces of a solid relative to another solid.

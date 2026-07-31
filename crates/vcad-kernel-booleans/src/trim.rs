@@ -413,11 +413,14 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             .collect();
         let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
 
-        if !point_in_polygon(&test_uv, &outer_uv) {
+        if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        {
             return false;
         }
         for inner_uv in &inner_uv {
-            if point_in_polygon(&test_uv, inner_uv) {
+            if point_in_polygon(&test_uv, inner_uv)
+                && !near_polygon_boundary(&test_uv, inner_uv, 1e-7)
+            {
                 return false;
             }
         }
@@ -472,11 +475,14 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             .collect();
         let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
 
-        if !point_in_polygon(&test_uv, &outer_uv) {
+        if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        {
             return false;
         }
         for inner_uv in &inner_uv {
-            if point_in_polygon(&test_uv, inner_uv) {
+            if point_in_polygon(&test_uv, inner_uv)
+                && !near_polygon_boundary(&test_uv, inner_uv, 1e-7)
+            {
                 return false;
             }
         }
@@ -532,11 +538,12 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             test_uv = Point2::new(test_uv.x, test_uv.y + 2.0 * std::f64::consts::PI);
         }
 
-        if !point_in_polygon(&test_uv, &outer_uv) {
+        if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        {
             return false;
         }
         for inner in &inner_uv {
-            if point_in_polygon(&test_uv, inner) {
+            if point_in_polygon(&test_uv, inner) && !near_polygon_boundary(&test_uv, inner, 1e-7) {
                 return false;
             }
         }
@@ -557,19 +564,46 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
         })
         .collect();
 
-    // Test if inside outer loop
-    if !point_in_polygon(&test_uv, &outer_uv) {
+    // Test if inside outer loop. `point_in_polygon` treats exactly-on-edge
+    // as inside via exact predicates, but the UV projection carries fp
+    // error — a point mathematically ON the boundary (e.g. the tangency
+    // where an ellipse touches a face edge) can project a hair outside and
+    // flip the verdict, which shifts trim endpoints a whole curve sample.
+    // Give the boundary an explicit metric tolerance.
+    if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7) {
         return false;
     }
 
     // Test if outside all inner loops (holes)
     for inner_uv in &inner_uv {
-        if point_in_polygon(&test_uv, inner_uv) {
+        if point_in_polygon(&test_uv, inner_uv) && !near_polygon_boundary(&test_uv, inner_uv, 1e-7)
+        {
             return false; // inside a hole
         }
     }
 
     true
+}
+
+/// Is `p` within `tol` of any edge of `polygon` (UV metric)?
+fn near_polygon_boundary(p: &Point2, polygon: &[Point2], tol: f64) -> bool {
+    let n = polygon.len();
+    for i in 0..n {
+        let a = polygon[i];
+        let b = polygon[(i + 1) % n];
+        let (ex, ey) = (b.x - a.x, b.y - a.y);
+        let len2 = ex * ex + ey * ey;
+        let t = if len2 < 1e-24 {
+            0.0
+        } else {
+            (((p.x - a.x) * ex + (p.y - a.y) * ey) / len2).clamp(0.0, 1.0)
+        };
+        let (dx, dy) = (p.x - (a.x + t * ex), p.y - (a.y + t * ey));
+        if dx * dx + dy * dy <= tol * tol {
+            return true;
+        }
+    }
+    false
 }
 
 /// Project a 3D point onto a surface's UV parameter space.

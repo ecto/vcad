@@ -198,7 +198,15 @@ pub fn split_face_by_curve(
     if entry_edge == exit_edge || (*exit_point - *entry_point).norm() < 1e-6 {
         // Curve enters and exits on the same edge, or grazes a single
         // vertex — no real cut.
-        split_dbg!("sfbc: same-edge or zero cut (edges {entry_edge},{exit_edge})");
+        split_dbg!(
+            "sfbc: same-edge or zero cut (edges {entry_edge},{exit_edge}) entry={:?} exit={:?} loop={:?}",
+            entry_point,
+            exit_point,
+            loop_verts
+                .iter()
+                .map(|p| ((p.x * 100.0).round() / 100.0, (p.y * 100.0).round() / 100.0, (p.z * 100.0).round() / 100.0))
+                .collect::<Vec<_>>()
+        );
         return SplitResult {
             sub_faces: vec![face_id],
         };
