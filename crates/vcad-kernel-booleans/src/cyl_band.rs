@@ -461,6 +461,16 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
             &uvs[..n.min(4)],
             &uvs[n.saturating_sub(3)..]
         );
+        for &i in &flips {
+            let lo = i.saturating_sub(2);
+            let hi = (i + 3).min(n);
+            band_dbg!(
+                "  flip at {}: unwrapped {:?} uvs {:?}",
+                i,
+                &unwrapped[lo..hi],
+                &uvs[lo..hi]
+            );
+        }
         return None;
     }
     // The run boundary may be preceded by zero-Δu connector steps (the

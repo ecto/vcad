@@ -1294,6 +1294,13 @@ pub fn classify_face(
             }
         })
         .collect();
+    cls_dbg!(
+        "classify {:?}: probes={} verdicts={} inside={}",
+        face_id,
+        probes.len(),
+        verdicts.len(),
+        verdicts.iter().filter(|(_, i)| *i).count()
+    );
     if verdicts.is_empty() {
         // Every probe hugs the other solid's boundary: pure tangency
         // contact with no interior penetration — the face stays on the

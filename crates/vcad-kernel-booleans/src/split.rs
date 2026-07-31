@@ -787,6 +787,34 @@ pub fn is_planar_face(brep: &BRepSolid, face_id: FaceId) -> bool {
     surface.surface_type() == vcad_kernel_geom::SurfaceKind::Plane
 }
 
+/// Whether `circle` lies on a cylindrical wall of `other` — i.e. it was
+/// minted by SSI against a cylinder, whose (frozen) band machinery emits
+/// canonical-grid ring points. Only such circles need canonical sampling in
+/// planar splits; a circle mated to a cone or sphere wall must keep the
+/// legacy circle-frame sampling that matches those tessellations.
+pub fn circle_on_cylinder_wall(other: &BRepSolid, circle: &vcad_kernel_geom::Circle3d) -> bool {
+    let n = circle
+        .x_dir
+        .into_inner()
+        .cross(circle.y_dir.into_inner())
+        .normalize();
+    other.geometry.surfaces.iter().any(|s| {
+        let Some(cyl) = s
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+        else {
+            return false;
+        };
+        let axis = cyl.axis.into_inner();
+        if axis.cross(n).norm() > 1e-6 {
+            return false;
+        }
+        let d = circle.center - cyl.center;
+        let radial = d - axis * d.dot(axis);
+        radial.norm() < 1e-6 && (cyl.radius - circle.radius).abs() < 1e-6
+    })
+}
+
 /// Split a planar face along a circle intersection curve.
 ///
 /// When a cylinder axis is perpendicular to a plane and they intersect,
@@ -804,6 +832,7 @@ pub fn split_planar_face_by_circle(
     face_id: FaceId,
     circle: &vcad_kernel_geom::Circle3d,
     segments: u32,
+    canonical: bool,
 ) -> SplitResult {
     // A circle approximated by fewer than 3 vertices can't form a valid face
     // loop; constructing one would feed an empty slice to `add_loop` and panic.
@@ -902,7 +931,7 @@ pub fn split_planar_face_by_circle(
                         .collect();
                     let new_outer = brep.topology.add_loop(&rim_hes);
                     brep.topology.faces[face_id].outer_loop = new_outer;
-                    return split_planar_face_by_circle(brep, face_id, circle, segments);
+                    return split_planar_face_by_circle(brep, face_id, circle, segments, canonical);
                 }
 
                 if circle_inside && cap_radius > 1e-12 {
@@ -912,13 +941,31 @@ pub fn split_planar_face_by_circle(
                     // the CANONICAL grid — the frozen cylinder wall bounded
                     // by this same circle emits identical points, so the
                     // hole rim and the wall ring conform exactly.
+                    // ...but only when the mating wall IS a cylinder
+                    // (`canonical`); cone/sphere walls tessellate their rings
+                    // in the circle's own frame at `segments`, and a
+                    // canonical-grid rim would not conform with them.
                     let circle_normal = circle.x_dir.into_inner().cross(circle.y_dir.into_inner());
-                    let raw_circle_verts: Vec<Point3> = canonical_circle_points(
-                        circle.center,
-                        circle.radius,
-                        circle_normal,
-                        segments,
-                    );
+                    let raw_circle_verts: Vec<Point3> = if canonical {
+                        canonical_circle_points(
+                            circle.center,
+                            circle.radius,
+                            circle_normal,
+                            segments,
+                        )
+                    } else {
+                        (0..segments)
+                            .map(|i| {
+                                let theta =
+                                    2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+                                let (sin_t, cos_t) = theta.sin_cos();
+                                circle.center
+                                    + circle.radius
+                                        * (cos_t * circle.x_dir.into_inner()
+                                            + sin_t * circle.y_dir.into_inner())
+                            })
+                            .collect()
+                    };
 
                     // The SSI circle's (x_dir, y_dir) frame is arbitrary, so
                     // the generated ring can wind either way. The tessellator
@@ -1067,14 +1114,28 @@ pub fn split_planar_face_by_circle(
 
     // Generate circle vertices in the SSI circle's own (x_dir, y_dir) frame;
     // the winding relative to the face is normalized below.
-    // Canonical grid sampling — must match the frozen cylinder wall rings
-    // bounded by the same circle (see canonical_circle_points).
-    let raw_circle_verts: Vec<Point3> = canonical_circle_points(
-        circle.center,
-        circle.radius,
-        circle.x_dir.into_inner().cross(circle.y_dir.into_inner()),
-        segments,
-    );
+    // Canonical grid sampling when the mating wall is a cylinder — must
+    // match the frozen cylinder wall rings bounded by the same circle (see
+    // canonical_circle_points). Cone/sphere-mated circles keep the legacy
+    // circle-frame sampling their wall tessellations conform to.
+    let raw_circle_verts: Vec<Point3> = if canonical {
+        canonical_circle_points(
+            circle.center,
+            circle.radius,
+            circle.x_dir.into_inner().cross(circle.y_dir.into_inner()),
+            segments,
+        )
+    } else {
+        (0..segments)
+            .map(|i| {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+                let (sin_t, cos_t) = theta.sin_cos();
+                circle.center
+                    + circle.radius
+                        * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
+            })
+            .collect()
+    };
 
     // Compute the face's 2D coordinate system using the plane surface normal
     // instead of deriving from vertices, which can produce inconsistent normals
@@ -2709,10 +2770,11 @@ pub fn split_planar_face(
     entry: &Point3,
     exit: &Point3,
     segments: u32,
+    canonical: bool,
 ) -> SplitResult {
     match curve {
         IntersectionCurve::Circle(circle) => {
-            split_planar_face_by_circle(brep, face_id, circle, segments)
+            split_planar_face_by_circle(brep, face_id, circle, segments, canonical)
         }
         IntersectionCurve::Line(line) => {
             // Get face boundary vertices
@@ -2756,6 +2818,7 @@ pub fn split_planar_face(
                 entry,
                 exit,
                 segments,
+                canonical,
             )
         }
         _ => {
@@ -4000,30 +4063,33 @@ pub(crate) fn canonical_arc_points(
     } else {
         (a_start / step).ceil() - 1.0
     };
+    // `traveled` must accumulate monotonically — computing it per-index with
+    // rem_euclid(2π) wraps back below `span` after one full revolution, so a
+    // full-circle arc whose seam is off the grid re-emits the first grid
+    // points as duplicates (and only the safety cap stopped it).
     let mut idx = first_idx;
-    loop {
+    let mut traveled = {
         let ang = idx * step;
-        let traveled = if ccw {
+        if ccw {
             (ang - a_start).rem_euclid(2.0 * PI)
         } else {
             (a_start - ang).rem_euclid(2.0 * PI)
-        };
-        if traveled <= eps || traveled >= span - eps {
-            break;
         }
-        let a = ang.rem_euclid(2.0 * PI);
-        let (sin_a, cos_a) = a.sin_cos();
-        pts.push(snap_point(
-            center + radius * (cos_a * x_axis + sin_a * y_axis),
-        ));
+    };
+    while traveled < span - eps {
+        if traveled > eps {
+            let a = (idx * step).rem_euclid(2.0 * PI);
+            let (sin_a, cos_a) = a.sin_cos();
+            pts.push(snap_point(
+                center + radius * (cos_a * x_axis + sin_a * y_axis),
+            ));
+        }
         if ccw {
             idx += 1.0;
         } else {
             idx -= 1.0;
         }
-        if pts.len() > n as usize + 2 {
-            break; // safety
-        }
+        traveled += step;
     }
     pts.push(end);
     pts
@@ -4937,6 +5003,7 @@ pub fn split_circular_disk_face(
                         &Point3::origin(),
                         &Point3::origin(),
                         segments,
+                        false,
                     );
                     all_faces.extend(result2.sub_faces);
                 }
@@ -5100,7 +5167,7 @@ mod tests {
 
         // Try to split
         let initial_faces = brep.topology.faces.len();
-        let result = split_planar_face_by_circle(&mut brep, z0_face_id, &circle, 32);
+        let result = split_planar_face_by_circle(&mut brep, z0_face_id, &circle, 32, true);
         println!("Split result: {} sub-faces", result.sub_faces.len());
         println!(
             "Total faces after: {} (was {})",

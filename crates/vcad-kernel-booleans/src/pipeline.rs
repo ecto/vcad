@@ -162,6 +162,7 @@ fn apply_splits_to_solid(
     splits: HashMap<FaceId, FaceSplits>,
     segments: u32,
     #[allow(unused_variables)] solid_name: &str,
+    other: &BRepSolid,
 ) {
     // Deterministic order: the splits are applied in sequence and each
     // one reshapes the face the next one sees, so iterating the HashMap
@@ -350,6 +351,7 @@ fn apply_splits_to_solid(
                                 circle.center.z,
                                 circle.radius
                             );
+                            let canonical = split::circle_on_cylinder_wall(other, circle);
                             let result = split::split_planar_face(
                                 solid,
                                 fid,
@@ -357,6 +359,7 @@ fn apply_splits_to_solid(
                                 &Point3::origin(),
                                 &Point3::origin(),
                                 segments,
+                                canonical,
                             );
                             debug_bool!(
                                 "    -> Circle split result: {} sub-faces {:?}",
@@ -391,6 +394,7 @@ fn apply_splits_to_solid(
                                 &Point3::origin(),
                                 &Point3::origin(),
                                 segments,
+                                false,
                             );
                             debug_bool!(
                                 "    -> planar Line split result: {} sub-faces {:?}",
@@ -1095,8 +1099,76 @@ pub(crate) fn brep_boolean(
         }
     }
 
+    // A spherical face split by two or more circles that INTERSECT each
+    // other is not representable by the cap splitter (each circle mints a
+    // full hole + disk; overlapping caps double-cover the surface and the
+    // result is a cracked shell). Until sphere arc-arrangement splitting
+    // exists, return the documented conservative result instead of garbage:
+    // empty for intersection, A for difference, both shells for union —
+    // exactly what the misclassification on main used to degrade to, but
+    // explicit. TODO(sphere-arrangements): remove once spheres get a real
+    // region splitter.
+    let sphere_arrangement_unsound =
+        |solid: &BRepSolid, splits: &HashMap<FaceId, FaceSplits>| -> bool {
+            for (face_id, list) in splits {
+                if !solid.topology.faces.contains_key(*face_id)
+                    || !split::is_spherical_face(solid, *face_id)
+                {
+                    continue;
+                }
+                let face = &solid.topology.faces[*face_id];
+                let Some(sphere) = solid.geometry.surfaces[face.surface_index]
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+                else {
+                    continue;
+                };
+                // Each circle on the sphere is a cap: axis = unit(center_circle
+                // − center_sphere)… for a great circle the offset is ~0, so use
+                // the circle's plane normal instead; angular radius from the
+                // chord.
+                let caps: Vec<(vcad_kernel_math::Vec3, f64)> = list
+                    .iter()
+                    .filter_map(|(curve, _, _)| {
+                        let ssi::IntersectionCurve::Circle(c) = curve else {
+                            return None;
+                        };
+                        let off = c.center - sphere.center;
+                        let axis = if off.norm() > 1e-9 {
+                            off.normalize()
+                        } else {
+                            c.x_dir.into_inner().cross(c.y_dir.into_inner()).normalize()
+                        };
+                        let ang = (c.radius / sphere.radius).clamp(-1.0, 1.0).asin();
+                        let ang = if off.norm() > 1e-9 && off.norm() > sphere.radius * ang.cos() {
+                            std::f64::consts::PI - ang
+                        } else {
+                            ang
+                        };
+                        Some((axis, ang))
+                    })
+                    .collect();
+                for i in 0..caps.len() {
+                    for j in i + 1..caps.len() {
+                        let (a1, t1) = caps[i];
+                        let (a2, t2) = caps[j];
+                        let gap = a1.dot(a2).clamp(-1.0, 1.0).acos();
+                        let margin = 1e-6;
+                        if gap > (t1 - t2).abs() + margin && gap + margin < t1 + t2 {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+    if sphere_arrangement_unsound(&a, &splits_a) || sphere_arrangement_unsound(&b, &splits_b) {
+        debug_bool!("Sphere circle arrangement unrepresentable: conservative fallback");
+        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
+    }
+
     // Apply splits to both solids
-    apply_splits_to_solid(&mut a, splits_a, segments, "A");
+    apply_splits_to_solid(&mut a, splits_a, segments, "A", &b);
     // Heal the T-junctions splitting leaves behind (stacked band pieces
     // partition shared vertical boundaries at different heights, a pinch
     // tangency stops one side's rim where the other continues). The
@@ -1106,7 +1178,7 @@ pub(crate) fn brep_boolean(
     debug_bool!("\n--- Stage 2.5: After splits applied to A ---");
     debug_bool!("A now has {} faces", a.topology.faces.len());
 
-    apply_splits_to_solid(&mut b, splits_b, segments, "B");
+    apply_splits_to_solid(&mut b, splits_b, segments, "B", &a);
     crate::repair::repair_topology_fine(&mut b.topology, 1e-6);
 
     // 3. Classify all faces (including split sub-faces)
@@ -1125,9 +1197,43 @@ pub(crate) fn brep_boolean(
     // cracks along the shared circles), so pick it per boolean from the
     // largest curved radius across both operands: a 45mm part classifies at
     // the 256 cap (~4e-3mm sag) while a fillet-scale solid stays cheap.
-    // Tessellate each solid once and reuse for classification.
-    let mesh_b = tessellate_brep(&b, segments);
-    let mesh_a = tessellate_brep(&a, segments);
+    // Tessellate each solid once and reuse for classification. Use the
+    // post-split solids so probes see the exact conformed boundary — but
+    // fall back to the ORIGINAL solid's mesh when the split mesh's area
+    // shows double coverage. A sphere fragmented by several plane circles
+    // renders each fragment as a whole-band patch; the overlapping panels
+    // flip ray parity so every interior probe reads Outside (torture
+    // rand-062). Point-in-solid does not depend on the face partition, so
+    // the unsplit mesh is a sound substitute in that failure mode.
+    let mesh_area = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> f64 {
+        let mut total = 0.0;
+        for t in 0..mesh.indices.len() / 3 {
+            let p = |k: usize| {
+                let i = mesh.indices[t * 3 + k] as usize;
+                Point3::new(
+                    mesh.vertices[i * 3] as f64,
+                    mesh.vertices[i * 3 + 1] as f64,
+                    mesh.vertices[i * 3 + 2] as f64,
+                )
+            };
+            let (x, y, z) = (p(0), p(1), p(2));
+            total += 0.5 * (y - x).cross(z - x).norm();
+        }
+        total
+    };
+    let cls_mesh = |split_solid: &BRepSolid, original: &BRepSolid| {
+        let split_mesh = tessellate_brep(split_solid, segments);
+        let original_mesh = tessellate_brep(original, segments);
+        // Splitting cannot grow the boundary area; a markedly larger split
+        // mesh means fragments tessellated with overlapping coverage.
+        if mesh_area(&split_mesh) > 1.05 * mesh_area(&original_mesh) {
+            original_mesh
+        } else {
+            split_mesh
+        }
+    };
+    let mesh_b = cls_mesh(&b, solid_b);
+    let mesh_a = cls_mesh(&a, solid_a);
     #[cfg(feature = "debug-boolean")]
     {
         let open = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> usize {
@@ -1178,6 +1284,29 @@ pub(crate) fn brep_boolean(
             "post-split meshes: A open={} B open={}",
             open(&mesh_a),
             open(&mesh_b)
+        );
+        let area = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> f64 {
+            let mut total = 0.0;
+            for t in 0..mesh.indices.len() / 3 {
+                let p = |k: usize| {
+                    let i = mesh.indices[t * 3 + k] as usize;
+                    Point3::new(
+                        mesh.vertices[i * 3] as f64,
+                        mesh.vertices[i * 3 + 1] as f64,
+                        mesh.vertices[i * 3 + 2] as f64,
+                    )
+                };
+                let (x, y, z) = (p(0), p(1), p(2));
+                total += 0.5 * (y - x).cross(&(z - x)).norm();
+            }
+            total
+        };
+        debug_bool!(
+            "post-split mesh areas: A={:.2} tris={} B={:.2} tris={}",
+            area(&mesh_a),
+            mesh_a.indices.len() / 3,
+            area(&mesh_b),
+            mesh_b.indices.len() / 3
         );
         let params = vcad_kernel_tessellate::TessellationParams::from_segments(segments);
         for (fid, _kind, fmesh) in vcad_kernel_tessellate::tessellate_brep_by_face(&a, &params) {
