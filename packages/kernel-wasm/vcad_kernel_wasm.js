@@ -240,14 +240,29 @@ export class PhysicsSim {
     /**
      * Joint ids in observation order (document `joints` order).
      *
-     * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`. Action vector entries index
-     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
+     * Joints map onto `joint_positions` / `joint_velocities` by *slice*, not
+     * by index: joint `i` owns the next `jointSlotCounts()[i]` entries. The
+     * lists are the same length only when every joint is single-DOF. Action
+     * vector entries index `actuatedJointIds()` instead, which drops zero-dof
+     * (Fixed) joints.
      * @returns {string[]}
      */
     jointIds() {
         const ret = wasm.physicssim_jointIds(this.__wbg_ptr);
         var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Observation slots occupied by each joint in `jointIds()` order:
+     * `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+     * Free 6. Walk it as a cursor to split an observation into per-joint
+     * slices.
+     * @returns {Uint32Array}
+     */
+    jointSlotCounts() {
+        const ret = wasm.physicssim_jointSlotCounts(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
     }
@@ -259,6 +274,8 @@ export class PhysicsSim {
      * * `end_effector_ids` - Array of instance IDs to track as end effectors
      * * `dt` - Simulation timestep in seconds (default: 1/240)
      * * `substeps` - Number of physics substeps per step (default: 4)
+     * * `config_json` - Optional JSON `EnvConfig`: domain randomization,
+     *   observation noise, termination conditions, base instance id
      * * `ground_enabled` - Ground-plane contact at z = `ground_height` (default: true)
      * * `ground_height` - Ground plane height in meters (default: 0)
      * * `ground_friction` - Ground Coulomb friction coefficient (default: 0.8)
@@ -267,17 +284,20 @@ export class PhysicsSim {
      * @param {string[]} end_effector_ids
      * @param {number | null} [dt]
      * @param {number | null} [substeps]
+     * @param {string | null} [config_json]
      * @param {boolean | null} [ground_enabled]
      * @param {number | null} [ground_height]
      * @param {number | null} [ground_friction]
      * @param {number | null} [ground_restitution]
      */
-    constructor(doc_json, end_effector_ids, dt, substeps, ground_enabled, ground_height, ground_friction, ground_restitution) {
+    constructor(doc_json, end_effector_ids, dt, substeps, config_json, ground_enabled, ground_height, ground_friction, ground_restitution) {
         const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArrayJsValueToWasm0(end_effector_ids, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.physicssim_new(ptr0, len0, ptr1, len1, isLikeNone(dt) ? 0x100000001 : Math.fround(dt), isLikeNone(substeps) ? 0x100000001 : (substeps) >>> 0, isLikeNone(ground_enabled) ? 0xFFFFFF : ground_enabled ? 1 : 0, !isLikeNone(ground_height), isLikeNone(ground_height) ? 0 : ground_height, !isLikeNone(ground_friction), isLikeNone(ground_friction) ? 0 : ground_friction, !isLikeNone(ground_restitution), isLikeNone(ground_restitution) ? 0 : ground_restitution);
+        var ptr2 = isLikeNone(config_json) ? 0 : passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.physicssim_new(ptr0, len0, ptr1, len1, isLikeNone(dt) ? 0x100000001 : Math.fround(dt), isLikeNone(substeps) ? 0x100000001 : (substeps) >>> 0, ptr2, len2, isLikeNone(ground_enabled) ? 0xFFFFFF : ground_enabled ? 1 : 0, !isLikeNone(ground_height), isLikeNone(ground_height) ? 0 : ground_height, !isLikeNone(ground_friction), isLikeNone(ground_friction) ? 0 : ground_friction, !isLikeNone(ground_restitution), isLikeNone(ground_restitution) ? 0 : ground_restitution);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -322,6 +342,17 @@ export class PhysicsSim {
         return ret;
     }
     /**
+     * Reset with a new seed: re-seeds the domain-randomization stream
+     * (episode counter rewinds to 0) and resets. Returns the initial
+     * observation as JSON.
+     * @param {bigint} seed
+     * @returns {any}
+     */
+    resetSeeded(seed) {
+        const ret = wasm.physicssim_resetSeeded(this.__wbg_ptr, seed);
+        return ret;
+    }
+    /**
      * Set the maximum episode length.
      * @param {number} max_steps
      */
@@ -342,7 +373,7 @@ export class PhysicsSim {
      * * `targets` - Array of position targets for each joint (degrees or mm)
      *
      * # Returns
-     * Object with { observation, reward, done }
+     * Object with { observation, reward, done, info }
      * @param {Float64Array} targets
      * @returns {any}
      */
@@ -359,7 +390,7 @@ export class PhysicsSim {
      * * `torques` - Array of torques/forces for each joint (Nm or N)
      *
      * # Returns
-     * Object with { observation, reward, done }
+     * Object with { observation, reward, done, info }
      * @param {Float64Array} torques
      * @returns {any}
      */
@@ -376,7 +407,7 @@ export class PhysicsSim {
      * * `targets` - Array of velocity targets for each joint (deg/s or mm/s)
      *
      * # Returns
-     * Object with { observation, reward, done }
+     * Object with { observation, reward, done, info }
      * @param {Float64Array} targets
      * @returns {any}
      */
@@ -10322,12 +10353,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3796, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3797, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3802, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3803, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3821, function: Function { arguments: [Externref], shim_idx: 3822, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3827, function: Function { arguments: [Externref], shim_idx: 3828, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

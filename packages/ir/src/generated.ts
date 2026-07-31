@@ -2342,7 +2342,7 @@ velocity_limit?: number, } | { "type": "Cylindrical",
 /**
  * Axis of rotation/translation.
  */
-axis: Vec3, } | { "type": "Ball" };
+axis: Vec3, } | { "type": "Ball" } | { "type": "Free" };
 
 /**
  * A single joint's state within a recorded pose.

@@ -847,8 +847,18 @@ impl<'a> UrdfReader<'a> {
                         .map(|v| v * 1000.0),
                 }
             }
-            "floating" | "planar" => {
-                // Not directly supported, approximate with ball joint
+            "floating" => {
+                // Full 6-DOF: the child (e.g. a humanoid's floating base)
+                // can translate and rotate freely. Previously mapped to
+                // Ball, which silently pinned the base in space.
+                JointKind::Free
+            }
+            "planar" => {
+                // Approximation: URDF planar is 2 translation + 1 rotation
+                // DOF in the plane normal to `axis`. vcad has no planar
+                // joint kind yet, so approximate with Ball (3 rotational
+                // DOF about the anchor) to keep the link mobile without
+                // letting it leave the anchor entirely.
                 JointKind::Ball
             }
             other => return Err(UrdfError::UnsupportedJointType(other.to_string())),
@@ -993,6 +1003,46 @@ mod tests {
             }
             _ => panic!("Expected Revolute joint for continuous"),
         }
+    }
+
+    #[test]
+    fn test_parse_floating_joint_maps_to_free() {
+        let urdf = r#"<?xml version="1.0"?>
+<robot name="humanoid">
+    <link name="base"/>
+    <link name="pelvis"/>
+    <joint name="world_joint" type="floating">
+        <parent link="base"/>
+        <child link="pelvis"/>
+    </joint>
+</robot>"#;
+
+        let doc = read_urdf_from_str(urdf).unwrap();
+        let joints = doc.joints.unwrap();
+        assert!(
+            matches!(joints[0].kind, JointKind::Free),
+            "floating must map to Free (6-DOF), got {:?}",
+            joints[0].kind
+        );
+    }
+
+    #[test]
+    fn test_parse_planar_joint_maps_to_ball() {
+        let urdf = r#"<?xml version="1.0"?>
+<robot name="p">
+    <link name="base"/>
+    <link name="slider"/>
+    <joint name="pj" type="planar">
+        <parent link="base"/>
+        <child link="slider"/>
+        <axis xyz="0 0 1"/>
+    </joint>
+</robot>"#;
+
+        let doc = read_urdf_from_str(urdf).unwrap();
+        let joints = doc.joints.unwrap();
+        // Documented approximation: vcad has no planar joint kind yet.
+        assert!(matches!(joints[0].kind, JointKind::Ball));
     }
 
     #[test]

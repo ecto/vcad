@@ -478,9 +478,10 @@ impl<'a> UrdfWriter<'a> {
                 ("continuous".to_string(), axis_str, None)
             }
             JointKind::Ball => {
-                // Approximate as floating
+                // Approximate as floating (URDF has no ball joint)
                 ("floating".to_string(), None, None)
             }
+            JointKind::Free => ("floating".to_string(), None, None),
         };
 
         // Convert anchor to origin

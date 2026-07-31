@@ -30,6 +30,7 @@ import { CaretDown } from "@phosphor-icons/react/dist/ssr/CaretDown";
 import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/ssr/ArrowsClockwise";
 import { Spiral } from "@phosphor-icons/react/dist/ssr/Spiral";
+import { ArrowsOutCardinal } from "@phosphor-icons/react/dist/ssr/ArrowsOutCardinal";
 import { Stack } from "@phosphor-icons/react/dist/ssr/Stack";
 import { Package } from "@phosphor-icons/react/dist/ssr/Package";
 import { LinkSimple } from "@phosphor-icons/react/dist/ssr/LinkSimple";
@@ -822,6 +823,8 @@ function getJointTypeLabel(kind: JointKind): string {
       return "Cylindrical";
     case "Ball":
       return "Ball";
+    case "Free":
+      return "Free";
   }
 }
 
@@ -838,6 +841,8 @@ function getJointIcon(kind: JointKind): typeof LinkSimple {
       return Spiral;
     case "Ball":
       return Globe;
+    case "Free":
+      return ArrowsOutCardinal;
   }
 }
 

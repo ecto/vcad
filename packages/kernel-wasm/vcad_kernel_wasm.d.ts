@@ -82,11 +82,20 @@ export class PhysicsSim {
     /**
      * Joint ids in observation order (document `joints` order).
      *
-     * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`. Action vector entries index
-     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
+     * Joints map onto `joint_positions` / `joint_velocities` by *slice*, not
+     * by index: joint `i` owns the next `jointSlotCounts()[i]` entries. The
+     * lists are the same length only when every joint is single-DOF. Action
+     * vector entries index `actuatedJointIds()` instead, which drops zero-dof
+     * (Fixed) joints.
      */
     jointIds(): string[];
+    /**
+     * Observation slots occupied by each joint in `jointIds()` order:
+     * `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+     * Free 6. Walk it as a cursor to split an observation into per-joint
+     * slices.
+     */
+    jointSlotCounts(): Uint32Array;
     /**
      * Create a new physics simulation from a vcad document JSON.
      *
@@ -95,12 +104,14 @@ export class PhysicsSim {
      * * `end_effector_ids` - Array of instance IDs to track as end effectors
      * * `dt` - Simulation timestep in seconds (default: 1/240)
      * * `substeps` - Number of physics substeps per step (default: 4)
+     * * `config_json` - Optional JSON `EnvConfig`: domain randomization,
+     *   observation noise, termination conditions, base instance id
      * * `ground_enabled` - Ground-plane contact at z = `ground_height` (default: true)
      * * `ground_height` - Ground plane height in meters (default: 0)
      * * `ground_friction` - Ground Coulomb friction coefficient (default: 0.8)
      * * `ground_restitution` - Ground restitution, 0 = inelastic (default: 0)
      */
-    constructor(doc_json: string, end_effector_ids: string[], dt?: number | null, substeps?: number | null, ground_enabled?: boolean | null, ground_height?: number | null, ground_friction?: number | null, ground_restitution?: number | null);
+    constructor(doc_json: string, end_effector_ids: string[], dt?: number | null, substeps?: number | null, config_json?: string | null, ground_enabled?: boolean | null, ground_height?: number | null, ground_friction?: number | null, ground_restitution?: number | null);
     /**
      * Get the number of joints in the environment.
      */
@@ -122,6 +133,12 @@ export class PhysicsSim {
      */
     reset(): any;
     /**
+     * Reset with a new seed: re-seeds the domain-randomization stream
+     * (episode counter rewinds to 0) and resets. Returns the initial
+     * observation as JSON.
+     */
+    resetSeeded(seed: bigint): any;
+    /**
      * Set the maximum episode length.
      */
     setMaxSteps(max_steps: number): void;
@@ -136,7 +153,7 @@ export class PhysicsSim {
      * * `targets` - Array of position targets for each joint (degrees or mm)
      *
      * # Returns
-     * Object with { observation, reward, done }
+     * Object with { observation, reward, done, info }
      */
     stepPosition(targets: Float64Array): any;
     /**
@@ -146,7 +163,7 @@ export class PhysicsSim {
      * * `torques` - Array of torques/forces for each joint (Nm or N)
      *
      * # Returns
-     * Object with { observation, reward, done }
+     * Object with { observation, reward, done, info }
      */
     stepTorque(torques: Float64Array): any;
     /**
@@ -156,7 +173,7 @@ export class PhysicsSim {
      * * `targets` - Array of velocity targets for each joint (deg/s or mm/s)
      *
      * # Returns
-     * Object with { observation, reward, done }
+     * Object with { observation, reward, done, info }
      */
     stepVelocity(targets: Float64Array): any;
 }
@@ -3384,11 +3401,13 @@ export interface InitOutput {
     readonly physicssim_actionDim: (a: number) => number;
     readonly physicssim_actuatedJointIds: (a: number) => [number, number];
     readonly physicssim_jointIds: (a: number) => [number, number];
-    readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number];
+    readonly physicssim_jointSlotCounts: (a: number) => [number, number];
+    readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number, number];
     readonly physicssim_numJoints: (a: number) => number;
     readonly physicssim_observationDim: (a: number) => number;
     readonly physicssim_observe: (a: number) => any;
     readonly physicssim_reset: (a: number) => any;
+    readonly physicssim_resetSeeded: (a: number, b: bigint) => any;
     readonly physicssim_setMaxSteps: (a: number, b: number) => void;
     readonly physicssim_setSeed: (a: number, b: bigint) => void;
     readonly physicssim_stepPosition: (a: number, b: number, c: number) => any;
@@ -3498,6 +3517,17 @@ export interface InitOutput {
     readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly getCompiledModule: () => any;
+    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
+    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -3578,17 +3608,58 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
-    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly checkDesignConstraints: (a: number, b: number) => [number, number, number, number];
+    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly embroideryDesignToMesh: (a: number, b: number) => [number, number, number];
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
+    readonly flattenSolidToSheetMetal: (a: number, b: number) => [number, number];
+    readonly getSheetMetalBendTable: () => [number, number];
+    readonly getSheetMetalMaterials: () => [number, number];
+    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
+    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
+    readonly solveDesignConstraints: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_can_redo: (a: number) => number;
+    readonly wasmdocumentengine_can_undo: (a: number) => number;
+    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
+    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
+    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
+    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
+    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_new: () => number;
+    readonly wasmdocumentengine_redo: (a: number) => any;
+    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_save: (a: number) => [number, number];
+    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_undo: (a: number) => any;
+    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_circuitsim_free: (a: number, b: number) => void;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
@@ -3686,58 +3757,6 @@ export interface InitOutput {
     readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly slicersettings_new: () => number;
     readonly isSlicerAvailable: () => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly checkDesignConstraints: (a: number, b: number) => [number, number, number, number];
-    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly embroideryDesignToMesh: (a: number, b: number) => [number, number, number];
-    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
-    readonly flattenSolidToSheetMetal: (a: number, b: number) => [number, number];
-    readonly getSheetMetalBendTable: () => [number, number];
-    readonly getSheetMetalMaterials: () => [number, number];
-    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
-    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
-    readonly solveDesignConstraints: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_can_redo: (a: number) => number;
-    readonly wasmdocumentengine_can_undo: (a: number) => number;
-    readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly wasmdocumentengine_create_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_delete_feature: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_delete_feature_by_id: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_from_v1_json: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_get_document_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_ops_since: (a: number, b: number, c: number) => [number, number];
-    readonly wasmdocumentengine_get_ordered_features_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_parts_json: (a: number) => [number, number];
-    readonly wasmdocumentengine_get_sync_clock: (a: number) => [number, number];
-    readonly wasmdocumentengine_import_ir: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_load: (a: number, b: number) => [number, number, number];
-    readonly wasmdocumentengine_merge_remote: (a: number, b: number, c: number) => any;
-    readonly wasmdocumentengine_move_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_new: () => number;
-    readonly wasmdocumentengine_redo: (a: number) => any;
-    readonly wasmdocumentengine_rename_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_save: (a: number) => [number, number];
-    readonly wasmdocumentengine_set_joint_state: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_set_material: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly wasmdocumentengine_set_param: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly wasmdocumentengine_set_rotation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
-    readonly wasmdocumentengine_undo: (a: number) => any;
-    readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];

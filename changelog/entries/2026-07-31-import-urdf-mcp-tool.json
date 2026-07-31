@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-import-urdf-mcp-tool",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "import_urdf MCP tool",
+  "summary": "Agents can import a URDF robot (links, joints, FK-placed instances, STL meshes) straight into a session document, ready for create_robot_env.",
+  "features": ["urdf", "robotics", "physics", "import"],
+  "mcpTools": ["import_urdf"]
+}

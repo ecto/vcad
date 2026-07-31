@@ -148,6 +148,13 @@ pub enum JointKind {
     },
     /// Ball joint — rotation around all axes.
     Ball,
+    /// Free joint — full 6-DOF (3 translation + 3 rotation), no constraint.
+    ///
+    /// Used for floating bases (e.g. a humanoid's pelvis imported from a
+    /// URDF `floating` joint): the child body can translate and rotate
+    /// freely relative to the parent. The scalar `Joint::state` is not
+    /// meaningful for this kind; the full pose lives in the physics state.
+    Free,
 }
 
 /// A joint connecting two instances in an assembly.
@@ -2731,6 +2738,13 @@ mod tests {
         assert!(json.contains(r#""type":"Ball""#));
         let restored: JointKind = serde_json::from_str(&json).unwrap();
         assert_eq!(ball, restored);
+
+        // Test Free
+        let free = JointKind::Free;
+        let json = serde_json::to_string(&free).unwrap();
+        assert!(json.contains(r#""type":"Free""#));
+        let restored: JointKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(free, restored);
     }
 
     #[test]

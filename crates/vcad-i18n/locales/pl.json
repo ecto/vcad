@@ -343,6 +343,7 @@
   "joint.slider": "Przesuwne",
   "joint.cylindrical": "Cylindryczne",
   "joint.ball": "Kuliste",
+  "joint.free": "Swobodny",
   "joint.suffix": "Połączenie",
 
   "tree.scene": "Scena",

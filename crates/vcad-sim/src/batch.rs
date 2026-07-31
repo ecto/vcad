@@ -314,6 +314,7 @@ fn build_phyz_model_joint(
         }
         JointKind::Cylindrical { .. } => Ok(PhyzJoint::revolute(xform)),
         JointKind::Ball => Ok(PhyzJoint::spherical(xform)),
+        JointKind::Free => Ok(PhyzJoint::free(xform)),
     }
 }
 
@@ -326,7 +327,7 @@ fn joint_frame_rotation(kind: &vcad_ir::JointKind) -> phyz_math::Mat3 {
         JointKind::Revolute { axis, .. } | JointKind::Cylindrical { axis } => {
             rotation_aligning_z_to(phyz_math::Vec3::new(axis.x, axis.y, axis.z).normalize())
         }
-        JointKind::Slider { .. } | JointKind::Fixed | JointKind::Ball => {
+        JointKind::Slider { .. } | JointKind::Fixed | JointKind::Ball | JointKind::Free => {
             phyz_math::Mat3::identity()
         }
     }

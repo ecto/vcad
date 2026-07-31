@@ -54,9 +54,29 @@ impl Default for MotorTarget {
 impl MotorTarget {
     /// Compute the control torque given current position and velocity.
     pub fn compute_torque(&self, position: f64, velocity: f64) -> f64 {
+        self.compute_torque_with_feedforward(position, velocity, 0.0)
+    }
+
+    /// Compute the control torque with a feedforward term (e.g. gravity
+    /// compensation) folded in before the clamp.
+    ///
+    /// The feedforward applies to Position and Velocity modes only — a pure
+    /// PD servo has no integrator, so the plant's static gravity torque
+    /// shows up verbatim as steady-state error (`τ_g / kp`; with the
+    /// reflected-inertia gains that is tens of degrees for a hanging link).
+    /// Torque mode passes the commanded value through untouched: RL torque
+    /// actions must reach the joint unmodified.
+    pub fn compute_torque_with_feedforward(
+        &self,
+        position: f64,
+        velocity: f64,
+        feedforward: f64,
+    ) -> f64 {
         let torque = match self.mode {
-            MotorMode::Position => self.kp * (self.target - position) - self.kd * velocity,
-            MotorMode::Velocity => self.kd * (self.target - velocity),
+            MotorMode::Position => {
+                self.kp * (self.target - position) - self.kd * velocity + feedforward
+            }
+            MotorMode::Velocity => self.kd * (self.target - velocity) + feedforward,
             MotorMode::Torque => self.target,
         };
         torque.clamp(-self.max_force, self.max_force)
@@ -132,13 +152,23 @@ pub(crate) fn vcad_joint_to_phyz(
             Ok(phyz_joint)
         }
         JointKind::Cylindrical { .. } => {
-            // Approximate as revolute (primary DOF)
+            // Approximate as revolute (primary DOF). The IR's Cylindrical
+            // carries no limits today; if it grows them, thread them through
+            // like Revolute above.
             let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::revolute(xform))
         }
         JointKind::Ball => {
             let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::spherical(xform))
+        }
+        JointKind::Free => {
+            // 6-DOF floating base. phyz's free joint carries
+            // q = [x, y, z, wx, wy, wz] (position in parent coords +
+            // exp-coords of the rotation) and v = [angular(3), linear(3)]
+            // — note the swapped order between q and v.
+            let xform = SpatialTransform::new(rot, anchor);
+            Ok(PhyzJoint::free(xform))
         }
     }
 }
@@ -154,7 +184,9 @@ pub(crate) fn joint_frame_rotation(kind: &JointKind) -> Mat3 {
         JointKind::Revolute { axis, .. } | JointKind::Cylindrical { axis } => {
             rotation_aligning_z_to(Vec3::new(axis.x, axis.y, axis.z).normalize())
         }
-        JointKind::Slider { .. } | JointKind::Fixed | JointKind::Ball => Mat3::identity(),
+        JointKind::Slider { .. } | JointKind::Fixed | JointKind::Ball | JointKind::Free => {
+            Mat3::identity()
+        }
     }
 }
 
@@ -184,12 +216,14 @@ fn rotation_aligning_z_to(target: Vec3) -> Mat3 {
 ///
 /// - Revolute: degrees → radians
 /// - Slider: mm → meters
+/// - Free: treated as the first q DOF (x translation), mm → meters — use
+///   [`convert_q_dof_to_physics`] for the full 6-DOF layout
 pub fn convert_state_to_physics(kind: &JointKind, state: f64) -> f64 {
     match kind {
         JointKind::Revolute { .. } | JointKind::Cylindrical { .. } | JointKind::Ball => {
             state.to_radians()
         }
-        JointKind::Slider { .. } => state / 1000.0,
+        JointKind::Slider { .. } | JointKind::Free => state / 1000.0,
         JointKind::Fixed => 0.0,
     }
 }
@@ -198,13 +232,85 @@ pub fn convert_state_to_physics(kind: &JointKind, state: f64) -> f64 {
 ///
 /// - Revolute: radians → degrees
 /// - Slider: meters → mm
+/// - Free: treated as the first q DOF (x translation), meters → mm
 pub fn convert_state_from_physics(kind: &JointKind, state: f64) -> f64 {
     match kind {
         JointKind::Revolute { .. } | JointKind::Cylindrical { .. } | JointKind::Ball => {
             state.to_degrees()
         }
-        JointKind::Slider { .. } => state * 1000.0,
+        JointKind::Slider { .. } | JointKind::Free => state * 1000.0,
         JointKind::Fixed => 0.0,
+    }
+}
+
+/// Convert one **position (q)** DOF from vcad units to physics units.
+///
+/// Per-DOF q layout in vcad units (phyz layout in parentheses):
+/// - 1-DOF kinds: DOF 0 = degrees (radians) or mm (meters)
+/// - Ball: DOFs 0–2 = exp-coords in degrees (radians)
+/// - Free: DOFs 0–2 = translation in mm (meters),
+///   DOFs 3–5 = rotation exp-coords in degrees (radians)
+pub fn convert_q_dof_to_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
+    match kind {
+        JointKind::Free => {
+            if dof < 3 {
+                value / 1000.0
+            } else {
+                value.to_radians()
+            }
+        }
+        _ => convert_state_to_physics(kind, value),
+    }
+}
+
+/// Convert one **position (q)** DOF from physics units to vcad units.
+/// Inverse of [`convert_q_dof_to_physics`]; same layout.
+pub fn convert_q_dof_from_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
+    match kind {
+        JointKind::Free => {
+            if dof < 3 {
+                value * 1000.0
+            } else {
+                value.to_degrees()
+            }
+        }
+        _ => convert_state_from_physics(kind, value),
+    }
+}
+
+/// Convert one **velocity (v)** DOF from physics units to vcad units.
+///
+/// The velocity layout of a Free joint is **swapped** relative to its q
+/// layout (phyz/Featherstone convention): v = [angular(3), linear(3)]
+/// while q = [linear(3), rotation(3)]. So:
+/// - Free: DOFs 0–2 = angular velocity rad/s → deg/s,
+///   DOFs 3–5 = body-frame linear velocity m/s → mm/s
+/// - all other kinds: same conversion as their q DOF
+pub fn convert_v_dof_from_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
+    match kind {
+        JointKind::Free => {
+            if dof < 3 {
+                value.to_degrees()
+            } else {
+                value * 1000.0
+            }
+        }
+        _ => convert_state_from_physics(kind, value),
+    }
+}
+
+/// Convert one **velocity (v)** DOF from vcad units to physics units.
+/// Inverse of [`convert_v_dof_from_physics`]; same swapped Free layout.
+pub fn convert_v_dof_to_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
+    match kind {
+        JointKind::Free => {
+            if dof < 3 {
+                value.to_radians()
+            } else {
+                value / 1000.0
+            }
+        }
+        _ => convert_state_to_physics(kind, value),
     }
 }
 
@@ -214,6 +320,7 @@ pub fn joint_ndof(kind: &JointKind) -> usize {
         JointKind::Fixed => 0,
         JointKind::Revolute { .. } | JointKind::Slider { .. } | JointKind::Cylindrical { .. } => 1,
         JointKind::Ball => 3,
+        JointKind::Free => 6,
     }
 }
 

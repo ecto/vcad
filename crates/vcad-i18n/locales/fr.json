@@ -343,6 +343,7 @@
   "joint.slider": "Glissière",
   "joint.cylindrical": "Cylindrique",
   "joint.ball": "Rotule",
+  "joint.free": "Libre",
   "joint.suffix": "Liaison",
 
   "tree.scene": "Scène",

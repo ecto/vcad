@@ -11,16 +11,47 @@ import type { PhysicsSim as WasmPhysicsSim } from "@vcad/kernel-wasm";
 /**
  * Observation from the physics simulation.
  *
- * Joint vectors are indexed by {@link PhysicsEnv.jointIds} order — the
- * document's `joints` array order.
+ * Joint vectors follow {@link PhysicsEnv.jointIds} order — the document's
+ * `joints` array order — but are grouped by *slice*, not one entry per joint:
+ * joint `i` owns the next {@link PhysicsEnv.jointSlotCounts}`[i]` entries
+ * (Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3, Free 6).
  */
 export interface PhysicsObservation {
-  /** Joint positions (degrees for revolute, mm for prismatic) */
+  /** Joint positions, flattened per DOF (degrees for rotational DOFs, mm for
+   *  translational ones) */
   joint_positions: number[];
-  /** Joint velocities (deg/s or mm/s) */
+  /** Joint velocities, flattened per DOF (deg/s or mm/s) */
   joint_velocities: number[];
   /** End effector poses as [x, y, z, qw, qx, qy, qz][] */
   end_effector_poses: Array<[number, number, number, number, number, number, number]>;
+  /**
+   * Base pose as [x, y, z, qw, qx, qy, qz] (config `base_instance_id`,
+   * defaulting to the ground instance). Absent on kernel builds predating
+   * base-state observations.
+   */
+  base_pose?: [number, number, number, number, number, number, number];
+  /** Base velocity as [vx, vy, vz, wx, wy, wz] (m/s, rad/s, world frame). */
+  base_velocity?: [number, number, number, number, number, number];
+}
+
+/** Per-step diagnostics from the kernel — reward inputs for the client. */
+export interface PhysicsStepInfo {
+  /** Steps since the last reset. */
+  step: number;
+  /** Episode ended by hitting max_steps. */
+  truncated: boolean;
+  /** Episode ended by a termination condition. */
+  terminated: boolean;
+  /** Which condition fired ("base_height", "base_tilt", "joint_limit", …). */
+  termination_reason?: string | null;
+  /** Base origin height (meters), when a base is known. */
+  base_height_m?: number | null;
+  /** Base tilt from upright (degrees), when a base is known. */
+  base_tilt_deg?: number | null;
+  /** Joint ids currently at/past a limit. */
+  joint_limit_violations: string[];
+  /** This episode's sampled actuator latency in physics substeps. */
+  action_latency_substeps: number;
 }
 
 /** Result from stepping the simulation */
@@ -28,6 +59,58 @@ export interface PhysicsStepResult {
   observation: PhysicsObservation;
   reward: number;
   done: boolean;
+  /** Absent on kernel builds predating the info map. */
+  info?: PhysicsStepInfo;
+}
+
+/** Inclusive [min, max] sampling range for domain randomization. */
+export interface PhysicsRange {
+  min: number;
+  max: number;
+}
+
+/** Seeded domain randomization applied on every reset. */
+export interface PhysicsDomainRandomization {
+  /** Per-link multiplicative mass scale (e.g. {min: 0.9, max: 1.1}). */
+  mass_scale?: PhysicsRange;
+  /** Per-joint scale on dry friction loss + viscous damping. */
+  friction_scale?: PhysicsRange;
+  /** Global scale on PD motor gains, sampled once per episode. */
+  pd_gain_scale?: PhysicsRange;
+  /** Actuator latency in physics substeps, uniform integer [min, max]. */
+  action_latency_steps?: [number, number];
+  /** Uniform ± initial joint position perturbation (deg / mm). */
+  joint_pos_perturb?: number;
+  /** Uniform ± initial joint velocity perturbation (deg/s / mm/s). */
+  joint_vel_perturb?: number;
+}
+
+/** Gaussian observation noise (std-devs; zero/absent = none). */
+export interface PhysicsObservationNoise {
+  joint_pos_std?: number;
+  joint_vel_std?: number;
+  base_pos_std?: number;
+  base_rot_std?: number;
+  base_vel_std?: number;
+}
+
+/** Configurable termination conditions. */
+export interface PhysicsTerminationConfig {
+  /** Terminate when base z drops below this (meters). */
+  base_height_below?: number;
+  /** Terminate when base tilt exceeds this (degrees from upright). */
+  base_tilt_above_deg?: number;
+  /** Terminate when any joint reaches a limit. */
+  terminate_on_joint_limit?: boolean;
+}
+
+/** Env configuration: randomization, noise, termination, base instance. */
+export interface PhysicsEnvConfig {
+  randomization?: PhysicsDomainRandomization;
+  observation_noise?: PhysicsObservationNoise;
+  termination?: PhysicsTerminationConfig;
+  /** Instance id used for base pose/velocity (default: ground instance). */
+  base_instance_id?: string;
 }
 
 /** Action types for controlling joints */
@@ -55,6 +138,13 @@ export interface PhysicsEnvOptions {
   substeps?: number;
   /** Maximum episode length (default: 1000) */
   maxSteps?: number;
+  /**
+   * Domain randomization / observation noise / termination config. Requires
+   * a kernel WASM build that supports it (create() throws otherwise rather
+   * than silently dropping the config).
+   */
+  config?: PhysicsEnvConfig;
+
   /**
    * Ground-plane contact. Defaults to enabled at z = 0 with friction 0.8.
    * A kernel WASM predating ground contact ignores these extra constructor
@@ -122,6 +212,7 @@ export class PhysicsEnv {
   private _observationDim: number;
   private _jointIds: string[] | null;
   private _actuatedJointIds: string[] | null;
+  private _jointSlotCounts: number[] | null;
 
   private constructor(sim: WasmPhysicsSim) {
     this.sim = sim;
@@ -151,6 +242,18 @@ export class PhysicsEnv {
     this._actuatedJointIds = Array.isArray(rawActuated)
       ? (rawActuated as string[])
       : null;
+    // Same story again for jointSlotCounts(), newer still. Null means "this
+    // kernel can't tell us the per-joint split"; callers then must not
+    // assume one slot per joint, since a Ball or Free joint occupies more.
+    const maybeSlots = (
+      sim as unknown as { jointSlotCounts?: () => unknown }
+    ).jointSlotCounts;
+    const rawSlots =
+      typeof maybeSlots === "function" ? maybeSlots.call(sim) : null;
+    this._jointSlotCounts =
+      Array.isArray(rawSlots) && rawSlots.every((n) => typeof n === "number")
+        ? (rawSlots as number[])
+        : null;
   }
 
   /**
@@ -172,15 +275,20 @@ export class PhysicsEnv {
     }
 
     const docJson = JSON.stringify(document);
-    // The ground-config arguments postdate some shipped kernel builds; the
+    // Both the config-JSON and ground arguments postdate some shipped kernel
+    // builds; extra args are ignored by older wasm-bindgen glue. The
     // structural cast keeps typecheck green against a checked-in .d.ts that
-    // predates them, and an older WASM simply ignores the extras (running
-    // contact-free, its previous behavior).
+    // may predate them. An older WASM silently runs contact-free (its
+    // previous behavior) — but a dropped `config` would silently disable
+    // randomization, so create() probes for a same-vintage binding
+    // (resetSeeded) and fails closed instead.
+    const configJson = options.config ? JSON.stringify(options.config) : null;
     const Sim = module.PhysicsSim as unknown as new (
       docJson: string,
       endEffectorIds: string[],
       dt: number | null,
       substeps: number | null,
+      configJson?: string | null,
       groundEnabled?: boolean | null,
       groundHeight?: number | null,
       groundFriction?: number | null,
@@ -191,11 +299,23 @@ export class PhysicsEnv {
       options.endEffectorIds,
       options.dt ?? null,
       options.substeps ?? null,
+      configJson,
       options.ground?.enabled ?? null,
       options.ground?.height ?? null,
       options.ground?.friction ?? null,
       options.ground?.restitution ?? null,
     );
+
+    if (
+      configJson &&
+      typeof (sim as unknown as { resetSeeded?: unknown }).resetSeeded !==
+        "function"
+    ) {
+      throw new Error(
+        "This kernel WASM build predates gym env config (domain randomization / " +
+          "observation noise / termination). Rebuild the kernel WASM or drop `config`.",
+      );
+    }
 
     if (options.maxSteps) {
       sim.setMaxSteps(options.maxSteps);
@@ -222,11 +342,23 @@ export class PhysicsEnv {
 
   /**
    * Joint ids in observation order (document `joints` order), or null when
-   * the loaded kernel WASM predates `jointIds()`. Index `i` of
-   * `joint_positions` / `joint_velocities` corresponds to `jointIds[i]`.
+   * the loaded kernel WASM predates `jointIds()`.
+   *
+   * Joints map onto `joint_positions` / `joint_velocities` by *slice*, not by
+   * index: joint `i` owns the next `jointSlotCounts[i]` entries. Index `i`
+   * lines up with joint `i` only when every joint is single-DOF.
    */
   get jointIds(): string[] | null {
     return this._jointIds;
+  }
+
+  /**
+   * Observation slots occupied by each joint in `jointIds` order:
+   * `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+   * Free 6. Null when the loaded kernel WASM predates `jointSlotCounts()`.
+   */
+  get jointSlotCounts(): number[] | null {
+    return this._jointSlotCounts;
   }
 
   /**
@@ -254,7 +386,22 @@ export class PhysicsEnv {
    *
    * @returns Initial observation
    */
-  reset(): PhysicsObservation {
+  reset(seed?: number | bigint): PhysicsObservation {
+    if (seed !== undefined) {
+      // resetSeeded postdates some shipped kernel builds — fail closed
+      // rather than silently ignoring an explicit seed.
+      const resetSeeded = (
+        this.sim as unknown as { resetSeeded?: (s: bigint) => unknown }
+      ).resetSeeded;
+      if (typeof resetSeeded !== "function") {
+        throw new Error(
+          "This kernel WASM build predates seeded resets. Rebuild the kernel " +
+            "WASM or call reset() without a seed.",
+        );
+      }
+      const rawObs = resetSeeded.call(this.sim, BigInt(seed));
+      return mapToObject(rawObs) as PhysicsObservation;
+    }
     const rawObs = this.sim.reset();
     // serde_wasm_bindgen returns a Map, convert to plain object
     return mapToObject(rawObs) as PhysicsObservation;
