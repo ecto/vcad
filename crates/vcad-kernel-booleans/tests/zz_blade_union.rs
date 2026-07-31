@@ -74,3 +74,46 @@ fn zz_frozen_caps_detected_as_disks() {
     assert_eq!(disks, 2, "analytic caps must read as disks");
     let _ = &mut cyl;
 }
+
+#[test]
+fn zz_two_flat_blades_sequential() {
+    let cyl = make_cylinder(22.5, 12.57, 32);
+    let mk = |ang: f64| -> BRepSolid {
+        let mut b = make_cube(23.5, 0.5, 12.57);
+        let t = Transform::rotation_z(ang.to_radians())
+            .then(&Transform::translation(21.5, 0.0, 0.0));
+        transform_brep(&mut b, &t);
+        b
+    };
+    let BooleanResult::BRep(u1) =
+        boolean_op(&mk(0.0), &cyl, BooleanOp::Union, 64).expect("boolean 1");
+    let BooleanResult::BRep(u2) =
+        boolean_op(&mk(180.0), &u1, BooleanOp::Union, 64).expect("boolean 2");
+    let mesh = vcad_kernel_tessellate::tessellate_brep(&u2, 64);
+    let quantum = 1e-5;
+    let vkey = |vi: usize| -> [i64; 3] {
+        let mut k = [0i64; 3];
+        for c in 0..3 {
+            k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+        }
+        k
+    };
+    let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+        std::collections::HashMap::new();
+    for t in 0..mesh.indices.len() / 3 {
+        for k in 0..3 {
+            let a = vkey(mesh.indices[t * 3 + k] as usize);
+            let b = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+            if a == b {
+                continue;
+            }
+            if a < b {
+                *net.entry((a, b)).or_default() += 1;
+            } else {
+                *net.entry((b, a)).or_default() -= 1;
+            }
+        }
+    }
+    let open = net.values().filter(|&&n| n != 0).count();
+    assert_eq!(open, 0, "{open} open edges after two sequential flat unions");
+}

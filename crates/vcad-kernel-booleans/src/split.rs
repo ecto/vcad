@@ -1483,6 +1483,17 @@ pub fn split_planar_face_by_arc(
     if arc1_inside && arc2_inside {
         return split_planar_face_tangent_inside(brep, face_id, circle, segments, int1, int2);
     }
+    if !arc1_inside && !arc2_inside {
+        // Neither arc's midpoint lies inside the polygon: the circle runs
+        // along the face boundary (a re-application of a circle this face
+        // was already cut by — its arc IS an edge now, and the midpoint
+        // probe lands on/outside it). Blindly taking the complementary arc
+        // here swept a near-full circle through the face and minted a
+        // phantom sub-face covering the far side of the disk.
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
+    }
 
     // Determine which arc is inside and which edge indices to walk
     let (inside_start, inside_end, inside_start_angle, inside_end_angle) = if arc1_inside {
@@ -1511,6 +1522,52 @@ pub fn split_planar_face_by_arc(
         inside_end.point,
         segments,
     );
+
+    // A cut whose arc midpoint lies ON the face boundary runs along an
+    // existing arc edge: the same circle reaches this face once per wall
+    // piece of the other operand, and re-splitting along the previous cut
+    // emits a duplicate face plus a phantom sliver (the arc analog of the
+    // duplicate-chord guard in split_face_by_curve). The probe must be the
+    // TRUE angular midpoint of the arc — short arcs carry no interior
+    // polyline vertices, and an endpoint always sits on the boundary.
+    {
+        let n_hat = plane_normal.normalize();
+        let d0 = inside_start.point - circle.center;
+        let d1 = inside_end.point - circle.center;
+        let ang = {
+            let cross = d0.cross(&d1).dot(&n_hat);
+            let a = cross.atan2(d0.dot(&d1));
+            a.rem_euclid(2.0 * std::f64::consts::PI)
+        };
+        let half = 0.5 * ang;
+        let (sin_h, cos_h) = half.sin_cos();
+        // Rodrigues rotation of d0 by `half` about n̂.
+        let rot = d0 * cos_h + n_hat.cross(&d0) * sin_h + n_hat * n_hat.dot(&d0) * (1.0 - cos_h);
+        let mid = circle.center + rot.normalize() * circle.radius;
+        let mut min_d = f64::INFINITY;
+        let n = loop_verts.len();
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            let ab = b - a;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((mid - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            min_d = min_d.min((mid - (a + t * ab)).norm());
+        }
+        split_dbg!("arc guard: mid {mid:?} min_d {min_d:.2e} nv {n}");
+        // Tolerance covers the ≤5 µm chord sag between the true circle and
+        // a previously inserted arc polyline; a fresh cut hugging the
+        // boundary this closely would only mint a sub-sag sliver anyway.
+        if min_d < 6e-3 && std::env::var("VCAD_NO_ARCGUARD").is_err() {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
+    }
 
     // Build Face 1: the inside-circle portion
     // Walk polygon from inside_end edge to inside_start edge, then add arc back

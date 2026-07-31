@@ -59,6 +59,24 @@ fn probe(src: &str, segments: u32) {
                 println!("    ({:8.4},{:8.4},{:8.4}) twin={}", p.x, p.y, p.z, tw);
             }
         }
+        // Dump z=0 faces near x=-22 (the 180-blade footprint).
+        for (face_id, face) in &brep.topology.faces {
+            let pts: Vec<_> = brep
+                .topology
+                .loop_half_edges(face.outer_loop)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if pts.iter().all(|p| p.z.abs() < 1e-6)
+                && pts.iter().any(|p| p.x.abs() > 21.0 && p.x.abs() < 23.0 && p.y.abs() < 1.0)
+            {
+                let near: Vec<_> = pts
+                    .iter()
+                    .filter(|p| p.x.abs() > 21.0 && p.x.abs() < 23.5 && p.y.abs() < 1.2)
+                    .map(|p| ((p.x * 1e4).round() / 1e4, (p.y * 1e4).round() / 1e4))
+                    .collect();
+                println!("Z0FACE {face_id:?} nv={} near: {near:?}", pts.len());
+            }
+        }
         // Dump loops of faces having vertices near the z=13 rim crack.
         for (face_id, face) in &brep.topology.faces {
             let surf = &brep.geometry.surfaces[face.surface_index];
@@ -141,6 +159,25 @@ fn zz_probe_rotated_blades() {
         src = format!(
             "[union [rotate 0 0 {ang} [translate 21.50 0 0 [rotate 39.29 0 0 \
                [cube 23.50 0.5 12.57]]]] {src}]"
+        );
+    }
+    probe(&src, 256);
+}
+
+#[test]
+fn zz_probe_flat_blade() {
+    probe(
+        "[union [translate 21.5 0 0 [cube 23.5 0.5 12.57]] [cylinder 22.5 12.57]]",
+        256,
+    );
+}
+
+#[test]
+fn zz_probe_flat_two() {
+    let mut src = String::from("[cylinder 22.5 12.57]");
+    for ang in [0.0, 180.0] {
+        src = format!(
+            "[union [rotate 0 0 {ang} [translate 21.5 0 0 [cube 23.5 0.5 12.57]]] {src}]"
         );
     }
     probe(&src, 256);
