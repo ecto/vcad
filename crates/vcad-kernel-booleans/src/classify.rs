@@ -28,6 +28,19 @@ pub enum FaceClassification {
     OnOpposite,
 }
 
+/// How far a classification probe must sit from the other solid's boundary
+/// before its in/out verdict is trusted to veto (mm).
+///
+/// It has to clear every noise source that can put a probe on the wrong
+/// side of a boundary it should sit exactly ON: the classification mesh's
+/// chordal sag (~4.5e-3 mm at the 256-segment cap) and split-boundary
+/// placement error, whose worst case is the trim truncation wedge near a
+/// tangency (~0.05 mm, measured on the torr doc_10 blades). A genuinely
+/// straddling face — one the splitter missed entirely — overhangs by much
+/// more: 0.165 mm in the smallest observed case (torr's rotating-group
+/// bore wall). 0.1 mm separates the two regimes with ~2x margin either way.
+const CONFIDENT_CLEARANCE: f64 = 0.1;
+
 /// Closest point on segment (x1,y1)-(x2,y2) to (px,py).
 fn nearest_point_on_segment_2d(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> (f64, f64) {
     let dx = x2 - x1;
@@ -1145,17 +1158,218 @@ pub fn classify_face(
         return c;
     }
 
-    // Test every probe: classify `Inside` only when *every* probe's
-    // interior-side offset lies inside the other solid; any `Outside` probe
-    // implies the face has material on the result's boundary.
+    // Confidence-weighted vote. The old rule was strict unanimity — any
+    // Outside probe forced `Outside` — which keeps genuinely-straddling
+    // faces (a split the pipeline missed) on the result boundary. But it
+    // also turned boundary-hugging slivers into coin flips: sub-faces
+    // produced by a trim split have probes sitting within the other
+    // tessellation's chordal error of the analytic surface, and a single
+    // such ambiguous probe then vetoed an entire correctly-kept sliver
+    // (the torr A1/A2 trim-overshoot family). So: only probes with real
+    // clearance from the other solid's boundary may veto. Among confident
+    // probes the unanimity rule stands (any confident Outside probe wins,
+    // preserving the straddling-face safety); when NO probe is confident
+    // the face lives entirely inside the ambiguity band and the probe with
+    // the most clearance — the least noise-prone verdict — decides.
     let eps = 1e-4;
-    for p in &probes {
-        let inward = *p - eps * oriented_normal;
-        if !point_in_mesh(&inward, other_mesh) {
-            return FaceClassification::Outside;
+    // A probe may veto only when its clearance exceeds every noise source
+    // that puts probes on the wrong side of a boundary they should sit ON:
+    // classification-mesh chordal sag (~4.5e-3 mm at the 256-segment cap),
+    // and split-boundary placement error, whose worst case is the trim
+    // truncation wedge near a tangency (~0.05 mm measured on the torr
+    // doc_10 blades). Genuine straddling faces — a split the pipeline
+    // missed entirely — overhang by much more (0.165 mm in the smallest
+    // observed case, torr's rotating-group bore wall), so 0.1 mm separates
+    // the two regimes with ~2-3x margin on either side.
+    let verdicts: Vec<(Point3, bool)> = probes
+        .iter()
+        .map(|p| {
+            let inward = *p - eps * oriented_normal;
+            (inward, point_in_mesh(&inward, other_mesh))
+        })
+        .collect();
+    // Fast path: unanimous probes need no clearance computation at all.
+    // The confidence weighting only changes the answer when the probes
+    // disagree, and clearance costs a mesh scan per probe — so on the
+    // overwhelming majority of faces this costs nothing beyond the
+    // point-in-mesh tests the old unanimity rule already did.
+    let n_inside = verdicts.iter().filter(|(_, i)| *i).count();
+    let inside = if n_inside == verdicts.len() {
+        true
+    } else if n_inside == 0 {
+        false
+    } else {
+        // Split vote. Which probes are far enough from the other boundary
+        // to be trusted? `clearance_exceeds` bails at the first triangle
+        // within the threshold, so a probe hugging the boundary — the
+        // common case here — costs a partial scan, not a full one.
+        let confident: Vec<bool> = verdicts
+            .iter()
+            .map(|(p, _)| clearance_exceeds(p, other_mesh, CONFIDENT_CLEARANCE))
+            .collect();
+        if confident.iter().any(|c| *c) {
+            // Unanimity among the confident probes: any confident Outside
+            // probe vetoes, which is what protects genuinely straddling
+            // faces.
+            verdicts
+                .iter()
+                .zip(&confident)
+                .all(|((_, inside), conf)| !conf || *inside)
+        } else {
+            // Every probe sits inside the ambiguity band. Fall back to the
+            // one with the most clearance — the least noise-prone verdict.
+            // Only this rare branch pays for exact distances.
+            let mut best_clear = f64::NEG_INFINITY;
+            let mut best_inside = false;
+            for (p, inside) in &verdicts {
+                let clear = dist_to_mesh(p, other_mesh);
+                if clear > best_clear {
+                    best_clear = clear;
+                    best_inside = *inside;
+                }
+            }
+            best_inside
+        }
+    };
+
+    if inside {
+        FaceClassification::Inside
+    } else {
+        FaceClassification::Outside
+    }
+}
+
+/// Squared distance from `p` to a triangle's axis-aligned bounding box —
+/// a cheap lower bound on the true point-triangle distance, used to skip
+/// the full barycentric computation for triangles that are obviously far.
+fn aabb_dist_sq(p: &Point3, a: &Point3, b: &Point3, c: &Point3) -> f64 {
+    let mut d2 = 0.0;
+    for (pv, av, bv, cv) in [
+        (p.x, a.x, b.x, c.x),
+        (p.y, a.y, b.y, c.y),
+        (p.z, a.z, b.z, c.z),
+    ] {
+        let lo = av.min(bv).min(cv);
+        let hi = av.max(bv).max(cv);
+        let d = if pv < lo {
+            lo - pv
+        } else if pv > hi {
+            pv - hi
+        } else {
+            0.0
+        };
+        d2 += d * d;
+    }
+    d2
+}
+
+/// Read triangle `tri`'s three corners out of a mesh, promoted to `f64`.
+///
+/// The `f32` → `f64` promotion is deliberate, and matches what
+/// `point_in_mesh` and every other mesh consumer in the kernel does: the
+/// distances computed from these corners decide a 0.1 mm clearance
+/// threshold on millimetre-scale coordinates, which is well inside the
+/// range where `f32` rounding would flip the verdict. Do not "optimize"
+/// this to `f32` arithmetic.
+fn tri_points(mesh: &TriangleMesh, tri: &[u32]) -> (Point3, Point3, Point3) {
+    let v = |i: u32| {
+        let b = i as usize * 3;
+        Point3::new(
+            mesh.vertices[b] as f64,
+            mesh.vertices[b + 1] as f64,
+            mesh.vertices[b + 2] as f64,
+        )
+    };
+    (v(tri[0]), v(tri[1]), v(tri[2]))
+}
+
+/// Is `p` farther than `threshold` from every triangle of `mesh`?
+///
+/// Answers the threshold question without computing the actual minimum:
+/// it returns `false` the instant one triangle is found within
+/// `threshold`. Probes that hug a boundary — the common case when the
+/// classification vote is split — therefore cost a partial scan rather
+/// than a full one, and far-away triangles are rejected by their bounding
+/// box before the barycentric branch chain runs.
+fn clearance_exceeds(p: &Point3, mesh: &TriangleMesh, threshold: f64) -> bool {
+    let thr_sq = threshold * threshold;
+    for tri in mesh.indices.chunks(3) {
+        let (a, b, c) = tri_points(mesh, tri);
+        if aabb_dist_sq(p, &a, &b, &c) >= thr_sq {
+            continue;
+        }
+        if point_triangle_dist(p, &a, &b, &c) < threshold {
+            return false;
         }
     }
-    FaceClassification::Inside
+    true
+}
+
+/// Unsigned distance from a point to the closest triangle of a mesh.
+///
+/// Only reached when no probe cleared `CONFIDENT_CLEARANCE`, so this full
+/// scan is rare; the bounding-box reject against the running best still
+/// skips the barycentric work for most triangles.
+fn dist_to_mesh(p: &Point3, mesh: &TriangleMesh) -> f64 {
+    let mut best = f64::INFINITY;
+    let mut best_sq = f64::INFINITY;
+    for tri in mesh.indices.chunks(3) {
+        let (a, b, c) = tri_points(mesh, tri);
+        if aabb_dist_sq(p, &a, &b, &c) >= best_sq {
+            continue;
+        }
+        let d = point_triangle_dist(p, &a, &b, &c);
+        if d < best {
+            best = d;
+            best_sq = d * d;
+        }
+    }
+    best
+}
+
+/// Unsigned distance from point `p` to triangle `abc`.
+fn point_triangle_dist(p: &Point3, a: &Point3, b: &Point3, c: &Point3) -> f64 {
+    // Project onto the triangle plane and clamp to the triangle via
+    // barycentric regions (Ericson, Real-Time Collision Detection).
+    let ab = *b - *a;
+    let ac = *c - *a;
+    let ap = *p - *a;
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return ap.norm();
+    }
+    let bp = *p - *b;
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    if d3 >= 0.0 && d4 <= d3 {
+        return bp.norm();
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let t = d1 / (d1 - d3);
+        return (ap - t * ab).norm();
+    }
+    let cp = *p - *c;
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return cp.norm();
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let t = d2 / (d2 - d6);
+        return (ap - t * ac).norm();
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let t = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (bp - t * (*c - *b)).norm();
+    }
+    let denom = 1.0 / (va + vb + vc);
+    let v = vb * denom;
+    let w = vc * denom;
+    (ap - (v * ab + w * ac)).norm()
 }
 
 /// Classify all faces of a solid relative to another solid.
