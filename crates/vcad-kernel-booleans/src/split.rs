@@ -3060,7 +3060,47 @@ pub fn split_cylindrical_face(
                         sub_faces: vec![face_id],
                     });
             }
-            let result = split_cylindrical_face_by_circle(brep, face_id, circle);
+            // The legacy splitter reconstructs its sub-faces as degenerate
+            // seam loops spanning the FULL circumference — correct only when
+            // the input face is itself a full tube. A u-sector rectangle
+            // (from earlier axis-parallel line splits) routed through it
+            // would balloon into two overlapping full tubes. Gate it to
+            // loops whose vertices all sit on one seam angle.
+            let is_seam_loop = {
+                let face = &brep.topology.faces[face_id];
+                if let Some(cyl) = brep.geometry.surfaces[face.surface_index]
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+                {
+                    let mut u0: Option<f64> = None;
+                    brep.topology.loop_half_edges(face.outer_loop).all(|he| {
+                        let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
+                        let u = compute_cylinder_u(&p, cyl);
+                        match u0 {
+                            None => {
+                                u0 = Some(u);
+                                true
+                            }
+                            Some(base) => {
+                                let mut d = (u - base).rem_euclid(2.0 * std::f64::consts::PI);
+                                if d > std::f64::consts::PI {
+                                    d = 2.0 * std::f64::consts::PI - d;
+                                }
+                                d < 1e-6
+                            }
+                        }
+                    })
+                } else {
+                    false
+                }
+            };
+            let result = if is_seam_loop {
+                split_cylindrical_face_by_circle(brep, face_id, circle)
+            } else {
+                SplitResult {
+                    sub_faces: vec![face_id],
+                }
+            };
             if result.sub_faces.len() >= 2 {
                 return result;
             }

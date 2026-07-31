@@ -1145,17 +1145,137 @@ pub fn classify_face(
         return c;
     }
 
-    // Test every probe: classify `Inside` only when *every* probe's
-    // interior-side offset lies inside the other solid; any `Outside` probe
-    // implies the face has material on the result's boundary.
+    // Confidence-weighted vote. The old rule was strict unanimity — any
+    // Outside probe forced `Outside` — which keeps genuinely-straddling
+    // faces (a split the pipeline missed) on the result boundary. But it
+    // also turned boundary-hugging slivers into coin flips: sub-faces
+    // produced by a trim split have probes sitting within the other
+    // tessellation's chordal error of the analytic surface, and a single
+    // such ambiguous probe then vetoed an entire correctly-kept sliver
+    // (the torr A1/A2 trim-overshoot family). So: only probes with real
+    // clearance from the other solid's boundary may veto. Among confident
+    // probes the unanimity rule stands (any confident Outside probe wins,
+    // preserving the straddling-face safety); when NO probe is confident
+    // the face lives entirely inside the ambiguity band and the probe with
+    // the most clearance — the least noise-prone verdict — decides.
     let eps = 1e-4;
-    for p in &probes {
-        let inward = *p - eps * oriented_normal;
-        if !point_in_mesh(&inward, other_mesh) {
-            return FaceClassification::Outside;
+    // A probe may veto only when its clearance exceeds every noise source
+    // that puts probes on the wrong side of a boundary they should sit ON:
+    // classification-mesh chordal sag (~4.5e-3 mm at the 256-segment cap),
+    // and split-boundary placement error, whose worst case is the trim
+    // truncation wedge near a tangency (~0.05 mm measured on the torr
+    // doc_10 blades). Genuine straddling faces — a split the pipeline
+    // missed entirely — overhang by much more (0.165 mm in the smallest
+    // observed case, torr's rotating-group bore wall), so 0.1 mm separates
+    // the two regimes with ~2-3x margin on either side.
+    let confident = 0.1;
+    let verdicts: Vec<(Point3, bool)> = probes
+        .iter()
+        .map(|p| {
+            let inward = *p - eps * oriented_normal;
+            (inward, point_in_mesh(&inward, other_mesh))
+        })
+        .collect();
+    // Fast path: unanimous probes need no clearance computation at all —
+    // the confidence weighting only matters when the vote is split, and
+    // `dist_to_mesh` is an O(triangles) scan per probe.
+    let n_inside = verdicts.iter().filter(|(_, i)| *i).count();
+    let inside = if n_inside == verdicts.len() {
+        true
+    } else if n_inside == 0 {
+        false
+    } else {
+        let mut best_clear = f64::NEG_INFINITY;
+        let mut best_inside = false;
+        let mut any_confident = false;
+        let mut confident_all_inside = true;
+        for (inward, inside) in &verdicts {
+            let clear = dist_to_mesh(inward, other_mesh);
+            if clear > best_clear {
+                best_clear = clear;
+                best_inside = *inside;
+            }
+            if clear > confident {
+                any_confident = true;
+                if !inside {
+                    confident_all_inside = false;
+                }
+            }
+        }
+        if any_confident {
+            confident_all_inside
+        } else {
+            best_inside
+        }
+    };
+
+    if inside {
+        FaceClassification::Inside
+    } else {
+        FaceClassification::Outside
+    }
+}
+
+/// Unsigned distance from a point to the closest triangle of a mesh.
+fn dist_to_mesh(p: &Point3, mesh: &TriangleMesh) -> f64 {
+    let verts = &mesh.vertices;
+    let mut best = f64::INFINITY;
+    for tri in mesh.indices.chunks(3) {
+        let v = |i: u32| {
+            let b = i as usize * 3;
+            Point3::new(verts[b] as f64, verts[b + 1] as f64, verts[b + 2] as f64)
+        };
+        let d = point_triangle_dist(p, &v(tri[0]), &v(tri[1]), &v(tri[2]));
+        if d < best {
+            best = d;
         }
     }
-    FaceClassification::Inside
+    best
+}
+
+/// Unsigned distance from point `p` to triangle `abc`.
+fn point_triangle_dist(p: &Point3, a: &Point3, b: &Point3, c: &Point3) -> f64 {
+    // Project onto the triangle plane and clamp to the triangle via
+    // barycentric regions (Ericson, Real-Time Collision Detection).
+    let ab = *b - *a;
+    let ac = *c - *a;
+    let ap = *p - *a;
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return ap.norm();
+    }
+    let bp = *p - *b;
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    if d3 >= 0.0 && d4 <= d3 {
+        return bp.norm();
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let t = d1 / (d1 - d3);
+        return (ap - t * ab).norm();
+    }
+    let cp = *p - *c;
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return cp.norm();
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let t = d2 / (d2 - d6);
+        return (ap - t * ac).norm();
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let t = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (bp - t * (*c - *b)).norm();
+    }
+    let denom = 1.0 / (va + vb + vc);
+    let v = vb * denom;
+    let w = vc * denom;
+    (ap - (v * ab + w * ac)).norm()
 }
 
 /// Classify all faces of a solid relative to another solid.
