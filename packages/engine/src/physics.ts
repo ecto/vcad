@@ -32,6 +32,22 @@ export interface PhysicsObservation {
   base_pose?: [number, number, number, number, number, number, number];
   /** Base velocity as [vx, vy, vz, wx, wy, wz] (m/s, rad/s, world frame). */
   base_velocity?: [number, number, number, number, number, number];
+  /**
+   * Ground contact under each end effector, index-aligned with
+   * `end_effector_poses` — the foot-force sensor (FSR / ankle F/T). Absent on
+   * kernel builds predating contact observations.
+   */
+  end_effector_contacts?: PhysicsContactState[];
+}
+
+/** One end effector's ground contact as of the last step. */
+export interface PhysicsContactState {
+  /** The collider touched the ground plane during the last step. */
+  in_contact: boolean;
+  /** Total normal force over the contact manifold, newtons. */
+  normal_force: number;
+  /** Center of pressure in world meters; [0, 0, 0] when not in contact. */
+  point: [number, number, number];
 }
 
 /** Per-step diagnostics from the kernel — reward inputs for the client. */
@@ -92,6 +108,9 @@ export interface PhysicsObservationNoise {
   base_pos_std?: number;
   base_rot_std?: number;
   base_vel_std?: number;
+  /** Std-dev on end-effector contact normal force (newtons); the noisy force
+   *  is clamped at 0. The in-contact flag stays clean. */
+  contact_force_std?: number;
 }
 
 /** Configurable termination conditions. */

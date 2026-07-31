@@ -12,6 +12,7 @@ import type { Document } from "@vcad/ir";
 import {
   PhysicsEnv,
   isPhysicsAvailable,
+  type PhysicsContactState,
   type PhysicsObservation,
   type PhysicsStepResult,
   type PhysicsActionType,
@@ -248,6 +249,8 @@ interface LabeledJoint {
 interface LabeledEndEffector {
   id: string;
   pose: [number, number, number, number, number, number, number];
+  /** Ground contact under this end effector, when the kernel reports it. */
+  contact?: PhysicsContactState;
 }
 
 /** An observation with the bare arrays retained (unchanged wire contract) plus
@@ -323,6 +326,9 @@ export function labelObservation(
     labeled.end_effectors = endEffectorIds.map((id, i) => ({
       id,
       pose: obs.end_effector_poses[i],
+      ...(obs.end_effector_contacts?.[i]
+        ? { contact: obs.end_effector_contacts[i] }
+        : {}),
     }));
   }
   return labeled;
@@ -386,7 +392,7 @@ export const createRobotEnvSchema = {
         "e.g. [2, 8]), joint_pos_perturb / joint_vel_perturb (uniform ± initial " +
         "state, deg/mm)}. " +
         "`observation_noise`: gaussian std-devs {joint_pos_std, joint_vel_std, " +
-        "base_pos_std, base_rot_std, base_vel_std}. " +
+        "base_pos_std, base_rot_std, base_vel_std, contact_force_std (N)}. " +
         "`termination`: {base_height_below (m), base_tilt_above_deg, " +
         "terminate_on_joint_limit}. " +
         "`base_instance_id`: instance used for base pose/velocity observations " +

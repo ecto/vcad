@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let slots = actuated_slots(&probe);
     let act_dim = probe.action_dim();
-    let obs_dim = 10 + 2 * slots.len();
+    let obs_dim = vcad_sim::rl::feature_dim(&probe, &slots);
     drop(probe);
 
     // Reward: stay alive, hold the nominal height and an upright trunk, don't

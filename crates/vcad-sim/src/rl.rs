@@ -247,7 +247,14 @@ pub struct IterationLog {
 ///
 /// Layout (all SI-ish and roughly unit-scaled before whitening):
 /// `[projected gravity (3), base linear vel (3), base angular vel (3),
-///   base height − nominal (1), joint angles rad (n), joint velocities rad/s (n)]`
+///   base height − nominal (1), joint angles rad (n), joint velocities rad/s (n),
+///   per-end-effector (in_contact 0/1, normal force N) (2·m)]`
+///
+/// The trailing contact pair is the foot-force channel: without it a balance
+/// policy has no way to tell a loaded foot from a swinging one. Raw newtons
+/// are fine here — ARS whitens every feature against its running statistics.
+///
+/// Use [`feature_dim`] rather than recomputing this length by hand.
 pub fn features(
     obs: &vcad_kernel_physics::Observation,
     slots: &[usize],
@@ -276,7 +283,19 @@ pub fn features(
     for &s in slots {
         f.push(obs.joint_velocities[s].to_radians());
     }
+    for c in &obs.end_effector_contacts {
+        f.push(if c.in_contact { 1.0 } else { 0.0 });
+        f.push(c.normal_force);
+    }
     f
+}
+
+/// Length of the [`features`] vector for an env — the policy's `obs_dim`.
+///
+/// `10` fixed base features, two per actuated joint slot, two per end
+/// effector (contact flag + normal force).
+pub fn feature_dim(env: &RobotEnv, slots: &[usize]) -> usize {
+    10 + 2 * slots.len() + 2 * env.end_effector_ids().len()
 }
 
 /// Flattened observation slot index of each actuated joint's first DOF.

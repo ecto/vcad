@@ -119,7 +119,9 @@ fn free_joint_gym_observation_layout() {
     // but not in the action space.
     assert_eq!(env.num_joints(), 1);
     assert_eq!(env.action_dim(), 0);
-    assert_eq!(env.observation_dim(), 6 * 2 + 7);
+    // 6 position + 6 velocity slots, plus the end effector's 7 pose slots and
+    // 5 contact slots (flag, normal force, center of pressure).
+    assert_eq!(env.observation_dim(), 6 * 2 + 7 + 5);
 
     let obs = env.reset();
     assert_eq!(obs.joint_positions.len(), 6);

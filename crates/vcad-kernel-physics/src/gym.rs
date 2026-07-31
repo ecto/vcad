@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use vcad_ir::Document;
 
 use crate::error::PhysicsError;
-use crate::world::{GroundConfig, PhysicsWorld};
+use crate::world::{ContactState, GroundConfig, PhysicsWorld};
 
 /// Observation from the robot environment.
 ///
@@ -41,9 +41,18 @@ pub struct Observation {
     /// then rad/s), world frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_velocity: Option<[f64; 6]>,
-    // TODO(contact): per-foot contact state (in-contact flag + normal force).
-    // Ground-plane contact now exists (`PhysicsWorld::ground_contacts`), but
-    // the per-body manifold isn't surfaced through the observation yet.
+    /// Ground contact under each end effector, one entry per
+    /// [`RobotEnv::end_effector_ids`] entry, in that order — the foot-force
+    /// sensor a real humanoid reads (FSR / ankle F/T). Five observation slots
+    /// each: `in_contact` (as 0/1), `normal_force`, and the 3-vector center of
+    /// pressure. An unknown end-effector id contributes the default
+    /// (not-in-contact) state rather than being skipped, so the layout stays
+    /// index-aligned with `end_effector_poses`.
+    ///
+    /// This is a *sensed* quantity, so [`ObservationNoise::contact_force_std`]
+    /// perturbs it in `step`/`reset` observations like any other sensor.
+    #[serde(default)]
+    pub end_effector_contacts: Vec<ContactState>,
 }
 
 impl Observation {
@@ -60,6 +69,7 @@ impl Observation {
             end_effector_poses: vec![[0.0; 7]; num_end_effectors],
             base_pose: None,
             base_velocity: None,
+            end_effector_contacts: vec![ContactState::default(); num_end_effectors],
         }
     }
 }
@@ -129,6 +139,11 @@ pub struct ObservationNoise {
     pub base_rot_std: f64,
     /// Std-dev on base linear/angular velocity (m/s and rad/s).
     pub base_vel_std: f64,
+    /// Std-dev on end-effector contact normal force (newtons). The noisy
+    /// force is clamped to `>= 0` — a load cell can't report negative normal
+    /// load. The `in_contact` flag stays clean: it models a foot switch,
+    /// a separate (and far less noisy) sensor from the force channel.
+    pub contact_force_std: f64,
 }
 
 impl ObservationNoise {
@@ -138,6 +153,7 @@ impl ObservationNoise {
             && self.base_pos_std == 0.0
             && self.base_rot_std == 0.0
             && self.base_vel_std == 0.0
+            && self.contact_force_std == 0.0
     }
 }
 
@@ -543,6 +559,7 @@ impl RobotEnv {
         }
 
         let mut end_effector_poses = Vec::with_capacity(self.end_effector_ids.len());
+        let mut end_effector_contacts = Vec::with_capacity(self.end_effector_ids.len());
         for ee_id in &self.end_effector_ids {
             if let Some((pos, quat)) = self.world.get_instance_pose(ee_id) {
                 end_effector_poses
@@ -550,6 +567,7 @@ impl RobotEnv {
             } else {
                 end_effector_poses.push([0.0; 7]);
             }
+            end_effector_contacts.push(self.world.get_instance_contact(ee_id).unwrap_or_default());
         }
 
         let (base_pose, base_velocity) = match self.base_instance_id.as_deref() {
@@ -568,6 +586,7 @@ impl RobotEnv {
             end_effector_poses,
             base_pose,
             base_velocity,
+            end_effector_contacts,
         }
     }
 
@@ -619,6 +638,12 @@ impl RobotEnv {
         if let Some(vel) = obs.base_velocity.as_mut() {
             for v in vel.iter_mut() {
                 *v += gaussian(&mut self.rng) * noise.base_vel_std;
+            }
+        }
+        if noise.contact_force_std > 0.0 {
+            for c in &mut obs.end_effector_contacts {
+                c.normal_force =
+                    (c.normal_force + gaussian(&mut self.rng) * noise.contact_force_std).max(0.0);
             }
         }
         obs
@@ -705,6 +730,13 @@ impl RobotEnv {
             .collect()
     }
 
+    /// End-effector instance ids in observation order — the order of
+    /// [`Observation::end_effector_poses`] and
+    /// [`Observation::end_effector_contacts`].
+    pub fn end_effector_ids(&self) -> &[String] {
+        &self.end_effector_ids
+    }
+
     /// Actuated joint ids in action order (document order, Fixed joints excluded).
     pub fn actuated_joint_ids(&self) -> &[String] {
         &self.actuated_joint_ids
@@ -719,13 +751,15 @@ impl RobotEnv {
     ///
     /// Each joint contributes `max(1, ndof)` position slots plus the same
     /// number of velocity slots (Fixed = 1 zero slot, Ball = 3, Free = 6).
+    /// Each end effector contributes 7 pose slots plus 5 contact slots
+    /// (in-contact flag, normal force, 3-vector center of pressure).
     pub fn observation_dim(&self) -> usize {
         let joint_slots: usize = self
             .joint_ids
             .iter()
             .map(|id| self.world.joint_dof_count(id).max(1))
             .sum();
-        joint_slots * 2 + self.end_effector_ids.len() * 7
+        joint_slots * 2 + self.end_effector_ids.len() * (7 + 5)
     }
 
     /// Get the action dimension: one entry per actuated (non-Fixed) joint.

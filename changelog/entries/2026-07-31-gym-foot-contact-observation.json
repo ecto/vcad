@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-gym-foot-contact-observation",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "Foot contact reaches the gym observation",
+  "summary": "Every end effector now reports an in-contact flag, normal force, and center of pressure — the foot-force channel a locomotion policy needs to tell a loaded foot from a swinging one.",
+  "features": ["physics", "simulation", "rl"],
+  "mcpTools": ["gym_observe", "gym_step", "gym_reset", "create_robot_env"]
+}

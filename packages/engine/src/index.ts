@@ -317,6 +317,7 @@ export type {
 export { PhysicsEnv, isPhysicsAvailable } from "./physics.js";
 export type {
   PhysicsObservation,
+  PhysicsContactState,
   PhysicsStepResult,
   PhysicsStepInfo,
   PhysicsEnvOptions,
