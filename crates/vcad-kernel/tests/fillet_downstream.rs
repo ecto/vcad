@@ -104,10 +104,14 @@ fn pocket_in_filleted_box_is_exact() {
 /// the whole-sphere path that minted the copies.
 ///
 /// Volume went 476028 → 105056 against a Monte-Carlo truth of 86618.
-/// The remainder is one more trimming defect, tested for separately in
-/// `curved_trim_conformity.rs`: a circle that crosses a planar face's
-/// boundary more than twice leaves that face chorded while the curved
-/// side follows the arc.
+/// The remainder was a family of multi-contact trims — a circle
+/// crossing a planar face's boundary more than twice, a circle
+/// inscribed tangentially in a grid cell, and a circle crossing a
+/// spherical patch's boundary more than twice — all of which now trace
+/// their regions along the true arc (see `split_planar_face_by_multi_arc`,
+/// `split_planar_face_inscribed_circle`, and `clip_spherical_face_multi`
+/// in vcad-kernel-booleans). The watertight + volume end state is
+/// asserted by `difference_with_filleted_subject_is_watertight` below.
 #[test]
 fn difference_with_filleted_subject_has_no_duplicate_patches() {
     let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
@@ -153,14 +157,11 @@ fn difference_with_filleted_subject_has_no_duplicate_patches() {
     );
 }
 
-/// Case 4's target state. Un-`ignore` this when a circle crossing a
-/// planar face's boundary more than twice trims that face along the arc
-/// — 86618 mm³ is a 20M-sample Monte-Carlo integration of the
+/// Case 4's end state: every fillet seam of the cut is trimmed along the
+/// true arc on both sides, so the shell closes and the volume lands on
+/// the truth — 86618 mm³ is a 20M-sample Monte-Carlo integration of the
 /// rounded-box SDF minus the inner cube.
 #[test]
-#[ignore = "known broken: a circle crossing a planar face's boundary \
-            more than twice leaves the face chorded while the curved \
-            side follows the arc"]
 fn difference_with_filleted_subject_is_watertight() {
     let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
@@ -172,6 +173,48 @@ fn difference_with_filleted_subject_is_watertight() {
         "{} vs Monte-Carlo truth 86618",
         result.volume()
     );
+}
+
+/// Booleans against a filleted subject must come out with OUTWARD
+/// windings. `Solid::volume()` takes the absolute value of the signed
+/// divergence-theorem sum, so a globally inverted mesh — the reported
+/// 2026-07-25 symptom, filleted parts turning inside-out under
+/// difference — still reports a plausible positive volume. Computing
+/// the signed sum directly pins the orientation.
+#[test]
+fn boolean_against_filleted_subject_keeps_outward_winding() {
+    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
+    for result in [filleted.difference(&inner), filleted.union(&inner)] {
+        let mesh = result.to_mesh(SEGMENTS);
+        let (verts, indices) = (&mesh.vertices, &mesh.indices);
+        let mut signed = 0.0;
+        for tri in indices.chunks(3) {
+            let p = |i: u32| {
+                let i = i as usize * 3;
+                [verts[i] as f64, verts[i + 1] as f64, verts[i + 2] as f64]
+            };
+            let (v0, v1, v2) = (p(tri[0]), p(tri[1]), p(tri[2]));
+            signed += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2])
+                - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
+                + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
+        }
+        signed /= 6.0;
+        assert!(
+            signed > 0.0,
+            "boolean on a filleted solid produced an inward-facing mesh \
+             (signed volume {signed})"
+        );
+        // `result.volume()` tessellates at the solid's own segment count,
+        // ours at SEGMENTS — only chord error apart. A subset of inverted
+        // faces would subtract their volume twice and blow way past 1%.
+        assert!(
+            (signed - result.volume()).abs() < result.volume() * 0.01,
+            "signed volume {signed} disagrees with |volume| {} — some \
+             faces wind inward",
+            result.volume()
+        );
+    }
 }
 
 /// The same operations against a CHAMFERED box are exact and watertight

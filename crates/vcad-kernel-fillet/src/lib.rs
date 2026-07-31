@@ -581,17 +581,18 @@ mod tests {
         );
     }
 
-    /// Aspirational: two ADJACENT edges sharing a vertex. This needs a
-    /// corner blend where two quarter-cylinders meet (a fillet-of-fillet /
-    /// partial-torus patch) that the current architecture cannot express —
-    /// such selections share a vertex, so they fall through to the legacy
-    /// inset-every-face pipeline and come out malformed (~520 mm³, dozens
-    /// of open edges). The correct per-edge builder (`fillet_subset`)
-    /// deliberately restricts itself to an *independent set* of edges and
-    /// leaves the shared-corner case to a follow-up. Un-ignore once
-    /// adjacent-edge corner blending exists.
+    /// Two ADJACENT edges sharing a vertex. At the shared cube corner the
+    /// two quarter-cylinder blends meet in a *miter*: the corner is
+    /// trihedral and mirror-symmetric (equal 90° dihedrals against the
+    /// shared face), so the two blend cylinders intersect exactly in a
+    /// planar curve on the bisector plane of the edge directions. The
+    /// chain-aware builder in `fillet_subset` trims both cylinders at that
+    /// miter plane and welds them along the *same* sampled curve, so no
+    /// spherical/toric corner patch is needed and the result is watertight
+    /// by construction. Volume is gated loosely to 1% because the exact
+    /// corner term (the miter's deviation from two independent slivers) is
+    /// small relative to the two-sliver closed form.
     #[test]
-    #[ignore = "adjacent-edge corner blend (fillet-of-fillet) not yet implemented; see fillet_subset"]
     fn test_fillet_two_adjacent_edges_volume() {
         let l = 10.0;
         let r = 1.5;
