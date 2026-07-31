@@ -62,6 +62,12 @@ pub(crate) struct CylBand {
     pub hi: Chain,
     /// Whether the band wraps the full circumference.
     pub full_wrap: bool,
+    /// Loop-winding convention of the ORIGINAL face: false = the loop
+    /// walks the lower chain ascending in u (outer-wall convention), true
+    /// = descending (bore walls wind the other way). realize_bands must
+    /// reproduce it or the rebuilt faces can no longer pair with their
+    /// cap-hole neighbors.
+    pub reversed_winding: bool,
 }
 
 /// A closed single-valued curve on a cylinder: v = f(u), periodic in 2π.
@@ -344,6 +350,7 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
                 lo: vec![(u0, v_min), (u0 + 2.0 * PI, v_min)],
                 hi: vec![(u0, v_max), (u0 + 2.0 * PI, v_max)],
                 full_wrap: true,
+                reversed_winding: false,
             },
         ));
     }
@@ -470,7 +477,8 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
         band_dbg!("parse_band: short chains {} {}", chain_a.len(), chain_b.len());
         return None;
     }
-    if chain_a[0].0 > chain_a[chain_a.len() - 1].0 {
+    let a_was_reversed_flag = chain_a[0].0 > chain_a[chain_a.len() - 1].0;
+    if a_was_reversed_flag {
         chain_a.reverse();
     }
     if chain_b[0].0 > chain_b[chain_b.len() - 1].0 {
@@ -524,13 +532,22 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
     let b_below = probe_us
         .iter()
         .all(|&u| chain_interp(&chain_b, u) <= chain_interp(&chain_a, u) + V_EPS);
-    let (mut lo, mut hi) = if a_below {
-        (chain_a, chain_b)
+    let first_run_ascended = !a_was_reversed_flag;
+    let (mut lo, mut hi, lo_is_first_run) = if a_below {
+        (chain_a, chain_b, true)
     } else if b_below {
-        (chain_b, chain_a)
+        (chain_b, chain_a, false)
     } else {
         band_dbg!("parse_band: chains cross");
         return None;
+    };
+    // Standard (outer-wall) cycles read as lo-ascending-then-hi-descending
+    // (any rotation thereof). The original loop's first run tells us which
+    // convention this face uses.
+    let reversed_winding = if lo_is_first_run {
+        !first_run_ascended
+    } else {
+        first_run_ascended
     };
     // Close residual end slack: both chains must span the same interval or
     // downstream splits clamp-extend the shorter one into phantom area. At
@@ -552,7 +569,7 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
             c.push((end_u, other_tail));
         }
     }
-    Some(CylBand { lo, hi, full_wrap })
+    Some(CylBand { lo, hi, full_wrap, reversed_winding })
 }
 
 /// Are two angles equal on the circle (mod 2π)?
@@ -847,6 +864,7 @@ fn extract_regions(
                 lo,
                 hi,
                 full_wrap: wrap,
+                reversed_winding: band.reversed_winding,
             }
         } else {
             let lo = envelope_chain(grid, a, b, f, &band.lo, band.full_wrap, false);
@@ -855,6 +873,7 @@ fn extract_regions(
                 lo,
                 hi,
                 full_wrap: wrap,
+                reversed_winding: band.reversed_winding,
             }
         }
     };
@@ -941,6 +960,7 @@ pub(crate) fn split_band_at_u(band: &CylBand, u_split: f64) -> Option<(CylBand, 
             lo: cut_chain(&band.lo, a, b),
             hi: cut_chain(&band.hi, a, b),
             full_wrap: false,
+            reversed_winding: band.reversed_winding,
         }
     };
     Some((cut(u_start, x), cut(x, u_end)))
@@ -1006,13 +1026,23 @@ pub(crate) fn realize_bands(
         // repair collapses the resulting zero-length half-edges later.
         let mut loop_pts: Vec<Point3> =
             Vec::with_capacity(band.lo.len() + band.hi.len());
-        // Bottom chain, ascending u.
-        for &(u, v) in &band.lo {
-            loop_pts.push(point_at(cyl, u, v));
-        }
-        // Top chain, descending u.
-        for &(u, v) in band.hi.iter().rev() {
-            loop_pts.push(point_at(cyl, u, v));
+        if band.reversed_winding {
+            // Bore convention: lower chain descending, upper ascending.
+            for &(u, v) in band.lo.iter().rev() {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+            for &(u, v) in &band.hi {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+        } else {
+            // Bottom chain, ascending u.
+            for &(u, v) in &band.lo {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+            // Top chain, descending u.
+            for &(u, v) in band.hi.iter().rev() {
+                loop_pts.push(point_at(cyl, u, v));
+            }
         }
         // Keep pinch-column duplicates: dropping the shared endpoint
         // shortens one chain, the re-parsed band then carries end slack,
@@ -1251,6 +1281,7 @@ mod tests {
             lo: vec![(0.0, v0), (2.0 * PI, v0)],
             hi: vec![(0.0, v1), (2.0 * PI, v1)],
             full_wrap: true,
+            reversed_winding: false,
         }
     }
 
@@ -1371,6 +1402,7 @@ mod tests {
             lo: vec![(0.0, 0.0), (1.0, 0.0), (3.0, 0.0), (2.0 * PI, 0.0)],
             hi: vec![(0.0, 5.0), (2.5, 5.0), (2.0 * PI, 5.0)],
             full_wrap: true,
+            reversed_winding: false,
         };
         let (l, r) = split_band_at_u(&band, 2.0).expect("split");
         // Left keeps lo vertex at 1.0 verbatim; right keeps 3.0 and hi 2.5.
@@ -1453,6 +1485,7 @@ mod ssi_profile_tests {
             lo: vec![(0.0, 0.0), (2.0 * PI, 0.0)],
             hi: vec![(0.0, 13.0), (2.0 * PI, 13.0)],
             full_wrap: true,
+            reversed_winding: false,
         };
 
         let mut sampled_seen = 0;

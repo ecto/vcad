@@ -370,8 +370,109 @@ pub fn split_face_by_curve(
     }
 
     // Create topology for the two new faces
+    // A cut that passes THROUGH an inner loop cannot be resolved by
+    // redistributing the hole to one side — the hole would need to be
+    // split and merged into the sub-faces' outer boundaries. Refuse the
+    // split instead (phantom cuts across holed caps are the common case:
+    // the intersection line of a distant operand plane runs across the
+    // whole face, hole included).
+    {
+        let parent_inner = brep.topology.faces[face_id].inner_loops.clone();
+        for inner in &parent_inner {
+            let verts: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(*inner)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if verts.is_empty() {
+                continue;
+            }
+            let n = verts.len() as f64;
+            let c = Point3::new(
+                verts.iter().map(|v| v.x).sum::<f64>() / n,
+                verts.iter().map(|v| v.y).sum::<f64>() / n,
+                verts.iter().map(|v| v.z).sum::<f64>() / n,
+            );
+            let r = verts
+                .iter()
+                .map(|v| (*v - c).norm())
+                .fold(0.0f64, f64::max);
+            // Distance from the hole center to the cut path (chord + via).
+            let mut path: Vec<Point3> = vec![*entry_point];
+            path.extend(via.iter().copied());
+            path.push(*exit_point);
+            let mut d = f64::INFINITY;
+            for w in path.windows(2) {
+                let ab = w[1] - w[0];
+                let len2 = ab.norm_squared();
+                let t = if len2 < 1e-18 {
+                    0.0
+                } else {
+                    ((c - w[0]).dot(ab) / len2).clamp(0.0, 1.0)
+                };
+                d = d.min((c - (w[0] + t * ab)).norm());
+            }
+            if d < r + 1e-6 {
+                return SplitResult {
+                    sub_faces: vec![face_id],
+                };
+            }
+        }
+    }
+
     let face1 = create_face_from_points(brep, &loop1_points, surface_index, orientation);
     let face2 = create_face_from_points(brep, &loop2_points, surface_index, orientation);
+
+    // Distribute the parent's inner loops (holes) to whichever sub-face
+    // contains them — dropping them silently REFILLS the holes (a phantom
+    // line split across an annular cap would otherwise fill in the bore).
+    let parent_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+    if !parent_inner.is_empty() {
+        // 2D frame on the parent plane for containment tests.
+        let origin = loop1_points[0];
+        let e1 = (loop1_points[1] - origin).normalize();
+        let mut e2n = vcad_kernel_math::Vec3::zeros();
+        for p in loop1_points.iter().chain(loop2_points.iter()) {
+            let d = *p - origin;
+            let perp = d - e1 * d.dot(&e1);
+            if perp.norm() > 1e-9 {
+                e2n = perp.normalize();
+                break;
+            }
+        }
+        let project = |p: &Point3| -> (f64, f64) {
+            let d = *p - origin;
+            (d.dot(&e1), d.dot(&e2n))
+        };
+        let poly1: Vec<(f64, f64)> = loop1_points.iter().map(&project).collect();
+        let poly2: Vec<(f64, f64)> = loop2_points.iter().map(&project).collect();
+        for inner in parent_inner {
+            let verts: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(inner)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if verts.is_empty() {
+                continue;
+            }
+            let n = verts.len() as f64;
+            let c = Point3::new(
+                verts.iter().map(|v| v.x).sum::<f64>() / n,
+                verts.iter().map(|v| v.y).sum::<f64>() / n,
+                verts.iter().map(|v| v.z).sum::<f64>() / n,
+            );
+            let (cx, cy) = project(&c);
+            let target = if point_in_polygon_2d(cx, cy, &poly1) {
+                face1
+            } else if point_in_polygon_2d(cx, cy, &poly2) {
+                face2
+            } else {
+                face1 // conservative: keep the hole somewhere
+            };
+            brep.topology.faces[target].inner_loops.push(inner);
+            brep.topology.loops[inner].face = Some(target);
+        }
+    }
 
     // Add the new faces to the shell
     if let Some(shell_id) = brep.topology.faces[face_id].shell {
