@@ -188,6 +188,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
 
   // ── Import + share ─────────────────────────────────────────────────────
   import_step: { title: "Import STEP", annotations: RW },
+  import_urdf: { title: "Import URDF", annotations: RW },
   import_kicad: { title: "Import KiCad", annotations: RW },
   import_eagle: { title: "Import EAGLE", annotations: RW },
   open_in_browser: { title: "Open in Browser", annotations: RW },

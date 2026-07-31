@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-29-revolute-physics-mass-properties",
+  "version": "0.9.4",
+  "date": "2026-07-29",
+  "category": "fix",
+  "title": "Physics sim: real geometry, real dynamics",
+  "summary": "Composed parts no longer collapse to a placeholder cube (inverted gravity); ball/free joints conserve energy; free bodies fall; position servos reach their target via gravity feedforward.",
+  "features": ["physics", "simulation", "assembly"],
+  "mcpTools": ["create_robot_env", "gym_step", "gym_observe", "record_simulation"]
+}

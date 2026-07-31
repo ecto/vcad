@@ -166,6 +166,7 @@ import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
 import { toolDefs as flatPatternToolDefs } from "./tools/flat-pattern.js";
 import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
 import { toolDefs as importToolDefs } from "./tools/import.js";
+import { toolDefs as importUrdfToolDefs } from "./tools/import-urdf.js";
 import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
 import { toolDefs as shareToolDefs } from "./tools/share.js";
 import { toolDefs as gymToolDefs } from "./tools/gym.js";
@@ -357,6 +358,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...flatPatternToolDefs,
   ...acousticsToolDefs,
   ...importToolDefs,
+  ...importUrdfToolDefs,
   ...importPcbToolDefs,
   ...shareToolDefs,
   ...gymToolDefs,
@@ -486,6 +488,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "simulate_strike",
   // ── Import + share ─────────────────────────────────────────
   "import_step",
+  "import_urdf",
   "import_kicad",
   "import_eagle",
   "open_in_browser",

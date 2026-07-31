@@ -54,9 +54,29 @@ impl Default for MotorTarget {
 impl MotorTarget {
     /// Compute the control torque given current position and velocity.
     pub fn compute_torque(&self, position: f64, velocity: f64) -> f64 {
+        self.compute_torque_with_feedforward(position, velocity, 0.0)
+    }
+
+    /// Compute the control torque with a feedforward term (e.g. gravity
+    /// compensation) folded in before the clamp.
+    ///
+    /// The feedforward applies to Position and Velocity modes only — a pure
+    /// PD servo has no integrator, so the plant's static gravity torque
+    /// shows up verbatim as steady-state error (`τ_g / kp`; with the
+    /// reflected-inertia gains that is tens of degrees for a hanging link).
+    /// Torque mode passes the commanded value through untouched: RL torque
+    /// actions must reach the joint unmodified.
+    pub fn compute_torque_with_feedforward(
+        &self,
+        position: f64,
+        velocity: f64,
+        feedforward: f64,
+    ) -> f64 {
         let torque = match self.mode {
-            MotorMode::Position => self.kp * (self.target - position) - self.kd * velocity,
-            MotorMode::Velocity => self.kd * (self.target - velocity),
+            MotorMode::Position => {
+                self.kp * (self.target - position) - self.kd * velocity + feedforward
+            }
+            MotorMode::Velocity => self.kd * (self.target - velocity) + feedforward,
             MotorMode::Torque => self.target,
         };
         torque.clamp(-self.max_force, self.max_force)
@@ -132,7 +152,9 @@ pub(crate) fn vcad_joint_to_phyz(
             Ok(phyz_joint)
         }
         JointKind::Cylindrical { .. } => {
-            // Approximate as revolute (primary DOF)
+            // Approximate as revolute (primary DOF). The IR's Cylindrical
+            // carries no limits today; if it grows them, thread them through
+            // like Revolute above.
             let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::revolute(xform))
         }
