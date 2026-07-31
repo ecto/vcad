@@ -15,6 +15,14 @@ use crate::split::point_to_segment_dist_2d;
 use crate::trim::point_in_face;
 use crate::BooleanOp;
 
+macro_rules! cls_dbg {
+    ($($arg:tt)*) => {
+        if std::env::var("VCAD_CLS_DEBUG").is_ok() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// Classification of a face relative to another solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaceClassification {
@@ -1058,6 +1066,12 @@ fn find_coincident_cylinder_classification(
     const RADIUS_TOL: f64 = 1e-6;
     const AXIS_TOL: f64 = 1e-6;
 
+    // Collect ALL other-faces on the same carrier cylinder first: the other
+    // operand's coincident wall may be split into several pieces (frozen
+    // dense splits land differently per operand), and a probe set spanning
+    // two pieces must still read as coincident. Coverage is judged against
+    // the UNION of same-carrier faces.
+    let mut carrier_faces: Vec<(FaceId, bool)> = Vec::new();
     for (other_fid, other_face) in &other.topology.faces {
         let other_surf = &other.geometry.surfaces[other_face.surface_index];
         if other_surf.surface_type() != SurfaceKind::Cylinder {
@@ -1083,35 +1097,51 @@ fn find_coincident_cylinder_classification(
         if radial_offset.norm() > AXIS_TOL {
             continue; // parallel but different axis line
         }
+        let other_forward = other_face.orientation == vcad_kernel_topo::Orientation::Forward;
+        carrier_faces.push((other_fid, other_forward));
+    }
+    if carrier_faces.is_empty() {
+        return None;
+    }
 
-        // Same carrier surface. All on-face probes must land inside the
-        // other face's bounded region for full coincidence.
-        let mut checked = 0u32;
-        let mut fully_coincident = true;
-        for p in probes {
-            if !point_in_face(brep, face_id, p) {
-                continue;
-            }
-            checked += 1;
-            if !point_in_face(other, other_fid, p) {
-                fully_coincident = false;
-                break;
-            }
-        }
-        if checked == 0 || !fully_coincident {
+    let mut checked = 0u32;
+    let mut matched_forward: Option<bool> = None;
+    for p in probes {
+        if !point_in_face(brep, face_id, p) {
             continue;
         }
-
-        // Radial normals are sign-symmetric in the axis direction, so
-        // alignment reduces to the orientation flags.
-        let other_forward = other_face.orientation == vcad_kernel_topo::Orientation::Forward;
-        return Some(if self_forward == other_forward {
-            FaceClassification::OnSame
-        } else {
-            FaceClassification::OnOpposite
-        });
+        checked += 1;
+        let hit = carrier_faces
+            .iter()
+            .find(|(fid, _)| point_in_face(other, *fid, p));
+        match hit {
+            Some((_, fwd)) => {
+                if let Some(prev) = matched_forward {
+                    if prev != *fwd {
+                        return None; // mixed orientations under one face
+                    }
+                } else {
+                    matched_forward = Some(*fwd);
+                }
+            }
+            None => {
+                cls_dbg!(
+                    "cyl-coincidence miss: probe {p:?} not in any of {} carrier faces",
+                    carrier_faces.len()
+                );
+                return None; // probe not covered — not fully coincident
+            }
+        }
     }
-    None
+    if checked == 0 {
+        return None;
+    }
+    let other_forward = matched_forward?;
+    Some(if self_forward == other_forward {
+        FaceClassification::OnSame
+    } else {
+        FaceClassification::OnOpposite
+    })
 }
 
 /// Generate additional probe points on a face for robust classification.
@@ -1139,6 +1169,8 @@ fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Ve
     // boundary at an even stride keeps the probes spread all the way
     // around the face, which is what makes the vote robust.
     let n = outer_verts.len();
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let is_plane = surface.surface_type() == SurfaceKind::Plane;
     let count = n.min(MAX_BOUNDARY_PROBES);
     let mut probes = Vec::with_capacity(count);
     for k in 0..count {
@@ -1148,7 +1180,18 @@ fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Ve
         let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
         // Nudge 20% toward centroid to land strictly inside the face.
         let dir = centroid - mid;
-        probes.push(mid + 0.2 * dir);
+        let p = mid + 0.2 * dir;
+        if is_plane {
+            probes.push(p);
+        } else {
+            // On a curved face the straight-line nudge leaves the surface —
+            // on a frozen full-wrap cylinder wall it drags far-side ring
+            // midpoints deep into the interior (or into a bore void).
+            // Re-project onto the carrying surface so probes stay ON the
+            // face they are meant to sample.
+            let uv = crate::trim::project_point_to_uv(surface.as_ref(), &p);
+            probes.push(surface.evaluate(uv));
+        }
     }
     probes
 }
@@ -1171,7 +1214,24 @@ pub fn classify_face(
     let sample = face_sample_point(brep, face_id);
     let oriented_normal = face_oriented_normal(brep, face_id);
     let mut probes = vec![sample];
-    probes.extend(extra_probe_points(brep, face_id, sample));
+    {
+        // Dense frozen boundaries yield hundreds of edge-midpoint probes;
+        // subsample for cost, and drop any probe that does not actually lie
+        // on the face (the straight-line "nudge toward centroid" can cross
+        // an inner-loop hole on an annular cap, sampling void instead of
+        // face and misclassifying the whole face).
+        // extra_probe_points already caps its own count; here just drop any
+        // probe that does not actually lie on the face (the straight-line
+        // "nudge toward centroid" can cross an inner-loop hole on an
+        // annular cap, sampling void instead of face and misclassifying
+        // the whole face).
+        let extra = extra_probe_points(brep, face_id, sample);
+        probes.extend(
+            extra
+                .into_iter()
+                .filter(|p| crate::trim::point_in_face(brep, face_id, p)),
+        );
+    }
 
     if let Some(c) = find_coincident_classification(brep, face_id, &probes, other) {
         return c;
@@ -1200,13 +1260,53 @@ pub fn classify_face(
     // missed entirely — overhang by much more (0.165 mm in the smallest
     // observed case, torr's rotating-group bore wall), so 0.1 mm separates
     // the two regimes with ~2-3x margin on either side.
+    // Seam-freeze additions to the probe semantics:
+    // — On a curved face the offset direction must be the LOCAL surface
+    //   normal at each probe: a frozen full-wrap cylinder wall carries
+    //   probes all around the circumference, and one global face normal
+    //   pushes far-side probes outward, reading an interior wall Outside.
+    // — A probe whose ±eps offsets land on OPPOSITE sides of the other
+    //   solid sits ON its boundary (tangent edge, grazing corner) and
+    //   abstains entirely.
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let is_plane = surface.surface_type() == SurfaceKind::Plane;
     let verdicts: Vec<(Point3, bool)> = probes
         .iter()
-        .map(|p| {
-            let inward = *p - eps * oriented_normal;
-            (inward, point_in_mesh(&inward, other_mesh))
+        .filter_map(|p| {
+            let normal = if is_plane {
+                oriented_normal
+            } else {
+                let uv = crate::trim::project_point_to_uv(surface.as_ref(), p);
+                let n = *surface.normal(uv).as_ref();
+                match face.orientation {
+                    vcad_kernel_topo::Orientation::Forward => n,
+                    vcad_kernel_topo::Orientation::Reversed => -n,
+                }
+            };
+            let inward = *p - eps * normal;
+            let inward_in = point_in_mesh(&inward, other_mesh);
+            let outward_in = point_in_mesh(&(*p + eps * normal), other_mesh);
+            if inward_in != outward_in {
+                None // on the other solid's boundary — abstain
+            } else {
+                Some((inward, inward_in))
+            }
         })
         .collect();
+    cls_dbg!(
+        "classify {:?}: probes={} verdicts={} inside={}",
+        face_id,
+        probes.len(),
+        verdicts.len(),
+        verdicts.iter().filter(|(_, i)| *i).count()
+    );
+    if verdicts.is_empty() {
+        // Every probe hugs the other solid's boundary: pure tangency
+        // contact with no interior penetration — the face stays on the
+        // result boundary.
+        return FaceClassification::Outside;
+    }
     // Fast path: unanimous probes need no clearance computation at all.
     // The confidence weighting only changes the answer when the probes
     // disagree, and clearance costs a mesh scan per probe — so on the

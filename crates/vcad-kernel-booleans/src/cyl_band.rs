@@ -8,10 +8,23 @@
 //! single-valued curve — the pieces are again bands (possibly over smaller
 //! u-intervals when the curve crosses a chain and pinches the region off).
 //!
-//! Band faces are materialized as loops of two angle-paired vertex chains
-//! (bottom chain u-ascending, then top chain u-descending), the exact shape
-//! `tessellate_ruled_two_chain` in vcad-kernel-tessellate renders verbatim,
-//! so slanted/wavy boundaries survive to the mesh.
+//! # Chains are explicit, independent vertex lists
+//!
+//! Each chain owns its own `(u, v)` vertex list; the two chains of a band
+//! need NOT share u-columns. This is the load-bearing design decision: every
+//! split operation slices the surviving chain segments VERBATIM and inserts
+//! only exact cut/crossing points, so a chain that is somebody's shared rim
+//! (a frozen cap ring, a neighboring band's profile) keeps exactly the
+//! vertex set the neighbor carries. The former paired-column representation
+//! interpolated each chain onto the union grid, which invented rim vertices
+//! the neighboring face never had — a guaranteed seam crack for every
+//! column the neighbor didn't share.
+//!
+//! Band faces are materialized as loops of two vertex chains (bottom chain
+//! u-ascending, then top chain u-descending), the exact shape
+//! `tessellate_ruled_two_chain` in vcad-kernel-tessellate renders verbatim
+//! (its zipper triangulation accepts rails with different vertex sets), so
+//! slanted/wavy boundaries survive to the mesh.
 //!
 //! This replaces the former behavior of returning oblique-cut cylinder faces
 //! unsplit, which silently corrupted every boolean touching them (empty
@@ -32,20 +45,29 @@ const U_EPS: f64 = 1e-9;
 /// Minimum band height (in v) for a region to count as real material.
 const V_EPS: f64 = 1e-9;
 
-/// A cylindrical face region `lo(u) ≤ v ≤ hi(u)` over `us` (ascending,
-/// possibly unwrapped past 2π). For a `full_wrap` band the first and last
-/// columns sit at the same angle (u and u + 2π) and the region closes on
-/// itself around the axis.
+/// A piecewise-linear chain v(u): `(u, v)` vertices with ascending u.
+pub(crate) type Chain = Vec<(f64, f64)>;
+
+/// A cylindrical face region `lo(u) ≤ v ≤ hi(u)`. The chains are
+/// independent vertex lists (they need not share u-columns); both span the
+/// same u-interval up to roughly one column of slack at either end (a pinch
+/// collapsed into a single shared vertex shortens one chain). For a
+/// `full_wrap` band each chain's last u equals its first u + 2π and the
+/// region closes on itself around the axis.
 #[derive(Debug, Clone)]
 pub(crate) struct CylBand {
-    /// Ascending u samples; `us.len() == lo.len() == hi.len() >= 2`.
-    pub us: Vec<f64>,
-    /// Lower v chain, sampled at `us`.
-    pub lo: Vec<f64>,
-    /// Upper v chain, sampled at `us`.
-    pub hi: Vec<f64>,
-    /// Whether the band wraps the full circumference (last u = first u + 2π).
+    /// Lower chain, ascending u.
+    pub lo: Chain,
+    /// Upper chain, ascending u.
+    pub hi: Chain,
+    /// Whether the band wraps the full circumference.
     pub full_wrap: bool,
+    /// Loop-winding convention of the ORIGINAL face: false = the loop
+    /// walks the lower chain ascending in u (outer-wall convention), true
+    /// = descending (bore walls wind the other way). realize_bands must
+    /// reproduce it or the rebuilt faces can no longer pair with their
+    /// cap-hole neighbors.
+    pub reversed_winding: bool,
 }
 
 /// A closed single-valued curve on a cylinder: v = f(u), periodic in 2π.
@@ -54,6 +76,14 @@ pub(crate) struct CylBand {
 pub(crate) struct CylProfile {
     us: Vec<f64>,
     vs: Vec<f64>,
+}
+
+macro_rules! band_dbg {
+    ($($arg:tt)*) => {
+        if std::env::var("VCAD_BAND_DEBUG").is_ok() {
+            eprintln!($($arg)*);
+        }
+    };
 }
 
 /// Compute (u, v) cylinder coordinates of a point, u normalized to [0, 2π).
@@ -78,6 +108,68 @@ fn point_at(cyl: &CylinderSurface, u: f64, v: f64) -> Point3 {
     let y_dir = cyl.axis.as_ref().cross(ref_dir);
     let (sin_u, cos_u) = u.sin_cos();
     cyl.center + cyl.radius * (cos_u * *ref_dir + sin_u * y_dir) + v * *cyl.axis.as_ref()
+}
+
+/// Clamped linear interpolation of a chain at `u`.
+fn chain_interp(chain: &Chain, u: f64) -> f64 {
+    let n = chain.len();
+    if u <= chain[0].0 {
+        return chain[0].1;
+    }
+    if u >= chain[n - 1].0 {
+        return chain[n - 1].1;
+    }
+    let i = chain.partition_point(|p| p.0 < u);
+    let (ua, va) = chain[i - 1];
+    let (ub, vb) = chain[i];
+    if (ub - ua).abs() < U_EPS {
+        va
+    } else {
+        va + (u - ua) / (ub - ua) * (vb - va)
+    }
+}
+
+/// Slice `chain` to `[a, b]`: exact interpolated endpoints plus every chain
+/// vertex strictly inside, verbatim. A chain vertex within `U_EPS` of an
+/// endpoint is absorbed into the endpoint (no duplicates).
+fn cut_chain(chain: &Chain, a: f64, b: f64) -> Chain {
+    let mut out: Chain = vec![(a, chain_interp(chain, a))];
+    for &(u, v) in chain {
+        if u > a + U_EPS && u < b - U_EPS {
+            out.push((u, v));
+        }
+    }
+    out.push((b, chain_interp(chain, b)));
+    out
+}
+
+/// Slice a chain of a FULL-WRAP band to `[a, b]` where the interval may
+/// extend past the chain's end (wrapping). The chain covers one period with
+/// duplicated first/last u (u₀ and u₀ + 2π); values are periodic.
+fn cut_chain_wrap(chain: &Chain, a: f64, b: f64) -> Chain {
+    let end = chain[chain.len() - 1].0;
+    if b <= end + U_EPS {
+        return cut_chain(chain, a, b);
+    }
+    // [a, end) from the chain tail, then [start, b − 2π] shifted +2π.
+    let mut out: Chain = vec![(a, chain_interp(chain, a))];
+    for &(u, v) in chain {
+        if u > a + U_EPS && u < end - U_EPS {
+            out.push((u, v));
+        }
+    }
+    let b2 = b - 2.0 * PI;
+    let start = chain[0].0;
+    // The chain's duplicated period endpoint (u = end, same point as start)
+    // becomes an interior vertex of the wrapped slice.
+    out.push((end, chain_interp(chain, end)));
+    for &(u, v) in chain {
+        if u > start + U_EPS && u < b2 - U_EPS {
+            out.push((u + 2.0 * PI, v));
+        }
+    }
+    out.push((b, chain_interp(chain, b2.max(start))));
+    out
 }
 
 /// Interpret a sampled intersection polyline as a closed single-valued
@@ -186,43 +278,45 @@ impl CylProfile {
             }
         }
     }
+
+    /// Does the profile own a vertex at (an unwrapped translate of) `u`?
+    fn has_node(&self, u: f64) -> bool {
+        let u0 = self.us[0];
+        let x = u0 + (u - u0).rem_euclid(2.0 * PI);
+        self.us
+            .iter()
+            .any(|&pu| (pu - x).abs() < U_EPS || (pu - x + 2.0 * PI).abs() < U_EPS)
+    }
 }
 
 impl CylBand {
-    /// Linear interpolation of a chain at u (no wrap: u must be in range).
-    fn interp(us: &[f64], vs: &[f64], u: f64) -> f64 {
-        let n = us.len();
-        if u <= us[0] {
-            return vs[0];
-        }
-        if u >= us[n - 1] {
-            return vs[n - 1];
-        }
-        let i = us.partition_point(|a| *a < u);
-        let (ua, ub) = (us[i - 1], us[i]);
-        let t = if (ub - ua).abs() < U_EPS {
-            0.0
-        } else {
-            (u - ua) / (ub - ua)
-        };
-        vs[i - 1] + t * (vs[i] - vs[i - 1])
-    }
-
     /// Lower chain value at u.
     pub(crate) fn lo_at(&self, u: f64) -> f64 {
-        Self::interp(&self.us, &self.lo, u)
+        chain_interp(&self.lo, u)
     }
 
     /// Upper chain value at u.
     pub(crate) fn hi_at(&self, u: f64) -> f64 {
-        Self::interp(&self.us, &self.hi, u)
+        chain_interp(&self.hi, u)
+    }
+
+    /// Start of the band's u-interval.
+    fn u_start(&self) -> f64 {
+        self.lo[0].0.min(self.hi[0].0)
+    }
+
+    /// End of the band's u-interval.
+    fn u_end(&self) -> f64 {
+        self.lo[self.lo.len() - 1]
+            .0
+            .max(self.hi[self.hi.len() - 1].0)
     }
 }
 
 /// Parse a cylindrical face into band form. Handles three loop shapes:
 /// degenerate seam loops (full tube), 4-vertex rectangles, and the dense
-/// angle-paired two-chain loops this module itself emits. Returns `None`
-/// for anything else.
+/// two-chain loops this module itself emits. Returns `None` for anything
+/// else.
 pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderSurface, CylBand)> {
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
@@ -254,10 +348,10 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
         return Some((
             cyl,
             CylBand {
-                us: vec![u0, u0 + 2.0 * PI],
-                lo: vec![v_min, v_min],
-                hi: vec![v_max, v_max],
+                lo: vec![(u0, v_min), (u0 + 2.0 * PI, v_min)],
+                hi: vec![(u0, v_max), (u0 + 2.0 * PI, v_max)],
                 full_wrap: true,
+                reversed_winding: false,
             },
         ));
     }
@@ -277,13 +371,63 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
     if n < 4 {
         return None;
     }
+    // A step of exactly half a turn is directionally ambiguous (an
+    // antipodal 2-point ring reads the same forwards and backwards). The
+    // two chains of a valid band travel in opposite directions, so try the
+    // four sign policies (constant, and flipping at the first vertical
+    // connector between the chains); accept whichever parses into a valid
+    // two-run band.
+    for policy in [
+        TiePolicy::Const(1.0),
+        TiePolicy::Const(-1.0),
+        TiePolicy::FlipAtConnector(1.0),
+        TiePolicy::FlipAtConnector(-1.0),
+    ] {
+        if let Some(band) = try_parse_two_chain(&uvs, policy) {
+            return Some((cyl, band));
+        }
+    }
+    None
+}
+
+/// How to resolve directionally ambiguous exactly-π unwrap steps.
+#[derive(Clone, Copy)]
+enum TiePolicy {
+    /// All ties take this sign.
+    Const(f64),
+    /// Ties take this sign until the first vertical connector (Δu ≈ 0,
+    /// Δv ≠ 0 — the edge joining the two chains), then the opposite.
+    FlipAtConnector(f64),
+}
+
+/// Attempt the two-run decomposition of a loop's (u, v) sequence, resolving
+/// exactly-π steps with `policy`.
+fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand> {
+    let n = uvs.len();
     let mut unwrapped: Vec<f64> = Vec::with_capacity(n);
     unwrapped.push(uvs[0].0);
-    for uv in uvs.iter().skip(1) {
+    let mut connector_seen = false;
+    for (k, uv) in uvs.iter().enumerate().skip(1) {
         let prev = *unwrapped.last().unwrap();
         let mut du = (uv.0 - prev).rem_euclid(2.0 * PI);
         if du > PI {
             du -= 2.0 * PI;
+        }
+        if du.abs() < U_EPS && (uv.1 - uvs[k - 1].1).abs() > V_EPS {
+            connector_seen = true;
+        }
+        if (du.abs() - PI).abs() < 1e-9 {
+            let sign = match policy {
+                TiePolicy::Const(s) => s,
+                TiePolicy::FlipAtConnector(s) => {
+                    if connector_seen {
+                        -s
+                    } else {
+                        s
+                    }
+                }
+            };
+            du = sign * PI;
         }
         unwrapped.push(prev + du);
     }
@@ -309,6 +453,24 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
         }
     }
     if flips.len() != 1 || run_dir == 0 {
+        band_dbg!(
+            "parse_band: {} flips (need 1), run_dir {}, n {}, uvs head {:?} tail {:?}",
+            flips.len(),
+            run_dir,
+            n,
+            &uvs[..n.min(4)],
+            &uvs[n.saturating_sub(3)..]
+        );
+        for &i in &flips {
+            let lo = i.saturating_sub(2);
+            let hi = (i + 3).min(n);
+            band_dbg!(
+                "  flip at {}: unwrapped {:?} uvs {:?}",
+                i,
+                &unwrapped[lo..hi],
+                &uvs[lo..hi]
+            );
+        }
         return None;
     }
     // The run boundary may be preceded by zero-Δu connector steps (the
@@ -320,12 +482,18 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
     while split_at > 1 && (unwrapped[split_at - 1] - unwrapped[split_at - 2]).abs() <= U_EPS {
         split_at -= 1;
     }
-    let mut chain_a: Vec<(f64, f64)> = (0..split_at).map(|i| (unwrapped[i], uvs[i].1)).collect();
-    let mut chain_b: Vec<(f64, f64)> = (split_at..n).map(|i| (unwrapped[i], uvs[i].1)).collect();
+    let mut chain_a: Chain = (0..split_at).map(|i| (unwrapped[i], uvs[i].1)).collect();
+    let mut chain_b: Chain = (split_at..n).map(|i| (unwrapped[i], uvs[i].1)).collect();
     if chain_a.len() < 2 || chain_b.len() < 2 {
+        band_dbg!(
+            "parse_band: short chains {} {}",
+            chain_a.len(),
+            chain_b.len()
+        );
         return None;
     }
-    if chain_a[0].0 > chain_a[chain_a.len() - 1].0 {
+    let a_was_reversed_flag = chain_a[0].0 > chain_a[chain_a.len() - 1].0;
+    if a_was_reversed_flag {
         chain_a.reverse();
     }
     if chain_b[0].0 > chain_b[chain_b.len() - 1].0 {
@@ -339,60 +507,99 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
     let (b0, b1) = (chain_b[0].0, chain_b[chain_b.len() - 1].0);
     let span = (a1 - a0).max(b1 - b0);
     if !(U_EPS..=2.0 * PI + 1e-6).contains(&span) {
+        band_dbg!("parse_band: bad span {span}");
         return None;
     }
-    let max_step = span / (chain_a.len().min(chain_b.len()) as f64 - 1.0).max(1.0);
-    let range_tol = (1.5 * max_step).max(1e-6);
+    // A pinch collapsed into a single shared vertex (realize dedups the
+    // duplicate point) shortens one chain by up to one of ITS OWN steps.
+    // Chains now carry heterogeneous vertex spacings (a sag-dense rim vs a
+    // profile at SSI sampling), so the slack must be the largest actual
+    // step, not the average.
+    let max_step = |c: &Chain| c.windows(2).map(|w| w[1].0 - w[0].0).fold(0.0f64, f64::max);
+    // Cap: a 2-point analytic chain has max_step = its whole span, which
+    // would make the tolerance unbounded and let a tiny wedge pair with a
+    // full-circle chain as a "band" (whose clamped interpolation then
+    // paints a phantom flat ring around the cylinder).
+    let range_tol = (1.5 * max_step(&chain_a).max(max_step(&chain_b))).clamp(1e-6, 0.35);
     if (a0 - b0).abs() > range_tol || (a1 - b1).abs() > range_tol {
+        band_dbg!(
+            "parse_band: range mismatch a=[{a0:.6},{a1:.6}] b=[{b0:.6},{b1:.6}] tol {range_tol:.6}"
+        );
         return None;
     }
     let full_wrap = (span - 2.0 * PI).abs() < 1e-6;
 
-    // Build the band on the union grid, interpolating each chain (clamped
-    // at pinch-shortened ends).
-    let mut us: Vec<f64> = chain_a.iter().map(|p| p.0).collect();
-    us.extend(chain_b.iter().map(|p| p.0));
-    us.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-    us.dedup_by(|x, y| (*x - *y).abs() < U_EPS);
-    let interp = |chain: &[(f64, f64)], u: f64| -> f64 {
-        if u <= chain[0].0 {
-            return chain[0].1;
-        }
-        let last = chain.len() - 1;
-        if u >= chain[last].0 {
-            return chain[last].1;
-        }
-        let i = chain.partition_point(|p| p.0 < u);
-        let (ua, va) = chain[i - 1];
-        let (ub, vb) = chain[i];
-        if (ub - ua).abs() < U_EPS {
-            va
-        } else {
-            va + (u - ua) / (ub - ua) * (vb - va)
-        }
-    };
-    let a_vals: Vec<f64> = us.iter().map(|&u| interp(&chain_a, u)).collect();
-    let b_vals: Vec<f64> = us.iter().map(|&u| interp(&chain_b, u)).collect();
-
     // Chains must not cross (a band has a well-defined lower/upper chain).
-    let a_below = a_vals.iter().zip(&b_vals).all(|(x, y)| *x <= *y + V_EPS);
-    let b_below = b_vals.iter().zip(&a_vals).all(|(x, y)| *x <= *y + V_EPS);
-    let (lo, hi) = if a_below {
-        (a_vals, b_vals)
+    // Compare on the union of both chains' sample angles.
+    let mut probe_us: Vec<f64> = chain_a.iter().map(|p| p.0).collect();
+    probe_us.extend(chain_b.iter().map(|p| p.0));
+    probe_us.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    probe_us.dedup_by(|x, y| (*x - *y).abs() < U_EPS);
+    let a_below = probe_us
+        .iter()
+        .all(|&u| chain_interp(&chain_a, u) <= chain_interp(&chain_b, u) + V_EPS);
+    let b_below = probe_us
+        .iter()
+        .all(|&u| chain_interp(&chain_b, u) <= chain_interp(&chain_a, u) + V_EPS);
+    let _ = a_was_reversed_flag;
+    let (mut lo, mut hi) = if a_below {
+        (chain_a, chain_b)
     } else if b_below {
-        (b_vals, a_vals)
+        (chain_b, chain_a)
     } else {
+        band_dbg!("parse_band: chains cross");
         return None;
     };
-    Some((
-        cyl,
-        CylBand {
-            us,
-            lo,
-            hi,
-            full_wrap,
-        },
-    ))
+    // Winding convention, start-phase-independent: the standard
+    // (outer-wall) cycle walks the lower chain ascending and the upper
+    // descending — counterclockwise in (u, v), positive shoelace area.
+    // Bores wind the other way. (Judging by "which run came first" breaks
+    // when the loop's starting half-edge sits mid-chain.)
+    let reversed_winding = {
+        let mut area2 = 0.0;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            area2 += unwrapped[i] * uvs[j].1 - unwrapped[j] * uvs[i].1;
+        }
+        area2 < 0.0
+    };
+    // Close residual end slack: both chains must span the same interval or
+    // downstream splits clamp-extend the shorter one into phantom area. At
+    // a collapsed pinch the extension point IS the pinch point (the longer
+    // chain's endpoint), so this is exact, not a fudge.
+    let (start_u, end_u) = (
+        lo[0].0.min(hi[0].0),
+        lo[lo.len() - 1].0.max(hi[hi.len() - 1].0),
+    );
+    let (lo_head_v, lo_tail_v) = (lo[0].1, lo[lo.len() - 1].1);
+    let (hi_head_v, hi_tail_v) = (hi[0].1, hi[hi.len() - 1].1);
+    for (c, other_head, other_tail) in [
+        (&mut lo, hi_head_v, hi_tail_v),
+        (&mut hi, lo_head_v, lo_tail_v),
+    ] {
+        if c[0].0 > start_u + U_EPS {
+            // The missing endpoint is the collapsed pinch — i.e. the OTHER
+            // chain's endpoint, where the two chains met.
+            c.insert(0, (start_u, other_head));
+        }
+        if c[c.len() - 1].0 < end_u - U_EPS {
+            c.push((end_u, other_tail));
+        }
+    }
+    band_dbg!(
+        "parse: n {} full_wrap {} rev_wind {} lo[0] {:?} hi[0] {:?}",
+        n,
+        full_wrap,
+        reversed_winding,
+        lo[0],
+        hi[0]
+    );
+    Some(CylBand {
+        lo,
+        hi,
+        full_wrap,
+        reversed_winding,
+    })
 }
 
 /// Are two angles equal on the circle (mod 2π)?
@@ -404,6 +611,103 @@ fn angle_close(a: f64, b: f64, tol: f64) -> bool {
     d.abs() < tol
 }
 
+/// Does a chain own a vertex at `u` (exact column, within U_EPS)?
+fn chain_has_node(chain: &Chain, u: f64) -> bool {
+    let i = chain.partition_point(|p| p.0 < u - U_EPS);
+    i < chain.len() && (chain[i].0 - u).abs() < U_EPS
+}
+
+/// Build the min- or max-envelope of the profile `f` and a parent chain
+/// over `[a, b]`, preserving vertex provenance: on stretches where `f`
+/// wins, only f's own vertices are emitted; where the chain wins, only the
+/// chain's own vertices; the grid nodes at switches (crossings, inserted
+/// into `grid` by the caller) and the interval endpoints are always
+/// emitted with exact envelope values.
+///
+/// `grid` must contain every node of both curves inside `[a, b]` plus all
+/// crossing points, sorted ascending; `a` and `b` must be grid nodes.
+#[allow(clippy::too_many_arguments)]
+fn envelope_chain(
+    grid: &[f64],
+    a: f64,
+    b: f64,
+    f: &CylProfile,
+    chain: &Chain,
+    chain_wraps: bool,
+    take_min: bool,
+) -> Chain {
+    let chain_val = |u: f64| -> f64 {
+        if chain_wraps {
+            let end = chain[chain.len() - 1].0;
+            if u > end + U_EPS {
+                return chain_interp(chain, chain[0].0 + (u - end));
+            }
+        }
+        chain_interp(chain, u)
+    };
+    // A sparse chain (an analytic seam loop or 4-corner rectangle, < 8
+    // nodes) has no explicit polyline to conform to — treat every grid
+    // node as its own so the envelope densifies there, as the paired-column
+    // implementation did. Dense (frozen / profile) chains pin their exact
+    // vertex set.
+    let sparse = chain.len() < 8;
+    let chain_node = |u: f64| -> bool {
+        if sparse || chain_has_node(chain, u) {
+            return true;
+        }
+        if chain_wraps {
+            let end = chain[chain.len() - 1].0;
+            if u > end + U_EPS {
+                return chain_has_node(chain, chain[0].0 + (u - end));
+            }
+        }
+        false
+    };
+    let env = |u: f64| -> f64 {
+        let fv = f.eval(u);
+        let cv = chain_val(u);
+        if take_min {
+            fv.min(cv)
+        } else {
+            fv.max(cv)
+        }
+    };
+    let mut out: Chain = vec![(a, env(a))];
+    // A wrapped region ([a, b] extending past the parent's period end)
+    // needs the +2π translates of the grid nodes too.
+    let translated: Vec<f64> = if b > grid[grid.len() - 1] + U_EPS {
+        grid.iter()
+            .map(|&u| u + 2.0 * PI)
+            .filter(|&u| u < b - U_EPS)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for &u in grid.iter().chain(translated.iter()) {
+        if u <= a + U_EPS || u >= b - U_EPS {
+            continue;
+        }
+        let fv = f.eval(u);
+        let cv = chain_val(u);
+        let f_wins = if take_min {
+            fv <= cv + V_EPS
+        } else {
+            fv >= cv - V_EPS
+        };
+        let c_wins = if take_min {
+            cv <= fv + V_EPS
+        } else {
+            cv >= fv - V_EPS
+        };
+        let emit = (f_wins && f.has_node(u)) || (c_wins && chain_node(u)) || (f_wins && c_wins);
+        if emit {
+            out.push((u, env(u)));
+        }
+    }
+    out.push((b, env(b)));
+    out
+}
+
 /// Split `band` by the closed profile `f`, producing the sub-bands below f
 /// (`lo ≤ v ≤ min(f, hi)`) and above f (`max(f, lo) ≤ v ≤ hi`). Returns
 /// `None` when the profile misses the band interior (no split needed).
@@ -411,10 +715,20 @@ pub(crate) fn split_band_by_profile(
     band: &CylBand,
     f: &CylProfile,
 ) -> Option<(Vec<CylBand>, Vec<CylBand>)> {
-    // Common refined grid: band chain samples ∪ profile samples mapped into
-    // the band's u-interval ∪ chain/profile crossing points.
-    let (u_start, u_end) = (band.us[0], *band.us.last().unwrap());
-    let mut grid: Vec<f64> = band.us.clone();
+    let (u_start, u_end) = (band.u_start(), band.u_end());
+
+    // Analysis grid: both chains' nodes ∪ profile nodes mapped into the
+    // band's u-interval ∪ profile/chain crossing points. Between adjacent
+    // grid nodes all three curves are linear, so sign-change localization
+    // below is exact.
+    let mut grid: Vec<f64> = Vec::new();
+    grid.push(u_start);
+    grid.push(u_end);
+    for p in band.lo.iter().chain(band.hi.iter()) {
+        if p.0 > u_start - U_EPS && p.0 < u_end + U_EPS {
+            grid.push(p.0.clamp(u_start, u_end));
+        }
+    }
     for &pu in &f.us {
         // Every 2π translate of pu that lands inside [u_start, u_end].
         let mut x = u_start + (pu - u_start).rem_euclid(2.0 * PI);
@@ -436,17 +750,15 @@ pub(crate) fn split_band_by_profile(
             break;
         }
         let (ua, ub) = (grid[i], grid[i + 1]);
-        for chain in [true, false] {
-            let ga = if chain {
-                f.eval(ua) - band.lo_at(ua)
-            } else {
-                band.hi_at(ua) - f.eval(ua)
+        for lower in [true, false] {
+            let g = |u: f64| -> f64 {
+                if lower {
+                    f.eval(u) - band.lo_at(u)
+                } else {
+                    band.hi_at(u) - f.eval(u)
+                }
             };
-            let gb = if chain {
-                f.eval(ub) - band.lo_at(ub)
-            } else {
-                band.hi_at(ub) - f.eval(ub)
-            };
+            let (ga, gb) = (g(ua), g(ub));
             if (ga > 0.0) != (gb > 0.0) && (ga - gb).abs() > 1e-15 {
                 let t = ga / (ga - gb);
                 let uc = ua + t * (ub - ua);
@@ -459,20 +771,48 @@ pub(crate) fn split_band_by_profile(
     refined.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     refined.dedup_by(|a, b| (*a - *b).abs() < U_EPS);
 
-    let lo: Vec<f64> = refined.iter().map(|&u| band.lo_at(u)).collect();
-    let hi: Vec<f64> = refined.iter().map(|&u| band.hi_at(u)).collect();
     let fv: Vec<f64> = refined.iter().map(|&u| f.eval(u)).collect();
+    let lo_v: Vec<f64> = refined.iter().map(|&u| band.lo_at(u)).collect();
+    let hi_v: Vec<f64> = refined.iter().map(|&u| band.hi_at(u)).collect();
 
-    let below_hi: Vec<f64> = fv.iter().zip(&hi).map(|(a, b)| a.min(*b)).collect();
-    let above_lo: Vec<f64> = fv.iter().zip(&lo).map(|(a, b)| a.max(*b)).collect();
+    // Region widths on the grid.
+    let below_w: Vec<f64> = (0..refined.len())
+        .map(|i| fv[i].min(hi_v[i]) - lo_v[i])
+        .collect();
+    let above_w: Vec<f64> = (0..refined.len())
+        .map(|i| hi_v[i] - fv[i].max(lo_v[i]))
+        .collect();
 
-    let below = extract_regions(&refined, &lo, &below_hi, band.full_wrap);
-    let above = extract_regions(&refined, &above_lo, &hi, band.full_wrap);
+    let below = extract_regions(band, f, &refined, &below_w, true);
+    let above = extract_regions(band, f, &refined, &above_w, false);
 
     // A real split leaves material on both sides; otherwise the profile
     // missed the band (entirely above or below it).
     if below.is_empty() || above.is_empty() {
         return None;
+    }
+    // Range validation: every output chain value must stay within the
+    // parent band's v-range (children are subsets). A value outside it is
+    // an envelope/region bug about to become phantom geometry.
+    {
+        let v_min = band.lo.iter().map(|p| p.1).fold(f64::MAX, f64::min) - 1e-6;
+        let v_max = band.hi.iter().map(|p| p.1).fold(f64::MIN, f64::max) + 1e-6;
+        for b in below.iter().chain(above.iter()) {
+            for p in b.lo.iter().chain(b.hi.iter()) {
+                if p.1 < v_min || p.1 > v_max {
+                    band_dbg!(
+                        "RANGE BUG: child v {:.4} outside parent [{:.4},{:.4}] at u {:.4}; parent lo {} hi {} pts, full_wrap {}",
+                        p.1,
+                        v_min,
+                        v_max,
+                        p.0,
+                        band.lo.len(),
+                        band.hi.len(),
+                        band.full_wrap
+                    );
+                }
+            }
+        }
     }
     // Also require the split to actually change the geometry: if the below
     // side reproduces the whole band, nothing was cut.
@@ -485,117 +825,178 @@ pub(crate) fn split_band_by_profile(
     Some((below, above))
 }
 
-/// Approximate (u, v) parameter area of a band (trapezoid rule).
-fn band_area(b: &CylBand) -> f64 {
+/// Approximate (u, v) parameter area of a band (trapezoid rule over the
+/// union of both chains' nodes).
+pub(crate) fn band_area(b: &CylBand) -> f64 {
+    let mut us: Vec<f64> = b.lo.iter().map(|p| p.0).collect();
+    us.extend(b.hi.iter().map(|p| p.0));
+    us.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    us.dedup_by(|x, y| (*x - *y).abs() < U_EPS);
     let mut a = 0.0;
-    for i in 0..b.us.len() - 1 {
-        let w0 = (b.hi[i] - b.lo[i]).max(0.0);
-        let w1 = (b.hi[i + 1] - b.lo[i + 1]).max(0.0);
-        a += 0.5 * (w0 + w1) * (b.us[i + 1] - b.us[i]);
+    for w in us.windows(2) {
+        let w0 = (b.hi_at(w[0]) - b.lo_at(w[0])).max(0.0);
+        let w1 = (b.hi_at(w[1]) - b.lo_at(w[1])).max(0.0);
+        a += 0.5 * (w0 + w1) * (w[1] - w[0]);
     }
     a
 }
 
-/// Extract maximal positive-width sub-bands of the region `lo(u) ≤ v ≤ hi(u)`
-/// over the refined grid. Pinch points (width 0) bound the pieces.
-fn extract_regions(us: &[f64], lo: &[f64], hi: &[f64], parent_wrap: bool) -> Vec<CylBand> {
-    let n = us.len();
-    let width = |i: usize| hi[i] - lo[i];
-    let positive: Vec<bool> = (0..n).map(|i| width(i) > V_EPS).collect();
+/// Extract the maximal positive-width sub-bands of one side of a profile
+/// split. `widths[i]` is the region's height at `grid[i]`; `take_min`
+/// selects the below side (`lo ≤ v ≤ min(f, hi)`) vs the above side
+/// (`max(f, lo) ≤ v ≤ hi`). Each region's chains are built by slicing the
+/// surviving parent chain verbatim and taking the provenance-preserving
+/// envelope for the profile-bounded side.
+fn extract_regions(
+    band: &CylBand,
+    f: &CylProfile,
+    grid: &[f64],
+    widths: &[f64],
+    take_min: bool,
+) -> Vec<CylBand> {
+    let n = grid.len();
+    let positive: Vec<bool> = widths.iter().map(|&w| w > V_EPS).collect();
+
+    // Slice a parent rim to [a, b]. A sparse rim (analytic seam loop /
+    // 4-corner rectangle) is densified at the analysis-grid columns — it
+    // has no explicit polyline to conform to and the two-chain renderer
+    // needs comparable rail density. A dense rim stays verbatim.
+    let rim_slice = |chain: &Chain, a: f64, b: f64| -> Chain {
+        let wrapping = band.full_wrap && b > band.u_end() + U_EPS;
+        let mut out = if wrapping {
+            cut_chain_wrap(chain, a, b)
+        } else {
+            cut_chain(chain, a, b)
+        };
+        if chain.len() < 8 {
+            let period = 2.0 * PI;
+            let mut extra: Chain = Vec::new();
+            for &u in grid {
+                for cand in [u, u + period] {
+                    if cand > a + U_EPS
+                        && cand < b - U_EPS
+                        && !out.iter().any(|p| (p.0 - cand).abs() < U_EPS)
+                    {
+                        let base = if cand > band.u_end() + U_EPS {
+                            chain[0].0 + (cand - band.u_end())
+                        } else {
+                            cand
+                        };
+                        extra.push((cand, chain_interp(chain, base)));
+                    }
+                }
+            }
+            out.extend(extra);
+            out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        out
+    };
+    let make = |a: f64, b: f64, wrap: bool| -> CylBand {
+        if take_min {
+            // below: lo = parent lo slice, hi = min(f, parent hi)
+            let lo = rim_slice(&band.lo, a, b);
+            let hi = envelope_chain(grid, a, b, f, &band.hi, band.full_wrap, true);
+            CylBand {
+                lo,
+                hi,
+                full_wrap: wrap,
+                reversed_winding: band.reversed_winding,
+            }
+        } else {
+            let lo = envelope_chain(grid, a, b, f, &band.lo, band.full_wrap, false);
+            let hi = rim_slice(&band.hi, a, b);
+            CylBand {
+                lo,
+                hi,
+                full_wrap: wrap,
+                reversed_winding: band.reversed_winding,
+            }
+        }
+    };
 
     if positive.iter().all(|&p| p) {
         // Region spans the whole interval — a single band, preserving wrap.
-        return vec![CylBand {
-            us: us.to_vec(),
-            lo: lo.to_vec(),
-            hi: hi.to_vec(),
-            full_wrap: parent_wrap,
-        }];
+        return vec![make(grid[0], grid[n - 1], band.full_wrap)];
     }
     if positive.iter().all(|&p| !p) {
         return Vec::new();
     }
 
-    // For wrapping parents, rotate the grid so it starts at a pinched
-    // (zero-width) column; then no positive run straddles the seam. The
-    // duplicated final column (same angle as the first) is dropped before
-    // rotating and the u coordinates are re-unwrapped from the new start.
-    let (us_r, lo_r, hi_r): (Vec<f64>, Vec<f64>, Vec<f64>) = if parent_wrap && positive[0] {
-        let m = n - 1; // drop duplicated final column
-        let start = (0..m).find(|&i| width(i) <= V_EPS).unwrap_or(0);
-        let mut u2 = Vec::with_capacity(m + 1);
-        let mut l2 = Vec::with_capacity(m + 1);
-        let mut h2 = Vec::with_capacity(m + 1);
-        for k in 0..=m {
-            let idx = (start + k) % m;
-            let turns = ((start + k) / m) as f64;
-            u2.push(us[idx] + turns * 2.0 * PI);
-            l2.push(lo[idx]);
-            h2.push(hi[idx]);
+    if band.full_wrap {
+        // Circular run extraction on the m unique nodes (grid's final node
+        // duplicates the first angle at +2π).
+        let m = n - 1;
+        // Find a non-positive node to anchor the scan.
+        let anchor = (0..m).find(|&i| !positive[i]).unwrap_or(0);
+        let mut out = Vec::new();
+        let mut k = 0usize;
+        while k < m {
+            let idx = (anchor + k) % m;
+            if !positive[idx] {
+                k += 1;
+                continue;
+            }
+            // Positive circular run starting at idx.
+            let run_start = k;
+            let mut run_len = 0usize;
+            while run_len < m && positive[(anchor + run_start + run_len) % m] {
+                run_len += 1;
+            }
+            // Bounding pinch nodes on either side.
+            let s = run_start - 1; // anchor is non-positive, so run_start ≥ 1
+            let e = run_start + run_len; // first non-positive after the run
+            let unwrap_at = |k: usize| -> f64 {
+                let idx = (anchor + k) % m;
+                let turns = ((anchor + k) / m) as f64;
+                grid[idx] + turns * 2.0 * PI
+            };
+            let (a, b) = (unwrap_at(s), unwrap_at(e));
+            if b > a + U_EPS {
+                out.push(make(a, b, false));
+            }
+            k = run_start + run_len;
         }
-        (u2, l2, h2)
+        out
     } else {
-        (us.to_vec(), lo.to_vec(), hi.to_vec())
-    };
-
-    let n = us_r.len();
-    let width = |i: usize| hi_r[i] - lo_r[i];
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < n {
-        if width(i) <= V_EPS {
-            i += 1;
-            continue;
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < n {
+            if !positive[i] {
+                i += 1;
+                continue;
+            }
+            let mut j = i;
+            while j < n && positive[j] {
+                j += 1;
+            }
+            // Include bounding pinch nodes when present.
+            let s = i.saturating_sub(1);
+            let e = j.min(n - 1);
+            if grid[e] > grid[s] + U_EPS {
+                out.push(make(grid[s], grid[e], false));
+            }
+            i = j;
         }
-        // Positive run [i, j); include bounding pinch columns when present.
-        let mut j = i;
-        while j < n && width(j) > V_EPS {
-            j += 1;
-        }
-        let s = i.saturating_sub(1);
-        let e = (j).min(n - 1);
-        if e > s {
-            out.push(CylBand {
-                us: us_r[s..=e].to_vec(),
-                lo: lo_r[s..=e].to_vec(),
-                hi: hi_r[s..=e].to_vec(),
-                full_wrap: false,
-            });
-        }
-        i = j;
+        out
     }
-    out
 }
 
 /// Split a band at a constant angle (a vertical intersection line at
 /// `u_split`). Returns the two halves, or `None` when the line misses the
 /// band interior.
 pub(crate) fn split_band_at_u(band: &CylBand, u_split: f64) -> Option<(CylBand, CylBand)> {
-    let (u_start, u_end) = (band.us[0], *band.us.last().unwrap());
+    let (u_start, u_end) = (band.u_start(), band.u_end());
     // Map u_split into the band's interval.
     let x = u_start + (u_split - u_start).rem_euclid(2.0 * PI);
     if x <= u_start + 1e-6 || x >= u_end - 1e-6 {
         return None;
     }
     let cut = |a: f64, b: f64| -> CylBand {
-        let mut us = vec![a];
-        let mut lo = vec![band.lo_at(a)];
-        let mut hi = vec![band.hi_at(a)];
-        for (k, &u) in band.us.iter().enumerate() {
-            if u > a + U_EPS && u < b - U_EPS {
-                us.push(u);
-                lo.push(band.lo[k]);
-                hi.push(band.hi[k]);
-            }
-        }
-        us.push(b);
-        lo.push(band.lo_at(b));
-        hi.push(band.hi_at(b));
         CylBand {
-            us,
-            lo,
-            hi,
+            lo: cut_chain(&band.lo, a, b),
+            hi: cut_chain(&band.hi, a, b),
             full_wrap: false,
+            reversed_winding: band.reversed_winding,
         }
     };
     Some((cut(u_start, x), cut(x, u_end)))
@@ -613,25 +1014,80 @@ pub(crate) fn realize_bands(
     let orientation = brep.topology.faces[parent].orientation;
     let shell = brep.topology.faces[parent].shell;
 
+    #[allow(unused_variables)]
+    let parent_v_range = {
+        let mut mn = f64::MAX;
+        let mut mx = f64::MIN;
+        for he in brep
+            .topology
+            .loop_half_edges(brep.topology.faces[parent].outer_loop)
+        {
+            let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
+            let v = (p - cyl.center).dot(cyl.axis.as_ref());
+            mn = mn.min(v);
+            mx = mx.max(v);
+        }
+        (mn, mx)
+    };
     let mut new_faces = Vec::with_capacity(bands.len());
     for band in bands {
-        // Emit BOTH chains at every column, INCLUDING pinch columns where
-        // the two chains meet (duplicate positions). The strict angle
-        // pairing (vert i ↔ vert 2m−1−i) is what `parse_band` and the
-        // ruled two-chain tessellation key on; deduplicating a pinch
-        // column would shift the pairing and demote the face to the
-        // rectangular-grid tessellation path, which overshoots wavy
-        // boundaries.
-        let m = band.us.len();
-        let mut loop_pts: Vec<Point3> = Vec::with_capacity(2 * m);
-        // Bottom chain, ascending u.
-        for i in 0..m {
-            loop_pts.push(point_at(cyl, band.us[i], band.lo[i]));
+        // A band's chains must co-span its u-interval; a wedge paired with
+        // a (clamped) full ring is a malformed region that would realize
+        // as phantom geometry. Skip it — the area it claims is already
+        // covered by the well-formed siblings.
+        let span = |c: &Chain| c[c.len() - 1].0 - c[0].0;
+        if (span(&band.lo) - span(&band.hi)).abs() > 0.35 {
+            band_dbg!(
+                "realize: skipping malformed band lo span {:.3} hi span {:.3}",
+                span(&band.lo),
+                span(&band.hi)
+            );
+            continue;
         }
-        // Top chain, descending u.
-        for i in (0..m).rev() {
-            loop_pts.push(point_at(cyl, band.us[i], band.hi[i]));
+        for p in band.lo.iter().chain(band.hi.iter()) {
+            if p.1 < parent_v_range.0 - 1e-6 || p.1 > parent_v_range.1 + 1e-6 {
+                band_dbg!(
+                    "REALIZE RANGE BUG: v {:.4} outside parent [{:.4},{:.4}] at u {:.4}; lo {} hi {} wrap {}",
+                    p.1,
+                    parent_v_range.0,
+                    parent_v_range.1,
+                    p.0,
+                    band.lo.len(),
+                    band.hi.len(),
+                    band.full_wrap
+                );
+            }
         }
+        // Each chain is emitted VERBATIM — its vertices are exactly the
+        // parent chain / profile / cut vertices the neighboring faces also
+        // carry, which is the whole point of the chain representation.
+        // Pinch endpoints (chains meeting at a shared point) may duplicate;
+        // repair collapses the resulting zero-length half-edges later.
+        let mut loop_pts: Vec<Point3> = Vec::with_capacity(band.lo.len() + band.hi.len());
+        if band.reversed_winding && std::env::var("VCAD_NO_WINDING").is_err() {
+            // Bore convention: lower chain descending, upper ascending.
+            for &(u, v) in band.lo.iter().rev() {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+            for &(u, v) in &band.hi {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+        } else {
+            // Bottom chain, ascending u.
+            for &(u, v) in &band.lo {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+            // Top chain, descending u.
+            for &(u, v) in band.hi.iter().rev() {
+                loop_pts.push(point_at(cyl, u, v));
+            }
+        }
+        // Keep pinch-column duplicates: dropping the shared endpoint
+        // shortens one chain, the re-parsed band then carries end slack,
+        // and the NEXT split's region grid clamp-extends the short chain
+        // flat — phantom overlapping geometry that compounds per split.
+        // Zero-length half-edges are collapsed by repair after all splits.
+        loop_pts.dedup_by(|a, b| (*a - *b).norm() < 1e-12);
         // A real face needs at least 3 distinct positions.
         let mut distinct = 0usize;
         for (i, p) in loop_pts.iter().enumerate() {
@@ -650,6 +1106,19 @@ pub(crate) fn realize_bands(
         }
         let loop_id = brep.topology.add_loop(&hes);
         let fid = brep.topology.add_face(loop_id, surface_index, orientation);
+        band_dbg!(
+            "realize {:?}: lo {} pts u[{:.4},{:.4}] v[{:.3},{:.3}], hi {} pts v[{:.3},{:.3}] wrap {}",
+            fid,
+            band.lo.len(),
+            band.lo[0].0,
+            band.lo[band.lo.len() - 1].0,
+            band.lo.iter().map(|p| p.1).fold(f64::MAX, f64::min),
+            band.lo.iter().map(|p| p.1).fold(f64::MIN, f64::max),
+            band.hi.len(),
+            band.hi.iter().map(|p| p.1).fold(f64::MAX, f64::min),
+            band.hi.iter().map(|p| p.1).fold(f64::MIN, f64::max),
+            band.full_wrap
+        );
         new_faces.push(fid);
     }
 
@@ -706,16 +1175,48 @@ pub(crate) fn split_wavy_band_by_circle(
     face_id: FaceId,
     circle: &vcad_kernel_geom::Circle3d,
     require_wavy: bool,
+    segments: u32,
 ) -> Option<SplitResult> {
     let (cyl, band) = parse_band(brep, face_id)?;
     if require_wavy && band_is_rectangular(&band) {
         return None;
     }
     let v_c = (circle.center - cyl.center).dot(cyl.axis.as_ref());
-    let profile = CylProfile {
-        us: vec![band.us[0], band.us[0] + PI],
-        vs: vec![v_c, v_c],
-    };
+    // The cut ring must be emitted at the canonical sag-dense grid — a
+    // 2-node constant-v profile would realize the ring as a chord pair,
+    // which neither the tessellator (density gate) nor the frozen caps the
+    // ring pairs with can conform to.
+    let u0 = band.u_start();
+    let p0 = point_at(&cyl, u0, v_c);
+    let ring = crate::split::canonical_arc_points(
+        circle.center,
+        circle.radius,
+        *cyl.axis.as_ref(),
+        p0,
+        p0,
+        segments,
+    );
+    let uvs: Vec<(f64, f64)> = ring.iter().map(|p| uv_of(p, &cyl)).collect();
+    // Unwrap ascending from u0.
+    let mut us: Vec<f64> = Vec::with_capacity(uvs.len());
+    let mut vs: Vec<f64> = Vec::with_capacity(uvs.len());
+    for (u, _v) in &uvs {
+        let x = match us.last() {
+            None => *u,
+            Some(&prev) => prev + (*u - prev).rem_euclid(2.0 * PI),
+        };
+        if us.last().is_some_and(|&prev| (x - prev).abs() < U_EPS) {
+            continue;
+        }
+        us.push(x);
+        vs.push(v_c);
+    }
+    // Drop a duplicated closing point one full turn up.
+    while us.len() > 1 && us[us.len() - 1] - us[0] > 2.0 * PI - U_EPS {
+        us.pop();
+        vs.pop();
+    }
+    let profile = CylProfile { us, vs };
     let (below, above) = split_band_by_profile(&band, &profile)?;
     let mut bands = below;
     bands.extend(above);
@@ -756,10 +1257,10 @@ pub(crate) fn split_wavy_band_by_line(
 /// handled by the pre-existing splitters and keep their degenerate loop
 /// representations.
 pub(crate) fn band_is_rectangular(band: &CylBand) -> bool {
-    let flat = |vs: &[f64]| {
-        let (mn, mx) = vs
+    let flat = |c: &Chain| {
+        let (mn, mx) = c
             .iter()
-            .fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+            .fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
         mx - mn < 1e-9
     };
     flat(&band.lo) && flat(&band.hi)
@@ -782,12 +1283,20 @@ pub(crate) fn band_sample_point(brep: &BRepSolid, face_id: FaceId) -> Option<Poi
     if band_is_rectangular(&band) {
         return None; // legacy sampling is fine (and battle-tested) for these
     }
-    let m = band.us.len();
+    let mut us: Vec<f64> = band.lo.iter().map(|p| p.0).collect();
+    us.extend(band.hi.iter().map(|p| p.0));
+    us.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    us.dedup_by(|x, y| (*x - *y).abs() < U_EPS);
+    if us.len() < 2 {
+        return None;
+    }
     // Widest column-interval by mean width.
     let mut best = 0usize;
     let mut best_w = f64::MIN;
-    for i in 0..m - 1 {
-        let w = 0.5 * ((band.hi[i] - band.lo[i]) + (band.hi[i + 1] - band.lo[i + 1]));
+    for i in 0..us.len() - 1 {
+        let w = 0.5
+            * ((band.hi_at(us[i]) - band.lo_at(us[i]))
+                + (band.hi_at(us[i + 1]) - band.lo_at(us[i + 1])));
         if w > best_w {
             best_w = w;
             best = i;
@@ -796,8 +1305,8 @@ pub(crate) fn band_sample_point(brep: &BRepSolid, face_id: FaceId) -> Option<Poi
     if best_w <= V_EPS {
         return None;
     }
-    let u = 0.5 * (band.us[best] + band.us[best + 1]);
-    let v = 0.25 * (band.lo[best] + band.hi[best] + band.lo[best + 1] + band.hi[best + 1]);
+    let u = 0.5 * (us[best] + us[best + 1]);
+    let v = 0.5 * (band.lo_at(u) + band.hi_at(u));
     Some(point_at(&cyl, u, v))
 }
 
@@ -807,10 +1316,10 @@ mod tests {
 
     fn flat_band(v0: f64, v1: f64) -> CylBand {
         CylBand {
-            us: vec![0.0, 2.0 * PI],
-            lo: vec![v0, v0],
-            hi: vec![v1, v1],
+            lo: vec![(0.0, v0), (2.0 * PI, v0)],
+            hi: vec![(0.0, v1), (2.0 * PI, v1)],
             full_wrap: true,
+            reversed_winding: false,
         }
     }
 
@@ -833,6 +1342,36 @@ mod tests {
         assert!(below[0].full_wrap);
         assert!(above[0].full_wrap);
         // Areas partition the parent.
+        let total = band_area(&below[0]) + band_area(&above[0]);
+        assert!((total - band_area(&band)).abs() < 1e-9 * band_area(&band));
+        assert!(below[0].hi.len() >= 64, "profile side keeps its sampling");
+    }
+
+    #[test]
+    fn dense_rim_stays_verbatim_under_profile_split() {
+        // A frozen (sag-dense) rim must keep EXACTLY its own vertex set
+        // when a profile splits the band — no columns invented from the
+        // profile's sampling. (Sparse analytic rims, by contrast, densify;
+        // see profile_inside_band_splits_into_two_full_bands.)
+        let n = 100usize;
+        let lo: Chain = (0..=n)
+            .map(|i| (2.0 * PI * i as f64 / n as f64, 0.0))
+            .collect();
+        let hi: Chain = (0..=n)
+            .map(|i| (2.0 * PI * i as f64 / n as f64, 10.0))
+            .collect();
+        let band = CylBand {
+            lo: lo.clone(),
+            hi,
+            full_wrap: true,
+            reversed_winding: false,
+        };
+        let f = sinusoid(5.0, 2.0, 0.123, 64);
+        let (below, above) = split_band_by_profile(&band, &f).expect("split");
+        assert_eq!(below.len(), 1);
+        assert_eq!(above.len(), 1);
+        // The rim slice is the parent's own vertices, nothing more.
+        assert_eq!(below[0].lo.len(), lo.len(), "dense rim must stay verbatim");
         let total = band_area(&below[0]) + band_area(&above[0]);
         assert!((total - band_area(&band)).abs() < 1e-9 * band_area(&band));
     }
@@ -891,6 +1430,27 @@ mod tests {
         let (l, r) = split_band_at_u(&band, 1.0).expect("split");
         let total = band_area(&l) + band_area(&r);
         assert!((total - band_area(&band)).abs() < 1e-9 * band_area(&band));
+        // Rim conservation: no invented columns beyond the exact cut point.
+        assert_eq!(l.lo.len(), 2);
+        assert_eq!(r.lo.len(), 2);
+    }
+
+    #[test]
+    fn split_at_u_preserves_interior_vertices() {
+        let band = CylBand {
+            lo: vec![(0.0, 0.0), (1.0, 0.0), (3.0, 0.0), (2.0 * PI, 0.0)],
+            hi: vec![(0.0, 5.0), (2.5, 5.0), (2.0 * PI, 5.0)],
+            full_wrap: true,
+            reversed_winding: false,
+        };
+        let (l, r) = split_band_at_u(&band, 2.0).expect("split");
+        // Left keeps lo vertex at 1.0 verbatim; right keeps 3.0 and hi 2.5.
+        assert!(l.lo.iter().any(|p| (p.0 - 1.0).abs() < 1e-12));
+        assert!(r.lo.iter().any(|p| (p.0 - 3.0).abs() < 1e-12));
+        assert!(r.hi.iter().any(|p| (p.0 - 2.5).abs() < 1e-12));
+        // And no chain gained the other chain's columns.
+        assert_eq!(l.lo.len(), 3); // 0.0, 1.0, cut@2.0
+        assert_eq!(l.hi.len(), 2); // 0.0, cut@2.0
     }
 }
 
@@ -916,11 +1476,11 @@ mod parse_tests {
                     Some((_, band)) => {
                         parsed += 1;
                         eprintln!(
-                            "band: us={:?} lo={:?} hi={:?} wrap={}",
-                            band.us, band.lo, band.hi, band.full_wrap
+                            "band: lo={:?} hi={:?} wrap={}",
+                            band.lo, band.hi, band.full_wrap
                         );
                         assert!(band.full_wrap);
-                        assert!((band.hi[0] - band.lo[0] - 13.0).abs() < 1e-9);
+                        assert!((band.hi[0].1 - band.lo[0].1 - 13.0).abs() < 1e-9);
                     }
                     None => panic!("wall face failed to parse as band"),
                 }
@@ -961,10 +1521,10 @@ mod ssi_profile_tests {
         let cyl = wall.as_any().downcast_ref::<CylinderSurface>().unwrap();
 
         let band = CylBand {
-            us: vec![0.0, 2.0 * PI],
-            lo: vec![0.0, 0.0],
-            hi: vec![13.0, 13.0],
+            lo: vec![(0.0, 0.0), (2.0 * PI, 0.0)],
+            hi: vec![(0.0, 13.0), (2.0 * PI, 13.0)],
             full_wrap: true,
+            reversed_winding: false,
         };
 
         let mut sampled_seen = 0;
@@ -1255,5 +1815,240 @@ mod result_band_tests {
             }
         }
         assert!(checked >= 1, "expected kept cylinder faces in the result");
+    }
+}
+
+#[cfg(test)]
+mod frozen_chain_tests {
+    use super::*;
+    use crate::ssi;
+    use vcad_kernel_math::Transform;
+    use vcad_kernel_primitives::{make_cube, make_cylinder};
+
+    #[test]
+    fn frozen_wall_survives_sequential_ellipse_splits() {
+        let mut cyl_solid = make_cylinder(45.0, 13.0, 32);
+        crate::freeze::freeze_circle_loops(&mut cyl_solid, 64);
+        let mut blade = make_cube(23.5, 0.5, 12.57);
+        let combined = Transform::translation(21.5, 0.0, 0.0)
+            .then(&Transform::rotation_x(39.29_f64.to_radians()));
+        for (_id, v) in &mut blade.topology.vertices {
+            v.point = combined.apply_point(&v.point);
+        }
+        for s in &mut blade.geometry.surfaces {
+            *s = s.transform(&combined);
+        }
+        let wall_idx = cyl_solid
+            .geometry
+            .surfaces
+            .iter()
+            .position(|s| s.as_any().downcast_ref::<CylinderSurface>().is_some())
+            .unwrap();
+        let wall_face = cyl_solid
+            .topology
+            .faces
+            .iter()
+            .find(|(_, f)| f.surface_index == wall_idx)
+            .map(|(id, _)| id)
+            .unwrap();
+        let mut current = vec![wall_face];
+        for (si, surf) in blade.geometry.surfaces.iter().enumerate() {
+            let curve = ssi::intersect_surfaces(
+                cyl_solid.geometry.surfaces[wall_idx].as_ref(),
+                surf.as_ref(),
+            )
+            .expect("ssi");
+            let ssi::IntersectionCurve::Sampled(pts) = curve else {
+                continue;
+            };
+            let mut next = Vec::new();
+            for fid in current {
+                if !cyl_solid.topology.faces.contains_key(fid) {
+                    continue;
+                }
+                match split_cylindrical_face_by_sampled(&mut cyl_solid, fid, &pts) {
+                    Some(r) => next.extend(r.sub_faces),
+                    None => {
+                        let nv = cyl_solid
+                            .topology
+                            .loop_len(cyl_solid.topology.faces[fid].outer_loop);
+                        panic!("surface {si}: split returned None on face {fid:?} nv={nv}");
+                    }
+                }
+            }
+            current = next;
+        }
+        assert!(current.len() >= 4, "got {} sub-faces", current.len());
+        // Area audit: the sub-bands must tile the wall exactly once.
+        let mut total = 0.0;
+        let wall_cyl = cyl_solid.geometry.surfaces[wall_idx]
+            .as_any()
+            .downcast_ref::<CylinderSurface>()
+            .unwrap()
+            .clone();
+        for &fid in &current {
+            // Shoelace area of the loop in unwrapped (u, v).
+            let uvs: Vec<(f64, f64)> = cyl_solid
+                .topology
+                .loop_half_edges(cyl_solid.topology.faces[fid].outer_loop)
+                .map(|he| {
+                    let p =
+                        cyl_solid.topology.vertices[cyl_solid.topology.half_edges[he].origin].point;
+                    uv_of(&p, &wall_cyl)
+                })
+                .collect();
+            let mut un: Vec<f64> = Vec::with_capacity(uvs.len());
+            un.push(uvs[0].0);
+            for k in 1..uvs.len() {
+                let prev = *un.last().unwrap();
+                let mut du = (uvs[k].0 - prev).rem_euclid(2.0 * PI);
+                if du > PI {
+                    du -= 2.0 * PI;
+                }
+                un.push(prev + du);
+            }
+            let mut a2 = 0.0;
+            for k in 0..uvs.len() {
+                let j = (k + 1) % uvs.len();
+                // closing edge: use unwrapped, treating wrap as small step
+                let (u1, v1) = (un[k], uvs[k].1);
+                let (mut u2, v2) = (un[j], uvs[j].1);
+                if j == 0 {
+                    let mut du = (uvs[0].0 - un[uvs.len() - 1]).rem_euclid(2.0 * PI);
+                    if du > PI {
+                        du -= 2.0 * PI;
+                    }
+                    u2 = un[uvs.len() - 1] + du;
+                }
+                a2 += u1 * v2 - u2 * v1;
+            }
+            total += 0.5 * a2.abs();
+        }
+        let expect = 2.0 * PI * 13.0;
+        assert!(
+            (total - expect).abs() < expect * 0.002,
+            "band areas sum to {total:.4}, wall is {expect:.4}"
+        );
+
+        // Now the blade end-plane line splits (TwoLines in the pipeline).
+        let u_line = (21.5f64 / 45.0).acos();
+        for sgn in [1.0f64, -1.0] {
+            let (su, cu) = (sgn * u_line).sin_cos();
+            let line = vcad_kernel_geom::Line3d {
+                origin: Point3::new(45.0 * cu, 45.0 * su, 0.0),
+                direction: vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
+            };
+            let faces: Vec<FaceId> = cyl_solid
+                .topology
+                .faces
+                .iter()
+                .filter(|(_, f)| f.surface_index == wall_idx)
+                .map(|(id, _)| id)
+                .collect();
+            for fid in faces {
+                if !cyl_solid.topology.faces.contains_key(fid) {
+                    continue;
+                }
+                let _ = crate::split::split_cylindrical_face(
+                    &mut cyl_solid,
+                    fid,
+                    &ssi::IntersectionCurve::Line(line.clone()),
+                    64,
+                );
+            }
+        }
+        // Mesh open-edge audit at the boolean's native resolution, after
+        // the same repair pass the pipeline runs before classification.
+        crate::repair::repair_topology(&mut cyl_solid.topology, 1e-6);
+        let mesh = vcad_kernel_tessellate::tessellate_brep(&cyl_solid, 64);
+        let quantum = 1e-5;
+        let vkey = |vi: usize| -> [i64; 3] {
+            let mut k = [0i64; 3];
+            for c in 0..3 {
+                k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+            }
+            k
+        };
+        let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+            std::collections::HashMap::new();
+        for t in 0..mesh.indices.len() / 3 {
+            for k in 0..3 {
+                let x = vkey(mesh.indices[t * 3 + k] as usize);
+                let y = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+                if x == y {
+                    continue;
+                }
+                if x < y {
+                    *net.entry((x, y)).or_default() += 1;
+                } else {
+                    *net.entry((y, x)).or_default() -= 1;
+                }
+            }
+        }
+        let mut open: Vec<_> = net.iter().filter(|(_, &n)| n != 0).collect();
+        open.sort_by_key(|((x, _), _)| *x);
+        for ((x, y), _) in open.iter().take(10) {
+            eprintln!(
+                "open ({:.4},{:.4},{:.4})->({:.4},{:.4},{:.4})",
+                x[0] as f64 * quantum,
+                x[1] as f64 * quantum,
+                x[2] as f64 * quantum,
+                y[0] as f64 * quantum,
+                y[1] as f64 * quantum,
+                y[2] as f64 * quantum
+            );
+        }
+        // Dump unpaired topology edges with owning faces.
+        let mut unpaired = 0;
+        for (he_id, he) in &cyl_solid.topology.half_edges {
+            if he.loop_id.is_none() || he.twin.is_some() {
+                continue;
+            }
+            unpaired += 1;
+            if unpaired <= 14 {
+                let a = cyl_solid.topology.vertices[he.origin].point;
+                let b = cyl_solid.topology.vertices[cyl_solid.topology.half_edge_dest(he_id)].point;
+                let f = he.loop_id.and_then(|l| cyl_solid.topology.loops[l].face);
+                let (ua, va) = uv_of(&a, &wall_cyl);
+                let (ub, vb) = uv_of(&b, &wall_cyl);
+                eprintln!("UNPAIRED {f:?} uv ({ua:.4},{va:.4})->({ub:.4},{vb:.4})");
+            }
+        }
+        eprintln!("total unpaired: {unpaired}");
+        // Dump loops of faces near the tangency point (u=π, v≈0).
+        for (fid, face) in cyl_solid.topology.faces.iter() {
+            if face.surface_index != wall_idx {
+                continue;
+            }
+            let uvs: Vec<(f64, f64)> = cyl_solid
+                .topology
+                .loop_half_edges(face.outer_loop)
+                .map(|he| {
+                    let p =
+                        cyl_solid.topology.vertices[cyl_solid.topology.half_edges[he].origin].point;
+                    uv_of(&p, &wall_cyl)
+                })
+                .collect();
+            if uvs
+                .iter()
+                .any(|&(u, v)| (u - PI).abs() < 0.02 && v.abs() < 0.02)
+            {
+                let disp: Vec<(f64, f64)> = uvs
+                    .iter()
+                    .map(|&(u, v)| ((u * 1e4).round() / 1e4, (v * 1e4).round() / 1e4))
+                    .collect();
+                eprintln!("face {fid:?} nv={} loop: {disp:?}", uvs.len());
+            }
+        }
+        // The caps are deliberately NOT split in this probe, so wall-rim
+        // crossing vertices T-junction against the untouched cap rings
+        // (the real pipeline splits the caps by the same planes, producing
+        // analytically identical points). Only wall-wall conformity is
+        // asserted here, via a loose ceiling on the census.
+        assert!(
+            open.len() < 120,
+            "{} open edges after line splits",
+            open.len()
+        );
     }
 }

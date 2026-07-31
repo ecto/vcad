@@ -321,6 +321,8 @@ fn plane_sphere(plane: &Plane, sphere: &SphereSurface) -> IntersectionCurve {
 /// `MAX_BOUNDARY_PROBES` in `classify` is what keeps classification cost
 /// from scaling with it.
 fn ellipse_samples(r: f64) -> usize {
+    // NOTE: must stay in lockstep with split::arc_segments' SAG — SSI
+    // polylines and canonical rings share vertices only at equal density.
     const SAG: f64 = 1e-3;
     let n = if r > SAG {
         let arg = (1.0 - SAG / r).clamp(-1.0, 1.0);
@@ -475,6 +477,13 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
         if points.is_empty() {
             IntersectionCurve::Empty
         } else {
+            // Close the loop explicitly: the ellipse is periodic, and a
+            // polyline that stops one sample short of its start makes every
+            // downstream trim whose inside-interval runs through the seam
+            // end at the last sample — up to a full sample step (~1 mm)
+            // away from the face boundary it should land on.
+            let first = points[0];
+            points.push(first);
             IntersectionCurve::Sampled(points)
         }
     }

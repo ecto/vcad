@@ -2797,7 +2797,12 @@ fn tessellate_cylindrical_face(
         // For a partial face, we need to find the angular extent
         // Get unique angles (vertices at same angle but different heights)
         for &a in &angles {
-            if !unique_angles.iter().any(|&ua| (ua - a).abs() < 0.01) {
+            // Tolerance must stay below the closest split-vertex spacing a
+            // boolean can produce (a cap-slit crossing can sit a few mrad
+            // from a frozen-ring grid point); a coarse 0.01 rad dedup here
+            // silently drops that column and cracks the seam against the
+            // neighboring cap, which renders its polyline verbatim.
+            if !unique_angles.iter().any(|&ua| (ua - a).abs() < 1e-7) {
                 unique_angles.push(a);
             }
         }
@@ -3349,7 +3354,15 @@ fn tessellate_ruled_two_chain(
             .fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
         mx - mn
     };
-    if spread(&chain_a) < 1e-9 && spread(&chain_b) < 1e-9 {
+    // Constant-v SPARSE chains are true rectangles — the grid path renders
+    // those smoother (height subdivision, adaptive n). But a DENSE
+    // constant-v two-chain loop is a frozen boundary (canonical polyline
+    // rings from the boolean pipeline); it must render verbatim or the
+    // shell can't conform with the neighboring caps.
+    if spread(&chain_a) < 1e-9
+        && spread(&chain_b) < 1e-9
+        && (chain_a.len() <= 4 || chain_b.len() <= 4)
+    {
         return None;
     }
 
@@ -3390,28 +3403,6 @@ fn tessellate_ruled_two_chain(
             radial / n
         }
     };
-    // 3D point on a chain at grid angle u: the chain's own vertex when the
-    // column matches one (verbatim → exact boundary welds), otherwise the
-    // chord interpolation between its adjacent vertices.
-    let chain_point = |chain: &[(f64, f64)], pts: &[Point3], u: f64| -> Point3 {
-        if u <= chain[0].0 + RUN_EPS {
-            return pts[0];
-        }
-        let last = chain.len() - 1;
-        if u >= chain[last].0 - RUN_EPS {
-            return pts[last];
-        }
-        let i = chain.partition_point(|p| p.0 < u);
-        let (ua, ub) = (chain[i - 1].0, chain[i].0);
-        if (u - ua).abs() < RUN_EPS {
-            return pts[i - 1];
-        }
-        if (ub - u).abs() < RUN_EPS {
-            return pts[i];
-        }
-        let f = (u - ua) / (ub - ua);
-        pts[i - 1] + f * (pts[i] - pts[i - 1])
-    };
     // Original 3D points per chain, ascending-u order to match chain_a/b.
     let pts_of = |start: usize, len: usize, reversed_run: bool| -> Vec<Point3> {
         let mut v: Vec<Point3> = (start..start + len).map(|i| verts[i]).collect();
@@ -3425,32 +3416,90 @@ fn tessellate_ruled_two_chain(
     let pts_a = pts_of(0, split_at, a_was_reversed);
     let pts_b = pts_of(split_at, l - split_at, b_was_reversed);
 
-    // Vertex layout: column i contributes bottom (index 2i) and top (2i+1).
-    let ncols = grid.len();
-    for &u in &grid {
-        for p in [
-            chain_point(&chain_a, &pts_a, u),
-            chain_point(&chain_b, &pts_b, u),
-        ] {
-            mesh.vertices
-                .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
-            let n = radial_normal(&p);
-            let (nx, ny, nz) = if reversed {
-                (-n.x as f32, -n.y as f32, -n.z as f32)
-            } else {
-                (n.x as f32, n.y as f32, n.z as f32)
-            };
-            mesh.normals.extend_from_slice(&[nx, ny, nz]);
+    // Verbatim rendering is only correct when the loop already carries its
+    // arcs at tessellation density. Frozen boolean boundaries do (they are
+    // sampled on the sag-bounded canonical grid); sparse sketch/extrude
+    // arcs do not — rendering those verbatim loses real volume, so they
+    // keep the refining grid path (whose cracks against neighbors are the
+    // pre-existing sparse-loop behavior, not a regression).
+    {
+        // Angle-PAIRED chains (same u columns on both rails — the
+        // miter-trimmed blend strips this path was built for) are verbatim-
+        // safe at any density: their rails ARE the neighboring faces'
+        // curves. Only unpaired chains need the density gate, where
+        // verbatim rendering of a sparse rail would lose real volume.
+        let paired = chain_a.len() == chain_b.len()
+            && chain_a
+                .iter()
+                .zip(chain_b.iter())
+                .all(|(a, b)| (a.0 - b.0).abs() <= RUN_EPS.max(1e-7));
+        let sag_step = 2.0
+            * (1.0 - 5e-3 / cyl.radius.abs().max(1e-6))
+                .clamp(-1.0, 1.0)
+                .acos();
+        let target_step = 2.0 * PI / (target_segments.max(3) as f64);
+        // Paired rails (miter-trimmed blend strips whose rails ARE the
+        // neighbors' curves) get generous slack — refusing them cracks the
+        // blend against its planar neighbors. Unpaired rails must be near
+        // render density or verbatim rendering loses real volume (sparse
+        // arc-extrusion walls keep the refining grid path).
+        let allowed = if paired {
+            sag_step.max(target_step) * 3.0
+        } else {
+            sag_step.max(target_step) * 1.05
+        };
+        let max_du = |c: &[(f64, f64)]| {
+            c.windows(2)
+                .map(|w| (w[1].0 - w[0].0).abs())
+                .fold(0.0f64, f64::max)
+        };
+        if max_du(&chain_a) > allowed || max_du(&chain_b) > allowed {
+            return None;
         }
     }
-    for i in 0..ncols - 1 {
-        let bl = (2 * i) as u32;
-        let tl = bl + 1;
-        let br = bl + 2;
-        let tr = bl + 3;
-        mesh.indices.extend_from_slice(&[bl, br, tl]);
-        mesh.indices.extend_from_slice(&[br, tr, tl]);
+
+    // Zipper triangulation between the two rails, using ONLY the loop's own
+    // vertices. The previous column-grid approach interpolated the opposite
+    // rail wherever one chain carried a vertex the other lacked (a partial
+    // wall split, a pinch column) — inventing a point ON the boundary rail
+    // that the neighboring face never emits, i.e. a mesh-level T-junction
+    // and a guaranteed seam crack. Marching two pointers and always
+    // connecting existing vertices keeps both rails verbatim, so whatever
+    // topology conforms to also welds in the mesh.
+    let mut push_vert = |p: &Point3| -> u32 {
+        let idx = (mesh.vertices.len() / 3) as u32;
+        mesh.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let n = radial_normal(p);
+        let (nx, ny, nz) = if reversed {
+            (-n.x as f32, -n.y as f32, -n.z as f32)
+        } else {
+            (n.x as f32, n.y as f32, n.z as f32)
+        };
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        idx
+    };
+    let ia: Vec<u32> = pts_a.iter().map(&mut push_vert).collect();
+    let ib: Vec<u32> = pts_b.iter().map(&mut push_vert).collect();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i + 1 < ia.len() || j + 1 < ib.len() {
+        let advance_a = if i + 1 >= ia.len() {
+            false
+        } else if j + 1 >= ib.len() {
+            true
+        } else {
+            // Advance the rail whose next vertex has the smaller u.
+            chain_a[i + 1].0 <= chain_b[j + 1].0
+        };
+        if advance_a {
+            mesh.indices.extend_from_slice(&[ia[i], ia[i + 1], ib[j]]);
+            i += 1;
+        } else {
+            mesh.indices.extend_from_slice(&[ia[i], ib[j + 1], ib[j]]);
+            j += 1;
+        }
     }
+    let _ = grid;
 
     // Orient the strip so triangle normals agree with the (possibly
     // reversed) outward radial direction: check one non-degenerate

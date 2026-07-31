@@ -78,7 +78,58 @@ fn cut_polyline_between(
     if rev {
         via.reverse();
     }
+    // On a CLOSED polyline the direct parameter walk lo→hi may be the long
+    // way around (the cut interval straddles the parameter seam): walking
+    // it drags far-side samples — points nowhere near this face — into the
+    // cut edge and mints phantom geometry. Take the wrap-around complement
+    // when it is shorter.
+    let closed = points.len() > 3 && (points[0] - points[points.len() - 1]).norm() < 1e-9;
+    if closed {
+        let path_len = |pts: &[Point3], a: &Point3, b: &Point3| -> f64 {
+            let mut total = 0.0;
+            let mut prev = *a;
+            for p in pts {
+                total += (*p - prev).norm();
+                prev = *p;
+            }
+            total + (*b - prev).norm()
+        };
+        let direct = path_len(&via, entry_point, exit_point);
+        let mut wrap: Vec<Point3> = points
+            .iter()
+            .enumerate()
+            .take(points.len() - 1) // skip the duplicated closing point
+            .filter(|(i, _)| (*i as f64) < lo - 1e-9 || (*i as f64) > hi + 1e-9)
+            .map(|(_, p)| *p)
+            .collect();
+        // Complement travels hi → end → start → lo; order it from the exit
+        // side: rotate so it starts just after `hi`.
+        let pivot = wrap.iter().position(|p| project(p) > hi).unwrap_or(0);
+        wrap.rotate_left(pivot);
+        if rev {
+            wrap.reverse();
+        }
+        let wrapped = path_len(&wrap, entry_point, exit_point);
+        if wrapped + 1e-9 < direct {
+            return wrap;
+        }
+    }
     via
+}
+
+/// Whether `VCAD_SPLIT_DEBUG` is set, read once per process — `split_dbg!`
+/// fires inside hot per-face loops, so the env lookup must not repeat.
+fn split_debug_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_SPLIT_DEBUG").is_ok())
+}
+
+macro_rules! split_dbg {
+    ($($arg:tt)*) => {
+        if crate::split::split_debug_enabled() {
+            eprintln!($($arg)*);
+        }
+    };
 }
 
 /// Split a face along an intersection curve.
@@ -117,23 +168,110 @@ pub fn split_face_by_curve(
         };
     }
 
-    // Find the two edges where the curve enters and exits the face
-    let (entry_edge, entry_dist) = find_closest_edge_with_dist(&loop_verts, entry_point);
-    let (exit_edge, exit_dist) = find_closest_edge_with_dist(&loop_verts, exit_point);
+    // Find the two edges where the curve enters and exits the face. An
+    // endpoint that lands on (or near) a CORNER is within tolerance of two
+    // edges; picking the nearest edge independently for entry and exit can
+    // then assign both to the same edge and reject a perfectly valid cut.
+    // Instead collect every edge within slack of each endpoint and pick a
+    // DISTINCT pair with minimal combined distance when one exists.
+    let edge_candidates = |p: &Point3| -> Vec<(usize, f64)> {
+        let (best_e, best_d) = find_closest_edge_with_dist(&loop_verts, p);
+        let slack = (best_d * 1.5).max(1e-6);
+        let mut out = Vec::new();
+        for i in 0..loop_verts.len() {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % loop_verts.len()];
+            let ab = b - a;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            let d = (*p - (a + t * ab)).norm();
+            if d <= slack + 1e-9 {
+                out.push((i, d));
+            }
+        }
+        if out.is_empty() {
+            out.push((best_e, best_d));
+        }
+        out
+    };
+    let entry_cands = edge_candidates(entry_point);
+    let exit_cands = edge_candidates(exit_point);
+    let mut entry_edge = entry_cands[0].0;
+    let mut exit_edge = exit_cands[0].0;
+    let mut entry_dist = entry_cands[0].1;
+    let mut exit_dist = exit_cands[0].1;
+    let mut best_sum = f64::INFINITY;
+    let mut found_distinct = false;
+    for &(e1, d1) in &entry_cands {
+        for &(e2, d2) in &exit_cands {
+            if e1 == e2 {
+                continue;
+            }
+            if d1 + d2 < best_sum {
+                best_sum = d1 + d2;
+                entry_edge = e1;
+                exit_edge = e2;
+                entry_dist = d1;
+                exit_dist = d2;
+                found_distinct = true;
+            }
+        }
+    }
+    if !found_distinct {
+        entry_edge = entry_cands[0].0;
+        exit_edge = exit_cands[0].0;
+        entry_dist = entry_cands[0].1;
+        exit_dist = exit_cands[0].1;
+    }
 
     // If entry or exit point is too far from any edge, the split line doesn't cross this face
     let max_dist_tolerance = 1.0; // Allow some tolerance for numerical precision
     if entry_dist > max_dist_tolerance || exit_dist > max_dist_tolerance {
+        split_dbg!("sfbc: entry/exit off-boundary d=({entry_dist:.4},{exit_dist:.4})");
         return SplitResult {
             sub_faces: vec![face_id],
         };
     }
 
-    if entry_edge == exit_edge {
-        // Curve enters and exits on the same edge — can't split simply
+    if entry_edge == exit_edge || (*exit_point - *entry_point).norm() < 1e-6 {
+        // Curve enters and exits on the same edge, or grazes a single
+        // vertex — no real cut.
+        split_dbg!(
+            "sfbc: same-edge or zero cut (edges {entry_edge},{exit_edge}) entry={:?} exit={:?} loop={:?}",
+            entry_point,
+            exit_point,
+            loop_verts
+                .iter()
+                .map(|p| ((p.x * 100.0).round() / 100.0, (p.y * 100.0).round() / 100.0, (p.z * 100.0).round() / 100.0))
+                .collect::<Vec<_>>()
+        );
         return SplitResult {
             sub_faces: vec![face_id],
         };
+    }
+
+    // A cut whose midpoint lies ON the face boundary runs along an existing
+    // edge (two operand planes can share their intersection line with this
+    // face — e.g. a blade's tangent bottom plane and its side plane both
+    // cross an end cap along the same chord). Splitting again along that
+    // chord would emit a duplicate of the face plus a zero-area sliver.
+    {
+        let mid = Point3::new(
+            0.5 * (entry_point.x + exit_point.x),
+            0.5 * (entry_point.y + exit_point.y),
+            0.5 * (entry_point.z + exit_point.z),
+        );
+        let (_, mid_dist) = find_closest_edge_with_dist(&loop_verts, &mid);
+        if mid_dist < 1e-7 {
+            split_dbg!("sfbc: cut runs along boundary");
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
     }
 
     // Insert new vertices at entry and exit points
@@ -177,6 +315,23 @@ pub fn split_face_by_curve(
     // coincide with existing vertices)
     let loop1_points = remove_consecutive_duplicates(&loop1_points, 1e-6);
     let loop2_points = remove_consecutive_duplicates(&loop2_points, 1e-6);
+    {
+        let zr = |pts: &[Point3]| {
+            (
+                pts.iter().map(|p| p.z).fold(f64::MAX, f64::min),
+                pts.iter().map(|p| p.z).fold(f64::MIN, f64::max),
+            )
+        };
+        let (fz0, fz1) = zr(&loop_verts);
+        let (a0, a1) = zr(&loop1_points);
+        let (b0, b1) = zr(&loop2_points);
+        if a0 < fz0 - 1.0 || a1 > fz1 + 1.0 || b0 < fz0 - 1.0 || b1 > fz1 + 1.0 {
+            split_dbg!(
+                "sfbc RANGE: face z[{fz0:.2},{fz1:.2}] loops z[{a0:.2},{a1:.2}]/[{b0:.2},{b1:.2}] entry {entry_point:?} exit {exit_point:?} via {} pts",
+                via.len()
+            );
+        }
+    }
 
     // Need at least 3 vertices for a valid face
     if loop1_points.len() < 3 || loop2_points.len() < 3 {
@@ -209,6 +364,7 @@ pub fn split_face_by_curve(
     let min_area = 0.001;
 
     if area1 < min_area || area2 < min_area {
+        split_dbg!("sfbc: degenerate areas {area1:.5} {area2:.5}");
         // One of the faces is degenerate (near-zero area)
         // This happens when the split line lies along an existing edge
         return SplitResult {
@@ -217,8 +373,106 @@ pub fn split_face_by_curve(
     }
 
     // Create topology for the two new faces
+    // A cut that passes THROUGH an inner loop cannot be resolved by
+    // redistributing the hole to one side — the hole would need to be
+    // split and merged into the sub-faces' outer boundaries. Refuse the
+    // split instead (phantom cuts across holed caps are the common case:
+    // the intersection line of a distant operand plane runs across the
+    // whole face, hole included).
+    {
+        let parent_inner = brep.topology.faces[face_id].inner_loops.clone();
+        for inner in &parent_inner {
+            let verts: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(*inner)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if verts.is_empty() {
+                continue;
+            }
+            let n = verts.len() as f64;
+            let c = Point3::new(
+                verts.iter().map(|v| v.x).sum::<f64>() / n,
+                verts.iter().map(|v| v.y).sum::<f64>() / n,
+                verts.iter().map(|v| v.z).sum::<f64>() / n,
+            );
+            let r = verts.iter().map(|v| (*v - c).norm()).fold(0.0f64, f64::max);
+            // Distance from the hole center to the cut path (chord + via).
+            let mut path: Vec<Point3> = vec![*entry_point];
+            path.extend(via.iter().copied());
+            path.push(*exit_point);
+            let mut d = f64::INFINITY;
+            for w in path.windows(2) {
+                let ab = w[1] - w[0];
+                let len2 = ab.norm_squared();
+                let t = if len2 < 1e-18 {
+                    0.0
+                } else {
+                    ((c - w[0]).dot(ab) / len2).clamp(0.0, 1.0)
+                };
+                d = d.min((c - (w[0] + t * ab)).norm());
+            }
+            if d < r + 1e-6 {
+                return SplitResult {
+                    sub_faces: vec![face_id],
+                };
+            }
+        }
+    }
+
     let face1 = create_face_from_points(brep, &loop1_points, surface_index, orientation);
     let face2 = create_face_from_points(brep, &loop2_points, surface_index, orientation);
+
+    // Distribute the parent's inner loops (holes) to whichever sub-face
+    // contains them — dropping them silently REFILLS the holes (a phantom
+    // line split across an annular cap would otherwise fill in the bore).
+    let parent_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+    if !parent_inner.is_empty() {
+        // 2D frame on the parent plane for containment tests.
+        let origin = loop1_points[0];
+        let e1 = (loop1_points[1] - origin).normalize();
+        let mut e2n = vcad_kernel_math::Vec3::zeros();
+        for p in loop1_points.iter().chain(loop2_points.iter()) {
+            let d = *p - origin;
+            let perp = d - e1 * d.dot(e1);
+            if perp.norm() > 1e-9 {
+                e2n = perp.normalize();
+                break;
+            }
+        }
+        let project = |p: &Point3| -> (f64, f64) {
+            let d = *p - origin;
+            (d.dot(e1), d.dot(e2n))
+        };
+        let poly1: Vec<(f64, f64)> = loop1_points.iter().map(&project).collect();
+        let poly2: Vec<(f64, f64)> = loop2_points.iter().map(&project).collect();
+        for inner in parent_inner {
+            let verts: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(inner)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if verts.is_empty() {
+                continue;
+            }
+            let n = verts.len() as f64;
+            let c = Point3::new(
+                verts.iter().map(|v| v.x).sum::<f64>() / n,
+                verts.iter().map(|v| v.y).sum::<f64>() / n,
+                verts.iter().map(|v| v.z).sum::<f64>() / n,
+            );
+            let (cx, cy) = project(&c);
+            let target = if point_in_polygon_2d(cx, cy, &poly1) {
+                face1
+            } else if point_in_polygon_2d(cx, cy, &poly2) {
+                face2
+            } else {
+                face1 // conservative: keep the hole somewhere
+            };
+            brep.topology.faces[target].inner_loops.push(inner);
+            brep.topology.loops[inner].face = Some(target);
+        }
+    }
 
     // Add the new faces to the shell
     if let Some(shell_id) = brep.topology.faces[face_id].shell {
@@ -533,6 +787,34 @@ pub fn is_planar_face(brep: &BRepSolid, face_id: FaceId) -> bool {
     surface.surface_type() == vcad_kernel_geom::SurfaceKind::Plane
 }
 
+/// Whether `circle` lies on a cylindrical wall of `other` — i.e. it was
+/// minted by SSI against a cylinder, whose (frozen) band machinery emits
+/// canonical-grid ring points. Only such circles need canonical sampling in
+/// planar splits; a circle mated to a cone or sphere wall must keep the
+/// legacy circle-frame sampling that matches those tessellations.
+pub fn circle_on_cylinder_wall(other: &BRepSolid, circle: &vcad_kernel_geom::Circle3d) -> bool {
+    let n = circle
+        .x_dir
+        .into_inner()
+        .cross(circle.y_dir.into_inner())
+        .normalize();
+    other.geometry.surfaces.iter().any(|s| {
+        let Some(cyl) = s
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+        else {
+            return false;
+        };
+        let axis = cyl.axis.into_inner();
+        if axis.cross(n).norm() > 1e-6 {
+            return false;
+        }
+        let d = circle.center - cyl.center;
+        let radial = d - axis * d.dot(axis);
+        radial.norm() < 1e-6 && (cyl.radius - circle.radius).abs() < 1e-6
+    })
+}
+
 /// Split a planar face along a circle intersection curve.
 ///
 /// When a cylinder axis is perpendicular to a plane and they intersect,
@@ -550,6 +832,7 @@ pub fn split_planar_face_by_circle(
     face_id: FaceId,
     circle: &vcad_kernel_geom::Circle3d,
     segments: u32,
+    canonical: bool,
 ) -> SplitResult {
     // A circle approximated by fewer than 3 vertices can't form a valid face
     // loop; constructing one would feed an empty slice to `add_loop` and panic.
@@ -648,23 +931,41 @@ pub fn split_planar_face_by_circle(
                         .collect();
                     let new_outer = brep.topology.add_loop(&rim_hes);
                     brep.topology.faces[face_id].outer_loop = new_outer;
-                    return split_planar_face_by_circle(brep, face_id, circle, segments);
+                    return split_planar_face_by_circle(brep, face_id, circle, segments, canonical);
                 }
 
                 if circle_inside && cap_radius > 1e-12 {
                     let tolerance = 1e-6;
 
-                    // Generate circle vertices for the inner disk face
-                    let raw_circle_verts: Vec<Point3> = (0..segments)
-                        .map(|i| {
-                            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-                            let (sin_t, cos_t) = theta.sin_cos();
-                            circle.center
-                                + circle.radius
-                                    * (cos_t * circle.x_dir.into_inner()
-                                        + sin_t * circle.y_dir.into_inner())
-                        })
-                        .collect();
+                    // Generate circle vertices for the inner disk face on
+                    // the CANONICAL grid — the frozen cylinder wall bounded
+                    // by this same circle emits identical points, so the
+                    // hole rim and the wall ring conform exactly.
+                    // ...but only when the mating wall IS a cylinder
+                    // (`canonical`); cone/sphere walls tessellate their rings
+                    // in the circle's own frame at `segments`, and a
+                    // canonical-grid rim would not conform with them.
+                    let circle_normal = circle.x_dir.into_inner().cross(circle.y_dir.into_inner());
+                    let raw_circle_verts: Vec<Point3> = if canonical {
+                        canonical_circle_points(
+                            circle.center,
+                            circle.radius,
+                            circle_normal,
+                            segments,
+                        )
+                    } else {
+                        (0..segments)
+                            .map(|i| {
+                                let theta =
+                                    2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+                                let (sin_t, cos_t) = theta.sin_cos();
+                                circle.center
+                                    + circle.radius
+                                        * (cos_t * circle.x_dir.into_inner()
+                                            + sin_t * circle.y_dir.into_inner())
+                            })
+                            .collect()
+                    };
 
                     // The SSI circle's (x_dir, y_dir) frame is arbitrary, so
                     // the generated ring can wind either way. The tessellator
@@ -813,15 +1114,28 @@ pub fn split_planar_face_by_circle(
 
     // Generate circle vertices in the SSI circle's own (x_dir, y_dir) frame;
     // the winding relative to the face is normalized below.
-    let raw_circle_verts: Vec<Point3> = (0..segments)
-        .map(|i| {
-            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-            let (sin_t, cos_t) = theta.sin_cos();
-            circle.center
-                + circle.radius
-                    * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
-        })
-        .collect();
+    // Canonical grid sampling when the mating wall is a cylinder — must
+    // match the frozen cylinder wall rings bounded by the same circle (see
+    // canonical_circle_points). Cone/sphere-mated circles keep the legacy
+    // circle-frame sampling their wall tessellations conform to.
+    let raw_circle_verts: Vec<Point3> = if canonical {
+        canonical_circle_points(
+            circle.center,
+            circle.radius,
+            circle.x_dir.into_inner().cross(circle.y_dir.into_inner()),
+            segments,
+        )
+    } else {
+        (0..segments)
+            .map(|i| {
+                let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+                let (sin_t, cos_t) = theta.sin_cos();
+                circle.center
+                    + circle.radius
+                        * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
+            })
+            .collect()
+    };
 
     // Compute the face's 2D coordinate system using the plane surface normal
     // instead of deriving from vertices, which can produce inconsistent normals
@@ -1520,6 +1834,17 @@ pub fn split_planar_face_by_arc(
     if arc1_inside && arc2_inside {
         return split_planar_face_tangent_inside(brep, face_id, circle, segments, int1, int2);
     }
+    if !arc1_inside && !arc2_inside {
+        // Neither arc's midpoint lies inside the polygon: the circle runs
+        // along the face boundary (a re-application of a circle this face
+        // was already cut by — its arc IS an edge now, and the midpoint
+        // probe lands on/outside it). Blindly taking the complementary arc
+        // here swept a near-full circle through the face and minted a
+        // phantom sub-face covering the far side of the disk.
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
+    }
 
     // Determine which arc is inside and which edge indices to walk
     let (inside_start, inside_end, inside_start_angle, inside_end_angle) = if arc1_inside {
@@ -1548,6 +1873,66 @@ pub fn split_planar_face_by_arc(
         inside_end.point,
         segments,
     );
+
+    // A cut whose arc midpoint lies ON the face boundary runs along an
+    // existing arc edge: the same circle reaches this face once per wall
+    // piece of the other operand, and re-splitting along the previous cut
+    // emits a duplicate face plus a phantom sliver (the arc analog of the
+    // duplicate-chord guard in split_face_by_curve). The probe must be the
+    // TRUE angular midpoint of the arc — short arcs carry no interior
+    // polyline vertices, and an endpoint always sits on the boundary.
+    {
+        let n_hat = plane_normal.normalize();
+        let d0 = inside_start.point - circle.center;
+        let d1 = inside_end.point - circle.center;
+        let ang = {
+            let cross = d0.cross(d1).dot(n_hat);
+            let a = cross.atan2(d0.dot(d1));
+            a.rem_euclid(2.0 * std::f64::consts::PI)
+        };
+        let half = 0.5 * ang;
+        let (sin_h, cos_h) = half.sin_cos();
+        // Rodrigues rotation of d0 by `half` about n̂.
+        let rot = d0 * cos_h + n_hat.cross(d0) * sin_h + n_hat * n_hat.dot(d0) * (1.0 - cos_h);
+        let mid = circle.center + rot.normalize() * circle.radius;
+        let mut min_d = f64::INFINITY;
+        let n = loop_verts.len();
+        for i in 0..n {
+            let a = loop_verts[i];
+            let b = loop_verts[(i + 1) % n];
+            let ab = b - a;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((mid - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            min_d = min_d.min((mid - (a + t * ab)).norm());
+        }
+        split_dbg!("arc guard: mid {mid:?} min_d {min_d:.2e} nv {n}");
+        let fz0 = loop_verts.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+        let fz1 = loop_verts.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+        let az0 = arc_points_3d.iter().map(|p| p.z).fold(f64::MAX, f64::min);
+        let az1 = arc_points_3d.iter().map(|p| p.z).fold(f64::MIN, f64::max);
+        if az0 < fz0 - 1.0 || az1 > fz1 + 1.0 {
+            split_dbg!(
+                "arc RANGE: face z[{fz0:.2},{fz1:.2}] arc z[{az0:.2},{az1:.2}] start {:?} end {:?}",
+                inside_start.point,
+                inside_end.point
+            );
+        }
+        // Tolerance covers the ≤1 µm chord sag between the true circle and
+        // a previously inserted arc polyline (arc_segments' SAG = 1e-3),
+        // with slack; a fresh cut hugging the boundary this closely would
+        // only mint a sub-sag sliver anyway. Keep it BELOW the smallest
+        // distinct-feature separation near tangencies (tangent-cyl stadium
+        // cutters carry legitimately distinct arcs a few µm apart).
+        if min_d < 2e-3 && std::env::var("VCAD_NO_ARCGUARD").is_err() {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
+    }
 
     // Build Face 1: the inside-circle portion
     // Walk polygon from inside_end edge to inside_start edge, then add arc back
@@ -2385,10 +2770,11 @@ pub fn split_planar_face(
     entry: &Point3,
     exit: &Point3,
     segments: u32,
+    canonical: bool,
 ) -> SplitResult {
     match curve {
         IntersectionCurve::Circle(circle) => {
-            split_planar_face_by_circle(brep, face_id, circle, segments)
+            split_planar_face_by_circle(brep, face_id, circle, segments, canonical)
         }
         IntersectionCurve::Line(line) => {
             // Get face boundary vertices
@@ -2406,6 +2792,14 @@ pub fn split_planar_face(
                 // Use the first two crossings as entry/exit
                 let actual_entry = crossings[0];
                 let actual_exit = crossings[1];
+                // A grazing line (both crossings at one vertex) is a
+                // zero-length cut: "splitting" would emit a copy of the
+                // face plus a degenerate sliver.
+                if (actual_exit - actual_entry).norm() < 1e-6 {
+                    return SplitResult {
+                        sub_faces: vec![face_id],
+                    };
+                }
                 split_face_by_curve(brep, face_id, curve, &actual_entry, &actual_exit)
             } else {
                 // Line doesn't cross the polygon boundary at two points
@@ -2424,6 +2818,7 @@ pub fn split_planar_face(
                 entry,
                 exit,
                 segments,
+                canonical,
             )
         }
         _ => {
@@ -2511,6 +2906,8 @@ pub fn split_spherical_face_by_circle(
 
     // Generate the N shared circle vertices.
     let n = segments as usize;
+    // NOTE: sphere ring pairing relies on the circle's own frame — do NOT
+    // switch this to the canonical grid (see fillet-defects notes).
     let circle_verts: Vec<Point3> = (0..segments)
         .map(|i| {
             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
@@ -3236,12 +3633,24 @@ fn split_conical_face_by_circle(
         sub_faces: vec![lower_face, upper_face],
     }
 }
+/// Debug-logging wrapper for [`split_cylindrical_face_by_circle`]
+/// (enable with `VCAD_SPLIT_DEBUG=1`).
+pub fn split_cylindrical_face_by_circle_logged(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+) -> SplitResult {
+    split_dbg!(
+        "legacy circle split on face {face_id:?} nv={} at z {:.4}",
+        brep.topology
+            .loop_len(brep.topology.faces[face_id].outer_loop),
+        circle.center.z
+    );
+    split_cylindrical_face_by_circle(brep, face_id, circle)
+}
 
-/// Split a cylindrical face along a circle intersection curve.
-///
-/// When a plane perpendicular to the cylinder axis intersects the cylinder,
-/// the result is a circle at constant height. In the cylinder's UV space
-/// `[0, 2π] × [v_min, v_max]`, this circle becomes a horizontal line at `v = h`.
+/// Split a full-tube cylindrical face by a perpendicular circle at the
+/// circle's height.
 ///
 /// This function splits the cylindrical face into two strips:
 /// - Lower strip: `[0, 2π] × [v_min, h]`
@@ -3441,7 +3850,9 @@ pub fn split_cylindrical_face_by_circle(
 /// kernel-seam-freeze WIP branch) this must stay at the caller's count —
 /// sag-adaptive densification here reopens every analytic/frozen seam.
 pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
-    const SAG: f64 = 5e-3;
+    // Must match ssi::ellipse_samples' sag: SSI polylines and canonical
+    // rings share vertices only when both discretize at the same density.
+    const SAG: f64 = 1e-3;
     let n = if radius > SAG {
         let arg = (1.0 - SAG / radius).clamp(-1.0, 1.0);
         (std::f64::consts::PI / arg.acos()).ceil() as u32
@@ -3545,6 +3956,45 @@ fn circle_frame_arc_points(
 /// faces sharing an arc reproduce bit-identical interior points regardless
 /// of their own parameterizations. Returns `[start, interior…, end]`; travel
 /// is counterclockwise about `normal` from `start` to `end`.
+/// Canonical full-circle polyline: every grid point of the sag-dense
+/// canonical frame, CCW about `normal`. Any two faces sampling the same
+/// circle (a frozen wall ring, a cap hole boundary) get identical points.
+pub(crate) fn canonical_circle_points(
+    center: Point3,
+    radius: f64,
+    normal: vcad_kernel_math::Vec3,
+    segments: u32,
+) -> Vec<Point3> {
+    // Reuse the arc sampler with start == end: it returns
+    // [start, interior grid..., start]; drop the duplicated closing point.
+    let x_axis = {
+        // Same canonical-frame derivation as canonical_arc_points.
+        let mut n_hat = normal.normalize();
+        for c in [n_hat.x, n_hat.y, n_hat.z] {
+            if c.abs() > 1e-9 {
+                if c < 0.0 {
+                    n_hat = -n_hat;
+                }
+                break;
+            }
+        }
+        let cand = [
+            vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0),
+            vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0),
+            vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
+        ];
+        let e = cand
+            .into_iter()
+            .min_by(|a, b| a.dot(n_hat).abs().partial_cmp(&b.dot(n_hat).abs()).unwrap())
+            .unwrap();
+        (e - n_hat * e.dot(n_hat)).normalize()
+    };
+    let seam = center + radius * x_axis;
+    let mut ring = canonical_arc_points(center, radius, normal, seam, seam, segments);
+    ring.pop();
+    ring
+}
+
 pub(crate) fn canonical_arc_points(
     center: Point3,
     radius: f64,
@@ -3613,30 +4063,33 @@ pub(crate) fn canonical_arc_points(
     } else {
         (a_start / step).ceil() - 1.0
     };
+    // `traveled` must accumulate monotonically — computing it per-index with
+    // rem_euclid(2π) wraps back below `span` after one full revolution, so a
+    // full-circle arc whose seam is off the grid re-emits the first grid
+    // points as duplicates (and only the safety cap stopped it).
     let mut idx = first_idx;
-    loop {
+    let mut traveled = {
         let ang = idx * step;
-        let traveled = if ccw {
+        if ccw {
             (ang - a_start).rem_euclid(2.0 * PI)
         } else {
             (a_start - ang).rem_euclid(2.0 * PI)
-        };
-        if traveled <= eps || traveled >= span - eps {
-            break;
         }
-        let a = ang.rem_euclid(2.0 * PI);
-        let (sin_a, cos_a) = a.sin_cos();
-        pts.push(snap_point(
-            center + radius * (cos_a * x_axis + sin_a * y_axis),
-        ));
+    };
+    while traveled < span - eps {
+        if traveled > eps {
+            let a = (idx * step).rem_euclid(2.0 * PI);
+            let (sin_a, cos_a) = a.sin_cos();
+            pts.push(snap_point(
+                center + radius * (cos_a * x_axis + sin_a * y_axis),
+            ));
+        }
         if ccw {
             idx += 1.0;
         } else {
             idx -= 1.0;
         }
-        if pts.len() > n as usize + 2 {
-            break; // safety
-        }
+        traveled += step;
     }
     pts.push(end);
     pts
@@ -3694,6 +4147,11 @@ pub fn split_cylindrical_face_by_line(
     line: &vcad_kernel_geom::Line3d,
     segments: u32,
 ) -> SplitResult {
+    split_dbg!(
+        "legacy line split on face {face_id:?} nv={}",
+        brep.topology
+            .loop_len(brep.topology.faces[face_id].outer_loop)
+    );
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
     let orientation = face.orientation;
@@ -4005,13 +4463,35 @@ pub fn split_cylindrical_face(
     segments: u32,
 ) -> SplitResult {
     let wavy = crate::cyl_band::face_is_wavy_band(brep, face_id);
+    // A dense (frozen-polyline) loop must not reach the legacy circle
+    // splitter: it re-emits analytic seam loops sampled on the raw
+    // `segments` grid, silently thawing a frozen boundary back into one
+    // that can never conform with its sag-dense neighbors. The band
+    // machinery preserves the loop's own columns. (Line splits stay
+    // legacy-first: the legacy line splitter emits canonical dense chains
+    // itself and handles full-face seam bookkeeping the band path lacks.)
+    let dense = brep
+        .topology
+        .loop_len(brep.topology.faces[face_id].outer_loop)
+        > 6;
     match curve {
         IntersectionCurve::Circle(circle) => {
-            if wavy {
-                return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, true)
-                    .unwrap_or(SplitResult {
+            if wavy || dense {
+                // `require_wavy` only when the face really is wavy: a dense
+                // frozen band is rectangular (constant-v rings) and must
+                // still be split by the band machinery. When the band path
+                // declines (e.g. the circle grazes a band edge), fall
+                // through to the legacy splitter rather than giving up.
+                if let Some(r) = crate::cyl_band::split_wavy_band_by_circle(
+                    brep, face_id, circle, wavy, segments,
+                ) {
+                    return r;
+                }
+                if wavy {
+                    return SplitResult {
                         sub_faces: vec![face_id],
-                    });
+                    };
+                }
             }
             // The legacy splitter reconstructs its sub-faces as degenerate
             // seam loops spanning the FULL circumference — correct only when
@@ -4048,7 +4528,7 @@ pub fn split_cylindrical_face(
                 }
             };
             let result = if is_seam_loop {
-                split_cylindrical_face_by_circle(brep, face_id, circle)
+                split_cylindrical_face_by_circle_logged(brep, face_id, circle)
             } else {
                 SplitResult {
                     sub_faces: vec![face_id],
@@ -4061,15 +4541,20 @@ pub fn split_cylindrical_face(
             // 4-corner rectangles; arc-extruded walls carry dense sampled
             // loops it refuses. Retry through the band machinery, which
             // parses any two-chain loop (rectangular included).
-            crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, false)
+            crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, false, segments)
                 .unwrap_or(result)
         }
         IntersectionCurve::Line(line) => {
-            if wavy {
-                return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, true)
-                    .unwrap_or(SplitResult {
+            if wavy || dense {
+                if let Some(r) = crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, wavy)
+                {
+                    return r;
+                }
+                if wavy {
+                    return SplitResult {
                         sub_faces: vec![face_id],
-                    });
+                    };
+                }
             }
             let result = split_cylindrical_face_by_line(brep, face_id, line, segments);
             if result.sub_faces.len() >= 2 {
@@ -4150,14 +4635,82 @@ pub fn is_circular_disk_face(brep: &BRepSolid, face_id: FaceId) -> bool {
         return false;
     }
 
-    // Check if it has a single vertex (circular boundary)
+    // Check if it has a single vertex (analytic circular boundary) or a
+    // dense frozen ring (canonical polyline from crate::freeze) — every
+    // vertex equidistant from the plane origin.
     let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
-    if loop_hes.len() != 1 {
+    if loop_hes.len() != 1 && !is_frozen_ring(brep, face_id) {
         return false;
     }
 
     // No inner loops
     face.inner_loops.is_empty()
+}
+
+/// True when the face's outer loop is a dense ring of vertices equidistant
+/// from the plane origin — the canonical polyline `crate::freeze` writes in
+/// place of an analytic full-circle boundary. 8+ vertices distinguishes a
+/// frozen ring from box faces and low-count polygons that happen to be
+/// cyclic.
+fn is_frozen_ring(brep: &BRepSolid, face_id: FaceId) -> bool {
+    let face = &brep.topology.faces[face_id];
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let plane = match surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
+        Some(p) => p,
+        None => return false,
+    };
+    let center = plane.origin;
+    let normal = *plane.normal_dir.as_ref();
+    let mut radius: Option<f64> = None;
+    let mut pts: Vec<Point3> = Vec::new();
+    for he in brep.topology.loop_half_edges(face.outer_loop) {
+        let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
+        let r = (p - center).norm();
+        match radius {
+            None => radius = Some(r),
+            Some(r0) => {
+                if (r - r0).abs() > 1e-6_f64.max(r0 * 1e-9) {
+                    return false;
+                }
+            }
+        }
+        pts.push(p);
+    }
+    if pts.len() < 8 {
+        return false;
+    }
+    // All vertices equidistant is necessary but NOT sufficient: a half-disk
+    // produced by a diameter cut has every vertex ON the circle too (the
+    // chord endpoints are ring vertices), and treating it as a full disk
+    // makes the next same-line split rebuild BOTH halves from the full
+    // circle — duplicate faces and phantom slivers. A genuine frozen ring
+    // walks the circle in uniform sag-scale steps; any large angular jump
+    // between consecutive loop vertices is a chord, not a ring edge.
+    let x_axis = {
+        let d = pts[0] - center;
+        let on = d - d.dot(normal) * normal;
+        if on.norm() < 1e-9 {
+            return false;
+        }
+        on.normalize()
+    };
+    let y_axis = normal.cross(x_axis);
+    let ang = |p: &Point3| -> f64 {
+        let d = *p - center;
+        d.dot(y_axis).atan2(d.dot(x_axis))
+    };
+    for w in 0..pts.len() {
+        let a = ang(&pts[w]);
+        let b = ang(&pts[(w + 1) % pts.len()]);
+        let mut d = (b - a).rem_euclid(2.0 * std::f64::consts::PI);
+        if d > std::f64::consts::PI {
+            d = 2.0 * std::f64::consts::PI - d;
+        }
+        if d > 0.2 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Get the circle parameters of a circular disk face.
@@ -4172,9 +4725,11 @@ pub fn get_disk_circle_params(
 
     let plane = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>()?;
 
-    // Get the seam vertex - this is on the circle at angle 0
+    // Get the seam vertex - this is on the circle at angle 0. A dense
+    // frozen ring qualifies too: all its vertices are equidistant from the
+    // plane origin, so the first one fixes the radius.
     let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
-    if loop_hes.len() != 1 {
+    if loop_hes.len() != 1 && !is_frozen_ring(brep, face_id) {
         return None;
     }
 
@@ -4448,6 +5003,7 @@ pub fn split_circular_disk_face(
                         &Point3::origin(),
                         &Point3::origin(),
                         segments,
+                        false,
                     );
                     all_faces.extend(result2.sub_faces);
                 }
@@ -4611,7 +5167,7 @@ mod tests {
 
         // Try to split
         let initial_faces = brep.topology.faces.len();
-        let result = split_planar_face_by_circle(&mut brep, z0_face_id, &circle, 32);
+        let result = split_planar_face_by_circle(&mut brep, z0_face_id, &circle, 32, true);
         println!("Split result: {} sub-faces", result.sub_faces.len());
         println!(
             "Total faces after: {} (was {})",
@@ -4652,5 +5208,122 @@ mod tests {
             "Expected at least 2 sub-faces from arc split, got {}",
             result.sub_faces.len()
         );
+    }
+}
+
+/// Sub-resolution fallback for thin faces: when a sampled cut curve crosses
+/// a face narrower than its own sample spacing, the trim finds no interval,
+/// but the two exact crossing vertices already sit ON the face's boundary
+/// (inserted by the adjacent faces' splits against the same surface pair).
+/// Detect exactly two such vertices and split along the chord between them.
+pub(crate) fn split_thin_face_at_curve_vertices(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    curve_pts: &[Point3],
+) -> Option<SplitResult> {
+    if curve_pts.len() < 4 {
+        return None;
+    }
+    let face = &brep.topology.faces[face_id];
+    if !face.inner_loops.is_empty() {
+        return None;
+    }
+    let loop_verts: Vec<Point3> = brep
+        .topology
+        .loop_half_edges(face.outer_loop)
+        .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+        .collect();
+    let n = loop_verts.len();
+    if n < 4 {
+        return None;
+    }
+    // Distance from a point to the sampled polyline. The crossing vertices
+    // lie ON the true curve, which sags up to ~5 µm off the polyline chords.
+    let dist_to_curve = |p: &Point3| -> f64 {
+        let mut best = f64::INFINITY;
+        for w in curve_pts.windows(2) {
+            let ab = w[1] - w[0];
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - w[0]).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            best = best.min((*p - (w[0] + t * ab)).norm());
+        }
+        best
+    };
+    // Candidate endpoints: TOPOLOGY vertices (they were inserted by the
+    // neighboring faces' splits and are not yet part of THIS face's loop)
+    // lying on both the cut curve and this face's boundary polyline, but
+    // not coincident with the loop's own corners.
+    const ON_CURVE_TOL: f64 = 6e-3;
+    let dist_to_boundary = |p: &Point3| -> f64 {
+        let mut best = f64::INFINITY;
+        for k in 0..n {
+            let e0 = loop_verts[k];
+            let e1 = loop_verts[(k + 1) % n];
+            let ab = e1 - e0;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - e0).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            best = best.min((*p - (e0 + t * ab)).norm());
+        }
+        best
+    };
+    let mut hits: Vec<Point3> = Vec::new();
+    for (_vid, v) in &brep.topology.vertices {
+        let p = v.point;
+        if dist_to_curve(&p) < ON_CURVE_TOL
+            && dist_to_boundary(&p) < ON_CURVE_TOL
+            && !loop_verts.iter().any(|q| (*q - p).norm() < 1e-6)
+            && !hits.iter().any(|q| (*q - p).norm() < 1e-6)
+        {
+            hits.push(p);
+        }
+    }
+    split_dbg!("thin-face fallback: {face_id:?} nv={n} hits {}", hits.len());
+    if hits.len() != 2 {
+        return None;
+    }
+    let (a, b) = (hits[0], hits[1]);
+    let chord = (b - a).norm();
+    // Sag-adaptive curves sample non-uniformly; gauge the chord against the
+    // LARGEST inter-sample step so a short first segment (high-curvature
+    // start) can't reject a chord that is a normal interior step.
+    let sample_step = curve_pts
+        .windows(2)
+        .map(|w| (w[1] - w[0]).norm())
+        .fold(0.0_f64, f64::max)
+        .max(1e-9);
+    if chord < 1e-6 || chord > 2.0 * sample_step {
+        return None;
+    }
+    // Chord midpoint must be strictly inside the face (not along an edge).
+    let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
+    let mut min_d = f64::INFINITY;
+    for k in 0..n {
+        let e0 = loop_verts[k];
+        let e1 = loop_verts[(k + 1) % n];
+        let ab = e1 - e0;
+        let len2 = ab.norm_squared();
+        let t = if len2 < 1e-18 {
+            0.0
+        } else {
+            ((mid - e0).dot(ab) / len2).clamp(0.0, 1.0)
+        };
+        min_d = min_d.min((mid - (e0 + t * ab)).norm());
+    }
+    if min_d < 1e-7 || !crate::trim::point_in_face(brep, face_id, &mid) {
+        return None;
+    }
+    let result = split_face_by_curve(brep, face_id, &IntersectionCurve::Empty, &a, &b);
+    if result.sub_faces.len() >= 2 {
+        Some(result)
+    } else {
+        None
     }
 }

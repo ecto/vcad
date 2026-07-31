@@ -162,6 +162,7 @@ fn apply_splits_to_solid(
     splits: HashMap<FaceId, FaceSplits>,
     segments: u32,
     #[allow(unused_variables)] solid_name: &str,
+    other: &BRepSolid,
 ) {
     // Deterministic order: the splits are applied in sequence and each
     // one reshapes the face the next one sees, so iterating the HashMap
@@ -350,6 +351,7 @@ fn apply_splits_to_solid(
                                 circle.center.z,
                                 circle.radius
                             );
+                            let canonical = split::circle_on_cylinder_wall(other, circle);
                             let result = split::split_planar_face(
                                 solid,
                                 fid,
@@ -357,6 +359,7 @@ fn apply_splits_to_solid(
                                 &Point3::origin(),
                                 &Point3::origin(),
                                 segments,
+                                canonical,
                             );
                             debug_bool!(
                                 "    -> Circle split result: {} sub-faces {:?}",
@@ -372,7 +375,18 @@ fn apply_splits_to_solid(
                         }
 
                         // Handle line curves on planar faces
-                        if let ssi::IntersectionCurve::Line(_) = &curve {
+                        if let ssi::IntersectionCurve::Line(_l) = &curve {
+                            debug_bool!(
+                                "  Split {} planar face {:?} by Line at ({:.2},{:.2},{:.2}) dir ({:.2},{:.2},{:.2})",
+                                solid_name,
+                                fid,
+                                _l.origin.x,
+                                _l.origin.y,
+                                _l.origin.z,
+                                _l.direction.x,
+                                _l.direction.y,
+                                _l.direction.z
+                            );
                             let result = split::split_planar_face(
                                 solid,
                                 fid,
@@ -380,6 +394,12 @@ fn apply_splits_to_solid(
                                 &Point3::origin(),
                                 &Point3::origin(),
                                 segments,
+                                false,
+                            );
+                            debug_bool!(
+                                "    -> planar Line split result: {} sub-faces {:?}",
+                                result.sub_faces.len(),
+                                result.sub_faces
                             );
                             if result.sub_faces.len() >= 2 {
                                 new_faces.extend(result.sub_faces);
@@ -407,7 +427,41 @@ fn apply_splits_to_solid(
                             new_faces.push(cur);
                             continue;
                         }
-                        let segs = trim::trim_curve_to_face(&curve, cur, solid, 64);
+                        // A closed sampled curve whose parameter seam falls
+                        // INSIDE this face yields two half-intervals, each
+                        // with one endpoint floating mid-face at the seam —
+                        // neither is a splittable cut. Rotate the sample
+                        // list so it starts at a sample outside the face;
+                        // the interval then reads as one seam-free segment.
+                        let curve_for_face: ssi::IntersectionCurve =
+                            if let ssi::IntersectionCurve::Sampled(pts) = &curve {
+                                let closed =
+                                    pts.len() > 2 && (pts[0] - pts[pts.len() - 1]).norm() < 1e-9;
+                                let seam_inside =
+                                    closed && trim::point_in_face(solid, cur, &pts[0]);
+                                if seam_inside {
+                                    let m = pts.len() - 1; // unique samples
+                                    match (0..m)
+                                        .find(|&k| !trim::point_in_face(solid, cur, &pts[k]))
+                                    {
+                                        Some(k) => {
+                                            let mut rot: Vec<Point3> = Vec::with_capacity(m + 1);
+                                            for j in 0..m {
+                                                rot.push(pts[(k + j) % m]);
+                                            }
+                                            rot.push(pts[k]);
+                                            ssi::IntersectionCurve::Sampled(rot)
+                                        }
+                                        None => curve.clone(),
+                                    }
+                                } else {
+                                    curve.clone()
+                                }
+                            } else {
+                                curve.clone()
+                            };
+                        let curve = &curve_for_face;
+                        let segs = trim::trim_curve_to_face(curve, cur, solid, 64);
                         debug_bool!(
                             "  Split {} face {:?}: re-trim got {} segs",
                             solid_name,
@@ -416,8 +470,8 @@ fn apply_splits_to_solid(
                         );
                         let mut split_applied = false;
                         for seg in &segs {
-                            let entry = evaluate_curve(&curve, seg.t_start);
-                            let exit = evaluate_curve(&curve, seg.t_end);
+                            let entry = evaluate_curve(curve, seg.t_start);
+                            let exit = evaluate_curve(curve, seg.t_end);
                             let len = (exit - entry).norm();
                             debug_bool!(
                                 "    -> entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
@@ -433,7 +487,7 @@ fn apply_splits_to_solid(
                                 continue;
                             }
                             let result =
-                                split::split_face_by_curve(solid, cur, &curve, &entry, &exit);
+                                split::split_face_by_curve(solid, cur, curve, &entry, &exit);
                             debug_bool!(
                                 "    -> split result: {} sub-faces {:?}",
                                 result.sub_faces.len(),
@@ -446,6 +500,25 @@ fn apply_splits_to_solid(
                             }
                         }
                         if !split_applied {
+                            // Sub-resolution fallback: a curve crossing a
+                            // THIN face (a 0.5 mm blade wall) can enter and
+                            // leave between two samples — the trim sees
+                            // nothing, but the face's boundary already
+                            // carries the two exact crossing vertices
+                            // (inserted by the neighboring faces' splits).
+                            // Cut the chord between them; over a
+                            // sub-sample span its deviation from the true
+                            // curve is far below merge tolerance.
+                            if let ssi::IntersectionCurve::Sampled(pts) = curve {
+                                if let Some(r) =
+                                    split::split_thin_face_at_curve_vertices(solid, cur, pts)
+                                {
+                                    if r.sub_faces.len() >= 2 {
+                                        pending.extend(r.sub_faces);
+                                        continue;
+                                    }
+                                }
+                            }
                             new_faces.push(cur);
                         }
                     }
@@ -480,6 +553,16 @@ pub(crate) fn brep_boolean(
     // Clone both solids so we can split them
     let mut a = solid_a.clone();
     let mut b = solid_b.clone();
+
+    // Freeze analytic full-circle edges into canonical polylines so the
+    // whole pipeline works on one concrete boundary representation (see
+    // crate::freeze). Without this, results that keep an untouched analytic
+    // face are watertight only by resolution coincidence, and any further
+    // boolean on them cannot conform.
+    if std::env::var("VCAD_NO_FREEZE").is_err() {
+        crate::freeze::freeze_circle_loops(&mut a, segments);
+        crate::freeze::freeze_circle_loops(&mut b, segments);
+    }
 
     // 1. Find candidate face pairs via AABB filtering
     let pairs = bbox::find_candidate_face_pairs(&a, &b);
@@ -842,6 +925,7 @@ pub(crate) fn brep_boolean(
                     face_a,
                     segs_a.len()
                 );
+                let mut recorded_a = false;
                 for seg in &segs_a {
                     let entry = evaluate_curve(single_curve, seg.t_start);
                     let exit = evaluate_curve(single_curve, seg.t_end);
@@ -858,6 +942,39 @@ pub(crate) fn brep_boolean(
                 );
                     if len > 1e-6 {
                         results_a.push((single_curve.clone(), entry, exit));
+                        recorded_a = true;
+                    }
+                }
+                // A sampled curve that grazes the face (only zero-length
+                // trims — the crossing is narrower than the curve's sample
+                // spacing) still gets recorded: the split stage's thin-face
+                // fallback can recover the cut from the exact crossing
+                // vertices the neighboring faces provide.
+                if !recorded_a {
+                    if let ssi::IntersectionCurve::Sampled(pts) = single_curve {
+                        // Whether the trim produced zero-length intervals or
+                        // nothing at all, a curve passing within one sample
+                        // step of the face may still cross it between
+                        // samples — leave the decision to the split stage's
+                        // thin-face fallback.
+                        let aabb = bbox::face_aabb(&a, face_a);
+                        let step = if pts.len() > 1 {
+                            (pts[1] - pts[0]).norm()
+                        } else {
+                            0.0
+                        };
+                        let near = pts.iter().any(|p| {
+                            p.x > aabb.min.x - step
+                                && p.x < aabb.max.x + step
+                                && p.y > aabb.min.y - step
+                                && p.y < aabb.max.y + step
+                                && p.z > aabb.min.z - step
+                                && p.z < aabb.max.z + step
+                        });
+                        if near {
+                            let entry = pts[0];
+                            results_a.push((single_curve.clone(), entry, entry));
+                        }
                     }
                 }
 
@@ -868,6 +985,7 @@ pub(crate) fn brep_boolean(
                     face_b,
                     segs_b.len()
                 );
+                let mut recorded_b = false;
                 for seg in &segs_b {
                     let entry = evaluate_curve(single_curve, seg.t_start);
                     let exit = evaluate_curve(single_curve, seg.t_end);
@@ -884,6 +1002,31 @@ pub(crate) fn brep_boolean(
                 );
                     if len > 1e-6 {
                         results_b.push((single_curve.clone(), entry, exit));
+                        recorded_b = true;
+                    }
+                }
+                // See the A-side counterpart: grazing sampled curves stay
+                // recorded so the thin-face fallback can decide.
+                if !recorded_b {
+                    if let ssi::IntersectionCurve::Sampled(pts) = single_curve {
+                        let aabb = bbox::face_aabb(&b, face_b);
+                        let step = if pts.len() > 1 {
+                            (pts[1] - pts[0]).norm()
+                        } else {
+                            0.0
+                        };
+                        let near = pts.iter().any(|p| {
+                            p.x > aabb.min.x - step
+                                && p.x < aabb.max.x + step
+                                && p.y > aabb.min.y - step
+                                && p.y < aabb.max.y + step
+                                && p.z > aabb.min.z - step
+                                && p.z < aabb.max.z + step
+                        });
+                        if near {
+                            let entry = pts[0];
+                            results_b.push((single_curve.clone(), entry, entry));
+                        }
                     }
                 }
 
@@ -956,12 +1099,87 @@ pub(crate) fn brep_boolean(
         }
     }
 
+    // A spherical face split by two or more circles that INTERSECT each
+    // other is not representable by the cap splitter (each circle mints a
+    // full hole + disk; overlapping caps double-cover the surface and the
+    // result is a cracked shell). Until sphere arc-arrangement splitting
+    // exists, return the documented conservative result instead of garbage:
+    // empty for intersection, A for difference, both shells for union —
+    // exactly what the misclassification on main used to degrade to, but
+    // explicit. TODO(sphere-arrangements): remove once spheres get a real
+    // region splitter.
+    let sphere_arrangement_unsound =
+        |solid: &BRepSolid, splits: &HashMap<FaceId, FaceSplits>| -> bool {
+            for (face_id, list) in splits {
+                if !solid.topology.faces.contains_key(*face_id)
+                    || !split::is_spherical_face(solid, *face_id)
+                {
+                    continue;
+                }
+                let face = &solid.topology.faces[*face_id];
+                let Some(sphere) = solid.geometry.surfaces[face.surface_index]
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+                else {
+                    continue;
+                };
+                // Each circle on the sphere is a cap: axis = unit(center_circle
+                // − center_sphere)… for a great circle the offset is ~0, so use
+                // the circle's plane normal instead; angular radius from the
+                // chord.
+                let caps: Vec<(vcad_kernel_math::Vec3, f64)> = list
+                    .iter()
+                    .filter_map(|(curve, _, _)| {
+                        let ssi::IntersectionCurve::Circle(c) = curve else {
+                            return None;
+                        };
+                        let off = c.center - sphere.center;
+                        let axis = if off.norm() > 1e-9 {
+                            off.normalize()
+                        } else {
+                            c.x_dir.into_inner().cross(c.y_dir.into_inner()).normalize()
+                        };
+                        let ang = (c.radius / sphere.radius).clamp(-1.0, 1.0).asin();
+                        let ang = if off.norm() > 1e-9 && off.norm() > sphere.radius * ang.cos() {
+                            std::f64::consts::PI - ang
+                        } else {
+                            ang
+                        };
+                        Some((axis, ang))
+                    })
+                    .collect();
+                for i in 0..caps.len() {
+                    for j in i + 1..caps.len() {
+                        let (a1, t1) = caps[i];
+                        let (a2, t2) = caps[j];
+                        let gap = a1.dot(a2).clamp(-1.0, 1.0).acos();
+                        let margin = 1e-6;
+                        if gap > (t1 - t2).abs() + margin && gap + margin < t1 + t2 {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+    if sphere_arrangement_unsound(&a, &splits_a) || sphere_arrangement_unsound(&b, &splits_b) {
+        debug_bool!("Sphere circle arrangement unrepresentable: conservative fallback");
+        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
+    }
+
     // Apply splits to both solids
-    apply_splits_to_solid(&mut a, splits_a, segments, "A");
+    apply_splits_to_solid(&mut a, splits_a, segments, "A", &b);
+    // Heal the T-junctions splitting leaves behind (stacked band pieces
+    // partition shared vertical boundaries at different heights, a pinch
+    // tangency stops one side's rim where the other continues). The
+    // classification stage ray-casts against these post-split meshes, and
+    // rays escaping through pre-repair cracks misclassify whole faces.
+    crate::repair::repair_topology_fine(&mut a.topology, 1e-6);
     debug_bool!("\n--- Stage 2.5: After splits applied to A ---");
     debug_bool!("A now has {} faces", a.topology.faces.len());
 
-    apply_splits_to_solid(&mut b, splits_b, segments, "B");
+    apply_splits_to_solid(&mut b, splits_b, segments, "B", &a);
+    crate::repair::repair_topology_fine(&mut b.topology, 1e-6);
 
     // 3. Classify all faces (including split sub-faces)
     debug_bool!("\n--- Stage 3: Classification ---");
@@ -979,9 +1197,133 @@ pub(crate) fn brep_boolean(
     // cracks along the shared circles), so pick it per boolean from the
     // largest curved radius across both operands: a 45mm part classifies at
     // the 256 cap (~4e-3mm sag) while a fillet-scale solid stays cheap.
-    // Tessellate each solid once and reuse for classification.
-    let mesh_b = tessellate_brep(&b, segments);
-    let mesh_a = tessellate_brep(&a, segments);
+    // Tessellate each solid once and reuse for classification. Use the
+    // post-split solids so probes see the exact conformed boundary — but
+    // fall back to the ORIGINAL solid's mesh when the split mesh's area
+    // shows double coverage. A sphere fragmented by several plane circles
+    // renders each fragment as a whole-band patch; the overlapping panels
+    // flip ray parity so every interior probe reads Outside (torture
+    // rand-062). Point-in-solid does not depend on the face partition, so
+    // the unsplit mesh is a sound substitute in that failure mode.
+    let mesh_area = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> f64 {
+        let mut total = 0.0;
+        for t in 0..mesh.indices.len() / 3 {
+            let p = |k: usize| {
+                let i = mesh.indices[t * 3 + k] as usize;
+                Point3::new(
+                    mesh.vertices[i * 3] as f64,
+                    mesh.vertices[i * 3 + 1] as f64,
+                    mesh.vertices[i * 3 + 2] as f64,
+                )
+            };
+            let (x, y, z) = (p(0), p(1), p(2));
+            total += 0.5 * (y - x).cross(z - x).norm();
+        }
+        total
+    };
+    let cls_mesh = |split_solid: &BRepSolid, original: &BRepSolid| {
+        let split_mesh = tessellate_brep(split_solid, segments);
+        let original_mesh = tessellate_brep(original, segments);
+        // Splitting cannot grow the boundary area; a markedly larger split
+        // mesh means fragments tessellated with overlapping coverage.
+        if mesh_area(&split_mesh) > 1.05 * mesh_area(&original_mesh) {
+            original_mesh
+        } else {
+            split_mesh
+        }
+    };
+    let mesh_b = cls_mesh(&b, solid_b);
+    let mesh_a = cls_mesh(&a, solid_a);
+    #[cfg(feature = "debug-boolean")]
+    {
+        let open = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> usize {
+            let quantum = 1e-5;
+            let vkey = |vi: usize| -> [i64; 3] {
+                let mut k = [0i64; 3];
+                for c in 0..3 {
+                    k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+                }
+                k
+            };
+            let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+                std::collections::HashMap::new();
+            for t in 0..mesh.indices.len() / 3 {
+                for k in 0..3 {
+                    let x = vkey(mesh.indices[t * 3 + k] as usize);
+                    let y = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+                    if x == y {
+                        continue;
+                    }
+                    if x < y {
+                        *net.entry((x, y)).or_default() += 1;
+                    } else {
+                        *net.entry((y, x)).or_default() -= 1;
+                    }
+                }
+            }
+            let mut locs: Vec<_> = net
+                .iter()
+                .filter(|(_, &n)| n != 0)
+                .map(|((x, y), _)| (*x, *y))
+                .collect();
+            locs.sort();
+            for (x, y) in locs.iter().take(12) {
+                debug_bool!(
+                    "    open ({:.4},{:.4},{:.4})->({:.4},{:.4},{:.4})",
+                    x[0] as f64 * quantum,
+                    x[1] as f64 * quantum,
+                    x[2] as f64 * quantum,
+                    y[0] as f64 * quantum,
+                    y[1] as f64 * quantum,
+                    y[2] as f64 * quantum
+                );
+            }
+            net.values().map(|n| n.unsigned_abs() as usize).sum()
+        };
+        debug_bool!(
+            "post-split meshes: A open={} B open={}",
+            open(&mesh_a),
+            open(&mesh_b)
+        );
+        let area = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> f64 {
+            let mut total = 0.0;
+            for t in 0..mesh.indices.len() / 3 {
+                let p = |k: usize| {
+                    let i = mesh.indices[t * 3 + k] as usize;
+                    Point3::new(
+                        mesh.vertices[i * 3] as f64,
+                        mesh.vertices[i * 3 + 1] as f64,
+                        mesh.vertices[i * 3 + 2] as f64,
+                    )
+                };
+                let (x, y, z) = (p(0), p(1), p(2));
+                total += 0.5 * (y - x).cross(&(z - x)).norm();
+            }
+            total
+        };
+        debug_bool!(
+            "post-split mesh areas: A={:.2} tris={} B={:.2} tris={}",
+            area(&mesh_a),
+            mesh_a.indices.len() / 3,
+            area(&mesh_b),
+            mesh_b.indices.len() / 3
+        );
+        let params = vcad_kernel_tessellate::TessellationParams::from_segments(segments);
+        for (fid, _kind, fmesh) in vcad_kernel_tessellate::tessellate_brep_by_face(&a, &params) {
+            let step: Vec<f64> = fmesh
+                .vertices
+                .chunks(3)
+                .take(4)
+                .map(|c| (c[1] as f64).atan2(c[0] as f64))
+                .collect();
+            debug_bool!(
+                "  A face {:?}: {} tris, first angles {:?}",
+                fid,
+                fmesh.indices.len() / 3,
+                step
+            );
+        }
+    }
     let classes_a = classify::classify_all_faces_with_mesh(&a, &b, &mesh_b);
     let classes_b = classify::classify_all_faces_with_mesh(&b, &a, &mesh_a);
 

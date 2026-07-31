@@ -47,6 +47,14 @@ use vcad_kernel_topo::FaceId;
 use crate::bbox;
 use crate::ssi::IntersectionCurve;
 
+macro_rules! trim_dbg {
+    ($($arg:tt)*) => {
+        if std::env::var("VCAD_CLS_DEBUG").is_ok() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 /// A trimmed segment of an intersection curve, expressed as a parameter range.
 #[derive(Debug, Clone)]
 pub struct TrimmedSegment {
@@ -131,6 +139,14 @@ pub fn point_in_polygon(point: &Point2, polygon: &[Point2]) -> bool {
 /// Projects the point into the face's (u,v) parameter space and tests
 /// against the face's trim loops.
 pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bool {
+    let r = point_in_face_inner(brep, face_id, point_3d);
+    if !r && std::env::var("VCAD_PIF_DEBUG").is_ok() {
+        eprintln!("pif FALSE {face_id:?} p {point_3d:?}");
+    }
+    r
+}
+
+fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bool {
     let topo = &brep.topology;
     let face = &topo.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
@@ -287,18 +303,71 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             }
         }
 
+        // A frozen full-wrap wall (crate::freeze rewrote the analytic seam
+        // loop into two dense canonical rings) also spans the full U range:
+        // every vertex sits on one of two v-levels and the u samples cover
+        // the whole circle with no gap. The general UV-polygon fallback
+        // cannot represent that annular domain (any seam cut tears the
+        // rings into a self-overlapping polygon), so route it through the
+        // same V-range test as the analytic 2-vertex loop.
+        let frozen_full_band = std::env::var("VCAD_NO_VBAND").is_err()
+            && unique_verts.len() >= 8
+            && surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+                .is_some_and(|cyl| {
+                    let axis = cyl.axis.as_ref();
+                    let vs: Vec<f64> = unique_verts
+                        .iter()
+                        .map(|p| (*p - cyl.center).dot(axis))
+                        .collect();
+                    let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    if v_max - v_min < 1e-9 {
+                        return false;
+                    }
+                    if !vs
+                        .iter()
+                        .all(|v| (v - v_min).abs() < 1e-6 || (v - v_max).abs() < 1e-6)
+                    {
+                        return false;
+                    }
+                    let ref_dir = cyl.ref_dir.as_ref();
+                    let y_dir = axis.cross(ref_dir);
+                    let mut us: Vec<f64> = unique_verts
+                        .iter()
+                        .map(|p| {
+                            let d = *p - cyl.center;
+                            let u = d.dot(y_dir).atan2(d.dot(ref_dir));
+                            if u < 0.0 {
+                                u + 2.0 * std::f64::consts::PI
+                            } else {
+                                u
+                            }
+                        })
+                        .collect();
+                    us.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let mut max_gap = us[0] + 2.0 * std::f64::consts::PI - us[us.len() - 1];
+                    for w in us.windows(2) {
+                        max_gap = max_gap.max(w[1] - w[0]);
+                    }
+                    max_gap < std::f64::consts::FRAC_PI_2
+                });
+
         // If we have only 2 unique vertices (standard full cylinder lateral face)
         // then the face spans the full U range and we only need to check V
-        if unique_verts.len() == 2 {
+        if unique_verts.len() == 2 || frozen_full_band {
             // Get V range from the two seam vertices
             if let Some(cyl) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
             {
-                let v0 = (unique_verts[0] - cyl.center).dot(cyl.axis.as_ref());
-                let v1 = (unique_verts[1] - cyl.center).dot(cyl.axis.as_ref());
-                let v_min = v0.min(v1);
-                let v_max = v0.max(v1);
+                let vs: Vec<f64> = unique_verts
+                    .iter()
+                    .map(|p| (*p - cyl.center).dot(cyl.axis.as_ref()))
+                    .collect();
+                let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+                let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
                 let test_v = test_uv.y; // V coordinate
 
                 // For a full cylinder, just check V is in range
@@ -363,11 +432,20 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             .collect();
         let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
 
-        if !point_in_polygon(&test_uv, &outer_uv) {
+        if !point_in_polygon(&test_uv, &outer_uv)
+            && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        {
+            trim_dbg!(
+                "pif-cyl generic FALSE: test {:?} outer {:?}",
+                test_uv,
+                &outer_uv[..outer_uv.len().min(8)]
+            );
             return false;
         }
         for inner_uv in &inner_uv {
-            if point_in_polygon(&test_uv, inner_uv) {
+            if point_in_polygon(&test_uv, inner_uv)
+                && !near_polygon_boundary(&test_uv, inner_uv, 1e-7)
+            {
                 return false;
             }
         }
@@ -422,11 +500,20 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             .collect();
         let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
 
-        if !point_in_polygon(&test_uv, &outer_uv) {
+        if !point_in_polygon(&test_uv, &outer_uv)
+            && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        {
+            trim_dbg!(
+                "pif-cyl generic FALSE: test {:?} outer {:?}",
+                test_uv,
+                &outer_uv[..outer_uv.len().min(8)]
+            );
             return false;
         }
         for inner_uv in &inner_uv {
-            if point_in_polygon(&test_uv, inner_uv) {
+            if point_in_polygon(&test_uv, inner_uv)
+                && !near_polygon_boundary(&test_uv, inner_uv, 1e-7)
+            {
                 return false;
             }
         }
@@ -482,11 +569,13 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
             test_uv = Point2::new(test_uv.x, test_uv.y + 2.0 * std::f64::consts::PI);
         }
 
-        if !point_in_polygon(&test_uv, &outer_uv) {
+        if !point_in_polygon(&test_uv, &outer_uv)
+            && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        {
             return false;
         }
         for inner in &inner_uv {
-            if point_in_polygon(&test_uv, inner) {
+            if point_in_polygon(&test_uv, inner) && !near_polygon_boundary(&test_uv, inner, 1e-7) {
                 return false;
             }
         }
@@ -507,19 +596,46 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> bo
         })
         .collect();
 
-    // Test if inside outer loop
-    if !point_in_polygon(&test_uv, &outer_uv) {
+    // Test if inside outer loop. `point_in_polygon` treats exactly-on-edge
+    // as inside via exact predicates, but the UV projection carries fp
+    // error — a point mathematically ON the boundary (e.g. the tangency
+    // where an ellipse touches a face edge) can project a hair outside and
+    // flip the verdict, which shifts trim endpoints a whole curve sample.
+    // Give the boundary an explicit metric tolerance.
+    if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7) {
         return false;
     }
 
     // Test if outside all inner loops (holes)
     for inner_uv in &inner_uv {
-        if point_in_polygon(&test_uv, inner_uv) {
+        if point_in_polygon(&test_uv, inner_uv) && !near_polygon_boundary(&test_uv, inner_uv, 1e-7)
+        {
             return false; // inside a hole
         }
     }
 
     true
+}
+
+/// Is `p` within `tol` of any edge of `polygon` (UV metric)?
+fn near_polygon_boundary(p: &Point2, polygon: &[Point2], tol: f64) -> bool {
+    let n = polygon.len();
+    for i in 0..n {
+        let a = polygon[i];
+        let b = polygon[(i + 1) % n];
+        let (ex, ey) = (b.x - a.x, b.y - a.y);
+        let len2 = ex * ex + ey * ey;
+        let t = if len2 < 1e-24 {
+            0.0
+        } else {
+            (((p.x - a.x) * ex + (p.y - a.y) * ey) / len2).clamp(0.0, 1.0)
+        };
+        let (dx, dy) = (p.x - (a.x + t * ex), p.y - (a.y + t * ey));
+        if dx * dx + dy * dy <= tol * tol {
+            return true;
+        }
+    }
+    false
 }
 
 /// Project a 3D point onto a surface's UV parameter space.
