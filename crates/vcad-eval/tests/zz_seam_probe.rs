@@ -170,6 +170,24 @@ fn probe(src: &str, segments: u32) {
             }
         }
     }
+    {
+        let mut vol = 0.0;
+        for t in 0..ntri {
+            let p = |i: usize| {
+                let b = mesh.indices[t * 3 + i] as usize * 3;
+                (
+                    mesh.vertices[b] as f64,
+                    mesh.vertices[b + 1] as f64,
+                    mesh.vertices[b + 2] as f64,
+                )
+            };
+            let (a, b, c) = (p(0), p(1), p(2));
+            vol += (a.0 * (b.1 * c.2 - b.2 * c.1) - a.1 * (b.0 * c.2 - b.2 * c.0)
+                + a.2 * (b.0 * c.1 - b.1 * c.0))
+                / 6.0;
+        }
+        println!("volume = {vol:.4}");
+    }
     let mut open: Vec<_> = net
         .iter()
         .filter(|(_, &n)| n != 0)
@@ -219,4 +237,25 @@ fn zz_probe_flat_two() {
         );
     }
     probe(&src, 256);
+}
+
+#[test]
+fn zz_probe_f2() {
+    // Staircase hub from the f2 test: cylinder minus bore minus counterbore,
+    // then union a single flat blade.
+    let hub = "[difference [translate 0 0 8.57 [cylinder 14 4]] \
+                 [difference [cylinder 8 12.57] [cylinder 22.5 12.57]]]";
+    let src = format!(
+        "[union [translate 21.5 0 0 [cube 23.5 0.5 12.57]] {hub}]"
+    );
+    probe(&src, 256);
+}
+
+#[test]
+fn zz_probe_hub_only() {
+    probe(
+        "[difference [translate 0 0 8.57 [cylinder 14 4]] \
+          [difference [cylinder 8 12.57] [cylinder 22.5 12.57]]]",
+        256,
+    );
 }

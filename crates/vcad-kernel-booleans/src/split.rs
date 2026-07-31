@@ -4011,3 +4011,91 @@ mod tests {
         );
     }
 }
+
+/// Sub-resolution fallback for thin faces: when a sampled cut curve crosses
+/// a face narrower than its own sample spacing, the trim finds no interval,
+/// but the two exact crossing vertices already sit ON the face's boundary
+/// (inserted by the adjacent faces' splits against the same surface pair).
+/// Detect exactly two such vertices and split along the chord between them.
+pub(crate) fn split_thin_face_at_curve_vertices(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    curve_pts: &[Point3],
+) -> Option<SplitResult> {
+    if curve_pts.len() < 4 {
+        return None;
+    }
+    let face = &brep.topology.faces[face_id];
+    if !face.inner_loops.is_empty() {
+        return None;
+    }
+    let loop_verts: Vec<Point3> = brep
+        .topology
+        .loop_half_edges(face.outer_loop)
+        .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+        .collect();
+    let n = loop_verts.len();
+    if n < 4 {
+        return None;
+    }
+    // Distance from a point to the sampled polyline. The crossing vertices
+    // lie ON the true curve, which sags up to ~5 µm off the polyline chords.
+    let dist_to_curve = |p: &Point3| -> f64 {
+        let mut best = f64::INFINITY;
+        for w in curve_pts.windows(2) {
+            let ab = w[1] - w[0];
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - w[0]).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            best = best.min((*p - (w[0] + t * ab)).norm());
+        }
+        best
+    };
+    const ON_CURVE_TOL: f64 = 6e-3;
+    let hits: Vec<usize> = (0..n)
+        .filter(|&i| dist_to_curve(&loop_verts[i]) < ON_CURVE_TOL)
+        .collect();
+    if hits.len() != 2 {
+        return None;
+    }
+    let (i, j) = (hits[0], hits[1]);
+    // The two vertices must not be adjacent along the loop (a boundary edge
+    // already runs between adjacent ones) and the chord must be a genuine
+    // sub-sample cut.
+    if j == i + 1 || (i == 0 && j == n - 1) {
+        return None;
+    }
+    let (a, b) = (loop_verts[i], loop_verts[j]);
+    let chord = (b - a).norm();
+    let sample_step = (curve_pts[1] - curve_pts[0]).norm().max(1e-9);
+    if chord < 1e-6 || chord > 2.0 * sample_step {
+        return None;
+    }
+    // Chord midpoint must be strictly inside the face (not along an edge).
+    let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
+    let mut min_d = f64::INFINITY;
+    for k in 0..n {
+        let e0 = loop_verts[k];
+        let e1 = loop_verts[(k + 1) % n];
+        let ab = e1 - e0;
+        let len2 = ab.norm_squared();
+        let t = if len2 < 1e-18 {
+            0.0
+        } else {
+            ((mid - e0).dot(ab) / len2).clamp(0.0, 1.0)
+        };
+        min_d = min_d.min((mid - (e0 + t * ab)).norm());
+    }
+    if min_d < 1e-7 || !crate::trim::point_in_face(brep, face_id, &mid) {
+        return None;
+    }
+    let result = split_face_by_curve(brep, face_id, &IntersectionCurve::Empty, &a, &b);
+    if result.sub_faces.len() >= 2 {
+        Some(result)
+    } else {
+        None
+    }
+}

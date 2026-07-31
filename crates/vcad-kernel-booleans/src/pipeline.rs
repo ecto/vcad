@@ -487,6 +487,25 @@ fn apply_splits_to_solid(
                             }
                         }
                         if !split_applied {
+                            // Sub-resolution fallback: a curve crossing a
+                            // THIN face (a 0.5 mm blade wall) can enter and
+                            // leave between two samples — the trim sees
+                            // nothing, but the face's boundary already
+                            // carries the two exact crossing vertices
+                            // (inserted by the neighboring faces' splits).
+                            // Cut the chord between them; over a
+                            // sub-sample span its deviation from the true
+                            // curve is far below merge tolerance.
+                            if let ssi::IntersectionCurve::Sampled(pts) = curve {
+                                if let Some(r) =
+                                    split::split_thin_face_at_curve_vertices(solid, cur, pts)
+                                {
+                                    if r.sub_faces.len() >= 2 {
+                                        pending.extend(r.sub_faces);
+                                        continue;
+                                    }
+                                }
+                            }
                             new_faces.push(cur);
                         }
                     }
