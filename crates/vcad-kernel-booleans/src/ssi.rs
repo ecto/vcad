@@ -310,6 +310,27 @@ fn plane_sphere(plane: &Plane, sphere: &SphereSurface) -> IntersectionCurve {
 // Plane-Cylinder intersection
 // =============================================================================
 
+/// Sample count for a sampled ellipse (oblique plane × cylinder) so the
+/// polyline's chordal sag stays under ~1e-3 mm on the cylinder of radius `r`.
+/// `n = π / acos(1 − sag/r)`, clamped to [64, 512].
+///
+/// The target is finer than `split::arc_segments` (5e-3) because the torr
+/// A1 sliver case fails at that coarser value — trim boundaries derived
+/// from this polyline need the extra accuracy. Sample count feeds band
+/// vertex count and hence result triangle count, so this is not free;
+/// `MAX_BOUNDARY_PROBES` in `classify` is what keeps classification cost
+/// from scaling with it.
+fn ellipse_samples(r: f64) -> usize {
+    const SAG: f64 = 1e-3;
+    let n = if r > SAG {
+        let arg = (1.0 - SAG / r).clamp(-1.0, 1.0);
+        (std::f64::consts::PI / arg.acos()).ceil() as usize
+    } else {
+        64
+    };
+    n.clamp(64, 512)
+}
+
 /// Intersection of a plane and a cylinder.
 ///
 /// Three cases:
@@ -420,9 +441,13 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
             normal: Dir3::new_normalize(circle_normal),
         })
     } else {
-        // General case — ellipse
-        // Sample the intersection curve
-        let n_samples = 64;
+        // General case — ellipse. Sample densely enough that the polyline's
+        // chordal sag stays below classification/probe tolerances: with a
+        // fixed 64 samples a 45mm-radius ellipse deviates ~0.07mm from the
+        // true curve, which places trim boundaries visibly inside the real
+        // intersection (the torr A1/A2 trim-overshoot family). Target the
+        // same sag the splitter's `arc_segments` uses.
+        let n_samples = ellipse_samples(cyl.radius);
         let mut points = Vec::with_capacity(n_samples);
 
         for i in 0..n_samples {

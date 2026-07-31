@@ -45,7 +45,7 @@
 //! - Self-inductance is filamentary, so it depends on the conductor radius used
 //!   to regularize the on-axis singularity. Rectangular PCB traces have no
 //!   single "radius"; we use the geometric-mean-distance equivalent, and the
-//!   residual error on `L` is larger than on `Kt` — see [`machine`].
+//!   residual error on `L` is larger than on `Kt` — see `machine`.
 //! - Temperature. `Kt` shifts with magnet remanence (≈ −0.2%/K for NdFeB,
 //!   ≈ −0.2%/K for ferrite) and `R` with copper resistivity (+0.39%/K).
 //!   Callers supply the operating temperature; nothing here guesses it.
@@ -57,7 +57,7 @@
 //! crate therefore returns zero cogging *by construction*, not as a computed
 //! result — do not read it as a validated prediction. What *is* computed is
 //! torque ripple under load, which for an air-core machine comes from winding
-//! and magnet-field harmonics alone; see [`kpi`].
+//! and magnet-field harmonics alone; see `kpi`.
 //!
 //! # Units
 //!

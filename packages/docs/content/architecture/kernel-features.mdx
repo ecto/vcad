@@ -259,7 +259,7 @@ Honesty: the luminance edge-stopping weight is scaled by the estimator's own var
 
 ### Physics
 
-`vcad-kernel-physics` converts BRep assemblies into articulated rigid-body simulations (phyz): revolute, prismatic, cylindrical, ball, and fixed joints, with a gym-style `reset()` / `step(action)` / `observe()` interface for reinforcement learning — actions as torques, position targets, or velocity targets.
+`vcad-kernel-physics` converts BRep assemblies into articulated rigid-body simulations (phyz): revolute, prismatic, cylindrical, ball, and fixed joints, with a gym-style `reset()` / `step(action)` / `observe()` interface for reinforcement learning — actions as torques, position targets, or velocity targets. The step includes ground contact: each part's convex collision geometry is tested against a configurable ground plane (height, Coulomb friction, restitution — on by default at z = 0) and resolved with a velocity-level projected Gauss-Seidel impulse solve over the coupled contact manifold, so dropped bodies land and rest and legged assemblies can push against a floor instead of falling through the world.
 
 ### Differentiable Geometry
 

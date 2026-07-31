@@ -241,7 +241,7 @@ impl SheetMetalModel {
     /// Walk the panel/bend graph from the root, yielding each `(panel_id,
     /// parent_bend_id_or_none)` in BFS order.
     ///
-    /// The first yielded item is `(root, None)`. Used by [`crate::unfold`] to
+    /// The first yielded item is `(root, None)`. Used by [`crate::unfold()`] to
     /// propagate the unfolded frame outward from the reference panel.
     pub fn bfs(&self) -> impl Iterator<Item = (PanelId, Option<BendId>)> + '_ {
         BfsIter::new(self)

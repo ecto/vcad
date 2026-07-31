@@ -620,11 +620,28 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
         .iter()
         .filter(|r| r.visible != Some(false))
         .collect();
+    // Part-definition prototype roots: a URDF import pushes each link's
+    // geometry both as a scene root AND as a part-def referenced by a
+    // world-placed instance. Drawing the root too would pile every link
+    // untransformed at the origin on top of the FK-placed assembly.
+    let proto_roots: std::collections::HashSet<vcad_ir::NodeId> =
+        match (&parsed.document.part_defs, &parsed.document.instances) {
+            (Some(defs), Some(insts)) if !insts.is_empty() => {
+                defs.values().map(|d| d.root).collect()
+            }
+            _ => Default::default(),
+        };
     let mut solids: Vec<SceneSolid> = scene
         .parts
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
+            if visible_roots
+                .get(i)
+                .is_some_and(|r| proto_roots.contains(&r.root))
+            {
+                return None;
+            }
             // A root whose chain bottoms out in an `ImportedMesh` (frozen
             // topology-optimization results, drag-dropped STL/GLB) carries
             // no `Solid` — the evaluator has no path from a triangle soup
@@ -665,7 +682,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     // definition once and place a transformed copy per instance. Without
     // this, an assembly-only document (no scene roots) rendered as
     // "no solids produced" despite being perfectly valid.
-    solids.extend(evaluate_assembly_instances(&parsed.document)?);
+    solids.extend(evaluate_assembly_instances(&parsed.document, &scene)?);
     Ok(solids)
 }
 
@@ -673,7 +690,10 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
 /// tinted solids. Part-definition solids are evaluated once and shared;
 /// per-instance world poses come from forward kinematics, falling back to
 /// the instance's static transform.
-fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid>, String> {
+fn evaluate_assembly_instances(
+    doc: &vcad_ir::Document,
+    scene: &vcad_eval::EvaluatedScene,
+) -> Result<Vec<SceneSolid>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
         return Ok(Vec::new());
     };
@@ -703,6 +723,24 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
                         .flatten()
                 }))
                 .unwrap_or(None)
+                // No BRep (mesh-imported part, e.g. a URDF link's STL):
+                // wrap the evaluated triangle mesh, same as the roots path.
+                .or_else(|| {
+                    scene
+                        .part_defs
+                        .as_ref()?
+                        .iter()
+                        .find(|pd| pd.id == inst.part_def_id)
+                        .filter(|pd| !pd.mesh.indices.is_empty())
+                        .map(|pd| {
+                            Solid::from_mesh(vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+                                vertices: pd.mesh.positions.clone(),
+                                indices: pd.mesh.indices.clone(),
+                                normals: pd.mesh.normals.clone().unwrap_or_default(),
+                                face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                            })
+                        })
+                })
             })
             .clone();
         let Some(solid) = solid else { continue };

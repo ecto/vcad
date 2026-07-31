@@ -3,7 +3,7 @@
 //!
 //! This module is a *composition layer*. It renders each view through the
 //! crate's ordinary public entry points ([`render_svg_str_opts`] /
-//! [`render_png_str`]) at one shared scale and arranges the results — it
+//! `render_png_str`) at one shared scale and arranges the results — it
 //! deliberately owns none of the projection, shading, or hidden-line logic.
 //! Keeping it decoupled means new single-view features (sections, exact
 //! edges, ray tracing, annotations) neither need nor get special-casing
@@ -32,7 +32,7 @@ const SHEET_VIEWS: [(View, &str, usize, usize); 4] = [
 #[derive(Debug, Clone)]
 pub struct SheetOptions {
     /// Overall sheet width in user units / pixels; height is derived
-    /// (landscape, [`SHEET_ASPECT`]).
+    /// (landscape, `SHEET_ASPECT`).
     pub width_px: f64,
     /// Title shown in the title block (typically the document/file name).
     pub title: String,

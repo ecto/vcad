@@ -288,7 +288,7 @@ pub fn tangency_rows(
 ///   field-velocity-quadratic terms. For sphere/cylinder it is the closed
 ///   form `−2‖ẋ⊥ − v_c⊥‖² + 2ṙ²` of their *constant* Hessian (`∇²g` = `2I` /
 ///   `2P`, `P = I − aaᵀ`); cone and torus carry their non-constant curvature
-///   in closed form too (see [`velocity_curvature`]'s per-kind derivations).
+///   in closed form too (see `velocity_curvature`'s per-kind derivations).
 ///
 /// `x` is the vertex position, `xdot` its already-solved velocity (from
 /// [`solve_vertex_velocity`] on the first-order rows). Implemented for

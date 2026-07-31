@@ -319,6 +319,7 @@ export type {
   PhysicsObservation,
   PhysicsStepResult,
   PhysicsEnvOptions,
+  PhysicsGroundOptions,
   ActionType as PhysicsActionType,
 } from "./physics.js";
 

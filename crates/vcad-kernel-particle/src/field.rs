@@ -86,7 +86,7 @@ struct BGrid {
 ///
 /// Coil B is precomputed on the Poisson grid once (analytic elliptic
 /// integrals at every node) and bilinearly sampled during tracing — except
-/// within [`B_NEAR_WIRE_FACTOR`] wire radii of a conductor, where the
+/// within `B_NEAR_WIRE_FACTOR` wire radii of a conductor, where the
 /// exact analytic sum is used so the shielding sheath keeps its 1/ρ
 /// structure. This removes the per-substep elliptic-integral cost that
 /// dominated high-current traces.

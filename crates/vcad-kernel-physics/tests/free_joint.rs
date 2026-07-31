@@ -4,7 +4,7 @@
 //! kept 3 rotational DOF but silently dropped translation).
 
 use vcad_ir::{Document, JointKind};
-use vcad_kernel_physics::{Action, PhysicsWorld, RobotEnv};
+use vcad_kernel_physics::{Action, GroundConfig, PhysicsWorld, RobotEnv};
 
 /// Ground base + a torso attached by a Free joint 500 mm up.
 fn free_base_doc() -> Document {
@@ -102,7 +102,18 @@ fn free_joint_gym_observation_layout() {
         JointKind::Free
     ));
 
-    let mut env = RobotEnv::new(doc, vec!["torso_inst".to_string()], None, None).unwrap();
+    // Ground off: this test measures free-fall dynamics and the observation
+    // layout, not contact. With the default ground plane at z = 0 the base
+    // (starting 500 mm up) would land after ~0.32 s and be at rest by the
+    // end of the 0.5 s rollout, leaving nothing to observe falling.
+    let mut env = RobotEnv::new(
+        doc,
+        vec!["torso_inst".to_string()],
+        None,
+        None,
+        Some(GroundConfig::disabled()),
+    )
+    .unwrap();
 
     // The floating base is passive: it appears in observations (6 slots)
     // but not in the action space.

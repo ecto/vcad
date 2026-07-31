@@ -3,7 +3,7 @@
 //! FIRE is the workhorse for atomic relaxation: it's a damped-MD scheme that
 //! is robust, gradient-only, and converges quickly to a local energy minimum.
 //! Convergence is on the max force component (eV/Å). The FIRE numerics
-//! delegate to [`phyz_md::field::fire`]; this module binds them to
+//! delegate to [`phyz_md::field::fire()`]; this module binds them to
 //! [`AtomSystem`] and a [`ForceField`].
 
 use crate::potential::ForceField;

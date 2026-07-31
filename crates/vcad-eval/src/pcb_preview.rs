@@ -9,7 +9,7 @@
 //! meshes — green soldermask, mask-clad copper (green) with exposed gold pads,
 //! real 3D component bodies, and white silkscreen — for the inline GLB preview.
 //! It reuses the exact copper-mesh
-//! helpers the merged path uses ([`trace_to_mesh`](crate::evaluate::trace_to_mesh)
+//! helpers the merged path uses (`trace_to_mesh`
 //! et al.) so the two views never diverge, and pulls component bodies from
 //! [`vcad_ecad_pcb::component_mesh`] so the preview shows real packages
 //! (chips with metallic end caps, dark ICs, pin headers) instead of 1 mm boxes.
