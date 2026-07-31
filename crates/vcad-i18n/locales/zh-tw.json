@@ -343,6 +343,7 @@
   "joint.slider": "滑動",
   "joint.cylindrical": "圓柱",
   "joint.ball": "球",
+  "joint.free": "自由",
   "joint.suffix": "接頭",
 
   "tree.scene": "場景",

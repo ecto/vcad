@@ -1,0 +1,18 @@
+{
+  "id": "2026-07-31-free-joint-floating-base",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "Free (6-DOF) joints — URDF floating bases can fall",
+  "summary": "New Free joint kind with full 6-DOF physics: URDF floating joints (e.g. a humanoid's floating base) now import as Free instead of Ball, so the base can translate, fall, and walk instead of being pinned in space.",
+  "features": [
+    "assembly",
+    "physics",
+    "urdf-import"
+  ],
+  "mcpTools": [
+    "create_robot_env",
+    "gym_step",
+    "gym_observe"
+  ]
+}

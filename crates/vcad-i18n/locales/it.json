@@ -343,6 +343,7 @@
   "joint.slider": "Prismatico",
   "joint.cylindrical": "Cilindrico",
   "joint.ball": "Sferico",
+  "joint.free": "Libero",
   "joint.suffix": "Giunto",
 
   "tree.scene": "Scena",

@@ -538,6 +538,7 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
                     ("Cylindrical", Some([axis.x, axis.y, axis.z]), None)
                 }
                 JointKind::Ball => ("Ball", None, None),
+                JointKind::Free => ("Free", None, None),
             };
 
             let mut params = HashMap::new();

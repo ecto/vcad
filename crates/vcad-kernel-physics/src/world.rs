@@ -13,8 +13,7 @@ use vcad_ir::{Document, InertialProperties, JointKind};
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
 use crate::error::PhysicsError;
 use crate::joints::{
-    convert_state_from_physics, convert_state_to_physics, joint_ndof, vcad_joint_to_phyz,
-    MotorMode, MotorTarget,
+    convert_state_to_physics, joint_ndof, vcad_joint_to_phyz, MotorMode, MotorTarget,
 };
 
 /// Ground-plane contact configuration for a physics world.
@@ -481,6 +480,12 @@ impl PhysicsWorld {
         // authored at a nonzero angle, so a "passive" rollout was really a
         // servo fighting gravity and no unactuated joint ever swung freely.
         for joint in joints {
+            // The scalar `state` is meaningless for a 6-DOF Free joint — its
+            // pose lives entirely in the physics q, and writing a single q
+            // slot from it would corrupt that pose — so skip it here.
+            if matches!(joint.kind, JointKind::Free) {
+                continue;
+            }
             if joint_ndof(&joint.kind) == 0 || joint.state.abs() <= 1e-6 {
                 continue;
             }
@@ -793,7 +798,8 @@ impl PhysicsWorld {
                     continue;
                 }
 
-                // For 1-DOF joints, read directly from state
+                // Scalar summary: the first DOF only. For multi-DOF joints
+                // (Ball, Free) use `get_joint_dofs` for the full layout.
                 let position = self.state.q[q_offset];
                 let velocity = self.state.v[v_offset];
                 let effort = self.state.ctrl[v_offset];
@@ -801,8 +807,8 @@ impl PhysicsWorld {
                 states.insert(
                     joint_id.clone(),
                     JointState {
-                        position: convert_state_from_physics(kind, position),
-                        velocity: convert_state_from_physics(kind, velocity),
+                        position: crate::joints::convert_q_dof_from_physics(kind, 0, position),
+                        velocity: crate::joints::convert_v_dof_from_physics(kind, 0, velocity),
                         effort,
                     },
                 );
@@ -820,7 +826,8 @@ impl PhysicsWorld {
     /// * `target` - Target position (degrees for revolute, mm for prismatic)
     pub fn set_joint_position(&mut self, joint_id: &str, target: f64) {
         if let Some(kind) = self.joint_kinds.get(joint_id) {
-            if joint_ndof(kind) == 0 {
+            // Free joints are passive floating bases — no motor to drive.
+            if joint_ndof(kind) == 0 || matches!(kind, JointKind::Free) {
                 return;
             }
             let physics_target = convert_state_to_physics(kind, target);
@@ -888,7 +895,8 @@ impl PhysicsWorld {
     /// * `target` - Target velocity (deg/s for revolute, mm/s for prismatic)
     pub fn set_joint_velocity(&mut self, joint_id: &str, target: f64) {
         if let Some(kind) = self.joint_kinds.get(joint_id) {
-            if joint_ndof(kind) == 0 {
+            // Free joints are passive floating bases — no motor to drive.
+            if joint_ndof(kind) == 0 || matches!(kind, JointKind::Free) {
                 return;
             }
             let physics_target = convert_state_to_physics(kind, target);
@@ -922,7 +930,7 @@ impl PhysicsWorld {
         if self
             .joint_kinds
             .get(joint_id)
-            .is_none_or(|kind| joint_ndof(kind) == 0)
+            .is_none_or(|kind| joint_ndof(kind) == 0 || matches!(kind, JointKind::Free))
         {
             return;
         }
@@ -1014,7 +1022,7 @@ impl PhysicsWorld {
                 .copied()
                 .ok_or_else(|| PhysicsError::MissingJoint(joint_id.clone()))?;
             for k in 0..ndof {
-                let physics_val = convert_state_to_physics(kind, q[cursor + k]);
+                let physics_val = crate::joints::convert_q_dof_to_physics(kind, k, q[cursor + k]);
                 self.state.q[q_offset + k] = physics_val;
             }
             cursor += ndof;
@@ -1064,7 +1072,8 @@ impl PhysicsWorld {
             }
             let q_offset = self.joint_q_offsets[joint_id];
             for k in 0..ndof {
-                self.state.q[q_offset + k] = convert_state_to_physics(kind, q[cursor + k]);
+                self.state.q[q_offset + k] =
+                    crate::joints::convert_q_dof_to_physics(kind, k, q[cursor + k]);
             }
             cursor += ndof;
         }
@@ -1148,17 +1157,56 @@ impl PhysicsWorld {
     /// Joint ids (document order) with at least one degree of freedom.
     ///
     /// Fixed joints weld their child to the parent body and contribute no
-    /// actuated dof, so they are excluded here.
+    /// actuated dof, so they are excluded here. Free joints (floating
+    /// bases) are excluded too: a floating base is passive — it has no
+    /// actuator, matching the URDF/MuJoCo convention.
     pub fn actuated_joint_ids(&self) -> Vec<String> {
         self.joint_order
             .iter()
             .filter(|id| {
                 self.joint_kinds
                     .get(*id)
-                    .is_some_and(|kind| joint_ndof(kind) > 0)
+                    .is_some_and(|kind| joint_ndof(kind) > 0 && !matches!(kind, JointKind::Free))
             })
             .cloned()
             .collect()
+    }
+
+    /// Number of DOFs of a joint (0 for unknown joint ids).
+    pub fn joint_dof_count(&self, joint_id: &str) -> usize {
+        self.joint_kinds.get(joint_id).map_or(0, joint_ndof)
+    }
+
+    /// Per-DOF positions and velocities of a joint, in vcad units.
+    ///
+    /// Layouts (see [`crate::joints::convert_q_dof_from_physics`] /
+    /// [`crate::joints::convert_v_dof_from_physics`]):
+    /// - 1-DOF kinds: `([pos], [vel])` — degrees / deg/s or mm / mm/s
+    /// - Ball: 3 rotation exp-coords in degrees; 3 angular vel in deg/s
+    /// - Free: positions `[x, y, z (mm), rx, ry, rz (exp-coords, deg)]`,
+    ///   velocities `[wx, wy, wz (deg/s), vx, vy, vz (body-frame mm/s)]` —
+    ///   note the swapped rotation/translation order between the two
+    /// - Fixed: `([], [])`
+    pub fn get_joint_dofs(&self, joint_id: &str) -> Option<(Vec<f64>, Vec<f64>)> {
+        let kind = self.joint_kinds.get(joint_id)?;
+        let ndof = joint_ndof(kind);
+        let &q_offset = self.joint_q_offsets.get(joint_id)?;
+        let &v_offset = self.joint_v_offsets.get(joint_id)?;
+        let mut positions = Vec::with_capacity(ndof);
+        let mut velocities = Vec::with_capacity(ndof);
+        for k in 0..ndof {
+            positions.push(crate::joints::convert_q_dof_from_physics(
+                kind,
+                k,
+                self.state.q[q_offset + k],
+            ));
+            velocities.push(crate::joints::convert_v_dof_from_physics(
+                kind,
+                k,
+                self.state.v[v_offset + k],
+            ));
+        }
+        Some((positions, velocities))
     }
 
     /// Get list of all instance IDs.

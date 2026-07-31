@@ -1124,6 +1124,7 @@ function getJointTypeLabel(kind: JointKind): string {
     case "Slider": return t("joint.slider");
     case "Cylindrical": return t("joint.cylindrical");
     case "Ball": return t("joint.ball");
+    case "Free": return t("joint.free");
   }
 }
 

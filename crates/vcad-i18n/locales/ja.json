@@ -343,6 +343,7 @@
   "joint.slider": "スライダー",
   "joint.cylindrical": "円筒",
   "joint.ball": "ボール",
+  "joint.free": "フリー",
   "joint.suffix": "ジョイント",
 
   "tree.scene": "シーン",

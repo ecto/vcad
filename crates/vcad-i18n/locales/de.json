@@ -343,6 +343,7 @@
   "joint.slider": "Schiebegelenk",
   "joint.cylindrical": "Zylindergelenk",
   "joint.ball": "Kugelgelenk",
+  "joint.free": "Frei",
   "joint.suffix": "Verbindung",
 
   "tree.scene": "Szene",

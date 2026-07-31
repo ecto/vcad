@@ -60,6 +60,7 @@
 //! JSLD id parentInst childInst px py pz cx cy cz ax ay az [min max]
 //! JCYL id parentInst childInst px py pz cx cy cz ax ay az
 //! JBAL id parentInst childInst px py pz cx cy cz
+//! JFRE id parentInst childInst px py pz cx cy cz
 //! GROUND instanceId
 //! ```
 //!
@@ -418,6 +419,22 @@ fn format_joint(output: &mut String, joint: &Joint) {
             )
             .unwrap();
         }
+        JointKind::Free => {
+            writeln!(
+                output,
+                "JFRE {} {} {} {} {} {} {} {} {}",
+                escape_id(&joint.id),
+                parent,
+                child,
+                pa.x,
+                pa.y,
+                pa.z,
+                ca.x,
+                ca.y,
+                ca.z
+            )
+            .unwrap();
+        }
         JointKind::Ball => {
             writeln!(
                 output,
@@ -745,7 +762,7 @@ pub fn from_vcode(s: &str) -> Result<Document, VCodeParseError> {
             }
 
             // Joints
-            "JFIX" | "JREV" | "JSLD" | "JCYL" | "JBAL" => {
+            "JFIX" | "JREV" | "JSLD" | "JCYL" | "JBAL" | "JFRE" => {
                 parse_joint(&mut doc, opcode, &parts, current_line)?;
             }
 
@@ -1226,6 +1243,32 @@ fn parse_joint(
                     parse_f64(parts[9], line)?,
                 ),
                 kind: JointKind::Ball,
+                state: 0.0,
+            });
+        }
+        "JFRE" => {
+            if parts.len() < 10 {
+                return Err(VCodeParseError {
+                    line,
+                    message: format!("JFRE requires 9 args, got {}", parts.len() - 1),
+                });
+            }
+            joints.push(Joint {
+                id: parse_string_arg(parts[1]),
+                name: None,
+                parent_instance_id: parse_optional_parent(parts[2]),
+                child_instance_id: parse_string_arg(parts[3]),
+                parent_anchor: Vec3::new(
+                    parse_f64(parts[4], line)?,
+                    parse_f64(parts[5], line)?,
+                    parse_f64(parts[6], line)?,
+                ),
+                child_anchor: Vec3::new(
+                    parse_f64(parts[7], line)?,
+                    parse_f64(parts[8], line)?,
+                    parse_f64(parts[9], line)?,
+                ),
+                kind: JointKind::Free,
                 state: 0.0,
             });
         }
