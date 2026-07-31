@@ -6,7 +6,7 @@
 //! measured reflected inertia, so commands must stay bounded and converge.
 
 use vcad_ir::Document;
-use vcad_kernel_physics::PhysicsWorld;
+use vcad_kernel_physics::{GroundConfig, PhysicsWorld, RobotEnv, GAIN_STABILITY_LIMIT};
 
 /// A mm-scale crank + slider: 40mm flywheel on a Y-axis revolute plus a
 /// vertical slider — the shape of an engine assembly.
@@ -124,5 +124,118 @@ fn unactuated_slider_stops_at_its_limit() {
         (slide.position - -15.0).abs() < 1.0,
         "slider not at lower stop: {}mm",
         slide.position
+    );
+}
+
+/// Empirical calibration of `GAIN_STABILITY_LIMIT`: sweep ω·dt on the
+/// mm-scale crank and confirm the explicit servo is well-behaved at (and
+/// well past) the limit, and genuinely broken above ω·dt ≈ 1.
+#[test]
+fn gain_stability_limit_is_conservative() {
+    let dt = 1.0 / 240.0f64;
+    let track_error = |omega_dt: f64| -> f64 {
+        let doc = mm_scale_doc();
+        let mut world = PhysicsWorld::from_document(&doc).expect("world");
+        // Probe the reflected inertia through the warning itself, then pick
+        // critically-damped gains landing exactly on this ω·dt.
+        world.set_joint_gains("crank", 1.0, 0.0);
+        let inertia = world
+            .check_gain_stability(dt)
+            .first()
+            .map(|w| w.reflected_inertia)
+            .unwrap_or(1.0);
+        let omega = omega_dt / dt;
+        world.set_joint_gains("crank", inertia * omega * omega, 2.0 * inertia * omega);
+        world.set_joint_position("crank", 30.0);
+        for _ in 0..480 {
+            world.step(dt as f32);
+        }
+        (world.get_joint_states()["crank"].position - 30.0).abs()
+    };
+
+    // At and beyond the limit the servo still settles on target.
+    for omega_dt in [GAIN_STABILITY_LIMIT, 0.5, 0.8] {
+        let err = track_error(omega_dt);
+        assert!(
+            err < 1.0,
+            "omega*dt = {omega_dt} should still track 30°, off by {err}°"
+        );
+    }
+    // Past ω·dt ≈ 1 it is destroyed.
+    let err = track_error(1.3);
+    assert!(
+        err > 30.0,
+        "omega*dt = 1.3 should diverge off target, off by only {err}°"
+    );
+}
+
+/// The reported case in miniature: gains that are stable in an implicitly
+/// integrated simulator (booster_gym ships kp = 200 on the K1) land far
+/// outside this crate's explicit stability region at a coarse substep. Here
+/// the fixture's inertia is mm-scale, so the same situation is reproduced by
+/// picking gains at ω·dt = 0.9 — unstable at 200 Hz substeps, comfortably
+/// stable at 5× the substep rate with the control period unchanged.
+#[test]
+fn unstable_gains_warn_and_clear_at_5x_substeps() {
+    let doc = mm_scale_doc();
+
+    // Probe the joint's reflected inertia, then pick critically-damped gains
+    // sitting at omega*dt = 0.9 for a 1/200 s substep.
+    let dt = 1.0 / 200.0f64;
+    let mut probe = PhysicsWorld::from_document(&doc).expect("world");
+    probe.set_joint_gains("crank", 1.0, 0.0);
+    let inertia = probe.check_gain_stability(dt)[0].reflected_inertia;
+    let omega = 0.9 / dt;
+    let (kp, kd) = (inertia * omega * omega, 2.0 * inertia * omega);
+
+    let mut env = RobotEnv::new(
+        doc.clone(),
+        vec![],
+        Some(dt as f32),
+        Some(4),
+        Some(GroundConfig::disabled()),
+    )
+    .expect("env");
+    env.set_joint_gains("crank", kp, kd);
+
+    let warnings = env.check_gain_stability();
+    let crank = warnings
+        .iter()
+        .find(|w| w.joint_id == "crank")
+        .unwrap_or_else(|| panic!("expected a warning naming 'crank', got {warnings:?}"));
+    assert!(
+        (crank.omega_dt - 0.9).abs() < 1e-6,
+        "warning should report omega*dt = 0.9: {crank:?}"
+    );
+    assert!(crank.max_stable_kp < kp, "{crank:?}");
+    assert!(
+        crank.min_substeps >= 4 * 3,
+        "3x the substeps are needed to reach 0.3: {crank:?}"
+    );
+    let message = crank.to_string();
+    assert!(
+        message.contains("crank"),
+        "message names the joint: {message}"
+    );
+    assert!(
+        message.contains("substeps"),
+        "message names the fix: {message}"
+    );
+
+    // 5x the substeps at 5x the rate: same control period, same gains,
+    // omega*dt = 0.18 — no warning.
+    let mut fine = RobotEnv::new(
+        doc,
+        vec![],
+        Some((dt / 5.0) as f32),
+        Some(20),
+        Some(GroundConfig::disabled()),
+    )
+    .expect("env");
+    fine.set_joint_gains("crank", kp, kd);
+    assert!(
+        fine.check_gain_stability().is_empty(),
+        "5x substeps should clear the warning, got {:?}",
+        fine.check_gain_stability()
     );
 }
