@@ -316,7 +316,7 @@ impl Solid {
     }
 
     /// Mirror the solid across a plane defined by a point on the plane and
-    /// a normal vector. Routes through [`apply_transform`] with a reflection
+    /// a normal vector. Routes through [`Self::apply_transform`] with a reflection
     /// matrix, so face / triangle winding is automatically reversed to
     /// preserve outward normals.
     pub fn mirror(&self, plane_origin: [f64; 3], plane_normal: [f64; 3]) -> Solid {

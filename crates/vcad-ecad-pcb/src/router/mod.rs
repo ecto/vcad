@@ -583,7 +583,7 @@ fn meander_pair_skew(pcb: &mut Pcb, tolerance: f64) -> (usize, usize) {
 ///    to be re-routed before descending it is worth anything.
 /// 2. [`descend_board`] then drives residual intra-pair skew out of the
 ///    geometry that is already close.
-/// 3. [`meander_pair_skew`] meanders whatever skew survives — the breakout
+/// 3. `meander_pair_skew` meanders whatever skew survives — the breakout
 ///    mismatch descent structurally cannot reach.
 ///
 /// Every stage is strictly non-regressive and gated on the exact oracle: a

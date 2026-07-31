@@ -7,9 +7,9 @@
 //!
 //! # Operations
 //!
-//! - [`Face`](operation::Face) - Surface facing with raster pattern
-//! - [`Pocket2D`](operation::Pocket2D) - 2D pocket clearing with offset rings
-//! - [`Contour2D`](operation::Contour2D) - Profile machining with optional tabs
+//! - [`Face`] - Surface facing with raster pattern
+//! - [`Pocket2D`] - 2D pocket clearing with offset rings
+//! - [`Contour2D`] - Profile machining with optional tabs
 //!
 //! # Example
 //!

@@ -199,7 +199,7 @@ pub fn slice(mesh: &TriangleMesh, settings: &SliceSettings) -> Result<SliceResul
     slice_with_progress(mesh, settings, None)
 }
 
-/// Like [`slice`], but reports progress to the given callback. The callback
+/// Like [`slice()`], but reports progress to the given callback. The callback
 /// runs synchronously on whatever thread is driving the slice; for the
 /// worker pipeline that means it can `postMessage` straight to the main
 /// thread without blocking it.

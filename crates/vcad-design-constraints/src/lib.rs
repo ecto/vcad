@@ -2,7 +2,7 @@
 //!
 //! Lowers [`vcad_ir::constraints::DesignConstraint`]s — spanning PCB layout
 //! (footprints, board outline), sketches, and mechanical part anchors — into
-//! per-plane [`Sketch2D`] systems solved by the Levenberg-Marquardt solver in
+//! per-plane `Sketch2D` systems solved by the Levenberg-Marquardt solver in
 //! `vcad-kernel-constraints`, then writes the solved geometry back into the
 //! document.
 //!

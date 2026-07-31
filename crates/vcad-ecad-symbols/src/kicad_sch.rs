@@ -2,7 +2,7 @@
 //!
 //! Converts a `.kicad_sch` S-expression file (KiCad 9 format, `version
 //! 20250114` — the format [`crate::kicad_write::write_kicad_sch`] emits) into a
-//! [`vcad_ir::ecad::SchematicSheet`].  Reuses the [`crate::sexpr`]
+//! [`vcad_ir::ecad::SchematicSheet`].  Reuses the `sexpr`
 //! S-expression parser and, like [`crate::kicad_pcb`], tolerates unknown
 //! tokens by skipping them.
 //!

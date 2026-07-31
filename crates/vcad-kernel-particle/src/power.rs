@@ -15,7 +15,7 @@
 //! resulting Q is **conservative** (the honest direction).
 
 /// Inputs to the power ledger. Every field is a measured or supplied
-/// number with a stated origin — see [`PowerLedger::evaluate`].
+/// number with a stated origin — see `PowerLedger::evaluate`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LedgerInputs {
     /// D-D neutron rate of the machine, n/s (from the ion traces).

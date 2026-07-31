@@ -15,9 +15,9 @@
 //!   (with the bend allowance offsetting the child along the parent's
 //!   in-plane outward direction).
 //!
-//! The involution test [`tests::round_trip_is_identity`] proves
+//! The involution test `tests::round_trip_is_identity` proves
 //! `refold ∘ unfold = identity` on bent frames within tolerance, and
-//! [`tests::flat_round_trip_is_identity`] proves `unfold ∘ refold =
+//! `tests::flat_round_trip_is_identity` proves `unfold ∘ refold =
 //! identity` on flat frames.
 //!
 //! The exported [`FlatPattern`] type is the manufacturing-side view —

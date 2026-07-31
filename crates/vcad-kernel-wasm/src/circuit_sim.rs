@@ -17,7 +17,7 @@ use vcad_ecad_sim::circuit::{
 };
 use wasm_bindgen::prelude::*;
 
-/// One device in a [`CircuitSpec`]. `p`/`n` are node ids (0 = ground).
+/// One device in a `CircuitSpec`. `p`/`n` are node ids (0 = ground).
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum DeviceSpec {
@@ -200,7 +200,7 @@ impl From<vcad_ecad_sim::circuit::Observation> for WasmObservation {
     }
 }
 
-/// A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
+/// A live circuit simulation. Build from a `CircuitSpec` JSON, then `step`.
 #[wasm_bindgen]
 pub struct CircuitSim {
     env: CircuitEnv,
@@ -1003,7 +1003,7 @@ struct MappedCircuitOut {
 ///
 /// * `sch_json` — JSON-serialized `SchematicSheet` (same shape as
 ///   `ecadGenerateNetlist` takes).
-/// * `options_json` — JSON [`MapOptions`] (`{}` for defaults).
+/// * `options_json` — JSON `MapOptions` (`{}` for defaults).
 ///
 /// Returns `{ok: true, devices, nodeOfNet, deviceOfRef, ...}` on success, or
 /// `{ok: false, blockers: [{reference, message}]}` when any component can't

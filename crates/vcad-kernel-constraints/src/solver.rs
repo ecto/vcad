@@ -143,7 +143,7 @@ pub trait LeastSquares {
 }
 
 /// Run Levenberg-Marquardt on any [`LeastSquares`] system, mutating `params`
-/// in place. This is the generic core extracted from [`solve`]; the constraint
+/// in place. This is the generic core extracted from `solve`; the constraint
 /// solver is now a thin wrapper around it, and differentiable design reuses it.
 pub fn levenberg_marquardt<Sys: LeastSquares>(
     system: &Sys,
