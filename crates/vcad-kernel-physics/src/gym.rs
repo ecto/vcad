@@ -8,13 +8,25 @@ use crate::world::PhysicsWorld;
 
 /// Observation from the robot environment.
 ///
-/// Joint vectors are indexed by [`RobotEnv::joint_ids`] order, which is the
-/// document's `joints` array order (deterministic).
+/// Joint vectors are flattened in [`RobotEnv::joint_ids`] order (the
+/// document's `joints` array order, deterministic), with each joint
+/// contributing `max(1, ndof)` consecutive entries:
+/// - Fixed: 1 entry, always `0.0`
+/// - Revolute / Slider / Cylindrical: 1 entry (degrees or mm; deg/s or mm/s)
+/// - Ball: 3 entries — rotation exp-coords in degrees; angular velocity in
+///   deg/s
+/// - Free (floating base): 6 entries — positions
+///   `[x, y, z (mm), rx, ry, rz (exp-coords, degrees)]` and velocities
+///   `[wx, wy, wz (deg/s), vx, vy, vz (body-frame mm/s)]`. Note the swapped
+///   rotation/translation order between positions and velocities (phyz's
+///   Featherstone free-joint convention).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
-    /// Joint positions (radians for revolute, meters for prismatic).
+    /// Flattened joint positions (degrees for rotational DOFs, mm for
+    /// translational DOFs) — see the struct docs for the per-kind layout.
     pub joint_positions: Vec<f64>,
-    /// Joint velocities (rad/s for revolute, m/s for prismatic).
+    /// Flattened joint velocities (deg/s for rotational DOFs, mm/s for
+    /// translational DOFs) — see the struct docs for the per-kind layout.
     pub joint_velocities: Vec<f64>,
     /// End effector poses as [x, y, z, qw, qx, qy, qz] in meters.
     pub end_effector_poses: Vec<[f64; 7]>,
@@ -145,20 +157,23 @@ impl RobotEnv {
 
     /// Get current observation without stepping.
     pub fn observe(&self) -> Observation {
-        let joint_states = self.world.get_joint_states();
-
-        let mut positions = Vec::with_capacity(self.joint_ids.len());
-        let mut velocities = Vec::with_capacity(self.joint_ids.len());
+        let mut positions = Vec::new();
+        let mut velocities = Vec::new();
 
         for joint_id in &self.joint_ids {
-            if let Some(state) = joint_states.get(joint_id) {
-                // Values are already in vcad units (degrees/mm) from get_joint_states()
-                // which calls convert_state_from_physics() internally
-                positions.push(state.position);
-                velocities.push(state.velocity);
-            } else {
-                positions.push(0.0);
-                velocities.push(0.0);
+            // Each joint contributes max(1, ndof) entries: Fixed joints keep
+            // their historical single zero slot; multi-DOF joints (Ball,
+            // Free) contribute one entry per DOF, in vcad units — see the
+            // `Observation` docs for the exact per-kind layout.
+            match self.world.get_joint_dofs(joint_id) {
+                Some((q, v)) if !q.is_empty() => {
+                    positions.extend(q);
+                    velocities.extend(v);
+                }
+                _ => {
+                    positions.push(0.0);
+                    velocities.push(0.0);
+                }
             }
         }
 
@@ -209,8 +224,16 @@ impl RobotEnv {
     }
 
     /// Get the observation dimension.
+    ///
+    /// Each joint contributes `max(1, ndof)` position slots plus the same
+    /// number of velocity slots (Fixed = 1 zero slot, Ball = 3, Free = 6).
     pub fn observation_dim(&self) -> usize {
-        self.joint_ids.len() * 2 + self.end_effector_ids.len() * 7
+        let joint_slots: usize = self
+            .joint_ids
+            .iter()
+            .map(|id| self.world.joint_dof_count(id).max(1))
+            .sum();
+        joint_slots * 2 + self.end_effector_ids.len() * 7
     }
 
     /// Get the action dimension: one entry per actuated (non-Fixed) joint.

@@ -453,7 +453,7 @@ fn joint_ranges(snap: &AssemblySnapshot) -> Result<Vec<(f64, f64)>, String> {
             JointKind::Revolute { limits, .. } => limits.unwrap_or((-180.0, 180.0)),
             JointKind::Slider { limits, .. } => limits.unwrap_or((-200.0, 200.0)),
             JointKind::Cylindrical { .. } => (-180.0, 180.0),
-            JointKind::Ball | JointKind::Fixed => {
+            JointKind::Ball | JointKind::Fixed | JointKind::Free => {
                 return Err(format!(
                     "joint {} is {:?}; only 1-DOF Revolute/Slider/Cylindrical supported in IK",
                     jid, j.kind
