@@ -292,8 +292,15 @@ pub fn features(
 
 /// Length of the [`features`] vector for an env — the policy's `obs_dim`.
 ///
-/// `10` fixed base features, two per actuated joint slot, two per end
-/// effector (contact flag + normal force).
+/// `10` fixed base features, two per entry in `slots` (a position and a
+/// velocity), and two per end effector (contact flag + normal force).
+///
+/// `slots` is [`actuated_slots`]' output — one *index* per actuated joint,
+/// pointing at that joint's FIRST DOF, not a per-joint DOF count. So
+/// `features` reads exactly one position and one velocity per actuated joint
+/// even for a multi-DOF (Ball, 3 DOF) one, whose remaining slots it ignores.
+/// Every actuated joint on the K1 is single-DOF; a multi-DOF actuated joint
+/// would need `features` extended first, and this length with it.
 pub fn feature_dim(env: &RobotEnv, slots: &[usize]) -> usize {
     10 + 2 * slots.len() + 2 * env.end_effector_ids().len()
 }
