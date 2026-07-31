@@ -1133,6 +1133,42 @@ mod tests {
         }
     }
 
+    /// Randomization must be applied to a *pristine* world each episode.
+    /// `scale_instance_mass` / `scale_joint_friction` are multiplicative, so if
+    /// `reset` ever stopped rebuilding from `initial_doc`, successive episodes
+    /// would compound their scales and drift unboundedly. Re-seeding the same
+    /// stream after intervening episodes must reproduce the same rollout.
+    #[test]
+    fn randomization_does_not_compound_across_episodes() {
+        let doc = create_simple_robot();
+        let mut env = RobotEnv::new_with_config(
+            doc,
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            randomized_config(),
+        )
+        .unwrap();
+
+        env.reset_with_seed(7);
+        let (first, _, _) = env.step(Action::Torque(vec![0.02, 0.02]));
+
+        // Burn several unrelated episodes; each re-applies a fresh mass /
+        // friction / gain draw to the rebuilt world.
+        for s in 0..5 {
+            env.reset_with_seed(100 + s);
+            env.step(Action::Torque(vec![0.02, 0.02]));
+        }
+
+        env.reset_with_seed(7);
+        let (again, _, _) = env.step(Action::Torque(vec![0.02, 0.02]));
+        assert_eq!(
+            first.joint_positions, again.joint_positions,
+            "episode 0 of seed 7 drifted after intervening episodes — \
+             randomization is compounding instead of starting from initial_doc"
+        );
+    }
+
     #[test]
     fn seeded_reset_is_reproducible() {
         let doc = create_simple_robot();
