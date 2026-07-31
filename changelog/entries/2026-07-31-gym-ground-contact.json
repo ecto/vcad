@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-gym-ground-contact",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "Gym physics gets ground contact",
+  "summary": "Robot simulation now has a configurable ground plane with friction — dropped bodies land and rest instead of falling forever, enabling legged locomotion training.",
+  "features": ["physics", "simulation", "rl"],
+  "mcpTools": ["create_robot_env", "batch_create_envs"]
+}

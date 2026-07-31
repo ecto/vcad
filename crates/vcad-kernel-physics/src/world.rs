@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use phyz::aba_with_external_forces;
 use phyz::math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
 use phyz::model::{Model, ModelBuilder, State};
-use phyz::{forward_kinematics, Geometry};
+use phyz::{
+    forward_kinematics, Collision, ContactMaterial, ContactProblem, ContactSolverConfig, Geometry,
+};
 use vcad_ir::{Document, InertialProperties, JointKind};
 
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
@@ -14,6 +16,51 @@ use crate::joints::{
     convert_state_from_physics, convert_state_to_physics, joint_ndof, vcad_joint_to_phyz,
     MotorMode, MotorTarget,
 };
+
+/// Ground-plane contact configuration for a physics world.
+///
+/// The ground is an infinite horizontal plane at `z = height` (metres,
+/// world frame). When enabled, every *movable* body's collision geometry is
+/// tested against it each substep and resolved through phyz's convex contact
+/// solver (Coulomb friction cone, restitution as a target normal velocity).
+/// Bodies welded to the world through nothing but Fixed joints are skipped —
+/// their contacts could exert no force and would only pad the Delassus
+/// system.
+///
+/// Body-body (robot self-) collision is not handled here yet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroundConfig {
+    /// Whether ground contact is active.
+    pub enabled: bool,
+    /// Ground plane height, metres in the world frame (plane is z = height).
+    pub height: f64,
+    /// Coulomb friction coefficient of the ground.
+    pub friction: f64,
+    /// Restitution (0 = inelastic rest, 1 = elastic bounce).
+    pub restitution: f64,
+}
+
+impl Default for GroundConfig {
+    /// Ground on at z = 0 with friction 0.8 and inelastic contact.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            height: 0.0,
+            friction: 0.8,
+            restitution: 0.0,
+        }
+    }
+}
+
+impl GroundConfig {
+    /// A disabled ground plane — the pre-contact, contact-free dynamics.
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+}
 
 /// Per-instance world-frame pose: `(position_m, quaternion_wxyz)`.
 pub type Pose = ([f64; 3], [f64; 4]);
@@ -64,6 +111,15 @@ pub struct PhysicsWorld {
     // the axis-alignment rotation and anchored at the child anchor. Identity
     // for ground/free bodies. Needed to report part poses to callers.
     body_part_frames: Vec<(Mat3, Vec3)>,
+
+    // Ground-plane contact configuration. Disabled by default at this level;
+    // RobotEnv turns it on for gym use.
+    ground: GroundConfig,
+
+    // Per-body collision geometry used for ground contact, `None` for bodies
+    // that cannot move (welded to the world through Fixed joints only) —
+    // contacts on those would contribute empty Jacobian rows.
+    contact_geometries: Vec<Option<Geometry>>,
 }
 
 impl PhysicsWorld {
@@ -340,6 +396,23 @@ impl PhysicsWorld {
             }
         }
 
+        // A body can move iff some joint between it and the world root has a
+        // degree of freedom. Only movable bodies get contact geometry — the
+        // fixed base (and anything welded to it) can't respond to contact
+        // impulses, so testing it against the ground is pure waste.
+        let mut movable = vec![false; model.bodies.len()];
+        for i in 0..model.bodies.len() {
+            let body = &model.bodies[i];
+            let own_dof = model.joints[body.joint_idx].ndof() > 0;
+            movable[i] = own_dof || (body.parent >= 0 && movable[body.parent as usize]);
+        }
+        let contact_geometries: Vec<Option<Geometry>> = model
+            .bodies
+            .iter()
+            .enumerate()
+            .map(|(i, b)| if movable[i] { b.geometry.clone() } else { None })
+            .collect();
+
         let state = model.default_state();
 
         // Pre-compute joint DOF offsets
@@ -362,6 +435,8 @@ impl PhysicsWorld {
             joint_q_offsets,
             joint_v_offsets,
             body_part_frames,
+            ground: GroundConfig::disabled(),
+            contact_geometries,
         };
 
         // Set initial joint states (zero-dof joints have no q slot to write)
@@ -384,7 +459,25 @@ impl PhysicsWorld {
         Ok(world)
     }
 
+    /// Configure the ground plane. Takes effect on the next [`Self::step`].
+    pub fn set_ground(&mut self, ground: GroundConfig) {
+        self.ground = ground;
+    }
+
+    /// Current ground-plane configuration.
+    pub fn ground(&self) -> GroundConfig {
+        self.ground
+    }
+
     /// Step the physics simulation by dt seconds.
+    ///
+    /// With the ground enabled ([`Self::set_ground`]) the step is
+    /// FK → ground contact detection → ABA → convex contact solve at the
+    /// velocity level → joint-aware semi-implicit Euler, mirroring phyz's
+    /// `Simulator::step_with_contacts`. The velocity-level impulse solve
+    /// (rather than a penalty force) keeps the explicit integrator stable at
+    /// gym timesteps: contact can only remove approach velocity, never
+    /// inject energy.
     pub fn step(&mut self, dt: f32) {
         // Temporarily set the model timestep
         let original_dt = self.model.dt;
@@ -393,27 +486,164 @@ impl PhysicsWorld {
         // Apply PD motor torques to state.ctrl
         self.apply_motor_torques();
 
-        // Step: ABA forward dynamics + semi-implicit Euler integration
         {
-            let qdd = aba_with_external_forces(&self.model, &self.state, None);
-
             let dt = self.model.dt;
             let nv = self.state.v.len();
-            for i in 0..nv {
-                self.state.v[i] += qdd[i] * dt;
+
+            // Contact detection reads world-frame body transforms — refresh
+            // them so contacts are found where the bodies are *now*, not
+            // where the last caller left body_xform.
+            let (xforms, _) = forward_kinematics(&self.model, &self.state);
+            self.state.body_xform = xforms;
+
+            // Free velocity: where the system lands after this step with
+            // every force except contact (ABA reads state.ctrl internally).
+            let qdd = aba_with_external_forces(&self.model, &self.state, None);
+            let free_v = &self.state.v + &(&qdd * dt);
+
+            let contacts = if self.ground.enabled {
+                self.ground_contacts()
+            } else {
+                Vec::new()
+            };
+
+            if contacts.is_empty() {
+                self.state.v = free_v;
+            } else {
+                // Contact solve: all contacts coupled through the Delassus
+                // operator, Coulomb friction disc with stiction.
+                let material = ContactMaterial {
+                    friction: self.ground.friction,
+                    restitution: self.ground.restitution,
+                    ..ContactMaterial::default()
+                };
+                let config = ContactSolverConfig::simulation();
+                let mut asm = phyz::contact::assemble(
+                    &self.model,
+                    &self.state,
+                    &contacts,
+                    &[material],
+                    &free_v,
+                    &config,
+                );
+                // Capped Baumgarte stabilization: bias the normal target
+                // velocity to push bodies out of penetration deeper than the
+                // slop, so a landed body settles near flush instead of
+                // freezing at its impact-frame penetration. The cap bounds
+                // the energy the bias can inject.
+                const SLOP_M: f64 = 0.002;
+                const BETA: f64 = 0.2;
+                const MAX_PUSH_M_S: f64 = 0.1;
+                for (ci, c) in contacts.iter().enumerate() {
+                    let push =
+                        (BETA * (c.penetration_depth - SLOP_M) / dt).clamp(0.0, MAX_PUSH_M_S);
+                    asm.problem.free_velocity[3 * ci] -= push;
+                }
+                let impulses = solve_contacts_pgs(&asm.problem);
+                // v' = v_free + M⁻¹ Jᵀ f.
+                self.state.v = &free_v + &asm.velocity_delta(&impulses);
             }
 
-            let nq = self.state.q.len();
-            for i in 0..nq {
-                self.state.q[i] += self.state.v[i.min(nv - 1)] * dt;
-            }
+            // Velocity is already updated; integrate positions only. The
+            // joint-aware integrator is required here: a flat `q += v·dt`
+            // mixes body angular velocity into the position slots of Free
+            // (floating-base) joints.
+            let zero_qdd = vec![0.0; nv];
+            phyz::rigid::semi_implicit_euler(&self.model, &mut self.state, &zero_qdd, dt);
 
             self.enforce_joint_limits();
 
-            forward_kinematics(&self.model, &self.state);
+            let (xforms, _) = forward_kinematics(&self.model, &self.state);
+            self.state.body_xform = xforms;
         }
 
         self.model.dt = original_dt;
+    }
+
+    /// Contacts between movable bodies' collision geometry and the ground
+    /// plane at `z = self.ground.height`.
+    ///
+    /// This intentionally does not use `phyz::find_ground_contacts`: that
+    /// routine multiplies vertices by `body_xform.rot`, but `body_xform` is
+    /// the world→body Plücker rotation `E` (`p_body = E (p − r)`), so
+    /// body→world needs `Eᵀ` — for any body whose frame is rotated (every
+    /// vcad joint whose axis isn't already Z) it places the candidates
+    /// wrongly and a swinging link passes straight through the floor. It
+    /// also truncates the manifold by depth *before* deduplicating, and
+    /// vcad's tessellated colliders duplicate each corner vertex per
+    /// incident face, so a flat box impact could spend the whole manifold
+    /// budget on copies of a single corner and lose its support polygon.
+    fn ground_contacts(&self) -> Vec<Collision> {
+        // Same manifold cap as phyz_collision::MAX_MANIFOLD_POINTS.
+        const MAX_POINTS: usize = 4;
+        let h = self.ground.height;
+        let mut contacts = Vec::new();
+
+        for (i, geom) in self.contact_geometries.iter().enumerate() {
+            let Some(geom) = geom else { continue };
+            let xform = &self.state.body_xform[i];
+            let (pos, e_t) = (xform.pos, xform.rot.transpose());
+            if !(pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite()) {
+                continue;
+            }
+
+            // World-frame candidate support points.
+            let candidates: Vec<Vec3> = match geom {
+                Geometry::Mesh { vertices, .. } => {
+                    vertices.iter().map(|v| e_t.mul_vec(*v) + pos).collect()
+                }
+                Geometry::Box { half_extents } => {
+                    let he = half_extents;
+                    let mut v = Vec::with_capacity(8);
+                    for sx in [-1.0, 1.0] {
+                        for sy in [-1.0, 1.0] {
+                            for sz in [-1.0, 1.0] {
+                                v.push(
+                                    e_t.mul_vec(Vec3::new(sx * he.x, sy * he.y, sz * he.z)) + pos,
+                                );
+                            }
+                        }
+                    }
+                    v
+                }
+                Geometry::Sphere { radius } => {
+                    vec![pos - Vec3::new(0.0, 0.0, *radius)]
+                }
+                // Colliders built by this crate are Mesh or Box; anything
+                // else has no ground support here yet.
+                _ => continue,
+            };
+
+            // Penetrating points, deduplicated (tessellated meshes repeat
+            // each corner per incident face), deepest first, capped.
+            let mut hits: Vec<(f64, Vec3)> = Vec::new();
+            'cand: for p in candidates {
+                if !p.z.is_finite() || p.z >= h {
+                    continue;
+                }
+                for (_, q) in &hits {
+                    if (p - *q).norm() < 1e-9 {
+                        continue 'cand;
+                    }
+                }
+                hits.push((h - p.z, p));
+            }
+            hits.sort_by(|a, b| b.0.total_cmp(&a.0));
+            hits.truncate(MAX_POINTS);
+
+            for (depth, p) in hits {
+                contacts.push(Collision {
+                    body_i: i,
+                    body_j: usize::MAX, // ground is not a body
+                    // Midsurface between the vertex and the plane.
+                    contact_point: Vec3::new(p.x, p.y, h - depth * 0.5),
+                    contact_normal: Vec3::new(0.0, 0.0, 1.0),
+                    penetration_depth: depth,
+                });
+            }
+        }
+
+        contacts
     }
 
     /// Clamp single-DOF joints to their limits after integration.
@@ -956,6 +1186,79 @@ fn euler_to_mat3(rx: f64, ry: f64, rz: f64) -> Mat3 {
         cx * sy * sz + sx * cz,
         cx * cy,
     )
+}
+
+/// Scalar projected Gauss-Seidel over an assembled contact problem.
+///
+/// Replaces `phyz::solve_contacts` for the gym step: phyz's staged
+/// per-contact block solve drops the within-block normal↔tangential
+/// coupling (its residual excludes the contact's own impulse, then solves
+/// the normal from `A_nn` alone and the tangential 2×2 without the
+/// `A_tn·f_n` term). For a multi-corner manifold — where a normal impulse
+/// at one corner induces tangential velocity at the others through the
+/// body's rotation — its fixed point satisfies the wrong equations and a
+/// 4 m/s box impact bounces off the floor at 25 m/s. Verified empirically:
+/// same assembly, phyz's solve diverges, this one rests.
+///
+/// This is the textbook sequential-impulse iteration on the PSD Delassus
+/// operator: each scalar row relaxed against the *full* current residual,
+/// normal impulses projected to `≥ 0`, tangential pairs clamped to the
+/// isotropic friction disc `‖f_t‖ ≤ μ f_n`.
+fn solve_contacts_pgs(problem: &ContactProblem) -> Vec<Vec3> {
+    let n = problem.n;
+    let dim = 3 * n;
+    let a = &problem.delassus;
+    let at = |i: usize, j: usize| a[i * dim + j];
+    let mut f = vec![0.0f64; dim];
+
+    for _ in 0..200 {
+        let mut max_move: f64 = 0.0;
+        for c in 0..n {
+            let base = 3 * c;
+
+            // Normal row: full residual over every impulse but its own.
+            let mut r = problem.free_velocity[base];
+            for (j, fj) in f.iter().enumerate() {
+                if j != base {
+                    r += at(base, j) * fj;
+                }
+            }
+            let a_nn = at(base, base).max(1e-12);
+            let f_n = (-r / a_nn).max(0.0);
+            max_move = max_move.max((f_n - f[base]).abs());
+            f[base] = f_n;
+
+            // Tangential rows, relaxed one scalar at a time, then projected
+            // onto the friction disc the fresh normal admits.
+            for t in 1..3 {
+                let i = base + t;
+                let mut r = problem.free_velocity[i];
+                for (j, fj) in f.iter().enumerate() {
+                    if j != i {
+                        r += at(i, j) * fj;
+                    }
+                }
+                let a_ii = at(i, i).max(1e-12);
+                let f_t = -r / a_ii;
+                max_move = max_move.max((f_t - f[i]).abs());
+                f[i] = f_t;
+            }
+            let limit = problem.rows[c].mu * f[base];
+            let t_norm = (f[base + 1] * f[base + 1] + f[base + 2] * f[base + 2]).sqrt();
+            if t_norm > limit {
+                let s = if t_norm > 0.0 { limit / t_norm } else { 0.0 };
+                f[base + 1] *= s;
+                f[base + 2] *= s;
+            }
+        }
+        if max_move < 1e-10 {
+            break;
+        }
+    }
+
+    (0..n)
+        .map(|c| Vec3::new(f[3 * c], f[3 * c + 1], f[3 * c + 2]))
+        .collect()
 }
 
 #[cfg(test)]

@@ -4307,18 +4307,36 @@ impl PhysicsSim {
     /// * `end_effector_ids` - Array of instance IDs to track as end effectors
     /// * `dt` - Simulation timestep in seconds (default: 1/240)
     /// * `substeps` - Number of physics substeps per step (default: 4)
+    /// * `ground_enabled` - Ground-plane contact at z = `ground_height` (default: true)
+    /// * `ground_height` - Ground plane height in meters (default: 0)
+    /// * `ground_friction` - Ground Coulomb friction coefficient (default: 0.8)
+    /// * `ground_restitution` - Ground restitution, 0 = inelastic (default: 0)
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         doc_json: &str,
         end_effector_ids: Vec<String>,
         dt: Option<f32>,
         substeps: Option<u32>,
+        ground_enabled: Option<bool>,
+        ground_height: Option<f64>,
+        ground_friction: Option<f64>,
+        ground_restitution: Option<f64>,
     ) -> Result<PhysicsSim, JsError> {
         let doc = vcad_ir::Document::from_json(doc_json)
             .map_err(|e| JsError::new(&format!("Invalid document JSON: {}", e)))?;
 
-        let env = vcad_kernel_physics::RobotEnv::new(doc, end_effector_ids, dt, substeps)
-            .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
+        let defaults = vcad_kernel_physics::GroundConfig::default();
+        let ground = vcad_kernel_physics::GroundConfig {
+            enabled: ground_enabled.unwrap_or(defaults.enabled),
+            height: ground_height.unwrap_or(defaults.height),
+            friction: ground_friction.unwrap_or(defaults.friction),
+            restitution: ground_restitution.unwrap_or(defaults.restitution),
+        };
+
+        let env =
+            vcad_kernel_physics::RobotEnv::new(doc, end_effector_ids, dt, substeps, Some(ground))
+                .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
 
         web_sys::console::log_1(
             &format!("[WASM] PhysicsSim created with {} joints", env.num_joints()).into(),
