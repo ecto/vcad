@@ -5028,15 +5028,6 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
 /// This is the primary tessellation function used by the facade crate.
 pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     let params = TessellationParams::from_segments(segments);
-    tessellate_brep_with_params(brep, &params)
-}
-
-/// `tessellate_brep` with explicit [`TessellationParams`] — for callers that
-/// need sag-driven adaptive resolution (e.g. boolean classification meshes,
-/// which must track the analytic surfaces far more tightly than the display
-/// tessellation without paying flat-high segment counts on small radii).
-pub fn tessellate_brep_with_params(brep: &BRepSolid, params: &TessellationParams) -> TriangleMesh {
-    let params = *params;
     let solid = &brep.topology.solids[brep.solid_id];
     let shell = &brep.topology.shells[solid.outer_shell];
 

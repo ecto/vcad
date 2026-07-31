@@ -311,8 +311,15 @@ fn plane_sphere(plane: &Plane, sphere: &SphereSurface) -> IntersectionCurve {
 // =============================================================================
 
 /// Sample count for a sampled ellipse (oblique plane × cylinder) so the
-/// polyline's chordal sag stays under ~1e-3 mm on the cylinder of radius
-/// `r`. `n = π / acos(1 − sag/r)`, clamped to [64, 512].
+/// polyline's chordal sag stays under ~1e-3 mm on the cylinder of radius `r`.
+/// `n = π / acos(1 − sag/r)`, clamped to [64, 512].
+///
+/// The target is finer than `split::arc_segments` (5e-3) because the torr
+/// A1 sliver case fails at that coarser value — trim boundaries derived
+/// from this polyline need the extra accuracy. Sample count feeds band
+/// vertex count and hence result triangle count, so this is not free;
+/// `MAX_BOUNDARY_PROBES` in `classify` is what keeps classification cost
+/// from scaling with it.
 fn ellipse_samples(r: f64) -> usize {
     const SAG: f64 = 1e-3;
     let n = if r > SAG {
