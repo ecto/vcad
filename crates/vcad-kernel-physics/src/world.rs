@@ -156,6 +156,13 @@ impl PhysicsWorld {
         let mut body_part_frames: Vec<(Mat3, Vec3)> = Vec::new();
         let mut body_count = 0usize;
 
+        // Tessellated part geometry, keyed by PartDef root node. Instances
+        // sharing a PartDef (every leg of a pattern, every identical link)
+        // evaluate its boolean tree once.
+        let mesh_cache: std::cell::RefCell<
+            HashMap<vcad_ir::NodeId, vcad_kernel_tessellate::TriangleMesh>,
+        > = std::cell::RefCell::new(HashMap::new());
+
         // Helper: evaluate mesh, mass, and (optionally) authored inertials
         // for an instance. When the instance's PartDef carries an
         // `inertial` block (set by the URDF importer for any link with an
@@ -180,8 +187,35 @@ impl PhysicsWorld {
             let part_def = part_defs
                 .get(&inst.part_def_id)
                 .ok_or_else(|| PhysicsError::MissingPartDef(inst.part_def_id.clone()))?;
-            let mut mesh = Self::evaluate_part(doc, part_def.root)?;
+            let cached = mesh_cache.borrow().get(&part_def.root).cloned();
             let mut authored = part_def.inertial;
+            let mut mesh = match cached {
+                Some(m) => m,
+                None => {
+                    let m = match Self::evaluate_part(doc, part_def.root)? {
+                        Some(m) => m,
+                        // No resolvable geometry. Acceptable only when the
+                        // PartDef carries an authored `inertial` block (the
+                        // URDF path, whose `package://` meshes often aren't on
+                        // disk): mass, COM and inertia then come from the
+                        // authored values and the placeholder only stands in
+                        // as a collider. Without authored inertials we would
+                        // be inventing the mass properties the dynamics run
+                        // on — exactly the failure this fallback used to hide
+                        // — so refuse instead.
+                        None if authored.is_some() => placeholder_collider_mesh(),
+                        None => {
+                            return Err(PhysicsError::Evaluation(format!(
+                                "part '{}' (node {}) has no resolvable geometry and no \
+                                 authored inertial block — cannot derive mass properties",
+                                part_def.id, part_def.root
+                            )))
+                        }
+                    };
+                    mesh_cache.borrow_mut().insert(part_def.root, m.clone());
+                    m
+                }
+            };
             if let Some((rot, anchor_mm)) = part_frame {
                 for v in mesh.vertices.chunks_mut(3) {
                     let p = Vec3::new(
@@ -439,16 +473,19 @@ impl PhysicsWorld {
             contact_geometries,
         };
 
-        // Set initial joint states (zero-dof joints have no q slot to write)
+        // Seed the initial configuration from the authored joint states.
+        //
+        // This writes `q` only — it must NOT install a motor. `joint.state` is
+        // the pose the assembly starts in, not a target to be held: calling
+        // `set_joint_position` here left a PD servo latched onto every joint
+        // authored at a nonzero angle, so a "passive" rollout was really a
+        // servo fighting gravity and no unactuated joint ever swung freely.
         for joint in joints {
-            if joint_ndof(&joint.kind) > 0 && joint.state.abs() > 1e-6 {
-                world.set_joint_position(&joint.id, joint.state);
-                // Also set the initial q value directly
-                if let Some(&q_offset) = world.joint_q_offsets.get(&joint.id) {
-                    let kind = &joint.kind;
-                    let physics_val = convert_state_to_physics(kind, joint.state);
-                    world.state.q[q_offset] = physics_val;
-                }
+            if joint_ndof(&joint.kind) == 0 || joint.state.abs() <= 1e-6 {
+                continue;
+            }
+            if let Some(&q_offset) = world.joint_q_offsets.get(&joint.id) {
+                world.state.q[q_offset] = convert_state_to_physics(&joint.kind, joint.state);
             }
         }
 
@@ -544,15 +581,24 @@ impl PhysicsWorld {
                 self.state.v = &free_v + &asm.velocity_delta(&impulses);
             }
 
-            // Velocity is already updated; integrate positions only. The
-            // joint-aware integrator is required here: a flat `q += v·dt`
-            // mixes body angular velocity into the position slots of Free
-            // (floating-base) joints.
+            // Velocity is already updated; integrate positions only. Do NOT
+            // hand-roll `q += v·dt` here: q and v use different
+            // parameterisations for ball joints (exp-coords vs body angular
+            // velocity — composition, not addition) and for Free
+            // (floating-base) joints (q is [pos, rot] while v is [angular,
+            // linear], so a flat elementwise add integrates angular velocity
+            // into *position*). phyz's `semi_implicit_euler` is the single
+            // place that knows the mapping.
             let zero_qdd = vec![0.0; nv];
             phyz::rigid::semi_implicit_euler(&self.model, &mut self.state, &zero_qdd, dt);
 
             self.enforce_joint_limits();
 
+            // Publish the new body poses. Dropping this result left
+            // `state.body_xform` pinned at the construction-time pose, so
+            // `get_instance_pose` (and every `end_effector_poses` built on
+            // it) reported the rest configuration no matter how far the
+            // joints had moved.
             let (xforms, _) = forward_kinematics(&self.model, &self.state);
             self.state.body_xform = xforms;
         }
@@ -684,11 +730,37 @@ impl PhysicsWorld {
     }
 
     /// Apply PD motor torques from motor targets to state.ctrl.
+    ///
+    /// Position/Velocity motors get gravity-compensation feedforward: one
+    /// RNEA pass at the current configuration with `v = qdd = 0` yields the
+    /// static holding torque per DOF, which is added inside the motor's
+    /// clamp. Without it the pure PD servo carries a `τ_g / kp` steady-state
+    /// droop — tens of degrees for a hanging link at the default gains.
     fn apply_motor_torques(&mut self) {
         // Zero out ctrl first
         for i in 0..self.state.ctrl.len() {
             self.state.ctrl[i] = 0.0;
         }
+        if self.motors.is_empty() {
+            return;
+        }
+
+        let needs_gravity_comp = self
+            .motors
+            .values()
+            .any(|m| !matches!(m.mode, MotorMode::Torque));
+        let tau_g = if needs_gravity_comp {
+            let saved_v = self.state.v.clone();
+            for i in 0..self.state.v.len() {
+                self.state.v[i] = 0.0;
+            }
+            let qdd = phyz::math::DVec::zeros(self.state.v.len());
+            let tau = phyz::rnea(&self.model, &self.state, &qdd);
+            self.state.v = saved_v;
+            Some(tau)
+        } else {
+            None
+        };
 
         for (joint_id, motor) in &self.motors {
             if let (Some(&q_offset), Some(&v_offset)) = (
@@ -697,7 +769,8 @@ impl PhysicsWorld {
             ) {
                 let position = self.state.q[q_offset];
                 let velocity = self.state.v[v_offset];
-                let torque = motor.compute_torque(position, velocity);
+                let ff = tau_g.as_ref().map_or(0.0, |t| t[v_offset]);
+                let torque = motor.compute_torque_with_feedforward(position, velocity, ff);
                 self.state.ctrl[v_offset] = torque;
             }
         }
@@ -1017,6 +1090,50 @@ impl PhysicsWorld {
         Ok(out)
     }
 
+    /// Debug: `(mass_kg, perpendicular COM distance from the joint axis,
+    /// I_com about the joint axis)` for a body, as handed to phyz.
+    #[doc(hidden)]
+    pub fn debug_body_props(&self, body_idx: usize) -> (f64, f64, f64) {
+        let si = &self.model.bodies[body_idx].inertia;
+        // phyz revolute joints rotate about body-frame Z.
+        let d = (si.com.x * si.com.x + si.com.y * si.com.y).sqrt();
+        (si.mass, d, si.inertia[(2, 2)])
+    }
+
+    /// Directly write a joint's velocity DOFs (physics units: rad/s or m/s),
+    /// without installing a motor. Test/tooling hook — actions should go
+    /// through the motor API.
+    #[doc(hidden)]
+    pub fn set_joint_velocity_raw(&mut self, joint_id: &str, v: &[f64]) {
+        let Some(&v_offset) = self.joint_v_offsets.get(joint_id) else {
+            return;
+        };
+        let Some(kind) = self.joint_kinds.get(joint_id) else {
+            return;
+        };
+        let ndof = joint_ndof(kind).min(v.len());
+        for (k, &val) in v.iter().enumerate().take(ndof) {
+            self.state.v[v_offset + k] = val;
+        }
+    }
+
+    /// Directly write a free-floating instance's angular velocity (rad/s,
+    /// body frame). Test/tooling hook.
+    #[doc(hidden)]
+    pub fn set_free_body_spin_raw(&mut self, instance_id: &str, omega: [f64; 3]) {
+        let Some(&body_idx) = self.instance_to_body.get(instance_id) else {
+            return;
+        };
+        let joint_idx = self.model.bodies[body_idx].joint_idx;
+        if self.model.joints[joint_idx].ndof() != 6 {
+            return; // not a free body
+        }
+        let v_offset = self.model.v_offsets[joint_idx];
+        for (k, w) in omega.iter().enumerate() {
+            self.state.v[v_offset + k] = *w;
+        }
+    }
+
     /// Get list of all joint IDs.
     ///
     /// Order is deterministic: document order (`doc.joints`), restricted to
@@ -1049,12 +1166,22 @@ impl PhysicsWorld {
         self.instance_to_body.keys().cloned().collect()
     }
 
-    /// Evaluate a part's geometry to get a mesh.
+    /// Evaluate a part's geometry to get a mesh, or `None` when the tree
+    /// carries no resolvable geometry (an unresolved external mesh reference,
+    /// an `Empty` node). Callers decide whether that is fatal — see
+    /// `eval_instance`.
+    ///
+    /// Uses the canonical document evaluator (`vcad_eval`), so a part built
+    /// from booleans, transforms, sketches or any other non-primitive op gets
+    /// its real geometry. This path used to match on primitives only and fall
+    /// back to a 10 mm placeholder cube for everything else, which silently
+    /// replaced every composed part with a 1 g box whose centre of mass sat
+    /// *above* the joint anchor — inverting the sign of the gravitational
+    /// torque and shrinking the inertia by orders of magnitude.
     fn evaluate_part(
         doc: &Document,
         node_id: vcad_ir::NodeId,
-    ) -> Result<vcad_kernel_tessellate::TriangleMesh, PhysicsError> {
-        // This is a simplified evaluation - in practice would use the full engine
+    ) -> Result<Option<vcad_kernel_tessellate::TriangleMesh>, PhysicsError> {
         let node = doc
             .nodes
             .get(&node_id)
@@ -1063,13 +1190,9 @@ impl PhysicsWorld {
         // STL meshes bypass the BRep solid path — load straight to a
         // triangle mesh in the IR's millimetre frame. If the path can't
         // be opened (e.g. browser-flow URDF imports keep the raw URDF
-        // filename and have no filesystem behind it), fall back to a 1 cm
-        // placeholder cube so authored inertials still anchor a body.
+        // filename and have no filesystem behind it), report "no geometry".
         if let vcad_ir::CsgOp::MeshImport { path, scale } = &node.op {
-            match crate::stl::load_stl(std::path::Path::new(path), *scale) {
-                Ok(mesh) => return Ok(mesh),
-                Err(_) => return Ok(vcad_kernel::Solid::cube(10.0, 10.0, 10.0).to_mesh(32)),
-            }
+            return Ok(crate::stl::load_stl(std::path::Path::new(path), *scale).ok());
         }
         // Inline ImportedMesh (e.g. browser pre-parsed STL/DAE) ships its
         // triangle data inside the IR node — pull positions / indices /
@@ -1089,63 +1212,36 @@ impl PhysicsWorld {
                 .as_ref()
                 .map(|n| n.iter().map(|v| *v as f32).collect())
                 .unwrap_or_else(|| vec![0.0; n_verts * 3]);
-            return Ok(TriangleMesh {
+            return Ok(Some(TriangleMesh {
                 vertices,
                 indices: indices.clone(),
                 normals: normals_f32,
                 face_kinds: Vec::new(),
-            });
+            }));
         }
 
-        // Create a simple mesh based on the primitive type
-        let solid = match &node.op {
-            vcad_ir::CsgOp::Cube { size } => vcad_kernel::Solid::cube(size.x, size.y, size.z),
-            vcad_ir::CsgOp::Cylinder {
-                radius,
-                height,
-                segments,
-            } => vcad_kernel::Solid::cylinder(
-                *radius,
-                *height,
-                if *segments == 0 { 32 } else { *segments },
-            ),
-            vcad_ir::CsgOp::Sphere { radius, segments } => {
-                vcad_kernel::Solid::sphere(*radius, if *segments == 0 { 32 } else { *segments })
-            }
-            vcad_ir::CsgOp::Cone {
-                radius_bottom,
-                radius_top,
-                height,
-                segments,
-            } => vcad_kernel::Solid::cone(
-                *radius_bottom,
-                *radius_top,
-                *height,
-                if *segments == 0 { 32 } else { *segments },
-            ),
-            vcad_ir::CsgOp::Torus {
-                major_radius,
-                minor_radius,
-                segments,
-            } => vcad_kernel::Solid::torus(
-                *major_radius,
-                *minor_radius,
-                if *segments == 0 { 32 } else { *segments },
-            ),
-            vcad_ir::CsgOp::Wedge { size } => vcad_kernel::Solid::wedge(size.x, size.y, size.z),
-            vcad_ir::CsgOp::Prism {
-                sides,
-                radius,
-                height,
-            } => vcad_kernel::Solid::prism(*sides, *radius, *height),
-            _ => {
-                // For other operations, create a small placeholder
-                vcad_kernel::Solid::cube(10.0, 10.0, 10.0)
-            }
-        };
+        // Everything else goes through the canonical evaluator, which
+        // understands booleans, transforms, sketches, sweeps and the rest.
+        let mut cache = std::collections::HashMap::new();
+        let solid = vcad_eval::evaluate_node(node_id, &doc.nodes, &mut cache)
+            .map_err(|e| PhysicsError::Evaluation(format!("node {node_id}: {e}")))?;
 
-        Ok(solid.to_mesh(32))
+        Ok(solid.map(|s| s.to_mesh(32)))
     }
+}
+
+/// A 1 cm cube centred on the body origin, used as a stand-in collider for a
+/// link whose geometry could not be resolved. Centred deliberately: a
+/// corner-at-origin cube would place the centre of mass 5 mm off the joint
+/// anchor and fabricate a gravitational lever arm.
+fn placeholder_collider_mesh() -> vcad_kernel_tessellate::TriangleMesh {
+    let mut mesh = vcad_kernel::Solid::cube(10.0, 10.0, 10.0).to_mesh(4);
+    for v in mesh.vertices.chunks_mut(3) {
+        v[0] -= 5.0;
+        v[1] -= 5.0;
+        v[2] -= 5.0;
+    }
+    mesh
 }
 
 /// Compute the SpatialTransform from an instance's transform.
