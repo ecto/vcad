@@ -157,6 +157,15 @@ pub struct EnvConfig {
 
 /// Per-step diagnostics returned alongside the observation — everything a
 /// client-side reward needs, without baking a reward DSL into the kernel.
+///
+/// **Every quantity here is the simulator's true state, never the noisy view.**
+/// [`ObservationNoise`] perturbs only [`StepResult::observation`], so with base
+/// noise configured `info.base_height_m` deliberately will *not* equal
+/// `observation.base_pose[2]`. That asymmetry is the point: the policy trains
+/// against noisy sensors while the reward and the termination decision are
+/// computed from ground truth (the usual privileged-information / asymmetric
+/// actor-critic split). Reward from `StepInfo`, observe from `observation`, and
+/// don't cross-reference the two expecting agreement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepInfo {
     /// Steps taken since the last reset (this step included).
@@ -169,10 +178,12 @@ pub struct StepInfo {
     /// "joint_limit", "end_effector_below_ground").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub termination_reason: Option<String>,
-    /// Base origin height above world z=0 (meters), when a base is known.
+    /// True base origin height above world z=0 (meters), when a base is
+    /// known. Noise-free — see the note on [`StepInfo`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_height_m: Option<f64>,
-    /// Base tilt from upright (degrees), when a base is known.
+    /// True base tilt from upright (degrees), when a base is known.
+    /// Noise-free — see the note on [`StepInfo`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_tilt_deg: Option<f64>,
     /// Ids of joints currently at/past a limit.
@@ -453,6 +464,11 @@ impl RobotEnv {
         let (terminated, termination_reason, joint_limit_violations) = self.check_termination(&obs);
         let truncated = self.current_step >= self.max_steps;
 
+        // Both the termination decision above and these diagnostics read the
+        // clean `obs`; only the returned observation gets noise. Deliberate —
+        // an episode must not end because a sensor blipped, and the reward
+        // signal must not inherit the policy's sensor noise. Consequence:
+        // `info.base_height_m != observation.base_pose[2]` under base noise.
         let (base_height_m, base_tilt_deg) = match obs.base_pose {
             Some(pose) => (Some(pose[2]), Some(tilt_from_upright_deg(&pose))),
             None => (None, None),
@@ -1417,6 +1433,48 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    /// `StepInfo` reports ground truth while the returned observation is
+    /// noisy. The divergence is the contract, not a bug: reward and
+    /// termination must not inherit sensor noise. Pinned so a later "make
+    /// these agree" refactor has to break a test to do it.
+    #[test]
+    fn step_info_reports_truth_while_observation_is_noisy() {
+        let doc = create_simple_robot();
+        let cfg = EnvConfig {
+            observation_noise: Some(ObservationNoise {
+                base_pos_std: 5.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut env = RobotEnv::new_with_config(
+            doc,
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            Some(GroundConfig::disabled()),
+            cfg,
+        )
+        .unwrap();
+        env.reset_with_seed(11);
+        let result = env.step_full(Action::Torque(vec![0.0, 0.0]));
+
+        let truth = env.observe().base_pose.expect("base pose")[2];
+        let reported = result.info.base_height_m.expect("base height");
+        let noisy = result.observation.base_pose.expect("noisy base pose")[2];
+
+        // info tracks the simulator, not the sensor.
+        assert!(
+            (reported - truth).abs() < 1e-9,
+            "StepInfo height {reported} should equal true height {truth}"
+        );
+        // ...and the caller-visible observation is perturbed away from it.
+        assert!(
+            (noisy - reported).abs() > 1e-6,
+            "observation height {noisy} should differ from true {reported} under 5m base noise"
+        );
     }
 
     /// `action_latency_steps` is caller-supplied JSON, so an absurd but
