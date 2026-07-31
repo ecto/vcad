@@ -2,7 +2,7 @@
 /* eslint-disable */
 
 /**
- * A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
+ * A live circuit simulation. Build from a `CircuitSpec` JSON, then `step`.
  */
 export class CircuitSim {
     free(): void;
@@ -248,7 +248,7 @@ export class RayTracer {
      *
      * # Note
      * This function is async to support WASM's single-threaded environment.
-     * In JavaScript, it returns a Promise<Uint8Array>.
+     * In JavaScript, it returns a `Promise<Uint8Array>`.
      */
     render(camera: Float64Array, target: Float64Array, up: Float64Array, width: number, height: number, fov: number): Promise<Uint8Array>;
     /**
@@ -1020,7 +1020,7 @@ export class WasmKeybindings {
      * Returns a JSON array describing every registered command. The TS UI
      * (command palette, keyboard prefs) reads this once at startup.
      *
-     * Each entry is a [`CommandView`] — a flattened, owned projection of
+     * Each entry is a `CommandView` — a flattened, owned projection of
      * `Command` that serde can serialize (the source struct uses `&'static
      * str` and a non-serializable `ModeScope` enum).
      */
@@ -1032,7 +1032,7 @@ export class WasmKeybindings {
      */
     conflictsJson(mode_name: string): string;
     /**
-     * Load overrides previously returned by [`save_overrides`]. Malformed
+     * Load overrides previously returned by [`Self::save_overrides`]. Malformed
      * entries are skipped — the caller never sees a parse failure for
      * stale config.
      */
@@ -1197,7 +1197,7 @@ export function analyzeStaticsMesh(spec_json: string, positions: Float32Array, i
  *
  * `spec_json` is a `vcad_kernel_antenna::spec::AntennaSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them,
- * `options_json` an [`AntennaOptions`] (the frequency `band` is
+ * `options_json` an `AntennaOptions` (the frequency `band` is
  * required).
  */
 export function antennaAnalyze(spec_json: string, params_json: string, options_json: string): any;
@@ -1300,7 +1300,7 @@ export function calibrationFingerprintDocument(doc_json: string): string;
  * Generate a height field from mesh using drop-cutter algorithm.
  *
  * # Arguments
- * * `vertices_json` - Vertex array as JSON [[x,y,z], ...]
+ * * `vertices_json` - Vertex array as JSON `[[x,y,z], ...]`
  * * `indices_json` - Triangle indices as JSON [i0, i1, i2, ...]
  * * `tool_json` - Tool definition as JSON
  * * `bounds_json` - Bounds [min_x, min_y, max_x, max_y] as JSON
@@ -1488,7 +1488,7 @@ export function circuitDcOperatingPoint(spec_json: string): any;
  *
  * * `sch_json` — JSON-serialized `SchematicSheet` (same shape as
  *   `ecadGenerateNetlist` takes).
- * * `options_json` — JSON [`MapOptions`] (`{}` for defaults).
+ * * `options_json` — JSON `MapOptions` (`{}` for defaults).
  *
  * Returns `{ok: true, devices, nodeOfNet, deviceOfRef, ...}` on success, or
  * `{ok: false, blockers: [{reference, message}]}` when any component can't
@@ -1594,7 +1594,7 @@ export function decimateMeshGpu(positions: Float32Array, indices: Uint32Array, t
 /**
  * Derive parts from a Document (as JSON).
  *
- * Returns a JSON-serialized Vec<PartInfo>.
+ * Returns a JSON-serialized `Vec<PartInfo>`.
  */
 export function deriveParts(doc_json: string): any;
 
@@ -2085,7 +2085,7 @@ export function ecadRouteNet(pcb_json: string, net: string, start_x: number, sta
 /**
  * Route a net with the avoiding A* maze router.
  *
- * Unlike [`Self::ecad_route_net_shove`] (which detours around static
+ * Unlike `ecad_route_net_shove` (which detours around static
  * inflated bounding boxes of other-net *traces*), this searches a grid and
  * tests every step against the exact clearance oracle, so the route avoids
  * *all* copper on `layer` — traces, pads, and vias. Every returned segment
@@ -2097,7 +2097,7 @@ export function ecadRouteNetMaze(pcb_json: string, layer: string, net: string, s
 /**
  * Route a net with the push-and-shove router.
  *
- * Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+ * Unlike `ecad_route_net` (grid/wave BFS), this routes in
  * continuous coordinate space and detours around existing copper on other
  * nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
  * and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
@@ -2148,7 +2148,7 @@ export function ecadVerifySubstitution(pcb_json: string, reference: string, cand
  * allowed), `planar_magnetostatics` (`PlanarSpec`, named parameters
  * allowed), or `electrostatics` (a literal-only electrode/dielectric
  * DTO — the crate has no serde seam for that class yet). `params_json`
- * binds named parameters; `options_json` is [`EmSimOptions`].
+ * binds named parameters; `options_json` is `EmSimOptions`.
  */
 export function emSimulate(spec_json: string, params_json: string, options_json: string): any;
 
@@ -2388,7 +2388,7 @@ export function exprParse(src: string): any;
  * predicted claim is emitted.
  *
  * `spec_json` is a `vcad_kernel_fea::spec::FeaSpec` (material, loads,
- * supports, resolution), `options_json` a [`FeaOptions`].
+ * supports, resolution), `options_json` a `FeaOptions`.
  */
 export function feaAnalyzeMesh(spec_json: string, options_json: string, positions: Float32Array, indices: Uint32Array): any;
 
@@ -2542,7 +2542,7 @@ export function importStepBufferWithReport(data: Uint8Array): any;
 
 /**
  * Import a URDF (Unified Robot Description Format) file and return a
- * serialised vcad [`Document`].
+ * serialised vcad `Document`.
  *
  * Browsers cannot resolve `package://` URIs or relative mesh paths
  * against the user's filesystem, so any `<mesh>` reference in the URDF
@@ -2635,7 +2635,7 @@ export function nestSheetMetalParts(parts_json: string, params_json: string): st
 /**
  * Produce one layered DXF per stock sheet for a set of nested parts.
  *
- * `placements_json` is an array of [`NestedPlacementDto`]; each chain
+ * `placements_json` is an array of `NestedPlacementDto`; each chain
  * is independently evaluated into a flat pattern, then translated /
  * rotated according to its placement before being written to the
  * sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`
@@ -2793,7 +2793,7 @@ export function particleOptimize(spec_json: string, params_json: string, optimiz
  * `spec_json` is a `vcad_kernel_particle::spec::DeviceSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them
  * (fail-closed: unbound names error), `options_json` a
- * [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
+ * `ParticleSimOptions`. Returns stats + `vcad.particle-claims/1` set +
  * unified-receipt claims (basis `predicted` — Provisional by contract).
  */
 export function particleSimulate(spec_json: string, params_json: string, options_json: string): any;
@@ -2941,7 +2941,7 @@ export function render_svg(vcad_json: string, scale: number): string;
 export function render_svg_annotated(vcad_json: string, scale: number, view: string, axes: boolean, labels: boolean, dims: boolean): string;
 
 /**
- * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
  * surface in one call: arbitrary camera, part focus, section cutaway,
  * changed-part highlight, and engineering annotations. This is the superset
  * the MCP `render_view` "agent eyes" path drives; the narrower
@@ -2961,7 +2961,7 @@ export function render_svg_annotated(vcad_json: string, scale: number, view: str
 export function render_svg_camera(vcad_json: string, scale: number, view: string, focus: string | null | undefined, axes: boolean, labels: boolean, dims: boolean, section?: string | null, highlight_json?: string | null): string;
 
 /**
- * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
  * surface expressed as one JSON options object — the forward-compatible
  * companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
  * so new render options never need another positional-arg binding.
@@ -3227,7 +3227,7 @@ export function textBounds(text: string, height: number, font?: string | null, l
  *
  * `spec_json` is a `vcad_kernel_thermal::spec::ThermalSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them,
- * `options_json` a [`ThermalOptions`].
+ * `options_json` a `ThermalOptions`.
  */
 export function thermalSolve(spec_json: string, params_json: string, options_json: string): any;
 
@@ -3241,7 +3241,7 @@ export function thermalSolve(spec_json: string, params_json: string, options_jso
  * `spec_json` is a `ThermalSpec` (every material needs
  * `heat_capacity_j_m3k`), `transient_json` a
  * `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
- * `{name: value}` map, `options_json` a [`ThermalOptions`].
+ * `{name: value}` map, `options_json` a `ThermalOptions`.
  */
 export function thermalSolveTransient(spec_json: string, transient_json: string, params_json: string, options_json: string): any;
 
@@ -3269,7 +3269,7 @@ export function toVCode(doc_json: string): string;
  * `spec_json` is a `vcad_kernel_tolerance::spec::StackupSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them
  * (fail-closed: unbound names error), `options_json` a
- * [`ToleranceOptions`]. Returns all three analyses +
+ * `ToleranceOptions`. Returns all three analyses +
  * `vcad.tolerance-claims/1` + unified-receipt claims (basis `predicted`).
  */
 export function toleranceAnalyze(spec_json: string, params_json: string, options_json: string): any;
