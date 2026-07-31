@@ -6937,6 +6937,47 @@
     }
   },
   {
+    "name": "import_urdf",
+    "title": "Import URDF",
+    "description": "Import a URDF (Unified Robot Description Format) robot from a server-local file. Builds the full kinematic tree — one part per link, instances FK-placed from joint origins, joints (revolute/prismatic/fixed) with limits, and a grounded root link — ready for create_robot_env. STL mesh references are resolved against the URDF's directory and optional package_roots and inlined; unresolved meshes fall back to placeholder geometry with an explicit warning.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the .urdf file on the server filesystem, relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). Relative mesh references inside the URDF resolve against the URDF's own directory. On hosted servers pass content_base64 instead."
+        },
+        "content_base64": {
+          "type": "string",
+          "description": "Base64-encoded URDF XML. Use instead of `path` when the server has no access to your filesystem (hosted/remote deployments). Mesh references cannot be resolved in this mode — links with meshes get placeholder geometry, but joints and inertials import exactly."
+        },
+        "package_roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Directories to search when resolving package://NAME/... mesh URIs, relative to the server working directory. Each root is checked for a NAME/ subdirectory; first match wins."
+        },
+        "name": {
+          "type": "string",
+          "description": "Robot name (default: filename without extension)"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
     "name": "import_kicad",
     "title": "Import KiCad",
     "description": "Import an existing KiCad .kicad_pcb board into a live session — board outline, footprints with pads + nets, design rules, and any routed traces/vias/zones. Returns a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. Pass content_base64 on hosted servers.",
