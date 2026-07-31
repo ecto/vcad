@@ -538,13 +538,6 @@ pub(crate) fn find_or_create_vertex(
     point: &Point3,
     tolerance: f64,
 ) -> vcad_kernel_topo::VertexId {
-    if std::env::var("VCAD_VERTEX_TRAP").is_ok() && (point.z < -1.0 || point.z > 14.0) {
-        panic!("vertex trap: {point:?}");
-    }
-    if std::env::var("VCAD_RING_TRAP").is_ok() && (point.z - 8.8967).abs() < 1e-3 && point.x < -15.0
-    {
-        panic!("ring trap: {point:?}");
-    }
     // Snap small values to exactly 0 to avoid floating point artifacts
     let snapped = snap_point(*point);
 
