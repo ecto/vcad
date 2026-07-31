@@ -240,14 +240,29 @@ export class PhysicsSim {
     /**
      * Joint ids in observation order (document `joints` order).
      *
-     * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`. Action vector entries index
-     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
+     * Joints map onto `joint_positions` / `joint_velocities` by *slice*, not
+     * by index: joint `i` owns the next `jointSlotCounts()[i]` entries. The
+     * lists are the same length only when every joint is single-DOF. Action
+     * vector entries index `actuatedJointIds()` instead, which drops zero-dof
+     * (Fixed) joints.
      * @returns {string[]}
      */
     jointIds() {
         const ret = wasm.physicssim_jointIds(this.__wbg_ptr);
         var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Observation slots occupied by each joint in `jointIds()` order:
+     * `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+     * Free 6. Walk it as a cursor to split an observation into per-joint
+     * slices.
+     * @returns {Uint32Array}
+     */
+    jointSlotCounts() {
+        const ret = wasm.physicssim_jointSlotCounts(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
     }

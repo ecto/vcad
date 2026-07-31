@@ -82,11 +82,20 @@ export class PhysicsSim {
     /**
      * Joint ids in observation order (document `joints` order).
      *
-     * `joint_positions[i]` / `joint_velocities[i]` in every observation
-     * correspond to `jointIds()[i]`. Action vector entries index
-     * `actuatedJointIds()` instead, which drops zero-dof (Fixed) joints.
+     * Joints map onto `joint_positions` / `joint_velocities` by *slice*, not
+     * by index: joint `i` owns the next `jointSlotCounts()[i]` entries. The
+     * lists are the same length only when every joint is single-DOF. Action
+     * vector entries index `actuatedJointIds()` instead, which drops zero-dof
+     * (Fixed) joints.
      */
     jointIds(): string[];
+    /**
+     * Observation slots occupied by each joint in `jointIds()` order:
+     * `max(1, ndof)` — Fixed 1, Revolute / Slider / Cylindrical 1, Ball 3,
+     * Free 6. Walk it as a cursor to split an observation into per-joint
+     * slices.
+     */
+    jointSlotCounts(): Uint32Array;
     /**
      * Create a new physics simulation from a vcad document JSON.
      *
@@ -3384,6 +3393,7 @@ export interface InitOutput {
     readonly physicssim_actionDim: (a: number) => number;
     readonly physicssim_actuatedJointIds: (a: number) => [number, number];
     readonly physicssim_jointIds: (a: number) => [number, number];
+    readonly physicssim_jointSlotCounts: (a: number) => [number, number];
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number, number];
     readonly physicssim_numJoints: (a: number) => number;
     readonly physicssim_observationDim: (a: number) => number;
@@ -3578,17 +3588,6 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
-    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbg_circuitsim_free: (a: number, b: number) => void;
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
@@ -3738,6 +3737,17 @@ export interface InitOutput {
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
+    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];
