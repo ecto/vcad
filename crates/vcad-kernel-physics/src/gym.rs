@@ -1,5 +1,7 @@
 //! Gym-style interface for reinforcement learning.
 
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use vcad_ir::Document;
 
@@ -18,6 +20,18 @@ pub struct Observation {
     pub joint_velocities: Vec<f64>,
     /// End effector poses as [x, y, z, qw, qx, qy, qz] in meters.
     pub end_effector_poses: Vec<[f64; 7]>,
+    /// Base pose as [x, y, z, qw, qx, qy, qz] (meters / unit quaternion) of
+    /// the base instance (config `base_instance_id`, defaulting to the
+    /// document's ground instance). None when the base instance is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_pose: Option<[f64; 7]>,
+    /// Base velocity as [vx, vy, vz, wx, wy, wz] (m/s of the base origin,
+    /// then rad/s), world frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_velocity: Option<[f64; 6]>,
+    // TODO(contact): per-foot contact state (in-contact flag + normal force)
+    // once the contact ground-plane task lands — PhysicsWorld currently runs
+    // a contact-free articulated rollout, so there is nothing to report yet.
 }
 
 impl Observation {
@@ -27,8 +41,144 @@ impl Observation {
             joint_positions: vec![0.0; num_joints],
             joint_velocities: vec![0.0; num_joints],
             end_effector_poses: vec![[0.0; 7]; num_end_effectors],
+            base_pose: None,
+            base_velocity: None,
         }
     }
+}
+
+/// Inclusive `[min, max]` sampling range for domain randomization.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Range {
+    /// Lower bound (inclusive).
+    pub min: f64,
+    /// Upper bound (inclusive).
+    pub max: f64,
+}
+
+impl Range {
+    fn sample(&self, rng: &mut StdRng) -> f64 {
+        self.min + rng.gen::<f64>() * (self.max - self.min)
+    }
+}
+
+/// Seeded domain randomization applied on every [`RobotEnv::reset`].
+///
+/// All fields are optional; an unset field applies no randomization for that
+/// quantity. Samples are drawn from a `StdRng` seeded from the env seed plus
+/// an episode counter, so a given `(seed, episode)` pair is reproducible.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DomainRandomization {
+    /// Per-link multiplicative mass scale (e.g. `{min: 0.9, max: 1.1}` for
+    /// ±10%). Sampled independently per non-ground instance; scales the whole
+    /// spatial inertia.
+    pub mass_scale: Option<Range>,
+    /// Per-joint multiplicative scale on dry friction loss and viscous
+    /// damping. (Joint friction only — see the contact TODO on
+    /// [`PhysicsWorld::scale_joint_friction`].)
+    pub friction_scale: Option<Range>,
+    /// Global multiplicative scale on the PD motor gains (kp, kd), sampled
+    /// once per episode.
+    pub pd_gain_scale: Option<Range>,
+    /// Actuator latency in physics substeps, sampled uniformly from the
+    /// inclusive `[min, max]` integer range once per episode. An action
+    /// passed to `step` takes effect after that many substeps (spilling into
+    /// the next env step if it exceeds `substeps`). Booster's official K1
+    /// config randomizes 2–8 sim steps.
+    pub action_latency_steps: Option<[u32; 2]>,
+    /// Uniform ± perturbation of each actuated joint's initial position
+    /// (degrees for revolute, mm for prismatic).
+    pub joint_pos_perturb: Option<f64>,
+    /// Uniform ± perturbation of each actuated joint's initial velocity
+    /// (deg/s or mm/s).
+    pub joint_vel_perturb: Option<f64>,
+}
+
+/// Zero-mean gaussian noise added to observations returned by `step`/`reset`.
+///
+/// [`RobotEnv::observe`] stays noise-free (it reads the true state); the
+/// noisy view is what a policy trains against.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObservationNoise {
+    /// Std-dev on joint positions (degrees / mm).
+    pub joint_pos_std: f64,
+    /// Std-dev on joint velocities (deg/s / mm/s).
+    pub joint_vel_std: f64,
+    /// Std-dev on base position (meters).
+    pub base_pos_std: f64,
+    /// Std-dev on base orientation (radians, small-angle perturbation).
+    pub base_rot_std: f64,
+    /// Std-dev on base linear/angular velocity (m/s and rad/s).
+    pub base_vel_std: f64,
+}
+
+impl ObservationNoise {
+    fn is_zero(&self) -> bool {
+        self.joint_pos_std == 0.0
+            && self.joint_vel_std == 0.0
+            && self.base_pos_std == 0.0
+            && self.base_rot_std == 0.0
+            && self.base_vel_std == 0.0
+    }
+}
+
+/// Configurable termination conditions checked after every step.
+///
+/// When set, these replace the legacy end-effector-below-ground check.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminationConfig {
+    /// Terminate when the base origin's world z drops below this (meters).
+    pub base_height_below: Option<f64>,
+    /// Terminate when the base tilts more than this many degrees from
+    /// upright (angle between the base frame's +Z axis and world +Z).
+    pub base_tilt_above_deg: Option<f64>,
+    /// Terminate when any joint reaches (or passes) a limit.
+    pub terminate_on_joint_limit: bool,
+}
+
+/// Full env configuration accepted by [`RobotEnv::new_with_config`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EnvConfig {
+    /// Domain randomization applied on every reset.
+    pub randomization: Option<DomainRandomization>,
+    /// Gaussian observation noise on `step`/`reset` observations.
+    pub observation_noise: Option<ObservationNoise>,
+    /// Termination conditions.
+    pub termination: Option<TerminationConfig>,
+    /// Instance id treated as the robot base for base pose/velocity
+    /// observations and termination checks. Defaults to the document's
+    /// ground instance.
+    pub base_instance_id: Option<String>,
+}
+
+/// Per-step diagnostics returned alongside the observation — everything a
+/// client-side reward needs, without baking a reward DSL into the kernel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepInfo {
+    /// Steps taken since the last reset (this step included).
+    pub step: u32,
+    /// Episode ended because `max_steps` was reached.
+    pub truncated: bool,
+    /// Episode ended because a termination condition fired.
+    pub terminated: bool,
+    /// Which condition fired (e.g. "base_height", "base_tilt",
+    /// "joint_limit", "end_effector_below_ground").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub termination_reason: Option<String>,
+    /// Base origin height above world z=0 (meters), when a base is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_height_m: Option<f64>,
+    /// Base tilt from upright (degrees), when a base is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_tilt_deg: Option<f64>,
+    /// Ids of joints currently at/past a limit.
+    pub joint_limit_violations: Vec<String>,
+    /// The episode's sampled actuator latency, in physics substeps.
+    pub action_latency_substeps: u32,
 }
 
 /// Action to apply to the robot.
@@ -65,6 +215,35 @@ pub struct RobotEnv {
     initial_doc: Document,
     /// Random seed.
     seed: u64,
+    /// Env configuration (randomization / noise / termination).
+    config: EnvConfig,
+    /// Resolved base instance id (config override or document ground).
+    base_instance_id: Option<String>,
+    /// Episode counter, folded into the per-reset RNG stream.
+    episode: u64,
+    /// RNG for the current episode (observation noise draws).
+    rng: StdRng,
+    /// The episode's sampled actuator latency in physics substeps.
+    latency_substeps: u32,
+    /// Delay line: (substeps until active, action). Motors persist once
+    /// applied, so the previous action keeps acting until its successor
+    /// clears the delay line.
+    pending_actions: Vec<(u32, Action)>,
+}
+
+/// Result of a single env step: observation plus reward, done, and the
+/// [`StepInfo`] diagnostics map.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepResult {
+    /// Observation after the step (noisy when observation noise is set).
+    pub observation: Observation,
+    /// Reward. The kernel computes no task reward (always 0.0) — compute
+    /// rewards client-side from the observation and [`StepInfo`].
+    pub reward: f64,
+    /// True when the episode ended (terminated or truncated).
+    pub done: bool,
+    /// Per-step diagnostics.
+    pub info: StepInfo,
 }
 
 impl RobotEnv {
@@ -82,11 +261,27 @@ impl RobotEnv {
         dt: Option<f32>,
         substeps: Option<u32>,
     ) -> Result<Self, PhysicsError> {
+        Self::new_with_config(doc, end_effector_ids, dt, substeps, EnvConfig::default())
+    }
+
+    /// Create a new robot environment with an explicit [`EnvConfig`]
+    /// (domain randomization, observation noise, termination conditions).
+    pub fn new_with_config(
+        doc: Document,
+        end_effector_ids: Vec<String>,
+        dt: Option<f32>,
+        substeps: Option<u32>,
+        config: EnvConfig,
+    ) -> Result<Self, PhysicsError> {
         let world = PhysicsWorld::from_document(&doc)?;
         let joint_ids = world.joint_ids();
         let actuated_joint_ids = world.actuated_joint_ids();
+        let base_instance_id = config
+            .base_instance_id
+            .clone()
+            .or_else(|| doc.ground_instance_id.clone());
 
-        Ok(Self {
+        let mut env = Self {
             world,
             joint_ids,
             actuated_joint_ids,
@@ -97,12 +292,23 @@ impl RobotEnv {
             current_step: 0,
             initial_doc: doc,
             seed: 0,
-        })
+            config,
+            base_instance_id,
+            episode: 0,
+            rng: StdRng::seed_from_u64(0),
+            latency_substeps: 0,
+            pending_actions: Vec::new(),
+        };
+        // Apply episode-0 randomization to the freshly built world so the
+        // very first rollout (before any explicit reset) is randomized too.
+        env.apply_episode_randomization();
+        Ok(env)
     }
 
-    /// Reset the environment to initial state.
+    /// Reset the environment to initial state, applying a fresh draw of
+    /// domain randomization (if configured).
     ///
-    /// Returns the initial observation.
+    /// Returns the initial observation (noisy when observation noise is set).
     pub fn reset(&mut self) -> Observation {
         // Rebuild from `initial_doc`, which was already validated via `?` in
         // `new()` and is never mutated afterwards — so this expect should be
@@ -113,34 +319,138 @@ impl RobotEnv {
         self.joint_ids = self.world.joint_ids();
         self.actuated_joint_ids = self.world.actuated_joint_ids();
         self.current_step = 0;
+        self.episode = self.episode.wrapping_add(1);
+        self.pending_actions.clear();
 
-        self.observe()
+        self.apply_episode_randomization();
+
+        let obs = self.observe();
+        self.noisify(obs)
+    }
+
+    /// Reset with a new seed: replaces the stored seed, rewinds the episode
+    /// counter (so the next randomization draw is episode 0 of the new
+    /// stream), then resets.
+    pub fn reset_with_seed(&mut self, seed: u64) -> Observation {
+        self.seed = seed;
+        // reset() pre-increments; start the new stream at episode 0.
+        self.episode = u64::MAX;
+        self.reset()
+    }
+
+    /// Re-seed the per-episode RNG and sample + apply this episode's domain
+    /// randomization to the freshly (re)built world.
+    fn apply_episode_randomization(&mut self) {
+        // Distinct, deterministic stream per (seed, episode).
+        self.rng =
+            StdRng::seed_from_u64(self.seed ^ self.episode.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        self.latency_substeps = 0;
+
+        let Some(dr) = self.config.randomization.clone() else {
+            return;
+        };
+
+        if let Some(range) = dr.mass_scale {
+            let ground = self.initial_doc.ground_instance_id.clone();
+            for inst_id in self.world.instance_ids() {
+                if ground.as_deref() == Some(inst_id.as_str()) {
+                    continue;
+                }
+                let scale = range.sample(&mut self.rng);
+                self.world.scale_instance_mass(&inst_id, scale);
+            }
+        }
+        if let Some(range) = dr.friction_scale {
+            for joint_id in self.actuated_joint_ids.clone() {
+                let scale = range.sample(&mut self.rng);
+                self.world.scale_joint_friction(&joint_id, scale);
+            }
+        }
+        if let Some(range) = dr.pd_gain_scale {
+            let scale = range.sample(&mut self.rng);
+            self.world.set_gain_scale(scale);
+        }
+        if let Some([lo, hi]) = dr.action_latency_steps {
+            let (lo, hi) = (lo.min(hi), lo.max(hi));
+            self.latency_substeps = lo + (self.rng.gen::<u64>() % (hi - lo + 1) as u64) as u32;
+        }
+        if dr.joint_pos_perturb.is_some() || dr.joint_vel_perturb.is_some() {
+            let dp = dr.joint_pos_perturb.unwrap_or(0.0);
+            let dv = dr.joint_vel_perturb.unwrap_or(0.0);
+            for joint_id in self.actuated_joint_ids.clone() {
+                let dpos = (self.rng.gen::<f64>() * 2.0 - 1.0) * dp;
+                let dvel = (self.rng.gen::<f64>() * 2.0 - 1.0) * dv;
+                self.world.perturb_joint_state(&joint_id, dpos, dvel);
+            }
+            self.world.refresh_kinematics();
+        }
     }
 
     /// Step the environment with an action.
     ///
-    /// Returns (observation, reward, done).
+    /// Returns (observation, reward, done). See [`Self::step_full`] for the
+    /// variant that also returns [`StepInfo`].
     pub fn step(&mut self, action: Action) -> (Observation, f64, bool) {
-        // Apply action
-        self.apply_action(&action);
+        let result = self.step_full(action);
+        (result.observation, result.reward, result.done)
+    }
 
-        // Step physics multiple times
+    /// Step the environment with an action, returning the full
+    /// [`StepResult`] including per-step diagnostics.
+    ///
+    /// The action enters a delay line of the episode's sampled actuator
+    /// latency (in physics substeps); until it clears, the previous motor
+    /// targets keep acting.
+    pub fn step_full(&mut self, action: Action) -> StepResult {
+        self.pending_actions.push((self.latency_substeps, action));
+
         for _ in 0..self.substeps {
+            // Apply, in FIFO order, every queued action whose delay elapsed.
+            let mut i = 0;
+            while i < self.pending_actions.len() {
+                if self.pending_actions[i].0 == 0 {
+                    let (_, a) = self.pending_actions.remove(i);
+                    self.apply_action(&a);
+                } else {
+                    i += 1;
+                }
+            }
             self.world.step(self.dt);
+            for pending in &mut self.pending_actions {
+                pending.0 -= 1;
+            }
         }
 
         self.current_step += 1;
 
-        // Get observation
         let obs = self.observe();
-
-        // Compute reward (placeholder - should be customized per task)
         let reward = self.compute_reward(&obs);
 
-        // Check termination
-        let done = self.current_step >= self.max_steps || self.is_terminated(&obs);
+        let (terminated, termination_reason, joint_limit_violations) = self.check_termination(&obs);
+        let truncated = self.current_step >= self.max_steps;
 
-        (obs, reward, done)
+        let (base_height_m, base_tilt_deg) = match obs.base_pose {
+            Some(pose) => (Some(pose[2]), Some(tilt_from_upright_deg(&pose))),
+            None => (None, None),
+        };
+
+        let info = StepInfo {
+            step: self.current_step,
+            truncated,
+            terminated,
+            termination_reason,
+            base_height_m,
+            base_tilt_deg,
+            joint_limit_violations,
+            action_latency_substeps: self.latency_substeps,
+        };
+
+        StepResult {
+            observation: self.noisify(obs),
+            reward,
+            done: terminated || truncated,
+            info,
+        }
     }
 
     /// Get current observation without stepping.
@@ -172,14 +482,110 @@ impl RobotEnv {
             }
         }
 
+        let (base_pose, base_velocity) = match self.base_instance_id.as_deref() {
+            Some(base_id) => (
+                self.world.get_instance_pose(base_id).map(|(pos, quat)| {
+                    [pos[0], pos[1], pos[2], quat[0], quat[1], quat[2], quat[3]]
+                }),
+                self.world.get_instance_velocity(base_id),
+            ),
+            None => (None, None),
+        };
+
         Observation {
             joint_positions: positions,
             joint_velocities: velocities,
             end_effector_poses,
+            base_pose,
+            base_velocity,
         }
     }
 
-    /// Set the random seed.
+    /// Apply configured gaussian observation noise, consuming RNG draws from
+    /// the current episode's stream. Identity when no noise is configured.
+    fn noisify(&mut self, mut obs: Observation) -> Observation {
+        let Some(noise) = self.config.observation_noise.clone() else {
+            return obs;
+        };
+        if noise.is_zero() {
+            return obs;
+        }
+        for p in &mut obs.joint_positions {
+            *p += gaussian(&mut self.rng) * noise.joint_pos_std;
+        }
+        for v in &mut obs.joint_velocities {
+            *v += gaussian(&mut self.rng) * noise.joint_vel_std;
+        }
+        if let Some(pose) = obs.base_pose.as_mut() {
+            for p in pose.iter_mut().take(3) {
+                *p += gaussian(&mut self.rng) * noise.base_pos_std;
+            }
+            if noise.base_rot_std > 0.0 {
+                // Small-angle perturbation: compose with a noise quaternion
+                // built from three gaussian axis-angle components.
+                let (dx, dy, dz) = (
+                    gaussian(&mut self.rng) * noise.base_rot_std,
+                    gaussian(&mut self.rng) * noise.base_rot_std,
+                    gaussian(&mut self.rng) * noise.base_rot_std,
+                );
+                let dq = normalize4([1.0, dx * 0.5, dy * 0.5, dz * 0.5]);
+                let q = [pose[3], pose[4], pose[5], pose[6]];
+                let qn = quat_mul(dq, q);
+                pose[3] = qn[0];
+                pose[4] = qn[1];
+                pose[5] = qn[2];
+                pose[6] = qn[3];
+            }
+        }
+        if let Some(vel) = obs.base_velocity.as_mut() {
+            for v in vel.iter_mut() {
+                *v += gaussian(&mut self.rng) * noise.base_vel_std;
+            }
+        }
+        obs
+    }
+
+    /// Evaluate termination conditions against a (noise-free) observation.
+    ///
+    /// Returns (terminated, reason, joints currently at/past a limit). The
+    /// limit list is reported regardless of whether limits terminate.
+    fn check_termination(&self, obs: &Observation) -> (bool, Option<String>, Vec<String>) {
+        const LIMIT_EPS: f64 = 1e-6;
+        let mut violations = Vec::new();
+        for (i, joint_id) in self.joint_ids.iter().enumerate() {
+            if let Some((lo, hi)) = self.world.joint_limits_vcad(joint_id) {
+                let q = obs.joint_positions[i];
+                if q <= lo + LIMIT_EPS || q >= hi - LIMIT_EPS {
+                    violations.push(joint_id.clone());
+                }
+            }
+        }
+
+        let Some(term) = self.config.termination.as_ref() else {
+            // Legacy behavior: terminate when an end effector falls below
+            // ground.
+            return (self.is_terminated(obs), None, violations);
+        };
+
+        if let Some(pose) = &obs.base_pose {
+            if let Some(min_z) = term.base_height_below {
+                if pose[2] < min_z {
+                    return (true, Some("base_height".to_string()), violations);
+                }
+            }
+            if let Some(max_tilt) = term.base_tilt_above_deg {
+                if tilt_from_upright_deg(pose) > max_tilt {
+                    return (true, Some("base_tilt".to_string()), violations);
+                }
+            }
+        }
+        if term.terminate_on_joint_limit && !violations.is_empty() {
+            return (true, Some("joint_limit".to_string()), violations);
+        }
+        (false, None, violations)
+    }
+
+    /// Set the random seed. Takes effect from the next [`Self::reset`].
     pub fn seed(&mut self, seed: u64) {
         self.seed = seed;
     }
@@ -245,26 +651,57 @@ impl RobotEnv {
     }
 
     fn compute_reward(&self, _obs: &Observation) -> f64 {
-        // Placeholder reward - should be customized per task
-        // Common rewards:
-        // - Distance to goal
-        // - Energy penalty
-        // - Smoothness penalty
-        // - Success bonus
+        // Rewards are deliberately computed client-side: the observation plus
+        // StepInfo (base pose/velocity, height, tilt, limit violations) carry
+        // everything a task reward needs. The kernel always returns 0.0.
         0.0
     }
 
+    /// Legacy termination check, used only when no [`TerminationConfig`] is
+    /// set: an end effector more than a meter below ground.
     fn is_terminated(&self, obs: &Observation) -> bool {
-        // Check for invalid states (e.g., robot fell over)
-        // Placeholder - should be customized per task
         for pose in &obs.end_effector_poses {
-            // Check if end effector is below ground
             if pose[2] < -1.0 {
                 return true;
             }
         }
         false
     }
+}
+
+/// Standard-normal draw via Box–Muller (avoids a rand_distr dependency).
+fn gaussian(rng: &mut StdRng) -> f64 {
+    let u1 = rng.gen::<f64>().max(1e-300);
+    let u2 = rng.gen::<f64>();
+    (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+}
+
+/// Normalize a wxyz quaternion.
+fn normalize4(q: [f64; 4]) -> [f64; 4] {
+    let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    if n < 1e-12 {
+        return [1.0, 0.0, 0.0, 0.0];
+    }
+    [q[0] / n, q[1] / n, q[2] / n, q[3] / n]
+}
+
+/// Hamilton product of two wxyz quaternions.
+fn quat_mul(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
+    [
+        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+    ]
+}
+
+/// Tilt from upright (degrees) of a `[x, y, z, qw, qx, qy, qz]` pose: the
+/// angle between the frame's +Z axis and world +Z. For a unit quaternion,
+/// `R·ez · ez = 1 − 2(qx² + qy²)`.
+fn tilt_from_upright_deg(pose: &[f64; 7]) -> f64 {
+    let (qx, qy) = (pose[4], pose[5]);
+    let cos_tilt = (1.0 - 2.0 * (qx * qx + qy * qy)).clamp(-1.0, 1.0);
+    cos_tilt.acos().to_degrees()
 }
 
 #[cfg(test)]
@@ -676,6 +1113,192 @@ mod tests {
         assert_eq!(obs.joint_positions.len(), 2);
         assert_eq!(obs.joint_velocities.len(), 2);
         assert_eq!(obs.end_effector_poses.len(), 1);
+    }
+
+    fn randomized_config() -> EnvConfig {
+        EnvConfig {
+            randomization: Some(DomainRandomization {
+                mass_scale: Some(Range { min: 0.9, max: 1.1 }),
+                friction_scale: Some(Range { min: 0.5, max: 2.0 }),
+                pd_gain_scale: Some(Range { min: 0.8, max: 1.2 }),
+                action_latency_steps: Some([2, 8]),
+                joint_pos_perturb: Some(5.0),
+                joint_vel_perturb: Some(1.0),
+            }),
+            observation_noise: Some(ObservationNoise {
+                joint_pos_std: 0.1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn seeded_reset_is_reproducible() {
+        let doc = create_simple_robot();
+        let mut env = RobotEnv::new_with_config(
+            doc.clone(),
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            randomized_config(),
+        )
+        .unwrap();
+        let mut env2 = RobotEnv::new_with_config(
+            doc,
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            randomized_config(),
+        )
+        .unwrap();
+
+        let a = env.reset_with_seed(42);
+        let b = env2.reset_with_seed(42);
+        assert_eq!(a.joint_positions, b.joint_positions);
+        assert_eq!(a.joint_velocities, b.joint_velocities);
+
+        // Same seed, same episode → identical rollouts too (randomized mass,
+        // gains, latency all resampled identically).
+        let (sa, _, _) = env.step(Action::Torque(vec![0.01, 0.01]));
+        let (sb, _, _) = env2.step(Action::Torque(vec![0.01, 0.01]));
+        assert_eq!(sa.joint_positions, sb.joint_positions);
+
+        // A different seed draws a different initial state (pos perturb ±5°
+        // makes a collision vanishingly unlikely).
+        let c = env.reset_with_seed(43);
+        let a2 = env2.reset_with_seed(42);
+        assert_ne!(c.joint_positions, a2.joint_positions);
+    }
+
+    #[test]
+    fn action_latency_delays_effect() {
+        let doc = create_simple_robot();
+        let latency_cfg = EnvConfig {
+            randomization: Some(DomainRandomization {
+                // Fixed 8-substep latency = 2 env steps at substeps=4.
+                action_latency_steps: Some([8, 8]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut delayed = RobotEnv::new_with_config(
+            doc.clone(),
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            latency_cfg,
+        )
+        .unwrap();
+        let mut immediate =
+            RobotEnv::new(doc.clone(), vec!["link2_inst".to_string()], None, None).unwrap();
+        // Reference: no torque at all, so the first step is gravity-only.
+        let mut passive = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None).unwrap();
+        delayed.reset();
+        immediate.reset();
+        passive.reset();
+
+        let torque = Action::Torque(vec![0.5, 0.0]);
+        let (obs_d, _, _) = delayed.step(torque.clone());
+        let (obs_i, _, _) = immediate.step(torque.clone());
+        let (obs_p, _, _) = passive.step(Action::Torque(vec![0.0, 0.0]));
+        // During the latency window the delayed env evolves exactly like the
+        // passive one (gravity only), while the immediate env already feels
+        // the torque.
+        assert_eq!(obs_d.joint_velocities, obs_p.joint_velocities);
+        assert_ne!(obs_i.joint_velocities, obs_p.joint_velocities);
+
+        // After the delay elapses the action lands and the trajectories split.
+        let result = delayed.step_full(torque.clone());
+        assert_eq!(result.info.action_latency_substeps, 8);
+        let (obs_d2, _, _) = delayed.step(torque);
+        let (obs_p2, _, _) = {
+            passive.step(Action::Torque(vec![0.0, 0.0]));
+            passive.step(Action::Torque(vec![0.0, 0.0]))
+        };
+        assert_ne!(obs_d2.joint_velocities, obs_p2.joint_velocities);
+    }
+
+    #[test]
+    fn observation_noise_perturbs_step_but_not_observe() {
+        let doc = create_simple_robot();
+        let cfg = EnvConfig {
+            observation_noise: Some(ObservationNoise {
+                joint_pos_std: 0.5,
+                joint_vel_std: 0.5,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut env =
+            RobotEnv::new_with_config(doc, vec!["link2_inst".to_string()], None, None, cfg)
+                .unwrap();
+        let noisy = env.reset_with_seed(7);
+        let clean = env.observe();
+        assert_ne!(noisy.joint_positions, clean.joint_positions);
+        let (stepped, _, _) = env.step(Action::Torque(vec![0.0, 0.0]));
+        assert_ne!(stepped.joint_positions, env.observe().joint_positions);
+    }
+
+    #[test]
+    fn base_state_and_step_info_are_reported() {
+        let doc = create_simple_robot();
+        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None).unwrap();
+        let obs = env.reset();
+        // Default base is the ground instance: present, at rest.
+        let pose = obs.base_pose.expect("base pose should be reported");
+        let vel = obs.base_velocity.expect("base velocity should be reported");
+        assert!(vel.iter().all(|v| v.abs() < 1e-12));
+
+        let result = env.step_full(Action::Torque(vec![0.01, 0.01]));
+        assert_eq!(result.info.step, 1);
+        assert!(!result.info.truncated);
+        assert!(!result.info.terminated);
+        assert_eq!(result.info.base_height_m, Some(pose[2]));
+        assert!(result.info.base_tilt_deg.unwrap() < 1e-6);
+    }
+
+    #[test]
+    fn configurable_termination_fires_on_base_height() {
+        let doc = create_simple_robot();
+        let cfg = EnvConfig {
+            termination: Some(TerminationConfig {
+                // Ground base sits near z=0 — an absurdly high floor makes
+                // the condition fire on the first step, proving the plumbing.
+                base_height_below: Some(10.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut env =
+            RobotEnv::new_with_config(doc, vec!["link2_inst".to_string()], None, None, cfg)
+                .unwrap();
+        env.reset();
+        let result = env.step_full(Action::Torque(vec![0.0, 0.0]));
+        assert!(result.done);
+        assert!(result.info.terminated);
+        assert_eq!(
+            result.info.termination_reason.as_deref(),
+            Some("base_height")
+        );
+    }
+
+    #[test]
+    fn joint_limit_violations_reported_in_info() {
+        let doc = create_simple_robot();
+        let mut env = RobotEnv::new(doc, vec!["link2_inst".to_string()], None, None).unwrap();
+        env.reset();
+        // Drive joint1 hard into its +90° limit; the world hard-clamps there.
+        let mut last = None;
+        for _ in 0..300 {
+            last = Some(env.step_full(Action::PositionTarget(vec![90.0, 0.0])));
+        }
+        let info = last.unwrap().info;
+        assert!(
+            info.joint_limit_violations.contains(&"joint1".to_string()),
+            "expected joint1 at its limit, got {:?}",
+            info.joint_limit_violations
+        );
     }
 
     #[test]

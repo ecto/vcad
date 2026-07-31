@@ -21,6 +21,34 @@ export interface PhysicsObservation {
   joint_velocities: number[];
   /** End effector poses as [x, y, z, qw, qx, qy, qz][] */
   end_effector_poses: Array<[number, number, number, number, number, number, number]>;
+  /**
+   * Base pose as [x, y, z, qw, qx, qy, qz] (config `base_instance_id`,
+   * defaulting to the ground instance). Absent on kernel builds predating
+   * base-state observations.
+   */
+  base_pose?: [number, number, number, number, number, number, number];
+  /** Base velocity as [vx, vy, vz, wx, wy, wz] (m/s, rad/s, world frame). */
+  base_velocity?: [number, number, number, number, number, number];
+}
+
+/** Per-step diagnostics from the kernel — reward inputs for the client. */
+export interface PhysicsStepInfo {
+  /** Steps since the last reset. */
+  step: number;
+  /** Episode ended by hitting max_steps. */
+  truncated: boolean;
+  /** Episode ended by a termination condition. */
+  terminated: boolean;
+  /** Which condition fired ("base_height", "base_tilt", "joint_limit", …). */
+  termination_reason?: string | null;
+  /** Base origin height (meters), when a base is known. */
+  base_height_m?: number | null;
+  /** Base tilt from upright (degrees), when a base is known. */
+  base_tilt_deg?: number | null;
+  /** Joint ids currently at/past a limit. */
+  joint_limit_violations: string[];
+  /** This episode's sampled actuator latency in physics substeps. */
+  action_latency_substeps: number;
 }
 
 /** Result from stepping the simulation */
@@ -28,6 +56,58 @@ export interface PhysicsStepResult {
   observation: PhysicsObservation;
   reward: number;
   done: boolean;
+  /** Absent on kernel builds predating the info map. */
+  info?: PhysicsStepInfo;
+}
+
+/** Inclusive [min, max] sampling range for domain randomization. */
+export interface PhysicsRange {
+  min: number;
+  max: number;
+}
+
+/** Seeded domain randomization applied on every reset. */
+export interface PhysicsDomainRandomization {
+  /** Per-link multiplicative mass scale (e.g. {min: 0.9, max: 1.1}). */
+  mass_scale?: PhysicsRange;
+  /** Per-joint scale on dry friction loss + viscous damping. */
+  friction_scale?: PhysicsRange;
+  /** Global scale on PD motor gains, sampled once per episode. */
+  pd_gain_scale?: PhysicsRange;
+  /** Actuator latency in physics substeps, uniform integer [min, max]. */
+  action_latency_steps?: [number, number];
+  /** Uniform ± initial joint position perturbation (deg / mm). */
+  joint_pos_perturb?: number;
+  /** Uniform ± initial joint velocity perturbation (deg/s / mm/s). */
+  joint_vel_perturb?: number;
+}
+
+/** Gaussian observation noise (std-devs; zero/absent = none). */
+export interface PhysicsObservationNoise {
+  joint_pos_std?: number;
+  joint_vel_std?: number;
+  base_pos_std?: number;
+  base_rot_std?: number;
+  base_vel_std?: number;
+}
+
+/** Configurable termination conditions. */
+export interface PhysicsTerminationConfig {
+  /** Terminate when base z drops below this (meters). */
+  base_height_below?: number;
+  /** Terminate when base tilt exceeds this (degrees from upright). */
+  base_tilt_above_deg?: number;
+  /** Terminate when any joint reaches a limit. */
+  terminate_on_joint_limit?: boolean;
+}
+
+/** Env configuration: randomization, noise, termination, base instance. */
+export interface PhysicsEnvConfig {
+  randomization?: PhysicsDomainRandomization;
+  observation_noise?: PhysicsObservationNoise;
+  termination?: PhysicsTerminationConfig;
+  /** Instance id used for base pose/velocity (default: ground instance). */
+  base_instance_id?: string;
 }
 
 /** Action types for controlling joints */
@@ -43,6 +123,12 @@ export interface PhysicsEnvOptions {
   substeps?: number;
   /** Maximum episode length (default: 1000) */
   maxSteps?: number;
+  /**
+   * Domain randomization / observation noise / termination config. Requires
+   * a kernel WASM build that supports it (create() throws otherwise rather
+   * than silently dropping the config).
+   */
+  config?: PhysicsEnvConfig;
 }
 
 /**
@@ -147,12 +233,32 @@ export class PhysicsEnv {
     }
 
     const docJson = JSON.stringify(document);
-    const sim = new module.PhysicsSim(
+    // The 5th (config JSON) constructor arg postdates some shipped kernel
+    // builds; extra args are ignored by older wasm-bindgen glue, so probe for
+    // a same-vintage binding (resetSeeded) and fail closed instead of
+    // silently dropping a requested config. The structural cast keeps
+    // typecheck green against a checked-in .d.ts that may predate it.
+    const configJson = options.config ? JSON.stringify(options.config) : null;
+    const sim = new (module.PhysicsSim as unknown as new (
+      ...args: unknown[]
+    ) => WasmPhysicsSim)(
       docJson,
       options.endEffectorIds,
       options.dt ?? null,
       options.substeps ?? null,
+      configJson,
     );
+
+    if (
+      configJson &&
+      typeof (sim as unknown as { resetSeeded?: unknown }).resetSeeded !==
+        "function"
+    ) {
+      throw new Error(
+        "This kernel WASM build predates gym env config (domain randomization / " +
+          "observation noise / termination). Rebuild the kernel WASM or drop `config`.",
+      );
+    }
 
     if (options.maxSteps) {
       sim.setMaxSteps(options.maxSteps);
@@ -200,7 +306,22 @@ export class PhysicsEnv {
    *
    * @returns Initial observation
    */
-  reset(): PhysicsObservation {
+  reset(seed?: number | bigint): PhysicsObservation {
+    if (seed !== undefined) {
+      // resetSeeded postdates some shipped kernel builds — fail closed
+      // rather than silently ignoring an explicit seed.
+      const resetSeeded = (
+        this.sim as unknown as { resetSeeded?: (s: bigint) => unknown }
+      ).resetSeeded;
+      if (typeof resetSeeded !== "function") {
+        throw new Error(
+          "This kernel WASM build predates seeded resets. Rebuild the kernel " +
+            "WASM or call reset() without a seed.",
+        );
+      }
+      const rawObs = resetSeeded.call(this.sim, BigInt(seed));
+      return mapToObject(rawObs) as PhysicsObservation;
+    }
     const rawObs = this.sim.reset();
     // serde_wasm_bindgen returns a Map, convert to plain object
     return mapToObject(rawObs) as PhysicsObservation;

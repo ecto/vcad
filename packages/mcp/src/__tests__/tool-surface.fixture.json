@@ -7010,7 +7010,7 @@
   {
     "name": "create_robot_env",
     "title": "Create Robot Env",
-    "description": "Create a physics simulation environment from a vcad assembly. Session-first: pass the `document_id` of the assembly already open — the env binds to that same session, so there is no IR round-trip and the sim can't run against a stale copy. Inline `document` IR is the stateless fallback; exactly one of the two is required. Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and document_id (what the replay viewer and the other session tools bind to). Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
+    "description": "Create a physics simulation environment from a vcad assembly. Session-first: pass the `document_id` of the assembly already open — the env binds to that same session, so there is no IR round-trip and the sim can't run against a stale copy. Inline `document` IR is the stateless fallback; exactly one of the two is required. Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and document_id (what the replay viewer and the other session tools bind to). Optional `config` arms sim2real training: seeded domain randomization (per-link mass, joint friction, PD gains, actuator latency, initial state), gaussian observation noise, and termination conditions (base height/tilt, joint limits). Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7040,6 +7040,10 @@
         "max_steps": {
           "type": "number",
           "description": "Maximum episode length (default: 1000)"
+        },
+        "config": {
+          "type": "object",
+          "description": "Optional env config for sim2real training. `randomization`: seeded domain randomization applied on every reset — {mass_scale: {min, max} (per-link multiplicative, e.g. 0.9–1.1), friction_scale: {min, max} (per-joint friction/damping), pd_gain_scale: {min, max} (global PD gain), action_latency_steps: [min, max] (actuator delay in physics substeps, e.g. [2, 8]), joint_pos_perturb / joint_vel_perturb (uniform ± initial state, deg/mm)}. `observation_noise`: gaussian std-devs {joint_pos_std, joint_vel_std, base_pos_std, base_rot_std, base_vel_std}. `termination`: {base_height_below (m), base_tilt_above_deg, terminate_on_joint_limit}. `base_instance_id`: instance used for base pose/velocity observations (default: the ground instance)."
         }
       },
       "required": [
@@ -7062,7 +7066,7 @@
   {
     "name": "gym_step",
     "title": "Gym Step",
-    "description": "Step the physics simulation with an action. action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). Returns observation (joint positions/velocities, end effector poses), reward, and done flag. The observation carries both the bare positional arrays and id-keyed views: `joints[i] = {id, position, velocity}` and `end_effectors[i] = {id, pose}`, so no ordering has to be remembered.",
+    "description": "Step the physics simulation with an action. action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). Returns observation (joint positions/velocities, end effector poses, base pose+velocity), reward, done flag, and an `info` map with per-step reward inputs: base height/tilt, joint-limit violations, termination reason, and the episode's sampled actuator latency. The observation carries both the bare positional arrays and id-keyed views: `joints[i] = {id, position, velocity}` and `end_effectors[i] = {id, pose}`, so no ordering has to be remembered.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -7100,13 +7104,17 @@
   {
     "name": "gym_reset",
     "title": "Gym Reset",
-    "description": "Reset the simulation environment to its initial state. Returns the initial observation, with joint values keyed by joint id (`joints`) and end effector poses keyed by instance id (`end_effectors`) alongside the bare arrays.",
+    "description": "Reset the simulation environment to its initial state, re-drawing any configured domain randomization. Optional `seed` re-seeds the randomization stream for reproducible episodes. Returns the initial observation, with joint values keyed by joint id (`joints`) and end effector poses keyed by instance id (`end_effectors`) alongside the bare arrays.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "env_id": {
           "type": "string",
           "description": "Environment ID returned by create_robot_env"
+        },
+        "seed": {
+          "type": "number",
+          "description": "Optional new random seed. Re-seeds the domain-randomization stream (episode counter rewinds), so identical seeds reproduce identical randomized episodes."
         }
       },
       "required": [

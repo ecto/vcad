@@ -52,5 +52,8 @@ pub use diff::{
     SurfaceTerm,
 };
 pub use error::PhysicsError;
-pub use gym::{Action, Observation, RobotEnv};
+pub use gym::{
+    Action, DomainRandomization, EnvConfig, Observation, ObservationNoise, Range, RobotEnv,
+    StepInfo, StepResult, TerminationConfig,
+};
 pub use world::{JointState, PhysicsWorld};

@@ -4307,18 +4307,33 @@ impl PhysicsSim {
     /// * `end_effector_ids` - Array of instance IDs to track as end effectors
     /// * `dt` - Simulation timestep in seconds (default: 1/240)
     /// * `substeps` - Number of physics substeps per step (default: 4)
+    /// * `config_json` - Optional JSON `EnvConfig`: domain randomization,
+    ///   observation noise, termination conditions, base instance id
     #[wasm_bindgen(constructor)]
     pub fn new(
         doc_json: &str,
         end_effector_ids: Vec<String>,
         dt: Option<f32>,
         substeps: Option<u32>,
+        config_json: Option<String>,
     ) -> Result<PhysicsSim, JsError> {
         let doc = vcad_ir::Document::from_json(doc_json)
             .map_err(|e| JsError::new(&format!("Invalid document JSON: {}", e)))?;
 
-        let env = vcad_kernel_physics::RobotEnv::new(doc, end_effector_ids, dt, substeps)
-            .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
+        let config: vcad_kernel_physics::EnvConfig = match config_json.as_deref() {
+            Some(json) if !json.trim().is_empty() => serde_json::from_str(json)
+                .map_err(|e| JsError::new(&format!("Invalid env config JSON: {}", e)))?,
+            _ => vcad_kernel_physics::EnvConfig::default(),
+        };
+
+        let env = vcad_kernel_physics::RobotEnv::new_with_config(
+            doc,
+            end_effector_ids,
+            dt,
+            substeps,
+            config,
+        )
+        .map_err(|e| JsError::new(&format!("Failed to create physics env: {}", e)))?;
 
         web_sys::console::log_1(
             &format!("[WASM] PhysicsSim created with {} joints", env.num_joints()).into(),
@@ -4336,24 +4351,26 @@ impl PhysicsSim {
         serde_wasm_bindgen::to_value(&obs).unwrap_or(JsValue::NULL)
     }
 
+    /// Reset with a new seed: re-seeds the domain-randomization stream
+    /// (episode counter rewinds to 0) and resets. Returns the initial
+    /// observation as JSON.
+    #[wasm_bindgen(js_name = resetSeeded)]
+    pub fn reset_seeded(&mut self, seed: u64) -> JsValue {
+        let obs = self.env.reset_with_seed(seed);
+        serde_wasm_bindgen::to_value(&obs).unwrap_or(JsValue::NULL)
+    }
+
     /// Step the simulation with a torque action.
     ///
     /// # Arguments
     /// * `torques` - Array of torques/forces for each joint (Nm or N)
     ///
     /// # Returns
-    /// Object with { observation, reward, done }
+    /// Object with { observation, reward, done, info }
     #[wasm_bindgen(js_name = stepTorque)]
     pub fn step_torque(&mut self, torques: Vec<f64>) -> JsValue {
         let action = vcad_kernel_physics::Action::Torque(torques);
-        let (obs, reward, done) = self.env.step(action);
-
-        let result = serde_json::json!({
-            "observation": obs,
-            "reward": reward,
-            "done": done
-        });
-
+        let result = self.env.step_full(action);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -4363,18 +4380,11 @@ impl PhysicsSim {
     /// * `targets` - Array of position targets for each joint (degrees or mm)
     ///
     /// # Returns
-    /// Object with { observation, reward, done }
+    /// Object with { observation, reward, done, info }
     #[wasm_bindgen(js_name = stepPosition)]
     pub fn step_position(&mut self, targets: Vec<f64>) -> JsValue {
         let action = vcad_kernel_physics::Action::PositionTarget(targets);
-        let (obs, reward, done) = self.env.step(action);
-
-        let result = serde_json::json!({
-            "observation": obs,
-            "reward": reward,
-            "done": done
-        });
-
+        let result = self.env.step_full(action);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -4384,18 +4394,11 @@ impl PhysicsSim {
     /// * `targets` - Array of velocity targets for each joint (deg/s or mm/s)
     ///
     /// # Returns
-    /// Object with { observation, reward, done }
+    /// Object with { observation, reward, done, info }
     #[wasm_bindgen(js_name = stepVelocity)]
     pub fn step_velocity(&mut self, targets: Vec<f64>) -> JsValue {
         let action = vcad_kernel_physics::Action::VelocityTarget(targets);
-        let (obs, reward, done) = self.env.step(action);
-
-        let result = serde_json::json!({
-            "observation": obs,
-            "reward": reward,
-            "done": done
-        });
-
+        let result = self.env.step_full(action);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -4471,6 +4474,7 @@ impl PhysicsSim {
         _end_effector_ids: Vec<String>,
         _dt: Option<f32>,
         _substeps: Option<u32>,
+        _config_json: Option<String>,
     ) -> Result<PhysicsSim, JsError> {
         Err(JsError::new(
             "Physics feature not enabled. Compile with --features physics",

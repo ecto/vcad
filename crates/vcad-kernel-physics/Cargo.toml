@@ -16,6 +16,8 @@ vcad-kernel-math = { workspace = true }
 phyz = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# std_rng only, no getrandom: every RNG is explicitly seeded (WASM-safe).
+rand = { version = "0.8.5", default-features = false, features = ["std_rng"] }
 stl_io = "0.8"
 
 [dev-dependencies]

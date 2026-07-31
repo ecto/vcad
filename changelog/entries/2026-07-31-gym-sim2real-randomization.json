@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-gym-sim2real-randomization",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "Sim2real gym: domain randomization and richer step results",
+  "summary": "Robot gym envs gain seeded domain randomization (mass, friction, PD gains, actuator latency, initial state), gaussian observation noise, configurable termination, base pose/velocity observations, a per-step info map, and seeded gym_reset.",
+  "features": ["physics", "simulation", "rl"],
+  "mcpTools": ["create_robot_env", "gym_step", "gym_reset"]
+}
