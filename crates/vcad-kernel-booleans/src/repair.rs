@@ -13,6 +13,18 @@ use vcad_kernel_topo::{HalfEdgeId, Topology};
 
 /// Repair common topology issues in-place.
 pub fn repair_topology(topo: &mut Topology, tolerance: f64) {
+    repair_topology_impl(topo, tolerance, true)
+}
+
+/// Repair without the coarse seam-snap round. Used before classification,
+/// where the split solids are almost entirely unpaired — the coarse round's
+/// unpaired-only guard is vacuous there and snapping through the vertices
+/// of tangent-but-distinct features fuses them.
+pub fn repair_topology_fine(topo: &mut Topology, tolerance: f64) {
+    repair_topology_impl(topo, tolerance, false)
+}
+
+fn repair_topology_impl(topo: &mut Topology, tolerance: f64, coarse: bool) {
     collapse_degenerate_half_edges(topo, tolerance);
     cleanup_loop_spikes(topo, tolerance);
     collapse_degenerate_half_edges(topo, tolerance);
@@ -25,16 +37,22 @@ pub fn repair_topology(topo: &mut Topology, tolerance: f64) {
     // it) makes both loops share the vertex, so the pieces pair by id.
     // Only still-unpaired half-edges are touched; the distortion is
     // bounded by the tolerance, i.e. tessellation-error scale.
-    const SEAM_SNAP_TOL: f64 = 8e-3;
-    if tolerance < SEAM_SNAP_TOL && std::env::var("VCAD_NO_WELD").is_err() {
-        split_edges_at_interior_vertices(topo, SEAM_SNAP_TOL);
+    const SEAM_SNAP_TOL: f64 = 1.5e-3;
+    // Vertex WELDING eats features at the weld radius, unlike edge splits
+    // (which distort by at most the vertex-to-edge distance). Keep it just
+    // above the grazing chord-vs-circle offset at SAG=1e-3 grids.
+    const SEAM_WELD_TOL: f64 = 1.5e-3;
+    if coarse && tolerance < SEAM_SNAP_TOL && std::env::var("VCAD_NO_WELD").is_err() {
+        split_edges_at_interior_vertices_boundary(topo, SEAM_SNAP_TOL);
         pair_half_edges(topo, tolerance);
         // Endpoint-vs-endpoint mismatches (e.g. the wall splitter's exact
         // line×circle corner vs the cap splitter's line×chord crossing)
         // can't be fixed by splitting — weld nearby vertices, but ONLY
         // those on still-unpaired (boundary) half-edges, so interior
         // geometry is never disturbed.
-        weld_boundary_vertices(topo, SEAM_SNAP_TOL);
+        if std::env::var("VCAD_NO_WELD2").is_err() {
+            weld_boundary_vertices(topo, SEAM_WELD_TOL);
+        }
         collapse_degenerate_half_edges(topo, tolerance);
         cleanup_loop_spikes(topo, tolerance);
         split_edges_at_interior_vertices(topo, tolerance);
@@ -103,13 +121,40 @@ fn weld_boundary_vertices(topo: &mut Topology, tolerance: f64) {
 /// `pair_half_edges` can pair the pieces by id) restores a conforming,
 /// closed shell.
 fn split_edges_at_interior_vertices(topo: &mut Topology, tolerance: f64) {
+    split_edges_at_interior_vertices_impl(topo, tolerance, false)
+}
+
+/// Like `split_edges_at_interior_vertices`, but only considers vertices
+/// that touch an unpaired half-edge (see `boundary_only` below).
+fn split_edges_at_interior_vertices_boundary(topo: &mut Topology, tolerance: f64) {
+    split_edges_at_interior_vertices_impl(topo, tolerance, true)
+}
+
+fn split_edges_at_interior_vertices_impl(topo: &mut Topology, tolerance: f64, boundary_only: bool) {
     // Snapshot loop vertices (id + position). Only vertices that appear in
-    // loops matter; isolated vertices can't be a neighbor's endpoint.
+    // loops matter; isolated vertices can't be a neighbor's endpoint. In
+    // `boundary_only` mode (the coarse seam-snap round) only vertices that
+    // touch an UNPAIRED half-edge qualify: a genuine crack is open on BOTH
+    // sides, whereas the vertices of an already-paired boundary that merely
+    // passes nearby (a face tangent to a cylinder wall) must not attract
+    // splits — snapping through them fuses distinct features.
     let mut verts: Vec<(vcad_kernel_topo::VertexId, Point3)> = Vec::new();
     {
+        let mut boundary_verts = std::collections::HashSet::new();
+        if boundary_only {
+            for (he_id, he) in &topo.half_edges {
+                if he.loop_id.is_some() && he.twin.is_none() {
+                    boundary_verts.insert(he.origin);
+                    boundary_verts.insert(topo.half_edge_dest(he_id));
+                }
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         for (_, he) in &topo.half_edges {
             if he.loop_id.is_none() {
+                continue;
+            }
+            if boundary_only && !boundary_verts.contains(&he.origin) {
                 continue;
             }
             if seen.insert(he.origin) {

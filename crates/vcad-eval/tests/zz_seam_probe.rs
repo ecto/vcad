@@ -67,7 +67,9 @@ fn probe(src: &str, segments: u32) {
                 .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
                 .collect();
             if pts.iter().all(|p| p.z.abs() < 1e-6)
-                && pts.iter().any(|p| p.x.abs() > 21.0 && p.x.abs() < 23.0 && p.y.abs() < 1.0)
+                && pts
+                    .iter()
+                    .any(|p| p.x.abs() > 21.0 && p.x.abs() < 23.0 && p.y.abs() < 1.0)
             {
                 let near: Vec<_> = pts
                     .iter()
@@ -84,8 +86,10 @@ fn probe(src: &str, segments: u32) {
             let mut pts = Vec::new();
             for he in brep.topology.loop_half_edges(face.outer_loop) {
                 let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
-                if (p.z - 13.0).abs() < 1e-6 && (p.x * p.x + p.y * p.y).sqrt() > 22.4
-                    && p.y < -6.0 && p.y > -8.0
+                if (p.z - 13.0).abs() < 1e-6
+                    && (p.x * p.x + p.y * p.y).sqrt() > 22.4
+                    && p.y < -6.0
+                    && p.y > -8.0
                 {
                     hit = true;
                 }
@@ -98,9 +102,10 @@ fn probe(src: &str, segments: u32) {
                     format!("{:?}", surf.surface_type()),
                     pts.len()
                 );
-                for p in pts.iter().filter(|p| {
-                    (p.z - 13.0).abs() < 1e-6 && p.y < -6.0 && p.y > -8.0 && p.x > 20.0
-                }) {
+                for p in pts
+                    .iter()
+                    .filter(|p| (p.z - 13.0).abs() < 1e-6 && p.y < -6.0 && p.y > -8.0 && p.x > 20.0)
+                {
                     println!("    ({:8.4},{:8.4},{:8.4})", p.x, p.y, p.z);
                 }
             }
@@ -192,7 +197,13 @@ fn probe(src: &str, segments: u32) {
         .iter()
         .filter(|(_, &n)| n != 0)
         .map(|((a, b), &n)| {
-            let p = |k: &[i64; 3]| [k[0] as f64 * quantum, k[1] as f64 * quantum, k[2] as f64 * quantum];
+            let p = |k: &[i64; 3]| {
+                [
+                    k[0] as f64 * quantum,
+                    k[1] as f64 * quantum,
+                    k[2] as f64 * quantum,
+                ]
+            };
             (p(a), p(b), n)
         })
         .collect();
@@ -232,9 +243,8 @@ fn zz_probe_flat_blade() {
 fn zz_probe_flat_two() {
     let mut src = String::from("[cylinder 22.5 12.57]");
     for ang in [0.0, 180.0] {
-        src = format!(
-            "[union [rotate 0 0 {ang} [translate 21.5 0 0 [cube 23.5 0.5 12.57]]] {src}]"
-        );
+        src =
+            format!("[union [rotate 0 0 {ang} [translate 21.5 0 0 [cube 23.5 0.5 12.57]]] {src}]");
     }
     probe(&src, 256);
 }
@@ -245,9 +255,7 @@ fn zz_probe_f2() {
     // then union a single flat blade.
     let hub = "[difference [translate 0 0 8.57 [cylinder 14 4]] \
                  [difference [cylinder 8 12.57] [cylinder 22.5 12.57]]]";
-    let src = format!(
-        "[union [translate 21.5 0 0 [cube 23.5 0.5 12.57]] {hub}]"
-    );
+    let src = format!("[union [translate 21.5 0 0 [cube 23.5 0.5 12.57]] {hub}]");
     probe(&src, 256);
 }
 

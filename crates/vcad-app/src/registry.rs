@@ -169,7 +169,7 @@ impl KeybindingRegistry {
         .to_string()
     }
 
-    /// Load overrides previously saved with [`save_overrides`]. Unknown
+    /// Load overrides previously saved with [`Self::save_overrides`]. Unknown
     /// command ids and malformed chords are skipped — the caller shouldn't
     /// crash on a stale config file.
     pub fn load_overrides(&mut self, json: &str) -> Result<(), LoadError> {

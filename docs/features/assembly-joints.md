@@ -11,6 +11,8 @@ Build multi-part assemblies with kinematic joints for mechanical motion simulati
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Shipped: assembly/joints in the app, FK solver, and physics-backed joints (`create_robot_env`, `gym_*` MCP tools).
+
 ## Problem
 
 Complex products require multiple parts that move relative to each other. Without assembly capabilities:

@@ -2,6 +2,14 @@
 
 **Score: 67/100** | **Priority: #23**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. Foundation shipped: gym-style physics environments via phyz (`crates/vcad-kernel-physics`) with MCP tools `create_robot_env`, `gym_step`/`gym_reset`/`gym_observe`/`gym_close`, plus batched `batch_create_envs`/`batch_step`/`batch_reset` — torque/position/velocity action modes as specced. Not shipped: `vcad train` CLI, in-repo PPO/SAC/TD3 implementations, browser training panel, ONNX policy export. (`packages/training` is an ML data-generation pipeline, not RL training.)
+
 ## Overview
 
 ```bash

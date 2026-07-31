@@ -11,6 +11,8 @@ Extract the self-contained STEP (ISO 10303-21) lexer and parser from vcad-kernel
 | Priority | `p2` |
 | Effort | `s` |
 
+> Verified against repo 2026-07-30. `crates/stepperoni` exists and `vcad-kernel-step` depends on it.
+
 ## Problem
 
 The STEP lexer and parser in `vcad-kernel-step` are already self-contained with zero vcad dependencies. This is useful code that:

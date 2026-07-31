@@ -27,7 +27,7 @@
 //! - t_range = 17.7 * 2 ≈ 35.5
 //! - Sampled t from -35.5 to +35.5
 //! - Points sampled: X from 35.5 to -35.5
-//! - MISSED the face entirely (X=[34,46] requires t≈-34 to -46)
+//! - MISSED the face entirely (X=\[34,46\] requires t≈-34 to -46)
 //!
 //! Fixed approach:
 //! - Use ray-AABB intersection to find t values where line enters/exits face bounds
@@ -46,7 +46,6 @@ use vcad_kernel_topo::FaceId;
 
 use crate::bbox;
 use crate::ssi::IntersectionCurve;
-
 
 macro_rules! trim_dbg {
     ($($arg:tt)*) => {
@@ -311,14 +310,17 @@ fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> 
         // cannot represent that annular domain (any seam cut tears the
         // rings into a self-overlapping polygon), so route it through the
         // same V-range test as the analytic 2-vertex loop.
-        let frozen_full_band = std::env::var("VCAD_NO_VBAND").is_err() && unique_verts.len() >= 8
+        let frozen_full_band = std::env::var("VCAD_NO_VBAND").is_err()
+            && unique_verts.len() >= 8
             && surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
                 .is_some_and(|cyl| {
                     let axis = cyl.axis.as_ref();
-                    let vs: Vec<f64> =
-                        unique_verts.iter().map(|p| (*p - cyl.center).dot(axis)).collect();
+                    let vs: Vec<f64> = unique_verts
+                        .iter()
+                        .map(|p| (*p - cyl.center).dot(axis))
+                        .collect();
                     let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
                     let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
                     if v_max - v_min < 1e-9 {
@@ -336,7 +338,7 @@ fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> 
                         .iter()
                         .map(|p| {
                             let d = *p - cyl.center;
-                            let u = d.dot(&y_dir).atan2(d.dot(ref_dir));
+                            let u = d.dot(y_dir).atan2(d.dot(ref_dir));
                             if u < 0.0 {
                                 u + 2.0 * std::f64::consts::PI
                             } else {
@@ -430,7 +432,8 @@ fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> 
             .collect();
         let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
 
-        if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        if !point_in_polygon(&test_uv, &outer_uv)
+            && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
         {
             trim_dbg!(
                 "pif-cyl generic FALSE: test {:?} outer {:?}",
@@ -497,7 +500,8 @@ fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> 
             .collect();
         let test_uv = unwrap_cylindrical_uv(&test_uv, seam_cut);
 
-        if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        if !point_in_polygon(&test_uv, &outer_uv)
+            && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
         {
             trim_dbg!(
                 "pif-cyl generic FALSE: test {:?} outer {:?}",
@@ -565,7 +569,8 @@ fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> 
             test_uv = Point2::new(test_uv.x, test_uv.y + 2.0 * std::f64::consts::PI);
         }
 
-        if !point_in_polygon(&test_uv, &outer_uv) && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
+        if !point_in_polygon(&test_uv, &outer_uv)
+            && !near_polygon_boundary(&test_uv, &outer_uv, 1e-7)
         {
             return false;
         }

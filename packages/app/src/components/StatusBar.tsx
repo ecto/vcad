@@ -192,6 +192,7 @@ export function StatusBar() {
                 sketchStatus === "error" && "text-red-400",
                 sketchStatus === "over" && "text-orange-400",
                 sketchStatus === "under" && "text-yellow-400",
+                sketchStatus === "pending" && "text-neutral-500",
               )}
             >
               [{sketchStatus}]

@@ -11,6 +11,8 @@ Save and load .vcad files with offline-first sync.
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Shipped: IndexedDB storage (`packages/app/src/lib/storage.ts`) plus Supabase cloud sync (`packages/auth/src/sync.ts`).
+
 ## Problem
 
 Users need their work saved reliably, even when offline. Traditional CAD tools either:

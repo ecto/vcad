@@ -6,10 +6,12 @@ Round or bevel edges to create realistic, manufacturable geometry.
 
 | Field | Value |
 |-------|-------|
-| State | `partial` |
+| State | `shipped` |
 | Owner | `unassigned` |
 | Priority | `p1` |
 | Effort | `s` |
+
+> Verified against repo 2026-07-30. Corrected State from `partial` to `shipped`: the kernel is well beyond the planar-only MVP described below (`crates/vcad-kernel-fillet` includes `fillet_curved.rs`, `rolling_ball.rs`, `blend_loft.rs`, `fillet_subset.rs`), the IR has `Fillet`, `Chamfer`, and selective `EdgeBlend` (with `EdgeQuery`) ops, and the app ships fillet/chamfer UI (feature table in CLAUDE.md).
 
 ## Problem
 
@@ -139,14 +141,14 @@ interface ChamferOp {
 - [x] Twin half-edge pairing (`xs`)
 - [x] Unit tests for cube chamfer/fillet (`s`)
 
-### Phase 2: UI Implementation (Pending)
+### Phase 2: UI Implementation
 
 - [ ] Edge selection mode in selection store (`s`)
 - [ ] Edge hover highlighting in viewport (`s`)
-- [ ] Fillet/chamfer property panel UI (`s`)
+- [x] Fillet/chamfer property panel UI (`s`)
 - [ ] Preview mode for edge modifications (`s`)
-- [ ] IR types for selective edge operations (`xs`)
-- [ ] Engine evaluation for selective fillet/chamfer (`s`)
+- [x] IR types for selective edge operations (`EdgeBlend` + `EdgeQuery`) (`xs`)
+- [x] Engine evaluation for selective fillet/chamfer (`s`)
 
 ## Acceptance Criteria
 
@@ -167,6 +169,6 @@ interface ChamferOp {
 - [ ] Face fillet (blend between faces rather than edges)
 - [ ] Chain selection (select all connected tangent edges)
 - [ ] Auto-fillet for printability (suggest radii based on material)
-- [ ] Fillet/chamfer on curved face edges (non-planar support)
+- [x] Fillet/chamfer on curved face edges (non-planar support) (`fillet_curved.rs`)
 - [ ] G2-continuous fillets (curvature-continuous blends)
-- [ ] Rolling ball blend for complex edge configurations
+- [x] Rolling ball blend for complex edge configurations (`rolling_ball.rs`)

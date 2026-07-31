@@ -2,6 +2,14 @@
 
 **Score: 81/100** | **Priority: #9**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. Shipped: a background eval worker with its own WASM instance (`packages/engine/src/index.ts` → `eval-worker.js`, pre-compiled module handoff), an analyze worker (`packages/engine/src/analyze.ts`), and a slicer worker (`packages/app/src/lib/slicer-client.ts`). Not shipped: the multi-worker pool, SharedArrayBuffer zero-copy sharing, and cross-origin-isolation setup described below.
+
 ## Overview
 
 Rust's fearless concurrency combined with Web Workers enables parallel CAD operations without blocking the UI. Heavy compute (booleans, tessellation, physics) runs in background workers while the main thread maintains 60fps rendering.

@@ -1,6 +1,17 @@
+> **Note (2026-07-30):** Much of this vision shipped in a diverged form as the document animation timeline (`doc.timeline`): `AnimationTimeline.tsx` + `useTimelinePlayback` in the app, and the `animate`, `timeline_from_simulation`, `render_sequence`, and `export_video` MCP tools. Ghost rendering, trajectory trails, and branching timelines remain aspirational.
+
 # Time as a Dimension
 
 **Score: 77/100** | **Priority: #13**
+
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+| Owner | `unassigned` |
+
+> Verified against repo 2026-07-30.
 
 ## Overview
 

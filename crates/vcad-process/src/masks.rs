@@ -1,7 +1,7 @@
 //! GDS layout → plan-view masks in µm.
 //!
-//! Bridges [`vcad_gdsii::flatten`] output (f64 database units) into the
-//! [`Masks`](crate::sim::Masks) the simulator consumes: polygons are
+//! Bridges [`vcad_gdsii::flatten()`] output (f64 database units) into the
+//! [`Masks`] the simulator consumes: polygons are
 //! scaled to µm, clipped to the region of interest, and unioned per layer
 //! so downstream booleans and interval extraction see disjoint geometry.
 

@@ -80,7 +80,7 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
         let v_pt = brep.topology.vertices[origin].point;
         let axis = *cyl.axis.as_ref();
         let d = v_pt - cyl.center;
-        let center = cyl.center + axis * d.dot(&axis);
+        let center = cyl.center + axis * d.dot(axis);
         let radius = (v_pt - center).norm();
         if radius < 1e-9 {
             continue;
@@ -101,7 +101,11 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
                 .downcast_ref::<vcad_kernel_geom::Plane>()
                 .is_some()
             {
-                Some(*surface.normal(vcad_kernel_math::Point2::new(0.0, 0.0)).as_ref())
+                Some(
+                    *surface
+                        .normal(vcad_kernel_math::Point2::new(0.0, 0.0))
+                        .as_ref(),
+                )
             } else {
                 None
             }
@@ -112,7 +116,7 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
         // is an oblique face (a blade plane grazing the wall), sweeping
         // phantom vertices far outside the solid.
         let sign_of = |n: Vec3| -> Option<f64> {
-            let d = n.dot(&axis);
+            let d = n.dot(axis);
             if d.abs() > 0.1 {
                 Some(d.signum())
             } else {
@@ -132,9 +136,9 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
                     let mut vmin = f64::MAX;
                     for h in brep.topology.loop_half_edges(l) {
                         let p = brep.topology.vertices[brep.topology.half_edges[h].origin].point;
-                        vmin = vmin.min((p - cyl.center).dot(&axis));
+                        vmin = vmin.min((p - cyl.center).dot(axis));
                     }
-                    (d.dot(&axis) - vmin).abs() < 1e-6
+                    (d.dot(axis) - vmin).abs() < 1e-6
                 })
                 .unwrap_or(true);
             if is_lower {

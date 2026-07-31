@@ -2,6 +2,14 @@
 
 **Score: 85/100** | **Priority: #5**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `in-progress` |
+
+> Verified against repo 2026-07-30. WASM (`crates/vcad-kernel-wasm` → browser) and native (`vcad-cli`, desktop) targets ship from the single Rust workspace. The WASI (`wasm32-wasi`) target is aspirational — no wasm32-wasi build exists in the workspace or CI, and no edge deployment ships.
+
 ## Overview
 
 The vcad kernel is written in Rust and compiles to multiple targets from a single codebase:

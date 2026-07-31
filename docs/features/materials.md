@@ -11,6 +11,8 @@ PBR material system for realistic appearance of parts in the viewport.
 | Priority | `p1` |
 | Effort | `n/a` (complete) |
 
+> Verified against repo 2026-07-30. Confirmed: `MaterialDef` in `crates/vcad-ir/src/lib.rs`, `setPartMaterial` in `packages/core/src/stores/document-store.ts`, `previewMaterial`/`favoriteMaterials`/`recentMaterials` (with `vcad:favoriteMaterials` localStorage persistence) in `packages/core/src/stores/ui-store.ts`.
+
 ## Problem
 
 Parts need realistic appearance for visualization and rendering. Without materials:

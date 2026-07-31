@@ -3433,7 +3433,10 @@ fn tessellate_ruled_two_chain(
                 .iter()
                 .zip(chain_b.iter())
                 .all(|(a, b)| (a.0 - b.0).abs() <= RUN_EPS.max(1e-7));
-        let sag_step = 2.0 * (1.0 - 5e-3 / cyl.radius.abs().max(1e-6)).clamp(-1.0, 1.0).acos();
+        let sag_step = 2.0
+            * (1.0 - 5e-3 / cyl.radius.abs().max(1e-6))
+                .clamp(-1.0, 1.0)
+                .acos();
         let target_step = 2.0 * PI / (target_segments.max(3) as f64);
         // Paired rails (miter-trimmed blend strips whose rails ARE the
         // neighbors' curves) get generous slack — refusing them cracks the
@@ -5074,6 +5077,15 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
 /// This is the primary tessellation function used by the facade crate.
 pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     let params = TessellationParams::from_segments(segments);
+    tessellate_brep_with_params(brep, &params)
+}
+
+/// `tessellate_brep` with explicit [`TessellationParams`] — for callers that
+/// need sag-driven adaptive resolution (e.g. boolean classification meshes,
+/// which must track the analytic surfaces far more tightly than the display
+/// tessellation without paying flat-high segment counts on small radii).
+pub fn tessellate_brep_with_params(brep: &BRepSolid, params: &TessellationParams) -> TriangleMesh {
+    let params = *params;
     let solid = &brep.topology.solids[brep.solid_id];
     let shell = &brep.topology.shells[solid.outer_shell];
 

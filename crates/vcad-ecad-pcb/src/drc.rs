@@ -2644,7 +2644,7 @@ pub(crate) fn spur_copper_mask(pcb: &Pcb) -> (Vec<bool>, Vec<bool>) {
     (keep_trace, keep_via)
 }
 
-/// Remove spur copper board-wide — see [`spur_copper_mask`]. Returns
+/// Remove spur copper board-wide — see `spur_copper_mask`. Returns
 /// `(traces_removed, vias_removed)`.
 pub fn prune_spur_copper(pcb: &mut Pcb) -> (usize, usize) {
     let (keep_trace, keep_via) = spur_copper_mask(pcb);

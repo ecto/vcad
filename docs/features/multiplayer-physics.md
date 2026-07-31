@@ -2,6 +2,14 @@
 
 **Score: 70/100** | **Priority: #20**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+
+> Verified against repo 2026-07-30. No CRDT sync (no Yjs/Automerge dependency), no real-time co-editing, no physics-state broadcast. Adjacent shipped features: read-only session sharing via the MCP `share_session` tool and Supabase document sync (`packages/auth/src/sync.ts`) — neither is real-time multi-writer collaboration.
+
 ## Overview
 
 Share a URL. Two people manipulate the same robot in real-time. The mechanical designer adjusts geometry while the controls engineer tunes PID gains. Both see the same simulation. Changes merge like git.

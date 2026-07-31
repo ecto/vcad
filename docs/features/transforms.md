@@ -11,6 +11,8 @@ Move, rotate, and scale geometry in 3D space.
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. Correction: Mirror is now shipped (`CsgOp::Mirror` in `crates/vcad-ir/src/lib.rs`, `addMirror` in `packages/core/src/stores/document-store.ts`) — the "Mirror not included" note below is stale.
+
 ## Problem
 
 Parts need to be positioned and oriented in 3D space. Without transforms, every primitive would be stuck at the origin with default orientation. Users need:
@@ -65,7 +67,7 @@ Non-uniform scaling per axis.
 
 Every part in vcad has a canonical transform chain: `Primitive -> Scale -> Rotate -> Translate`. This ensures consistent behavior and predictable results.
 
-**Not included:** Mirror operation (kernel supports it, but UI not yet implemented).
+**Update (2026-07-30):** Mirror is now shipped — `CsgOp::Mirror` plus the `addMirror(partId, plane)` store action.
 
 ## UX Details
 
@@ -154,7 +156,7 @@ All tasks complete.
 
 ## Future Enhancements
 
-- [ ] Mirror operation UI (kernel `vcad-kernel-topo` supports mirroring, needs UI exposure)
+- [x] Mirror operation UI (shipped: `CsgOp::Mirror` + `addMirror` store action)
 - [ ] Transform relative to other objects (snap to face, align to edge)
 - [ ] Transform multiple selected parts simultaneously
 - [ ] Constrain transforms (e.g., lock Y axis during translation)

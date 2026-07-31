@@ -10,7 +10,7 @@
 //! 1. A **named document parameter** (the `parameters` + `bindings` sidecar
 //!    the product's parametric documents already carry) is the θ.
 //! 2. The **build closure** clones the document, overwrites the parameter's
-//!    value, and runs [`evaluate_document`](crate::evaluate_document) — the
+//!    value, and runs [`evaluate_document`] — the
 //!    same resolve-and-walk every other consumer uses.
 //! 3. **Seeding synthesis** (M6) machine-derives how θ moves every surface;
 //!    the frozen-plan seam prices the mass-property derivatives exactly.

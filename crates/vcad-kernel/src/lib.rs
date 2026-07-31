@@ -316,7 +316,7 @@ impl Solid {
     }
 
     /// Mirror the solid across a plane defined by a point on the plane and
-    /// a normal vector. Routes through [`apply_transform`] with a reflection
+    /// a normal vector. Routes through [`Self::apply_transform`] with a reflection
     /// matrix, so face / triangle winding is automatically reversed to
     /// preserve outward normals.
     pub fn mirror(&self, plane_origin: [f64; 3], plane_normal: [f64; 3]) -> Solid {
@@ -1238,15 +1238,29 @@ impl Solid {
     ///
     /// Returns a `StepError` if the file cannot be read, parsed, or contains no solids.
     pub fn from_step_all(path: impl AsRef<Path>) -> Result<Vec<Self>, StepError> {
-        let solids = vcad_kernel_step::read_step(path)?;
-        Ok(solids
+        Self::from_step_all_with_report(path).map(|(solids, _)| solids)
+    }
+
+    /// Import all solids from a STEP file, together with an import report
+    /// describing any skipped faces or approximations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `StepError` if the file cannot be read, parsed, or contains no solids.
+    pub fn from_step_all_with_report(
+        path: impl AsRef<Path>,
+    ) -> Result<(Vec<Self>, vcad_kernel_step::StepImportReport), StepError> {
+        let result = vcad_kernel_step::read_step_with_report(path)?;
+        let solids = result
+            .solids
             .into_iter()
             .map(|brep| Self {
                 names: None,
                 repr: SolidRepr::BRep(Box::new(brep)),
                 segments: 32,
             })
-            .collect())
+            .collect();
+        Ok((solids, result.report))
     }
 
     /// Import the first solid from a STEP buffer.
@@ -1282,15 +1296,29 @@ impl Solid {
     ///
     /// Returns a `StepError` if the buffer cannot be parsed.
     pub fn from_step_buffer_all(data: &[u8]) -> Result<Vec<Self>, StepError> {
-        let solids = vcad_kernel_step::read_step_from_buffer(data)?;
-        Ok(solids
+        Self::from_step_buffer_all_with_report(data).map(|(solids, _)| solids)
+    }
+
+    /// Import all solids from a STEP buffer, together with an import report
+    /// describing any skipped faces or approximations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `StepError` if the buffer cannot be parsed.
+    pub fn from_step_buffer_all_with_report(
+        data: &[u8],
+    ) -> Result<(Vec<Self>, vcad_kernel_step::StepImportReport), StepError> {
+        let result = vcad_kernel_step::read_step_from_buffer_with_report(data)?;
+        let solids = result
+            .solids
             .into_iter()
             .map(|brep| Self {
                 names: None,
                 repr: SolidRepr::BRep(Box::new(brep)),
                 segments: 32,
             })
-            .collect())
+            .collect();
+        Ok((solids, result.report))
     }
 
     /// Export this solid to a STEP file.

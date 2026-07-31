@@ -2,6 +2,14 @@
 
 **Score: 71/100** | **Priority: #19**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `proposed` |
+
+> Verified against repo 2026-07-30. State row added; no "Why?" button or AI failure-diagnosis pipeline found in the app. Adjacent shipped capability: simulation replay/trace tooling exists on the MCP side (`get_sim_replay`, `record_simulation`), but the diagnosis feature described here is not built.
+
 ## Overview
 
 Simulation fails. Robot tips over. Gripper misses. One click: "Why?"

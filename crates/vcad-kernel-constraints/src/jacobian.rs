@@ -1,7 +1,7 @@
 //! Jacobian matrix computation using finite differences.
 //!
 //! The Jacobian matrix J has dimensions (num_residuals × num_parameters),
-//! where J[i,j] = ∂r_i/∂p_j is the partial derivative of the i-th residual
+//! where J\[i,j\] = ∂r_i/∂p_j is the partial derivative of the i-th residual
 //! with respect to the j-th parameter.
 //!
 //! Note: the solver now uses symbolic Jacobians via [`crate::symbolic::CompiledSystem`].
@@ -21,7 +21,7 @@ const EPSILON: f64 = 1e-8;
 /// Compute the Jacobian matrix for all constraints using central finite differences.
 ///
 /// Central differences give better accuracy than forward differences:
-/// J[i,j] ≈ (r_i(p + h·e_j) - r_i(p - h·e_j)) / (2h)
+/// J\[i,j\] ≈ (r_i(p + h·e_j) - r_i(p - h·e_j)) / (2h)
 ///
 /// # Arguments
 ///

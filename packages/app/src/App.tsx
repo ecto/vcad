@@ -508,12 +508,27 @@ export function App() {
         const buffer = await file.arrayBuffer();
         logger.info("step", `Buffer size: ${buffer.byteLength}`);
 
-        logger.info("step", "Calling engine.importStep...");
-        const rawMeshes = await runJob(
+        logger.info("step", "Calling engine.importStepWithReport...");
+        const {
+          meshes: rawMeshes,
+          report: importReport,
+          summary: importWarnings,
+        } = await runJob(
           { verb: `Importing ${file.name}` },
-          () => engine.importStep(buffer),
+          () => engine.importStepWithReport(buffer),
         );
         logger.info("step", `Got meshes: ${rawMeshes.length}`);
+        const skipped = importReport.reduce(
+          (sum, s) => sum + s.skipped_faces.length,
+          0,
+        );
+        if (skipped > 0) {
+          logger.warn("step", importWarnings ?? `${skipped} face(s) skipped`);
+          useNotificationStore.getState().addToast(
+            `STEP import skipped ${skipped} face${skipped !== 1 ? "s" : ""} with unsupported surfaces — the geometry has holes there (see console)`,
+            "warning",
+          );
+        }
 
         if (rawMeshes.length === 0) {
           useNotificationStore.getState().addToast("No geometry found in STEP file", "error");

@@ -6,14 +6,13 @@ phyz-based articulated rigid body physics for robotics simulation and RL policy 
 
 | Field | Value |
 |-------|-------|
-| State | `planned` |
-| Owner | `unassigned` |
+| State | `shipped` |
+| Owner | @cam |
 | Priority | `p2` |
-| Effort | `l` (3-4 weeks) |
-| Target | Post-cad0 |
-| Depends On | URDF support |
+| Effort | n/a (complete) |
+| Depends On | URDF support (shipped) |
 
-**Note:** Wait for user demand signal before starting. cad0 milestone is higher priority.
+> Verified against repo 2026-07-30. Corrected State `planned` → `shipped`: `crates/vcad-kernel-physics` (phyz integration — `world.rs`, `joints.rs`, `colliders.rs`, `gym.rs`, `diff.rs`) and the gym MCP tools are live. Shipped tool names differ from the plan below: `create_robot_env`, `gym_step`, `gym_reset`, `gym_observe`, `gym_close` (plus `batch_create_envs`/`batch_step`/`batch_reset`), in `packages/mcp/src/tools/gym.ts` and `physics.ts`. Collision shapes are ConvexHull/TriMesh/primitives — no VHACD decomposition. The in-app simulation-mode UI (play/pause/record overlay) described below did not ship as such.
 
 ## Problem
 
@@ -241,33 +240,33 @@ interface SimulationFrame {
 
 ### Phase 1: Physics Engine Integration
 
-- [ ] Create `vcad-kernel-physics` crate with phyz (`l`)
-- [ ] Implement `SimConfig` and basic world setup (`s`)
-- [ ] Map vcad joints to phyz joint types (`m`)
-- [ ] Add `step()` and `reset()` methods (`s`)
-- [ ] Implement gravity and basic dynamics (`xs`)
+- [x] Create `vcad-kernel-physics` crate with phyz (`l`)
+- [x] Implement `SimConfig` and basic world setup (`s`)
+- [x] Map vcad joints to phyz joint types (`m`)
+- [x] Add `step()` and `reset()` methods (`s`)
+- [x] Implement gravity and basic dynamics (`xs`)
 
 ### Phase 2: Collision Shape Generation
 
-- [ ] Implement primitive shape detection (box/cylinder/sphere) (`s`)
-- [ ] Add convex hull generation from BRep tessellation (`m`)
+- [x] Implement primitive shape detection (box/cylinder/sphere) (`s`)
+- [x] Add convex hull generation from BRep tessellation (`m`)
 - [ ] Integrate VHACD for concave shape decomposition (`m`)
-- [ ] Add trimesh fallback for exact collision (`s`)
+- [x] Add trimesh fallback for exact collision (`s`)
 - [ ] Cache collision shapes per part hash (`s`)
 
 ### Phase 3: Gym Interface
 
-- [ ] Define `Observation` and `Action` types (`xs`)
-- [ ] Implement `step(action) → (obs, reward, done, info)` (`m`)
-- [ ] Add position/velocity/torque control modes (`s`)
+- [x] Define `Observation` and `Action` types (`xs`)
+- [x] Implement `step(action) → (obs, reward, done, info)` (`m`)
+- [x] Add position/velocity/torque control modes (`s`)
 - [ ] Implement contact force observation (`s`)
-- [ ] Add end-effector pose tracking (`s`)
+- [x] Add end-effector pose tracking (`s`)
 
 ### Phase 4: WASM Bindings
 
-- [ ] Add WASM bindings in `vcad-kernel-wasm` (`m`)
-- [ ] Create `packages/engine/src/physics.ts` wrapper (`s`)
-- [ ] Expose simulation state to TypeScript (`s`)
+- [x] Add WASM bindings in `vcad-kernel-wasm` (`m`)
+- [x] Create `packages/engine/src/physics.ts` wrapper (`s`)
+- [x] Expose simulation state to TypeScript (`s`)
 
 ### Phase 5: App Integration
 
@@ -279,21 +278,21 @@ interface SimulationFrame {
 
 ### Phase 6: MCP Tools
 
-- [ ] Add `create_simulation` tool (`s`)
-- [ ] Add `step_simulation` tool (`s`)
-- [ ] Add `reset_simulation` tool (`xs`)
-- [ ] Add `set_action` tool (`xs`)
-- [ ] Add `get_observation` tool (`xs`)
-- [ ] Document MCP tools for training scripts (`s`)
+- [x] Add `create_simulation` tool (`s`)
+- [x] Add `step_simulation` tool (`s`)
+- [x] Add `reset_simulation` tool (`xs`)
+- [x] Add `set_action` tool (`xs`)
+- [x] Add `get_observation` tool (`xs`)
+- [x] Document MCP tools for training scripts (`s`)
 
 ## Acceptance Criteria
 
-- [ ] Can create physics simulation from vcad document with joints
-- [ ] phyz simulates rigid body dynamics with gravity
-- [ ] Joint constraints map correctly (revolute, prismatic, fixed)
-- [ ] Collision shapes auto-generated from BRep geometry
-- [ ] Gym-style `step(action)` returns observations
-- [ ] MCP tools enable external training scripts
+- [x] Can create physics simulation from vcad document with joints
+- [x] phyz simulates rigid body dynamics with gravity
+- [x] Joint constraints map correctly (revolute, prismatic, fixed)
+- [x] Collision shapes auto-generated from BRep geometry
+- [x] Gym-style `step(action)` returns observations
+- [x] MCP tools enable external training scripts
 - [ ] **Simulate Franka Panda arm** from URDF-imported document
 - [ ] **Train simple reach policy** via MCP (arm reaches target position)
 - [ ] App shows simulation mode with play/pause controls

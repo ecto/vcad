@@ -1,7 +1,7 @@
 /* @ts-self-types="./vcad_kernel_wasm.d.ts" */
 
 /**
- * A live circuit simulation. Build from a [`CircuitSpec`] JSON, then `step`.
+ * A live circuit simulation. Build from a `CircuitSpec` JSON, then `step`.
  */
 export class CircuitSim {
     __destroy_into_raw() {
@@ -542,7 +542,7 @@ export class RayTracer {
      *
      * # Note
      * This function is async to support WASM's single-threaded environment.
-     * In JavaScript, it returns a Promise<Uint8Array>.
+     * In JavaScript, it returns a `Promise<Uint8Array>`.
      * @param {Float64Array} camera
      * @param {Float64Array} target
      * @param {Float64Array} up
@@ -2503,7 +2503,7 @@ export class WasmKeybindings {
      * Returns a JSON array describing every registered command. The TS UI
      * (command palette, keyboard prefs) reads this once at startup.
      *
-     * Each entry is a [`CommandView`] — a flattened, owned projection of
+     * Each entry is a `CommandView` — a flattened, owned projection of
      * `Command` that serde can serialize (the source struct uses `&'static
      * str` and a non-serializable `ModeScope` enum).
      * @returns {string}
@@ -2542,7 +2542,7 @@ export class WasmKeybindings {
         }
     }
     /**
-     * Load overrides previously returned by [`save_overrides`]. Malformed
+     * Load overrides previously returned by [`Self::save_overrides`]. Malformed
      * entries are skipped — the caller never sees a parse failure for
      * stale config.
      * @param {string} json
@@ -2925,7 +2925,7 @@ export function analyzeStaticsMesh(spec_json, positions, indices) {
  *
  * `spec_json` is a `vcad_kernel_antenna::spec::AntennaSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them,
- * `options_json` an [`AntennaOptions`] (the frequency `band` is
+ * `options_json` an `AntennaOptions` (the frequency `band` is
  * required).
  * @param {string} spec_json
  * @param {string} params_json
@@ -3327,7 +3327,7 @@ export function calibrationFingerprintDocument(doc_json) {
  * Generate a height field from mesh using drop-cutter algorithm.
  *
  * # Arguments
- * * `vertices_json` - Vertex array as JSON [[x,y,z], ...]
+ * * `vertices_json` - Vertex array as JSON `[[x,y,z], ...]`
  * * `indices_json` - Triangle indices as JSON [i0, i1, i2, ...]
  * * `tool_json` - Tool definition as JSON
  * * `bounds_json` - Bounds [min_x, min_y, max_x, max_y] as JSON
@@ -3853,7 +3853,7 @@ export function circuitDcOperatingPoint(spec_json) {
  *
  * * `sch_json` — JSON-serialized `SchematicSheet` (same shape as
  *   `ecadGenerateNetlist` takes).
- * * `options_json` — JSON [`MapOptions`] (`{}` for defaults).
+ * * `options_json` — JSON `MapOptions` (`{}` for defaults).
  *
  * Returns `{ok: true, devices, nodeOfNet, deviceOfRef, ...}` on success, or
  * `{ok: false, blockers: [{reference, message}]}` when any component can't
@@ -4093,7 +4093,7 @@ export function decimateMeshGpu(positions, indices, target_ratio) {
 /**
  * Derive parts from a Document (as JSON).
  *
- * Returns a JSON-serialized Vec<PartInfo>.
+ * Returns a JSON-serialized `Vec<PartInfo>`.
  * @param {string} doc_json
  * @returns {any}
  */
@@ -5178,7 +5178,7 @@ export function ecadRouteNet(pcb_json, net, start_x, start_y, end_x, end_y, widt
 /**
  * Route a net with the avoiding A* maze router.
  *
- * Unlike [`Self::ecad_route_net_shove`] (which detours around static
+ * Unlike `ecad_route_net_shove` (which detours around static
  * inflated bounding boxes of other-net *traces*), this searches a grid and
  * tests every step against the exact clearance oracle, so the route avoids
  * *all* copper on `layer` — traces, pads, and vias. Every returned segment
@@ -5211,7 +5211,7 @@ export function ecadRouteNetMaze(pcb_json, layer, net, start_x, start_y, end_x, 
 /**
  * Route a net with the push-and-shove router.
  *
- * Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in
+ * Unlike `ecad_route_net` (grid/wave BFS), this routes in
  * continuous coordinate space and detours around existing copper on other
  * nets, yielding cleaner diagonal paths. Coordinates are board-space mm in
  * and out — no grid origin offset. Returns `{ net, segments, vias, success }`.
@@ -5334,7 +5334,7 @@ export function ecadVerifySubstitution(pcb_json, reference, candidate_query) {
  * allowed), `planar_magnetostatics` (`PlanarSpec`, named parameters
  * allowed), or `electrostatics` (a literal-only electrode/dielectric
  * DTO — the crate has no serde seam for that class yet). `params_json`
- * binds named parameters; `options_json` is [`EmSimOptions`].
+ * binds named parameters; `options_json` is `EmSimOptions`.
  * @param {string} spec_json
  * @param {string} params_json
  * @param {string} options_json
@@ -5998,7 +5998,7 @@ export function exprParse(src) {
  * predicted claim is emitted.
  *
  * `spec_json` is a `vcad_kernel_fea::spec::FeaSpec` (material, loads,
- * supports, resolution), `options_json` a [`FeaOptions`].
+ * supports, resolution), `options_json` a `FeaOptions`.
  * @param {string} spec_json
  * @param {string} options_json
  * @param {Float32Array} positions
@@ -6384,8 +6384,28 @@ export function importStepBuffer(data) {
 }
 
 /**
+ * Import solids from STEP file bytes, reporting skipped faces.
+ *
+ * Like [`import_step_buffer`], but returns `{ meshes, report, summary }`
+ * where `report` lists, per solid, any faces omitted because their surface
+ * type is unsupported (the imported geometry has holes there), and
+ * `summary` is a ready-to-display warning string (null when clean).
+ * @param {Uint8Array} data
+ * @returns {any}
+ */
+export function importStepBufferWithReport(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.importStepBufferWithReport(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Import a URDF (Unified Robot Description Format) file and return a
- * serialised vcad [`Document`].
+ * serialised vcad `Document`.
  *
  * Browsers cannot resolve `package://` URIs or relative mesh paths
  * against the user's filesystem, so any `<mesh>` reference in the URDF
@@ -6576,7 +6596,7 @@ export function nestSheetMetalParts(parts_json, params_json) {
 /**
  * Produce one layered DXF per stock sheet for a set of nested parts.
  *
- * `placements_json` is an array of [`NestedPlacementDto`]; each chain
+ * `placements_json` is an array of `NestedPlacementDto`; each chain
  * is independently evaluated into a flat pattern, then translated /
  * rotated according to its placement before being written to the
  * sheet's DXF. Layers are the same `CUT` / `BEND_UP` / `BEND_DOWN`
@@ -6954,7 +6974,7 @@ export function particleOptimize(spec_json, params_json, optimize_json) {
  * `spec_json` is a `vcad_kernel_particle::spec::DeviceSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them
  * (fail-closed: unbound names error), `options_json` a
- * [`ParticleSimOptions`]. Returns stats + `vcad.particle-claims/1` set +
+ * `ParticleSimOptions`. Returns stats + `vcad.particle-claims/1` set +
  * unified-receipt claims (basis `predicted` — Provisional by contract).
  * @param {string} spec_json
  * @param {string} params_json
@@ -7367,7 +7387,7 @@ export function render_svg_annotated(vcad_json, scale, view, axes, labels, dims)
 }
 
 /**
- * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
  * surface in one call: arbitrary camera, part focus, section cutaway,
  * changed-part highlight, and engineering annotations. This is the superset
  * the MCP `render_view` "agent eyes" path drives; the narrower
@@ -7424,7 +7444,7 @@ export function render_svg_camera(vcad_json, scale, view, focus, axes, labels, d
 }
 
 /**
- * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * Render raw `.vcad` document JSON to an SVG with the full `SvgOptions`
  * surface expressed as one JSON options object — the forward-compatible
  * companion to [`render_svg_camera`] (mirroring [`render_pcb_svg_opts`]),
  * so new render options never need another positional-arg binding.
@@ -8242,7 +8262,7 @@ export function textBounds(text, height, font, letter_spacing, line_spacing) {
  *
  * `spec_json` is a `vcad_kernel_thermal::spec::ThermalSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them,
- * `options_json` a [`ThermalOptions`].
+ * `options_json` a `ThermalOptions`.
  * @param {string} spec_json
  * @param {string} params_json
  * @param {string} options_json
@@ -8272,7 +8292,7 @@ export function thermalSolve(spec_json, params_json, options_json) {
  * `spec_json` is a `ThermalSpec` (every material needs
  * `heat_capacity_j_m3k`), `transient_json` a
  * `vcad_kernel_thermal::spec::TransientSpec`, `params_json` a
- * `{name: value}` map, `options_json` a [`ThermalOptions`].
+ * `{name: value}` map, `options_json` a `ThermalOptions`.
  * @param {string} spec_json
  * @param {string} transient_json
  * @param {string} params_json
@@ -8340,7 +8360,7 @@ export function toVCode(doc_json) {
  * `spec_json` is a `vcad_kernel_tolerance::spec::StackupSpec` (named
  * parameters allowed), `params_json` a `{name: value}` map binding them
  * (fail-closed: unbound names error), `options_json` a
- * [`ToleranceOptions`]. Returns all three analyses +
+ * `ToleranceOptions`. Returns all three analyses +
  * `vcad.tolerance-claims/1` + unified-receipt claims (basis `predicted`).
  * @param {string} spec_json
  * @param {string} params_json
@@ -10294,12 +10314,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3791, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3792, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3796, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3797, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3816, function: Function { arguments: [Externref], shim_idx: 3817, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3821, function: Function { arguments: [Externref], shim_idx: 3822, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },

@@ -2,6 +2,14 @@
 
 **Score: 91/100** | **Priority: #1**
 
+## Status
+
+| Field | Value |
+|-------|-------|
+| State | `shipped` |
+
+> Verified against repo 2026-07-30. State row added. The core architecture is shipped: the full BRep kernel runs client-side via `vcad-kernel-wasm` / `@vcad/engine` (workers exist for evaluation and analysis: `packages/engine/src/eval-worker.ts`, `analyze-worker.ts`). Specific performance numbers below are targets, not measured guarantees.
+
 ## Overview
 
 Zero-latency parametric editing enables all geometry operations to run client-side in WebAssembly at near-native speed. Boolean operations complete in 2-5ms, enabling 60fps parametric editing with no server round-trips.

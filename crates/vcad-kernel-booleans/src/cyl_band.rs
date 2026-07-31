@@ -78,7 +78,6 @@ pub(crate) struct CylProfile {
     vs: Vec<f64>,
 }
 
-
 macro_rules! band_dbg {
     ($($arg:tt)*) => {
         if std::env::var("VCAD_BAND_DEBUG").is_ok() {
@@ -284,9 +283,9 @@ impl CylProfile {
     fn has_node(&self, u: f64) -> bool {
         let u0 = self.us[0];
         let x = u0 + (u - u0).rem_euclid(2.0 * PI);
-        self.us.iter().any(|&pu| {
-            (pu - x).abs() < U_EPS || (pu - x + 2.0 * PI).abs() < U_EPS
-        })
+        self.us
+            .iter()
+            .any(|&pu| (pu - x).abs() < U_EPS || (pu - x + 2.0 * PI).abs() < U_EPS)
     }
 }
 
@@ -308,7 +307,9 @@ impl CylBand {
 
     /// End of the band's u-interval.
     fn u_end(&self) -> f64 {
-        self.lo[self.lo.len() - 1].0.max(self.hi[self.hi.len() - 1].0)
+        self.lo[self.lo.len() - 1]
+            .0
+            .max(self.hi[self.hi.len() - 1].0)
     }
 }
 
@@ -474,7 +475,11 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
     let mut chain_a: Chain = (0..split_at).map(|i| (unwrapped[i], uvs[i].1)).collect();
     let mut chain_b: Chain = (split_at..n).map(|i| (unwrapped[i], uvs[i].1)).collect();
     if chain_a.len() < 2 || chain_b.len() < 2 {
-        band_dbg!("parse_band: short chains {} {}", chain_a.len(), chain_b.len());
+        band_dbg!(
+            "parse_band: short chains {} {}",
+            chain_a.len(),
+            chain_b.len()
+        );
         return None;
     }
     let a_was_reversed_flag = chain_a[0].0 > chain_a[chain_a.len() - 1].0;
@@ -500,18 +505,12 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
     // Chains now carry heterogeneous vertex spacings (a sag-dense rim vs a
     // profile at SSI sampling), so the slack must be the largest actual
     // step, not the average.
-    let max_step = |c: &Chain| {
-        c.windows(2)
-            .map(|w| w[1].0 - w[0].0)
-            .fold(0.0f64, f64::max)
-    };
+    let max_step = |c: &Chain| c.windows(2).map(|w| w[1].0 - w[0].0).fold(0.0f64, f64::max);
     // Cap: a 2-point analytic chain has max_step = its whole span, which
     // would make the tolerance unbounded and let a tiny wedge pair with a
     // full-circle chain as a "band" (whose clamped interpolation then
     // paints a phantom flat ring around the cylinder).
-    let range_tol = (1.5 * max_step(&chain_a).max(max_step(&chain_b)))
-        .max(1e-6)
-        .min(0.35);
+    let range_tol = (1.5 * max_step(&chain_a).max(max_step(&chain_b))).clamp(1e-6, 0.35);
     if (a0 - b0).abs() > range_tol || (a1 - b1).abs() > range_tol {
         band_dbg!(
             "parse_band: range mismatch a=[{a0:.6},{a1:.6}] b=[{b0:.6},{b1:.6}] tol {range_tol:.6}"
@@ -558,7 +557,10 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
     // downstream splits clamp-extend the shorter one into phantom area. At
     // a collapsed pinch the extension point IS the pinch point (the longer
     // chain's endpoint), so this is exact, not a fudge.
-    let (start_u, end_u) = (lo[0].0.min(hi[0].0), lo[lo.len() - 1].0.max(hi[hi.len() - 1].0));
+    let (start_u, end_u) = (
+        lo[0].0.min(hi[0].0),
+        lo[lo.len() - 1].0.max(hi[hi.len() - 1].0),
+    );
     let (lo_head_v, lo_tail_v) = (lo[0].1, lo[lo.len() - 1].1);
     let (hi_head_v, hi_tail_v) = (hi[0].1, hi[hi.len() - 1].1);
     for (c, other_head, other_tail) in [
@@ -582,7 +584,12 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
         lo[0],
         hi[0]
     );
-    Some(CylBand { lo, hi, full_wrap, reversed_winding })
+    Some(CylBand {
+        lo,
+        hi,
+        full_wrap,
+        reversed_winding,
+    })
 }
 
 /// Are two angles equal on the circle (mod 2π)?
@@ -672,8 +679,16 @@ fn envelope_chain(
         }
         let fv = f.eval(u);
         let cv = chain_val(u);
-        let f_wins = if take_min { fv <= cv + V_EPS } else { fv >= cv - V_EPS };
-        let c_wins = if take_min { cv <= fv + V_EPS } else { cv >= fv - V_EPS };
+        let f_wins = if take_min {
+            fv <= cv + V_EPS
+        } else {
+            fv >= cv - V_EPS
+        };
+        let c_wins = if take_min {
+            cv <= fv + V_EPS
+        } else {
+            cv >= fv - V_EPS
+        };
         let emit = (f_wins && f.has_node(u)) || (c_wins && chain_node(u)) || (f_wins && c_wins);
         if emit {
             out.push((u, env(u)));
@@ -862,9 +877,7 @@ fn extract_regions(
                 }
             }
             out.extend(extra);
-            out.sort_by(|x, y| {
-                x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
         }
         out
     };
@@ -995,7 +1008,10 @@ pub(crate) fn realize_bands(
     let parent_v_range = {
         let mut mn = f64::MAX;
         let mut mx = f64::MIN;
-        for he in brep.topology.loop_half_edges(brep.topology.faces[parent].outer_loop) {
+        for he in brep
+            .topology
+            .loop_half_edges(brep.topology.faces[parent].outer_loop)
+        {
             let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
             let v = (p - cyl.center).dot(cyl.axis.as_ref());
             mn = mn.min(v);
@@ -1037,8 +1053,7 @@ pub(crate) fn realize_bands(
         // carry, which is the whole point of the chain representation.
         // Pinch endpoints (chains meeting at a shared point) may duplicate;
         // repair collapses the resulting zero-length half-edges later.
-        let mut loop_pts: Vec<Point3> =
-            Vec::with_capacity(band.lo.len() + band.hi.len());
+        let mut loop_pts: Vec<Point3> = Vec::with_capacity(band.lo.len() + band.hi.len());
         if band.reversed_winding && std::env::var("VCAD_NO_WINDING").is_err() {
             // Bore convention: lower chain descending, upper ascending.
             for &(u, v) in band.lo.iter().rev() {
@@ -1339,6 +1354,7 @@ mod tests {
             lo: lo.clone(),
             hi,
             full_wrap: true,
+            reversed_winding: false,
         };
         let f = sinusoid(5.0, 2.0, 0.123, 64);
         let (below, above) = split_band_by_profile(&band, &f).expect("split");
@@ -1866,9 +1882,8 @@ mod frozen_chain_tests {
                 .topology
                 .loop_half_edges(cyl_solid.topology.faces[fid].outer_loop)
                 .map(|he| {
-                    let p = cyl_solid.topology.vertices
-                        [cyl_solid.topology.half_edges[he].origin]
-                        .point;
+                    let p =
+                        cyl_solid.topology.vertices[cyl_solid.topology.half_edges[he].origin].point;
                     uv_of(&p, &wall_cyl)
                 })
                 .collect();
@@ -1982,17 +1997,11 @@ mod frozen_chain_tests {
             unpaired += 1;
             if unpaired <= 14 {
                 let a = cyl_solid.topology.vertices[he.origin].point;
-                let b = cyl_solid.topology.vertices
-                    [cyl_solid.topology.half_edge_dest(he_id)]
-                    .point;
-                let f = he
-                    .loop_id
-                    .and_then(|l| cyl_solid.topology.loops[l].face);
+                let b = cyl_solid.topology.vertices[cyl_solid.topology.half_edge_dest(he_id)].point;
+                let f = he.loop_id.and_then(|l| cyl_solid.topology.loops[l].face);
                 let (ua, va) = uv_of(&a, &wall_cyl);
                 let (ub, vb) = uv_of(&b, &wall_cyl);
-                eprintln!(
-                    "UNPAIRED {f:?} uv ({ua:.4},{va:.4})->({ub:.4},{vb:.4})"
-                );
+                eprintln!("UNPAIRED {f:?} uv ({ua:.4},{va:.4})->({ub:.4},{vb:.4})");
             }
         }
         eprintln!("total unpaired: {unpaired}");
@@ -2005,9 +2014,8 @@ mod frozen_chain_tests {
                 .topology
                 .loop_half_edges(face.outer_loop)
                 .map(|he| {
-                    let p = cyl_solid.topology.vertices
-                        [cyl_solid.topology.half_edges[he].origin]
-                        .point;
+                    let p =
+                        cyl_solid.topology.vertices[cyl_solid.topology.half_edges[he].origin].point;
                     uv_of(&p, &wall_cyl)
                 })
                 .collect();

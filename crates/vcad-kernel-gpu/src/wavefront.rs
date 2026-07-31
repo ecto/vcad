@@ -350,7 +350,7 @@ const ITERS_PER_READBACK: usize = 64;
 /// grid: a prep kernel converts the frontier counter into indirect
 /// dispatch args, and the relax kernel appends improved neighbors to the
 /// next frontier with epoch-stamped deduplication. The host only reads
-/// back the frontier length every [`ITERS_PER_READBACK`] iterations to
+/// back the frontier length every `ITERS_PER_READBACK` iterations to
 /// detect termination.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn distance_field_compacted(

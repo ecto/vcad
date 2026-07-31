@@ -51,18 +51,24 @@ impl From<Point2D> for vcad_kernel_math::Point2 {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ViewDirection {
-    /// Front view: looking along -Y axis (XZ plane visible).
+    /// Front view: camera on the -Y side looking along +Y (XZ plane visible,
+    /// world +X maps to drawing +X).
     #[default]
     Front,
-    /// Back view: looking along +Y axis (XZ plane visible, mirrored).
+    /// Back view: camera on the +Y side looking along -Y (XZ plane visible,
+    /// world -X maps to drawing +X).
     Back,
-    /// Top view: looking along -Z axis (XY plane visible).
+    /// Top view: camera above (+Z) looking along -Z (XY plane visible,
+    /// world +X maps to drawing +X, +Y to drawing +Y).
     Top,
-    /// Bottom view: looking along +Z axis (XY plane visible, mirrored).
+    /// Bottom view: camera below (-Z) looking along +Z (XY plane visible,
+    /// world +X maps to drawing +X, -Y to drawing +Y).
     Bottom,
-    /// Right view: looking along -X axis (YZ plane visible).
+    /// Right view: camera on the +X side looking along -X (YZ plane visible,
+    /// world +Y maps to drawing +X).
     Right,
-    /// Left view: looking along +X axis (YZ plane visible, mirrored).
+    /// Left view: camera on the -X side looking along +X (YZ plane visible,
+    /// world -Y maps to drawing +X).
     Left,
     /// Isometric view with specified azimuth and elevation angles (in radians).
     Isometric {
@@ -86,13 +92,20 @@ impl ViewDirection {
         elevation: 0.46365,
     };
 
-    /// Get the view direction as a unit vector pointing from the viewer toward the model.
+    /// Get the view direction as a unit vector pointing from the scene
+    /// **toward the viewer** (i.e. along the camera position).
+    ///
+    /// Triangles whose normals have a positive dot product with this vector
+    /// face the viewer, and depth measured along it increases toward the
+    /// viewer. Until 2026-07 this vector pointed the other way (viewer →
+    /// scene) while the projection basis assumed viewer-ward, which mirrored
+    /// every view; see `handedness` tests in `projection.rs`.
     pub fn view_vector(&self) -> Vec3 {
         match self {
-            ViewDirection::Front => Vec3::new(0.0, 1.0, 0.0),
-            ViewDirection::Back => Vec3::new(0.0, -1.0, 0.0),
-            ViewDirection::Top => Vec3::new(0.0, 0.0, -1.0),
-            ViewDirection::Bottom => Vec3::new(0.0, 0.0, 1.0),
+            ViewDirection::Front => Vec3::new(0.0, -1.0, 0.0),
+            ViewDirection::Back => Vec3::new(0.0, 1.0, 0.0),
+            ViewDirection::Top => Vec3::new(0.0, 0.0, 1.0),
+            ViewDirection::Bottom => Vec3::new(0.0, 0.0, -1.0),
             ViewDirection::Right => Vec3::new(1.0, 0.0, 0.0),
             ViewDirection::Left => Vec3::new(-1.0, 0.0, 0.0),
             ViewDirection::Isometric { azimuth, elevation } => {
@@ -100,7 +113,7 @@ impl ViewDirection {
                 let sin_elev = elevation.sin();
                 let cos_az = azimuth.cos();
                 let sin_az = azimuth.sin();
-                Vec3::new(cos_elev * sin_az, cos_elev * cos_az, -sin_elev)
+                Vec3::new(cos_elev * sin_az, cos_elev * cos_az, sin_elev)
             }
         }
     }
@@ -359,7 +372,11 @@ impl Triangle3D {
         Self { v0, v1, v2, normal }
     }
 
-    /// Check if the triangle is front-facing relative to the view direction.
+    /// Check if the triangle faces the viewer.
+    ///
+    /// `view_dir` points from the scene toward the viewer (see
+    /// [`ViewDirection::view_vector`]); a triangle is front-facing when its
+    /// outward normal has a positive component along it.
     pub fn is_front_facing(&self, view_dir: &Vec3) -> bool {
         self.normal.dot(view_dir) > 0.0
     }
@@ -424,11 +441,12 @@ impl SectionPlane {
         }
     }
 
-    /// Right section at a given X position (looking along -X).
+    /// Right section at a given X position (viewed from +X, looking along
+    /// -X — same orientation as [`ViewDirection::Right`]).
     pub fn right(x: f64) -> Self {
         Self {
             origin: [x, 0.0, 0.0],
-            normal: [-1.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
             up: [0.0, 0.0, 1.0],
         }
     }
@@ -743,13 +761,15 @@ mod tests {
 
     #[test]
     fn test_view_direction_vectors() {
+        // view_vector points scene -> viewer: the Front camera sits at -Y,
+        // the Top camera above at +Z.
         let front = ViewDirection::Front.view_vector();
-        assert!((front.y - 1.0).abs() < 1e-10);
+        assert!((front.y - (-1.0)).abs() < 1e-10);
         assert!(front.x.abs() < 1e-10);
         assert!(front.z.abs() < 1e-10);
 
         let top = ViewDirection::Top.view_vector();
-        assert!((top.z - (-1.0)).abs() < 1e-10);
+        assert!((top.z - 1.0).abs() < 1e-10);
     }
 
     #[test]

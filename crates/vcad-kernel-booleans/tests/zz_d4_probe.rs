@@ -58,7 +58,11 @@ fn zz_d4_probe() {
     for (fid, face) in s2.topology.faces.iter() {
         let kind = s2.geometry.surfaces[face.surface_index].surface_type();
         let hes: Vec<_> = s2.topology.loop_half_edges(face.outer_loop).collect();
-        println!("s2 {fid:?} {kind:?} loop_len={} inner={}", hes.len(), face.inner_loops.len());
+        println!(
+            "s2 {fid:?} {kind:?} loop_len={} inner={}",
+            hes.len(),
+            face.inner_loops.len()
+        );
         if hes.len() <= 6 {
             for he in hes {
                 let h = &s2.topology.half_edges[he];
@@ -76,6 +80,10 @@ fn zz_d4_probe() {
     for seg in [32u32, 64, 256] {
         let m1 = tessellate_brep(&s1, seg);
         let m2 = tessellate_brep(&s2, seg);
-        println!("seg={seg}: s1 open={} s2 open={}", open_edges(&m1), open_edges(&m2));
+        println!(
+            "seg={seg}: s1 open={} s2 open={}",
+            open_edges(&m1),
+            open_edges(&m2)
+        );
     }
 }

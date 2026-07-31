@@ -11,6 +11,8 @@ Repeat geometry in linear or circular arrays.
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30.
+
 ## Problem
 
 Creating many copies of features manually is tedious and error-prone:

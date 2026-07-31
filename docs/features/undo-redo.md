@@ -11,6 +11,8 @@ Revert and replay document changes to recover from mistakes and explore design a
 | Priority | `p0` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. State `shipped` is correct, but the implementation has diverged from this doc: undo/redo is now CRDT-based, delegated to the engine (`undo()` / `can_undo()` on the engine handle in `packages/core/src/stores/document-store.ts`) rather than the 50-step JSON-snapshot stacks described below. The Snapshot/`undoStack`/`MAX_UNDO` sections are historical.
+
 ## Problem
 
 Users make mistakes and need to backtrack. Without undo/redo:

@@ -39,6 +39,33 @@ macro_rules! debug_bool {
     ($($arg:tt)*) => {};
 }
 
+/// Shortest interior arc (mm) that counts as a circle genuinely CROSSING a
+/// planar face rather than grazing it.
+///
+/// Sits three orders of magnitude above the sewing merge tolerance (1e-6),
+/// so an accepted crossing can never collapse to a degenerate face, and
+/// well below the smallest real crossing measured in the corpus (a 0.5mm
+/// arc where a torr blade crosses the r30 trim circle; the tangency graze
+/// it has to reject is 4e-7mm).
+const MIN_CROSSING_ARC: f64 = 1e-3;
+
+/// Largest curved-surface radius in a solid's geometry (0.0 when the solid
+/// is all-planar). Drives the classification tessellation density.
+fn max_curved_radius(brep: &BRepSolid) -> f64 {
+    let mut r = 0.0f64;
+    for s in &brep.geometry.surfaces {
+        let any = s.as_any();
+        if let Some(c) = any.downcast_ref::<vcad_kernel_geom::CylinderSurface>() {
+            r = r.max(c.radius.abs());
+        } else if let Some(sp) = any.downcast_ref::<vcad_kernel_geom::SphereSurface>() {
+            r = r.max(sp.radius.abs());
+        } else if let Some(t) = any.downcast_ref::<vcad_kernel_geom::TorusSurface>() {
+            r = r.max(t.major_radius.abs() + t.minor_radius.abs());
+        }
+    }
+    r
+}
+
 /// Handle boolean operations on non-overlapping solids.
 pub(crate) fn non_overlapping_boolean(
     solid_a: &BRepSolid,
@@ -421,18 +448,17 @@ fn apply_splits_to_solid(
                         // the interval then reads as one seam-free segment.
                         let curve_for_face: ssi::IntersectionCurve =
                             if let ssi::IntersectionCurve::Sampled(pts) = &curve {
-                                let closed = pts.len() > 2
-                                    && (pts[0] - pts[pts.len() - 1]).norm() < 1e-9;
-                                let seam_inside = closed
-                                    && trim::point_in_face(solid, cur, &pts[0]);
+                                let closed =
+                                    pts.len() > 2 && (pts[0] - pts[pts.len() - 1]).norm() < 1e-9;
+                                let seam_inside =
+                                    closed && trim::point_in_face(solid, cur, &pts[0]);
                                 if seam_inside {
                                     let m = pts.len() - 1; // unique samples
-                                    match (0..m).find(|&k| {
-                                        !trim::point_in_face(solid, cur, &pts[k])
-                                    }) {
+                                    match (0..m)
+                                        .find(|&k| !trim::point_in_face(solid, cur, &pts[k]))
+                                    {
                                         Some(k) => {
-                                            let mut rot: Vec<Point3> =
-                                                Vec::with_capacity(m + 1);
+                                            let mut rot: Vec<Point3> = Vec::with_capacity(m + 1);
                                             for j in 0..m {
                                                 rot.push(pts[(k + j) % m]);
                                             }
@@ -654,12 +680,102 @@ pub(crate) fn brep_boolean(
                     }
                     false
                 };
+                // Exact third chance: the circle properly CROSSES the planar
+                // face's boundary and carries a real interior arc. The seated
+                // probes above sample only 8 angles, so a genuine narrow
+                // crossing (a thin blade face crossing a big wall circle over
+                // ~1° of arc — torr A2's r30 trim) falls between probes and
+                // the wall never gets its circle split. Solving each boundary
+                // edge against the circle is exact for any arc width, and the
+                // interior-midpoint test still rejects the phantom graze
+                // regime the anchor gate exists for.
+                let crosses = |solid: &vcad_kernel_primitives::BRepSolid, fid: FaceId| -> bool {
+                    let verts: Vec<Point3> = solid
+                        .topology
+                        .loop_half_edges(solid.topology.faces[fid].outer_loop)
+                        .map(|he| {
+                            solid.topology.vertices[solid.topology.half_edges[he].origin].point
+                        })
+                        .collect();
+                    if verts.len() < 3 {
+                        return false;
+                    }
+                    let xd = circle.x_dir.into_inner();
+                    let yd = circle.y_dir.into_inner();
+                    let nd = circle.normal.into_inner();
+                    let mut angles: Vec<f64> = Vec::new();
+                    for i in 0..verts.len() {
+                        let p1 = verts[i] - circle.center;
+                        let p2 = verts[(i + 1) % verts.len()] - circle.center;
+                        // The face must be coplanar with the circle's plane.
+                        if p1.dot(nd).abs() > 1e-6 || p2.dot(nd).abs() > 1e-6 {
+                            return false;
+                        }
+                        let (x1, y1) = (p1.dot(xd), p1.dot(yd));
+                        let (x2, y2) = (p2.dot(xd), p2.dot(yd));
+                        let (dx, dy) = (x2 - x1, y2 - y1);
+                        let aa = dx * dx + dy * dy;
+                        if aa < 1e-18 {
+                            continue;
+                        }
+                        let bb = 2.0 * (x1 * dx + y1 * dy);
+                        let cc = x1 * x1 + y1 * y1 - circle.radius * circle.radius;
+                        let disc = bb * bb - 4.0 * aa * cc;
+                        if disc <= 0.0 {
+                            continue;
+                        }
+                        let sq = disc.sqrt();
+                        for t in [(-bb - sq) / (2.0 * aa), (-bb + sq) / (2.0 * aa)] {
+                            if (0.0..1.0).contains(&t) {
+                                angles.push((y1 + t * dy).atan2(x1 + t * dx));
+                            }
+                        }
+                    }
+                    if angles.len() < 2 {
+                        return false;
+                    }
+                    angles.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
+                    for i in 0..angles.len() {
+                        let (t0, t1) = (angles[i], angles[(i + 1) % angles.len()]);
+                        let mid = if i + 1 == angles.len() {
+                            // wrap arc
+                            0.5 * (t0 + t1 + 2.0 * std::f64::consts::PI)
+                        } else {
+                            0.5 * (t0 + t1)
+                        };
+                        // The arc must be long enough to be real geometry, not
+                        // a touch. A circle that grazes a face at a single
+                        // point (a solid tangent to another's edge) produces
+                        // two crossings a hair apart, and splitting on it
+                        // emits a degenerate face — this is exactly the
+                        // phantom regime the anchor gate exists for, and the
+                        // `seated()` probe above rejects it by construction.
+                        // Measure it as arc LENGTH, not angle: the same
+                        // physical crossing subtends 23 degrees on an r=5
+                        // circle and under 1 degree on an r=30 one.
+                        let span = if i + 1 == angles.len() {
+                            t1 + 2.0 * std::f64::consts::PI - t0
+                        } else {
+                            t1 - t0
+                        };
+                        if span * circle.radius <= MIN_CROSSING_ARC {
+                            continue;
+                        }
+                        let p = circle.center + circle.radius * (mid.cos() * xd + mid.sin() * yd);
+                        if trim::point_in_face(solid, fid, &p) {
+                            return true;
+                        }
+                    }
+                    false
+                };
                 let b_anchors_circle = !split::is_planar_face(&b, face_b)
                     || trim::point_in_face(&b, face_b, &circle.center)
-                    || seated(&b, face_b);
+                    || seated(&b, face_b)
+                    || crosses(&b, face_b);
                 let a_anchors_circle = !split::is_planar_face(&a, face_a)
                     || trim::point_in_face(&a, face_a, &circle.center)
-                    || seated(&a, face_a);
+                    || seated(&a, face_a)
+                    || crosses(&a, face_a);
 
                 // A circle that is already part of the planar face's sampled
                 // boundary (the cap of an arc-extruded body paired with the
@@ -1003,21 +1119,42 @@ pub(crate) fn brep_boolean(
     // tangency stops one side's rim where the other continues). The
     // classification stage ray-casts against these post-split meshes, and
     // rays escaping through pre-repair cracks misclassify whole faces.
-    crate::repair::repair_topology(&mut a.topology, 1e-6);
+    crate::repair::repair_topology_fine(&mut a.topology, 1e-6);
     debug_bool!("\n--- Stage 2.5: After splits applied to A ---");
     debug_bool!("A now has {} faces", a.topology.faces.len());
 
     apply_splits_to_solid(&mut b, splits_b, segments, "B");
-    crate::repair::repair_topology(&mut b.topology, 1e-6);
+    crate::repair::repair_topology_fine(&mut b.topology, 1e-6);
 
     // 3. Classify all faces (including split sub-faces)
     debug_bool!("\n--- Stage 3: Classification ---");
     debug_bool!("Solid A has {} faces after splits", a.topology.faces.len());
     debug_bool!("Solid B has {} faces after splits", b.topology.faces.len());
 
-    // Tessellate each solid once and reuse for classification
-    let mesh_b = tessellate_brep(&b, segments);
-    let mesh_a = tessellate_brep(&a, segments);
+    // Tessellate each solid once and reuse for classification. Classification
+    // probes sit ~1e-4 off split boundaries that were placed on the ANALYTIC
+    // surfaces, so the point-in-mesh oracle needs far less chordal error than
+    // the display tessellation: at 64 segments a 45mm cylinder's mesh is
+    // ~0.05mm inside the true surface and boundary-adjacent slivers flip
+    // classification (torr A1/A2 trim overshoot). The count must be FLAT
+    // (one number for walls and caps alike — per-radius adaptivity leaves
+    // 64-gon caps butted against 256-gon walls and the classification mesh
+    // cracks along the shared circles), so pick it per boolean from the
+    // largest curved radius across both operands: a 45mm part classifies at
+    // the 256 cap (~4e-3mm sag) while a fillet-scale solid stays cheap.
+    let cls_segments = {
+        let max_r = max_curved_radius(&a).max(max_curved_radius(&b));
+        const SAG: f64 = 1.5e-3;
+        let needed = if max_r > SAG {
+            let arg = (1.0 - SAG / max_r).clamp(-1.0, 1.0);
+            (std::f64::consts::PI / arg.acos()).ceil() as u32
+        } else {
+            0
+        };
+        needed.min(256).max(segments)
+    };
+    let mesh_b = tessellate_brep(&b, cls_segments);
+    let mesh_a = tessellate_brep(&a, cls_segments);
     #[cfg(feature = "debug-boolean")]
     {
         let open = |mesh: &vcad_kernel_tessellate::TriangleMesh| -> usize {

@@ -310,6 +310,22 @@ fn plane_sphere(plane: &Plane, sphere: &SphereSurface) -> IntersectionCurve {
 // Plane-Cylinder intersection
 // =============================================================================
 
+/// Sample count for a sampled ellipse (oblique plane × cylinder) so the
+/// polyline's chordal sag stays under ~1e-3 mm on the cylinder of radius
+/// `r`. `n = π / acos(1 − sag/r)`, clamped to [64, 512].
+fn ellipse_samples(r: f64) -> usize {
+    // NOTE: must stay in lockstep with split::arc_segments' SAG — SSI
+    // polylines and canonical rings share vertices only at equal density.
+    const SAG: f64 = 1e-3;
+    let n = if r > SAG {
+        let arg = (1.0 - SAG / r).clamp(-1.0, 1.0);
+        (std::f64::consts::PI / arg.acos()).ceil() as usize
+    } else {
+        64
+    };
+    n.clamp(64, 512)
+}
+
 /// Intersection of a plane and a cylinder.
 ///
 /// Three cases:
@@ -420,22 +436,13 @@ fn plane_cylinder(plane: &Plane, cyl: &CylinderSurface) -> IntersectionCurve {
             normal: Dir3::new_normalize(circle_normal),
         })
     } else {
-        // General case — ellipse
-        // Sample the intersection curve at sag density: the samples become
-        // boundary polyline vertices on both operands, and every boundary
-        // in the frozen pipeline is held to the same ≤5 µm chord-sag
-        // standard (see split::arc_segments). A fixed 64 leaves visible
-        // chord-sag volume on large radii.
-        let n_samples = {
-            const SAG: f64 = 5e-3;
-            let r = cyl.radius.abs();
-            let n = if r > SAG {
-                (std::f64::consts::PI / (1.0 - SAG / r).clamp(-1.0, 1.0).acos()).ceil() as usize
-            } else {
-                64
-            };
-            n.clamp(64, 512)
-        };
+        // General case — ellipse. Sample densely enough that the polyline's
+        // chordal sag stays below classification/probe tolerances: with a
+        // fixed 64 samples a 45mm-radius ellipse deviates ~0.07mm from the
+        // true curve, which places trim boundaries visibly inside the real
+        // intersection (the torr A1/A2 trim-overshoot family). Target the
+        // same sag the splitter's `arc_segments` uses.
+        let n_samples = ellipse_samples(cyl.radius);
         let mut points = Vec::with_capacity(n_samples);
 
         for i in 0..n_samples {

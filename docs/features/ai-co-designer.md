@@ -6,12 +6,14 @@ Intelligent design partner that understands geometry, physics, and engineering t
 
 | Field | Value |
 |-------|-------|
-| State | `proposed` |
+| State | `in-progress` |
 | Owner | `unassigned` |
 | Priority | `p1` |
 | Score | 78/100 |
 | Effort | `xl` (6-8 weeks) |
 | Depends On | MCP Server, Physics Simulation |
+
+> Verified against repo 2026-07-30. State corrected `proposed` → `in-progress`: much of the analysis surface has shipped as MCP tools under different names (`measure`, `check_clearance`, `inspect_cad` mass properties, `describe_scene`, `gym_*` simulation, `critique_route`), though the in-app AI chat panel and preview-overlay UI described below are not built.
 
 ## Problem
 
@@ -409,7 +411,7 @@ interface GetWorkspaceOutput {
 
 - [ ] Implement `measure_distance` with all modes (`m`)
 - [ ] Implement `measure_angle` for edges and faces (`s`)
-- [ ] Implement `check_clearance` between parts (`m`)
+- [x] Implement `check_clearance` between parts (`m`)
 - [ ] Implement `get_mass_properties` (`s`)
 - [ ] Add entity reference resolution from selection (`s`)
 - [ ] Write unit tests for measurement accuracy (`s`)

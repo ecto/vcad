@@ -11,6 +11,8 @@ Pixel-perfect rendering of CAD geometry without tessellation artifacts.
 | Priority | `p1` |
 | Effort | n/a (complete) |
 
+> Verified against repo 2026-07-30. `crates/vcad-kernel-raytrace` (incl. `gpu/` compute pipeline) and `RayTracedViewport.tsx` exist as described.
+
 ## Problem
 
 Traditional CAD rendering relies on tessellation, converting smooth analytic surfaces into triangle meshes for display. This approach has fundamental limitations:

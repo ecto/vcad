@@ -16,8 +16,8 @@ fn transform_brep(brep: &mut BRepSolid, t: &Transform) {
 fn zz_blade_union_no_duplicate_faces() {
     let cyl = make_cylinder(22.5, 13.0, 32);
     let mut blade = make_cube(23.5, 0.5, 12.57);
-    let combined = Transform::translation(21.5, 0.0, 0.0)
-        .then(&Transform::rotation_x(39.29_f64.to_radians()));
+    let combined =
+        Transform::translation(21.5, 0.0, 0.0).then(&Transform::rotation_x(39.29_f64.to_radians()));
     transform_brep(&mut blade, &combined);
     let BooleanResult::BRep(result) =
         boolean_op(&blade, &cyl, BooleanOp::Union, 64).expect("boolean");
@@ -30,11 +30,7 @@ fn zz_blade_union_no_duplicate_faces() {
             .loop_half_edges(face.outer_loop)
             .map(|he| {
                 let p = result.topology.vertices[result.topology.half_edges[he].origin].point;
-                [
-                    (p.x * 1e6) as i64,
-                    (p.y * 1e6) as i64,
-                    (p.z * 1e6) as i64,
-                ]
+                [(p.x * 1e6) as i64, (p.y * 1e6) as i64, (p.z * 1e6) as i64]
             })
             .collect();
         key.sort();
@@ -42,7 +38,8 @@ fn zz_blade_union_no_duplicate_faces() {
             "{_fid:?} {:?} nv={} first={:?}",
             result.geometry.surfaces[face.surface_index].surface_type(),
             key.len(),
-            key.first().map(|k| [k[0] as f64 / 1e6, k[1] as f64 / 1e6, k[2] as f64 / 1e6])
+            key.first()
+                .map(|k| [k[0] as f64 / 1e6, k[1] as f64 / 1e6, k[2] as f64 / 1e6])
         );
         seen.entry(key).or_default().push(kind);
     }
@@ -80,8 +77,8 @@ fn zz_two_flat_blades_sequential() {
     let cyl = make_cylinder(22.5, 12.57, 32);
     let mk = |ang: f64| -> BRepSolid {
         let mut b = make_cube(23.5, 0.5, 12.57);
-        let t = Transform::rotation_z(ang.to_radians())
-            .then(&Transform::translation(21.5, 0.0, 0.0));
+        let t =
+            Transform::rotation_z(ang.to_radians()).then(&Transform::translation(21.5, 0.0, 0.0));
         transform_brep(&mut b, &t);
         b
     };
@@ -115,7 +112,10 @@ fn zz_two_flat_blades_sequential() {
         }
     }
     let open = net.values().filter(|&&n| n != 0).count();
-    assert_eq!(open, 0, "{open} open edges after two sequential flat unions");
+    assert_eq!(
+        open, 0,
+        "{open} open edges after two sequential flat unions"
+    );
 }
 
 #[test]
@@ -151,14 +151,8 @@ fn zz_two_rotated_blades_sequential() {
             .collect();
         let zmin = pts.iter().map(|p| p.z).fold(f64::MAX, f64::min);
         let zmax = pts.iter().map(|p| p.z).fold(f64::MIN, f64::max);
-        let umin = pts
-            .iter()
-            .map(|p| p.y.atan2(p.x))
-            .fold(f64::MAX, f64::min);
-        let umax = pts
-            .iter()
-            .map(|p| p.y.atan2(p.x))
-            .fold(f64::MIN, f64::max);
+        let umin = pts.iter().map(|p| p.y.atan2(p.x)).fold(f64::MAX, f64::min);
+        let umax = pts.iter().map(|p| p.y.atan2(p.x)).fold(f64::MIN, f64::max);
         eprintln!(
             "U1WALL {fid:?} nv={} z[{zmin:.3},{zmax:.3}] u[{umin:.3},{umax:.3}]",
             pts.len()
@@ -189,7 +183,10 @@ fn zz_two_rotated_blades_sequential() {
     if !bad.is_empty() {
         for (fid, face) in u2.topology.faces.iter() {
             let hes: Vec<_> = u2.topology.loop_half_edges(face.outer_loop).collect();
-            if hes.iter().any(|&he| bad.contains(&u2.topology.half_edges[he].origin)) {
+            if hes
+                .iter()
+                .any(|&he| bad.contains(&u2.topology.half_edges[he].origin))
+            {
                 let pts: Vec<_> = hes
                     .iter()
                     .map(|&he| {
@@ -256,9 +253,7 @@ fn zz_two_rotated_blades_sequential() {
     if opens.len() > 4 {
         // Which faces' tessellations emit the phantom ring edges?
         let params = vcad_kernel_tessellate::TessellationParams::from_segments(64);
-        for (fid, kind, fmesh) in
-            vcad_kernel_tessellate::tessellate_brep_by_face(&u2, &params)
-        {
+        for (fid, kind, fmesh) in vcad_kernel_tessellate::tessellate_brep_by_face(&u2, &params) {
             let hits = fmesh
                 .vertices
                 .chunks(3)
@@ -291,7 +286,11 @@ fn zz_two_rotated_blades_sequential() {
                 if pts.len() > 100 {
                     eprintln!("RINGFACE {fid:?} nv={} FULL {uv:?}", pts.len());
                 } else {
-                    eprintln!("RINGFACE {fid:?} nv={} {:?}", pts.len(), &uv[..uv.len().min(14)]);
+                    eprintln!(
+                        "RINGFACE {fid:?} nv={} {:?}",
+                        pts.len(),
+                        &uv[..uv.len().min(14)]
+                    );
                 }
             }
         }
@@ -303,8 +302,8 @@ fn zz_two_rotated_blades_sequential() {
 fn zz_one_rotated_blade() {
     let cyl = make_cylinder(22.5, 13.0, 32);
     let mut b = make_cube(23.5, 0.5, 12.57);
-    let t = Transform::translation(21.5, 0.0, 0.0)
-        .then(&Transform::rotation_x(39.29_f64.to_radians()));
+    let t =
+        Transform::translation(21.5, 0.0, 0.0).then(&Transform::rotation_x(39.29_f64.to_radians()));
     transform_brep(&mut b, &t);
     let BooleanResult::BRep(u) = boolean_op(&b, &cyl, BooleanOp::Union, 32).expect("boolean");
     let mut unpaired = 0;
