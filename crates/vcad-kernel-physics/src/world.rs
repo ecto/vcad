@@ -13,7 +13,8 @@ use vcad_ir::{Document, InertialProperties, JointKind};
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
 use crate::error::PhysicsError;
 use crate::joints::{
-    convert_state_to_physics, joint_ndof, vcad_joint_to_phyz, MotorMode, MotorTarget,
+    convert_q_dof_to_physics, convert_state_from_physics, convert_state_to_physics,
+    convert_v_dof_to_physics, joint_ndof, vcad_joint_to_phyz, MotorMode, MotorTarget,
 };
 
 /// Ground-plane contact configuration for a physics world.
@@ -110,6 +111,15 @@ pub struct PhysicsWorld {
     // the axis-alignment rotation and anchored at the child anchor. Identity
     // for ground/free bodies. Needed to report part poses to callers.
     body_part_frames: Vec<(Mat3, Vec3)>,
+
+    // Spatial velocities per body (body frame), refreshed alongside
+    // `state.body_xform` by [`Self::step`] / [`Self::refresh_kinematics`].
+    body_vels: Vec<phyz::math::SpatialVec>,
+
+    // Multiplier applied to the auto-derived PD gains (kp, kd) of position
+    // and velocity motors. Domain randomization scales this per episode to
+    // model actuator strength/controller mismatch.
+    gain_scale: f64,
 
     // Ground-plane contact configuration. Disabled by default at this level;
     // RobotEnv turns it on for gym use.
@@ -429,12 +439,14 @@ impl PhysicsWorld {
             }
         }
 
+        let nbodies = model.bodies.len();
+
         // A body can move iff some joint between it and the world root has a
         // degree of freedom. Only movable bodies get contact geometry — the
         // fixed base (and anything welded to it) can't respond to contact
         // impulses, so testing it against the ground is pure waste.
-        let mut movable = vec![false; model.bodies.len()];
-        for i in 0..model.bodies.len() {
+        let mut movable = vec![false; nbodies];
+        for i in 0..nbodies {
             let body = &model.bodies[i];
             let own_dof = model.joints[body.joint_idx].ndof() > 0;
             movable[i] = own_dof || (body.parent >= 0 && movable[body.parent as usize]);
@@ -468,6 +480,8 @@ impl PhysicsWorld {
             joint_q_offsets,
             joint_v_offsets,
             body_part_frames,
+            body_vels: vec![phyz::math::SpatialVec::zero(); nbodies],
+            gain_scale: 1.0,
             ground: GroundConfig::disabled(),
             contact_geometries,
         };
@@ -495,8 +509,7 @@ impl PhysicsWorld {
         }
 
         // Run initial FK
-        let (xforms, _) = forward_kinematics(&world.model, &world.state);
-        world.state.body_xform = xforms;
+        world.refresh_kinematics();
 
         Ok(world)
     }
@@ -603,12 +616,21 @@ impl PhysicsWorld {
             // `state.body_xform` pinned at the construction-time pose, so
             // `get_instance_pose` (and every `end_effector_poses` built on
             // it) reported the rest configuration no matter how far the
-            // joints had moved.
-            let (xforms, _) = forward_kinematics(&self.model, &self.state);
-            self.state.body_xform = xforms;
+            // joints had moved. This also caches the spatial velocities that
+            // base-velocity observations read.
+            self.refresh_kinematics();
         }
 
         self.model.dt = original_dt;
+    }
+
+    /// Recompute forward kinematics from the current `state.q` / `state.v`,
+    /// refreshing the cached body transforms and spatial velocities. Call
+    /// after mutating joint state directly (e.g. [`Self::perturb_joint_state`]).
+    pub fn refresh_kinematics(&mut self) {
+        let (xforms, vels) = forward_kinematics(&self.model, &self.state);
+        self.state.body_xform = xforms;
+        self.body_vels = vels;
     }
 
     /// Contacts between movable bodies' collision geometry and the ground
@@ -856,8 +878,8 @@ impl PhysicsWorld {
     fn position_gains(&mut self, joint_id: &str) -> (f64, f64, f64) {
         const OMEGA: f64 = 20.0;
         let i = self.reflected_inertia(joint_id);
-        let kp = i * OMEGA * OMEGA;
-        let kd = 2.0 * i * OMEGA;
+        let kp = i * OMEGA * OMEGA * self.gain_scale;
+        let kd = 2.0 * i * OMEGA * self.gain_scale;
         // Full-scale (π rad / 1 m) error torque bounds the clamp.
         let max_force = (kp * std::f64::consts::PI).max(1e-12);
         (kp, kd, max_force)
@@ -905,7 +927,7 @@ impl PhysicsWorld {
             // time constant, scaled to the joint's reflected inertia.
             const OMEGA: f64 = 40.0;
             let i = self.reflected_inertia(joint_id);
-            let kd = i * OMEGA;
+            let kd = i * OMEGA * self.gain_scale;
             let max_force = (kd * physics_target.abs().max(1.0) * 2.0).max(1e-12);
             self.motors.insert(
                 joint_id.to_string(),
@@ -977,6 +999,109 @@ impl PhysicsWorld {
     /// Set gravity vector.
     pub fn set_gravity(&mut self, x: f32, y: f32, z: f32) {
         self.model.gravity = Vec3::new(x as f64, y as f64, z as f64);
+    }
+
+    /// Scale an instance's mass (and rotational inertia) by `scale`.
+    ///
+    /// Domain-randomization seam: multiplying the whole spatial inertia by a
+    /// scalar models a uniformly denser/lighter link with unchanged geometry.
+    pub fn scale_instance_mass(&mut self, instance_id: &str, scale: f64) {
+        let Some(&body_idx) = self.instance_to_body.get(instance_id) else {
+            return;
+        };
+        let inertia = &mut self.model.bodies[body_idx].inertia;
+        inertia.mass *= scale;
+        let i = inertia.inertia;
+        inertia.inertia = Mat3::new(
+            i[(0, 0)] * scale,
+            i[(0, 1)] * scale,
+            i[(0, 2)] * scale,
+            i[(1, 0)] * scale,
+            i[(1, 1)] * scale,
+            i[(1, 2)] * scale,
+            i[(2, 0)] * scale,
+            i[(2, 1)] * scale,
+            i[(2, 2)] * scale,
+        );
+    }
+
+    /// Scale a joint's dry-friction loss (and viscous damping) by `scale`.
+    ///
+    /// Both enter the dynamics through phyz's passive-force path
+    /// (`Joint::passive_force` inside ABA's generalized forces).
+    ///
+    /// TODO(contact): once the contact ground-plane task lands, surface
+    /// (foot-ground) friction should be randomized here too — this seam only
+    /// covers *joint* friction because `PhysicsWorld` currently runs a
+    /// contact-free articulated rollout.
+    pub fn scale_joint_friction(&mut self, joint_id: &str, scale: f64) {
+        let Some(&body_idx) = self.joint_to_index.get(joint_id) else {
+            return;
+        };
+        let joint_idx = self.model.bodies[body_idx].joint_idx;
+        let joint = &mut self.model.joints[joint_idx];
+        joint.friction_loss *= scale;
+        joint.damping *= scale;
+    }
+
+    /// Set the multiplier applied to auto-derived PD motor gains (kp, kd).
+    ///
+    /// Domain-randomization seam for actuator-strength / controller mismatch.
+    /// Applies to motors installed *after* the call.
+    pub fn set_gain_scale(&mut self, scale: f64) {
+        self.gain_scale = scale;
+    }
+
+    /// Add `dpos` / `dvel` (vcad units: degrees or mm) to a 1-DOF joint's
+    /// position and velocity. No-op for Fixed joints. Call
+    /// [`Self::refresh_kinematics`] after the last perturbation.
+    pub fn perturb_joint_state(&mut self, joint_id: &str, dpos: f64, dvel: f64) {
+        let Some(kind) = self.joint_kinds.get(joint_id) else {
+            return;
+        };
+        if joint_ndof(kind) == 0 {
+            return;
+        }
+        if let (Some(&q_offset), Some(&v_offset)) = (
+            self.joint_q_offsets.get(joint_id),
+            self.joint_v_offsets.get(joint_id),
+        ) {
+            // Every DOF, not just the first: a Ball joint carries 3 and a Free
+            // joint 6, and perturbing only DOF 0 would silently apply a
+            // fraction of the requested randomization. The per-DOF converters
+            // also handle Free's swapped q/v layouts (q = [linear, rotation],
+            // v = [angular, linear]).
+            for k in 0..joint_ndof(kind) {
+                self.state.q[q_offset + k] += convert_q_dof_to_physics(kind, k, dpos);
+                self.state.v[v_offset + k] += convert_v_dof_to_physics(kind, k, dvel);
+            }
+        }
+    }
+
+    /// World-frame velocity of an instance's body: `[vx, vy, vz, wx, wy, wz]`
+    /// (linear m/s of the body-frame origin, then angular rad/s). Zero for
+    /// fixed bodies. Reflects the last [`Self::step`] /
+    /// [`Self::refresh_kinematics`] call.
+    pub fn get_instance_velocity(&self, instance_id: &str) -> Option<[f64; 6]> {
+        let &body_idx = self.instance_to_body.get(instance_id)?;
+        let v = self.body_vels.get(body_idx)?;
+        // body_xform.rot maps world → body; transpose back to world.
+        let e_t = self.state.body_xform[body_idx].rot.transpose();
+        let lin = e_t.mul_vec(v.linear);
+        let ang = e_t.mul_vec(v.angular);
+        Some([lin.x, lin.y, lin.z, ang.x, ang.y, ang.z])
+    }
+
+    /// A 1-DOF joint's limits in vcad units (degrees / mm), if any.
+    pub fn joint_limits_vcad(&self, joint_id: &str) -> Option<(f64, f64)> {
+        let &body_idx = self.joint_to_index.get(joint_id)?;
+        let joint_idx = self.model.bodies[body_idx].joint_idx;
+        let [lo, hi] = self.model.joints[joint_idx].limits?;
+        let kind = self.joint_kinds.get(joint_id)?;
+        Some((
+            convert_state_from_physics(kind, lo),
+            convert_state_from_physics(kind, hi),
+        ))
     }
 
     /// Pose every instance in world coordinates for a given joint configuration.
@@ -1209,9 +1334,15 @@ impl PhysicsWorld {
         Some((positions, velocities))
     }
 
-    /// Get list of all instance IDs.
+    /// Get list of all instance IDs, sorted.
+    ///
+    /// The backing map is a `HashMap`, whose iteration order varies per
+    /// process. Sorting keeps callers that consume a seeded RNG per instance
+    /// (domain randomization) reproducible across runs.
     pub fn instance_ids(&self) -> Vec<String> {
-        self.instance_to_body.keys().cloned().collect()
+        let mut ids: Vec<String> = self.instance_to_body.keys().cloned().collect();
+        ids.sort();
+        ids
     }
 
     /// Evaluate a part's geometry to get a mesh, or `None` when the tree
@@ -1506,6 +1637,32 @@ mod tests {
 
         assert_eq!(world.instance_ids().len(), 2);
         assert_eq!(world.joint_ids().len(), 1);
+    }
+
+    /// `perturb_joint_state` must move every DOF. Writing only `q[offset]`
+    /// left a Ball joint with a third of the requested initial-state
+    /// randomization and a Free joint with a sixth — silently, since the
+    /// caller sees no error and the episode just starts less varied than
+    /// asked for.
+    #[test]
+    fn perturb_moves_every_dof_of_a_multi_dof_joint() {
+        let mut doc = create_test_document();
+        doc.joints.as_mut().unwrap()[0].kind = JointKind::Ball;
+        let mut world = PhysicsWorld::from_document(&doc).unwrap();
+
+        let before = world.get_joint_dofs("joint1").expect("ball dofs").0;
+        assert_eq!(before.len(), 3, "Ball should expose 3 position DOFs");
+
+        world.perturb_joint_state("joint1", 4.0, 0.0);
+        let after = world.get_joint_dofs("joint1").expect("ball dofs").0;
+
+        for (k, (b, a)) in before.iter().zip(&after).enumerate() {
+            assert!(
+                (a - b - 4.0).abs() < 1e-9,
+                "DOF {k} moved by {}, expected 4.0 — perturbation applied to only part of the joint",
+                a - b
+            );
+        }
     }
 
     #[test]

@@ -318,7 +318,13 @@ export { PhysicsEnv, isPhysicsAvailable } from "./physics.js";
 export type {
   PhysicsObservation,
   PhysicsStepResult,
+  PhysicsStepInfo,
   PhysicsEnvOptions,
+  PhysicsEnvConfig,
+  PhysicsRange,
+  PhysicsDomainRandomization,
+  PhysicsObservationNoise,
+  PhysicsTerminationConfig,
   PhysicsGroundOptions,
   ActionType as PhysicsActionType,
 } from "./physics.js";

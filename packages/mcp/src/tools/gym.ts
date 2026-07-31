@@ -357,6 +357,24 @@ export const createRobotEnvSchema = {
       type: "number" as const,
       description: "Maximum episode length (default: 1000)",
     },
+    config: {
+      type: "object" as const,
+      description:
+        "Optional env config for sim2real training. " +
+        "`randomization`: seeded domain randomization applied on every reset — " +
+        "{mass_scale: {min, max} (per-link multiplicative, e.g. 0.9–1.1), " +
+        "friction_scale: {min, max} (per-joint friction/damping), " +
+        "pd_gain_scale: {min, max} (global PD gain), " +
+        "action_latency_steps: [min, max] (actuator delay in physics substeps, " +
+        "e.g. [2, 8]), joint_pos_perturb / joint_vel_perturb (uniform ± initial " +
+        "state, deg/mm)}. " +
+        "`observation_noise`: gaussian std-devs {joint_pos_std, joint_vel_std, " +
+        "base_pos_std, base_rot_std, base_vel_std}. " +
+        "`termination`: {base_height_below (m), base_tilt_above_deg, " +
+        "terminate_on_joint_limit}. " +
+        "`base_instance_id`: instance used for base pose/velocity observations " +
+        "(default: the ground instance).",
+    },
     ...GROUND_SCHEMA_PROPS,
   },
   required: ["end_effector_ids"],
@@ -392,6 +410,13 @@ export const gymResetSchema = {
     env_id: {
       type: "string" as const,
       description: "Environment ID returned by create_robot_env",
+    },
+    seed: {
+      type: "number" as const,
+      description:
+        "Optional new random seed. Re-seeds the domain-randomization stream " +
+        "(episode counter rewinds), so identical seeds reproduce identical " +
+        "randomized episodes.",
     },
   },
   required: ["env_id"],
@@ -430,6 +455,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
     dt?: number;
     substeps?: number;
     max_steps?: number;
+    config?: import("@vcad/engine").PhysicsEnvConfig;
   } & GroundArgs;
 
   // Check if physics is available
@@ -461,6 +487,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       dt: args.dt,
       substeps: args.substeps,
       maxSteps: args.max_steps,
+      config: args.config,
       ground: resolveGroundOptions(args),
     });
 
@@ -519,6 +546,9 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       dt: args.dt ?? 1 / 240,
       substeps: args.substeps ?? 4,
       max_steps: args.max_steps ?? 1000,
+      // Echo the env config so the caller can see what randomization /
+      // noise / termination the env was armed with.
+      config: args.config ?? null,
       // Ground-contact contract, echoed so the caller knows there is a
       // floor: robot collision shapes rest on the plane z = ground_height
       // instead of falling forever.
@@ -606,7 +636,7 @@ export function gymStep(input: unknown): GymResult {
 
 /** Reset the environment to initial state */
 export function gymReset(input: unknown): GymResult {
-  const args = input as { env_id: string };
+  const args = input as { env_id: string; seed?: number };
 
   const env = simulations.get(args.env_id);
   if (!env) {
@@ -619,7 +649,7 @@ export function gymReset(input: unknown): GymResult {
   }
 
   try {
-    const observation = env.reset();
+    const observation = env.reset(args.seed);
 
     // A reset starts a fresh episode — drop the recorded rollout and bump
     // the epoch so the replay version token can't collide with an
@@ -999,6 +1029,10 @@ export const toolDefs: ToolDef[] = [
       "one of the two is required. " +
       "Returns env_id (for gym_step / gym_reset / gym_observe / gym_close) and " +
       "document_id (what the replay viewer and the other session tools bind to). " +
+      "Optional `config` arms sim2real training: seeded domain randomization " +
+      "(per-link mass, joint friction, PD gains, actuator latency, initial state), " +
+      "gaussian observation noise, and termination conditions (base height/tilt, " +
+      "joint limits). " +
       "A ground plane at z = 0 (friction 0.8) is on by default, so dropped bodies land " +
       "and legged assemblies can touch a floor — tune or disable it via the ground_* params. " +
       "Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
@@ -1015,7 +1049,10 @@ export const toolDefs: ToolDef[] = [
     description:
       "Step the physics simulation with an action. " +
       "action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). " +
-      "Returns observation (joint positions/velocities, end effector poses), reward, and done flag. " +
+      "Returns observation (joint positions/velocities, end effector poses, base " +
+      "pose+velocity), reward, done flag, and an `info` map with per-step reward " +
+      "inputs: base height/tilt, joint-limit violations, termination reason, and " +
+      "the episode's sampled actuator latency. " +
       "The observation carries both the bare positional arrays and id-keyed views: " +
       "`joints[i] = {id, position, velocity}` and `end_effectors[i] = {id, pose}`, so no " +
       "ordering has to be remembered.",
@@ -1027,9 +1064,11 @@ export const toolDefs: ToolDef[] = [
     name: "gym_reset",
     pack: "physics",
     description:
-      "Reset the simulation environment to its initial state. Returns the initial " +
-      "observation, with joint values keyed by joint id (`joints`) and end effector " +
-      "poses keyed by instance id (`end_effectors`) alongside the bare arrays.",
+      "Reset the simulation environment to its initial state, re-drawing any " +
+      "configured domain randomization. Optional `seed` re-seeds the randomization " +
+      "stream for reproducible episodes. Returns the initial observation, with " +
+      "joint values keyed by joint id (`joints`) and end effector poses keyed by " +
+      "instance id (`end_effectors`) alongside the bare arrays.",
     inputSchema: gymResetSchema,
     handler: (a) => gymReset(a),
     behavior: behavior({}),

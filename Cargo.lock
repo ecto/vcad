@@ -7600,6 +7600,7 @@ name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
  "phyz",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "stl_io",
