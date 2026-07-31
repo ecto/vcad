@@ -39,6 +39,16 @@ macro_rules! debug_bool {
     ($($arg:tt)*) => {};
 }
 
+/// Shortest interior arc (mm) that counts as a circle genuinely CROSSING a
+/// planar face rather than grazing it.
+///
+/// Sits three orders of magnitude above the sewing merge tolerance (1e-6),
+/// so an accepted crossing can never collapse to a degenerate face, and
+/// well below the smallest real crossing measured in the corpus (a 0.5mm
+/// arc where a torr blade crosses the r30 trim circle; the tangency graze
+/// it has to reject is 4e-7mm).
+const MIN_CROSSING_ARC: f64 = 1e-3;
+
 /// Largest curved-surface radius in a solid's geometry (0.0 when the solid
 /// is all-planar). Drives the classification tessellation density.
 fn max_curved_radius(brep: &BRepSolid) -> f64 {
@@ -654,6 +664,24 @@ pub(crate) fn brep_boolean(
                         } else {
                             0.5 * (t0 + t1)
                         };
+                        // The arc must be long enough to be real geometry, not
+                        // a touch. A circle that grazes a face at a single
+                        // point (a solid tangent to another's edge) produces
+                        // two crossings a hair apart, and splitting on it
+                        // emits a degenerate face — this is exactly the
+                        // phantom regime the anchor gate exists for, and the
+                        // `seated()` probe above rejects it by construction.
+                        // Measure it as arc LENGTH, not angle: the same
+                        // physical crossing subtends 23 degrees on an r=5
+                        // circle and under 1 degree on an r=30 one.
+                        let span = if i + 1 == angles.len() {
+                            t1 + 2.0 * std::f64::consts::PI - t0
+                        } else {
+                            t1 - t0
+                        };
+                        if span * circle.radius <= MIN_CROSSING_ARC {
+                            continue;
+                        }
                         let p = circle.center + circle.radius * (mid.cos() * xd + mid.sin() * yd);
                         if trim::point_in_face(solid, fid, &p) {
                             return true;
