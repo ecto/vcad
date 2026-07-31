@@ -390,7 +390,13 @@ impl RobotEnv {
         }
         if let Some([lo, hi]) = dr.action_latency_steps {
             let (lo, hi) = (lo.min(hi), lo.max(hi));
-            self.latency_substeps = lo + (self.rng.gen::<u64>() % (hi - lo + 1) as u64) as u32;
+            // Width in u64: a full-width `[0, u32::MAX]` config would overflow
+            // `hi - lo + 1` in u32 (panic in debug, then a `% 0` divide-by-zero
+            // in release). The config is caller-supplied JSON, so it has to
+            // survive absurd input. Same draw count and modulus as before for
+            // any sane range, so seeded streams are unchanged.
+            let span = (hi as u64) - (lo as u64) + 1;
+            self.latency_substeps = lo.saturating_add((self.rng.gen::<u64>() % span) as u32);
         }
         if dr.joint_pos_perturb.is_some() || dr.joint_vel_perturb.is_some() {
             let dp = dr.joint_pos_perturb.unwrap_or(0.0);
@@ -1411,6 +1417,62 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    /// `action_latency_steps` is caller-supplied JSON, so an absurd but
+    /// well-typed range must not panic. A full-width `[0, u32::MAX]` overflows
+    /// a u32 `hi - lo + 1` (debug panic; `% 0` divide-by-zero in release).
+    /// Note the overflow needs a *wide* range, not `lo == hi == u32::MAX`,
+    /// where the width is simply 1.
+    #[test]
+    fn full_width_latency_range_does_not_overflow() {
+        let doc = create_simple_robot();
+        let cfg = EnvConfig {
+            randomization: Some(DomainRandomization {
+                action_latency_steps: Some([0, u32::MAX]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut env = RobotEnv::new_with_config(
+            doc,
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            Some(GroundConfig::disabled()),
+            cfg,
+        )
+        .unwrap();
+        env.reset_with_seed(3);
+        let result = env.step_full(Action::Torque(vec![0.0, 0.0]));
+        // Any draw in range is acceptable; not panicking is the assertion.
+        assert!(result.info.action_latency_substeps <= u32::MAX);
+
+        // The degenerate range Choji named is a width of 1, always exact.
+        let doc2 = create_simple_robot();
+        let cfg2 = EnvConfig {
+            randomization: Some(DomainRandomization {
+                action_latency_steps: Some([u32::MAX, u32::MAX]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut env2 = RobotEnv::new_with_config(
+            doc2,
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            Some(GroundConfig::disabled()),
+            cfg2,
+        )
+        .unwrap();
+        env2.reset_with_seed(3);
+        assert_eq!(
+            env2.step_full(Action::Torque(vec![0.0, 0.0]))
+                .info
+                .action_latency_substeps,
+            u32::MAX
+        );
     }
 
     /// Randomization must be applied to a *pristine* world each episode.
