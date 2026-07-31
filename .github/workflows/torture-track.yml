@@ -2,14 +2,28 @@ name: Kernel Torture Track
 
 # Adversarial robustness track for the BRep kernel: a deterministic corpus of
 # hostile boolean / STEP / tessellation cases graded pass / graceful-refusal /
-# bad-geometry / timeout / crash. PRs touching kernel code run the fast subset
-# and fail on any per-case regression vs the checked-in baseline
-# (crates/vcad-torture/baseline.json). Pushes to main and the nightly schedule
-# run the full corpus and publish the scoreboard to the job summary.
+# bad-geometry / timeout / crash. Every trigger runs the FULL corpus and fails
+# on any per-case regression vs the checked-in baseline
+# (crates/vcad-torture/baseline.json); the scoreboard goes to the job summary.
+#
+# The PR trigger used to run a fast 297-case subset, which is how main went red
+# for most of 2026-07-31: PRs #754, #756 and #758 each went green on the subset
+# and each landed a regression only the full corpus covers (chain-16,
+# rand-115/335/371, rand-367). Running all 752 cases takes ~1 second next to a
+# multi-minute build, so the subset bought nothing and cost a day of red main.
 #
 # Refreshing the baseline after a deliberate change:
 #   cargo run --release -p vcad-torture --features vcad-kernel/no-builtin-font \
 #     -- run --write-baseline crates/vcad-torture/baseline.json
+#
+# ...but the baseline is PLATFORM-SPECIFIC, so prefer the `torture-scorecard`
+# artifact this job uploads over a locally generated file. As of #758 five
+# cases land differently on x86_64 Linux than on aarch64 macOS (rand-052,
+# sliv-cyl-graze-t1-u, tan-cyl-inscribed-d/i/u) — the boolean kernel's
+# predicates are not bit-reproducible across the two. A baseline written on a
+# dev machine therefore reds the gate here on cases that looked fine locally.
+# Recording the CI values keeps a locally-run corpus honest too: the extra
+# passes surface as improvements, which never fail the gate.
 
 on:
   pull_request:
@@ -38,7 +52,7 @@ env:
 
 jobs:
   torture:
-    name: Torture track (${{ github.event_name == 'pull_request' && 'pr subset' || 'full' }})
+    name: Torture track (full)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -54,9 +68,8 @@ jobs:
         run: cargo build --release -p vcad-torture --features vcad-kernel/no-builtin-font
       - name: Run track
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then SUBSET=pr; else SUBSET=full; fi
           ./target/release/vcad-torture run \
-            --subset "$SUBSET" \
+            --subset full \
             --baseline crates/vcad-torture/baseline.json \
             --check \
             --json torture-scorecard.json \
