@@ -901,7 +901,15 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
     });
 
     // Import the STEP file
-    let solids = Solid::from_step_all(input)?;
+    let (solids, report) = Solid::from_step_all_with_report(input)?;
+
+    if let Some(summary) = report.summary() {
+        eprintln!(
+            "warning: STEP import skipped {} face(s) with unsupported surface types:",
+            report.total_skipped_faces()
+        );
+        eprintln!("{summary}");
+    }
 
     if solids.is_empty() {
         anyhow::bail!("No solids found in STEP file");
