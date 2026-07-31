@@ -117,9 +117,16 @@ fn cut_polyline_between(
     via
 }
 
+/// Whether `VCAD_SPLIT_DEBUG` is set, read once per process — `split_dbg!`
+/// fires inside hot per-face loops, so the env lookup must not repeat.
+fn split_debug_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_SPLIT_DEBUG").is_ok())
+}
+
 macro_rules! split_dbg {
     ($($arg:tt)*) => {
-        if std::env::var("VCAD_SPLIT_DEBUG").is_ok() {
+        if crate::split::split_debug_enabled() {
             eprintln!($($arg)*);
         }
     };
@@ -5217,7 +5224,14 @@ pub(crate) fn split_thin_face_at_curve_vertices(
     }
     let (a, b) = (hits[0], hits[1]);
     let chord = (b - a).norm();
-    let sample_step = (curve_pts[1] - curve_pts[0]).norm().max(1e-9);
+    // Sag-adaptive curves sample non-uniformly; gauge the chord against the
+    // LARGEST inter-sample step so a short first segment (high-curvature
+    // start) can't reject a chord that is a normal interior step.
+    let sample_step = curve_pts
+        .windows(2)
+        .map(|w| (w[1] - w[0]).norm())
+        .fold(0.0_f64, f64::max)
+        .max(1e-9);
     if chord < 1e-6 || chord > 2.0 * sample_step {
         return None;
     }
