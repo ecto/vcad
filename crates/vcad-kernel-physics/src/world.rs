@@ -8,6 +8,7 @@ use phyz::model::{Model, ModelBuilder, State};
 use phyz::{
     forward_kinematics, Collision, ContactMaterial, ContactProblem, ContactSolverConfig, Geometry,
 };
+use serde::{Deserialize, Serialize};
 use vcad_ir::{Document, InertialProperties, JointKind};
 
 use crate::colliders::{estimate_mass, mesh_to_collider, ColliderStrategy};
@@ -145,6 +146,43 @@ pub struct PhysicsWorld {
     // floating-base robot. Gates gravity-compensation feedforward (see
     // `apply_motor_torques`).
     has_floating_base: bool,
+
+    // Per-body ground-contact state from the most recent `step`, indexed like
+    // `model.bodies`. Overwritten every step (so after a multi-substep env
+    // step it reports the final substep), and cleared to "no contact" when a
+    // step finds no manifold or the ground is disabled.
+    body_contacts: Vec<ContactState>,
+}
+
+/// Ground-contact state of one body, as of the most recent
+/// [`PhysicsWorld::step`].
+///
+/// This is the physical sensor a foot force plate / ankle F/T would read: a
+/// touch flag, the total normal load, and where it acts.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ContactState {
+    /// True when the body's collider had at least one point penetrating the
+    /// ground plane during the last step — touching, whether or not the
+    /// solver had to push (a grazing touch reports `normal_force == 0`).
+    pub in_contact: bool,
+    /// Total normal force over the body's contact manifold, in newtons
+    /// (the solved normal impulse divided by the step's `dt`). A body at rest
+    /// reads its supported weight; airborne reads `0`.
+    pub normal_force: f64,
+    /// Impulse-weighted centroid of the manifold in world meters — the
+    /// center of pressure. `[0, 0, 0]` when not in contact; falls back to the
+    /// unweighted centroid when the manifold carries no normal impulse.
+    pub point: [f64; 3],
+}
+
+impl Default for ContactState {
+    fn default() -> Self {
+        Self {
+            in_contact: false,
+            normal_force: 0.0,
+            point: [0.0; 3],
+        }
+    }
 }
 
 impl PhysicsWorld {
@@ -514,6 +552,7 @@ impl PhysicsWorld {
             contact_geometries,
             contact_support,
             has_floating_base,
+            body_contacts: vec![ContactState::default(); nbodies],
         };
 
         // Seed the initial configuration from the authored joint states.
@@ -592,6 +631,12 @@ impl PhysicsWorld {
                 Vec::new()
             };
 
+            // Contact sensing is per-step, not cumulative: last step's
+            // manifold says nothing about this one.
+            for c in &mut self.body_contacts {
+                *c = ContactState::default();
+            }
+
             if contacts.is_empty() {
                 self.state.v = free_v;
             } else {
@@ -625,6 +670,50 @@ impl PhysicsWorld {
                     asm.problem.free_velocity[3 * ci] -= push;
                 }
                 let impulses = solve_contacts_pgs(&asm.problem);
+
+                // Publish the per-body manifold as a foot-force sensor. The
+                // solve returns impulses in each contact's local frame with
+                // the normal first, so force = impulse_n / dt, and the center
+                // of pressure is the impulse-weighted point centroid.
+                for (ci, c) in contacts.iter().enumerate() {
+                    let s = &mut self.body_contacts[c.body_i];
+                    let fn_ = impulses[ci].x.max(0.0) / dt;
+                    let p = c.contact_point;
+                    if !s.in_contact {
+                        *s = ContactState {
+                            in_contact: true,
+                            normal_force: 0.0,
+                            point: [0.0; 3],
+                        };
+                    }
+                    s.normal_force += fn_;
+                    // Accumulate weighted point; normalized below.
+                    s.point[0] += fn_ * p.x;
+                    s.point[1] += fn_ * p.y;
+                    s.point[2] += fn_ * p.z;
+                }
+                for (bi, s) in self.body_contacts.iter_mut().enumerate() {
+                    if !s.in_contact {
+                        continue;
+                    }
+                    if s.normal_force > 1e-12 {
+                        for v in &mut s.point {
+                            *v /= s.normal_force;
+                        }
+                    } else {
+                        // Grazing touch: no impulse to weight by, so report
+                        // the plain centroid of this body's manifold.
+                        let pts: Vec<&Collision> =
+                            contacts.iter().filter(|c| c.body_i == bi).collect();
+                        let n = pts.len().max(1) as f64;
+                        let mut acc = Vec3::new(0.0, 0.0, 0.0);
+                        for c in pts {
+                            acc += c.contact_point;
+                        }
+                        s.point = [acc.x / n, acc.y / n, acc.z / n];
+                    }
+                }
+
                 // v' = v_free + M⁻¹ Jᵀ f.
                 self.state.v = &free_v + &asm.velocity_delta(&impulses);
             }
@@ -1092,6 +1181,17 @@ impl PhysicsWorld {
         Some(self.part_pose(body_idx))
     }
 
+    /// Ground-contact state of an instance as of the most recent
+    /// [`Self::step`] — `None` for an unknown instance id.
+    ///
+    /// A body whose collider never reaches the ground (or any body at all,
+    /// with the ground disabled) reports the default "not in contact, zero
+    /// force" state.
+    pub fn get_instance_contact(&self, instance_id: &str) -> Option<ContactState> {
+        let &body_idx = self.instance_to_body.get(instance_id)?;
+        self.body_contacts.get(body_idx).copied()
+    }
+
     /// World pose of the PART frame for a body: composes the body-in-world
     /// pose from FK with the stored part→body frame, so callers see the
     /// part's local origin/axes (the thing renderers pose), not the internal
@@ -1115,6 +1215,12 @@ impl PhysicsWorld {
     /// Set gravity vector.
     pub fn set_gravity(&mut self, x: f32, y: f32, z: f32) {
         self.model.gravity = Vec3::new(x as f64, y as f64, z as f64);
+    }
+
+    /// An instance's body mass in kilograms — `None` for an unknown id.
+    pub fn get_instance_mass(&self, instance_id: &str) -> Option<f64> {
+        let &body_idx = self.instance_to_body.get(instance_id)?;
+        Some(self.model.bodies[body_idx].inertia.mass)
     }
 
     /// Scale an instance's mass (and rotational inertia) by `scale`.
