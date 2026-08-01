@@ -56,4 +56,6 @@ pub use gym::{
     Action, DomainRandomization, EnvConfig, Observation, ObservationNoise, Range, RobotEnv,
     StepInfo, StepResult, TerminationConfig,
 };
-pub use world::{ContactState, GroundConfig, JointState, PhysicsWorld};
+pub use world::{
+    ContactState, GainWarning, GroundConfig, JointState, PhysicsWorld, GAIN_STABILITY_LIMIT,
+};

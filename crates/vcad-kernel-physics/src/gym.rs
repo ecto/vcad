@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use vcad_ir::Document;
 
 use crate::error::PhysicsError;
-use crate::world::{ContactState, GroundConfig, PhysicsWorld};
+use crate::world::{ContactState, GainWarning, GroundConfig, PhysicsWorld};
 
 /// Observation from the robot environment.
 ///
@@ -597,6 +597,43 @@ impl RobotEnv {
     pub fn set_joint_gains(&mut self, joint_id: &str, kp: f64, kd: f64) {
         self.joint_gains.insert(joint_id.to_string(), (kp, kd));
         self.world.set_joint_gains(joint_id, kp, kd);
+        for warning in self.check_gain_stability() {
+            if warning.joint_id == joint_id {
+                eprintln!("vcad-physics: unstable PD gains — {warning}");
+            }
+        }
+    }
+
+    /// Explicit-integrator stability check for the gains currently set on
+    /// this environment, at this environment's substep timestep.
+    ///
+    /// Gains published for Isaac-style simulators assume implicit actuator
+    /// integration; this crate integrates explicitly, so they can diverge
+    /// here in a fraction of a second. Emitted (never clamped) on
+    /// [`Self::set_joint_gains`] — raising `substeps` is usually the fix
+    /// that keeps the published gains intact. See
+    /// [`PhysicsWorld::check_gain_stability`].
+    pub fn check_gain_stability(&mut self) -> Vec<GainWarning> {
+        // Check the *worst case* the env can produce, not the scale that
+        // happens to be sampled right now: `pd_gain_scale` is re-drawn every
+        // episode, so a check run before the first reset would otherwise
+        // clear gains that go unstable two episodes later.
+        let restore = self.world.gain_scale();
+        let worst = self
+            .config
+            .randomization
+            .as_ref()
+            .and_then(|dr| dr.pd_gain_scale)
+            .map_or(restore, |range| range.max.max(range.min));
+        self.world.set_gain_scale(worst);
+        let mut warnings = self.world.check_gain_stability(self.dt as f64);
+        self.world.set_gain_scale(restore);
+        // The world reports a *multiplier*; report absolute substeps, which
+        // is what the caller actually sets.
+        for w in &mut warnings {
+            w.min_substeps = w.min_substeps.saturating_mul(self.substeps.max(1));
+        }
+        warnings
     }
 
     /// Apply configured gaussian observation noise, consuming RNG draws from

@@ -18,6 +18,58 @@ use crate::joints::{
     convert_v_dof_to_physics, joint_ndof, vcad_joint_to_phyz, MotorMode, MotorTarget,
 };
 
+/// Largest ω·dt an explicit PD servo may run at before it is reported as
+/// unstable, where ω = √(kp / I_reflected) is the closed-loop natural
+/// frequency of the joint.
+///
+/// The divergence boundary for critically-damped explicit PD sits near
+/// ω·dt ≈ 1 (measured in `tests/servo_stability.rs`: the servo tracks its
+/// target cleanly through 0.8, overshoots at 1.0, and is thrown off the
+/// target entirely by 1.3). 0.3 leaves the margin the nonlinear multi-body case
+/// actually needs — coupling, contact impulses and gain randomization all
+/// push a marginal joint over.
+pub const GAIN_STABILITY_LIMIT: f64 = 0.3;
+
+/// One joint whose explicit PD gains are too stiff for the integrator at a
+/// given timestep. Produced by [`PhysicsWorld::check_gain_stability`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct GainWarning {
+    /// The vcad joint ID.
+    pub joint_id: String,
+    /// The effective proportional gain (after domain-randomization scaling).
+    pub kp: f64,
+    /// Measured reflected inertia of the joint's DOF (kg·m² or kg).
+    pub reflected_inertia: f64,
+    /// ω·dt at the checked timestep — unstable above
+    /// [`GAIN_STABILITY_LIMIT`].
+    pub omega_dt: f64,
+    /// The largest `kp` that stays inside the limit at this timestep.
+    pub max_stable_kp: f64,
+    /// Substep count needed to bring ω·dt under the limit. From
+    /// [`PhysicsWorld::check_gain_stability`] this is a *multiplier* on
+    /// whatever substep count the caller runs (the world doesn't know it);
+    /// [`crate::RobotEnv::check_gain_stability`] rescales it to the absolute
+    /// substep count for that env.
+    pub min_substeps: u32,
+}
+
+impl std::fmt::Display for GainWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "joint '{}': kp={:.4} with reflected inertia {:.3e} gives omega*dt = {:.2} \
+             (unstable above ~{:.1}); raise substeps to >= {}x or lower kp below {:.4}",
+            self.joint_id,
+            self.kp,
+            self.reflected_inertia,
+            self.omega_dt,
+            GAIN_STABILITY_LIMIT,
+            self.min_substeps,
+            self.max_stable_kp,
+        )
+    }
+}
+
 /// Ground-plane contact configuration for a physics world.
 ///
 /// The ground is an infinite horizontal plane at `z = height` (metres,
@@ -981,8 +1033,69 @@ impl PhysicsWorld {
     /// Set explicit PD gains for a joint, overriding the inertia-scaled
     /// defaults for position and velocity servos. Gains are in physics units
     /// (N·m/rad and N·m·s/rad for revolute; N/m and N·s/m for prismatic).
+    ///
+    /// Gains published for Isaac-style simulators assume an *implicit*
+    /// actuator integration and can be far outside this crate's explicit
+    /// stability region — check them with [`Self::check_gain_stability`]
+    /// once the timestep is known.
     pub fn set_joint_gains(&mut self, joint_id: &str, kp: f64, kd: f64) {
         self.joint_gains.insert(joint_id.to_string(), (kp, kd));
+    }
+
+    /// Explicit-integrator stability check for the currently-set PD gains.
+    ///
+    /// This crate integrates explicitly (`phyz::rigid::semi_implicit_euler`),
+    /// so a PD servo is only stable while the closed-loop natural frequency
+    /// ω = √(kp / I_reflected) is small against the substep: ω·dt must stay
+    /// below ~[`GAIN_STABILITY_LIMIT`]. Isaac and MuJoCo integrate their
+    /// actuators implicitly and have no such bound, so gains copied from a
+    /// published config (booster_gym's K1 ships kp = 200 on 1e-3 kg·m²
+    /// joints) can diverge here within a few control steps — the robot tears
+    /// itself apart while still airborne, which reads exactly like a contact
+    /// solver bug.
+    ///
+    /// Returns one [`GainWarning`] per offending joint. Nothing is clamped:
+    /// the caller may be about to raise `substeps` instead, which is the fix
+    /// that keeps the published gains intact.
+    pub fn check_gain_stability(&mut self, dt: f64) -> Vec<GainWarning> {
+        if !(dt.is_finite() && dt > 0.0) {
+            return Vec::new();
+        }
+        let joint_ids: Vec<String> = self.joint_gains.keys().cloned().collect();
+        let mut warnings = Vec::new();
+        for joint_id in joint_ids {
+            let Some(&(kp, _kd)) = self.joint_gains.get(&joint_id) else {
+                continue;
+            };
+            let kp = kp * self.gain_scale;
+            if !(kp.is_finite() && kp > 0.0) {
+                continue;
+            }
+            let inertia = self.reflected_inertia(&joint_id);
+            let omega = (kp / inertia).sqrt();
+            let omega_dt = omega * dt;
+            if omega_dt <= GAIN_STABILITY_LIMIT {
+                continue;
+            }
+            // Largest kp that lands exactly on the limit at this dt.
+            let max_kp = inertia * (GAIN_STABILITY_LIMIT / dt).powi(2) / self.gain_scale.max(1e-12);
+            // Substep multiplier needed to bring ω·dt back under the limit.
+            let substep_factor = (omega_dt / GAIN_STABILITY_LIMIT).ceil() as u32;
+            warnings.push(GainWarning {
+                joint_id,
+                kp,
+                reflected_inertia: inertia,
+                omega_dt,
+                max_stable_kp: max_kp,
+                min_substeps: substep_factor,
+            });
+        }
+        warnings.sort_by(|a, b| {
+            b.omega_dt
+                .partial_cmp(&a.omega_dt)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        warnings
     }
 
     /// Get the current state of all joints.
@@ -1272,6 +1385,11 @@ impl PhysicsWorld {
     /// Applies to motors installed *after* the call.
     pub fn set_gain_scale(&mut self, scale: f64) {
         self.gain_scale = scale;
+    }
+
+    /// The current multiplier applied to PD motor gains.
+    pub fn gain_scale(&self) -> f64 {
+        self.gain_scale
     }
 
     /// Add `dpos` / `dvel` (vcad units: degrees or mm) to a 1-DOF joint's
