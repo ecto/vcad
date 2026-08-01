@@ -62,11 +62,20 @@ pub(crate) struct CylBand {
     pub hi: Chain,
     /// Whether the band wraps the full circumference.
     pub full_wrap: bool,
-    /// Loop-winding convention of the ORIGINAL face: false = the loop
-    /// walks the lower chain ascending in u (outer-wall convention), true
-    /// = descending (bore walls wind the other way). realize_bands must
-    /// reproduce it or the rebuilt faces can no longer pair with their
-    /// cap-hole neighbors.
+    /// Loop-winding convention of the ORIGINAL face: false = the loop walks
+    /// the lower chain ascending in u (outer-wall convention), true =
+    /// descending (bore walls wind the other way).
+    ///
+    /// Recorded for diagnostics only — `realize_bands` emits every band in
+    /// the outer-wall cycle regardless. Replaying it there double-applies an
+    /// orientation the sewing stage already establishes: it inverted the
+    /// r20 bore wall of a two-half-annuli union, inflating that wall's area
+    /// 628 → 890 mm² and cutting the solid's volume 7777 → 6031 mm³
+    /// (`half_annuli_union_full_annulus`). Replaying it earns nothing
+    /// anywhere measurable — the 752-case torture corpus scores identically
+    /// with and without, as does every other boolean and tessellate test.
+    /// Restore the replay only alongside a case that demonstrates it is
+    /// needed.
     pub reversed_winding: bool,
 }
 
@@ -371,6 +380,60 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
                 reversed_winding: false,
             },
         ));
+    }
+
+    // Collapsed-pinch wedge. When a band's two chains meet at a shared
+    // vertex, sewing leaves a THREE-vertex loop: the pinch corner, plus the
+    // two chain endpoints at the opposite column. `try_parse_two_chain`
+    // cannot express the resulting one-vertex chain and the `n < 4` floor
+    // below refuses the loop outright, so build the band directly — the
+    // downstream machinery already expects chains that share an endpoint
+    // (see the end-slack close below, which manufactures exactly this
+    // shape). Left unparsed, these wedges come back from
+    // `split_cylindrical_face_by_sampled` unsplit and the boolean keeps
+    // material it should have trimmed.
+    if raw_uvs.len() == 3 {
+        let u0 = raw_uvs[0].0;
+        // Unwrap onto vertex 0 by shortest path; a wedge spans far less
+        // than a half turn, so there is no ambiguity to resolve here.
+        let unwrap = |u: f64| {
+            let mut du = (u - u0).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            u0 + du
+        };
+        let p: Vec<(f64, f64)> = raw_uvs.iter().map(|&(u, v)| (unwrap(u), v)).collect();
+        // The pinch is the lone vertex at its own column: the other two
+        // share a column, and it does not sit on theirs.
+        let pinch = (0..3).find(|&i| {
+            let (a, b) = (p[(i + 1) % 3].0, p[(i + 2) % 3].0);
+            (a - b).abs() <= U_EPS && (p[i].0 - a).abs() > U_EPS
+        });
+        if let Some(pinch) = pinch {
+            let (q, r) = (p[(pinch + 1) % 3], p[(pinch + 2) % 3]);
+            // A zero-height far column is a sliver with no material.
+            if (q.1 - r.1).abs() > V_EPS {
+                let (far_lo, far_hi) = if q.1 < r.1 { (q, r) } else { (r, q) };
+                let mut lo = vec![p[pinch], far_lo];
+                let mut hi = vec![p[pinch], far_hi];
+                if far_lo.0 < p[pinch].0 {
+                    // Chains must ascend in u.
+                    lo.reverse();
+                    hi.reverse();
+                }
+                band_dbg!("parse_band: collapsed-pinch wedge lo {lo:?} hi {hi:?}");
+                return Some((
+                    cyl,
+                    CylBand {
+                        lo,
+                        hi,
+                        full_wrap: false,
+                        reversed_winding: false,
+                    },
+                ));
+            }
+        }
     }
 
     // Two-chain loop (covers 4-vertex rectangles too): the loop must
@@ -1159,23 +1222,15 @@ pub(crate) fn realize_bands(
         // Pinch endpoints (chains meeting at a shared point) may duplicate;
         // repair collapses the resulting zero-length half-edges later.
         let mut loop_pts: Vec<Point3> = Vec::with_capacity(band.lo.len() + band.hi.len());
-        if band.reversed_winding && std::env::var("VCAD_NO_WINDING").is_err() {
-            // Bore convention: lower chain descending, upper ascending.
-            for &(u, v) in band.lo.iter().rev() {
-                loop_pts.push(point_at(cyl, u, v));
-            }
-            for &(u, v) in &band.hi {
-                loop_pts.push(point_at(cyl, u, v));
-            }
-        } else {
-            // Bottom chain, ascending u.
-            for &(u, v) in &band.lo {
-                loop_pts.push(point_at(cyl, u, v));
-            }
-            // Top chain, descending u.
-            for &(u, v) in band.hi.iter().rev() {
-                loop_pts.push(point_at(cyl, u, v));
-            }
+        // Always the outer-wall cycle: bottom chain ascending u, top chain
+        // descending. `band.reversed_winding` records the parent loop's
+        // orientation but is deliberately NOT replayed here — see the note on
+        // the field.
+        for &(u, v) in &band.lo {
+            loop_pts.push(point_at(cyl, u, v));
+        }
+        for &(u, v) in band.hi.iter().rev() {
+            loop_pts.push(point_at(cyl, u, v));
         }
         // Keep pinch-column duplicates: dropping the shared endpoint
         // shortens one chain, the re-parsed band then carries end slack,
