@@ -38,6 +38,23 @@ pub enum PhysicsError {
     #[error("No ground instance specified in document")]
     NoGroundInstance,
 
+    /// Termination conditions reference a base pose no instance provides.
+    ///
+    /// Fail-closed guard: with `base_height_below` / `base_tilt_above_deg`
+    /// configured but no observable base pose, those checks would silently
+    /// never fire and every episode would run to `max_steps` — a run that
+    /// reports confident survival while measuring nothing.
+    #[error(
+        "termination config sets base-pose conditions, but base instance {base_instance_id:?} \
+         has no observable pose — the checks would silently never fire. Point \
+         `EnvConfig::base_instance_id` at the floating-base instance (or import the \
+         floating-base variant of the robot)"
+    )]
+    UnobservableBase {
+        /// The configured (or defaulted) base instance id, if any.
+        base_instance_id: Option<String>,
+    },
+
     /// Evaluation error.
     #[error("Failed to evaluate geometry: {0}")]
     Evaluation(String),

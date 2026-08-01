@@ -363,6 +363,24 @@ impl RobotEnv {
             ground,
             joint_gains: std::collections::HashMap::new(),
         };
+        // Fail closed on base-pose termination conditions that can never
+        // fire. A fixed-base document (or a typo'd `base_instance_id`) makes
+        // `Observation::base_pose` None on every step, which silently
+        // disables `base_height_below` / `base_tilt_above_deg` — the episode
+        // then always runs to `max_steps` and an RL run reports confident
+        // survival while measuring nothing. That mistake has cost a real
+        // afternoon of training; it should be a constructor error, not a
+        // property of the numbers.
+        let wants_base_termination = env
+            .config
+            .termination
+            .as_ref()
+            .is_some_and(|t| t.base_height_below.is_some() || t.base_tilt_above_deg.is_some());
+        if wants_base_termination && env.observe().base_pose.is_none() {
+            return Err(PhysicsError::UnobservableBase {
+                base_instance_id: env.base_instance_id.clone(),
+            });
+        }
         // Apply episode-0 randomization to the freshly built world so the
         // very first rollout (before any explicit reset) is randomized too.
         // Unlike `reset`, this doesn't clear `pending_actions` first — it is
@@ -1711,9 +1729,8 @@ mod tests {
         )
         .unwrap();
         env.reset_with_seed(3);
-        let result = env.step_full(Action::Torque(vec![0.0, 0.0]));
         // Any draw in range is acceptable; not panicking is the assertion.
-        assert!(result.info.action_latency_substeps <= u32::MAX);
+        let _ = env.step_full(Action::Torque(vec![0.0, 0.0]));
 
         // The degenerate range Choji named is a width of 1, always exact.
         let doc2 = create_simple_robot();
@@ -1961,6 +1978,40 @@ mod tests {
         assert_eq!(
             result.info.termination_reason.as_deref(),
             Some("base_height")
+        );
+    }
+
+    /// Base-pose termination conditions that can never fire must be a
+    /// constructor error, not a silent no-op. With `base_pose` None every
+    /// step, `base_height_below`/`base_tilt_above_deg` never fire, episodes
+    /// always run to `max_steps`, and a training run reports confident
+    /// survival while measuring nothing — measured on a fixed-base K1 doc.
+    #[test]
+    fn base_termination_without_observable_base_fails_closed() {
+        let doc = create_simple_robot();
+        let cfg = EnvConfig {
+            termination: Some(TerminationConfig {
+                base_height_below: Some(0.42),
+                ..Default::default()
+            }),
+            // A typo'd (or grounded-away) base id: no pose is observable.
+            base_instance_id: Some("no_such_instance".to_string()),
+            ..Default::default()
+        };
+        let err = RobotEnv::new_with_config(
+            doc,
+            vec!["link2_inst".to_string()],
+            None,
+            None,
+            Some(GroundConfig::disabled()),
+            cfg,
+        );
+        let Err(e) = err.map(|_| ()) else {
+            panic!("expected UnobservableBase, construction succeeded");
+        };
+        assert!(
+            matches!(e, PhysicsError::UnobservableBase { .. }),
+            "got {e:?}"
         );
     }
 

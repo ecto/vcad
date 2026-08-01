@@ -635,6 +635,42 @@ impl PhysicsWorld {
         Ok(world)
     }
 
+    /// The underlying phyz model, as built from the document — authored
+    /// inertials, joint frames, limits, the lot.
+    ///
+    /// This is the seam batched backends build on: clone it into a
+    /// `phyz_gpu::GpuBatchSimulator` or a `phyz_env::BatchEnv` and every
+    /// environment inherits exactly the physics this world runs, instead of a
+    /// re-derived approximation. (An earlier GPU pipeline rebuilt the model
+    /// from the document with density-guessed box inertias; keeping a single
+    /// builder is the fix.)
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    /// The current phyz state (q, v) — pair of [`Self::model`] for seeding a
+    /// batched backend with this world's exact initial conditions.
+    pub fn phyz_state(&self) -> &State {
+        &self.state
+    }
+
+    /// A joint's (q offset, v offset, dof count) in the flat phyz state, plus
+    /// its authored effort limit (N·m or N) when it has one.
+    ///
+    /// This is the addressing a batched backend needs to servo the same
+    /// joints this world servos — a GPU PD pass indexes `q`/`v` directly and
+    /// cannot go through vcad joint ids.
+    pub fn joint_addressing(&self, joint_id: &str) -> Option<(usize, usize, usize, Option<f64>)> {
+        let q = *self.joint_q_offsets.get(joint_id)?;
+        let v = *self.joint_v_offsets.get(joint_id)?;
+        let ndof = self.joint_dof_count(joint_id);
+        let effort = self
+            .joint_kinds
+            .get(joint_id)
+            .and_then(Self::joint_effort_limit);
+        Some((q, v, ndof, effort))
+    }
+
     /// Configure the ground plane. Takes effect on the next [`Self::step`].
     pub fn set_ground(&mut self, ground: GroundConfig) {
         self.ground = ground;

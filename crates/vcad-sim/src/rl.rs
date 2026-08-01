@@ -404,6 +404,20 @@ pub struct ArsConfig {
     /// apart, reach for this before anything else, and log
     /// [`IterationLog::update_norm`] to see the step that is doing it.
     pub step_size: f64,
+    /// Final step size at the end of training, reached by cosine decay from
+    /// [`Self::step_size`]. `None` keeps the step constant.
+    ///
+    /// This exists because shrinking the *constant* only slows the wandering
+    /// described on `step_size` — it never stops it. The ARS update is
+    /// scale-free, so at any constant α the trainer keeps taking full-size
+    /// steps after it has found a solution; a schedule is the only way to
+    /// actually anneal. Decay follows training progress
+    /// (`α(t) = final + (initial − final)·½(1 + cos(π·t))`), so early
+    /// iterations explore at full step and late ones consolidate. The
+    /// effective value each iteration is logged as
+    /// [`IterationLog::step_size`].
+    #[serde(default)]
+    pub step_size_final: Option<f64>,
     /// Exploration noise ν.
     pub noise_std: f64,
     /// Training iterations.
@@ -433,6 +447,7 @@ impl Default for ArsConfig {
             // cannot stay in it is worth less than a slower one that can.
             // See the measurements on `step_size`.
             step_size: 0.005,
+            step_size_final: None,
             noise_std: 0.03,
             iterations: 200,
             // One rollout per evaluation measures the randomization draw as
@@ -440,6 +455,21 @@ impl Default for ArsConfig {
             rollouts_per_eval: 3,
             seed: 0,
         }
+    }
+}
+
+/// Effective ARS step size at training `progress` in `[0, 1]`.
+///
+/// Cosine decay from `step_size` to `step_size_final` when the latter is
+/// set; constant otherwise. Public so a caller reporting or sweeping the
+/// schedule computes exactly what the trainer applies.
+pub fn step_size_at(cfg: &ArsConfig, progress: f64) -> f64 {
+    match cfg.step_size_final {
+        Some(f) => {
+            let t = progress.clamp(0.0, 1.0);
+            f + (cfg.step_size - f) * 0.5 * (1.0 + (std::f64::consts::PI * t).cos())
+        }
+        None => cfg.step_size,
     }
 }
 
@@ -478,6 +508,11 @@ pub struct IterationLog {
     pub sigma: f64,
     /// Norm of the parameter update actually applied this iteration.
     pub update_norm: f64,
+    /// Effective step size α this iteration, after any decay schedule
+    /// ([`ArsConfig::step_size_final`]). Equals [`ArsConfig::step_size`] when
+    /// the schedule is off.
+    #[serde(default)]
+    pub step_size: f64,
 }
 
 /// Build the policy feature vector from an env observation.
@@ -785,9 +820,10 @@ where
             .sqrt()
             .max(1e-6);
 
+        let alpha = step_size_at(cfg, progress);
         let before: Vec<f64> = policy.params().to_vec();
         for (plus, minus, i) in top {
-            let coeff = cfg.step_size * (plus - minus) / (cfg.top_k as f64 * sigma);
+            let coeff = alpha * (plus - minus) / (cfg.top_k as f64 * sigma);
             for (w, dw) in policy.params_mut().iter_mut().zip(deltas[*i].iter()) {
                 *w += coeff * dw;
             }
@@ -842,6 +878,7 @@ where
             eval_steps: eval.steps,
             sigma,
             update_norm,
+            step_size: alpha,
         };
         on_iteration(&entry, &policy);
         log.push(entry);
@@ -864,6 +901,31 @@ mod tests {
             default_pose_deg: vec![0.0; act_dim],
             action_scale_deg: 8.0,
         }
+    }
+
+    /// The decay schedule must hit its endpoints exactly, shrink
+    /// monotonically between them, and be the identity when disabled — a
+    /// schedule that undershoots its endpoints silently changes what
+    /// "α = 0.005" means in every result table.
+    #[test]
+    fn step_size_schedule_endpoints_and_monotonicity() {
+        let mut cfg = ArsConfig::default();
+        assert_eq!(step_size_at(&cfg, 0.0), cfg.step_size);
+        assert_eq!(step_size_at(&cfg, 0.5), cfg.step_size);
+        assert_eq!(step_size_at(&cfg, 1.0), cfg.step_size);
+
+        cfg.step_size = 0.005;
+        cfg.step_size_final = Some(0.0005);
+        assert!((step_size_at(&cfg, 0.0) - 0.005).abs() < 1e-12);
+        assert!((step_size_at(&cfg, 1.0) - 0.0005).abs() < 1e-12);
+        let mut prev = f64::INFINITY;
+        for i in 0..=20 {
+            let a = step_size_at(&cfg, i as f64 / 20.0);
+            assert!(a <= prev + 1e-12, "schedule not monotone at {i}");
+            prev = a;
+        }
+        // Out-of-range progress clamps instead of overshooting.
+        assert!((step_size_at(&cfg, 1.5) - 0.0005).abs() < 1e-12);
     }
 
     /// Both architectures start at the default pose, so a run that swaps one
