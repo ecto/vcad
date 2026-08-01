@@ -18,6 +18,12 @@ jobs:
   rust:
     name: Rust (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    # A single pathological test (a kernel perf regression, a hang) would
+    # otherwise burn the full 6h GitHub job limit — 12 runner-hours per PR
+    # across the matrix — before anyone learns anything. The whole job runs
+    # in ~35m healthy, so cap it well below the platform ceiling and let a
+    # blowup surface as a fast red.
+    timeout-minutes: 75
     # Nightly clippy adds new lints constantly; treat it as informational.
     continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     strategy:

@@ -62,11 +62,20 @@ pub(crate) struct CylBand {
     pub hi: Chain,
     /// Whether the band wraps the full circumference.
     pub full_wrap: bool,
-    /// Loop-winding convention of the ORIGINAL face: false = the loop
-    /// walks the lower chain ascending in u (outer-wall convention), true
-    /// = descending (bore walls wind the other way). realize_bands must
-    /// reproduce it or the rebuilt faces can no longer pair with their
-    /// cap-hole neighbors.
+    /// Loop-winding convention of the ORIGINAL face: false = the loop walks
+    /// the lower chain ascending in u (outer-wall convention), true =
+    /// descending (bore walls wind the other way).
+    ///
+    /// Recorded for diagnostics only — `realize_bands` emits every band in
+    /// the outer-wall cycle regardless. Replaying it there double-applies an
+    /// orientation the sewing stage already establishes: it inverted the
+    /// r20 bore wall of a two-half-annuli union, inflating that wall's area
+    /// 628 → 890 mm² and cutting the solid's volume 7777 → 6031 mm³
+    /// (`half_annuli_union_full_annulus`). Replaying it earns nothing
+    /// anywhere measurable — the 752-case torture corpus scores identically
+    /// with and without, as does every other boolean and tessellate test.
+    /// Restore the replay only alongside a case that demonstrates it is
+    /// needed.
     pub reversed_winding: bool,
 }
 
@@ -78,9 +87,19 @@ pub(crate) struct CylProfile {
     vs: Vec<f64>,
 }
 
+/// Whether `VCAD_BAND_DEBUG` is set, read once per process. `band_dbg!` sits
+/// inside `try_parse_two_chain`, which runs per-face and up to four times per
+/// face (once per tie policy), so a per-call `env::var` — which allocates and
+/// takes the environment lock — is not affordable here. Mirrors
+/// `split::split_debug_enabled`.
+fn band_debug_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_BAND_DEBUG").is_ok())
+}
+
 macro_rules! band_dbg {
     ($($arg:tt)*) => {
-        if std::env::var("VCAD_BAND_DEBUG").is_ok() {
+        if crate::cyl_band::band_debug_enabled() {
             eprintln!($($arg)*);
         }
     };
@@ -329,6 +348,13 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
         .collect();
     // Faces with holes are outside this family.
     if !face.inner_loops.is_empty() {
+        if crate::split::split_debug_enabled() {
+            eprintln!(
+                "parse_band: {face_id:?} rejected — {} inner loop(s), {} outer verts",
+                face.inner_loops.len(),
+                verts.len()
+            );
+        }
         return None;
     }
 
@@ -354,6 +380,60 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
                 reversed_winding: false,
             },
         ));
+    }
+
+    // Collapsed-pinch wedge. When a band's two chains meet at a shared
+    // vertex, sewing leaves a THREE-vertex loop: the pinch corner, plus the
+    // two chain endpoints at the opposite column. `try_parse_two_chain`
+    // cannot express the resulting one-vertex chain and the `n < 4` floor
+    // below refuses the loop outright, so build the band directly — the
+    // downstream machinery already expects chains that share an endpoint
+    // (see the end-slack close below, which manufactures exactly this
+    // shape). Left unparsed, these wedges come back from
+    // `split_cylindrical_face_by_sampled` unsplit and the boolean keeps
+    // material it should have trimmed.
+    if raw_uvs.len() == 3 {
+        let u0 = raw_uvs[0].0;
+        // Unwrap onto vertex 0 by shortest path; a wedge spans far less
+        // than a half turn, so there is no ambiguity to resolve here.
+        let unwrap = |u: f64| {
+            let mut du = (u - u0).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            u0 + du
+        };
+        let p: Vec<(f64, f64)> = raw_uvs.iter().map(|&(u, v)| (unwrap(u), v)).collect();
+        // The pinch is the lone vertex at its own column: the other two
+        // share a column, and it does not sit on theirs.
+        let pinch = (0..3).find(|&i| {
+            let (a, b) = (p[(i + 1) % 3].0, p[(i + 2) % 3].0);
+            (a - b).abs() <= U_EPS && (p[i].0 - a).abs() > U_EPS
+        });
+        if let Some(pinch) = pinch {
+            let (q, r) = (p[(pinch + 1) % 3], p[(pinch + 2) % 3]);
+            // A zero-height far column is a sliver with no material.
+            if (q.1 - r.1).abs() > V_EPS {
+                let (far_lo, far_hi) = if q.1 < r.1 { (q, r) } else { (r, q) };
+                let mut lo = vec![p[pinch], far_lo];
+                let mut hi = vec![p[pinch], far_hi];
+                if far_lo.0 < p[pinch].0 {
+                    // Chains must ascend in u.
+                    lo.reverse();
+                    hi.reverse();
+                }
+                band_dbg!("parse_band: collapsed-pinch wedge lo {lo:?} hi {hi:?}");
+                return Some((
+                    cyl,
+                    CylBand {
+                        lo,
+                        hi,
+                        full_wrap: false,
+                        reversed_winding: false,
+                    },
+                ));
+            }
+        }
     }
 
     // Two-chain loop (covers 4-vertex rectangles too): the loop must
@@ -387,7 +467,100 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
             return Some((cyl, band));
         }
     }
+
+    // The scan above walks the loop linearly, so it only sees a direction
+    // change that falls strictly inside the vertex list — the change carried
+    // by the CLOSING edge (v[n-1] → v[0]) is invisible to it. A loop whose
+    // starting half-edge sits mid-chain therefore presents just one visible
+    // flip, and the decomposition hands the tail few-or-one vertices and
+    // bails ("short chains N 1"). The loop is cyclic and its parse must be
+    // start-phase-independent the same way `reversed_winding` below already
+    // is, so re-anchor at each true cyclic turning point and retry.
+    for start in cyclic_turning_points(&uvs) {
+        // Anchoring at vertex 0 is the identity rotation, which the linear
+        // pass above just tried and failed; retrying it would only spend
+        // four more parses per face in a hot path.
+        if start == 0 {
+            continue;
+        }
+        let rotated: Vec<(f64, f64)> = uvs[start..].iter().chain(&uvs[..start]).copied().collect();
+        for policy in [
+            TiePolicy::Const(1.0),
+            TiePolicy::Const(-1.0),
+            TiePolicy::FlipAtConnector(1.0),
+            TiePolicy::FlipAtConnector(-1.0),
+        ] {
+            if let Some(band) = try_parse_two_chain(&rotated, policy) {
+                band_dbg!("parse_band: parsed after rotating to turning point {start}");
+                return Some((cyl, band));
+            }
+        }
+    }
+    if crate::split::split_debug_enabled() {
+        eprintln!(
+            "parse_band: {face_id:?} rejected — two-chain parse failed on {} verts",
+            uvs.len()
+        );
+    }
     None
+}
+
+/// Vertices where the loop's angular direction reverses, judged on the full
+/// CYCLIC step sequence (including the closing edge back to vertex 0).
+///
+/// A well-formed band loop has exactly two such turning points — the columns
+/// where the lower chain hands over to the upper. Which of them vertex 0
+/// happens to precede is an accident of the half-edge the face records as its
+/// loop start, so these are the anchors the linear parse needs to be retried
+/// from. Zero-Δu steps (seam edges, collapsed pinches) carry no direction and
+/// are skipped rather than treated as reversals.
+fn cyclic_turning_points(uvs: &[(f64, f64)]) -> Vec<usize> {
+    let n = uvs.len();
+    if n < 4 {
+        return Vec::new();
+    }
+    // Direction of the step leaving each vertex, 0 where the step is vertical.
+    let dirs: Vec<i8> = (0..n)
+        .map(|i| {
+            let mut du = (uvs[(i + 1) % n].0 - uvs[i].0).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            if du > U_EPS {
+                1
+            } else if du < -U_EPS {
+                -1
+            } else {
+                0
+            }
+        })
+        .collect();
+    // Vertex i is a turning point when the last directed step arriving at it
+    // opposes the first directed step leaving it.
+    //
+    // A vertex whose OWN outgoing step is vertical is deliberately not a
+    // candidate: it is the foot of a connector, and anchoring the parse there
+    // would open the rotated list with the connector rather than with a
+    // chain. The vertex at the far end of that connector — the first one that
+    // actually leaves in the reversed direction — is the anchor the linear
+    // parse wants, and it is reported here. This mirrors the existing
+    // `split_at` walk-back, which likewise pushes connector vertices onto the
+    // chain that follows them.
+    let mut out = Vec::new();
+    for i in 0..n {
+        let leaving = dirs[i];
+        if leaving == 0 {
+            continue;
+        }
+        let arriving = (1..n)
+            .map(|k| dirs[(i + n - k) % n])
+            .find(|&d| d != 0)
+            .unwrap_or(0);
+        if arriving != 0 && arriving != leaving {
+            out.push(i);
+        }
+    }
+    out
 }
 
 /// How to resolve directionally ambiguous exactly-π unwrap steps.
@@ -1064,23 +1237,15 @@ pub(crate) fn realize_bands(
         // Pinch endpoints (chains meeting at a shared point) may duplicate;
         // repair collapses the resulting zero-length half-edges later.
         let mut loop_pts: Vec<Point3> = Vec::with_capacity(band.lo.len() + band.hi.len());
-        if band.reversed_winding && std::env::var("VCAD_NO_WINDING").is_err() {
-            // Bore convention: lower chain descending, upper ascending.
-            for &(u, v) in band.lo.iter().rev() {
-                loop_pts.push(point_at(cyl, u, v));
-            }
-            for &(u, v) in &band.hi {
-                loop_pts.push(point_at(cyl, u, v));
-            }
-        } else {
-            // Bottom chain, ascending u.
-            for &(u, v) in &band.lo {
-                loop_pts.push(point_at(cyl, u, v));
-            }
-            // Top chain, descending u.
-            for &(u, v) in band.hi.iter().rev() {
-                loop_pts.push(point_at(cyl, u, v));
-            }
+        // Always the outer-wall cycle: bottom chain ascending u, top chain
+        // descending. `band.reversed_winding` records the parent loop's
+        // orientation but is deliberately NOT replayed here — see the note on
+        // the field.
+        for &(u, v) in &band.lo {
+            loop_pts.push(point_at(cyl, u, v));
+        }
+        for &(u, v) in band.hi.iter().rev() {
+            loop_pts.push(point_at(cyl, u, v));
         }
         // Keep pinch-column duplicates: dropping the shared endpoint
         // shortens one chain, the re-parsed band then carries end slack,
@@ -1148,8 +1313,22 @@ pub(crate) fn split_cylindrical_face_by_sampled(
     face_id: FaceId,
     points: &[Point3],
 ) -> Option<SplitResult> {
-    let (cyl, band) = parse_band(brep, face_id)?;
-    let profile = profile_from_samples(&cyl, points)?;
+    let dbg = crate::split::split_debug_enabled();
+    let Some((cyl, band)) = parse_band(brep, face_id) else {
+        if dbg {
+            eprintln!("sampled split: parse_band rejected face {face_id:?}");
+        }
+        return None;
+    };
+    let Some(profile) = profile_from_samples(&cyl, points) else {
+        if dbg {
+            eprintln!(
+                "sampled split: profile_from_samples rejected {} points on {face_id:?}",
+                points.len()
+            );
+        }
+        return None;
+    };
     // A profile that misses this band's interior is a legitimate no-op
     // (the curve crosses the cylinder elsewhere): report "split into just
     // this face" so the caller keeps it without logging a failure.
