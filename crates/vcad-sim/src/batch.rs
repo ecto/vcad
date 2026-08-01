@@ -29,6 +29,24 @@ impl BatchSimPipeline {
     /// Builds the phyz Model from the assembly, then initializes `n_envs`
     /// parallel GPU environments.
     pub fn from_document(doc: &Document, n_envs: usize) -> Result<Self, SimError> {
+        Self::from_document_with_dt(doc, n_envs, None)
+    }
+
+    /// Create a batch pipeline with an explicit physics timestep.
+    ///
+    /// **Pass the same `dt` the CPU env runs**, not the document's. The
+    /// model `PhysicsWorld` builds carries `dt = 1/240`, but `RobotEnv`
+    /// overrides it on every step — the RL configuration runs 1/1000 with 20
+    /// substeps. The GPU simulator bakes `model.dt` into a uniform at
+    /// construction, so a caller that skips this silently gets 4.2x coarser
+    /// physics than the env it is supposed to be replicating, with PD gains
+    /// chosen for the finer tick. That combination diverges rather than
+    /// merely drifting.
+    pub fn from_document_with_dt(
+        doc: &Document,
+        n_envs: usize,
+        dt: Option<f64>,
+    ) -> Result<Self, SimError> {
         // One model builder for the whole stack: `PhysicsWorld::from_document`
         // is what the CPU gym env runs, with authored inertials, collider
         // masses, joint frames and limits. The GPU batch inherits it verbatim
@@ -36,7 +54,10 @@ impl BatchSimPipeline {
         // density-guessed box inertias, which silently trained against the
         // wrong robot.
         let world = vcad_kernel_physics::PhysicsWorld::from_document(doc)?;
-        let model = world.model().clone();
+        let mut model = world.model().clone();
+        if let Some(dt) = dt {
+            model.dt = dt;
+        }
         let initial_state = world.phyz_state().clone();
         let nv = model.nv;
 
@@ -227,18 +248,83 @@ impl BatchSimPipeline {
         self.gpu_sim.load_states(&states);
     }
 
-    /// Enable ground-plane contact detection.
+    /// Prepare the model's collision geometry for the GPU contact shader:
+    /// strip immovable bodies, box-approximate the rest.
     ///
-    /// Objects will be repelled from the ground at `height` via penalty forces.
+    /// Returns `(converted, stripped)`. Must be called before
+    /// [`Self::enable_ground_contact`] on any document-derived model.
+    ///
+    /// Two things happen, and both are load-bearing:
+    ///
+    /// **Immovable bodies lose their geometry.** A body can move iff some
+    /// joint between it and the world root has a DOF; anything else cannot
+    /// respond to a contact force. `PhysicsWorld` applies the same rule to
+    /// its own contact set. Skipping it is not merely wasted work — the
+    /// document's *ground plate* is such a body, it sits at z <= 0, and
+    /// leaving it in makes the penalty shader see a metre-deep penetration
+    /// on step one — NaN within 400 ticks, which reads as a contact-tuning
+    /// problem and is not one.
+    ///
+    /// **Mesh colliders become their bounding boxes.** The shader speaks
+    /// spheres, boxes, capsules and cylinders, and refuses meshes rather
+    /// than silently packing them as "no collision". The approximation is
+    /// conservative — half-extents are measured from the body origin, so a
+    /// K1 foot contacts at least as early as its mesh would, never later —
+    /// but it is an approximation: contact timing differs from the CPU env,
+    /// which uses exact mesh support points. A policy trained through this
+    /// path has box feet.
+    pub fn prepare_colliders_for_gpu(&mut self) -> (usize, usize) {
+        let model = &mut self.gpu_sim.model;
+        let nbodies = model.bodies.len();
+        let mut movable = vec![false; nbodies];
+        for i in 0..nbodies {
+            let body = &model.bodies[i];
+            let own_dof = model.joints[body.joint_idx].ndof() > 0;
+            movable[i] = own_dof || (body.parent >= 0 && movable[body.parent as usize]);
+        }
+
+        let (mut converted, mut stripped) = (0, 0);
+        for (i, body) in model.bodies.iter_mut().enumerate() {
+            if body.geometry.is_none() {
+                continue;
+            }
+            if !movable[i] {
+                body.geometry = None;
+                stripped += 1;
+                continue;
+            }
+            let geom = body.geometry.as_ref().expect("checked above");
+            if matches!(geom, phyz_model::Geometry::Box { .. }) {
+                continue;
+            }
+            if let Some(b) = geom.to_box_approximation() {
+                body.geometry = Some(b);
+                converted += 1;
+            }
+        }
+        (converted, stripped)
+    }
+
+    /// Enable ground-plane contact at `height` with mass-derived penalty
+    /// forces.
+    ///
+    /// `time_const` is the contact response time (0.02 s is MuJoCo's
+    /// default and works for the K1) and `damp_ratio` of 1.0 is critically
+    /// damped. Stiffness is derived per body from its own mass, so one
+    /// setting serves the trunk and the feet — see
+    /// `phyz_gpu::contact_pipeline::GroundContactParams`.
+    ///
+    /// Call [`Self::prepare_colliders_for_gpu`] first on any
+    /// document-derived model, or this fails on vcad's mesh colliders.
     pub fn enable_ground_contact(
         &mut self,
         height: f64,
-        stiffness: f64,
-        damping: f64,
+        time_const: f64,
+        damp_ratio: f64,
         friction: f64,
     ) -> Result<(), SimError> {
         self.gpu_sim
-            .enable_ground_contact(height, stiffness, damping, friction)
+            .enable_ground_contact(height, time_const, damp_ratio, friction)
             .map_err(SimError::Gpu)?;
         Ok(())
     }

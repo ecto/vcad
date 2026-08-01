@@ -27,6 +27,12 @@
 use vcad_ir::Document;
 use vcad_sim::BatchSimPipeline;
 
+/// Physics tick, seconds. The same 1 kHz the ARS rollouts run — *not* the
+/// 1/240 the document's model carries, which `RobotEnv` overrides per step.
+/// The stiff booster-style PD gains need this tick; at 1/240 they are past
+/// the explicit stability limit and the robot diverges.
+const DT: f64 = 1.0 / 1000.0;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
@@ -72,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "envs", "submit substeps/s", "readback substeps/s", "vs CPU"
     );
     for n_envs in [64usize, 256, 1024, 4096] {
-        let mut batch = match BatchSimPipeline::from_document(&doc, n_envs) {
+        let mut batch = match BatchSimPipeline::from_document_with_dt(&doc, n_envs, Some(DT)) {
             Ok(b) => b,
             Err(e) => {
                 println!("{n_envs:>7}  construction failed: {e}");
@@ -111,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // --- Sanity: gravity acts. A zero-torque K1 must be falling. ---
-    let mut batch = BatchSimPipeline::from_document(&doc, 4)?;
+    let mut batch = BatchSimPipeline::from_document_with_dt(&doc, 4, Some(DT))?;
     batch.batch_reset();
     let z0 = batch.batch_observe()[0].joint_positions[2];
     let nv = batch.action_dim();
@@ -138,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // wrong DOF indexing leaves some joint untouched at 0.3 rad of error.
     // (No contact geometry yet, so the robot falls forever; joint tracking
     // is the thing under test.)
-    let mut batch = BatchSimPipeline::from_document(&doc, 4)?;
+    let mut batch = BatchSimPipeline::from_document_with_dt(&doc, 4, Some(DT))?;
     let gains: std::collections::HashMap<String, (f64, f64)> = batch
         .servo_joint_ids()
         .iter()
@@ -157,7 +163,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_servo = batch.servo_joint_ids().len();
     batch.batch_reset();
     let cmd = 0.3f64;
-    for _ in 0..200 {
+    // 2000 ticks = 2 s at 1 kHz. (200 was enough at the model's own
+    // 1/240 tick and misleadingly failed here.)
+    for _ in 0..2000 {
         batch.batch_step_targets(&vec![vec![cmd; n_servo]; 4])?;
     }
     let obs = batch.batch_observe();
@@ -168,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|&s| (obs[0].joint_positions[s] - cmd).abs())
         .fold(0.0f64, f64::max);
     println!(
-        "PD sanity: worst |q - {cmd}| after 200 ticks commanding {cmd} rad: \
+        "PD sanity: worst |q - {cmd}| after 2000 ticks commanding {cmd} rad: \
          {worst:.4} rad ({})",
         if worst < 0.15 {
             "tracking — PD pass OK"
@@ -176,5 +184,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "NOT tracking — PD pass broken"
         }
     );
+    // --- Contact: does the K1 stand on the GPU ground plane? ---
+    //
+    // The end of the M2 chain. Mesh colliders must be converted to boxes
+    // explicitly (the shader refuses meshes rather than silently dropping
+    // them), then the penalty ground has something to push on. The test is
+    // whether the base settles instead of falling forever: free fall from
+    // 0.55 m reaches roughly -4.3 m in 1 s, so anything near the spawn
+    // height means contact carried the weight.
+    let mut batch = BatchSimPipeline::from_document_with_dt(&doc, 4, Some(DT))?;
+    let (converted, stripped) = batch.prepare_colliders_for_gpu();
+    batch.enable_ground_contact(0.0, 0.02, 1.0, 0.8)?;
+    batch.enable_pd(&gains, (40.0, 1.0))?;
+    batch.batch_reset();
+    let z_start = batch.batch_observe()[0].joint_positions[2];
+    for _ in 0..1000 {
+        batch.batch_step_targets(&vec![vec![0.0; n_servo]; 4])?;
+    }
+    let z_end = batch.batch_observe()[0].joint_positions[2];
+    println!(
+        "contact: {converted} colliders boxed, {stripped} immovable stripped; base z {z_start:.3} -> \
+         {z_end:.3} after 1000 ticks ({})",
+        if z_end > -0.5 {
+            "supported — GPU contact OK"
+        } else {
+            "fell through — contact not acting"
+        }
+    );
+
     Ok(())
 }
