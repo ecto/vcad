@@ -78,6 +78,25 @@ enum Commands {
         input: PathBuf,
         /// Output .vcad file
         output: PathBuf,
+        /// Synthesize a floating (6-DOF) base when the URDF has none.
+        ///
+        /// Most humanoid/quadruped URDFs ship the world link and its
+        /// `type="floating"` joint commented out, leaving the robot welded
+        /// to the world on import. This injects them.
+        #[arg(long)]
+        floating_base: bool,
+        /// Link to attach the floating base to (default: the tree's root).
+        #[arg(long, value_name = "LINK", requires = "floating_base")]
+        floating_base_link: Option<String>,
+        /// Initial base height in mm for the synthesized floating base.
+        /// Spawn just above the settled standing height (Booster K1: 620).
+        #[arg(
+            long,
+            value_name = "MM",
+            default_value = "0",
+            requires = "floating_base"
+        )]
+        spawn_height_mm: f64,
     },
 
     /// Render document to image
@@ -257,6 +276,22 @@ enum Commands {
         /// subdirectories (the standard ROS package layout).
         #[arg(long = "package-root", value_name = "DIR")]
         package_roots: Vec<PathBuf>,
+        /// Synthesize a floating (6-DOF) base when a .urdf input has none.
+        /// Without it the root link is grounded and the robot is welded to
+        /// the world — it can neither walk nor fall.
+        #[arg(long)]
+        floating_base: bool,
+        /// Link to attach the floating base to (default: the tree's root).
+        #[arg(long, value_name = "LINK", requires = "floating_base")]
+        floating_base_link: Option<String>,
+        /// Initial base height in mm for `--floating-base`.
+        #[arg(
+            long,
+            value_name = "MM",
+            default_value = "0",
+            requires = "floating_base"
+        )]
+        spawn_height_mm: f64,
     },
 
     /// Slice a .vcad file for 3D printing
@@ -347,8 +382,22 @@ fn main() -> Result<()> {
         }) => {
             import_step(&input, &output, name)?;
         }
-        Some(Commands::ImportUrdf { input, output }) => {
-            import_urdf(&input, &output)?;
+        Some(Commands::ImportUrdf {
+            input,
+            output,
+            floating_base,
+            floating_base_link,
+            spawn_height_mm,
+        }) => {
+            import_urdf(
+                &input,
+                &output,
+                FloatingBase {
+                    enabled: floating_base,
+                    link: floating_base_link,
+                    spawn_height_mm,
+                },
+            )?;
         }
         Some(Commands::Render {
             input,
@@ -450,8 +499,22 @@ fn main() -> Result<()> {
             dt,
             log_every,
             package_roots,
+            floating_base,
+            floating_base_link,
+            spawn_height_mm,
         }) => {
-            simulate_file(&input, steps, dt, log_every, &package_roots)?;
+            simulate_file(
+                &input,
+                steps,
+                dt,
+                log_every,
+                &package_roots,
+                FloatingBase {
+                    enabled: floating_base,
+                    link: floating_base_link,
+                    spawn_height_mm,
+                },
+            )?;
         }
         Some(Commands::Slice {
             input,
@@ -1070,11 +1133,37 @@ fn print_timing(timing: &vcad_eval::EvalTiming) {
     }
 }
 
-fn import_urdf(input: &PathBuf, output: &PathBuf) -> Result<()> {
+/// The `--floating-base` family of flags, shared by `import-urdf` and
+/// `simulate`.
+struct FloatingBase {
+    /// Synthesize a world link + 6-DOF joint when the URDF declares none.
+    enabled: bool,
+    /// Link to attach it to (default: the tree's root link).
+    link: Option<String>,
+    /// Initial base height in mm, written as the joint's `parentAnchor.z`.
+    spawn_height_mm: f64,
+}
+
+fn import_urdf(input: &PathBuf, output: &PathBuf, floating: FloatingBase) -> Result<()> {
     use std::fs;
+    use vcad_kernel_urdf::UrdfReadOptions;
 
     // Import the URDF file
-    let doc = vcad_kernel_urdf::read_urdf(input)?;
+    let opts = UrdfReadOptions {
+        urdf_dir: input.parent().map(|p| p.to_path_buf()),
+        floating_base: floating.enabled,
+        floating_base_link: floating.link,
+        spawn_height_mm: floating.spawn_height_mm,
+        ..UrdfReadOptions::default()
+    };
+    let doc = vcad_kernel_urdf::read_urdf_with_options(input, &opts)?;
+    if floating.enabled {
+        let z = floating.spawn_height_mm;
+        println!(
+            "Floating base: synthesized a 6-DOF root joint at z = {z} mm \
+             (parentAnchor.z sets the spawn height)"
+        );
+    }
 
     // Write the document
     let json = doc.to_json()?;
@@ -1100,6 +1189,7 @@ fn simulate_file(
     dt: f64,
     log_every: u32,
     package_roots: &[PathBuf],
+    floating: FloatingBase,
 ) -> Result<()> {
     use vcad_kernel_physics::PhysicsWorld;
     use vcad_kernel_urdf::UrdfReadOptions;
@@ -1115,6 +1205,9 @@ fn simulate_file(
             let opts = UrdfReadOptions {
                 package_roots: package_roots.to_vec(),
                 urdf_dir: input.parent().map(|p| p.to_path_buf()),
+                floating_base: floating.enabled,
+                floating_base_link: floating.link,
+                spawn_height_mm: floating.spawn_height_mm,
             };
             vcad_kernel_urdf::read_urdf_with_options(input, &opts)?
         }

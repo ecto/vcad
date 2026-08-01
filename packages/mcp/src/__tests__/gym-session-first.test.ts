@@ -151,7 +151,15 @@ describe("observation labeling", () => {
 
       // End effectors are keyed by the instance id they were requested under.
       expect(obs.end_effectors).toEqual([
-        { id: "link1_inst", pose: obs.end_effector_poses[0] },
+        {
+          id: "link1_inst",
+          pose: obs.end_effector_poses[0],
+          // Kernel builds that report per-foot contact get the labeled
+          // view too; older ones omit it rather than guessing.
+          ...(obs.end_effector_contacts
+            ? { contact: obs.end_effector_contacts[0] }
+            : {}),
+        },
       ]);
 
       // Joints are keyed by joint id when the kernel reports them; older
@@ -265,7 +273,15 @@ describe("batch_create_envs document input", () => {
     expect(reset.observations).toHaveLength(2);
     for (const obs of reset.observations) {
       expect(obs.end_effectors).toEqual([
-        { id: "link1_inst", pose: obs.end_effector_poses[0] },
+        {
+          id: "link1_inst",
+          pose: obs.end_effector_poses[0],
+          // Kernel builds that report per-foot contact get the labeled
+          // view too; older ones omit it rather than guessing.
+          ...(obs.end_effector_contacts
+            ? { contact: obs.end_effector_contacts[0] }
+            : {}),
+        },
       ]);
     }
   });

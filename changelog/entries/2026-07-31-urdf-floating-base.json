@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-31-urdf-floating-base",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "URDF import can synthesize a floating base",
+  "summary": "Humanoid URDFs ship the world link and floating joint commented out; import_urdf's floating_base option injects them so the robot can fall and walk instead of being welded to the world.",
+  "features": ["urdf", "physics", "simulation"],
+  "mcpTools": ["import_urdf"]
+}

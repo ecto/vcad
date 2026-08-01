@@ -35,6 +35,9 @@ interface ImportUrdfInput {
   content_base64?: string;
   package_roots?: string[];
   name?: string;
+  floating_base?: boolean;
+  floating_base_link?: string;
+  spawn_height_mm?: number;
 }
 
 export const importUrdfSchema = {
@@ -67,6 +70,32 @@ export const importUrdfSchema = {
     name: {
       type: "string" as const,
       description: "Robot name (default: filename without extension)",
+    },
+    floating_base: {
+      type: "boolean" as const,
+      description:
+        "Synthesize a floating (6-DOF) base when the URDF declares none. Most " +
+        "humanoid/quadruped URDFs ship the world link and its type=\"floating\" " +
+        "joint commented out, on the convention that the simulator supplies the " +
+        "free base — without this the root link is grounded and the robot is " +
+        "welded to the world, which cannot walk or fall. Set this for any " +
+        "locomotion task. No-op when the URDF already has a floating joint.",
+    },
+    floating_base_link: {
+      type: "string" as const,
+      description:
+        "Link to attach the synthesized floating base to (default: the tree's " +
+        "root link, i.e. the one that is never a joint's child). Requires " +
+        "floating_base.",
+    },
+    spawn_height_mm: {
+      type: "number" as const,
+      description:
+        "Initial base height in mm for the synthesized floating base (default 0). " +
+        "A Free joint's `state` is a scalar and meaningless for 6 DOF, so this " +
+        "is written as the joint's parentAnchor.z. Spawn just above the settled " +
+        "standing height so the robot drops onto the ground instead of starting " +
+        "interpenetrated (Booster K1: 620 mm against a 549.8 mm stand).",
     },
   },
 };
@@ -241,8 +270,21 @@ export function importUrdf(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { path, content_base64, package_roots, name } =
-    input as ImportUrdfInput;
+  const {
+    path,
+    content_base64,
+    package_roots,
+    name,
+    floating_base,
+    floating_base_link,
+    spawn_height_mm,
+  } = input as ImportUrdfInput;
+
+  if (!floating_base && (floating_base_link || spawn_height_mm !== undefined)) {
+    throw new Error(
+      "floating_base_link / spawn_height_mm require floating_base: true",
+    );
+  }
 
   const confineRoot = process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd();
   let fileBuffer: Buffer;
@@ -294,7 +336,20 @@ export function importUrdf(
   // pooled slice).
   const arrayBuffer = new ArrayBuffer(fileBuffer.byteLength);
   new Uint8Array(arrayBuffer).set(fileBuffer);
-  const doc = JSON.parse(engine.importUrdf(arrayBuffer)) as Document;
+  const doc = JSON.parse(
+    engine.importUrdf(arrayBuffer, {
+      floatingBase: floating_base,
+      floatingBaseLink: floating_base_link,
+      spawnHeightMm: spawn_height_mm,
+    }),
+  ) as Document;
+
+  // A floating joint hiding in a comment means the author expected the
+  // simulator to supply the free base — say so rather than silently
+  // handing back a robot welded to the world.
+  const commentedFloating = floating_base
+    ? undefined
+    : engine.urdfCommentedFloatingJoint(arrayBuffer);
 
   const meshes = inlineMeshImports(doc, urdfDir, packageRoots, confineRoot);
 
@@ -322,6 +377,28 @@ export function importUrdf(
     instances: (doc.instances ?? []).length,
     ground_instance_id: doc.groundInstanceId ?? null,
     joint_list: joints,
+    ...(floating_base
+      ? {
+          floating_base: {
+            synthesized: joints.some((j) => j.kind === "Free"),
+            spawn_height_mm: spawn_height_mm ?? 0,
+            note:
+              "The root link hangs off a 6-DOF Free joint; parentAnchor.z is the " +
+              "spawn height. The robot will fall under gravity.",
+          },
+        }
+      : {}),
+    ...(commentedFloating
+      ? {
+          floating_base_warning:
+            `This URDF declares a floating joint (${commentedFloating}) inside a ` +
+            "comment — the usual convention that the simulator supplies the free " +
+            "base. Imported as-is, the root link is grounded and the robot is " +
+            "welded to the world (it cannot walk or fall). Re-import with " +
+            "floating_base: true (and a spawn_height_mm just above standing " +
+            "height) for any locomotion task.",
+        }
+      : {}),
     ...(meshes.inlined > 0 ? { meshes_inlined: meshes.inlined } : {}),
     ...(meshes.unresolved.length > 0
       ? {
@@ -365,7 +442,9 @@ export const toolDefs: ToolDef[] = [
       "origins, joints (revolute/prismatic/fixed) with limits, and a grounded root link — " +
       "ready for create_robot_env. STL mesh references are resolved against the URDF's " +
       "directory and optional package_roots and inlined; unresolved meshes fall back to " +
-      "placeholder geometry with an explicit warning.",
+      "placeholder geometry with an explicit warning. For locomotion, pass " +
+      "floating_base: true — most humanoid/quadruped URDFs leave the world link and " +
+      "floating joint commented out, and without them the robot is welded to the world.",
     inputSchema: importUrdfSchema,
     handler: (a, c) => importUrdf(a, c.engine),
     behavior: behavior({ writesDoc: true, geometry: true, mount: true }),

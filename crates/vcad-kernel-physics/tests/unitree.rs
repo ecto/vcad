@@ -189,3 +189,94 @@ fn unitree_g1_pd_hold_with_ground_contact_stays_finite() {
         }
     }
 }
+
+/// The G1 URDF, like nearly every humanoid descriptor, declares no floating
+/// joint — the convention is that the simulator supplies the free base.
+/// Imported plainly, the root link is grounded and the robot is welded to
+/// the world; with `floating_base` the importer synthesizes the world link
+/// and a 6-DOF `Free` joint, and the base falls under gravity.
+#[test]
+fn unitree_g1_floating_base_falls_under_gravity() {
+    use vcad_ir::JointKind;
+    use vcad_kernel_urdf::UrdfReadOptions;
+
+    let urdf_path = examples_dir().join("unitree-g1.urdf");
+
+    // Baseline: default import is unchanged — no Free joint, root grounded.
+    let welded = vcad_kernel_urdf::read_urdf(&urdf_path).expect("parse unitree-g1.urdf");
+    assert!(
+        !welded
+            .joints
+            .as_ref()
+            .expect("joints")
+            .iter()
+            .any(|j| matches!(j.kind, JointKind::Free)),
+        "default import must not synthesize a floating base"
+    );
+
+    let opts = UrdfReadOptions {
+        urdf_dir: urdf_path.parent().map(|p| p.to_path_buf()),
+        floating_base: true,
+        spawn_height_mm: 900.0,
+        ..UrdfReadOptions::default()
+    };
+    let doc = vcad_kernel_urdf::read_urdf_with_options(&urdf_path, &opts)
+        .expect("parse unitree-g1.urdf with floating base");
+
+    // Exactly one link and one joint more than the welded import.
+    assert_eq!(
+        doc.part_defs.as_ref().unwrap().len(),
+        welded.part_defs.as_ref().unwrap().len() + 1
+    );
+    let joints = doc.joints.as_ref().expect("joints");
+    let free: Vec<_> = joints
+        .iter()
+        .filter(|j| matches!(j.kind, JointKind::Free))
+        .collect();
+    assert_eq!(free.len(), 1, "exactly one synthesized floating joint");
+    // parentAnchor.z carries the spawn height (a Free joint's scalar state
+    // cannot).
+    assert!((free[0].parent_anchor.z - 900.0).abs() < 1e-9);
+
+    // The floating base is what the *root* link hangs from, so the welded
+    // import's grounded instance is now the Free joint's child.
+    let root_instance = welded.ground_instance_id.as_ref().expect("welded ground");
+    assert_eq!(&free[0].child_instance_id, root_instance);
+    assert_ne!(doc.ground_instance_id.as_ref(), Some(root_instance));
+
+    // No ground plane: with a free base the whole robot accelerates
+    // downward. Welded, that instance cannot move at all.
+    let mut world = PhysicsWorld::from_document(&doc).expect("build PhysicsWorld");
+    let z0 = world
+        .get_instance_pose(root_instance)
+        .expect("root instance pose")
+        .0[2];
+    for _ in 0..240 {
+        world.step(1.0 / 240.0);
+    }
+    let z1 = world
+        .get_instance_pose(root_instance)
+        .expect("root instance pose")
+        .0[2];
+    assert!(
+        z1.is_finite() && z1 < z0 - 1.0,
+        "floating base should fall under gravity over 1 s: z {z0} -> {z1}"
+    );
+
+    let mut welded_world = PhysicsWorld::from_document(&welded).expect("build welded world");
+    let wz0 = welded_world
+        .get_instance_pose(root_instance)
+        .expect("root instance pose")
+        .0[2];
+    for _ in 0..240 {
+        welded_world.step(1.0 / 240.0);
+    }
+    let wz1 = welded_world
+        .get_instance_pose(root_instance)
+        .expect("root instance pose")
+        .0[2];
+    assert!(
+        (wz1 - wz0).abs() < 1e-6,
+        "welded root must stay pinned: z {wz0} -> {wz1}"
+    );
+}

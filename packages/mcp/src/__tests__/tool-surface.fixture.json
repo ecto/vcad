@@ -6939,7 +6939,7 @@
   {
     "name": "import_urdf",
     "title": "Import URDF",
-    "description": "Import a URDF (Unified Robot Description Format) robot from a server-local file. Builds the full kinematic tree — one part per link, instances FK-placed from joint origins, joints (revolute/prismatic/fixed) with limits, and a grounded root link — ready for create_robot_env. STL mesh references are resolved against the URDF's directory and optional package_roots and inlined; unresolved meshes fall back to placeholder geometry with an explicit warning.",
+    "description": "Import a URDF (Unified Robot Description Format) robot from a server-local file. Builds the full kinematic tree — one part per link, instances FK-placed from joint origins, joints (revolute/prismatic/fixed) with limits, and a grounded root link — ready for create_robot_env. STL mesh references are resolved against the URDF's directory and optional package_roots and inlined; unresolved meshes fall back to placeholder geometry with an explicit warning. For locomotion, pass floating_base: true — most humanoid/quadruped URDFs leave the world link and floating joint commented out, and without them the robot is welded to the world.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6961,6 +6961,18 @@
         "name": {
           "type": "string",
           "description": "Robot name (default: filename without extension)"
+        },
+        "floating_base": {
+          "type": "boolean",
+          "description": "Synthesize a floating (6-DOF) base when the URDF declares none. Most humanoid/quadruped URDFs ship the world link and its type=\"floating\" joint commented out, on the convention that the simulator supplies the free base — without this the root link is grounded and the robot is welded to the world, which cannot walk or fall. Set this for any locomotion task. No-op when the URDF already has a floating joint."
+        },
+        "floating_base_link": {
+          "type": "string",
+          "description": "Link to attach the synthesized floating base to (default: the tree's root link, i.e. the one that is never a joint's child). Requires floating_base."
+        },
+        "spawn_height_mm": {
+          "type": "number",
+          "description": "Initial base height in mm for the synthesized floating base (default 0). A Free joint's `state` is a scalar and meaningless for 6 DOF, so this is written as the joint's parentAnchor.z. Spawn just above the settled standing height so the robot drops onto the ground instead of starting interpenetrated (Booster K1: 620 mm against a 549.8 mm stand)."
         }
       }
     },
@@ -7103,7 +7115,7 @@
         },
         "config": {
           "type": "object",
-          "description": "Optional env config for sim2real training. `randomization`: seeded domain randomization applied on every reset — {mass_scale: {min, max} (per-link multiplicative, e.g. 0.9–1.1), friction_scale: {min, max} (per-joint friction/damping), pd_gain_scale: {min, max} (global PD gain), action_latency_steps: [min, max] (actuator delay in physics substeps, e.g. [2, 8]), joint_pos_perturb / joint_vel_perturb (uniform ± initial state, deg/mm)}. `observation_noise`: gaussian std-devs {joint_pos_std, joint_vel_std, base_pos_std, base_rot_std, base_vel_std}. `termination`: {base_height_below (m), base_tilt_above_deg, terminate_on_joint_limit}. `base_instance_id`: instance used for base pose/velocity observations (default: the ground instance)."
+          "description": "Optional env config for sim2real training. `randomization`: seeded domain randomization applied on every reset — {mass_scale: {min, max} (per-link multiplicative, e.g. 0.9–1.1), friction_scale: {min, max} (per-joint friction/damping), pd_gain_scale: {min, max} (global PD gain), action_latency_steps: [min, max] (actuator delay in physics substeps, e.g. [2, 8]), joint_pos_perturb / joint_vel_perturb (uniform ± initial state, deg/mm)}. `observation_noise`: gaussian std-devs {joint_pos_std, joint_vel_std, base_pos_std, base_rot_std, base_vel_std, contact_force_std (N)}. `termination`: {base_height_below (m), base_tilt_above_deg, terminate_on_joint_limit}. `base_instance_id`: instance used for base pose/velocity observations (default: the ground instance)."
         },
         "ground_enabled": {
           "type": "boolean",

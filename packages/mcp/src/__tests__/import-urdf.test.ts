@@ -93,3 +93,72 @@ describe("import_urdf", () => {
     }
   });
 });
+
+describe("import_urdf floating base", () => {
+  // Shaped like Booster's K1 and the Unitree descriptors: the world link
+  // and its floating joint ship commented out, on the convention that the
+  // simulator supplies the free base.
+  const COMMENTED = `<robot name="k1">
+      <!-- <link name="world"/>
+      <joint name="world_joint" type="floating">
+        <origin xyz="0 0 0"/>
+        <parent link="world"/>
+        <child link="Trunk"/>
+      </joint> -->
+      <link name="Trunk"/>
+      <link name="Thigh"/>
+      <joint name="hip" type="revolute">
+        <parent link="Trunk"/><child link="Thigh"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-1" upper="1" effort="40" velocity="12.5"/>
+      </joint>
+    </robot>`;
+  const b64 = () => Buffer.from(COMMENTED).toString("base64");
+
+  it("warns when a floating joint is only present in a comment", () => {
+    const out = parseResult(importUrdf({ content_base64: b64() }, engine));
+    expect(out.summary.floating_base_warning).toMatch(/world_joint/);
+    expect(out.summary.floating_base_warning).toMatch(/welded to the world/);
+    // Behavior itself is unchanged: root still grounded, no Free joint.
+    expect(out.summary.ground_instance_id).toBe("Trunk_inst");
+    expect(out.summary.joint_list.some((j: { kind: string }) => j.kind === "Free")).toBe(false);
+  });
+
+  it("synthesizes a Free root joint with floating_base", () => {
+    const out = parseResult(
+      importUrdf(
+        { content_base64: b64(), floating_base: true, spawn_height_mm: 620 },
+        engine,
+      ),
+    );
+    expect(out.summary.floating_base.synthesized).toBe(true);
+    expect(out.summary.floating_base.spawn_height_mm).toBe(620);
+    expect(out.summary.floating_base_warning).toBeUndefined();
+    const free = out.summary.joint_list.filter(
+      (j: { kind: string }) => j.kind === "Free",
+    );
+    expect(free).toHaveLength(1);
+    expect(free[0].child_instance_id).toBe("Trunk_inst");
+    // The world link is now the ground, not the Trunk.
+    expect(out.summary.ground_instance_id).not.toBe("Trunk_inst");
+  });
+
+  it("rejects floating-base sub-options without floating_base", () => {
+    expect(() =>
+      importUrdf({ content_base64: b64(), spawn_height_mm: 620 }, engine),
+    ).toThrow(/require floating_base/);
+  });
+
+  it("does not warn on a URDF with no floating joint at all", () => {
+    const xml = `<robot name="arm">
+        <link name="base"/><link name="tip"/>
+        <joint name="j" type="revolute">
+          <parent link="base"/><child link="tip"/><axis xyz="0 0 1"/>
+        </joint>
+      </robot>`;
+    const out = parseResult(
+      importUrdf({ content_base64: Buffer.from(xml).toString("base64") }, engine),
+    );
+    expect(out.summary.floating_base_warning).toBeUndefined();
+  });
+});
