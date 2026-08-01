@@ -3258,6 +3258,56 @@ pub fn import_urdf_buffer(data: &[u8]) -> Result<String, JsError> {
         .map_err(|e| JsError::new(&format!("Document serialise error: {e}")))
 }
 
+/// Import a URDF, optionally synthesizing a floating (6-DOF) base.
+///
+/// Most humanoid/quadruped URDFs ship the `world` link and its
+/// `type="floating"` joint commented out, on the convention that the
+/// simulator supplies the free base. Without it the root link is grounded
+/// and the robot is welded to the world — useless for locomotion. Passing
+/// `floating_base` injects exactly that commented-out block.
+///
+/// # Arguments
+///
+/// * `data` - Raw URDF XML bytes (UTF-8).
+/// * `floating_base` - Synthesize the world link + `Free` joint.
+/// * `root_link` - Link to attach it to (default: the tree's root link).
+/// * `spawn_height_mm` - Initial base height in mm, written as the joint's
+///   `parentAnchor.z` (a `Free` joint's scalar `state` cannot carry it).
+#[module("urdf")]
+#[wasm_bindgen(js_name = importUrdfBufferWithOptions)]
+pub fn import_urdf_buffer_with_options(
+    data: &[u8],
+    floating_base: bool,
+    root_link: Option<String>,
+    spawn_height_mm: Option<f64>,
+) -> Result<String, JsError> {
+    let xml = std::str::from_utf8(data)
+        .map_err(|e| JsError::new(&format!("URDF must be valid UTF-8: {e}")))?;
+    let opts = vcad_kernel_urdf::UrdfReadOptions {
+        floating_base,
+        floating_base_link: root_link,
+        spawn_height_mm: spawn_height_mm.unwrap_or(0.0),
+        ..Default::default()
+    };
+    let doc = vcad_kernel_urdf::read_urdf_from_str_with_options(xml, &opts)
+        .map_err(|e| JsError::new(&format!("URDF parse error: {e}")))?;
+    doc.to_json()
+        .map_err(|e| JsError::new(&format!("Document serialise error: {e}")))
+}
+
+/// Report the name of a floating joint found inside a **commented-out**
+/// region of the URDF, or `undefined` if there is none.
+///
+/// A hit is a strong signal the caller wants `floating_base` — the file's
+/// author wrote the joint and then commented it out for the simulator to
+/// supply.
+#[module("urdf")]
+#[wasm_bindgen(js_name = urdfCommentedFloatingJoint)]
+pub fn urdf_commented_floating_joint(data: &[u8]) -> Option<String> {
+    let xml = std::str::from_utf8(data).ok()?;
+    vcad_kernel_urdf::commented_out_floating_joint(xml)
+}
+
 // =========================================================================
 // GPU-Accelerated Geometry Processing
 // =========================================================================

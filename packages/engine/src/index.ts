@@ -544,6 +544,15 @@ export interface KernelModule {
    * robot to first order.
    */
   importUrdfBuffer: (data: Uint8Array) => string;
+  /** As `importUrdfBuffer`, but able to synthesize a floating base. */
+  importUrdfBufferWithOptions?: (
+    data: Uint8Array,
+    floating_base: boolean,
+    root_link: string | undefined,
+    spawn_height_mm: number | undefined,
+  ) => string;
+  /** Name of a floating joint found in a commented-out region, if any. */
+  urdfCommentedFloatingJoint?: (data: Uint8Array) => string | undefined;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
   /** Offset (stepped) section of a mesh; null on parse failure. */
   offsetSectionMesh?: (
@@ -1088,6 +1097,8 @@ export class Engine {
       importStepBufferWithReport: (wasmModule as Record<string, unknown>).importStepBufferWithReport as KernelModule["importStepBufferWithReport"],
       documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
+      importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
+      urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
       renderTitleBlock: (wasmModule as Record<string, unknown>).renderTitleBlock as KernelModule["renderTitleBlock"],
@@ -1821,14 +1832,48 @@ export class Engine {
    * through unchanged, so simulation behaves like the real robot to
    * first order.
    */
-  importUrdf(data: ArrayBuffer): string {
+  importUrdf(
+    data: ArrayBuffer,
+    opts?: {
+      floatingBase?: boolean;
+      floatingBaseLink?: string;
+      spawnHeightMm?: number;
+    },
+  ): string {
     const bytes = new Uint8Array(data);
+    if (opts?.floatingBase) {
+      if (typeof this.kernel.importUrdfBufferWithOptions !== "function") {
+        throw new Error(
+          "floating-base URDF import not available — kernel WASM predates the " +
+            "importUrdfBufferWithOptions export; rebuild the kernel WASM",
+        );
+      }
+      return this.kernel.importUrdfBufferWithOptions(
+        bytes,
+        true,
+        opts.floatingBaseLink,
+        opts.spawnHeightMm,
+      );
+    }
     if (typeof this.kernel.importUrdfBuffer !== "function") {
       throw new Error(
         "URDF import not available — kernel WASM was built without urdf support",
       );
     }
     return this.kernel.importUrdfBuffer(bytes);
+  }
+
+  /**
+   * Name of a floating joint the URDF declares inside a **commented-out**
+   * region, or `undefined`. Callers use it to suggest `floatingBase` —
+   * a commented-out floating joint means the author expected the simulator
+   * to supply the free base.
+   */
+  urdfCommentedFloatingJoint(data: ArrayBuffer): string | undefined {
+    if (typeof this.kernel.urdfCommentedFloatingJoint !== "function") {
+      return undefined;
+    }
+    return this.kernel.urdfCommentedFloatingJoint(new Uint8Array(data));
   }
 
   /** Export a projected view to DXF format.

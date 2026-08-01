@@ -99,6 +99,7 @@ fn urdf_resolves_package_uri() {
     let opts = UrdfReadOptions {
         package_roots: vec![tmp.clone()],
         urdf_dir: None,
+        ..UrdfReadOptions::default()
     };
     let doc = read_urdf_from_str_with_options(urdf, &opts).expect("parse URDF");
 

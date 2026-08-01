@@ -31,7 +31,7 @@ mod writer;
 
 pub use error::UrdfError;
 pub use reader::{
-    read_urdf, read_urdf_from_str, read_urdf_from_str_with_options, read_urdf_with_options,
-    UrdfReadOptions,
+    commented_out_floating_joint, read_urdf, read_urdf_from_str, read_urdf_from_str_with_options,
+    read_urdf_with_options, UrdfReadOptions,
 };
 pub use writer::{write_urdf, write_urdf_to_string};

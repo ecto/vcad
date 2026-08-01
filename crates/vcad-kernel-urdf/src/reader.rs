@@ -163,6 +163,32 @@ pub struct UrdfReadOptions {
     /// Directory the URDF lives in — used as the base for resolving
     /// relative mesh paths. Set automatically by [`read_urdf`].
     pub urdf_dir: Option<PathBuf>,
+    /// Synthesize a floating base when the URDF has no floating joint.
+    ///
+    /// Most humanoid/quadruped URDFs ship the `world` link and its
+    /// `type="floating"` joint **commented out**, because the convention is
+    /// that the simulator supplies the free base (MuJoCo's MJCF for the same
+    /// robot carries `<joint type="free"/>`). Without it vcad grounds the
+    /// tree's root link and the robot is welded to the world — physically
+    /// pinned, useless for locomotion. Setting this injects exactly the
+    /// commented-out block: a geometry-less `world` link plus a
+    /// [`JointKind::Free`] joint from it to the root link.
+    ///
+    /// No-op when the URDF already declares a floating joint.
+    pub floating_base: bool,
+    /// Link to attach the synthesized floating base to. Defaults to the
+    /// tree's root link (the one that is never a joint's child). Ignored
+    /// unless [`Self::floating_base`] is set.
+    pub floating_base_link: Option<String>,
+    /// Initial base height in **millimetres**, written as the synthesized
+    /// joint's origin `z`.
+    ///
+    /// A `Free` joint's `state` is a scalar and therefore meaningless for
+    /// 6 DOF, so `parentAnchor.z` is what actually sets the spawn height.
+    /// Spawn slightly above the settled standing height so the robot drops
+    /// onto the ground rather than starting interpenetrated (for the Booster
+    /// K1, 620 mm against a 549.8 mm settled stand). Defaults to 0.
+    pub spawn_height_mm: f64,
 }
 
 impl UrdfReadOptions {
@@ -286,8 +312,162 @@ pub fn read_urdf_from_str_with_options(
             MAX_JOINTS
         )));
     }
+    let mut robot = robot;
+    apply_floating_base(&mut robot, opts, xml)?;
     let reader = UrdfReader::new(&robot, opts);
     reader.into_document()
+}
+
+/// Name of the floating joint found inside a commented-out region of `xml`,
+/// if any.
+///
+/// The near-universal convention is to ship the world link and its floating
+/// joint commented out and let the simulator supply the free base. That
+/// comment is a strong signal the author *wants* a floating base, so callers
+/// can surface it when [`UrdfReadOptions::floating_base`] was not requested.
+pub fn commented_out_floating_joint(xml: &str) -> Option<String> {
+    let mut rest = xml;
+    loop {
+        let start = rest.find("<!--")?;
+        let after = &rest[start + 4..];
+        match after.find("-->") {
+            Some(end) => {
+                if let Some(name) = floating_joint_name_in(&after[..end]) {
+                    return Some(name);
+                }
+                rest = &after[end + 3..];
+            }
+            // Unterminated comment: everything left is commented out.
+            None => return floating_joint_name_in(after),
+        }
+    }
+}
+
+/// Scan a fragment of URDF-ish text for `<joint ... type="floating">` and
+/// return the joint's `name` (or a placeholder when it has none). Purely
+/// textual — the fragment lives inside a comment, so it need not be
+/// well-formed enough to parse.
+fn floating_joint_name_in(body: &str) -> Option<String> {
+    let mut rest = body;
+    while let Some(idx) = rest.find("<joint") {
+        rest = &rest[idx + 6..];
+        let tag_end = rest.find('>').unwrap_or(rest.len());
+        let tag = &rest[..tag_end];
+        if attr_value(tag, "type").as_deref() == Some("floating") {
+            return Some(attr_value(tag, "name").unwrap_or_else(|| "<unnamed>".to_string()));
+        }
+    }
+    None
+}
+
+/// Extract `name="value"` (or `name='value'`) from an XML start-tag body.
+fn attr_value(tag: &str, attr: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let needle = format!("{attr}={quote}");
+        if let Some(i) = tag.find(&needle) {
+            let after = &tag[i + needle.len()..];
+            if let Some(j) = after.find(quote) {
+                return Some(after[..j].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Inject the `world` link + `type="floating"` joint that the URDF left
+/// commented out, when [`UrdfReadOptions::floating_base`] asks for it.
+///
+/// When the option is *not* set but the XML's comments do contain a floating
+/// joint, warn on stderr — that is the case this option exists for.
+fn apply_floating_base(
+    robot: &mut Robot,
+    opts: &UrdfReadOptions,
+    xml: &str,
+) -> Result<(), UrdfError> {
+    let already_floating = robot
+        .joints
+        .iter()
+        .any(|j| j.joint_type.trim() == "floating");
+
+    if !opts.floating_base {
+        if !already_floating {
+            if let Some(name) = commented_out_floating_joint(xml) {
+                eprintln!(
+                    "urdf: '{}' declares a floating joint ({name}) inside a comment — the \
+                     robot will be welded to the world. Re-import with floating_base to \
+                     synthesize it (CLI: --floating-base).",
+                    robot.name
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    if already_floating {
+        return Ok(());
+    }
+
+    let root = match &opts.floating_base_link {
+        Some(link) => {
+            if !robot.links.iter().any(|l| &l.name == link) {
+                return Err(UrdfError::UnknownLink(link.clone()));
+            }
+            link.clone()
+        }
+        None => find_root_link_name(robot)?,
+    };
+
+    let world = unique_name("world", |n| robot.links.iter().any(|l| l.name == n));
+    let joint_name = unique_name("world_joint", |n| robot.joints.iter().any(|j| j.name == n));
+
+    robot.links.push(Link {
+        name: world.clone(),
+        visuals: Vec::new(),
+        collisions: Vec::new(),
+        inertial: None,
+    });
+    // URDF origins are metres; the IR converts ×1000 on the way in.
+    let z_m = opts.spawn_height_mm / 1000.0;
+    robot.joints.push(Joint {
+        name: joint_name,
+        joint_type: "floating".to_string(),
+        origin: Some(crate::types::Origin {
+            xyz: Some(format!("0 0 {z_m}")),
+            rpy: None,
+        }),
+        parent: crate::types::ParentLink { link: world },
+        child: crate::types::ChildLink { link: root },
+        axis: None,
+        limit: None,
+        dynamics: None,
+    });
+    Ok(())
+}
+
+/// First `base` name not already taken, suffixing `_1`, `_2`, … as needed.
+fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(base) {
+        return base.to_string();
+    }
+    (1..)
+        .map(|i| format!("{base}_{i}"))
+        .find(|n| !taken(n))
+        .unwrap()
+}
+
+/// The link that is never a joint's child — see
+/// [`UrdfReader::find_root_link`], which does the same on the reader's
+/// borrowed robot.
+fn find_root_link_name(robot: &Robot) -> Result<String, UrdfError> {
+    let children: std::collections::HashSet<_> =
+        robot.joints.iter().map(|j| &j.child.link).collect();
+    robot
+        .links
+        .iter()
+        .find(|l| !children.contains(&l.name))
+        .or_else(|| robot.links.first())
+        .map(|l| l.name.clone())
+        .ok_or_else(|| UrdfError::MissingElement("No links found".to_string()))
 }
 
 /// Case-insensitive scan for `<!DOCTYPE` that ignores leading whitespace.
@@ -977,6 +1157,162 @@ mod tests {
             }
             _ => panic!("Expected Revolute joint"),
         }
+    }
+
+    /// A humanoid-shaped URDF that, like Booster's K1 and most real ones,
+    /// ships its world link + floating joint commented out.
+    const COMMENTED_FLOATING: &str = r#"<?xml version="1.0"?>
+<robot name="k1">
+    <!-- <link name="world"/>
+    <joint name="world_joint" type="floating">
+      <origin xyz="0 0 0"/>
+      <parent link="world"/>
+      <child link="Trunk"/>
+    </joint> -->
+    <link name="Trunk"/>
+    <link name="Thigh"/>
+    <joint name="hip" type="revolute">
+        <parent link="Trunk"/>
+        <child link="Thigh"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="-1" upper="1" effort="40" velocity="12.5"/>
+    </joint>
+</robot>"#;
+
+    fn floating_opts(height_mm: f64) -> UrdfReadOptions {
+        UrdfReadOptions {
+            floating_base: true,
+            spawn_height_mm: height_mm,
+            ..UrdfReadOptions::default()
+        }
+    }
+
+    #[test]
+    fn test_floating_base_off_by_default() {
+        let doc = read_urdf_from_str(COMMENTED_FLOATING).unwrap();
+        // Unchanged: Trunk is still the ground, no Free joint synthesized.
+        let instances = doc.instances.as_ref().unwrap();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(doc.ground_instance_id.as_deref(), Some("Trunk_inst"));
+        let joints = doc.joints.as_ref().unwrap();
+        assert_eq!(joints.len(), 1);
+        assert!(!matches!(joints[0].kind, JointKind::Free));
+    }
+
+    #[test]
+    fn test_floating_base_synthesizes_free_root_joint() {
+        let doc =
+            read_urdf_from_str_with_options(COMMENTED_FLOATING, &floating_opts(620.0)).unwrap();
+
+        // world is now the grounded link, Trunk hangs off it via Free.
+        assert_eq!(doc.ground_instance_id.as_deref(), Some("world_inst"));
+        assert_eq!(doc.instances.as_ref().unwrap().len(), 3);
+
+        let joints = doc.joints.as_ref().unwrap();
+        let free = joints
+            .iter()
+            .find(|j| matches!(j.kind, JointKind::Free))
+            .expect("synthesized floating joint must map to JointKind::Free");
+        assert_eq!(free.parent_instance_id.as_deref(), Some("world_inst"));
+        assert_eq!(free.child_instance_id, "Trunk_inst");
+        // parentAnchor.z is what sets the spawn height (state is a scalar
+        // and meaningless for 6 DOF).
+        assert!((free.parent_anchor.z - 620.0).abs() < 1e-9);
+        // The authored hip joint survives untouched.
+        assert_eq!(joints.len(), 2);
+    }
+
+    #[test]
+    fn test_floating_base_noop_when_urdf_already_has_one() {
+        let urdf = r#"<?xml version="1.0"?>
+<robot name="declared">
+    <link name="world"/>
+    <link name="Trunk"/>
+    <joint name="world_joint" type="floating">
+        <origin xyz="0 0 1.0"/>
+        <parent link="world"/>
+        <child link="Trunk"/>
+    </joint>
+</robot>"#;
+        let doc = read_urdf_from_str_with_options(urdf, &floating_opts(620.0)).unwrap();
+        let joints = doc.joints.as_ref().unwrap();
+        assert_eq!(joints.len(), 1, "must not add a second floating joint");
+        // The authored origin wins over spawn_height_mm.
+        assert!((joints[0].parent_anchor.z - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_floating_base_explicit_link() {
+        let opts = UrdfReadOptions {
+            floating_base: true,
+            floating_base_link: Some("Thigh".to_string()),
+            ..UrdfReadOptions::default()
+        };
+        let doc = read_urdf_from_str_with_options(COMMENTED_FLOATING, &opts).unwrap();
+        let free = doc
+            .joints
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|j| matches!(j.kind, JointKind::Free))
+            .unwrap()
+            .clone();
+        assert_eq!(free.child_instance_id, "Thigh_inst");
+    }
+
+    #[test]
+    fn test_floating_base_unknown_link_is_an_error() {
+        let opts = UrdfReadOptions {
+            floating_base: true,
+            floating_base_link: Some("Nope".to_string()),
+            ..UrdfReadOptions::default()
+        };
+        assert!(read_urdf_from_str_with_options(COMMENTED_FLOATING, &opts).is_err());
+    }
+
+    #[test]
+    fn test_detect_commented_out_floating_joint() {
+        assert_eq!(
+            commented_out_floating_joint(COMMENTED_FLOATING).as_deref(),
+            Some("world_joint")
+        );
+        // An *active* floating joint is not a comment hit.
+        assert!(commented_out_floating_joint(
+            r#"<robot name="a"><joint name="w" type="floating"/></robot>"#
+        )
+        .is_none());
+        // Ordinary comments don't trip it.
+        assert!(commented_out_floating_joint(
+            r#"<robot name="a"><!-- a plain note --><link name="l"/></robot>"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn test_floating_base_name_collision() {
+        let urdf = r#"<?xml version="1.0"?>
+<robot name="collide">
+    <link name="world"/>
+    <link name="Trunk"/>
+    <joint name="world_joint" type="fixed">
+        <parent link="world"/>
+        <child link="Trunk"/>
+    </joint>
+</robot>"#;
+        // `world`/`world_joint` are taken by a *fixed* joint here, so the
+        // synthesized pair must not clash with them.
+        let doc = read_urdf_from_str_with_options(urdf, &floating_opts(100.0)).unwrap();
+        let instances = doc.instances.as_ref().unwrap();
+        assert_eq!(instances.len(), 3);
+        assert!(instances.iter().any(|i| i.id == "world_1_inst"));
+        let joints = doc.joints.as_ref().unwrap();
+        assert_eq!(
+            joints
+                .iter()
+                .filter(|j| matches!(j.kind, JointKind::Free))
+                .count(),
+            1
+        );
     }
 
     #[test]
