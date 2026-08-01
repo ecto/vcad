@@ -477,6 +477,12 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
     // start-phase-independent the same way `reversed_winding` below already
     // is, so re-anchor at each true cyclic turning point and retry.
     for start in cyclic_turning_points(&uvs) {
+        // Anchoring at vertex 0 is the identity rotation, which the linear
+        // pass above just tried and failed; retrying it would only spend
+        // four more parses per face in a hot path.
+        if start == 0 {
+            continue;
+        }
         let rotated: Vec<(f64, f64)> = uvs[start..].iter().chain(&uvs[..start]).copied().collect();
         for policy in [
             TiePolicy::Const(1.0),
@@ -531,6 +537,15 @@ fn cyclic_turning_points(uvs: &[(f64, f64)]) -> Vec<usize> {
         .collect();
     // Vertex i is a turning point when the last directed step arriving at it
     // opposes the first directed step leaving it.
+    //
+    // A vertex whose OWN outgoing step is vertical is deliberately not a
+    // candidate: it is the foot of a connector, and anchoring the parse there
+    // would open the rotated list with the connector rather than with a
+    // chain. The vertex at the far end of that connector — the first one that
+    // actually leaves in the reversed direction — is the anchor the linear
+    // parse wants, and it is reported here. This mirrors the existing
+    // `split_at` walk-back, which likewise pushes connector vertices onto the
+    // chain that follows them.
     let mut out = Vec::new();
     for i in 0..n {
         let leaving = dirs[i];
