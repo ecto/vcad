@@ -78,9 +78,19 @@ pub(crate) struct CylProfile {
     vs: Vec<f64>,
 }
 
+/// Whether `VCAD_BAND_DEBUG` is set, read once per process. `band_dbg!` sits
+/// inside `try_parse_two_chain`, which runs per-face and up to four times per
+/// face (once per tie policy), so a per-call `env::var` — which allocates and
+/// takes the environment lock — is not affordable here. Mirrors
+/// `split::split_debug_enabled`.
+fn band_debug_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_BAND_DEBUG").is_ok())
+}
+
 macro_rules! band_dbg {
     ($($arg:tt)*) => {
-        if std::env::var("VCAD_BAND_DEBUG").is_ok() {
+        if crate::cyl_band::band_debug_enabled() {
             eprintln!($($arg)*);
         }
     };
@@ -329,6 +339,13 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
         .collect();
     // Faces with holes are outside this family.
     if !face.inner_loops.is_empty() {
+        if crate::split::split_debug_enabled() {
+            eprintln!(
+                "parse_band: {face_id:?} rejected — {} inner loop(s), {} outer verts",
+                face.inner_loops.len(),
+                verts.len()
+            );
+        }
         return None;
     }
 
@@ -387,7 +404,85 @@ pub(crate) fn parse_band(brep: &BRepSolid, face_id: FaceId) -> Option<(CylinderS
             return Some((cyl, band));
         }
     }
+
+    // The scan above walks the loop linearly, so it only sees a direction
+    // change that falls strictly inside the vertex list — the change carried
+    // by the CLOSING edge (v[n-1] → v[0]) is invisible to it. A loop whose
+    // starting half-edge sits mid-chain therefore presents just one visible
+    // flip, and the decomposition hands the tail few-or-one vertices and
+    // bails ("short chains N 1"). The loop is cyclic and its parse must be
+    // start-phase-independent the same way `reversed_winding` below already
+    // is, so re-anchor at each true cyclic turning point and retry.
+    for start in cyclic_turning_points(&uvs) {
+        let rotated: Vec<(f64, f64)> = uvs[start..].iter().chain(&uvs[..start]).copied().collect();
+        for policy in [
+            TiePolicy::Const(1.0),
+            TiePolicy::Const(-1.0),
+            TiePolicy::FlipAtConnector(1.0),
+            TiePolicy::FlipAtConnector(-1.0),
+        ] {
+            if let Some(band) = try_parse_two_chain(&rotated, policy) {
+                band_dbg!("parse_band: parsed after rotating to turning point {start}");
+                return Some((cyl, band));
+            }
+        }
+    }
+    if crate::split::split_debug_enabled() {
+        eprintln!(
+            "parse_band: {face_id:?} rejected — two-chain parse failed on {} verts",
+            uvs.len()
+        );
+    }
     None
+}
+
+/// Vertices where the loop's angular direction reverses, judged on the full
+/// CYCLIC step sequence (including the closing edge back to vertex 0).
+///
+/// A well-formed band loop has exactly two such turning points — the columns
+/// where the lower chain hands over to the upper. Which of them vertex 0
+/// happens to precede is an accident of the half-edge the face records as its
+/// loop start, so these are the anchors the linear parse needs to be retried
+/// from. Zero-Δu steps (seam edges, collapsed pinches) carry no direction and
+/// are skipped rather than treated as reversals.
+fn cyclic_turning_points(uvs: &[(f64, f64)]) -> Vec<usize> {
+    let n = uvs.len();
+    if n < 4 {
+        return Vec::new();
+    }
+    // Direction of the step leaving each vertex, 0 where the step is vertical.
+    let dirs: Vec<i8> = (0..n)
+        .map(|i| {
+            let mut du = (uvs[(i + 1) % n].0 - uvs[i].0).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            if du > U_EPS {
+                1
+            } else if du < -U_EPS {
+                -1
+            } else {
+                0
+            }
+        })
+        .collect();
+    // Vertex i is a turning point when the last directed step arriving at it
+    // opposes the first directed step leaving it.
+    let mut out = Vec::new();
+    for i in 0..n {
+        let leaving = dirs[i];
+        if leaving == 0 {
+            continue;
+        }
+        let arriving = (1..n)
+            .map(|k| dirs[(i + n - k) % n])
+            .find(|&d| d != 0)
+            .unwrap_or(0);
+        if arriving != 0 && arriving != leaving {
+            out.push(i);
+        }
+    }
+    out
 }
 
 /// How to resolve directionally ambiguous exactly-π unwrap steps.
@@ -1148,8 +1243,22 @@ pub(crate) fn split_cylindrical_face_by_sampled(
     face_id: FaceId,
     points: &[Point3],
 ) -> Option<SplitResult> {
-    let (cyl, band) = parse_band(brep, face_id)?;
-    let profile = profile_from_samples(&cyl, points)?;
+    let dbg = crate::split::split_debug_enabled();
+    let Some((cyl, band)) = parse_band(brep, face_id) else {
+        if dbg {
+            eprintln!("sampled split: parse_band rejected face {face_id:?}");
+        }
+        return None;
+    };
+    let Some(profile) = profile_from_samples(&cyl, points) else {
+        if dbg {
+            eprintln!(
+                "sampled split: profile_from_samples rejected {} points on {face_id:?}",
+                points.len()
+            );
+        }
+        return None;
+    };
     // A profile that misses this band's interior is a legitimate no-op
     // (the curve crosses the cylinder elsewhere): report "split into just
     // this face" so the caller keeps it without logging a failure.

@@ -119,7 +119,7 @@ fn cut_polyline_between(
 
 /// Whether `VCAD_SPLIT_DEBUG` is set, read once per process — `split_dbg!`
 /// fires inside hot per-face loops, so the env lookup must not repeat.
-fn split_debug_enabled() -> bool {
+pub(crate) fn split_debug_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("VCAD_SPLIT_DEBUG").is_ok())
 }
@@ -4574,11 +4574,17 @@ pub fn split_cylindrical_face(
                     // is outside the band family. Log so the caller sees
                     // the operation failed instead of silently producing a
                     // geometrically wrong result.
+                    let loop_len = brep
+                        .topology
+                        .loop_half_edges(brep.topology.faces[face_id].outer_loop)
+                        .count();
+                    let holes = brep.topology.faces[face_id].inner_loops.len();
                     eprintln!(
                         "[vcad-kernel-booleans] split_cylindrical_face: Sampled \
-                         intersection ({} points) is not a closed single-valued \
-                         profile on this face; returning face unsplit. Downstream \
-                         boolean result may be incorrect for this face.",
+                         intersection ({} points) could not be applied to {face_id:?} \
+                         ({loop_len}-vertex outer loop, {holes} hole(s)); returning \
+                         face unsplit. Downstream boolean result may be incorrect \
+                         for this face.",
                         points.len()
                     );
                     SplitResult {

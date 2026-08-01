@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-01-boolean-band-cyclic-parse",
+  "version": "0.9.4",
+  "date": "2026-08-01",
+  "category": "fix",
+  "title": "Booleans: parse cylindrical bands independent of loop start",
+  "summary": "Booleans over many-instance patterns no longer fragment faces or drop geometry when a face loop's starting edge sits mid-chain.",
+  "features": ["booleans", "patterns"]
+}
