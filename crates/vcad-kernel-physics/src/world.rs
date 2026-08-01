@@ -635,6 +635,25 @@ impl PhysicsWorld {
         Ok(world)
     }
 
+    /// The underlying phyz model, as built from the document — authored
+    /// inertials, joint frames, limits, the lot.
+    ///
+    /// This is the seam batched backends build on: clone it into a
+    /// `phyz_gpu::GpuBatchSimulator` or a `phyz_env::BatchEnv` and every
+    /// environment inherits exactly the physics this world runs, instead of a
+    /// re-derived approximation. (An earlier GPU pipeline rebuilt the model
+    /// from the document with density-guessed box inertias; keeping a single
+    /// builder is the fix.)
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    /// The current phyz state (q, v) — pair of [`Self::model`] for seeding a
+    /// batched backend with this world's exact initial conditions.
+    pub fn phyz_state(&self) -> &State {
+        &self.state
+    }
+
     /// Configure the ground plane. Takes effect on the next [`Self::step`].
     pub fn set_ground(&mut self, ground: GroundConfig) {
         self.ground = ground;
