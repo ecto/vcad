@@ -168,6 +168,80 @@ fn env_usize(key: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+/// A policy loaded from disk, whichever architecture wrote it.
+///
+/// Both the replay and re-score paths need this, and when they each rolled
+/// their own the re-score one silently stayed linear-only — so loading lives
+/// in exactly one place and the enum implements [`Policy`] by delegation,
+/// letting every consumer stay generic.
+#[derive(Clone)]
+enum SavedPolicy {
+    Linear(LinearPolicy),
+    Mlp(MlpPolicy),
+}
+
+impl Policy for SavedPolicy {
+    fn obs_dim(&self) -> usize {
+        match self {
+            Self::Linear(p) => p.obs_dim(),
+            Self::Mlp(p) => p.obs_dim(),
+        }
+    }
+    fn params(&self) -> &[f64] {
+        match self {
+            Self::Linear(p) => p.params(),
+            Self::Mlp(p) => p.params(),
+        }
+    }
+    fn params_mut(&mut self) -> &mut [f64] {
+        match self {
+            Self::Linear(p) => p.params_mut(),
+            Self::Mlp(p) => p.params_mut(),
+        }
+    }
+    fn set_whitening(&mut self, mean: Vec<f64>, std: Vec<f64>) {
+        match self {
+            Self::Linear(p) => p.set_whitening(mean, std),
+            Self::Mlp(p) => p.set_whitening(mean, std),
+        }
+    }
+    fn act(&self, features: &[f64]) -> Vec<f64> {
+        match self {
+            Self::Linear(p) => Policy::act(p, features),
+            Self::Mlp(p) => Policy::act(p, features),
+        }
+    }
+}
+
+impl SavedPolicy {
+    /// Name of the architecture, for logging.
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Linear(_) => "linear",
+            Self::Mlp(_) => "mlp",
+        }
+    }
+}
+
+/// Load a trained policy, dispatching on the architecture the file records.
+///
+/// `hidden` is the discriminator: only [`MlpPolicy`] has it. Guessing wrong
+/// is not silent — [`LinearPolicy`] has a required `weights` field an MLP
+/// file lacks, so a mismatch fails deserialization — but it is still a
+/// failure, and with the MLP now the default it was the common case.
+fn load_policy(path: &std::path::Path) -> Result<SavedPolicy, Box<dyn std::error::Error>> {
+    let blob: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    let pol = blob
+        .get("policy")
+        .ok_or("saved file has no `policy` field")?
+        .clone();
+    Ok(if pol.get("hidden").is_some() {
+        SavedPolicy::Mlp(serde_json::from_value(pol)?)
+    } else {
+        SavedPolicy::Linear(serde_json::from_value(pol)?)
+    })
+}
+
 /// Ten fresh evaluation seeds, disjoint from anything training touches.
 ///
 /// This is the *only* number any change may be judged by. ARS's own
@@ -403,23 +477,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&dir)?;
         let every = env_usize("K1_REPLAY_EVERY", 2).max(1);
 
-        let blob: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&saved)?)?;
-        let pol = &blob["policy"];
-        // The saved policy is whichever architecture trained it; `hidden`
-        // is the discriminator.
-        let mlp: Option<MlpPolicy> = pol
-            .get("hidden")
-            .is_some()
-            .then(|| serde_json::from_value(pol.clone()))
-            .transpose()?;
-        let lin: Option<LinearPolicy> = match &mlp {
-            Some(_) => None,
-            None => Some(serde_json::from_value(pol.clone())?),
-        };
-        println!(
-            "replay: {} policy, seed {seed} → {dir}/",
-            if mlp.is_some() { "mlp" } else { "linear" }
-        );
+        let policy = load_policy(&saved)?;
+        println!("replay: {} policy, seed {seed} → {dir}/", policy.kind());
 
         let mut env = spec.build()?;
         let mut obs = env.reset_with_seed(seed);
@@ -432,11 +491,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 frame += 1;
             }
             let f = vcad_sim::rl::features(&obs, &slots, NOMINAL_H);
-            let targets = match (&mlp, &lin) {
-                (Some(m), _) => Policy::act(m, &f),
-                (_, Some(l)) => Policy::act(l, &f),
-                _ => unreachable!(),
-            };
+            let targets = Policy::act(&policy, &f);
             let r = env.step_full(vcad_kernel_physics::Action::PositionTarget(targets.clone()));
             total += reward(&r, &targets);
             obs = r.observation;
@@ -539,8 +594,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `iterations = 0` re-evaluates the policy already on disk instead of
     // retraining — the cheap way to re-check a run you just paid for.
     if iterations == 0 {
-        let blob: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&saved)?)?;
-        let policy: LinearPolicy = serde_json::from_value(blob["policy"].clone())?;
+        let policy = load_policy(&saved)?;
+        println!("re-scoring saved {} policy", policy.kind());
         let mut env = spec.build()?;
         for s in 1..=10u64 {
             let e = vcad_sim::rl::rollout(&mut env, &policy, &slots, NOMINAL_H, s, &reward, None);
