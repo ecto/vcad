@@ -6501,6 +6501,51 @@ export function importUrdfBuffer(data) {
 }
 
 /**
+ * Import a URDF, optionally synthesizing a floating (6-DOF) base.
+ *
+ * Most humanoid/quadruped URDFs ship the `world` link and its
+ * `type="floating"` joint commented out, on the convention that the
+ * simulator supplies the free base. Without it the root link is grounded
+ * and the robot is welded to the world — useless for locomotion. Passing
+ * `floating_base` injects exactly that commented-out block.
+ *
+ * # Arguments
+ *
+ * * `data` - Raw URDF XML bytes (UTF-8).
+ * * `floating_base` - Synthesize the world link + `Free` joint.
+ * * `root_link` - Link to attach it to (default: the tree's root link).
+ * * `spawn_height_mm` - Initial base height in mm, written as the joint's
+ *   `parentAnchor.z` (a `Free` joint's scalar `state` cannot carry it).
+ * @param {Uint8Array} data
+ * @param {boolean} floating_base
+ * @param {string | null} [root_link]
+ * @param {number | null} [spawn_height_mm]
+ * @returns {string}
+ */
+export function importUrdfBufferWithOptions(data, floating_base, root_link, spawn_height_mm) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(root_link) ? 0 : passStringToWasm0(root_link, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.importUrdfBufferWithOptions(ptr0, len0, floating_base, ptr1, len1, !isLikeNone(spawn_height_mm), isLikeNone(spawn_height_mm) ? 0 : spawn_height_mm);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Initialize the WASM module (sets up panic hook for better error messages).
  */
 export function init() {
@@ -8511,6 +8556,28 @@ export function transformMeshBuffers(positions, normals, transform_json) {
 }
 
 /**
+ * Report the name of a floating joint found inside a **commented-out**
+ * region of the URDF, or `undefined` if there is none.
+ *
+ * A hit is a strong signal the caller wants `floating_base` — the file's
+ * author wrote the joint and then commented it out for the simulator to
+ * supply.
+ * @param {Uint8Array} data
+ * @returns {string | undefined}
+ */
+export function urdfCommentedFloatingJoint(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.urdfCommentedFloatingJoint(ptr0, len0);
+    let v2;
+    if (ret[0] !== 0) {
+        v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v2;
+}
+
+/**
  * Write a DST file from an embroidery pattern JSON string.
  * @param {string} json
  * @returns {Uint8Array}
@@ -10369,12 +10436,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3803, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3804, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3804, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3805, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3828, function: Function { arguments: [Externref], shim_idx: 3829, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3829, function: Function { arguments: [Externref], shim_idx: 3830, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
