@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-01-ars-step-decay-failclosed-base",
+  "version": "0.9.4",
+  "date": "2026-08-01",
+  "category": "feat",
+  "title": "ARS step-size decay + fail-closed base termination",
+  "summary": "The RL trainer gains an optional cosine step-size schedule, and robot envs now refuse base-pose termination conditions that could never fire (fixed-base or mistyped base instance).",
+  "features": ["simulation", "rl", "physics"]
+}

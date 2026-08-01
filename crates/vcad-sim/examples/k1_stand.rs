@@ -23,6 +23,7 @@
 //!
 //! Every knob below is an environment variable so a sweep is a shell line
 //! rather than a recompile: `K1_ROLLOUTS`, `K1_DIRS`, `K1_TOPK`, `K1_ALPHA`,
+//! `K1_ALPHA_FINAL` (cosine step-size decay target; 0 = constant α),
 //! `K1_NU`, `K1_SEED`, `K1_POLICY` (`linear`|`mlp`), `K1_HIDDEN`,
 //! `K1_CURRICULUM_WARMUP`, `K1_ACTION_SCALE`, `K1_SPAWN_Z_MM`, the
 //! randomization channels (`K1_POS_PERTURB`, `K1_VEL_PERTURB`, `K1_MASS_PCT`,
@@ -392,6 +393,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         n_directions: env_usize("K1_DIRS", 12),
         top_k: env_usize("K1_TOPK", 6),
         step_size: env_f64("K1_ALPHA", 0.005),
+        // Cosine decay target; 0 disables the schedule (constant α). ARS
+        // never anneals on its own — see `ArsConfig::step_size_final`.
+        step_size_final: match env_f64("K1_ALPHA_FINAL", 0.0) {
+            f if f > 0.0 => Some(f),
+            _ => None,
+        },
         noise_std: env_f64("K1_NU", 0.05),
         iterations,
         // Draws averaged per evaluation. Three is not enough on this env —
