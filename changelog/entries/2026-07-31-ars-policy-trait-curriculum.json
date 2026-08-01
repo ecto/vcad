@@ -1,0 +1,13 @@
+{
+  "id": "2026-07-31-ars-policy-trait-curriculum",
+  "version": "0.9.4",
+  "date": "2026-07-31",
+  "category": "feat",
+  "title": "RL trainer: K1 standing task solved (10/10 seeds)",
+  "summary": "ARS no longer walks out of the solutions it finds (step size 0.03 -> 0.005), gains a randomization curriculum and a tanh MLP policy, and selects iterates on held-out seeds. The Booster K1 randomized standing task goes from 0/10 to 10/10 full episodes.",
+  "features": [
+    "physics",
+    "simulation",
+    "rl"
+  ]
+}
