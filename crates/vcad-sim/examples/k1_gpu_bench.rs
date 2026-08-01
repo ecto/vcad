@@ -18,10 +18,11 @@
 //!    (`phyz_gpu::GpuBatchSimulator::interop`): once observations stay on
 //!    device, only the submit column matters.
 //!
-//! What this deliberately does **not** measure yet: contact (the GPU penalty
-//! pipeline needs collision geometry the model doesn't carry yet) and PD
-//! actuation (the GPU path is torque-only today). Both are listed gaps for
-//! M1; this benchmark exists so their cost is measurable when they land.
+//! What this deliberately does **not** measure yet: contact — the GPU
+//! penalty pipeline needs collision geometry the model doesn't carry yet.
+//! PD actuation landed (`BatchSimPipeline::enable_pd`) and is sanity-checked
+//! at the bottom: all 22 servoed K1 joints track a 0.3 rad command while the
+//! base free-falls.
 
 use vcad_ir::Document;
 use vcad_sim::BatchSimPipeline;
@@ -125,6 +126,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "falling — gravity OK"
         } else {
             "NOT falling — GPU path is broken, numbers above are meaningless"
+        }
+    );
+
+    // --- PD sanity: servos track a commanded pose while the base
+    // free-falls. ---
+    //
+    // Zero targets would prove nothing (in uniform free fall the joints stay
+    // at rest with or without servos), so command 0.3 rad on every servoed
+    // joint and require the tracking error to shrink. A sign error diverges;
+    // wrong DOF indexing leaves some joint untouched at 0.3 rad of error.
+    // (No contact geometry yet, so the robot falls forever; joint tracking
+    // is the thing under test.)
+    let mut batch = BatchSimPipeline::from_document(&doc, 4)?;
+    let gains: std::collections::HashMap<String, (f64, f64)> = batch
+        .servo_joint_ids()
+        .iter()
+        .map(|id| {
+            let g = if id.contains("Hip") || id.contains("Knee") {
+                (200.0, 5.0)
+            } else if id.contains("Ankle") {
+                (50.0, 1.0)
+            } else {
+                (40.0, 1.0)
+            };
+            (id.to_string(), g)
+        })
+        .collect();
+    batch.enable_pd(&gains, (40.0, 1.0))?;
+    let n_servo = batch.servo_joint_ids().len();
+    batch.batch_reset();
+    let cmd = 0.3f64;
+    for _ in 0..200 {
+        batch.batch_step_targets(&vec![vec![cmd; n_servo]; 4])?;
+    }
+    let obs = batch.batch_observe();
+    // Worst tracking error over the servoed slots, at their true offsets:
+    let servo_offsets = batch.servo_q_offsets();
+    let worst = servo_offsets
+        .iter()
+        .map(|&s| (obs[0].joint_positions[s] - cmd).abs())
+        .fold(0.0f64, f64::max);
+    println!(
+        "PD sanity: worst |q - {cmd}| after 200 ticks commanding {cmd} rad: \
+         {worst:.4} rad ({})",
+        if worst < 0.15 {
+            "tracking — PD pass OK"
+        } else {
+            "NOT tracking — PD pass broken"
         }
     );
     Ok(())

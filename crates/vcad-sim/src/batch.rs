@@ -16,6 +16,11 @@ pub struct BatchSimPipeline {
     n_envs: usize,
     nv: usize,
     initial_state: State,
+    /// Single-DOF joints in document order: (joint id, q offset, v offset,
+    /// authored effort limit). The PD action interface indexes against this.
+    servo_joints: Vec<(String, usize, usize, Option<f64>)>,
+    /// Number of servoed DOFs once [`Self::enable_pd`] has run.
+    pd_dofs: usize,
 }
 
 impl BatchSimPipeline {
@@ -35,6 +40,19 @@ impl BatchSimPipeline {
         let initial_state = world.phyz_state().clone();
         let nv = model.nv;
 
+        // Single-DOF joints in document order — the servo-able set, matching
+        // the CPU gym env's actuated_joint_ids minus multi-DOF joints (which
+        // have no scalar position target; the K1's floating base is the
+        // canonical example).
+        let servo_joints = world
+            .joint_ids()
+            .into_iter()
+            .filter_map(|id| {
+                let (q, v, ndof, effort) = world.joint_addressing(&id)?;
+                (ndof == 1).then_some((id, q, v, effort))
+            })
+            .collect();
+
         let gpu_sim = GpuBatchSimulator::new(model, n_envs).map_err(SimError::Gpu)?;
 
         Ok(Self {
@@ -42,7 +60,91 @@ impl BatchSimPipeline {
             n_envs,
             nv,
             initial_state,
+            servo_joints,
+            pd_dofs: 0,
         })
+    }
+
+    /// Enable GPU PD position servos on every single-DOF joint.
+    ///
+    /// `gains` supplies per-joint `(kp, kd)` by joint id; joints not in the
+    /// map fall back to `default_gains`. The torque clamp is the joint's
+    /// authored effort limit when it has one, else the CPU servo's `kp·π`
+    /// fallback — the same law `RobotEnv` runs, minus its inertia-scaled
+    /// defaults (a batched caller supplies real gains; guessing them
+    /// per-joint on the GPU would hide the difference from the CPU env).
+    ///
+    /// After this, [`Self::set_position_targets`] is the action interface.
+    pub fn enable_pd(
+        &mut self,
+        gains: &std::collections::HashMap<String, (f64, f64)>,
+        default_gains: (f64, f64),
+    ) -> Result<(), SimError> {
+        let dofs: Vec<phyz_gpu::PdDof> = self
+            .servo_joints
+            .iter()
+            .map(|(id, q, v, effort)| {
+                let (kp, kd) = gains.get(id).copied().unwrap_or(default_gains);
+                phyz_gpu::PdDof {
+                    q_index: *q,
+                    v_index: *v,
+                    kp,
+                    kd,
+                    max_force: effort.unwrap_or((kp * std::f64::consts::PI).max(1e-12)),
+                }
+            })
+            .collect();
+        self.gpu_sim
+            .enable_pd_control(&dofs)
+            .map_err(SimError::Gpu)?;
+        self.pd_dofs = dofs.len();
+        Ok(())
+    }
+
+    /// The servoed joints' q offsets in the flat state, in
+    /// [`Self::servo_joint_ids`] order — for reading joint angles out of
+    /// [`Self::batch_observe`] without re-deriving the model's layout.
+    pub fn servo_q_offsets(&self) -> Vec<usize> {
+        self.servo_joints.iter().map(|(_, q, ..)| *q).collect()
+    }
+
+    /// Ids of the servoed joints, in the order
+    /// [`Self::set_position_targets`] expects its per-env target vectors.
+    pub fn servo_joint_ids(&self) -> Vec<&str> {
+        self.servo_joints
+            .iter()
+            .map(|(id, ..)| id.as_str())
+            .collect()
+    }
+
+    /// Upload per-environment position targets (radians / meters) for the
+    /// PD servos and step all environments, without host readback.
+    ///
+    /// The RL rollout hot path: PD torque computation happens on the GPU, so
+    /// nothing crosses the bus but the targets themselves.
+    pub fn batch_step_targets(&mut self, targets: &[Vec<f64>]) -> Result<(), SimError> {
+        if self.pd_dofs == 0 {
+            return Err(SimError::Gpu(
+                "PD control not enabled — call enable_pd first".into(),
+            ));
+        }
+        if targets.len() != self.n_envs {
+            return Err(SimError::ActionMismatch {
+                expected: self.n_envs,
+                got: targets.len(),
+            });
+        }
+        if let Some(bad) = targets.iter().find(|t| t.len() != self.pd_dofs) {
+            return Err(SimError::ActionMismatch {
+                expected: self.pd_dofs,
+                got: bad.len(),
+            });
+        }
+        self.gpu_sim
+            .set_position_targets(targets)
+            .map_err(SimError::Gpu)?;
+        self.gpu_sim.step();
+        Ok(())
     }
 
     /// Step all environments with per-environment actions.

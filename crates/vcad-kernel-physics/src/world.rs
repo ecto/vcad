@@ -654,6 +654,23 @@ impl PhysicsWorld {
         &self.state
     }
 
+    /// A joint's (q offset, v offset, dof count) in the flat phyz state, plus
+    /// its authored effort limit (N·m or N) when it has one.
+    ///
+    /// This is the addressing a batched backend needs to servo the same
+    /// joints this world servos — a GPU PD pass indexes `q`/`v` directly and
+    /// cannot go through vcad joint ids.
+    pub fn joint_addressing(&self, joint_id: &str) -> Option<(usize, usize, usize, Option<f64>)> {
+        let q = *self.joint_q_offsets.get(joint_id)?;
+        let v = *self.joint_v_offsets.get(joint_id)?;
+        let ndof = self.joint_dof_count(joint_id);
+        let effort = self
+            .joint_kinds
+            .get(joint_id)
+            .and_then(Self::joint_effort_limit);
+        Some((q, v, ndof, effort))
+    }
+
     /// Configure the ground plane. Takes effect on the next [`Self::step`].
     pub fn set_ground(&mut self, ground: GroundConfig) {
         self.ground = ground;
