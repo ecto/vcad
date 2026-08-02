@@ -64,6 +64,30 @@ func vcadMat4(_ d: [Double], at o: Int = 0) -> float4x4 {
     return float4x4(columns: (col(0), col(1), col(2), col(3)))
 }
 
+/// Unpack the flat contact channel — 5 doubles per end effector: in-contact
+/// (0/1), normal force (N), then the 3-vector centre of pressure.
+///
+/// A free function so the stride boundary is directly testable. `to:` is
+/// `count - 4` rather than `count` because `stride(to:)` is exclusive: for a
+/// well-formed buffer of `5n` the two are identical (the last start index
+/// `5n-5` satisfies `5n-5 < 5n-4`), but on a short or malformed buffer only
+/// `count - 4` refuses to start a record it cannot finish. With `count` a
+/// 12-element array would begin a record at index 10 and read index 14.
+///
+/// Pinned by `testFootContactUnpacking`, because this is exactly the kind of
+/// off-by-one that reads wrong in either direction.
+func unpackFootContacts(_ flat: [Double]) -> [FootContact] {
+    var contacts: [FootContact] = []
+    contacts.reserveCapacity(flat.count / 5)
+    for i in stride(from: 0, to: flat.count - 4, by: 5) {
+        contacts.append(FootContact(
+            inContact: flat[i] != 0,
+            normalForce: flat[i + 1],
+            centerOfPressure: SIMD3(flat[i + 2], flat[i + 3], flat[i + 4])))
+    }
+    return contacts
+}
+
 /// Borrow a `(ptr, len)` UTF-8 pair as a Swift `String`.
 private func ffiString(_ p: UnsafePointer<UInt8>?, _ len: Int) -> String? {
     guard let p, len > 0 else { return nil }
@@ -550,15 +574,8 @@ final class RobotEnv {
             guard let p, n > 0 else { return [] }
             return Array(UnsafeBufferPointer(start: p, count: n))
         }
-        let contactsFlat = doubles(v.end_effector_contacts, v.end_effector_contacts_len)
-        var contacts: [FootContact] = []
-        contacts.reserveCapacity(contactsFlat.count / 5)
-        for i in stride(from: 0, to: contactsFlat.count - 4, by: 5) {
-            contacts.append(FootContact(
-                inContact: contactsFlat[i] != 0,
-                normalForce: contactsFlat[i + 1],
-                centerOfPressure: SIMD3(contactsFlat[i + 2], contactsFlat[i + 3], contactsFlat[i + 4])))
-        }
+        let contacts = unpackFootContacts(
+            doubles(v.end_effector_contacts, v.end_effector_contacts_len))
         return SimStep(
             step: v.step,
             reward: v.reward,

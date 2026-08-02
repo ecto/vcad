@@ -334,3 +334,42 @@ final class SimParityTests: XCTestCase {
         XCTAssertEqual(gains["left_shoulder_pitch_joint"], [40, 1])
     }
 }
+
+/// The flat contact channel's stride boundary.
+///
+/// Raised in review as dropping the last record when the buffer is a perfect
+/// multiple of 5. It does not — `stride(to:)` is exclusive, so the final start
+/// index `5n-5` satisfies `5n-5 < 5n-4` and is included. The `- 4` is what
+/// keeps a short buffer from starting a record it cannot finish, so this is
+/// pinned from both sides.
+final class FootContactUnpackingTests: XCTestCase {
+
+    func testEveryEndEffectorSurvivesAWellFormedBuffer() {
+        for n in 0...4 {
+            var flat: [Double] = []
+            for k in 0..<n {
+                flat += [Double(k % 2), Double(100 + k), Double(k), Double(k) + 0.5, 0.0]
+            }
+            let got = unpackFootContacts(flat)
+            XCTAssertEqual(got.count, n,
+                           "a \(flat.count)-element buffer must yield \(n) records")
+            for k in 0..<n {
+                XCTAssertEqual(got[k].inContact, k % 2 == 1)
+                XCTAssertEqual(got[k].normalForce, Double(100 + k))
+                XCTAssertEqual(got[k].centerOfPressure,
+                               SIMD3(Double(k), Double(k) + 0.5, 0.0))
+            }
+        }
+    }
+
+    func testAShortBufferIsTruncatedRatherThanReadOutOfBounds() {
+        // The reason the bound is `count - 4`. Using `count` here would start a
+        // record at index 10 of a 12-element array and read index 14.
+        for count in [1, 4, 7, 12, 13] {
+            let flat = (0..<count).map(Double.init)
+            let got = unpackFootContacts(flat)
+            XCTAssertEqual(got.count, count / 5,
+                           "\(count) doubles hold \(count / 5) whole records")
+        }
+    }
+}
