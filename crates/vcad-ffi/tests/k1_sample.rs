@@ -30,6 +30,56 @@ fn last_error() -> String {
     String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(p, len) }).into_owned()
 }
 
+/// Every mesh the sample references must exist on disk, by exact name.
+///
+/// This is the check that would have caught the meshes being absent from the
+/// repository. They were dropped by the root `.gitignore`'s `*.stl` rule —
+/// which matches `Trunk.STL` on macOS, where git sets `core.ignorecase=true` —
+/// so `git add third_party/` skipped all 24 files silently, and the tests below
+/// still passed locally because the files were there, just untracked. The
+/// sample rendered nothing on every other machine.
+///
+/// Exact-case comparison on purpose: a case-insensitive filesystem will happily
+/// open `trunk.stl` for `Trunk.STL`, so a case mismatch is another bug that
+/// only appears on Linux.
+#[test]
+fn every_referenced_mesh_is_present_by_exact_name() {
+    let (doc, dir) = sample();
+    let v: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let base = Path::new(&dir);
+    let mut checked = 0;
+    for node in v["nodes"].as_object().unwrap().values() {
+        if node["op"]["type"] != "mesh_import" {
+            continue;
+        }
+        let rel = node["op"]["path"].as_str().unwrap();
+        let full = base.join(rel);
+        assert!(
+            full.is_file(),
+            "{rel} is referenced by the sample but not on disk (looked at {}). \
+             If it exists locally but not in a fresh clone, it was swallowed by \
+             a .gitignore rule — check `git check-ignore -v` on it.",
+            full.display()
+        );
+        // Exact case: readdir the parent and match byte-for-byte.
+        let name = full.file_name().unwrap().to_string_lossy().into_owned();
+        let parent = full.parent().unwrap();
+        let exact = std::fs::read_dir(parent)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy() == name);
+        assert!(
+            exact,
+            "{name} resolves only case-insensitively — it will not open on Linux"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 20,
+        "expected the K1's mesh imports, found {checked}"
+    );
+}
+
 #[test]
 fn the_sample_references_its_meshes_relatively() {
     // An absolute path here resolves on exactly one machine. This is the

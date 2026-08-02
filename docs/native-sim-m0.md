@@ -190,6 +190,11 @@ tolerance covers two measured effects:
   round-trip subnormal-magnitude values (`-7.510773185222099e-19` reads back as
   `-7.5107731852221e-19`). Several base DOFs sit at 1e-17..1e-19. Worst
   same-profile deviation: **9.8e-17**.
+- macOS/aarch64 golden vs Linux/glibc/aarch64, measured in a container against
+  a clean clone: **3.8e-9**. That is the OS + libm dimension isolated
+  (`sin`/`cos`/`atan2` differ by ~1 ulp between Apple's libm and glibc's,
+  amplified over the 21 frames). The x86_64 dimension — FMA contraction and
+  reassociation — is still untested; `1e-6` leaves ~260x headroom for it.
 - Optimization changes floating-point codegen, and a falling humanoid is a
   divergent system that amplifies early rounding. Debug golden vs release run:
   **1.5e-9**. Pinning a build profile would only move the problem to the first
