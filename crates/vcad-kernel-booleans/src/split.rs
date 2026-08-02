@@ -3840,25 +3840,29 @@ pub fn split_cylindrical_face_by_circle(
     }
 }
 
-/// Compute the U parameter for a point on a cylinder surface.
-/// Segment count for discretizing a circle. Both the planar-cap and
-/// cylinder-wall splitters must use this same count so their shared arcs
-/// discretize identically. It also has to agree with the display
-/// tessellator's re-sampling of ANALYTIC circle boundaries that survive the
-/// boolean untouched (`TessellationParams::from_segments(n)` resamples at
-/// exactly `n`), so until boolean results freeze every boundary (see the
-/// kernel-seam-freeze WIP branch) this must stay at the caller's count —
-/// sag-adaptive densification here reopens every analytic/frozen seam.
 /// Number of points a boolean-result circular rim of `radius` is
 /// discretized into, given the caller's requested `segments`.
 ///
-/// This is the *canonical rim grid*: it is sag-adaptive and therefore
-/// usually FINER than the requested `circle_segments` — the returned count
-/// is `max(requested, sag_count)`. Callers that need the exact discrete
-/// geometry of a boolean result (closed-form volume of a through hole, the
-/// node count of a frozen rim, a discrete dV/dr) must ask this function
-/// rather than assuming the rim is the inscribed `circle_segments`-gon: for
-/// r = 2.5 at the default sag this returns 112, not 32.
+/// This is the *canonical rim grid*: sag-adaptive, and therefore usually
+/// FINER than the requested `circle_segments` — the count is
+/// `max(requested, sag_count)`. For r = 2.5 at the default sag it is 112,
+/// not 32. Callers that need the exact discrete geometry of a boolean
+/// result (closed-form volume of a through hole, the node count of a frozen
+/// rim, a discrete dV/dr) must ask this function rather than assume the rim
+/// is the inscribed `circle_segments`-gon.
+///
+/// Both the planar-cap and cylinder-wall splitters must use this same count
+/// so their shared arcs discretize identically.
+///
+/// CAVEAT, and a live lead: before #758 this deliberately returned the
+/// caller's count, because the display tessellator re-samples ANALYTIC
+/// circle boundaries that survive a boolean untouched at exactly `n`
+/// (`TessellationParams::from_segments(n)`) — so densifying here makes a
+/// frozen rim disagree with an analytic one it borders. #758 made it
+/// sag-adaptive anyway, to match `ssi::ellipse_samples`. That trade may be
+/// what the quarantined `through_hole_reconstructs_full_circles` is
+/// measuring (STEP reconstructs 6 circles where it should find 8);
+/// unproven, but it is the first place to look.
 pub fn arc_segments(radius: f64, segments: u32) -> u32 {
     // Must match ssi::ellipse_samples' sag: SSI polylines and canonical
     // rings share vertices only when both discretize at the same density.
