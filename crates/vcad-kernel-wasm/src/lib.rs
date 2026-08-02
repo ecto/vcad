@@ -3273,6 +3273,8 @@ pub fn import_urdf_buffer(data: &[u8]) -> Result<String, JsError> {
 /// * `root_link` - Link to attach it to (default: the tree's root link).
 /// * `spawn_height_mm` - Initial base height in mm, written as the joint's
 ///   `parentAnchor.z` (a `Free` joint's scalar `state` cannot carry it).
+///   `undefined` keeps whatever origin the URDF authored, and applies to a
+///   floating joint the URDF already declares — not only a synthesized one.
 #[module("urdf")]
 #[wasm_bindgen(js_name = importUrdfBufferWithOptions)]
 pub fn import_urdf_buffer_with_options(
@@ -3286,7 +3288,11 @@ pub fn import_urdf_buffer_with_options(
     let opts = vcad_kernel_urdf::UrdfReadOptions {
         floating_base,
         floating_base_link: root_link,
-        spawn_height_mm: spawn_height_mm.unwrap_or(0.0),
+        // Passed through rather than flattened to 0.0: `None` now means "keep
+        // the authored origin", where it used to silently force the base to
+        // the world origin — which for a URDF authoring `xyz="0 0 0"` put the
+        // robot below its own termination floor.
+        spawn_height_mm,
         ..Default::default()
     };
     let doc = vcad_kernel_urdf::read_urdf_from_str_with_options(xml, &opts)

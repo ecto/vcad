@@ -369,8 +369,9 @@ VcadTrainer *vcad_train_start(const uint8_t *doc_json, size_t doc_json_len,
                               const uint8_t *reward_json, size_t reward_json_len);
 uint8_t vcad_train_poll(const VcadTrainer *trainer, VcadTrainProgress *out);
 void vcad_train_stop(VcadTrainer *trainer);
-/* Two-call protocol: call with out=NULL,out_cap=0 to learn the size (returns 0
- * and reports "policy bundle needs N bytes" via vcad_last_error), then copy. */
+/* Two-call protocol. Sizing call: out=NULL (or out_cap=0) RETURNS the number of
+ * bytes required, or 0 if no policy has been scored yet. Copy call: pass a
+ * buffer of at least that size; returns bytes written, or 0 if too small. */
 size_t vcad_train_best_policy_json(const VcadTrainer *trainer, uint8_t *out, size_t out_cap);
 const uint8_t *vcad_train_error(const VcadTrainer *trainer, size_t *out_len);
 /* Cancels, JOINS the worker, then frees. Blocks — deliberately. */

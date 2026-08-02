@@ -108,18 +108,18 @@ impl Trainer {
     }
 
     fn best_bundle(&self) -> Option<String> {
-        // The documented two-call protocol: size, then copy.
-        let need = vcad_train_best_policy_json(self.0, std::ptr::null_mut(), 0);
-        assert_eq!(need, 0, "sizing call must return 0");
-        let msg = last_error();
-        if msg.contains("no policy has been scored") {
+        // The documented two-call protocol: the sizing call RETURNS the size.
+        let n = vcad_train_best_policy_json(self.0, std::ptr::null_mut(), 0);
+        if n == 0 {
             return None;
         }
-        let n: usize = msg
-            .split_whitespace()
-            .nth(3)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| panic!("could not parse required size from {msg:?}"));
+        // An undersized buffer must refuse rather than truncate.
+        let mut tiny = vec![0u8; n - 1];
+        assert_eq!(
+            vcad_train_best_policy_json(self.0, tiny.as_mut_ptr(), tiny.len()),
+            0,
+            "a short buffer must be refused, not partially filled"
+        );
         let mut buf = vec![0u8; n];
         let written = vcad_train_best_policy_json(self.0, buf.as_mut_ptr(), buf.len());
         assert_eq!(written, n, "{}", last_error());

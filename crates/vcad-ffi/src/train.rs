@@ -863,10 +863,19 @@ pub extern "C" fn vcad_train_stop(trainer: *mut VcadTrainer) {
 
 /// Copy the best-so-far policy bundle (`.vcadpolicy` JSON) into `out`.
 ///
-/// Returns the number of bytes written, or 0 when no policy has been scored
-/// yet or `out_cap` is too small. Call with `out = null, out_cap = 0` to
-/// query the required size — it is reported through
-/// [`crate::vcad_last_error`] and returned as 0, so size first, then copy.
+/// The conventional C two-call protocol:
+///
+/// - **Sizing call** — pass `out = null` (or `out_cap = 0`). Returns the
+///   number of bytes required, or 0 when no policy has been scored yet.
+/// - **Copy call** — pass a buffer of at least that size. Returns the number
+///   of bytes written, or 0 if the buffer is too small.
+///
+/// The size is a *return value*, not something to recover from the error
+/// message. An earlier version returned 0 from the sizing call and reported
+/// the length only in [`crate::vcad_last_error`], which forced callers to
+/// parse a byte count out of English prose — a protocol that breaks the moment
+/// anyone rewords the message, and breaks silently, by failing to save a
+/// trained policy.
 #[no_mangle]
 pub extern "C" fn vcad_train_best_policy_json(
     trainer: *const VcadTrainer,
@@ -883,8 +892,15 @@ pub extern "C" fn vcad_train_best_policy_json(
         set_error("no policy has been scored yet");
         return 0;
     };
-    if out.is_null() || out_cap < text.len() {
-        set_error(format!("policy bundle needs {} bytes", text.len()));
+    // Sizing call: report the requirement as the return value.
+    if out.is_null() || out_cap == 0 {
+        return text.len();
+    }
+    if out_cap < text.len() {
+        set_error(format!(
+            "policy bundle needs {} bytes, got a {out_cap}-byte buffer",
+            text.len()
+        ));
         return 0;
     }
     unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), out, text.len()) };

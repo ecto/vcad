@@ -712,15 +712,14 @@ final class Trainer {
 
     /// The best-by-held-out policy bundle so far, or nil if none scored yet.
     ///
-    /// Uses the ABI's two-call size-then-copy protocol.
+    /// The ABI's two-call size-then-copy protocol: the sizing call returns the
+    /// required byte count directly. (It used to return 0 and report the size
+    /// only in the error message, so this had to regex a number out of English
+    /// prose — which would have broken silently, by failing to save a trained
+    /// policy, the first time anyone reworded the message.)
     func bestPolicyJSON() -> Data? {
-        let need = vcad_train_best_policy_json(handle, nil, 0)
-        guard need == 0 else { return nil }  // protocol says the sizing call returns 0
-        guard let msg = SimError.pending(),
-              let range = msg.range(of: #"needs (\d+) bytes"#, options: .regularExpression)
-        else { return nil }
-        let digits = msg[range].filter(\.isNumber)
-        guard let size = Int(digits), size > 0 else { return nil }
+        let size = vcad_train_best_policy_json(handle, nil, 0)
+        guard size > 0 else { return nil }
         var buf = [UInt8](repeating: 0, count: size)
         let written = buf.withUnsafeMutableBufferPointer {
             vcad_train_best_policy_json(handle, $0.baseAddress, $0.count)
