@@ -321,7 +321,6 @@ panic = "unwind"
 
 [profile.dev]
 panic = "unwind"
-opt-level = 2
 
 # Size-optimized profile for the Typst plugin WASM
 # (scripts/build-typst-plugin.sh).
