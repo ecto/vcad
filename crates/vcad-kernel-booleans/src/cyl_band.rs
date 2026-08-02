@@ -703,9 +703,27 @@ fn try_parse_two_chain(uvs: &[(f64, f64)], policy: TiePolicy) -> Option<CylBand>
     let full_wrap = (span - 2.0 * PI).abs() < 1e-6;
 
     // Chains must not cross (a band has a well-defined lower/upper chain).
-    // Compare on the union of both chains' sample angles.
+    // Compare on the union of both chains' sample angles — but ONLY where
+    // both are actually defined. The chains may legitimately differ by up to
+    // the end slack the range check above allows, and `chain_interp` CLAMPS
+    // outside a chain's range, so probing past the shorter chain's end
+    // compares a real value against a flat extrapolation. That manufactures
+    // a crossing out of nothing: a tangent blade wedge on a cylinder wall
+    // whose chains ended 0.31° apart read as "chains cross", the face came
+    // back unsplit, and the boolean over-trimmed. The end-slack close below
+    // is what reconciles the ends; it just runs after this test, because it
+    // needs the lo/hi answer this test produces.
+    let common_lo = chain_a[0].0.max(chain_b[0].0);
+    let common_hi = chain_a[chain_a.len() - 1]
+        .0
+        .min(chain_b[chain_b.len() - 1].0);
+    if common_hi < common_lo - U_EPS {
+        band_dbg!("parse_band: chains share no u-interval");
+        return None;
+    }
     let mut probe_us: Vec<f64> = chain_a.iter().map(|p| p.0).collect();
     probe_us.extend(chain_b.iter().map(|p| p.0));
+    probe_us.retain(|&u| u >= common_lo - U_EPS && u <= common_hi + U_EPS);
     probe_us.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
     probe_us.dedup_by(|x, y| (*x - *y).abs() < U_EPS);
     let a_below = probe_us
