@@ -89,6 +89,47 @@ pub struct EvalOptions {
     pub clock: Option<Box<dyn Clock>>,
 }
 
+/// Rewrite relative `MeshImport` paths to absolute, against `base_dir`.
+///
+/// Mesh references are opened verbatim during evaluation, so a relative path
+/// resolves against the *process working directory* — which for an app is
+/// wherever it happened to be launched from, and for a test is the crate root.
+/// A document that references its meshes relatively therefore renders in some
+/// invocations and silently comes back empty in others.
+///
+/// Normalizing once here, at the point a document is loaded from a known
+/// location, is deliberately preferred over threading a base directory through
+/// the evaluator: physics evaluates parts by its own path, and every consumer
+/// that reads a `.vcad` from disk would otherwise need to remember to pass it.
+/// After this call the document is self-describing wherever it goes.
+///
+/// Absolute paths are left alone, so a document written by the importer's
+/// default (absolute) path mode is unaffected. Returns the number of nodes
+/// rewritten.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn resolve_mesh_paths(doc: &mut vcad_ir::Document, base_dir: &std::path::Path) -> usize {
+    let mut n = 0;
+    for node in doc.nodes.values_mut() {
+        if let vcad_ir::CsgOp::MeshImport { path, .. } = &mut node.op {
+            let p = std::path::Path::new(path.as_str());
+            if p.is_absolute() {
+                continue;
+            }
+            let joined = base_dir.join(p);
+            // Canonicalize when possible so the stored path survives a later
+            // change of working directory; fall back to the joined form so a
+            // missing file still reports a useful path in the error.
+            *path = joined
+                .canonicalize()
+                .unwrap_or(joined)
+                .to_string_lossy()
+                .into_owned();
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Errors that can occur during evaluation.
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {

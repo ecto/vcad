@@ -90,13 +90,16 @@ enum Commands {
         floating_base_link: Option<String>,
         /// Initial base height in mm for the synthesized floating base.
         /// Spawn just above the settled standing height (Booster K1: 620).
-        #[arg(
-            long,
-            value_name = "MM",
-            default_value = "0",
-            requires = "floating_base"
-        )]
-        spawn_height_mm: f64,
+        #[arg(long, value_name = "MM")]
+        spawn_height_mm: Option<f64>,
+        /// Write mesh paths relative to the OUTPUT document instead of
+        /// absolute — required for a document you intend to commit.
+        ///
+        /// The default absolute path resolves only on the machine that ran the
+        /// import. Relative paths are resolved against the document's own
+        /// directory when it is loaded from disk.
+        #[arg(long)]
+        relative_meshes: bool,
     },
 
     /// Render document to image
@@ -285,13 +288,8 @@ enum Commands {
         #[arg(long, value_name = "LINK", requires = "floating_base")]
         floating_base_link: Option<String>,
         /// Initial base height in mm for `--floating-base`.
-        #[arg(
-            long,
-            value_name = "MM",
-            default_value = "0",
-            requires = "floating_base"
-        )]
-        spawn_height_mm: f64,
+        #[arg(long, value_name = "MM")]
+        spawn_height_mm: Option<f64>,
     },
 
     /// Slice a .vcad file for 3D printing
@@ -388,6 +386,7 @@ fn main() -> Result<()> {
             floating_base,
             floating_base_link,
             spawn_height_mm,
+            relative_meshes,
         }) => {
             import_urdf(
                 &input,
@@ -397,6 +396,7 @@ fn main() -> Result<()> {
                     link: floating_base_link,
                     spawn_height_mm,
                 },
+                relative_meshes,
             )?;
         }
         Some(Commands::Render {
@@ -1141,28 +1141,59 @@ struct FloatingBase {
     /// Link to attach it to (default: the tree's root link).
     link: Option<String>,
     /// Initial base height in mm, written as the joint's `parentAnchor.z`.
-    spawn_height_mm: f64,
+    spawn_height_mm: Option<f64>,
 }
 
-fn import_urdf(input: &PathBuf, output: &PathBuf, floating: FloatingBase) -> Result<()> {
+fn import_urdf(
+    input: &PathBuf,
+    output: &PathBuf,
+    floating: FloatingBase,
+    relative_meshes: bool,
+) -> Result<()> {
     use std::fs;
     use vcad_kernel_urdf::UrdfReadOptions;
 
     // Import the URDF file
+    // Relative to the OUTPUT's directory: that is what the loader resolves
+    // against, and it is usually not the URDF's directory.
+    let rel_base = if relative_meshes {
+        let dir = output
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        fs::create_dir_all(&dir)?;
+        Some(dir)
+    } else {
+        None
+    };
     let opts = UrdfReadOptions {
         urdf_dir: input.parent().map(|p| p.to_path_buf()),
         floating_base: floating.enabled,
         floating_base_link: floating.link,
         spawn_height_mm: floating.spawn_height_mm,
+        mesh_paths_relative_to: rel_base,
         ..UrdfReadOptions::default()
     };
     let doc = vcad_kernel_urdf::read_urdf_with_options(input, &opts)?;
-    if floating.enabled {
-        let z = floating.spawn_height_mm;
-        println!(
-            "Floating base: synthesized a 6-DOF root joint at z = {z} mm \
-             (parentAnchor.z sets the spawn height)"
-        );
+    // Report what the document actually says, not what was requested — the
+    // flag is a no-op on a URDF that already declares a floating joint unless
+    // a spawn height was given, and a message that claims otherwise is how a
+    // robot ends up silently spawning at the world origin.
+    match doc
+        .joints
+        .iter()
+        .flat_map(|js| js.iter())
+        .find(|j| matches!(j.kind, vcad_ir::JointKind::Free))
+    {
+        Some(j) => println!(
+            "Floating base: 6-DOF root joint '{}' at z = {} mm",
+            j.id, j.parent_anchor.z
+        ),
+        None if floating.enabled => {
+            println!("Floating base: requested but NOT created — the robot is welded to the world")
+        }
+        None => {}
     }
 
     // Write the document
@@ -1208,12 +1239,20 @@ fn simulate_file(
                 floating_base: floating.enabled,
                 floating_base_link: floating.link,
                 spawn_height_mm: floating.spawn_height_mm,
+                // This path simulates in place from a URDF; absolute paths are
+                // right here, nothing is being written out to commit.
+                mesh_paths_relative_to: None,
             };
             vcad_kernel_urdf::read_urdf_with_options(input, &opts)?
         }
         "vcad" | "json" => {
             let json = std::fs::read_to_string(input)?;
-            vcad_ir::Document::from_json(&json)?
+            let mut d = vcad_ir::Document::from_json(&json)?;
+            // A committed document references its meshes relative to itself.
+            if let Some(dir) = input.parent() {
+                vcad_eval::resolve_mesh_paths(&mut d, dir);
+            }
+            d
         }
         other => anyhow::bail!(
             "simulate: unsupported input extension '{}' (expected .vcad or .urdf)",
