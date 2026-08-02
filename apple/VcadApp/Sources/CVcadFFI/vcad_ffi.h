@@ -1,5 +1,9 @@
-/* Mirror of crates/vcad-ffi/include/vcad_ffi.h for the SwiftPM systemLibrary
- * target. Keep in sync with the canonical crate header. */
+/* GENERATED FILE - DO NOT EDIT.
+ *
+ * Regenerated from crates/vcad-ffi/include/vcad_ffi.h by
+ * scripts/sync-ffi-header.py, which each app's build-ffi.sh runs before
+ * building. Edit the canonical header; this mirror is overwritten.
+ */
 #ifndef VCAD_FFI_H
 #define VCAD_FFI_H
 
@@ -57,6 +61,15 @@ VcadHit vcad_solid_raycast(const VcadSolid *solid, const double *origin, const d
  * vcad_scene_from_loon compiles a loon source program (the AI-intent path) to
  * the same IR and evaluates it identically. */
 VcadScene *vcad_scene_from_json(const uint8_t *json, size_t json_len);
+/* Like vcad_scene_from_json, but resolves RELATIVE MeshImport paths against
+ * base_dir (the document's own directory). A document that ships its meshes
+ * alongside itself references them relatively; without a base directory they
+ * resolve against the process working directory, so the same file renders from
+ * one launch and comes back empty from another. NULL/empty base_dir behaves
+ * exactly like vcad_scene_from_json. */
+VcadScene *vcad_scene_from_json_in(const uint8_t *json, size_t json_len,
+                                   const uint8_t *base_dir, size_t base_dir_len);
+
 VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
@@ -166,7 +179,7 @@ size_t vcad_solve_trace_count(const VcadSolve *s);
 VcadTraceLine vcad_solve_trace(const VcadSolve *s, size_t idx);
 size_t vcad_solve_unrouted(const VcadSolve *s);  /* receipt: nets unrouted (0 = ok) */
 double vcad_solve_min_wall(const VcadSolve *s);   /* receipt: connector-wall mm */
-/* Receipt verdicts (ABI 5). bracket_ok: 1=Held, 0=Violated (DFM Error).
+/* Receipt verdicts (ABI 4). bracket_ok: 1=Held, 0=Violated (DFM Error).
  * bracket_severity: 0 clean / 1 Warning / 2 Error. quote_cost_cents: integer
  * cents TOTAL (enclosure + board + bracket, qty 1). lead_days: HEURISTIC.
  * all_held: AND of gating domains (min-wall, copper, bracket; quote never
@@ -176,7 +189,7 @@ uint8_t vcad_solve_bracket_severity(const VcadSolve *s);
 uint64_t vcad_solve_quote_cost_cents(const VcadSolve *s);
 uint32_t vcad_solve_lead_days(const VcadSolve *s);
 uint8_t vcad_solve_all_held(const VcadSolve *s);
-/* Per-domain quote breakdown (ABI 6): enclosure CNC + bracket fold are
+/* Per-domain quote breakdown (ABI 5): enclosure CNC + bracket fold are
  * kernel-real cost models (removed-volume / unfold); board is a labeled estimate
  * (no Rust PCB cost model). quote_has_estimate = 1 when the total includes the
  * labeled board line, so the UI tags it "est." Sum == quote_cost_cents. */
@@ -185,6 +198,183 @@ uint64_t vcad_solve_quote_board_cents(const VcadSolve *s);
 uint64_t vcad_solve_quote_bracket_cents(const VcadSolve *s);
 uint8_t vcad_solve_quote_has_estimate(const VcadSolve *s);
 void vcad_solve_free(VcadSolve *s);
+
+/* =====================================================================
+ * Simulation (ABI 6) — physics envs, the render seam, policy inference,
+ * and in-process training. See crates/vcad-ffi/src/gym.rs and train.rs.
+ *
+ * UNITS. Body transforms come back in MILLIMETERS, column-major, exactly
+ * like vcad_scene_solve_fk — a renderer that draws kinematic playback draws
+ * a physics rollout unchanged. Observations are NOT rescaled: they are the
+ * policy's input space (degrees / mm / meters as documented per field) and
+ * must stay bit-identical to what training saw.
+ *
+ * ERRORS. Every entry point below returns NULL/0 on failure AND records a
+ * human-readable reason retrievable with vcad_last_error() on the SAME
+ * thread. Read it immediately after a failed call.
+ * ===================================================================== */
+
+/* Borrow this thread's last error as UTF-8 (NOT null-terminated; use the
+ * length). Returns NULL when no error is recorded. Valid until the next FFI
+ * call on this thread. */
+const uint8_t *vcad_last_error(size_t *out_len);
+
+typedef struct VcadGym VcadGym;
+typedef struct VcadPolicy VcadPolicy;
+typedef struct VcadTrainer VcadTrainer;
+
+/* A borrowed view of the most recent step/reset. Every pointer borrows from
+ * the owning gym and is invalidated by the next step/reset on it — copy out
+ * before stepping again. Lengths are element counts.
+ *
+ * base_height_m / base_tilt_deg are NOISE-FREE ground truth; base_pose is the
+ * (possibly noisy) sensor view the policy trains against. They deliberately
+ * disagree when observation noise is configured. Reward and termination read
+ * the former; the policy reads the latter. */
+typedef struct VcadGymStepView {
+  const double *joint_positions;      /* degrees (rotational) / mm (linear) */
+  size_t joint_positions_len;
+  const double *joint_velocities;     /* per second, same per-DOF units */
+  size_t joint_velocities_len;
+  const double *end_effector_poses;   /* 7 per EE: x,y,z (m), qw,qx,qy,qz */
+  size_t end_effector_poses_len;
+  const double *end_effector_contacts;/* 5 per EE: touch(0/1), N, cop xyz */
+  size_t end_effector_contacts_len;
+  const double *base_pose;            /* 7 doubles, or NULL */
+  const double *base_velocity;        /* 6 doubles (v xyz m/s, w xyz rad/s) */
+  double reward;                      /* always 0 — compute task reward yourself */
+  uint8_t done;
+  uint8_t terminated;
+  uint8_t truncated;
+  uint8_t has_base;
+  uint32_t step;
+  uint32_t action_latency_substeps;
+  double base_height_m;               /* ground truth */
+  double base_tilt_deg;               /* ground truth */
+  const uint8_t *termination_reason;  /* UTF-8, or NULL */
+  size_t termination_reason_len;
+} VcadGymStepView;
+
+/* Create an env from a .vcad JSON document and a GymSpec JSON blob. Pass
+ * spec_json = NULL (len 0) for defaults. Returns NULL on failure. */
+VcadGym *vcad_gym_create(const uint8_t *doc_json, size_t doc_json_len,
+                         const uint8_t *spec_json, size_t spec_json_len);
+void vcad_gym_free(VcadGym *gym);
+
+/* Reset, drawing domain randomization from `seed`. Returns 1 on success. */
+uint8_t vcad_gym_reset(VcadGym *gym, uint64_t seed);
+
+/* Step once. action_kind: 0 = torque (Nm/N), 1 = position target (deg/mm),
+ * 2 = velocity target (deg/s, mm/s). actions_len MUST equal
+ * vcad_gym_action_dim — a mismatch is refused, never padded. */
+uint8_t vcad_gym_step(VcadGym *gym, const double *actions, size_t actions_len,
+                      uint32_t action_kind);
+
+/* Refresh the view from true state without advancing time. */
+uint8_t vcad_gym_observe(VcadGym *gym);
+VcadGymStepView vcad_gym_step_view(const VcadGym *gym);
+
+/* Introspection. */
+size_t vcad_gym_action_dim(const VcadGym *gym);       /* action vector length */
+size_t vcad_gym_obs_dim(const VcadGym *gym);          /* POLICY feature count */
+size_t vcad_gym_observation_dim(const VcadGym *gym);  /* raw observation slots */
+double vcad_gym_control_dt(const VcadGym *gym);       /* dt*substeps, seconds */
+uint32_t vcad_gym_max_steps(const VcadGym *gym);
+size_t vcad_gym_actuated_joint_count(const VcadGym *gym);
+const uint8_t *vcad_gym_actuated_joint_id(const VcadGym *gym, size_t index,
+                                          size_t *out_len);
+size_t vcad_gym_body_count(const VcadGym *gym);
+const uint8_t *vcad_gym_body_id(const VcadGym *gym, size_t index, size_t *out_len);
+
+/* Render seam. Writes 16 doubles per body, COLUMN-MAJOR, MILLIMETERS —
+ * identical layout to vcad_scene_solve_fk. out_cap is in doubles. */
+size_t vcad_gym_body_transforms(const VcadGym *gym, double *out, size_t out_cap);
+
+/* Bind the env's bodies to a scene's instance ordering (call once, after
+ * creating both from the same document). Returns the number of scene
+ * instances that matched a simulated body. */
+size_t vcad_gym_bind_scene(VcadGym *gym, const VcadScene *scene);
+size_t vcad_gym_scene_binding_len(const VcadGym *gym);
+/* Transforms in SCENE INSTANCE ORDER — the index space the vcad_scene_instance_*
+ * calls use. Unmatched instances are left UNTOUCHED, so pre-fill `out` with
+ * authored transforms to keep static scenery. Requires vcad_gym_bind_scene. */
+size_t vcad_gym_scene_transforms(const VcadGym *gym, double *out, size_t out_cap);
+
+/* Shove the floating base: angular (rad/s) then BODY-FRAME linear (m/s),
+ * added to its current velocity. Returns 0 if there is no floating base. */
+uint8_t vcad_gym_nudge_base(VcadGym *gym, double dwx, double dwy, double dwz,
+                            double dvx, double dvy, double dvz);
+
+/* Write the current policy feature vector (for plotting). Returns the count. */
+size_t vcad_gym_features(VcadGym *gym, double *out, size_t out_cap);
+
+/* --- Policy inference -------------------------------------------------
+ * Inference lives in Rust so the forward pass matches training EXACTLY
+ * (whitening, output clamp, default-pose offset). Do not reimplement it in
+ * Swift: a drift of one clamp gives a robot that almost stands. */
+VcadPolicy *vcad_policy_load(const uint8_t *json, size_t json_len);
+/* Load a .vcadpolicy bundle. document_json may be NULL to skip the drift
+ * check; when supplied and the hash differs the policy STILL loads (staleness
+ * is a judgement, not a load error) and vcad_last_error describes the drift. */
+VcadPolicy *vcad_policy_load_bundle(const uint8_t *bundle_json, size_t bundle_json_len,
+                                    const uint8_t *document_json, size_t document_json_len);
+void vcad_policy_free(VcadPolicy *policy);
+size_t vcad_policy_obs_dim(const VcadPolicy *policy);
+size_t vcad_policy_act_dim(const VcadPolicy *policy);
+uint8_t vcad_policy_is_mlp(const VcadPolicy *policy);
+/* Dimensional compatibility check with a descriptive error. Call at load. */
+uint8_t vcad_policy_check(const VcadGym *gym, const VcadPolicy *policy);
+/* A zero (hold-rest-pose) policy matched to this env — the baseline. */
+VcadPolicy *vcad_policy_zeros(const VcadGym *gym, double action_scale_deg);
+/* Step by evaluating the policy: features -> act -> position targets. */
+uint8_t vcad_gym_policy_step(VcadGym *gym, const VcadPolicy *policy);
+/* The action the last policy step issued (joint targets, degrees), or NULL. */
+const double *vcad_gym_last_action(const VcadGym *gym, size_t *out_len);
+
+/* --- Reward and provenance -------------------------------------------- */
+/* Evaluate a RewardSpec JSON against the gym's most recent step. Returns 0
+ * before the first step of an episode, NaN on failure. */
+double vcad_gym_reward(const VcadGym *gym, const uint8_t *reward_json,
+                       size_t reward_json_len);
+/* Content hash of a document ("fnv1a64:xxxxxxxxxxxxxxxx", 23 bytes). */
+size_t vcad_document_hash(const uint8_t *doc_json, size_t doc_json_len,
+                          uint8_t *out, size_t out_cap);
+
+/* --- Training ---------------------------------------------------------- */
+typedef struct VcadTrainProgress {
+  uint32_t iteration;
+  uint32_t total_iterations;
+  double mean_reward;
+  double eval_reward;   /* trainer's own eval — NOT trustworthy, see docs */
+  uint32_t eval_steps;
+  double sigma;         /* top-k spread; collapsing toward 0 precedes divergence */
+  double update_norm;
+  double step_size;
+  double best_held_out; /* the only number a run may be judged by */
+  uint32_t best_held_out_full;
+  uint32_t best_iteration;
+  uint8_t running;
+  uint8_t finished;
+  uint8_t failed;
+  uint8_t cancelled;
+} VcadTrainProgress;
+
+/* Start a run on a worker thread; returns immediately. train_spec_json and
+ * reward_json may be NULL for defaults. gym_spec_json uses the SAME GymSpec
+ * shape as vcad_gym_create, so the simulated env and the trained env cannot
+ * disagree. */
+VcadTrainer *vcad_train_start(const uint8_t *doc_json, size_t doc_json_len,
+                              const uint8_t *gym_spec_json, size_t gym_spec_json_len,
+                              const uint8_t *train_spec_json, size_t train_spec_json_len,
+                              const uint8_t *reward_json, size_t reward_json_len);
+uint8_t vcad_train_poll(const VcadTrainer *trainer, VcadTrainProgress *out);
+void vcad_train_stop(VcadTrainer *trainer);
+/* Two-call protocol: call with out=NULL,out_cap=0 to learn the size (returns 0
+ * and reports "policy bundle needs N bytes" via vcad_last_error), then copy. */
+size_t vcad_train_best_policy_json(const VcadTrainer *trainer, uint8_t *out, size_t out_cap);
+const uint8_t *vcad_train_error(const VcadTrainer *trainer, size_t *out_len);
+/* Cancels, JOINS the worker, then frees. Blocks — deliberately. */
+void vcad_train_free(VcadTrainer *trainer);
 
 #ifdef __cplusplus
 }

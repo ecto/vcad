@@ -26,5 +26,17 @@ let package = Package(
                 .linkedLibrary("c++"),
             ]
         ),
+        // Cross-language parity for the simulation ABI. Reads the SAME golden
+        // fixtures the Rust `gym_parity` test records, so a Swift-only failure
+        // localizes the bug to the marshalling layer rather than the kernel.
+        .testTarget(
+            name: "VcadAppTests",
+            dependencies: ["VcadApp", "CVcadFFI"],
+            path: "Tests/VcadAppTests",
+            linkerSettings: [
+                .unsafeFlags(["-L", ffiLibDir]),
+                .linkedLibrary("c++"),
+            ]
+        ),
     ]
 )

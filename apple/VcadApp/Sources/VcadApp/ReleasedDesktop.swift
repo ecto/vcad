@@ -171,10 +171,10 @@ struct ReleasedOverlayView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ReleasedARView(model: model,
-                           cameraPosition: model.cameraPosition,
-                           lookAt: model.panOffset,
-                           geometryKey: "\(model.baseShape)|\(model.modifier)|\(model.modifierValue)|\(model.triangleCount)|\(model.zebraMode)|\(model.highlightedParts.sorted())|\(model.hiddenParts.sorted())|\(String(describing: model.isolatedPart))|\(model.sketching)")
+            ReleasedScene(model: model,
+                          cameraPosition: model.cameraPosition,
+                          lookAt: model.panOffset,
+                          geometryKey: "\(model.baseShape)|\(model.modifier)|\(model.modifierValue)|\(model.triangleCount)|\(model.zebraMode)|\(model.highlightedParts.sorted())|\(model.hiddenParts.sorted())|\(String(describing: model.isolatedPart))|\(model.sketching)")
                 .ignoresSafeArea()
             // ARView consumes mouse events — capture orbit/zoom on a clear
             // layer above it instead.
@@ -212,6 +212,13 @@ struct ReleasedOverlayView: View {
                 .frame(maxHeight: 380)
                 .fixedSize(horizontal: false, vertical: true)
                 .modifier(ChromeRegion(key: "tree"))
+                // Dynamics, as its own tool window. Released mode floats over
+                // the desktop, so the studio's single scrolling inspector has
+                // no home here — the BCB idiom is one window per concern.
+                if model.canSimulate {
+                    SimulationWindow(model: model)
+                        .modifier(ChromeRegion(key: "sim"))
+                }
             }
             .padding(16)
             // The Object Inspector floats beside whatever it inspects: it
@@ -251,6 +258,10 @@ struct ReleasedOverlayView: View {
                     if model.timeline != nil {
                         PlaybackBar(model: model)
                             .modifier(ChromeRegion(key: "playback"))
+                    }
+                    if model.canSimulate {
+                        SimBar(model: model)
+                            .modifier(ChromeRegion(key: "simBar"))
                     }
                     if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
                         ExampleChips(intent: intent)
@@ -444,12 +455,27 @@ struct ReleasedARView: NSViewRepresentable {
     let model: EditorModel
     let cameraPosition: SIMD3<Float>
     let lookAt: SIMD3<Float>
+    /// Bumped by every published solve (a playback frame or a physics step).
+    ///
+    /// `updateNSView` only runs when one of this representable's properties
+    /// changes, so without a per-frame input the released view would rebuild on
+    /// geometry changes and then never re-pose — the robot would render at its
+    /// rest pose and sit there while the simulation ran behind it. The studio
+    /// gets this for free because a `RealityView`'s update closure observes the
+    /// model directly.
+    let poseTick: Int
     let geometryKey: String
 
     final class Coordinator {
         var camera: PerspectiveCamera?
         var anchor: AnchorEntity?
         var builtKey = ""
+        /// Instance entities in scene order, captured at build time.
+        ///
+        /// `findEntity(named:)` walks the whole descendant tree; doing that
+        /// once per instance per frame is quadratic in the model and lands
+        /// squarely on the frame budget for a 24-body robot.
+        var instanceEntities: [ModelEntity] = []
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -503,7 +529,20 @@ struct ReleasedARView: NSViewRepresentable {
             rebuild(in: context.coordinator.anchor, coordinator: context.coordinator)
             applyLighting(ar)
         }
+        applyInstancePoses(context.coordinator)
         syncCamera(context.coordinator)
+    }
+
+    /// Re-pose instance entities from the latest solve — the released twin of
+    /// the studio's `playbackDirty` branch. Both kinematic playback and the
+    /// physics engine publish through `instanceTransforms`, so this one path
+    /// serves both and the released view cannot fall behind the studio.
+    private func applyInstancePoses(_ c: Coordinator) {
+        guard model.playbackDirty, !c.instanceEntities.isEmpty else { return }
+        for (i, m) in model.instanceTransforms.enumerated() where i < c.instanceEntities.count {
+            c.instanceEntities[i].transform = Transform(matrix: m)
+        }
+        model.playbackDirty = false
     }
 
     private func syncCamera(_ c: Coordinator) {
@@ -515,6 +554,7 @@ struct ReleasedARView: NSViewRepresentable {
     private func rebuild(in anchor: AnchorEntity?, coordinator: Coordinator) {
         guard let anchor else { return }
         coordinator.builtKey = geometryKey
+        coordinator.instanceEntities.removeAll(keepingCapacity: true)
         anchor.children.filter { $0.name == "geomRoot" }.forEach { $0.removeFromParent() }
 
         let scene = model.buildScene()
@@ -530,6 +570,32 @@ struct ReleasedARView: NSViewRepresentable {
         // studio; its handle proxies carry collision shapes, so the ARView
         // hitTest (drag start + pass-through) sees them like parts.
         if model.showsGizmo { centering.addChild(buildGizmo(model: model)) }
+        // Assembly documents carry INSTANCES rather than root parts, and
+        // `scene.meshes` is empty for them — so a released view that only
+        // walked `meshes` drew nothing at all for any assembly, simulated or
+        // not. Instances are the studio's primary path; they are the whole
+        // content of a robot document.
+        for (i, inst) in scene.instances.enumerated() {
+            var m = PhysicallyBasedMaterial()
+            if model.zebraMode {
+                m = ViewportView.zebraChrome
+            } else {
+                m.baseColor = .init(tint: inst.material.color)
+                m.roughness = .init(floatLiteral: inst.material.roughness)
+                m.metallic = .init(floatLiteral: inst.material.metallic)
+            }
+            let e = ModelEntity(mesh: inst.mesh, materials: [m])
+            e.name = "inst\(i)"
+            // Live transforms win over the authored pose: kinematic playback
+            // and physics both publish through `instanceTransforms`, and a
+            // rebuild mid-episode must not snap the robot back to its rest
+            // pose.
+            e.transform = Transform(matrix: i < model.instanceTransforms.count
+                                    ? model.instanceTransforms[i] : inst.transform)
+            e.generateCollisionShapes(recursive: false)
+            centering.addChild(e)
+            coordinator.instanceEntities.append(e)
+        }
         for (i, item) in scene.meshes.enumerated() {
             var m = PhysicallyBasedMaterial()
             if model.zebraMode {
@@ -829,5 +895,52 @@ struct ObjectInspectorWindow: View {
             Text(k).font(.system(size: 11)).foregroundStyle(.secondary)
             Text(v).font(.system(size: 11).monospacedDigit())
         }
+    }
+}
+
+/// The released twin of the studio's Simulation inspector section.
+///
+/// Wraps the same `SimInspector` the studio uses, so the two cannot drift:
+/// every readout, every control, and every fail-closed message is defined once.
+/// Only the chrome differs — a floating BCB tool window rather than a section
+/// inside the scrolling inspector.
+///
+/// **Anything added here must carry a `ChromeRegion`.** Released mode passes
+/// the mouse through to the desktop everywhere the hit test says the pixel is
+/// not ours, so chrome that does not report its frame renders normally and
+/// then silently ignores every click.
+struct SimulationWindow: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        ToolWindow(title: "Simulation", onClose: { model.sim.teardown() }) {
+            SimInspector(model: model)
+                .frame(width: 240)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+
+/// Wraps the released ARView so that only *this* view observes `poseTick`.
+///
+/// Reading a 50 Hz counter directly in `ReleasedOverlayView.body` re-evaluates
+/// the entire overlay on every physics step — every tool window, the feature
+/// tree, the inspector and the training chart — which is how a simulation that
+/// runs at 3x real time headless ends up displaying 0.3x. SwiftUI's observation
+/// is per-view, so isolating the read here confines the per-frame work to the
+/// one view that actually needs it.
+struct ReleasedScene: View {
+    @Bindable var model: EditorModel
+    let cameraPosition: SIMD3<Float>
+    let lookAt: SIMD3<Float>
+    let geometryKey: String
+
+    var body: some View {
+        ReleasedARView(model: model,
+                       cameraPosition: cameraPosition,
+                       lookAt: lookAt,
+                       poseTick: model.poseTick,
+                       geometryKey: geometryKey)
     }
 }

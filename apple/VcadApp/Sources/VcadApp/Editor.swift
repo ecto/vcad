@@ -197,6 +197,10 @@ struct GenStats {
 @MainActor
 @Observable
 final class EditorModel {
+    init() {
+        bridgeSimulationToRenderer()
+    }
+
     // Orbit camera (radians / scene meters).
     var azimuth: Float = .pi / 5
     var elevation: Float = .pi / 7
@@ -335,12 +339,87 @@ final class EditorModel {
     /// The resident evaluated assembly scene (owns instance meshes + the
     /// parsed doc the FK solver re-poses). Freed on rebuild / source change.
     nonisolated(unsafe) private var residentAssemblyScene: OpaquePointer?
+
+    // MARK: dynamics (physics simulation)
+    //
+    // Playback above is *kinematic*: the document says where each joint is and
+    // FK says where that puts the links. The simulation below is *dynamic*:
+    // gravity, contact, and actuator torques decide, and the document only
+    // supplies the plant. Both end at the same place — `instanceTransforms` in
+    // scene order — so the renderer draws either without knowing which it got.
+
+    /// The physics simulation model. Inert until `enableSimulation()`.
+    let sim = SimController()
+
+    /// Whether the current document can be simulated: an assembly with bodies.
+    var canSimulate: Bool { assemblyInstanceCount > 0 && documentJSON != nil }
+
+    /// Build a simulation for the current document and bind it to the resident
+    /// scene, so simulated transforms arrive in the renderer's index order.
+    func enableSimulation() {
+        // No silent guards on this path. Every early return here is a press of
+        // the Simulate button that visibly does nothing, which is the worst
+        // possible failure mode for a button whose whole job is to start
+        // something.
+        guard canSimulate else {
+            sim.reportUnavailable(
+                "This document has no simulable assembly (instances: \(assemblyInstanceCount)).")
+            return
+        }
+        guard let dict = documentJSON else {
+            sim.reportUnavailable("The document JSON is not loaded yet.")
+            return
+        }
+        let data: Data
+        do {
+            data = try JSONSerialization.data(withJSONObject: dict)
+        } catch {
+            sim.reportUnavailable("Could not re-serialize the document: \(error)")
+            return
+        }
+        // Physics and kinematic playback both write `instanceTransforms`;
+        // letting them run together means two writers racing for the pose.
+        pausePlayback()
+        sim.prepare(documentJSON: data,
+                    scene: residentAssemblyScene,
+                    authored: authoredInstanceTransforms,
+                    baseDirectory: documentDirectory)
+    }
+
+    /// Directory of the currently open document, when it came from a file —
+    /// the base for resolving its relative mesh references.
+    var documentDirectory: String? {
+        guard case .document(let path, _) = source else { return nil }
+        return (path as NSString).deletingLastPathComponent
+    }
+
+    /// Monotonic counter over published poses, for view layers that need an
+    /// explicit per-frame input rather than an observation closure.
+    ///
+    /// Reading this in a `body` is what makes the released `NSViewRepresentable`
+    /// re-pose; the studio's `RealityView` observes `playbackDirty` directly and
+    /// does not need it.
+    var poseTick = 0
+
+    /// Route simulated poses into the same channel kinematic playback uses.
+    /// Called from `init`, once.
+    private func bridgeSimulationToRenderer() {
+        sim.onTransforms = { [weak self] transforms in
+            guard let self else { return }
+            self.instanceTransforms = transforms
+            self.playbackDirty = true
+            self.poseTick &+= 1
+        }
+    }
     /// FFI instance count of the resident scene (0 = not an assembly).
     var assemblyInstanceCount = 0
     /// Per-instance kernel-frame world transforms at the current playback
     /// time, FFI-index order. Applied to "inst<i>" entities when
     /// `playbackDirty` is set.
     @ObservationIgnored var instanceTransforms: [float4x4] = []
+    /// The instances' authored (document) transforms, scene order. Seeds the
+    /// simulation's output for bodies physics doesn't own.
+    @ObservationIgnored var authoredInstanceTransforms: [float4x4] = []
     var playbackDirty = false
     var isPlaying = false
     /// Current playback time in seconds (drives the scrubber).
@@ -398,6 +477,7 @@ final class EditorModel {
         guard n == assemblyInstanceCount else { return }
         instanceTransforms = (0..<n).map { Self.mat4(out, at: $0 * 16) }
         playbackDirty = true
+        poseTick &+= 1
     }
 
     /// Column-major 16-double slice → float4x4 (the FFI transform layout).
@@ -413,6 +493,8 @@ final class EditorModel {
     /// rebuild about to adopt a fresh scene).
     private func clearAssembly() {
         pausePlayback()
+        sim.teardown()
+        authoredInstanceTransforms = []
         if let s = residentAssemblyScene {
             vcad_scene_free(s)
             residentAssemblyScene = nil
@@ -1712,6 +1794,14 @@ final class EditorModel {
         ("Counterbore", "\(kSamplesDir)/mecheval/tasks/a4-counterbore-plate-01.vcad"),
         ("Ribbed plate", "\(kSamplesDir)/mecheval/tasks/a5-ribbed-plate-01.vcad"),
         ("Robot arm", "\(kSamplesDir)/examples/robot-arm-2dof.vcad"),
+        // The flagship simulation sample: a 22-DOF floating-base humanoid with
+        // its meshes vendored under third_party/booster-k1, so it both renders
+        // and stands (briefly) before it falls.
+        ("Booster K1", "\(kSamplesDir)/examples/k1-floating.vcad"),
+        // A floating-base robot: the sample that has something to simulate.
+        // Imported from robot-arm-2dof.urdf, which is genuinely primitives-only,
+        // so its geometry resolves with no vendored meshes.
+        ("Floating arm", "\(kSamplesDir)/examples/floating-arm.vcad"),
         ("Sensor mast", "\(kSamplesDir)/examples/sensor-mast.vcad"),
     ]
 
@@ -2022,8 +2112,17 @@ final class EditorModel {
         if documentJSON != nil { data = evalData(applying: plan) }
         else { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
         guard let data, !data.isEmpty else { return .empty }
+        // Resolve the document's relative mesh references against its own
+        // directory. A robot document ships its meshes alongside itself; with
+        // no base directory they resolve against the process working directory
+        // and the whole assembly evaluates to empty meshes, which presents as
+        // "the file didn't load" rather than "the meshes weren't found".
+        let dir = Array((documentDirectory ?? "").utf8)
         let scene: OpaquePointer? = data.withUnsafeBytes { raw in
-            vcad_scene_from_json(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+            dir.withUnsafeBufferPointer { d in
+                vcad_scene_from_json_in(raw.bindMemory(to: UInt8.self).baseAddress, data.count,
+                                        d.baseAddress, d.count)
+            }
         }
         guard let scene else { return .empty }
         if vcad_scene_instance_count(scene) > 0 {
@@ -2105,6 +2204,11 @@ final class EditorModel {
         }
         assemblyInstanceCount = count
         instanceTransforms = transforms
+        // Keep the AUTHORED poses: the simulation only writes instances that
+        // have a physics body, and everything else (static scenery, fixtures)
+        // must keep the pose the document gave it rather than collapse to the
+        // origin.
+        authoredInstanceTransforms = transforms
         // Instance picking isn't wired yet — clear the part pick meshes so a
         // stale root-part hit can't select the wrong thing.
         docPartMeshes = []
