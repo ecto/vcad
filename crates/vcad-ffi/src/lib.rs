@@ -47,6 +47,12 @@ use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_raytrace::{Bvh, Ray};
 use vcad_kernel_tessellate::TriangleMesh;
 
+mod err;
+pub mod gym;
+pub mod train;
+
+pub use err::vcad_last_error;
+
 /// Opaque handle to a kernel solid.
 pub struct VcadSolid {
     inner: Solid,
@@ -111,7 +117,10 @@ impl VcadEdgesView {
 /// Swift side assert it linked a compatible static lib.
 #[no_mangle]
 pub extern "C" fn vcad_ffi_abi_version() -> u32 {
-    5
+    // 6: added the simulation surface — `vcad_gym_*` (physics envs, the
+    //    render seam, policy inference), `vcad_train_*` (in-process ARS), and
+    //    the shared `vcad_last_error` diagnostic channel.
+    6
 }
 
 /// Create a box (corner at origin, extends to `(sx, sy, sz)`). Returns null on panic.
@@ -265,6 +274,22 @@ pub struct VcadScene {
     doc: Option<Document>,
 }
 
+impl VcadScene {
+    /// Instance ids in scene order — the index space every `vcad_scene_instance_*`
+    /// entry point uses. Empty for a part-only document.
+    ///
+    /// Exposed for [`gym::vcad_gym_bind_scene`], which maps this ordering onto
+    /// the physics world's (sorted) body ordering once, so the render loop can
+    /// pull simulated transforms in scene order without per-frame lookups.
+    pub(crate) fn instances(&self) -> Vec<String> {
+        self.inner
+            .instances
+            .as_ref()
+            .map(|list| list.iter().map(|i| i.instance_id.clone()).collect())
+            .unwrap_or_default()
+    }
+}
+
 /// Parse a `.vcad` JSON document (UTF-8 bytes of length `json_len`) and
 /// evaluate it into a scene. Returns null on invalid UTF-8, parse error,
 /// evaluation error, or panic.
@@ -283,6 +308,48 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
             Ok(d) => d,
             Err(_) => return ptr::null_mut(),
         };
+        match evaluate_document(&doc, &EvalOptions::default()) {
+            Ok(scene) => Box::into_raw(Box::new(VcadScene {
+                inner: scene,
+                doc: Some(doc),
+            })),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Like [`vcad_scene_from_json`], but resolves relative `MeshImport` paths
+/// against `base_dir` (the document's own directory).
+///
+/// A document that references vendored meshes relatively is portable; without a
+/// base directory those paths resolve against the process working directory,
+/// so the same file renders from one launch and comes back empty from another.
+/// Passing a null/empty `base_dir` is exactly [`vcad_scene_from_json`].
+#[no_mangle]
+pub extern "C" fn vcad_scene_from_json_in(
+    json: *const u8,
+    json_len: usize,
+    base_dir: *const u8,
+    base_dir_len: usize,
+) -> *mut VcadScene {
+    if json.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return ptr::null_mut();
+        };
+        let Ok(mut doc) = Document::from_json(text) else {
+            return ptr::null_mut();
+        };
+        if !base_dir.is_null() && base_dir_len > 0 {
+            let db = unsafe { std::slice::from_raw_parts(base_dir, base_dir_len) };
+            if let Ok(dir) = std::str::from_utf8(db) {
+                vcad_eval::resolve_mesh_paths(&mut doc, std::path::Path::new(dir));
+            }
+        }
         match evaluate_document(&doc, &EvalOptions::default()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,

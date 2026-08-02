@@ -1,0 +1,2179 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "3": {
+      "id": 3,
+      "name": "left_hip_pitch_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_hip_pitch_link.STL"
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "right_ankle_roll_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_ankle_roll_link.STL"
+      }
+    },
+    "29": {
+      "id": 29,
+      "name": "right_shoulder_pitch_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_shoulder_pitch_link.STL"
+      }
+    },
+    "33": {
+      "id": 33,
+      "name": "right_wrist_roll_rubber_hand_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_wrist_roll_rubber_hand.STL"
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "waist_yaw_fixed_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/waist_yaw_link.STL"
+      }
+    },
+    "32": {
+      "id": 32,
+      "name": "right_elbow_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_elbow_link.STL"
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "left_knee_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_knee_link.STL"
+      }
+    },
+    "26": {
+      "id": 26,
+      "name": "left_shoulder_yaw_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_shoulder_yaw_link.STL"
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "right_ankle_pitch_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_ankle_pitch_link.STL"
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "imu_in_torso",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "mid360_link",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "pelvis_contour_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/pelvis_contour_link.STL"
+      }
+    },
+    "30": {
+      "id": 30,
+      "name": "right_shoulder_roll_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_shoulder_roll_link.STL"
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "left_hip_roll_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_hip_roll_link.STL"
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "left_ankle_roll_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_ankle_roll_link.STL"
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "logo_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/logo_link.STL"
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "right_knee_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_knee_link.STL"
+      }
+    },
+    "28": {
+      "id": 28,
+      "name": "left_wrist_roll_rubber_hand_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_wrist_roll_rubber_hand.STL"
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "waist_support_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/waist_support_link.STL"
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "d435_link",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "24": {
+      "id": 24,
+      "name": "left_shoulder_pitch_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_shoulder_pitch_link.STL"
+      }
+    },
+    "25": {
+      "id": 25,
+      "name": "left_shoulder_roll_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_shoulder_roll_link.STL"
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "right_hip_yaw_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_hip_yaw_link.STL"
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "head_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/head_link.STL"
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "right_hip_pitch_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_hip_pitch_link.STL"
+      }
+    },
+    "27": {
+      "id": 27,
+      "name": "left_elbow_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_elbow_link.STL"
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "left_ankle_pitch_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_ankle_pitch_link.STL"
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "left_hip_yaw_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/left_hip_yaw_link.STL"
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "right_hip_roll_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_hip_roll_link.STL"
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "imu_in_pelvis",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "torso_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/torso_link.STL"
+      }
+    },
+    "31": {
+      "id": 31,
+      "name": "right_shoulder_yaw_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/right_shoulder_yaw_link.STL"
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": "pelvis_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "meshes/pelvis.STL"
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "name": "default",
+      "color": [
+        0.7,
+        0.7,
+        0.7
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "dark": {
+      "name": "dark",
+      "color": [
+        0.2,
+        0.2,
+        0.2
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "white": {
+      "name": "white",
+      "color": [
+        0.7,
+        0.7,
+        0.7
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 15,
+      "material": "default"
+    },
+    {
+      "root": 16,
+      "material": "default"
+    },
+    {
+      "root": 17,
+      "material": "default"
+    },
+    {
+      "root": 18,
+      "material": "default"
+    },
+    {
+      "root": 19,
+      "material": "default"
+    },
+    {
+      "root": 20,
+      "material": "default"
+    },
+    {
+      "root": 21,
+      "material": "default"
+    },
+    {
+      "root": 22,
+      "material": "default"
+    },
+    {
+      "root": 23,
+      "material": "default"
+    },
+    {
+      "root": 24,
+      "material": "default"
+    },
+    {
+      "root": 25,
+      "material": "default"
+    },
+    {
+      "root": 26,
+      "material": "default"
+    },
+    {
+      "root": 27,
+      "material": "default"
+    },
+    {
+      "root": 28,
+      "material": "default"
+    },
+    {
+      "root": 29,
+      "material": "default"
+    },
+    {
+      "root": 30,
+      "material": "default"
+    },
+    {
+      "root": 31,
+      "material": "default"
+    },
+    {
+      "root": 32,
+      "material": "default"
+    },
+    {
+      "root": 33,
+      "material": "default"
+    }
+  ],
+  "partDefs": {
+    "part_head_link": {
+      "id": "part_head_link",
+      "name": "head_link",
+      "root": 18,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.036,
+        "com": {
+          "x": 5.267,
+          "y": 0.299,
+          "z": 449.869
+        },
+        "inertia": [
+          0.004085051,
+          0.004185212,
+          0.001807911,
+          -2.543e-6,
+          -0.000069455,
+          -3.726e-6
+        ]
+      }
+    },
+    "part_left_shoulder_yaw_link": {
+      "id": "part_left_shoulder_yaw_link",
+      "name": "left_shoulder_yaw_link",
+      "root": 26,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.734,
+        "com": {
+          "x": 10.773,
+          "y": -2.949,
+          "z": -72.009
+        },
+        "inertia": [
+          0.0009988,
+          0.0010605,
+          0.0004354,
+          7.9e-6,
+          0.0001412,
+          -0.0000286
+        ]
+      }
+    },
+    "part_imu_in_torso": {
+      "id": "part_imu_in_torso",
+      "name": "imu_in_torso",
+      "root": 20,
+      "defaultMaterial": "default"
+    },
+    "part_right_ankle_pitch_link": {
+      "id": "part_right_ankle_pitch_link",
+      "name": "right_ankle_pitch_link",
+      "root": 13,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.074,
+        "com": {
+          "x": -7.269,
+          "y": 0.0,
+          "z": 11.136999999999999
+        },
+        "inertia": [
+          8.4e-6,
+          0.0000189,
+          0.0000126,
+          0.0,
+          -2.9e-6,
+          0.0
+        ]
+      }
+    },
+    "part_torso_link": {
+      "id": "part_torso_link",
+      "name": "torso_link",
+      "root": 16,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 8.562,
+        "com": {
+          "x": 2.601,
+          "y": 0.257,
+          "z": 153.719
+        },
+        "inertia": [
+          0.065674966,
+          0.053535188,
+          0.030808125,
+          -0.00008597,
+          -0.001737252,
+          0.000086899
+        ]
+      }
+    },
+    "part_left_shoulder_pitch_link": {
+      "id": "part_left_shoulder_pitch_link",
+      "name": "left_shoulder_pitch_link",
+      "root": 24,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.718,
+        "com": {
+          "x": 0.0,
+          "y": 35.892,
+          "z": -11.628
+        },
+        "inertia": [
+          0.0004291,
+          0.000453,
+          0.000423,
+          -9.2e-6,
+          6.4e-6,
+          0.0000226
+        ]
+      }
+    },
+    "part_logo_link": {
+      "id": "part_logo_link",
+      "name": "logo_link",
+      "root": 17,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.001,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          1e-7,
+          1e-7,
+          1e-7,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_d435_link": {
+      "id": "part_d435_link",
+      "name": "d435_link",
+      "root": 22,
+      "defaultMaterial": "default"
+    },
+    "part_right_hip_roll_link": {
+      "id": "part_right_hip_roll_link",
+      "name": "right_hip_roll_link",
+      "root": 10,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.52,
+        "com": {
+          "x": 29.812,
+          "y": 1.045,
+          "z": -87.934
+        },
+        "inertia": [
+          0.0023773,
+          0.0024123,
+          0.0016595,
+          3.8e-6,
+          -0.0003908,
+          -0.0000184
+        ]
+      }
+    },
+    "part_left_hip_roll_link": {
+      "id": "part_left_hip_roll_link",
+      "name": "left_hip_roll_link",
+      "root": 4,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.52,
+        "com": {
+          "x": 29.812,
+          "y": -1.045,
+          "z": -87.934
+        },
+        "inertia": [
+          0.0023773,
+          0.0024123,
+          0.0016595,
+          -3.8e-6,
+          -0.0003908,
+          0.0000184
+        ]
+      }
+    },
+    "part_waist_yaw_fixed_link": {
+      "id": "part_waist_yaw_fixed_link",
+      "name": "waist_yaw_fixed_link",
+      "root": 15,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.244,
+        "com": {
+          "x": 3.9639999999999995,
+          "y": 0.0,
+          "z": 18.769000000000002
+        },
+        "inertia": [
+          0.000099587,
+          0.00012411,
+          0.00015586,
+          -1.833e-6,
+          -0.000012617,
+          -1.18e-7
+        ]
+      }
+    },
+    "part_right_knee_link": {
+      "id": "part_right_knee_link",
+      "name": "right_knee_link",
+      "root": 12,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.932,
+        "com": {
+          "x": 5.457,
+          "y": -3.9639999999999995,
+          "z": -120.74
+        },
+        "inertia": [
+          0.011329,
+          0.011277,
+          0.0015168,
+          -0.0000482,
+          0.0000449,
+          0.0007146
+        ]
+      }
+    },
+    "part_left_shoulder_roll_link": {
+      "id": "part_left_shoulder_roll_link",
+      "name": "left_shoulder_roll_link",
+      "root": 25,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.643,
+        "com": {
+          "x": -0.22699999999999998,
+          "y": 7.2700000000000005,
+          "z": -63.242999999999995
+        },
+        "inertia": [
+          0.0006177,
+          0.0006912,
+          0.0003894,
+          -1e-6,
+          8.7e-6,
+          -5.3e-6
+        ]
+      }
+    },
+    "part_right_shoulder_roll_link": {
+      "id": "part_right_shoulder_roll_link",
+      "name": "right_shoulder_roll_link",
+      "root": 30,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.643,
+        "com": {
+          "x": -0.22699999999999998,
+          "y": -7.2700000000000005,
+          "z": -63.242999999999995
+        },
+        "inertia": [
+          0.0006177,
+          0.0006912,
+          0.0003894,
+          1e-6,
+          8.7e-6,
+          5.3e-6
+        ]
+      }
+    },
+    "part_right_shoulder_yaw_link": {
+      "id": "part_right_shoulder_yaw_link",
+      "name": "right_shoulder_yaw_link",
+      "root": 31,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.734,
+        "com": {
+          "x": 10.773,
+          "y": 2.949,
+          "z": -72.009
+        },
+        "inertia": [
+          0.0009988,
+          0.0010605,
+          0.0004354,
+          -7.9e-6,
+          0.0001412,
+          0.0000286
+        ]
+      }
+    },
+    "part_left_wrist_roll_rubber_hand": {
+      "id": "part_left_wrist_roll_rubber_hand",
+      "name": "left_wrist_roll_rubber_hand",
+      "root": 28,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.35692864,
+        "com": {
+          "x": 107.94656649999999,
+          "y": 1.63511945,
+          "z": 2.02244863
+        },
+        "inertia": [
+          0.00019613494735,
+          0.00200280358206,
+          0.00194181412808,
+          -4.19816908e-6,
+          -0.0000395086058,
+          2.49774203e-6
+        ]
+      }
+    },
+    "part_right_elbow_link": {
+      "id": "part_right_elbow_link",
+      "name": "right_elbow_link",
+      "root": 32,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.6,
+        "com": {
+          "x": 64.956,
+          "y": -4.454,
+          "z": -10.062
+        },
+        "inertia": [
+          0.0002891,
+          0.0004152,
+          0.0004197,
+          -0.0000653,
+          0.0000172,
+          5.6e-6
+        ]
+      }
+    },
+    "part_left_knee_link": {
+      "id": "part_left_knee_link",
+      "name": "left_knee_link",
+      "root": 6,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.932,
+        "com": {
+          "x": 5.457,
+          "y": 3.9639999999999995,
+          "z": -120.74
+        },
+        "inertia": [
+          0.011329,
+          0.011277,
+          0.0015168,
+          0.0000482,
+          -0.0000449,
+          -0.0007146
+        ]
+      }
+    },
+    "part_right_wrist_roll_rubber_hand": {
+      "id": "part_right_wrist_roll_rubber_hand",
+      "name": "right_wrist_roll_rubber_hand",
+      "root": 33,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.35692864,
+        "com": {
+          "x": 107.94656649999999,
+          "y": -1.63511945,
+          "z": 2.02244863
+        },
+        "inertia": [
+          0.00019613494735,
+          0.00200280358206,
+          0.00194181412808,
+          4.19816908e-6,
+          -0.0000395086058,
+          -2.49774203e-6
+        ]
+      }
+    },
+    "part_right_hip_pitch_link": {
+      "id": "part_right_hip_pitch_link",
+      "name": "right_hip_pitch_link",
+      "root": 9,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.35,
+        "com": {
+          "x": 2.741,
+          "y": -47.791,
+          "z": -26.06
+        },
+        "inertia": [
+          0.001811,
+          0.0014193,
+          0.0012812,
+          -0.0000368,
+          -0.0000344,
+          -0.000171
+        ]
+      }
+    },
+    "part_pelvis_contour_link": {
+      "id": "part_pelvis_contour_link",
+      "name": "pelvis_contour_link",
+      "root": 2,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.001,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          1e-7,
+          1e-7,
+          1e-7,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_pelvis": {
+      "id": "part_pelvis",
+      "name": "pelvis",
+      "root": 1,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 3.813,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": -76.05000000000001
+        },
+        "inertia": [
+          0.010549,
+          0.0093089,
+          0.0079184,
+          0.0,
+          2.1e-6,
+          0.0
+        ]
+      }
+    },
+    "part_mid360_link": {
+      "id": "part_mid360_link",
+      "name": "mid360_link",
+      "root": 23,
+      "defaultMaterial": "default"
+    },
+    "part_left_hip_yaw_link": {
+      "id": "part_left_hip_yaw_link",
+      "name": "left_hip_yaw_link",
+      "root": 5,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.702,
+        "com": {
+          "x": -57.709,
+          "y": -10.981,
+          "z": -150.78
+        },
+        "inertia": [
+          0.0057774,
+          0.0076124,
+          0.003149,
+          -0.0005411,
+          -0.0023948,
+          -0.0007072
+        ]
+      }
+    },
+    "part_left_ankle_pitch_link": {
+      "id": "part_left_ankle_pitch_link",
+      "name": "left_ankle_pitch_link",
+      "root": 7,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.074,
+        "com": {
+          "x": -7.269,
+          "y": 0.0,
+          "z": 11.136999999999999
+        },
+        "inertia": [
+          8.4e-6,
+          0.0000189,
+          0.0000126,
+          0.0,
+          -2.9e-6,
+          0.0
+        ]
+      }
+    },
+    "part_right_hip_yaw_link": {
+      "id": "part_right_hip_yaw_link",
+      "name": "right_hip_yaw_link",
+      "root": 11,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.702,
+        "com": {
+          "x": -57.709,
+          "y": 10.981,
+          "z": -150.78
+        },
+        "inertia": [
+          0.0057774,
+          0.0076124,
+          0.003149,
+          0.0005411,
+          -0.0023948,
+          0.0007072
+        ]
+      }
+    },
+    "part_right_shoulder_pitch_link": {
+      "id": "part_right_shoulder_pitch_link",
+      "name": "right_shoulder_pitch_link",
+      "root": 29,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.718,
+        "com": {
+          "x": 0.0,
+          "y": -35.892,
+          "z": -11.628
+        },
+        "inertia": [
+          0.0004291,
+          0.000453,
+          0.000423,
+          9.2e-6,
+          6.4e-6,
+          -0.0000226
+        ]
+      }
+    },
+    "part_left_ankle_roll_link": {
+      "id": "part_left_ankle_roll_link",
+      "name": "left_ankle_roll_link",
+      "root": 8,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.608,
+        "com": {
+          "x": 26.505000000000003,
+          "y": 0.0,
+          "z": -16.424999999999997
+        },
+        "inertia": [
+          0.0002231,
+          0.0016161,
+          0.0016667,
+          2e-7,
+          0.0000891,
+          -1e-7
+        ]
+      }
+    },
+    "part_imu_in_pelvis": {
+      "id": "part_imu_in_pelvis",
+      "name": "imu_in_pelvis",
+      "root": 21,
+      "defaultMaterial": "default"
+    },
+    "part_right_ankle_roll_link": {
+      "id": "part_right_ankle_roll_link",
+      "name": "right_ankle_roll_link",
+      "root": 14,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.608,
+        "com": {
+          "x": 26.505000000000003,
+          "y": 0.0,
+          "z": -16.424999999999997
+        },
+        "inertia": [
+          0.0002231,
+          0.0016161,
+          0.0016667,
+          -2e-7,
+          0.0000891,
+          1e-7
+        ]
+      }
+    },
+    "part_left_hip_pitch_link": {
+      "id": "part_left_hip_pitch_link",
+      "name": "left_hip_pitch_link",
+      "root": 3,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.35,
+        "com": {
+          "x": 2.741,
+          "y": 47.791,
+          "z": -26.06
+        },
+        "inertia": [
+          0.001811,
+          0.0014193,
+          0.0012812,
+          0.0000368,
+          -0.0000344,
+          0.000171
+        ]
+      }
+    },
+    "part_left_elbow_link": {
+      "id": "part_left_elbow_link",
+      "name": "left_elbow_link",
+      "root": 27,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.6,
+        "com": {
+          "x": 64.956,
+          "y": 4.454,
+          "z": -10.062
+        },
+        "inertia": [
+          0.0002891,
+          0.0004152,
+          0.0004197,
+          0.0000653,
+          0.0000172,
+          -5.6e-6
+        ]
+      }
+    },
+    "part_waist_support_link": {
+      "id": "part_waist_support_link",
+      "name": "waist_support_link",
+      "root": 19,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.001,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          1e-7,
+          1e-7,
+          1e-7,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  },
+  "instances": [
+    {
+      "id": "pelvis_inst",
+      "partDefId": "part_pelvis",
+      "name": "pelvis"
+    },
+    {
+      "id": "pelvis_contour_link_inst",
+      "partDefId": "part_pelvis_contour_link",
+      "name": "pelvis_contour_link"
+    },
+    {
+      "id": "left_hip_pitch_link_inst",
+      "partDefId": "part_left_hip_pitch_link",
+      "name": "left_hip_pitch_link"
+    },
+    {
+      "id": "left_hip_roll_link_inst",
+      "partDefId": "part_left_hip_roll_link",
+      "name": "left_hip_roll_link"
+    },
+    {
+      "id": "left_hip_yaw_link_inst",
+      "partDefId": "part_left_hip_yaw_link",
+      "name": "left_hip_yaw_link"
+    },
+    {
+      "id": "left_knee_link_inst",
+      "partDefId": "part_left_knee_link",
+      "name": "left_knee_link"
+    },
+    {
+      "id": "left_ankle_pitch_link_inst",
+      "partDefId": "part_left_ankle_pitch_link",
+      "name": "left_ankle_pitch_link"
+    },
+    {
+      "id": "left_ankle_roll_link_inst",
+      "partDefId": "part_left_ankle_roll_link",
+      "name": "left_ankle_roll_link"
+    },
+    {
+      "id": "right_hip_pitch_link_inst",
+      "partDefId": "part_right_hip_pitch_link",
+      "name": "right_hip_pitch_link"
+    },
+    {
+      "id": "right_hip_roll_link_inst",
+      "partDefId": "part_right_hip_roll_link",
+      "name": "right_hip_roll_link"
+    },
+    {
+      "id": "right_hip_yaw_link_inst",
+      "partDefId": "part_right_hip_yaw_link",
+      "name": "right_hip_yaw_link"
+    },
+    {
+      "id": "right_knee_link_inst",
+      "partDefId": "part_right_knee_link",
+      "name": "right_knee_link"
+    },
+    {
+      "id": "right_ankle_pitch_link_inst",
+      "partDefId": "part_right_ankle_pitch_link",
+      "name": "right_ankle_pitch_link"
+    },
+    {
+      "id": "right_ankle_roll_link_inst",
+      "partDefId": "part_right_ankle_roll_link",
+      "name": "right_ankle_roll_link"
+    },
+    {
+      "id": "waist_yaw_fixed_link_inst",
+      "partDefId": "part_waist_yaw_fixed_link",
+      "name": "waist_yaw_fixed_link"
+    },
+    {
+      "id": "torso_link_inst",
+      "partDefId": "part_torso_link",
+      "name": "torso_link"
+    },
+    {
+      "id": "logo_link_inst",
+      "partDefId": "part_logo_link",
+      "name": "logo_link"
+    },
+    {
+      "id": "head_link_inst",
+      "partDefId": "part_head_link",
+      "name": "head_link"
+    },
+    {
+      "id": "waist_support_link_inst",
+      "partDefId": "part_waist_support_link",
+      "name": "waist_support_link"
+    },
+    {
+      "id": "imu_in_torso_inst",
+      "partDefId": "part_imu_in_torso",
+      "name": "imu_in_torso"
+    },
+    {
+      "id": "imu_in_pelvis_inst",
+      "partDefId": "part_imu_in_pelvis",
+      "name": "imu_in_pelvis"
+    },
+    {
+      "id": "d435_link_inst",
+      "partDefId": "part_d435_link",
+      "name": "d435_link"
+    },
+    {
+      "id": "mid360_link_inst",
+      "partDefId": "part_mid360_link",
+      "name": "mid360_link"
+    },
+    {
+      "id": "left_shoulder_pitch_link_inst",
+      "partDefId": "part_left_shoulder_pitch_link",
+      "name": "left_shoulder_pitch_link"
+    },
+    {
+      "id": "left_shoulder_roll_link_inst",
+      "partDefId": "part_left_shoulder_roll_link",
+      "name": "left_shoulder_roll_link"
+    },
+    {
+      "id": "left_shoulder_yaw_link_inst",
+      "partDefId": "part_left_shoulder_yaw_link",
+      "name": "left_shoulder_yaw_link"
+    },
+    {
+      "id": "left_elbow_link_inst",
+      "partDefId": "part_left_elbow_link",
+      "name": "left_elbow_link"
+    },
+    {
+      "id": "left_wrist_roll_rubber_hand_inst",
+      "partDefId": "part_left_wrist_roll_rubber_hand",
+      "name": "left_wrist_roll_rubber_hand"
+    },
+    {
+      "id": "right_shoulder_pitch_link_inst",
+      "partDefId": "part_right_shoulder_pitch_link",
+      "name": "right_shoulder_pitch_link"
+    },
+    {
+      "id": "right_shoulder_roll_link_inst",
+      "partDefId": "part_right_shoulder_roll_link",
+      "name": "right_shoulder_roll_link"
+    },
+    {
+      "id": "right_shoulder_yaw_link_inst",
+      "partDefId": "part_right_shoulder_yaw_link",
+      "name": "right_shoulder_yaw_link"
+    },
+    {
+      "id": "right_elbow_link_inst",
+      "partDefId": "part_right_elbow_link",
+      "name": "right_elbow_link"
+    },
+    {
+      "id": "right_wrist_roll_rubber_hand_inst",
+      "partDefId": "part_right_wrist_roll_rubber_hand",
+      "name": "right_wrist_roll_rubber_hand"
+    }
+  ],
+  "joints": [
+    {
+      "id": "pelvis_contour_joint",
+      "name": "pelvis_contour_joint",
+      "parentInstanceId": "pelvis_inst",
+      "childInstanceId": "pelvis_contour_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_hip_pitch_joint",
+      "name": "left_hip_pitch_joint",
+      "parentInstanceId": "pelvis_inst",
+      "childInstanceId": "left_hip_pitch_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 64.452,
+        "z": -102.7
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -144.99842921375742,
+          165.00038584177446
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_hip_roll_joint",
+      "name": "left_hip_roll_joint",
+      "parentInstanceId": "left_hip_pitch_link_inst",
+      "childInstanceId": "left_hip_roll_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 52.0,
+        "z": -30.465
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -30.0000701530499,
+          170.00230739326656
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_hip_yaw_joint",
+      "name": "left_hip_yaw_joint",
+      "parentInstanceId": "left_hip_roll_link_inst",
+      "childInstanceId": "left_hip_yaw_link_inst",
+      "parentAnchor": {
+        "x": 25.000999999999998,
+        "y": 0.0,
+        "z": -124.11999999999999
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -157.9988415852758,
+          157.9988415852758
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_knee_joint",
+      "name": "left_knee_joint",
+      "parentInstanceId": "left_hip_yaw_link_inst",
+      "childInstanceId": "left_knee_link_inst",
+      "parentAnchor": {
+        "x": -78.273,
+        "y": 2.1489,
+        "z": -177.34
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -5.000030790768155,
+          165.00038584177446
+        ],
+        "effort_limit": 139.0,
+        "velocity_limit": 1145.9155902616465
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_ankle_pitch_joint",
+      "name": "left_ankle_pitch_joint",
+      "parentInstanceId": "left_knee_link_inst",
+      "childInstanceId": "left_ankle_pitch_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -0.094445,
+        "z": -300.01
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -50.000307907681545,
+          30.0000701530499
+        ],
+        "effort_limit": 35.0,
+        "velocity_limit": 1718.8733853924696
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_ankle_roll_joint",
+      "name": "left_ankle_roll_joint",
+      "parentInstanceId": "left_ankle_pitch_link_inst",
+      "childInstanceId": "left_ankle_roll_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -17.558
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -15.00003507652495,
+          15.00003507652495
+        ],
+        "effort_limit": 35.0,
+        "velocity_limit": 1718.8733853924696
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_hip_pitch_joint",
+      "name": "right_hip_pitch_joint",
+      "parentInstanceId": "pelvis_inst",
+      "childInstanceId": "right_hip_pitch_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -64.452,
+        "z": -102.7
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -144.99842921375742,
+          165.00038584177446
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_hip_roll_joint",
+      "name": "right_hip_roll_joint",
+      "parentInstanceId": "right_hip_pitch_link_inst",
+      "childInstanceId": "right_hip_roll_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -52.0,
+        "z": -30.465
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -170.00230739326656,
+          30.0000701530499
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_hip_yaw_joint",
+      "name": "right_hip_yaw_joint",
+      "parentInstanceId": "right_hip_roll_link_inst",
+      "childInstanceId": "right_hip_yaw_link_inst",
+      "parentAnchor": {
+        "x": 25.000999999999998,
+        "y": 0.0,
+        "z": -124.11999999999999
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -157.9988415852758,
+          157.9988415852758
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_knee_joint",
+      "name": "right_knee_joint",
+      "parentInstanceId": "right_hip_yaw_link_inst",
+      "childInstanceId": "right_knee_link_inst",
+      "parentAnchor": {
+        "x": -78.273,
+        "y": -2.1489,
+        "z": -177.34
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -5.000030790768155,
+          165.00038584177446
+        ],
+        "effort_limit": 139.0,
+        "velocity_limit": 1145.9155902616465
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_ankle_pitch_joint",
+      "name": "right_ankle_pitch_joint",
+      "parentInstanceId": "right_knee_link_inst",
+      "childInstanceId": "right_ankle_pitch_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.094445,
+        "z": -300.01
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -50.000307907681545,
+          30.0000701530499
+        ],
+        "effort_limit": 35.0,
+        "velocity_limit": 1718.8733853924696
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_ankle_roll_joint",
+      "name": "right_ankle_roll_joint",
+      "parentInstanceId": "right_ankle_pitch_link_inst",
+      "childInstanceId": "right_ankle_roll_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -17.558
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -15.00003507652495,
+          15.00003507652495
+        ],
+        "effort_limit": 35.0,
+        "velocity_limit": 1718.8733853924696
+      },
+      "state": 0.0
+    },
+    {
+      "id": "waist_yaw_fixed_joint",
+      "name": "waist_yaw_fixed_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "waist_yaw_fixed_link_inst",
+      "parentAnchor": {
+        "x": 3.9635,
+        "y": 0.0,
+        "z": -54.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "waist_yaw_joint",
+      "name": "waist_yaw_joint",
+      "parentInstanceId": "pelvis_inst",
+      "childInstanceId": "torso_link_inst",
+      "parentAnchor": {
+        "x": -3.9635,
+        "y": 0.0,
+        "z": 54.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -150.00035076524952,
+          150.00035076524952
+        ],
+        "effort_limit": 88.0,
+        "velocity_limit": 1833.4649444186343
+      },
+      "state": 0.0
+    },
+    {
+      "id": "logo_joint",
+      "name": "logo_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "logo_link_inst",
+      "parentAnchor": {
+        "x": 3.9635,
+        "y": 0.0,
+        "z": -54.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_joint",
+      "name": "head_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "head_link_inst",
+      "parentAnchor": {
+        "x": 3.9635,
+        "y": 0.0,
+        "z": -54.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "waist_support_joint",
+      "name": "waist_support_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "waist_support_link_inst",
+      "parentAnchor": {
+        "x": 3.9635,
+        "y": 0.0,
+        "z": -54.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "imu_in_torso_joint",
+      "name": "imu_in_torso_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "imu_in_torso_inst",
+      "parentAnchor": {
+        "x": -39.59,
+        "y": -2.2399999999999998,
+        "z": 137.92
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "imu_in_pelvis_joint",
+      "name": "imu_in_pelvis_joint",
+      "parentInstanceId": "pelvis_inst",
+      "childInstanceId": "imu_in_pelvis_inst",
+      "parentAnchor": {
+        "x": 45.25,
+        "y": 0.0,
+        "z": -83.39
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "d435_joint",
+      "name": "d435_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "d435_link_inst",
+      "parentAnchor": {
+        "x": 57.6235,
+        "y": 17.53,
+        "z": 419.87
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "mid360_joint",
+      "name": "mid360_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "mid360_link_inst",
+      "parentAnchor": {
+        "x": 0.28350000000000003,
+        "y": 0.030000000000000002,
+        "z": 406.18
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_shoulder_pitch_joint",
+      "name": "left_shoulder_pitch_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "left_shoulder_pitch_link_inst",
+      "parentAnchor": {
+        "x": 3.9563,
+        "y": 100.22,
+        "z": 237.78
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -176.9981220718139,
+          153.00264961173502
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_shoulder_roll_joint",
+      "name": "left_shoulder_roll_joint",
+      "parentInstanceId": "left_shoulder_pitch_link_inst",
+      "childInstanceId": "left_shoulder_roll_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 38.0,
+        "z": -13.831
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -90.99715702267734,
+          129.00144757370487
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_shoulder_yaw_joint",
+      "name": "left_shoulder_yaw_joint",
+      "parentInstanceId": "left_shoulder_roll_link_inst",
+      "childInstanceId": "left_shoulder_yaw_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 6.24,
+        "z": -103.2
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -150.00035076524952,
+          150.00035076524952
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_elbow_joint",
+      "name": "left_elbow_joint",
+      "parentInstanceId": "left_shoulder_yaw_link_inst",
+      "childInstanceId": "left_elbow_link_inst",
+      "parentAnchor": {
+        "x": 15.782999999999998,
+        "y": 0.0,
+        "z": -80.518
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -60.0001403060998,
+          120.0002806121996
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "left_wrist_roll_joint",
+      "name": "left_wrist_roll_joint",
+      "parentInstanceId": "left_elbow_link_inst",
+      "childInstanceId": "left_wrist_roll_rubber_hand_inst",
+      "parentAnchor": {
+        "x": 100.0,
+        "y": 1.88791,
+        "z": -10.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -112.99999995682234,
+          112.99999995682234
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_shoulder_pitch_joint",
+      "name": "right_shoulder_pitch_joint",
+      "parentInstanceId": "torso_link_inst",
+      "childInstanceId": "right_shoulder_pitch_link_inst",
+      "parentAnchor": {
+        "x": 3.9563,
+        "y": -100.21,
+        "z": 237.78
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -176.9981220718139,
+          153.00264961173502
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_shoulder_roll_joint",
+      "name": "right_shoulder_roll_joint",
+      "parentInstanceId": "right_shoulder_pitch_link_inst",
+      "childInstanceId": "right_shoulder_roll_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -38.0,
+        "z": -13.831
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -129.00144757370487,
+          90.99715702267734
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_shoulder_yaw_joint",
+      "name": "right_shoulder_yaw_joint",
+      "parentInstanceId": "right_shoulder_roll_link_inst",
+      "childInstanceId": "right_shoulder_yaw_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -6.24,
+        "z": -103.2
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -150.00035076524952,
+          150.00035076524952
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_elbow_joint",
+      "name": "right_elbow_joint",
+      "parentInstanceId": "right_shoulder_yaw_link_inst",
+      "childInstanceId": "right_elbow_link_inst",
+      "parentAnchor": {
+        "x": 15.782999999999998,
+        "y": 0.0,
+        "z": -80.518
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -60.0001403060998,
+          120.0002806121996
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    },
+    {
+      "id": "right_wrist_roll_joint",
+      "name": "right_wrist_roll_joint",
+      "parentInstanceId": "right_elbow_link_inst",
+      "childInstanceId": "right_wrist_roll_rubber_hand_inst",
+      "parentAnchor": {
+        "x": 100.0,
+        "y": -1.88791,
+        "z": -10.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -112.99999995682234,
+          112.99999995682234
+        ],
+        "effort_limit": 25.0,
+        "velocity_limit": 2119.943841984046
+      },
+      "state": 0.0
+    }
+  ],
+  "groundInstanceId": "pelvis_inst"
+}

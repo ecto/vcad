@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel-physics = { workspace = true }
 phyz = { workspace = true }

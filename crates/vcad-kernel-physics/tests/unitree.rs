@@ -217,7 +217,7 @@ fn unitree_g1_floating_base_falls_under_gravity() {
     let opts = UrdfReadOptions {
         urdf_dir: urdf_path.parent().map(|p| p.to_path_buf()),
         floating_base: true,
-        spawn_height_mm: 900.0,
+        spawn_height_mm: Some(900.0),
         ..UrdfReadOptions::default()
     };
     let doc = vcad_kernel_urdf::read_urdf_with_options(&urdf_path, &opts)

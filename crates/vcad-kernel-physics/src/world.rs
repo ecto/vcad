@@ -1237,6 +1237,14 @@ impl PhysicsWorld {
         let Some(&v_offset) = self.joint_v_offsets.get(joint_id) else {
             return 1.0;
         };
+        // A zero-DOF (Fixed) joint still has an entry in `joint_v_offsets` —
+        // pointing at where its DOFs *would* start, which for the last joint in
+        // the model is one past the end of `ctrl`. Probing it panicked with an
+        // out-of-bounds index. A joint with no DOF has no reflected inertia to
+        // measure and no motor to tune, so the neutral fallback is the answer.
+        if v_offset >= self.state.ctrl.len() {
+            return 1.0;
+        }
         let saved_ctrl = self.state.ctrl.clone();
         for c in self.state.ctrl.as_mut_slice() {
             *c = 0.0;
@@ -1608,6 +1616,23 @@ impl PhysicsWorld {
         // phyz revolute joints rotate about body-frame Z.
         let d = (si.com.x * si.com.x + si.com.y * si.com.y).sqrt();
         (si.mass, d, si.inertia[(2, 2)])
+    }
+
+    /// Read a joint's velocity DOFs in **physics units** (rad/s, m/s),
+    /// unconverted.
+    ///
+    /// The symmetric partner of [`Self::set_joint_velocity_raw`]. It exists
+    /// because the natural-looking pairing — read with
+    /// [`Self::get_joint_dofs`], write with `set_joint_velocity_raw` — mixes
+    /// unit systems: the getter converts to vcad units (deg/s, mm/s) and the
+    /// setter does not convert back. Round-tripping through that pair scales
+    /// an angular velocity by 180/π and a linear one by 1000, silently.
+    #[doc(hidden)]
+    pub fn get_joint_velocity_raw(&self, joint_id: &str) -> Option<Vec<f64>> {
+        let kind = self.joint_kinds.get(joint_id)?;
+        let &v_offset = self.joint_v_offsets.get(joint_id)?;
+        let ndof = joint_ndof(kind);
+        Some((0..ndof).map(|k| self.state.v[v_offset + k]).collect())
     }
 
     /// Directly write a joint's velocity DOFs (physics units: rad/s or m/s),
