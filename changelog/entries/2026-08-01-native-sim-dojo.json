@@ -1,0 +1,15 @@
+{
+  "id": "2026-08-01-native-sim-dojo",
+  "version": "0.9.4",
+  "date": "2026-08-01",
+  "category": "feat",
+  "title": "Physics simulation and RL training in the native app",
+  "summary": "The macOS/visionOS app can simulate an assembly, drive it with a trained policy, and train one in-process \u2014 in both studio and released-to-desktop modes, with the Booster K1 shipped as a sample.",
+  "features": [
+    "simulation",
+    "rl",
+    "physics",
+    "native-app",
+    "training"
+  ]
+}

@@ -1,0 +1,1653 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "11": {
+      "id": 11,
+      "name": "Right_Arm_3_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Arm_3.STL"
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "Left_Hip_Pitch_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Hip_Pitch.STL"
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "Left_Ankle_Cross_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Ankle_Cross.STL"
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Left_Arm_1_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Arm_1.STL"
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "Right_Hip_Roll_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Hip_Roll.STL"
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "Right_Hip_Yaw_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Hip_Yaw.STL"
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Left_Arm_3_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Arm_3.STL"
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Right_Arm_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Arm_2.STL"
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Head_1_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Head_1.STL"
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "Right_Shank_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Shank.STL"
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "Right_Ankle_Cross_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Ankle_Cross.STL"
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Trunk_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Trunk.STL"
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "Right_Hip_Pitch_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Hip_Pitch.STL"
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Right_Arm_1_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Arm_1.STL"
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "Left_Shank_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Shank.STL"
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "right_hand_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Arm_4.STL"
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "Left_Hip_Roll_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Hip_Roll.STL"
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "left_hand_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Arm_4.STL"
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Head_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Head_2.STL"
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": "world",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Left_Arm_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Arm_2.STL"
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "Left_Hip_Yaw_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Hip_Yaw.STL"
+      }
+    },
+    "24": {
+      "id": 24,
+      "name": "right_foot_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Right_Foot.STL"
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "left_foot_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/booster-k1/meshes/Left_Foot.STL"
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "name": "default",
+      "color": [
+        0.7,
+        0.7,
+        0.7
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 15,
+      "material": "default"
+    },
+    {
+      "root": 16,
+      "material": "default"
+    },
+    {
+      "root": 17,
+      "material": "default"
+    },
+    {
+      "root": 18,
+      "material": "default"
+    },
+    {
+      "root": 19,
+      "material": "default"
+    },
+    {
+      "root": 20,
+      "material": "default"
+    },
+    {
+      "root": 21,
+      "material": "default"
+    },
+    {
+      "root": 22,
+      "material": "default"
+    },
+    {
+      "root": 23,
+      "material": "default"
+    },
+    {
+      "root": 24,
+      "material": "default"
+    }
+  ],
+  "partDefs": {
+    "part_Right_Arm_2": {
+      "id": "part_Right_Arm_2",
+      "name": "Right_Arm_2",
+      "root": 10,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.09,
+        "com": {
+          "x": 17.229000000000003,
+          "y": -18.428,
+          "z": 0.043784
+        },
+        "inertia": [
+          0.000092,
+          0.000068,
+          0.000113,
+          -9e-6,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_Left_Arm_3": {
+      "id": "part_Left_Arm_3",
+      "name": "Left_Arm_3",
+      "root": 7,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.8,
+        "com": {
+          "x": -0.39790000000000003,
+          "y": 72.617,
+          "z": -0.66218
+        },
+        "inertia": [
+          0.006069,
+          0.000387,
+          0.006067,
+          -0.000017,
+          -1e-6,
+          -0.000079
+        ]
+      }
+    },
+    "part_Right_Hip_Roll": {
+      "id": "part_Right_Hip_Roll",
+      "name": "Right_Hip_Roll",
+      "root": 20,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.13,
+        "com": {
+          "x": 23.584999999999997,
+          "y": 0.049,
+          "z": -24.996000000000002
+        },
+        "inertia": [
+          0.000191,
+          0.000262,
+          0.00015,
+          0.0,
+          -0.000048,
+          0.0
+        ]
+      }
+    },
+    "part_Left_Arm_1": {
+      "id": "part_Left_Arm_1",
+      "name": "Left_Arm_1",
+      "root": 5,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.5,
+        "com": {
+          "x": -2.7009999999999996,
+          "y": 62.383,
+          "z": -11.965
+        },
+        "inertia": [
+          0.002194,
+          0.000331,
+          0.002139,
+          -0.000084,
+          0.000017,
+          -0.000372
+        ]
+      }
+    },
+    "part_Right_Arm_3": {
+      "id": "part_Right_Arm_3",
+      "name": "Right_Arm_3",
+      "root": 11,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.8,
+        "com": {
+          "x": -0.39919,
+          "y": -72.601,
+          "z": -0.65629
+        },
+        "inertia": [
+          0.00607,
+          0.000388,
+          0.006068,
+          0.000017,
+          -1e-6,
+          0.000079
+        ]
+      }
+    },
+    "part_Left_Hip_Yaw": {
+      "id": "part_Left_Hip_Yaw",
+      "name": "Left_Hip_Yaw",
+      "root": 15,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.65,
+        "com": {
+          "x": -8.4744,
+          "y": -4.0493999999999994,
+          "z": -87.90599999999999
+        },
+        "inertia": [
+          0.015786,
+          0.01614,
+          0.001551,
+          0.000096,
+          0.001546,
+          0.000745
+        ]
+      }
+    },
+    "part_Right_Hip_Yaw": {
+      "id": "part_Right_Hip_Yaw",
+      "name": "Right_Hip_Yaw",
+      "root": 21,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.65,
+        "com": {
+          "x": -8.475,
+          "y": 4.0392,
+          "z": -87.90599999999999
+        },
+        "inertia": [
+          0.015786,
+          0.01614,
+          0.001551,
+          -0.000096,
+          0.001546,
+          -0.000745
+        ]
+      }
+    },
+    "part_Left_Arm_2": {
+      "id": "part_Left_Arm_2",
+      "name": "Left_Arm_2",
+      "root": 6,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.09,
+        "com": {
+          "x": 17.29,
+          "y": 18.221,
+          "z": -0.04329
+        },
+        "inertia": [
+          0.000092,
+          0.000068,
+          0.000113,
+          9e-6,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_left_foot_link": {
+      "id": "part_left_foot_link",
+      "name": "left_foot_link",
+      "root": 18,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.494,
+        "com": {
+          "x": 11.662,
+          "y": 0.244,
+          "z": -14.364
+        },
+        "inertia": [
+          0.000261,
+          0.00117,
+          0.001213,
+          3e-7,
+          -0.000115,
+          -2e-7
+        ]
+      }
+    },
+    "part_Left_Ankle_Cross": {
+      "id": "part_Left_Ankle_Cross",
+      "name": "Left_Ankle_Cross",
+      "root": 17,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.039,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          2e-6,
+          4e-6,
+          4e-6,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_Head_1": {
+      "id": "part_Head_1",
+      "name": "Head_1",
+      "root": 3,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.3,
+        "com": {
+          "x": -0.69503,
+          "y": -0.38527,
+          "z": 31.688000000000002
+        },
+        "inertia": [
+          0.000429,
+          0.000421,
+          0.000126,
+          -2e-6,
+          -6e-6,
+          -5e-6
+        ]
+      }
+    },
+    "part_Trunk": {
+      "id": "part_Trunk",
+      "name": "Trunk",
+      "root": 2,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 6.5,
+        "com": {
+          "x": -4.3392,
+          "y": -0.65534,
+          "z": 65.68599999999999
+        },
+        "inertia": [
+          0.096159,
+          0.089512,
+          0.020187,
+          -0.000039,
+          -0.002091,
+          -0.000567
+        ]
+      }
+    },
+    "part_Left_Hip_Pitch": {
+      "id": "part_Left_Hip_Pitch",
+      "name": "Left_Hip_Pitch",
+      "root": 13,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.69,
+        "com": {
+          "x": -10.093,
+          "y": -1.9934000000000003,
+          "z": -24.712999999999997
+        },
+        "inertia": [
+          0.000781,
+          0.000987,
+          0.000604,
+          4e-6,
+          0.000167,
+          8e-6
+        ]
+      }
+    },
+    "part_Right_Arm_1": {
+      "id": "part_Right_Arm_1",
+      "name": "Right_Arm_1",
+      "root": 9,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.5,
+        "com": {
+          "x": -2.6302,
+          "y": -62.51,
+          "z": -11.99
+        },
+        "inertia": [
+          0.0022,
+          0.000332,
+          0.002145,
+          0.000082,
+          0.000017,
+          0.000373
+        ]
+      }
+    },
+    "part_world": {
+      "id": "part_world",
+      "name": "world",
+      "root": 1,
+      "defaultMaterial": "default"
+    },
+    "part_Right_Shank": {
+      "id": "part_Right_Shank",
+      "name": "Right_Shank",
+      "root": 22,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.5,
+        "com": {
+          "x": -0.805,
+          "y": -3.146,
+          "z": -109.215
+        },
+        "inertia": [
+          0.023681,
+          0.02367,
+          0.00124,
+          -0.000035,
+          0.000221,
+          0.000105
+        ]
+      }
+    },
+    "part_Head_2": {
+      "id": "part_Head_2",
+      "name": "Head_2",
+      "root": 4,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.7,
+        "com": {
+          "x": 11.042,
+          "y": -0.92871,
+          "z": 80.69800000000001
+        },
+        "inertia": [
+          0.005927,
+          0.005776,
+          0.001807,
+          -0.000012,
+          0.000664,
+          -0.000033
+        ]
+      }
+    },
+    "part_Left_Hip_Roll": {
+      "id": "part_Left_Hip_Roll",
+      "name": "Left_Hip_Roll",
+      "root": 14,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.13,
+        "com": {
+          "x": 23.584999999999997,
+          "y": 0.049,
+          "z": -24.996000000000002
+        },
+        "inertia": [
+          0.000191,
+          0.000262,
+          0.00015,
+          0.0,
+          -0.000048,
+          0.0
+        ]
+      }
+    },
+    "part_right_hand_link": {
+      "id": "part_right_hand_link",
+      "name": "right_hand_link",
+      "root": 12,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.19,
+        "com": {
+          "x": -1.5177,
+          "y": -84.536,
+          "z": 8.6733
+        },
+        "inertia": [
+          0.002056,
+          0.000082,
+          0.00203,
+          5e-6,
+          -2e-6,
+          -0.000031
+        ]
+      }
+    },
+    "part_Left_Shank": {
+      "id": "part_Left_Shank",
+      "name": "Left_Shank",
+      "root": 16,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.5,
+        "com": {
+          "x": -0.81083,
+          "y": 3.1459,
+          "z": -109.22
+        },
+        "inertia": [
+          0.023681,
+          0.02367,
+          0.00124,
+          0.000035,
+          0.000222,
+          -0.000105
+        ]
+      }
+    },
+    "part_Right_Hip_Pitch": {
+      "id": "part_Right_Hip_Pitch",
+      "name": "Right_Hip_Pitch",
+      "root": 19,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.69,
+        "com": {
+          "x": -10.065,
+          "y": 2.0086,
+          "z": -24.739
+        },
+        "inertia": [
+          0.000782,
+          0.000988,
+          0.000604,
+          -4e-6,
+          0.000166,
+          -9e-6
+        ]
+      }
+    },
+    "part_Right_Ankle_Cross": {
+      "id": "part_Right_Ankle_Cross",
+      "name": "Right_Ankle_Cross",
+      "root": 23,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.039,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          2e-6,
+          4e-6,
+          4e-6,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_right_foot_link": {
+      "id": "part_right_foot_link",
+      "name": "right_foot_link",
+      "root": 24,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.494,
+        "com": {
+          "x": 11.662,
+          "y": -0.244,
+          "z": -14.364
+        },
+        "inertia": [
+          0.000261,
+          0.00117,
+          0.001213,
+          -3e-7,
+          -0.000115,
+          2e-7
+        ]
+      }
+    },
+    "part_left_hand_link": {
+      "id": "part_left_hand_link",
+      "name": "left_hand_link",
+      "root": 8,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.19,
+        "com": {
+          "x": -1.5751000000000002,
+          "y": 84.637,
+          "z": 8.7033
+        },
+        "inertia": [
+          0.002056,
+          0.000082,
+          0.002029,
+          -7e-6,
+          -2e-6,
+          0.000031
+        ]
+      }
+    }
+  },
+  "instances": [
+    {
+      "id": "world_inst",
+      "partDefId": "part_world",
+      "name": "world"
+    },
+    {
+      "id": "Trunk_inst",
+      "partDefId": "part_Trunk",
+      "name": "Trunk"
+    },
+    {
+      "id": "Head_1_inst",
+      "partDefId": "part_Head_1",
+      "name": "Head_1"
+    },
+    {
+      "id": "Head_2_inst",
+      "partDefId": "part_Head_2",
+      "name": "Head_2"
+    },
+    {
+      "id": "Left_Arm_1_inst",
+      "partDefId": "part_Left_Arm_1",
+      "name": "Left_Arm_1"
+    },
+    {
+      "id": "Left_Arm_2_inst",
+      "partDefId": "part_Left_Arm_2",
+      "name": "Left_Arm_2"
+    },
+    {
+      "id": "Left_Arm_3_inst",
+      "partDefId": "part_Left_Arm_3",
+      "name": "Left_Arm_3"
+    },
+    {
+      "id": "left_hand_link_inst",
+      "partDefId": "part_left_hand_link",
+      "name": "left_hand_link"
+    },
+    {
+      "id": "Right_Arm_1_inst",
+      "partDefId": "part_Right_Arm_1",
+      "name": "Right_Arm_1"
+    },
+    {
+      "id": "Right_Arm_2_inst",
+      "partDefId": "part_Right_Arm_2",
+      "name": "Right_Arm_2"
+    },
+    {
+      "id": "Right_Arm_3_inst",
+      "partDefId": "part_Right_Arm_3",
+      "name": "Right_Arm_3"
+    },
+    {
+      "id": "right_hand_link_inst",
+      "partDefId": "part_right_hand_link",
+      "name": "right_hand_link"
+    },
+    {
+      "id": "Left_Hip_Pitch_inst",
+      "partDefId": "part_Left_Hip_Pitch",
+      "name": "Left_Hip_Pitch"
+    },
+    {
+      "id": "Left_Hip_Roll_inst",
+      "partDefId": "part_Left_Hip_Roll",
+      "name": "Left_Hip_Roll"
+    },
+    {
+      "id": "Left_Hip_Yaw_inst",
+      "partDefId": "part_Left_Hip_Yaw",
+      "name": "Left_Hip_Yaw"
+    },
+    {
+      "id": "Left_Shank_inst",
+      "partDefId": "part_Left_Shank",
+      "name": "Left_Shank"
+    },
+    {
+      "id": "Left_Ankle_Cross_inst",
+      "partDefId": "part_Left_Ankle_Cross",
+      "name": "Left_Ankle_Cross"
+    },
+    {
+      "id": "left_foot_link_inst",
+      "partDefId": "part_left_foot_link",
+      "name": "left_foot_link"
+    },
+    {
+      "id": "Right_Hip_Pitch_inst",
+      "partDefId": "part_Right_Hip_Pitch",
+      "name": "Right_Hip_Pitch"
+    },
+    {
+      "id": "Right_Hip_Roll_inst",
+      "partDefId": "part_Right_Hip_Roll",
+      "name": "Right_Hip_Roll"
+    },
+    {
+      "id": "Right_Hip_Yaw_inst",
+      "partDefId": "part_Right_Hip_Yaw",
+      "name": "Right_Hip_Yaw"
+    },
+    {
+      "id": "Right_Shank_inst",
+      "partDefId": "part_Right_Shank",
+      "name": "Right_Shank"
+    },
+    {
+      "id": "Right_Ankle_Cross_inst",
+      "partDefId": "part_Right_Ankle_Cross",
+      "name": "Right_Ankle_Cross"
+    },
+    {
+      "id": "right_foot_link_inst",
+      "partDefId": "part_right_foot_link",
+      "name": "right_foot_link"
+    }
+  ],
+  "joints": [
+    {
+      "id": "world_joint",
+      "name": "world_joint",
+      "parentInstanceId": "world_inst",
+      "childInstanceId": "Trunk_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 550.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Free"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "AAHead_yaw",
+      "name": "AAHead_yaw",
+      "parentInstanceId": "Trunk_inst",
+      "childInstanceId": "Head_1_inst",
+      "parentAnchor": {
+        "x": 5.6,
+        "y": 0.0,
+        "z": 214.9
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -57.29577951308232,
+          57.29577951308232
+        ],
+        "effort_limit": 6.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Head_pitch",
+      "name": "Head_pitch",
+      "parentInstanceId": "Head_1_inst",
+      "childInstanceId": "Head_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 33.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -19.99622705006573,
+          48.98789148368539
+        ],
+        "effort_limit": 6.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "ALeft_Shoulder_Pitch",
+      "name": "ALeft_Shoulder_Pitch",
+      "parentInstanceId": "Trunk_inst",
+      "childInstanceId": "Left_Arm_1_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 77.0,
+        "z": 184.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -189.99280486538098,
+          69.90085100596043
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Shoulder_Roll",
+      "name": "Left_Shoulder_Roll",
+      "parentInstanceId": "Left_Arm_1_inst",
+      "childInstanceId": "Left_Arm_2_inst",
+      "parentAnchor": {
+        "x": 2.5,
+        "y": 68.0,
+        "z": -13.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -99.69465635276325,
+          89.95437383553924
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Elbow_Pitch",
+      "name": "Left_Elbow_Pitch",
+      "parentInstanceId": "Left_Arm_2_inst",
+      "childInstanceId": "Left_Arm_3_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 44.428000000000004,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -130.06141949469688,
+          130.06141949469688
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Elbow_Yaw",
+      "name": "Left_Elbow_Yaw",
+      "parentInstanceId": "Left_Arm_3_inst",
+      "childInstanceId": "left_hand_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 121.5,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -139.80170201192087,
+          0.0
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "ARight_Shoulder_Pitch",
+      "name": "ARight_Shoulder_Pitch",
+      "parentInstanceId": "Trunk_inst",
+      "childInstanceId": "Right_Arm_1_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -77.0,
+        "z": 184.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -189.99280486538098,
+          69.90085100596043
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Shoulder_Roll",
+      "name": "Right_Shoulder_Roll",
+      "parentInstanceId": "Right_Arm_1_inst",
+      "childInstanceId": "Right_Arm_2_inst",
+      "parentAnchor": {
+        "x": 2.5,
+        "y": -68.0,
+        "z": -13.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -89.95437383553924,
+          99.69465635276325
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Elbow_Pitch",
+      "name": "Right_Elbow_Pitch",
+      "parentInstanceId": "Right_Arm_2_inst",
+      "childInstanceId": "Right_Arm_3_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -44.428000000000004,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -130.06141949469688,
+          130.06141949469688
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Elbow_Yaw",
+      "name": "Right_Elbow_Yaw",
+      "parentInstanceId": "Right_Arm_3_inst",
+      "childInstanceId": "right_hand_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -121.5,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          0.0,
+          139.80170201192087
+        ],
+        "effort_limit": 14.0,
+        "velocity_limit": 1031.324031235482
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Hip_Pitch",
+      "name": "Left_Hip_Pitch",
+      "parentInstanceId": "Trunk_inst",
+      "childInstanceId": "Left_Hip_Pitch_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 96.0,
+        "z": -77.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -171.88733853924697,
+          126.62367272391194
+        ],
+        "effort_limit": 30.0,
+        "velocity_limit": 406.8000345428845
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Hip_Roll",
+      "name": "Left_Hip_Roll",
+      "parentInstanceId": "Left_Hip_Pitch_inst",
+      "childInstanceId": "Left_Hip_Roll_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -26.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -22.918311805232932,
+          89.95437383553924
+        ],
+        "effort_limit": 35.0,
+        "velocity_limit": 739.115555718762
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Hip_Yaw",
+      "name": "Left_Hip_Yaw",
+      "parentInstanceId": "Left_Hip_Roll_inst",
+      "childInstanceId": "Left_Hip_Yaw_inst",
+      "parentAnchor": {
+        "x": 12.0,
+        "y": 0.0,
+        "z": -48.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -57.29577951308232,
+          57.29577951308232
+        ],
+        "effort_limit": 20.0,
+        "velocity_limit": 1037.05360918679
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Knee_Pitch",
+      "name": "Left_Knee_Pitch",
+      "parentInstanceId": "Left_Hip_Yaw_inst",
+      "childInstanceId": "Left_Shank_inst",
+      "parentAnchor": {
+        "x": -14.0,
+        "y": 0.0,
+        "z": -117.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          0.0,
+          127.76958831417357
+        ],
+        "effort_limit": 40.0,
+        "velocity_limit": 716.1972439135291
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Ankle_Pitch",
+      "name": "Left_Ankle_Pitch",
+      "parentInstanceId": "Left_Shank_inst",
+      "childInstanceId": "Left_Ankle_Cross_inst",
+      "parentAnchor": {
+        "x": 0.19705999999999999,
+        "y": 0.2,
+        "z": -245.19
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -49.84732817638162,
+          19.7670439320134
+        ],
+        "effort_limit": 20.0,
+        "velocity_limit": 1037.05360918679
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Ankle_Roll",
+      "name": "Left_Ankle_Roll",
+      "parentInstanceId": "Left_Ankle_Cross_inst",
+      "childInstanceId": "left_foot_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -19.7670439320134,
+          19.7670439320134
+        ],
+        "effort_limit": 20.0,
+        "velocity_limit": 1037.05360918679
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Hip_Pitch",
+      "name": "Right_Hip_Pitch",
+      "parentInstanceId": "Trunk_inst",
+      "childInstanceId": "Right_Hip_Pitch_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -96.0,
+        "z": -77.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -171.88733853924697,
+          126.62367272391194
+        ],
+        "effort_limit": 30.0,
+        "velocity_limit": 406.8000345428845
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Hip_Roll",
+      "name": "Right_Hip_Roll",
+      "parentInstanceId": "Right_Hip_Pitch_inst",
+      "childInstanceId": "Right_Hip_Roll_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -26.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -89.95437383553924,
+          22.918311805232932
+        ],
+        "effort_limit": 35.0,
+        "velocity_limit": 739.115555718762
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Hip_Yaw",
+      "name": "Right_Hip_Yaw",
+      "parentInstanceId": "Right_Hip_Roll_inst",
+      "childInstanceId": "Right_Hip_Yaw_inst",
+      "parentAnchor": {
+        "x": 12.0,
+        "y": 0.0,
+        "z": -48.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -57.29577951308232,
+          57.29577951308232
+        ],
+        "effort_limit": 20.0,
+        "velocity_limit": 1037.05360918679
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Knee_Pitch",
+      "name": "Right_Knee_Pitch",
+      "parentInstanceId": "Right_Hip_Yaw_inst",
+      "childInstanceId": "Right_Shank_inst",
+      "parentAnchor": {
+        "x": -14.0,
+        "y": 0.0,
+        "z": -117.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          0.0,
+          127.76958831417357
+        ],
+        "effort_limit": 40.0,
+        "velocity_limit": 716.1972439135291
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Ankle_Pitch",
+      "name": "Right_Ankle_Pitch",
+      "parentInstanceId": "Right_Shank_inst",
+      "childInstanceId": "Right_Ankle_Cross_inst",
+      "parentAnchor": {
+        "x": 0.19705999999999999,
+        "y": -0.2,
+        "z": -245.19
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -49.84732817638162,
+          19.7670439320134
+        ],
+        "effort_limit": 20.0,
+        "velocity_limit": 1037.05360918679
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Ankle_Roll",
+      "name": "Right_Ankle_Roll",
+      "parentInstanceId": "Right_Ankle_Cross_inst",
+      "childInstanceId": "right_foot_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -19.7670439320134,
+          19.7670439320134
+        ],
+        "effort_limit": 20.0,
+        "velocity_limit": 1037.05360918679
+      },
+      "state": 0.0
+    }
+  ],
+  "groundInstanceId": "world_inst"
+}

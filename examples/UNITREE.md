@@ -4,10 +4,21 @@ Four URDF descriptors live in this directory for Unitree robots:
 
 | File | Source | Geometry | DOF | Status |
 |------|--------|----------|-----|--------|
-| `unitree-g1.urdf` | hand-authored | primitives only | 23 | self-contained |
-| `unitree-go2.urdf` | hand-authored | primitives only | 12 | self-contained |
-| `unitree-g1-official.urdf` | `unitreerobotics/unitree_ros` (g1_23dof) | STL meshes | 23 | meshes not vendored |
-| `unitree-go2-official.urdf` | `unitreerobotics/unitree_ros` (go2_description) | DAE meshes | 12 actuated (41 total joints) | DAE not yet loaded |
+| `unitree-g1.urdf` | `unitreerobotics/unitree_ros` (g1_23dof) | 50 STL meshes + 12 primitives | 23 | **meshes not vendored** |
+| `unitree-go2.urdf` | `unitreerobotics/unitree_ros` (go2_description) | 17 meshes + 27 primitives | 12 actuated (41 total joints) | **meshes not vendored** |
+
+> This table used to claim both files were hand-authored, primitives-only and
+> self-contained, and listed two `*-official.urdf` variants that are not in this
+> directory. Neither was true: at some point the hand-authored files were
+> replaced by the upstream ones. The distinction matters — a URDF whose meshes
+> are absent still *simulates* correctly (mass, COM and inertia come from the
+> authored `<inertial>` blocks, and only the collider falls back to a
+> placeholder), but it **renders nothing**, so a document imported from one
+> shows an empty viewport in the app.
+>
+> `examples/robot-arm-2dof.urdf` is genuinely primitives-only, and
+> `examples/floating-arm.vcad` is that robot imported with a synthesized
+> floating base — the sample to reach for when you need geometry that resolves.
 
 The hand-authored versions ship with primitive box / cylinder / sphere
 geometry and are ready to simulate with no external dependencies.
