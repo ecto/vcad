@@ -295,14 +295,19 @@ fn trajectory_matches_the_golden_record() {
     // take a perturbation ~31% of one frame's motion — six orders of magnitude
     // above anything floating-point noise produces.
     let last = got.frames.last().expect("no frames");
-    assert!(last.done, "the episode must end by terminating, not by running out");
+    assert!(
+        last.done,
+        "the episode must end by terminating, not by running out"
+    );
     assert!(
         last.base_tilt_deg > 45.0,
         "it must terminate by tipping past 45 degrees, got {:.2}",
         last.base_tilt_deg
     );
     assert!(
-        got.frames.windows(2).all(|w| w[1].base_height_m < w[0].base_height_m),
+        got.frames
+            .windows(2)
+            .all(|w| w[1].base_height_m < w[0].base_height_m),
         "an uncontrolled humanoid must descend monotonically"
     );
     eprintln!(
