@@ -797,6 +797,90 @@ impl RobotEnv {
         &self.actuated_joint_ids
     }
 
+    /// Whether the robot has a genuine floating base: a 6-DOF (`Free`) joint.
+    ///
+    /// Distinct from "`base_pose` resolved", which is the check that looks
+    /// right and is wrong. A fixed-base document still has a base *instance*,
+    /// so its pose resolves fine — to a constant. Every height and tilt
+    /// reading is then a constant too, no termination condition can ever fire,
+    /// and a training run reports full-length episodes and a stable reward
+    /// while measuring nothing at all. Only the presence of the 6-DOF joint
+    /// distinguishes the two cases.
+    pub fn has_floating_base(&self) -> bool {
+        self.joint_ids
+            .iter()
+            .any(|id| self.world.joint_dof_count(id) == 6)
+    }
+
+    /// Instance ids of every simulated body, sorted.
+    ///
+    /// Sorted rather than in document order because the backing map is a
+    /// `HashMap`: any per-instance iteration that consumes a seeded RNG (or
+    /// that a caller indexes into across runs) would otherwise vary per
+    /// process.
+    pub fn instance_ids(&self) -> Vec<String> {
+        self.world.instance_ids()
+    }
+
+    /// World pose of an instance's part frame as `(position_m, [w, x, y, z])`,
+    /// or `None` for an id with no physics body.
+    ///
+    /// This is the *rendering* seam — the pose of the geometry, not of the
+    /// physics body's center of mass. Position is in **meters**, so a caller
+    /// feeding a vcad scene (millimeters) must scale.
+    pub fn instance_pose(&self, instance_id: &str) -> Option<([f64; 3], [f64; 4])> {
+        self.world.get_instance_pose(instance_id)
+    }
+
+    /// Add a velocity impulse to the floating base: `d_omega` in rad/s and
+    /// `d_v` in m/s.
+    ///
+    /// The "shove the robot and see if the policy recovers" primitive. It is a
+    /// velocity kick rather than a force because the base's free joint is the
+    /// only handle the articulated solver exposes without a full external-
+    /// wrench channel, and for a disturbance test an impulse is the honest
+    /// model anyway: a shove is over long before the next control tick.
+    ///
+    /// Both components are in the free joint's own convention — angular first,
+    /// then **body-frame** linear velocity (phyz's Featherstone free-joint
+    /// ordering, the same one [`Observation::joint_velocities`] documents). A
+    /// caller wanting a world-frame push must rotate it by the base
+    /// orientation first; for an interactive shove the distinction rarely
+    /// matters, but it is not world frame and pretending otherwise puts the
+    /// push in the wrong direction whenever the robot is turned.
+    ///
+    /// Returns false when the document has no floating base (nothing to
+    /// shove). The kick is applied on top of the current velocity.
+    pub fn nudge_base(&mut self, d_omega: [f64; 3], d_v: [f64; 3]) -> bool {
+        let Some(free_id) = self
+            .joint_ids
+            .iter()
+            .find(|id| self.world.joint_dof_count(id) == 6)
+            .cloned()
+        else {
+            return false;
+        };
+        // Raw physics units on both sides of the read/modify/write — see
+        // `PhysicsWorld::get_joint_velocity_raw` for why the converting getter
+        // would be wrong here.
+        let Some(v) = self.world.get_joint_velocity_raw(&free_id) else {
+            return false;
+        };
+        if v.len() != 6 {
+            return false;
+        }
+        let next = [
+            v[0] + d_omega[0],
+            v[1] + d_omega[1],
+            v[2] + d_omega[2],
+            v[3] + d_v[0],
+            v[4] + d_v[1],
+            v[5] + d_v[2],
+        ];
+        self.world.set_joint_velocity_raw(&free_id, &next);
+        true
+    }
+
     /// Get the number of joints (observation joint count, including Fixed joints).
     pub fn num_joints(&self) -> usize {
         self.joint_ids.len()

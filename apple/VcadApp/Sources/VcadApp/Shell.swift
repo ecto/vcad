@@ -89,6 +89,24 @@ struct EditorView: View {
                             ExampleChips(intent: intent)
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
+                        // Transports live here, in the SAME bottom overlay as the
+                        // composer — not in ViewportView's own bottom overlay.
+                        // Two bottom-aligned overlays on one view do not stack,
+                        // they coincide, and this one is applied outermost, so
+                        // anything the viewport draws at the bottom ends up
+                        // underneath the composer and the tool palette. (That is
+                        // where PlaybackBar used to be, and why it was invisible
+                        // whenever the footer palette was showing.)
+                        //
+                        // Kinematic playback above physics: both write the same
+                        // instance transforms, so only one drives at a time —
+                        // starting the simulation pauses playback.
+                        if model.hasPlayback {
+                            PlaybackBar(model: model)
+                        }
+                        if model.canSimulate {
+                            SimBar(model: model)
+                        }
                         ComposerBar(engine: intent, model: model)
                         if showsTools && model.toolPlacement == .footer {
                             toolStrip(header: false)
@@ -132,6 +150,39 @@ struct EditorView: View {
                     if env["VCAD_RELEASE"] != "0" {
                         try? await Task.sleep(for: .seconds(1))
                         model.releaseMode = true
+                    }
+                    // Dev hook: VCAD_SIM=1 builds the physics simulation for the
+                    // opened document and starts it running, so the whole path
+                    // (enableSimulation -> prepare -> stepping engine -> instance
+                    // transforms -> renderer) can be verified without driving the
+                    // UI. Same purpose as VCAD_GRIPPER/VCAD_ROUTE below.
+                    if env["VCAD_SIM"] == "1" {
+                        // After the geometry rebuild, or there is no resident
+                        // assembly scene to bind against yet.
+                        try? await Task.sleep(for: .seconds(2))
+                        model.enableSimulation()
+                        if model.sim.isReady {
+                            model.sim.run()
+                        }
+                        // VCAD_POLICY=<path> drives with a trained policy.
+                        if let pol = env["VCAD_POLICY"], !pol.isEmpty {
+                            model.sim.loadPolicy(from: URL(fileURLWithPath: pol))
+                        }
+                        // VCAD_TRAIN=1 additionally kicks off a short ARS run,
+                        // so the training console can be seen working.
+                        if env["VCAD_TRAIN"] == "1" {
+                            model.sim.trainSpec.ars.iterations = 12
+                            model.sim.trainSpec.ars.n_directions = 4
+                            model.sim.trainSpec.ars.top_k = 2
+                            model.sim.trainSpec.held_out_seeds = 3
+                            model.sim.trainSpec.held_out_every = 1
+                            model.sim.spec.max_steps = 60
+                            model.sim.startTraining()
+                        }
+                        let line = "[VCAD_SIM] available=\(model.sim.isAvailable) "
+                            + "ready=\(model.sim.isReady) actionDim=\(model.sim.actionDim) "
+                            + "error=\(model.sim.errorMessage ?? "none")\n"
+                        FileHandle.standardError.write(Data(line.utf8))
                     }
                     guard env["VCAD_GRIPPER"] == "1" else { return }
                     model.openGripper()
@@ -890,6 +941,16 @@ struct InspectorView: View {
                     Text(info).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
+            // Dynamics. Gated on the document being simulatable, NOT on a
+            // simulation having been built successfully: `prepare` sets
+            // `isAvailable = false` on failure, so gating on that made the
+            // error message it just recorded unreachable — pressing Simulate
+            // would do nothing at all, silently.
+            if model.canSimulate {
+                Divider()
+                SimInspector(model: model)
+                    .padding(.top, 2)
+            }
         }
         .padding(14)
         .glassCard()
@@ -1589,12 +1650,6 @@ struct ViewportView: View {
           }
           // Kinematic playback transport — shown only when the document has
           // an animation timeline with joint tracks (and instances to move).
-          .overlay(alignment: .bottom) {
-              if model.hasPlayback {
-                  PlaybackBar(model: model)
-                      .padding(.bottom, 14)
-              }
-          }
           .overlay(alignment: .bottomTrailing) {
               if model.raytraceEnabled {
                   Text(model.raytraceImage == nil ? "RT …" : "RT")

@@ -283,6 +283,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let iterations: usize = args.next().map_or(150, |s| s.parse().unwrap());
 
     let mut doc: Document = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    // A committed robot document references its vendored meshes relative to
+    // itself. Without this the STLs never load, every collider degrades to a
+    // placeholder box, and the policy trains against feet it does not have.
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let n = vcad_eval::resolve_mesh_paths(&mut doc, dir);
+        if n > 0 {
+            println!("resolved {n} mesh references against {}", dir.display());
+        }
+    }
 
     // Raise the floating base to standing height.
     //
@@ -733,7 +742,7 @@ where
                     e.iteration, e.eval_reward, e.sigma, e.update_norm, r, st
                 );
             }
-            return;
+            return std::ops::ControlFlow::Continue(());
         }
         if e.iteration % 5 == 0 || e.iteration + 1 == iterations {
             println!(
@@ -746,6 +755,8 @@ where
                 spec.max_steps
             );
         }
+        // This example never cancels; a UI-driven trainer does.
+        std::ops::ControlFlow::Continue(())
     })?;
     println!("trained in {:?}", t0.elapsed());
     if curve > 0 {

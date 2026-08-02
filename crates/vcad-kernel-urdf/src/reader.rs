@@ -163,6 +163,19 @@ pub struct UrdfReadOptions {
     /// Directory the URDF lives in — used as the base for resolving
     /// relative mesh paths. Set automatically by [`read_urdf`].
     pub urdf_dir: Option<PathBuf>,
+    /// Emit `MeshImport` paths relative to this directory instead of absolute.
+    ///
+    /// The importer's default is an absolute path, because the immediate
+    /// consumer (physics, CSG eval) opens it with no base directory to resolve
+    /// against. That default cannot be committed: an absolute path resolves
+    /// only on the machine that ran the import, so a checked-in sample renders
+    /// on exactly one computer.
+    ///
+    /// Set this to the *output document's* directory to get a portable
+    /// document. Relative paths are then resolved against the document's own
+    /// location by [`vcad_eval::resolve_mesh_paths`], which every loader that
+    /// reads a `.vcad` from disk applies.
+    pub mesh_paths_relative_to: Option<PathBuf>,
     /// Synthesize a floating base when the URDF has no floating joint.
     ///
     /// Most humanoid/quadruped URDFs ship the `world` link and its
@@ -188,7 +201,7 @@ pub struct UrdfReadOptions {
     /// Spawn slightly above the settled standing height so the robot drops
     /// onto the ground rather than starting interpenetrated (for the Booster
     /// K1, 620 mm against a 549.8 mm settled stand). Defaults to 0.
-    pub spawn_height_mm: f64,
+    pub spawn_height_mm: Option<f64>,
 }
 
 impl UrdfReadOptions {
@@ -196,6 +209,23 @@ impl UrdfReadOptions {
     /// disk, or `None` if no candidate exists. Logs (via `eprintln!`) when
     /// a `package://` URI cannot be located so the caller knows a mesh
     /// fell back to a placeholder.
+    /// Render a resolved mesh path for writing into a `MeshImport` node:
+    /// relative to [`Self::mesh_paths_relative_to`] when that is set and a
+    /// relative path exists, absolute otherwise.
+    pub fn render_mesh_path(&self, resolved: &Path) -> String {
+        let Some(base) = self.mesh_paths_relative_to.as_ref() else {
+            return resolved.to_string_lossy().into_owned();
+        };
+        match relative_path(resolved, base) {
+            Some(rel) => rel.to_string_lossy().into_owned(),
+            // No relative route (different volumes, say). Absolute beats a
+            // path that silently resolves against the wrong directory.
+            None => resolved.to_string_lossy().into_owned(),
+        }
+    }
+
+    /// Resolve `filename` (a `package://`, `file://`, absolute or relative
+    /// URDF mesh reference) to a real file on disk.
     pub fn resolve_mesh(&self, filename: &str) -> Option<PathBuf> {
         // package://NAME/rest/of/path
         if let Some(rest) = filename.strip_prefix("package://") {
@@ -377,6 +407,9 @@ fn attr_value(tag: &str, attr: &str) -> Option<String> {
 /// Inject the `world` link + `type="floating"` joint that the URDF left
 /// commented out, when [`UrdfReadOptions::floating_base`] asks for it.
 ///
+/// [`UrdfReadOptions::spawn_height_mm`] applies to the floating joint either
+/// way — synthesized or already authored in the URDF.
+///
 /// When the option is *not* set but the XML's comments do contain a floating
 /// joint, warn on stderr — that is the case this option exists for.
 fn apply_floating_base(
@@ -390,7 +423,11 @@ fn apply_floating_base(
         .any(|j| j.joint_type.trim() == "floating");
 
     if !opts.floating_base {
-        if !already_floating {
+        if already_floating {
+            apply_spawn_height(robot, opts);
+            return Ok(());
+        }
+        {
             if let Some(name) = commented_out_floating_joint(xml) {
                 eprintln!(
                     "urdf: '{}' declares a floating joint ({name}) inside a comment — the \
@@ -404,6 +441,7 @@ fn apply_floating_base(
     }
 
     if already_floating {
+        apply_spawn_height(robot, opts);
         return Ok(());
     }
 
@@ -427,7 +465,7 @@ fn apply_floating_base(
         inertial: None,
     });
     // URDF origins are metres; the IR converts ×1000 on the way in.
-    let z_m = opts.spawn_height_mm / 1000.0;
+    let z_m = opts.spawn_height_mm.unwrap_or(0.0) / 1000.0;
     robot.joints.push(Joint {
         name: joint_name,
         joint_type: "floating".to_string(),
@@ -907,7 +945,7 @@ impl<'a> UrdfReader<'a> {
             let path = self
                 .opts
                 .resolve_mesh(&mesh.filename)
-                .map(|p| p.to_string_lossy().into_owned())
+                .map(|p| self.opts.render_mesh_path(&p))
                 .unwrap_or_else(|| mesh.filename.clone());
             Ok((CsgOp::MeshImport { path, scale }, Vec3::new(0.0, 0.0, 0.0)))
         } else {
@@ -1182,7 +1220,7 @@ mod tests {
     fn floating_opts(height_mm: f64) -> UrdfReadOptions {
         UrdfReadOptions {
             floating_base: true,
-            spawn_height_mm: height_mm,
+            spawn_height_mm: Some(height_mm),
             ..UrdfReadOptions::default()
         }
     }
@@ -1234,11 +1272,30 @@ mod tests {
         <child link="Trunk"/>
     </joint>
 </robot>"#;
+        // An explicit spawn height applies to the AUTHORED joint too. It used
+        // to be discarded, which meant `--spawn-height-mm` silently did nothing
+        // on exactly the URDFs it matters most for: the Booster K1's floating
+        // variant authors `xyz="0 0 0"`, so the robot spawned at the world
+        // origin, below its own termination floor, and every episode ended on
+        // step 1 while the CLI reported the height it had ignored.
         let doc = read_urdf_from_str_with_options(urdf, &floating_opts(620.0)).unwrap();
         let joints = doc.joints.as_ref().unwrap();
         assert_eq!(joints.len(), 1, "must not add a second floating joint");
-        // The authored origin wins over spawn_height_mm.
-        assert!((joints[0].parent_anchor.z - 1000.0).abs() < 1e-9);
+        assert!(
+            (joints[0].parent_anchor.z - 620.0).abs() < 1e-9,
+            "an explicit spawn height must win, got {}",
+            joints[0].parent_anchor.z
+        );
+
+        // ...and with no height requested, the authored origin is preserved.
+        let mut opts = floating_opts(0.0);
+        opts.spawn_height_mm = None;
+        let doc = read_urdf_from_str_with_options(urdf, &opts).unwrap();
+        let joints = doc.joints.as_ref().unwrap();
+        assert!(
+            (joints[0].parent_anchor.z - 1000.0).abs() < 1e-9,
+            "without an explicit height the URDF's own origin must survive"
+        );
     }
 
     #[test]
@@ -1448,5 +1505,82 @@ mod tests {
             assert!((size.y - 200.0).abs() < 0.1);
             assert!((size.z - 300.0).abs() < 0.1);
         }
+    }
+}
+
+/// Write the requested spawn height onto the robot's floating joint.
+///
+/// Applies to an *authored* floating joint as well as a synthesized one. It
+/// used to apply only to synthesized joints, on the reasoning that an authored
+/// origin should win — but the practical effect was that importing a URDF whose
+/// floating variant authors `xyz="0 0 0"` (the Booster K1 does) silently
+/// discarded the requested height and dropped the robot at the world origin,
+/// below its own termination floor, so every episode ended on step 1. A flag
+/// named `spawn_height_mm` that does not set the spawn height is worse than no
+/// flag. Leave it `None` to keep the authored origin.
+fn apply_spawn_height(robot: &mut Robot, opts: &UrdfReadOptions) {
+    let Some(mm) = opts.spawn_height_mm else {
+        return;
+    };
+    let z_m = mm / 1000.0;
+    for j in robot.joints.iter_mut() {
+        if j.joint_type.trim() == "floating" {
+            let rpy = j.origin.as_ref().and_then(|o| o.rpy.clone());
+            j.origin = Some(crate::types::Origin {
+                xyz: Some(format!("0 0 {z_m}")),
+                rpy,
+            });
+        }
+    }
+}
+
+/// `target` expressed relative to `base`, walking up with `..` as needed.
+///
+/// `std::path::Path` has no such operation (`strip_prefix` only handles the
+/// case where `base` is an ancestor), and the common layout here — a document
+/// in `examples/` referencing meshes in `third_party/` — is exactly the case
+/// `strip_prefix` cannot express.
+fn relative_path(target: &Path, base: &Path) -> Option<PathBuf> {
+    let target = target.canonicalize().ok()?;
+    let base = base.canonicalize().ok()?;
+    let mut t = target.components().peekable();
+    let mut b = base.components().peekable();
+    while t.peek().is_some() && t.peek() == b.peek() {
+        t.next();
+        b.next();
+    }
+    let mut out = PathBuf::new();
+    for _ in b {
+        out.push("..");
+    }
+    for c in t {
+        out.push(c);
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
+}
+
+#[cfg(test)]
+mod relative_path_tests {
+    use super::*;
+
+    #[test]
+    fn walks_up_and_back_down() {
+        let tmp = std::env::temp_dir().join("vcad-relpath-test");
+        let a = tmp.join("examples");
+        let b = tmp.join("third_party/meshes");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let f = b.join("Trunk.STL");
+        std::fs::write(&f, b"x").unwrap();
+
+        let rel = relative_path(&f, &a).expect("a relative route exists");
+        assert_eq!(
+            rel,
+            Path::new("../third_party/meshes/Trunk.STL"),
+            "a sibling directory must be reached with `..`, which strip_prefix cannot do"
+        );
+        // And it must actually resolve back to the same file.
+        assert!(a.join(&rel).canonicalize().unwrap() == f.canonicalize().unwrap());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

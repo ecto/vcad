@@ -7213,6 +7213,7 @@ name = "vcad-ffi"
 version = "0.9.4"
 dependencies = [
  "pollster",
+ "serde",
  "serde_json",
  "vcad-ecad-pcb",
  "vcad-eval",
@@ -7220,9 +7221,11 @@ dependencies = [
  "vcad-kernel",
  "vcad-kernel-gpu",
  "vcad-kernel-math",
+ "vcad-kernel-physics",
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
  "vcad-loon",
+ "vcad-sim",
 ]
 
 [[package]]
@@ -7930,6 +7933,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "vcad-eval",
  "vcad-ir",
  "vcad-kernel-physics",
 ]

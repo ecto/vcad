@@ -65,6 +65,7 @@
 //! iterations select for lucky draws.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -369,7 +370,14 @@ impl RunningStats {
 }
 
 /// ARS hyperparameters.
+///
+/// `serde(default)` so a partial config deserializes: a caller overriding one
+/// knob (a UI, a sweep script, a saved run) writes only that knob, and the
+/// measured defaults below fill the rest. Without it, every JSON config has to
+/// restate all eight fields, and the one that matters most — `step_size` — is
+/// then easy to restate wrongly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ArsConfig {
     /// Number of antithetic directions sampled per iteration.
     pub n_directions: usize,
@@ -693,6 +701,12 @@ pub struct TrainOutcome<P> {
 /// not optional bookkeeping: the trainer's own eval return is not a
 /// trustworthy measure of the iterate, so without an external one there is no
 /// way to know which iteration was actually best.
+///
+/// Returning [`ControlFlow::Break`] from `on_iteration` stops the run and
+/// returns the outcome as of that iteration. That is the cancellation path: a
+/// long run driven from a UI must be stoppable, and a callback that merely
+/// declines to do its bookkeeping does not stop anything — the loop keeps
+/// spending rollouts either way.
 pub fn train<P, R, F>(
     spec: &EnvSpec,
     policy: P,
@@ -704,7 +718,7 @@ pub fn train<P, R, F>(
 where
     P: Policy,
     R: Fn(&StepResult, &[f64]) -> f64 + Sync + Send,
-    F: FnMut(&IterationLog, &P),
+    F: FnMut(&IterationLog, &P) -> ControlFlow<()>,
 {
     train_curriculum(
         |_| spec.clone(),
@@ -722,6 +736,9 @@ where
 /// to collect rollouts in at that point — the hook for a domain-randomization
 /// curriculum, where the ranges start narrow and widen toward the real task.
 ///
+/// As in [`train`], `on_iteration` returning [`ControlFlow::Break`] ends the
+/// run early and returns what has been learned so far.
+///
 /// Evaluation always runs at `spec_at(1.0)`, the full target task, never at
 /// the current curriculum level. An eval that eases off with the curriculum
 /// would show a rising curve made entirely of the task getting easier.
@@ -736,7 +753,7 @@ pub fn train_curriculum<P, R, F, S>(
 where
     P: Policy,
     R: Fn(&StepResult, &[f64]) -> f64 + Sync + Send,
-    F: FnMut(&IterationLog, &P),
+    F: FnMut(&IterationLog, &P) -> ControlFlow<()>,
     S: Fn(f64) -> EnvSpec + Sync,
 {
     let target_spec = spec_at(1.0);
@@ -880,8 +897,11 @@ where
             update_norm,
             step_size: alpha,
         };
-        on_iteration(&entry, &policy);
+        let flow = on_iteration(&entry, &policy);
         log.push(entry);
+        if flow.is_break() {
+            break;
+        }
     }
 
     Ok(TrainOutcome {

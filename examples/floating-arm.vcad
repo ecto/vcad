@@ -1,0 +1,403 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "11": {
+      "id": 11,
+      "name": "world",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "link2_center",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": -12.5,
+          "y": -12.5,
+          "z": -60.0
+        }
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": "base_link_geom",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100.0,
+          "y": 100.0,
+          "z": 50.0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "end_effector_geom",
+      "op": {
+        "type": "Sphere",
+        "radius": 15.0,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "link2_translate",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 12.5,
+          "y": 12.5,
+          "z": 60.0
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "base_link_center",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50.0,
+          "y": -50.0,
+          "z": -25.0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "base_link_translate",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 50.0,
+          "y": 50.0,
+          "z": 25.0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "link1_geom",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 30.0,
+          "y": 30.0,
+          "z": 150.0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "link2_geom",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 25.0,
+          "y": 25.0,
+          "z": 120.0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "link1_center",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -15.0,
+          "y": -15.0,
+          "z": -75.0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "link1_translate",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 15.0,
+          "y": 15.0,
+          "z": 75.0
+        }
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "name": "default",
+      "color": [
+        0.7,
+        0.7,
+        0.7
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ],
+  "partDefs": {
+    "part_link1": {
+      "id": "part_link1",
+      "name": "link1",
+      "root": 6,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 1.0,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.002,
+          0.002,
+          0.0002,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_base_link": {
+      "id": "part_base_link",
+      "name": "base_link",
+      "root": 3,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 5.0,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.01,
+          0.01,
+          0.01,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_end_effector": {
+      "id": "part_end_effector",
+      "name": "end_effector",
+      "root": 10,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.2,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.00001,
+          0.00001,
+          0.00001,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_link2": {
+      "id": "part_link2",
+      "name": "link2",
+      "root": 9,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.7,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.001,
+          0.001,
+          0.0001,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_world": {
+      "id": "part_world",
+      "name": "world",
+      "root": 11,
+      "defaultMaterial": "default"
+    }
+  },
+  "instances": [
+    {
+      "id": "base_link_inst",
+      "partDefId": "part_base_link",
+      "name": "base_link"
+    },
+    {
+      "id": "link1_inst",
+      "partDefId": "part_link1",
+      "name": "link1"
+    },
+    {
+      "id": "link2_inst",
+      "partDefId": "part_link2",
+      "name": "link2"
+    },
+    {
+      "id": "end_effector_inst",
+      "partDefId": "part_end_effector",
+      "name": "end_effector"
+    },
+    {
+      "id": "world_inst",
+      "partDefId": "part_world",
+      "name": "world"
+    }
+  ],
+  "joints": [
+    {
+      "id": "shoulder",
+      "name": "shoulder",
+      "parentInstanceId": "base_link_inst",
+      "childInstanceId": "link1_inst",
+      "parentAnchor": {
+        "x": 50.0,
+        "y": 50.0,
+        "z": 50.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -90.00021045914971,
+          90.00021045914971
+        ],
+        "effort_limit": 100.0,
+        "velocity_limit": 114.59155902616465
+      },
+      "state": 0.0
+    },
+    {
+      "id": "elbow",
+      "name": "elbow",
+      "parentInstanceId": "link1_inst",
+      "childInstanceId": "link2_inst",
+      "parentAnchor": {
+        "x": 15.0,
+        "y": 0.0,
+        "z": 150.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -134.98885653282196,
+          134.98885653282196
+        ],
+        "effort_limit": 50.0,
+        "velocity_limit": 114.59155902616465
+      },
+      "state": 0.0
+    },
+    {
+      "id": "wrist",
+      "name": "wrist",
+      "parentInstanceId": "link2_inst",
+      "childInstanceId": "end_effector_inst",
+      "parentAnchor": {
+        "x": 12.5,
+        "y": 0.0,
+        "z": 120.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "world_joint",
+      "name": "world_joint",
+      "parentInstanceId": "world_inst",
+      "childInstanceId": "base_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Free"
+      },
+      "state": 0.0
+    }
+  ],
+  "groundInstanceId": "world_inst"
+}
