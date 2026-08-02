@@ -1,0 +1,10 @@
+# The root .gitignore excludes `*.stl` — a sensible rule for generated exports,
+# and the reason these vendored meshes were silently dropped from their own
+# commit. On macOS git sets `core.ignorecase=true`, so `*.stl` matches
+# `Trunk.STL`, and `git add third_party/` skipped all 24 files without a word.
+# Tests passed locally because the files were present but untracked; the sample
+# rendered nothing on any other machine.
+#
+# These meshes ARE the vendored asset (see README.md), so re-include them.
+!*.STL
+!*.stl
