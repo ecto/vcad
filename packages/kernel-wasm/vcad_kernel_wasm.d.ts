@@ -2606,6 +2606,8 @@ export function importUrdfBuffer(data: Uint8Array): string;
  * * `root_link` - Link to attach it to (default: the tree's root link).
  * * `spawn_height_mm` - Initial base height in mm, written as the joint's
  *   `parentAnchor.z` (a `Free` joint's scalar `state` cannot carry it).
+ *   `undefined` keeps whatever origin the URDF authored, and applies to a
+ *   floating joint the URDF already declares — not only a synthesized one.
  */
 export function importUrdfBufferWithOptions(data: Uint8Array, floating_base: boolean, root_link?: string | null, spawn_height_mm?: number | null): string;
 
