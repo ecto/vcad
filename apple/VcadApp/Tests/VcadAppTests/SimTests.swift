@@ -127,7 +127,15 @@ final class SimParityTests: XCTestCase {
         // This test held at 1e-12 only for as long as the app linked a debug
         // kernel; making the app link release (which took the K1 from 0.29x to
         // real time) put Swift on the other side of that boundary too.
-        let tol = 1e-8
+        //
+        // A third effect is reasoned about rather than measured: the golden is
+        // recorded on aarch64 macOS and CI runs x86_64 Linux, whose libm
+        // `sin`/`cos`/`atan2` legitimately differ by ~1 ulp — amplified over the
+        // 21 frames here. So the bound is physical rather than bitwise: 1e-6
+        // relative on 0.78 m is 780 nanometres, while a real physics regression
+        // moves millimetres. The structural assertions below are what actually
+        // guard this, and they are exact on every platform.
+        let tol = 1e-6
         for (i, (got, want)) in zip(frames, g.frames).enumerated() {
             XCTAssertEqual(got.step, want.step, "frame \(i): step index")
             XCTAssertEqual(got.done, want.done, "frame \(i): termination")
@@ -140,6 +148,17 @@ final class SimParityTests: XCTestCase {
                                accuracy: tol * (1 + abs(w)),
                                "frame \(i): base DOF \(k)")
             }
+        }
+
+        // The structural facts — exact, platform-independent, and what a real
+        // regression actually breaks.
+        let last = try XCTUnwrap(frames.last)
+        XCTAssertTrue(last.done, "the episode must end by terminating")
+        XCTAssertGreaterThan(last.baseTiltDeg, 45.0,
+                             "it must terminate by tipping past 45 degrees")
+        for (a, b) in zip(frames, frames.dropFirst()) {
+            XCTAssertLessThan(b.baseHeightM, a.baseHeightM,
+                              "an uncontrolled humanoid must descend monotonically")
         }
     }
 
