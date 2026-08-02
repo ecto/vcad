@@ -38,6 +38,17 @@ const SEGMENTS: u32 = 32;
 const H: f64 = 1e-6;
 const GATE: f64 = 1e-6;
 
+/// Points on the through-hole's rim circle in the frozen mesh.
+///
+/// NOT `SEGMENTS`: boolean-result rims ride the kernel's sag-adaptive
+/// canonical grid, which is at least as fine as the requested resolution
+/// (112 for r=2.5 here, against `circle_segments = 32`). Ask the kernel
+/// rather than assuming, so this tracks the convention instead of pinning a
+/// stale copy of it.
+fn rim_segments() -> u32 {
+    vcad_kernel::vcad_kernel_booleans::split::arc_segments(R0, SEGMENTS)
+}
+
 /// The parametric model: block minus a through-hole of radius `r` centered
 /// at (L/2, W/2), tool overshooting both faces.
 fn build(r: f64) -> BRepSolid {
@@ -79,8 +90,10 @@ fn m2_through_hole_dv_dr_matches_closed_form_and_fd() {
     let seam = evaluate_with_sensitivity(&base, &plan, &seeding(&base)).expect("seam");
 
     // Discrete closed form for the frozen mesh: hole cross-section is the
-    // inscribed N-gon of the rim circle.
-    let n = SEGMENTS as f64;
+    // inscribed N-gon of the rim circle. N is the kernel's canonical rim
+    // count, NOT `SEGMENTS` — boolean-result rims are sag-adaptive, so the
+    // hole wall is finer than the requested resolution (112 vs 32 here).
+    let n = rim_segments() as f64;
     let sector = 2.0 * std::f64::consts::PI / n;
     let v_exact = L * W * T - 0.5 * n * sector.sin() * R0 * R0 * T;
     let dv_exact = -n * sector.sin() * R0 * T;
@@ -164,7 +177,7 @@ fn m2_rim_nodes_implicit_diff_matches_fd() {
     }
     assert_eq!(
         rim_nodes,
-        2 * SEGMENTS as usize,
+        2 * rim_segments() as usize,
         "expected a full rim ring on each cap"
     );
 

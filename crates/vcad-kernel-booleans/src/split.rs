@@ -3849,7 +3849,17 @@ pub fn split_cylindrical_face_by_circle(
 /// exactly `n`), so until boolean results freeze every boundary (see the
 /// kernel-seam-freeze WIP branch) this must stay at the caller's count —
 /// sag-adaptive densification here reopens every analytic/frozen seam.
-pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
+/// Number of points a boolean-result circular rim of `radius` is
+/// discretized into, given the caller's requested `segments`.
+///
+/// This is the *canonical rim grid*: it is sag-adaptive and therefore
+/// usually FINER than the requested `circle_segments` — the returned count
+/// is `max(requested, sag_count)`. Callers that need the exact discrete
+/// geometry of a boolean result (closed-form volume of a through hole, the
+/// node count of a frozen rim, a discrete dV/dr) must ask this function
+/// rather than assuming the rim is the inscribed `circle_segments`-gon: for
+/// r = 2.5 at the default sag this returns 112, not 32.
+pub fn arc_segments(radius: f64, segments: u32) -> u32 {
     // Must match ssi::ellipse_samples' sag: SSI polylines and canonical
     // rings share vertices only when both discretize at the same density.
     const SAG: f64 = 1e-3;
