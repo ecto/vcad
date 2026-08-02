@@ -49,7 +49,16 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
+      # cache-workspace-crates: the ~90 vcad crates are path deps of each
+      # other, and rust-cache leaves those out by default — so every run
+      # rebuilt the whole workspace even when a PR touched one crate. That is
+      # now the dominant cost: with tests running optimized, a cold-cache run
+      # spends 21.5 min compiling and 9.6 min actually running tests. Most
+      # crates are untouched by any given PR, so cache them too (the `wasm`
+      # job below already does this).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-workspace-crates: true
       # `cargo fmt --all` would traverse into the path-dep workspaces
       # (tang/phyz/loon, cloned above). Format only vcad workspace members
       # explicitly so external repos don't gate our CI.
