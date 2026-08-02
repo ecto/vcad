@@ -49,7 +49,16 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
+      # cache-workspace-crates: the ~90 vcad crates are path deps of each
+      # other, and rust-cache leaves those out by default — so every run
+      # rebuilt the whole workspace even when a PR touched one crate. That is
+      # now the dominant cost: with tests running optimized, a cold-cache run
+      # spends 21.5 min compiling and 9.6 min actually running tests. Most
+      # crates are untouched by any given PR, so cache them too (the `wasm`
+      # job below already does this).
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-workspace-crates: true
       # `cargo fmt --all` would traverse into the path-dep workspaces
       # (tang/phyz/loon, cloned above). Format only vcad workspace members
       # explicitly so external repos don't gate our CI.
@@ -59,7 +68,12 @@ jobs:
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(p['name'] for p in d['packages']))" \
             | xargs -n 1 -I{} cargo fmt -p {} --check
       - run: cargo clippy --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font -- -D warnings
-      - run: cargo test --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font
+      # --no-fail-fast: `cargo test` otherwise stops at the FIRST failing test
+      # binary, so a single red crate hides every failure behind it. That is how
+      # 5 broken tests sat undetected on main behind the torr catalogue — CI
+      # only ever reached 38 of ~200 binaries, and each fix revealed one more
+      # failure instead of turning the job green. Run everything, report everything.
+      - run: cargo test --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font --no-fail-fast
       - run: cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
       - run: cargo doc --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
       # packages/ir/src/generated.ts is generated from the Rust `vcad-ir` types

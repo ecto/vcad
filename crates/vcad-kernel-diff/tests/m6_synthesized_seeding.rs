@@ -92,7 +92,8 @@ fn m2_hole_radius_synthesized() {
     let (_v, dv) = volume_with_derivative(&seam);
 
     // Discrete closed form for the frozen N-gon rim: dV/dr = −N·sin(2π/N)·r·t.
-    let n = M2_SEG as f64;
+    // N is the kernel's canonical (sag-adaptive) rim count, not `M2_SEG`.
+    let n = vcad_kernel::vcad_kernel_booleans::split::arc_segments(M2_R0, M2_SEG) as f64;
     let dv_closed = -n * (2.0 * PI / n).sin() * M2_R0 * M2_T;
     let dv_fd = fd_volume_derivative(build_m2, M2_R0, H, &plan).expect("fd");
 

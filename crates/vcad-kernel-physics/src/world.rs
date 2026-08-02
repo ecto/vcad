@@ -736,27 +736,21 @@ impl PhysicsWorld {
                     ..ContactMaterial::default()
                 };
                 let config = ContactSolverConfig::simulation();
-                let mut asm = phyz::contact::assemble(
+                // Position stabilization is phyz's job now: `assemble` takes
+                // `dt` and applies the MuJoCo-style solref bias from each
+                // contact material (ContactMaterial::default() → timeconst
+                // 0.02, dampratio 1.0). That replaces the capped Baumgarte
+                // push vcad used to apply here by hand — keeping both would
+                // stack two recovery biases on the same penetration.
+                let asm = phyz::contact::assemble(
                     &self.model,
                     &self.state,
                     &contacts,
                     &[material],
                     &free_v,
+                    dt,
                     &config,
                 );
-                // Capped Baumgarte stabilization: bias the normal target
-                // velocity to push bodies out of penetration deeper than the
-                // slop, so a landed body settles near flush instead of
-                // freezing at its impact-frame penetration. The cap bounds
-                // the energy the bias can inject.
-                const SLOP_M: f64 = 0.002;
-                const BETA: f64 = 0.2;
-                const MAX_PUSH_M_S: f64 = 0.1;
-                for (ci, c) in contacts.iter().enumerate() {
-                    let push =
-                        (BETA * (c.penetration_depth - SLOP_M) / dt).clamp(0.0, MAX_PUSH_M_S);
-                    asm.problem.free_velocity[3 * ci] -= push;
-                }
                 let impulses = solve_contacts_pgs(&asm.problem);
 
                 // Publish the per-body manifold as a foot-force sensor. The

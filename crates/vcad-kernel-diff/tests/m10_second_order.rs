@@ -115,7 +115,10 @@ fn m10_hole_second_derivative_matches_closed_form_and_fd() {
 
     // V(r) = LWT − ½ N sin(2π/N) r² T (inscribed N-gon rim) ⇒
     // dV/dr = −N sin(2π/N) r T, d²V/dr² = −N sin(2π/N) T (constant).
-    let n = HOLE_SEGMENTS as f64;
+    // N is the kernel's canonical rim count, NOT `HOLE_SEGMENTS`: a
+    // boolean-result rim is sag-adaptive and lands finer than the requested
+    // resolution (112 vs 32 at r=2.5).
+    let n = vcad_kernel::vcad_kernel_booleans::split::arc_segments(r0, HOLE_SEGMENTS) as f64;
     let sector = 2.0 * std::f64::consts::PI / n;
     let v_exact = HOLE_L * HOLE_W * HOLE_T - 0.5 * n * sector.sin() * r0 * r0 * HOLE_T;
     let dv_exact = -n * sector.sin() * r0 * HOLE_T;

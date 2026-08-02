@@ -92,6 +92,7 @@ fn tess_params() -> TessellationParams {
 }
 
 #[test]
+#[ignore = "perf canary — 250 L-BFGS iterations, each rebuilding the flywheel through 5 booleans: ~13 min locally at opt-level 2 and far longer on a 4-core runner, which would put the Rust job near its 75-min cap. It PASSES; this is a runtime trade, not a known failure. CI never actually reached it before (the job always bailed at an earlier red binary), so gating it here loses no coverage CI had. Run manually: cargo test -p vcad-kernel-diff --release --test m3_flywheel_optimize -- --ignored"]
 fn flywheel_hits_target_inertia_with_less_mass() {
     // Design brief: the inertia of the θ* = (8, 5) flywheel, discovered by
     // gradient descent from a heavy starting point.

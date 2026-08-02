@@ -321,6 +321,13 @@ panic = "unwind"
 
 [profile.dev]
 panic = "unwind"
+# The kernel is numerics-heavy and its tests run in this profile. Unoptimized
+# they are ~20x slower: the torr boolean catalogue alone took 20.8 min of the
+# stable Rust CI job's 25.4 min `cargo test` step at opt-level 0, and 7.9s at
+# opt-level 2 (same 24 tests, same machine). `debug_assertions` and overflow
+# checks stay on, unlike `--release` — see the vcad-kernel-fea override below,
+# which is the same trick applied to one crate before this was workspace-wide.
+opt-level = 2
 
 # Size-optimized profile for the Typst plugin WASM
 # (scripts/build-typst-plugin.sh).
