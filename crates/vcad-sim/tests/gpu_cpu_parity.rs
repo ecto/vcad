@@ -253,3 +253,121 @@ fn the_batch_reports_the_same_model_the_cpu_built() {
         assert_eq!(cpu_q, q, "{id} has a different q offset on the two paths");
     }
 }
+
+// ---------------------------------------------------------------------------
+// M3.1 — do the two backends produce the same *policy input*?
+// ---------------------------------------------------------------------------
+
+/// Build a CPU env over the sample, matching what a batch decoder needs.
+///
+/// `base_instance_id` is set explicitly to the free joint's child. Left to
+/// default it resolves to the document's *ground* instance — the world — whose
+/// pose is a constant and whose velocity is zero. Every base-derived feature
+/// then reads its fallback: projected gravity comes back as the literal
+/// `[0, 0, -1]` default and the base velocity as zeros. Both backends agree
+/// perfectly on that, and it means nothing. This is the same trap as a
+/// fixed-base document passing a floating-base check.
+fn cpu_env(doc: &Document) -> vcad_kernel_physics::RobotEnv {
+    vcad_kernel_physics::RobotEnv::new_with_config(
+        doc.clone(),
+        vec!["end_effector_inst".to_string()],
+        Some(DT as f32),
+        Some(1),
+        None,
+        vcad_kernel_physics::EnvConfig {
+            base_instance_id: Some("base_link_inst".to_string()),
+            ..Default::default()
+        },
+    )
+    .expect("cpu env")
+}
+
+#[test]
+fn the_two_backends_produce_the_same_policy_features() {
+    // State-level parity is necessary but not sufficient. What a policy
+    // actually consumes is `rl::features`, and between the raw batch state and
+    // that vector sit a unit system (radians/metres vs degrees/millimetres),
+    // an angular-first free-joint layout, a body-to-world rotation of the base
+    // velocity, and a quaternion built from exponential coordinates. Any one
+    // of those done differently on the two paths gives a policy that works on
+    // one backend and twitches on the other, with nothing raising an error.
+    //
+    // This asserts the thing that matters: identical feature vectors, from the
+    // identical state, through both paths.
+    let doc = floating_arm();
+    let Some(mut gpu) = gpu_or_skip(&doc, 1, "the_two_backends_produce_the_same_policy_features")
+    else {
+        return;
+    };
+    let mut decoder = cpu_env(&doc);
+    let mut cpu = cpu_env(&doc);
+
+    let slots = vcad_sim::rl::actuated_slots(&cpu);
+    let nominal_h = 0.0;
+
+    let cpu_obs = cpu.reset_with_seed(1);
+    gpu.batch_reset();
+
+    let f_cpu = vcad_sim::rl::features(&cpu_obs, &slots, nominal_h);
+    let gpu_obs = gpu.batch_observe_gym(&mut decoder).expect("decode");
+    let f_gpu = vcad_sim::rl::features(&gpu_obs[0], &slots, nominal_h);
+
+    assert_eq!(
+        f_cpu.len(),
+        f_gpu.len(),
+        "the two backends disagree about the policy's input width"
+    );
+    let (d, i) = worst("features at reset", &f_gpu, &f_cpu);
+    eprintln!(
+        "features at reset: {} elements, worst delta {d:.3e} (element {i})",
+        f_cpu.len()
+    );
+
+    // At reset both describe the same state, so the only difference is the
+    // f32 round-trip through the GPU buffers — about 1e-7 relative on values
+    // of order 1.
+    assert!(
+        d < 1e-5,
+        "policy features differ at reset by {d:.3e} at element {i}. \
+         The batch path is feeding a policy something the CPU path would not."
+    );
+}
+
+#[test]
+fn the_feature_vector_is_not_accidentally_all_zeros() {
+    // The failure this guards is the one that looks like success: if the
+    // decoder never loaded the state, or the free-joint slots were read at the
+    // wrong offsets, both feature vectors could agree *and* be meaningless.
+    // A robot that has fallen for a while has a non-trivial gravity vector and
+    // a non-zero base velocity; assert the vector actually carries signal.
+    let doc = floating_arm();
+    let Some(mut gpu) = gpu_or_skip(&doc, 1, "the_feature_vector_is_not_all_zeros") else {
+        return;
+    };
+    let mut decoder = cpu_env(&doc);
+    let slots = vcad_sim::rl::actuated_slots(&decoder);
+
+    gpu.batch_reset();
+    let zero = vec![0.0f64; gpu.action_dim()];
+    for _ in 0..50 {
+        gpu.batch_step(&zero).expect("gpu step");
+    }
+    let obs = gpu.batch_observe_gym(&mut decoder).expect("decode");
+    let f = vcad_sim::rl::features(&obs[0], &slots, 0.0);
+
+    // Feature layout: [projected gravity (3), base lin vel (3), base ang vel
+    // (3), height - nominal (1), joint angles, joint vels, contacts].
+    let g_mag = (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt();
+    assert!(
+        (g_mag - 1.0).abs() < 1e-3,
+        "projected gravity should be a unit vector, got {g_mag:.4} — the base \
+         orientation is not being decoded"
+    );
+    let falling = f[5];
+    assert!(
+        falling < -0.1,
+        "after 50 steps of free fall the base should be moving downward, got \
+         vz = {falling:.4} — the base velocity is not being decoded"
+    );
+    eprintln!("features carry signal: |gravity| = {g_mag:.4}, vz = {falling:.4}");
+}

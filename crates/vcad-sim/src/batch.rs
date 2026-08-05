@@ -5,7 +5,7 @@ use phyz_model::State;
 use vcad_ir::Document;
 
 use crate::error::SimError;
-use crate::{Observation, StepResult};
+use crate::{RawState, StepResult};
 
 /// GPU batch simulation pipeline running N parallel environments.
 ///
@@ -221,18 +221,55 @@ impl BatchSimPipeline {
     }
 
     /// Observe all environments without stepping.
-    pub fn batch_observe(&self) -> Vec<Observation> {
+    pub fn batch_observe(&self) -> Vec<RawState> {
         let states = self.gpu_sim.readback_states();
 
         let mut observations = Vec::with_capacity(self.n_envs);
         for state in &states {
-            observations.push(Observation {
+            observations.push(RawState {
                 joint_positions: state.q.as_slice().to_vec(),
                 joint_velocities: state.v.as_slice().to_vec(),
             });
         }
 
         observations
+    }
+
+    /// Full gym observations for every environment, decoded through the CPU
+    /// env's own conversion path.
+    ///
+    /// [`Self::batch_observe`] returns raw phyz state — radians, metres,
+    /// angular-first free-joint slots — while everything a policy consumes
+    /// (`vcad_sim::rl::features`, the reward, the termination checks) is
+    /// defined against `vcad_kernel_physics::Observation` in degrees and
+    /// millimetres. Those are two different types with the same name and
+    /// different units, and feeding one where the other is expected scales
+    /// every joint angle by 180/pi with no error anywhere.
+    ///
+    /// So this does not convert anything itself. It hands each readback state
+    /// to `decoder`, which loads it and answers with the same code the CPU env
+    /// answers with.
+    ///
+    /// `decoder` must be built from the same document — same end effectors,
+    /// same base instance — or the observations describe a different robot.
+    /// The DOF widths are checked; the naming is not, and cannot be.
+    ///
+    /// **Contacts are missing.** `State` does not carry them, so
+    /// `end_effector_contacts` reads as the decoder's last step — nothing, for
+    /// a decoder that has never stepped. On the K1's 58-element feature vector
+    /// that is 4 elements: the two per-foot touch flags and normal forces. The
+    /// other 54 are correct. Reading contact back from the GPU is the next
+    /// piece of work, and until it lands a policy driven from here is blind to
+    /// its feet.
+    pub fn batch_observe_gym(
+        &self,
+        decoder: &mut vcad_kernel_physics::RobotEnv,
+    ) -> Result<Vec<vcad_kernel_physics::Observation>, SimError> {
+        self.gpu_sim
+            .readback_states()
+            .iter()
+            .map(|st| decoder.observe_state(st).map_err(SimError::from))
+            .collect()
     }
 
     /// Reset all environments to the initial state.

@@ -825,6 +825,43 @@ impl PhysicsWorld {
         self.model.dt = original_dt;
     }
 
+    /// Adopt an externally produced state — a GPU batch readback — and
+    /// recompute the derived kinematics, so every pose and velocity query
+    /// afterwards answers about *that* state.
+    ///
+    /// This exists so the GPU path never re-derives a conversion. Base pose,
+    /// base velocity, joint units and end-effector poses all have exact
+    /// definitions here (world-frame rotation of a body-frame spatial
+    /// velocity, angular-first free-joint slots, degrees and millimetres);
+    /// reimplementing any of them against a raw `q`/`v` buffer is how the two
+    /// backends end up describing different robots. Load the state, then ask
+    /// the same questions.
+    ///
+    /// Contacts are **not** part of `State`, so they are unchanged by this
+    /// call — a decoder that has never stepped reports no contact.
+    pub fn load_phyz_state(&mut self, state: &State) -> Result<(), PhysicsError> {
+        if state.q.len() != self.state.q.len() || state.v.len() != self.state.v.len() {
+            return Err(PhysicsError::Evaluation(format!(
+                "state has {} q / {} v, this model has {} q / {} v — decoding it \
+                 would silently read another robot's DOFs",
+                state.q.len(),
+                state.v.len(),
+                self.state.q.len(),
+                self.state.v.len()
+            )));
+        }
+        self.state
+            .q
+            .as_mut_slice()
+            .copy_from_slice(state.q.as_slice());
+        self.state
+            .v
+            .as_mut_slice()
+            .copy_from_slice(state.v.as_slice());
+        self.refresh_kinematics();
+        Ok(())
+    }
+
     /// Recompute forward kinematics from the current `state.q` / `state.v`,
     /// refreshing the cached body transforms and spatial velocities. Call
     /// after mutating joint state directly (e.g. [`Self::perturb_joint_state`]).

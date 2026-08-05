@@ -4,7 +4,7 @@ use vcad_ir::Document;
 use vcad_kernel_physics::PhysicsWorld;
 
 use crate::error::SimError;
-use crate::{Observation, StepResult};
+use crate::{RawState, StepResult};
 
 /// CPU single-environment simulation pipeline.
 ///
@@ -71,7 +71,7 @@ impl SimPipeline {
     }
 
     /// Observe the current simulation state without stepping.
-    pub fn observe(&self) -> Observation {
+    pub fn observe(&self) -> RawState {
         let states = self.world.get_joint_states();
         let mut joint_ids: Vec<String> = self.world.joint_ids();
         joint_ids.sort();
@@ -85,7 +85,7 @@ impl SimPipeline {
             }
         }
 
-        Observation {
+        RawState {
             joint_positions: positions,
             joint_velocities: velocities,
         }

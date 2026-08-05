@@ -555,6 +555,27 @@ impl RobotEnv {
         }
     }
 
+    /// Observe an externally produced state — a GPU batch readback — through
+    /// the identical path [`Self::observe`] uses.
+    ///
+    /// The point is reuse, not convenience: end-effector poses, base pose and
+    /// velocity, and the per-joint unit conversions are all defined once, in
+    /// the CPU env, and a batched backend borrows them rather than
+    /// reimplementing them against a raw buffer.
+    ///
+    /// **Contacts are not carried by `State`.** The returned observation's
+    /// `end_effector_contacts` reflect whatever this env last stepped — for a
+    /// decoder that has never stepped, no contact at all. Until the batch path
+    /// reads contact forces back from the GPU, a policy driven from this
+    /// observation is missing its foot-force channel.
+    pub fn observe_state(
+        &mut self,
+        state: &phyz::model::State,
+    ) -> Result<Observation, PhysicsError> {
+        self.world.load_phyz_state(state)?;
+        Ok(self.observe())
+    }
+
     /// Get current observation without stepping.
     pub fn observe(&self) -> Observation {
         let mut positions = Vec::new();
