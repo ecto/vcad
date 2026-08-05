@@ -34,11 +34,25 @@ pub struct StepResult {
     pub done: bool,
 }
 
-/// Observation of the current simulation state.
+/// Raw phyz state read back from a simulator, in **physics units**.
+///
+/// Named `RawState` rather than `Observation` on purpose. There is a
+/// `vcad_kernel_physics::Observation` too, and it is a different type with a
+/// different shape *and different units* — degrees and millimetres, plus base
+/// pose, base velocity and contact channels. When both were called
+/// `Observation`, passing one where the other was expected compiled fine in
+/// any module that imported only one of them, and scaled every joint angle by
+/// 180/pi with no error at any layer.
+///
+/// If you want the thing a policy consumes, use
+/// [`BatchSimPipeline::batch_observe_gym`] — it decodes through the CPU env's
+/// own conversions rather than reimplementing them here.
 #[derive(Debug, Clone)]
-pub struct Observation {
-    /// Joint positions (degrees for revolute, mm for prismatic).
+pub struct RawState {
+    /// Joint positions in physics units: radians, metres. A `Free` joint's
+    /// six slots are angular-first (`[rx, ry, rz, x, y, z]`).
     pub joint_positions: Vec<f64>,
-    /// Joint velocities.
+    /// Joint velocities in physics units: rad/s, m/s. Angular-first for a
+    /// `Free` joint, and its linear part is body-frame.
     pub joint_velocities: Vec<f64>,
 }

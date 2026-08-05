@@ -4016,6 +4016,7 @@ dependencies = [
 [[package]]
 name = "phyz"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "phyz-collision",
  "phyz-contact",
@@ -4028,6 +4029,7 @@ dependencies = [
 [[package]]
 name = "phyz-collision"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "phyz-math",
  "phyz-model",
@@ -4036,6 +4038,7 @@ dependencies = [
 [[package]]
 name = "phyz-contact"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "phyz-collision",
  "phyz-math",
@@ -4046,7 +4049,10 @@ dependencies = [
 [[package]]
 name = "phyz-diff"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
+ "phyz-collision",
+ "phyz-contact",
  "phyz-math",
  "phyz-model",
  "phyz-rigid",
@@ -4058,6 +4064,7 @@ dependencies = [
 [[package]]
 name = "phyz-gpu"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
@@ -4071,6 +4078,7 @@ dependencies = [
 [[package]]
 name = "phyz-math"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "tang",
  "tang-la",
@@ -4079,6 +4087,7 @@ dependencies = [
 [[package]]
 name = "phyz-md"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "phyz-math",
  "rand 0.8.5",
@@ -4090,6 +4099,7 @@ dependencies = [
 [[package]]
 name = "phyz-model"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "phyz-math",
 ]
@@ -4097,6 +4107,7 @@ dependencies = [
 [[package]]
 name = "phyz-rigid"
 version = "0.3.1"
+source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
  "phyz-math",
  "phyz-model",

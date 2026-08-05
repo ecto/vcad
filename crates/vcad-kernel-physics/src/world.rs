@@ -242,6 +242,28 @@ impl PhysicsWorld {
     ///
     /// The document must have assembly data (instances and joints).
     pub fn from_document(doc: &Document) -> Result<Self, PhysicsError> {
+        Self::from_document_with_colliders(doc, ColliderStrategy::ConvexHull)
+    }
+
+    /// Build a world using a specific collider strategy.
+    ///
+    /// The strategy is not cosmetic across backends. phyz's **GPU** contact
+    /// pipeline packs eight floats per body and understands only `Sphere`,
+    /// `Box`, `Capsule` and `Cylinder`; anything else — including the
+    /// `Geometry::Mesh` that [`ColliderStrategy::ConvexHull`] produces — falls
+    /// through its match to "type 0", which means *no collision*, silently.
+    /// A vcad robot built the default way is therefore invisible to GPU
+    /// contact and drops through the floor, while the same robot on the CPU
+    /// (which handles meshes) stands on it.
+    ///
+    /// [`ColliderStrategy::Aabb`] emits `Geometry::Box`, which the GPU does
+    /// understand. That is a real fidelity trade — a box is not a hull — so it
+    /// is opt-in rather than the default, and a batch that wants contact has
+    /// to ask for it.
+    pub fn from_document_with_colliders(
+        doc: &Document,
+        collider_strategy: ColliderStrategy,
+    ) -> Result<Self, PhysicsError> {
         let instances = doc.instances.as_ref().ok_or(PhysicsError::NoAssembly)?;
         let joints = doc.joints.as_ref().ok_or(PhysicsError::NoAssembly)?;
         let part_defs = doc.part_defs.as_ref().ok_or(PhysicsError::NoAssembly)?;
@@ -377,7 +399,7 @@ impl PhysicsWorld {
                     estimate_mass(&mesh, density)
                 }
             };
-            let geometry = mesh_to_collider(&mesh, ColliderStrategy::ConvexHull, &inst.id)?;
+            let geometry = mesh_to_collider(&mesh, collider_strategy, &inst.id)?;
             Ok((mesh, mass, geometry, authored))
         };
 
@@ -823,6 +845,43 @@ impl PhysicsWorld {
         }
 
         self.model.dt = original_dt;
+    }
+
+    /// Adopt an externally produced state — a GPU batch readback — and
+    /// recompute the derived kinematics, so every pose and velocity query
+    /// afterwards answers about *that* state.
+    ///
+    /// This exists so the GPU path never re-derives a conversion. Base pose,
+    /// base velocity, joint units and end-effector poses all have exact
+    /// definitions here (world-frame rotation of a body-frame spatial
+    /// velocity, angular-first free-joint slots, degrees and millimetres);
+    /// reimplementing any of them against a raw `q`/`v` buffer is how the two
+    /// backends end up describing different robots. Load the state, then ask
+    /// the same questions.
+    ///
+    /// Contacts are **not** part of `State`, so they are unchanged by this
+    /// call — a decoder that has never stepped reports no contact.
+    pub fn load_phyz_state(&mut self, state: &State) -> Result<(), PhysicsError> {
+        if state.q.len() != self.state.q.len() || state.v.len() != self.state.v.len() {
+            return Err(PhysicsError::Evaluation(format!(
+                "state has {} q / {} v, this model has {} q / {} v — decoding it \
+                 would silently read another robot's DOFs",
+                state.q.len(),
+                state.v.len(),
+                self.state.q.len(),
+                self.state.v.len()
+            )));
+        }
+        self.state
+            .q
+            .as_mut_slice()
+            .copy_from_slice(state.q.as_slice());
+        self.state
+            .v
+            .as_mut_slice()
+            .copy_from_slice(state.v.as_slice());
+        self.refresh_kinematics();
+        Ok(())
     }
 
     /// Recompute forward kinematics from the current `state.q` / `state.v`,
@@ -1447,7 +1506,7 @@ impl PhysicsWorld {
             // Every DOF, not just the first: a Ball joint carries 3 and a Free
             // joint 6, and perturbing only DOF 0 would silently apply a
             // fraction of the requested randomization. The per-DOF converters
-            // also handle Free's swapped q/v layouts (q = [linear, rotation],
+            // also handle Free's angular-first q/v layouts (q = [rotation, linear],
             // v = [angular, linear]).
             for k in 0..joint_ndof(kind) {
                 self.state.q[q_offset + k] += convert_q_dof_to_physics(kind, k, dpos);
@@ -1703,9 +1762,9 @@ impl PhysicsWorld {
     /// [`crate::joints::convert_v_dof_from_physics`]):
     /// - 1-DOF kinds: `([pos], [vel])` — degrees / deg/s or mm / mm/s
     /// - Ball: 3 rotation exp-coords in degrees; 3 angular vel in deg/s
-    /// - Free: positions `[x, y, z (mm), rx, ry, rz (exp-coords, deg)]`,
+    /// - Free: positions `[rx, ry, rz (exp-coords, deg), x, y, z (mm)]`,
     ///   velocities `[wx, wy, wz (deg/s), vx, vy, vz (body-frame mm/s)]` —
-    ///   note the swapped rotation/translation order between the two
+    ///   both angular-first, matching phyz's `SpatialVec` order
     /// - Fixed: `([], [])`
     pub fn get_joint_dofs(&self, joint_id: &str) -> Option<(Vec<f64>, Vec<f64>)> {
         let kind = self.joint_kinds.get(joint_id)?;
