@@ -1447,7 +1447,7 @@ impl PhysicsWorld {
             // Every DOF, not just the first: a Ball joint carries 3 and a Free
             // joint 6, and perturbing only DOF 0 would silently apply a
             // fraction of the requested randomization. The per-DOF converters
-            // also handle Free's swapped q/v layouts (q = [linear, rotation],
+            // also handle Free's angular-first q/v layouts (q = [rotation, linear],
             // v = [angular, linear]).
             for k in 0..joint_ndof(kind) {
                 self.state.q[q_offset + k] += convert_q_dof_to_physics(kind, k, dpos);
@@ -1703,9 +1703,9 @@ impl PhysicsWorld {
     /// [`crate::joints::convert_v_dof_from_physics`]):
     /// - 1-DOF kinds: `([pos], [vel])` — degrees / deg/s or mm / mm/s
     /// - Ball: 3 rotation exp-coords in degrees; 3 angular vel in deg/s
-    /// - Free: positions `[x, y, z (mm), rx, ry, rz (exp-coords, deg)]`,
+    /// - Free: positions `[rx, ry, rz (exp-coords, deg), x, y, z (mm)]`,
     ///   velocities `[wx, wy, wz (deg/s), vx, vy, vz (body-frame mm/s)]` —
-    ///   note the swapped rotation/translation order between the two
+    ///   both angular-first, matching phyz's `SpatialVec` order
     /// - Fixed: `([], [])`
     pub fn get_joint_dofs(&self, joint_id: &str) -> Option<(Vec<f64>, Vec<f64>)> {
         let kind = self.joint_kinds.get(joint_id)?;

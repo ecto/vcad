@@ -164,9 +164,9 @@ pub(crate) fn vcad_joint_to_phyz(
         }
         JointKind::Free => {
             // 6-DOF floating base. phyz's free joint carries
-            // q = [x, y, z, wx, wy, wz] (position in parent coords +
-            // exp-coords of the rotation) and v = [angular(3), linear(3)]
-            // — note the swapped order between q and v.
+            // q = [wx, wy, wz, x, y, z] (exp-coords of the rotation, then
+            // position in parent coords) and v = [angular(3), linear(3)] —
+            // the same order, which is the point.
             let xform = SpatialTransform::new(rot, anchor);
             Ok(PhyzJoint::free(xform))
         }
@@ -248,15 +248,21 @@ pub fn convert_state_from_physics(kind: &JointKind, state: f64) -> f64 {
 /// Per-DOF q layout in vcad units (phyz layout in parentheses):
 /// - 1-DOF kinds: DOF 0 = degrees (radians) or mm (meters)
 /// - Ball: DOFs 0–2 = exp-coords in degrees (radians)
-/// - Free: DOFs 0–2 = translation in mm (meters),
-///   DOFs 3–5 = rotation exp-coords in degrees (radians)
+/// - Free: DOFs 0–2 = rotation exp-coords in degrees (radians),
+///   DOFs 3–5 = translation in mm (meters)
+///
+/// **Free is angular-first, matching `v`.** It was translation-first until
+/// phyz unified the two orders; a converter left on the old layout applies the
+/// millimetre scale to a rotation and the degree scale to a position, so a
+/// robot's base height reads as ~0 and the whole balance task quietly stops
+/// measuring anything.
 pub fn convert_q_dof_to_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
     match kind {
         JointKind::Free => {
             if dof < 3 {
-                value / 1000.0
-            } else {
                 value.to_radians()
+            } else {
+                value / 1000.0
             }
         }
         _ => convert_state_to_physics(kind, value),
@@ -269,9 +275,9 @@ pub fn convert_q_dof_from_physics(kind: &JointKind, dof: usize, value: f64) -> f
     match kind {
         JointKind::Free => {
             if dof < 3 {
-                value * 1000.0
-            } else {
                 value.to_degrees()
+            } else {
+                value * 1000.0
             }
         }
         _ => convert_state_from_physics(kind, value),
@@ -280,9 +286,8 @@ pub fn convert_q_dof_from_physics(kind: &JointKind, dof: usize, value: f64) -> f
 
 /// Convert one **velocity (v)** DOF from physics units to vcad units.
 ///
-/// The velocity layout of a Free joint is **swapped** relative to its q
-/// layout (phyz/Featherstone convention): v = [angular(3), linear(3)]
-/// while q = [linear(3), rotation(3)]. So:
+/// A Free joint's v layout **matches** its q layout — both are angular-first
+/// (`[angular(3), linear(3)]`), phyz's `SpatialVec` convention. So:
 /// - Free: DOFs 0–2 = angular velocity rad/s → deg/s,
 ///   DOFs 3–5 = body-frame linear velocity m/s → mm/s
 /// - all other kinds: same conversion as their q DOF
@@ -300,7 +305,7 @@ pub fn convert_v_dof_from_physics(kind: &JointKind, dof: usize, value: f64) -> f
 }
 
 /// Convert one **velocity (v)** DOF from vcad units to physics units.
-/// Inverse of [`convert_v_dof_from_physics`]; same swapped Free layout.
+/// Inverse of [`convert_v_dof_from_physics`]; same angular-first Free layout.
 pub fn convert_v_dof_to_physics(kind: &JointKind, dof: usize, value: f64) -> f64 {
     match kind {
         JointKind::Free => {

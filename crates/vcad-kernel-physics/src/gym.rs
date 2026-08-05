@@ -18,10 +18,11 @@ use crate::world::{ContactState, GainWarning, GroundConfig, PhysicsWorld};
 /// - Ball: 3 entries — rotation exp-coords in degrees; angular velocity in
 ///   deg/s
 /// - Free (floating base): 6 entries — positions
-///   `[x, y, z (mm), rx, ry, rz (exp-coords, degrees)]` and velocities
-///   `[wx, wy, wz (deg/s), vx, vy, vz (body-frame mm/s)]`. Note the swapped
-///   rotation/translation order between positions and velocities (phyz's
-///   Featherstone free-joint convention).
+///   `[rx, ry, rz (exp-coords, degrees), x, y, z (mm)]` and velocities
+///   `[wx, wy, wz (deg/s), vx, vy, vz (body-frame mm/s)]`. Both are
+///   **angular-first**, phyz's `SpatialVec` order. Positions used to be
+///   translation-first while velocities were angular-first; anything that
+///   still assumes that reads a rotation where it expects a height.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
     /// Flattened joint positions (degrees for rotational DOFs, mm for

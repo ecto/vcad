@@ -128,17 +128,32 @@ fn free_joint_gym_observation_layout() {
     assert_eq!(obs.joint_velocities.len(), 6);
 
     // Step with an empty action; the base falls. Position layout is
-    // [x, y, z (mm), rx, ry, rz (deg)] — z (slot 2) decreases.
+    // ANGULAR-FIRST — [rx, ry, rz (deg), x, y, z (mm)] — matching the velocity
+    // layout, so z is slot 5.
+    //
+    // It was translation-first until phyz unified the two orders. That change
+    // is invisible to anything that only reads magnitudes, which is why this
+    // asserts both halves: the height slot moves, and the rotation slots stay
+    // quiet. A converter left on the old layout puts a ~70 mm drop into slot 5
+    // while slot 2 reads a rotation — the robot's base height reads as zero and
+    // every height termination and reward term silently stops meaning anything.
     let mut obs = obs;
     for _ in 0..30 {
         let (o, _, _) = env.step(Action::Torque(vec![]));
         obs = o;
     }
     assert!(
-        obs.joint_positions[2] < -10.0,
-        "free-base z should have dropped (mm); obs = {:?}",
+        obs.joint_positions[5] < -10.0,
+        "free-base z (slot 5, angular-first layout) should have dropped (mm); obs = {:?}",
         obs.joint_positions
     );
+    for (i, r) in obs.joint_positions[0..3].iter().enumerate() {
+        assert!(
+            r.abs() < 1e-6,
+            "a body falling straight down must not rotate: slot {i} = {r} deg; \
+             a non-zero value here means the layout is translation-first again"
+        );
+    }
     // Velocity layout is [wx, wy, wz (deg/s), vx, vy, vz (mm/s)]: the
     // linear-z slot (5) carries the fall speed, the angular slots stay ~0.
     assert!(
