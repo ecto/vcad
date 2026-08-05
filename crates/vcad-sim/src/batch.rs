@@ -29,6 +29,9 @@ pub struct BatchSimPipeline {
     n_bodies: usize,
     /// Per-body mass, for deriving stable contact gains.
     body_masses: Vec<f64>,
+    /// Masses of just the bodies the GPU contact pass can see — the set that
+    /// bounds stiffness from above. See [`Self::is_gpu_collidable`].
+    collidable_masses: Vec<f64>,
 }
 
 impl BatchSimPipeline {
@@ -89,18 +92,23 @@ impl BatchSimPipeline {
         let gpu_collidable = model
             .bodies
             .iter()
-            .filter(|b| {
-                matches!(
-                    b.geometry,
-                    Some(phyz_model::Geometry::Sphere { .. })
-                        | Some(phyz_model::Geometry::Box { .. })
-                        | Some(phyz_model::Geometry::Capsule { .. })
-                        | Some(phyz_model::Geometry::Cylinder { .. })
-                )
-            })
+            .filter(|b| Self::is_gpu_collidable(b))
             .count();
 
+        // Two different mass sets, because the two stability bounds ask
+        // different questions. `k_min` must hold up the whole model's weight,
+        // collidable or not — a non-colliding forearm still presses down
+        // through the joints onto the feet that do touch. `k_max` is set by
+        // the lightest body the contact pass can actually push on; a body the
+        // GPU never sees is never integrated against this spring and cannot
+        // make it blow up.
         let body_masses: Vec<f64> = model.bodies.iter().map(|b| b.inertia.mass).collect();
+        let collidable_masses: Vec<f64> = model
+            .bodies
+            .iter()
+            .filter(|b| Self::is_gpu_collidable(b))
+            .map(|b| b.inertia.mass)
+            .collect();
 
         let gpu_sim = GpuBatchSimulator::new(model, n_envs).map_err(SimError::Gpu)?;
 
@@ -115,6 +123,7 @@ impl BatchSimPipeline {
             gpu_collidable,
             n_bodies,
             body_masses,
+            collidable_masses,
         })
     }
 
@@ -321,6 +330,22 @@ impl BatchSimPipeline {
         self.gpu_sim.load_states(&states);
     }
 
+    /// Whether the GPU contact pipeline can collide this body.
+    ///
+    /// Mirrors the shape match in phyz's `contact_pipeline`, whose `_` arm
+    /// packs every other geometry (and `None`) as type 0 — no collision, no
+    /// diagnostic. Kept in one place so the collidable *count* and the
+    /// collidable *masses* can never disagree about what "collidable" means.
+    fn is_gpu_collidable(body: &phyz_model::Body) -> bool {
+        matches!(
+            body.geometry,
+            Some(phyz_model::Geometry::Sphere { .. })
+                | Some(phyz_model::Geometry::Box { .. })
+                | Some(phyz_model::Geometry::Capsule { .. })
+                | Some(phyz_model::Geometry::Cylinder { .. })
+        )
+    }
+
     /// Enable ground-plane contact detection.
     ///
     /// Objects will be repelled from the ground at `height` via penalty forces.
@@ -379,7 +404,7 @@ impl BatchSimPipeline {
         // only ones with real mass — a massless link (a `world` anchor, a
         // frame-carrying dummy) would drive the limit to zero.
         let m_min = self
-            .body_masses
+            .collidable_masses
             .iter()
             .copied()
             .filter(|m| *m > 1e-6)
