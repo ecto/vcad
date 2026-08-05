@@ -118,12 +118,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Sanity: gravity acts. A zero-torque K1 must be falling. ---
     let mut batch = BatchSimPipeline::from_document(&doc, 4, DT)?;
     batch.batch_reset();
-    let z0 = batch.batch_observe()[0].joint_positions[2];
+    // Free-joint q is angular-first: [rx, ry, rz, x, y, z] — base z is slot 5.
+    let z0 = batch.batch_observe()[0].joint_positions[5];
     let nv = batch.action_dim();
     for _ in 0..100 {
         batch.batch_step_submit(&vec![0.0; 4 * nv])?;
     }
-    let z1 = batch.batch_observe()[0].joint_positions[2];
+    let z1 = batch.batch_observe()[0].joint_positions[5];
     println!(
         "\nsanity: base z {z0:.3} -> {z1:.3} after 100 ticks of free fall \
          ({})",

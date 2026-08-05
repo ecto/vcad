@@ -3219,7 +3219,7 @@ name = "mecheval-grader"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "phyz 0.3.1",
+ "phyz",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4016,34 +4016,14 @@ dependencies = [
 [[package]]
 name = "phyz"
 version = "0.3.1"
-dependencies = [
- "phyz-collision 0.3.1",
- "phyz-contact 0.3.1",
- "phyz-diff 0.3.1",
- "phyz-math 0.3.1",
- "phyz-model 0.3.1",
- "phyz-rigid 0.3.1",
-]
-
-[[package]]
-name = "phyz"
-version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-collision 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-contact 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-diff 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-rigid 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
-]
-
-[[package]]
-name = "phyz-collision"
-version = "0.3.1"
-dependencies = [
- "phyz-math 0.3.1",
- "phyz-model 0.3.1",
+ "phyz-collision",
+ "phyz-contact",
+ "phyz-diff",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
 ]
 
 [[package]]
@@ -4051,18 +4031,8 @@ name = "phyz-collision"
 version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
-]
-
-[[package]]
-name = "phyz-contact"
-version = "0.3.1"
-dependencies = [
- "phyz-collision 0.3.1",
- "phyz-math 0.3.1",
- "phyz-model 0.3.1",
- "phyz-rigid 0.3.1",
+ "phyz-math",
+ "phyz-model",
 ]
 
 [[package]]
@@ -4070,22 +4040,10 @@ name = "phyz-contact"
 version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-collision 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-rigid 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
-]
-
-[[package]]
-name = "phyz-diff"
-version = "0.3.1"
-dependencies = [
- "phyz-math 0.3.1",
- "phyz-model 0.3.1",
- "phyz-rigid 0.3.1",
- "tang",
- "tang-expr",
- "tang-la",
+ "phyz-collision",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
 ]
 
 [[package]]
@@ -4093,11 +4051,11 @@ name = "phyz-diff"
 version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-collision 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-contact 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-rigid 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz-collision",
+ "phyz-contact",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
  "tang",
  "tang-expr",
  "tang-la",
@@ -4110,19 +4068,11 @@ source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b04
 dependencies = [
  "bytemuck",
  "futures-intrusive",
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-rigid 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz-math",
+ "phyz-model",
+ "phyz-rigid",
  "pollster",
  "wgpu",
-]
-
-[[package]]
-name = "phyz-math"
-version = "0.3.1"
-dependencies = [
- "tang",
- "tang-la",
 ]
 
 [[package]]
@@ -4139,7 +4089,7 @@ name = "phyz-md"
 version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz-math",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rand_distr",
@@ -4149,24 +4099,9 @@ dependencies = [
 [[package]]
 name = "phyz-model"
 version = "0.3.1"
-dependencies = [
- "phyz-math 0.3.1",
-]
-
-[[package]]
-name = "phyz-model"
-version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
-]
-
-[[package]]
-name = "phyz-rigid"
-version = "0.3.1"
-dependencies = [
- "phyz-math 0.3.1",
- "phyz-model 0.3.1",
+ "phyz-math",
 ]
 
 [[package]]
@@ -4174,8 +4109,8 @@ name = "phyz-rigid"
 version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz-math",
+ "phyz-model",
 ]
 
 [[package]]
@@ -7678,7 +7613,7 @@ dependencies = [
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
- "phyz 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -8000,10 +7935,10 @@ dependencies = [
 name = "vcad-sim"
 version = "0.9.4"
 dependencies = [
- "phyz 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz",
  "phyz-gpu",
- "phyz-math 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
- "phyz-model 0.3.1 (git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef)",
+ "phyz-math",
+ "phyz-model",
  "rand 0.8.5",
  "rayon",
  "serde",
