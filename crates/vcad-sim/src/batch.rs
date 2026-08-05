@@ -23,6 +23,12 @@ pub struct BatchSimPipeline {
     pd_dofs: usize,
     /// Timestep the GPU captured at construction.
     dt: f64,
+    /// Bodies whose collider the GPU contact pipeline can actually see.
+    gpu_collidable: usize,
+    /// Total bodies, for the diagnostic.
+    n_bodies: usize,
+    /// Per-body mass, for deriving stable contact gains.
+    body_masses: Vec<f64>,
 }
 
 impl BatchSimPipeline {
@@ -48,7 +54,16 @@ impl BatchSimPipeline {
         // — an earlier version of this pipeline re-derived the model here with
         // density-guessed box inertias, which silently trained against the
         // wrong robot.
-        let world = vcad_kernel_physics::PhysicsWorld::from_document(doc)?;
+        // AABB colliders, not the default convex hulls. phyz's GPU contact
+        // pipeline only understands Sphere/Box/Capsule/Cylinder and maps
+        // anything else — including `Geometry::Mesh` — to "no collision",
+        // silently. A hull-collided robot simply falls through the GPU's
+        // ground while standing on the CPU's. See
+        // `PhysicsWorld::from_document_with_colliders`.
+        let world = vcad_kernel_physics::PhysicsWorld::from_document_with_colliders(
+            doc,
+            vcad_kernel_physics::colliders::ColliderStrategy::Aabb,
+        )?;
         let mut model = world.model().clone();
         // Stamp the timestep into the model before the GPU captures it.
         model.dt = dt;
@@ -68,6 +83,25 @@ impl BatchSimPipeline {
             })
             .collect();
 
+        // Count what the GPU's contact pass will actually see, before handing
+        // the model over — the packing itself reports nothing.
+        let n_bodies = model.bodies.len();
+        let gpu_collidable = model
+            .bodies
+            .iter()
+            .filter(|b| {
+                matches!(
+                    b.geometry,
+                    Some(phyz_model::Geometry::Sphere { .. })
+                        | Some(phyz_model::Geometry::Box { .. })
+                        | Some(phyz_model::Geometry::Capsule { .. })
+                        | Some(phyz_model::Geometry::Cylinder { .. })
+                )
+            })
+            .count();
+
+        let body_masses: Vec<f64> = model.bodies.iter().map(|b| b.inertia.mass).collect();
+
         let gpu_sim = GpuBatchSimulator::new(model, n_envs).map_err(SimError::Gpu)?;
 
         Ok(Self {
@@ -78,6 +112,9 @@ impl BatchSimPipeline {
             servo_joints,
             pd_dofs: 0,
             dt,
+            gpu_collidable,
+            n_bodies,
+            body_masses,
         })
     }
 
@@ -254,13 +291,13 @@ impl BatchSimPipeline {
     /// same base instance — or the observations describe a different robot.
     /// The DOF widths are checked; the naming is not, and cannot be.
     ///
-    /// **Contacts are missing.** `State` does not carry them, so
-    /// `end_effector_contacts` reads as the decoder's last step — nothing, for
-    /// a decoder that has never stepped. On the K1's 58-element feature vector
-    /// that is 4 elements: the two per-foot touch flags and normal forces. The
-    /// other 54 are correct. Reading contact back from the GPU is the next
-    /// piece of work, and until it lands a policy driven from here is blind to
-    /// its feet.
+    /// Contacts are recomputed on the decoder rather than read back from the
+    /// GPU, which has no path for them — its contact pass accumulates into
+    /// `ext_forces`, which is neither the contact manifold nor readable. So
+    /// each environment costs one CPU step to populate its foot-force channel.
+    /// That is the honest price until phyz surfaces contact state; the
+    /// alternative is four silent zeros where a balance policy expects its
+    /// feet.
     pub fn batch_observe_gym(
         &self,
         decoder: &mut vcad_kernel_physics::RobotEnv,
@@ -268,7 +305,11 @@ impl BatchSimPipeline {
         self.gpu_sim
             .readback_states()
             .iter()
-            .map(|st| decoder.observe_state(st).map_err(SimError::from))
+            .map(|st| {
+                decoder
+                    .observe_state_with_contacts(st)
+                    .map_err(SimError::from)
+            })
             .collect()
     }
 
@@ -290,6 +331,17 @@ impl BatchSimPipeline {
         damping: f64,
         friction: f64,
     ) -> Result<(), SimError> {
+        // Refuse rather than enable a contact pass that cannot see anything.
+        // The GPU's geometry packing maps every unsupported shape to type 0 —
+        // no collision — with no diagnostic, so a robot built with mesh
+        // colliders silently free-falls through the ground it was asked to
+        // stand on. That reads as a physics bug, or worse, as a bad policy.
+        if self.gpu_collidable == 0 {
+            return Err(SimError::Gpu(format!(
+                "ground contact would be inert: none of this model's {} bodies has                  geometry the GPU contact pipeline supports (Sphere, Box, Capsule,                  Cylinder). Build the pipeline with AABB colliders.",
+                self.n_bodies
+            )));
+        }
         self.gpu_sim
             .enable_ground_contact(height, stiffness, damping, friction)
             .map_err(SimError::Gpu)?;
@@ -299,6 +351,58 @@ impl BatchSimPipeline {
     /// The timestep every environment steps at, in seconds.
     pub fn dt(&self) -> f64 {
         self.dt
+    }
+
+    /// Ground-contact gains for this model, or why none exist.
+    ///
+    /// A penalty contact has to satisfy two constraints at once, and they pull
+    /// in opposite directions:
+    ///
+    /// - **Stiff enough to hold the robot up.** Supporting total weight `M*g`
+    ///   without sinking more than `max_penetration` needs
+    ///   `k >= M*g/max_penetration`.
+    /// - **Soft enough to integrate.** The GPU integrates the spring
+    ///   explicitly, so `w*dt` must stay under about 0.3 with
+    ///   `w = sqrt(k/m)`. The binding body is the *lightest* one that can
+    ///   touch, giving `k <= m_min*(0.3/dt)^2`.
+    ///
+    /// When the window is empty there is no stable penalty stiffness for this
+    /// model at this timestep, and that is reported with both bounds rather
+    /// than approximated — the failure mode otherwise is NaN a few hundred
+    /// steps later, or a robot that sinks through the floor, neither of which
+    /// points at the parameter that caused it.
+    ///
+    /// Damping is set for critical damping on the binding body; a contact that
+    /// bounces forever is as useless as one that diverges.
+    pub fn stable_ground_gains(&self, max_penetration_m: f64) -> Result<(f64, f64), SimError> {
+        // Only bodies the GPU can actually collide constrain stability, and
+        // only ones with real mass — a massless link (a `world` anchor, a
+        // frame-carrying dummy) would drive the limit to zero.
+        let m_min = self
+            .body_masses
+            .iter()
+            .copied()
+            .filter(|m| *m > 1e-6)
+            .fold(f64::INFINITY, f64::min);
+        if !m_min.is_finite() {
+            return Err(SimError::Gpu(
+                "no body has enough mass to derive contact gains from".into(),
+            ));
+        }
+        let total: f64 = self.body_masses.iter().sum();
+
+        let k_max = m_min * (0.3 / self.dt).powi(2);
+        let k_min = total * 9.81 / max_penetration_m;
+        if k_min > k_max {
+            return Err(SimError::Gpu(format!(
+                "no stable penalty stiffness exists for this model at dt={:.2e}: holding                  {total:.3} kg within {max_penetration_m:.4} m needs k >= {k_min:.3e}, but the                  lightest contacting body ({m_min:.4} kg) goes unstable above k = {k_max:.3e}.                  Use a smaller dt, allow deeper penetration, or accept that this model                  cannot use GPU penalty contact.",
+                self.dt
+            )));
+        }
+        // Sit at the geometric mean of the window: as stiff as the support
+        // requirement allows without crowding the stability limit.
+        let k = (k_min * k_max).sqrt();
+        Ok((k, 2.0 * (k * m_min).sqrt()))
     }
 
     /// Get the number of parallel environments.

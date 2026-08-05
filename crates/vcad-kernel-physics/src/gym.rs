@@ -576,6 +576,41 @@ impl RobotEnv {
         Ok(self.observe())
     }
 
+    /// Observe an external state **with a real contact channel**.
+    ///
+    /// [`Self::observe_state`] leaves `end_effector_contacts` as whatever this
+    /// env last stepped — nothing, for a decoder that never steps. That is a
+    /// silently wrong answer rather than a missing one: a policy reads four
+    /// zeros where its feet should be and simply behaves worse, with no error
+    /// anywhere. On the K1's 58-element feature vector those four are the two
+    /// per-foot touch flags and normal forces, which is precisely the channel a
+    /// balance policy steers on.
+    ///
+    /// Contacts are not carried by `State`, and the GPU has no readback for
+    /// them (its contact pass accumulates into `ext_forces`, which is not the
+    /// manifold and has no staging buffer). So they are recomputed here, by the
+    /// CPU's own contact code, at the loaded pose:
+    ///
+    /// 1. load the state,
+    /// 2. take one step — this is what populates the contact manifold,
+    /// 3. load the state again, restoring the exact `q`/`v` the step advanced
+    ///    (contacts survive, since they live outside `State`),
+    /// 4. observe.
+    ///
+    /// The result is a contact state consistent with the pose being observed,
+    /// computed by the same code the CPU env reports. It costs one CPU step per
+    /// environment, which is the honest price of the GPU not surfacing its own
+    /// contact — see `docs/native-sim-m0.md`.
+    pub fn observe_state_with_contacts(
+        &mut self,
+        state: &phyz::model::State,
+    ) -> Result<Observation, PhysicsError> {
+        self.world.load_phyz_state(state)?;
+        self.world.step(self.dt);
+        self.world.load_phyz_state(state)?;
+        Ok(self.observe())
+    }
+
     /// Get current observation without stepping.
     pub fn observe(&self) -> Observation {
         let mut positions = Vec::new();

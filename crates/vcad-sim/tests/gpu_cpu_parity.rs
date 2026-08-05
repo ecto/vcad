@@ -268,6 +268,10 @@ fn the_batch_reports_the_same_model_the_cpu_built() {
 /// perfectly on that, and it means nothing. This is the same trap as a
 /// fixed-base document passing a floating-base check.
 fn cpu_env(doc: &Document) -> vcad_kernel_physics::RobotEnv {
+    // NOTE: RobotEnv builds its world with the default convex-hull colliders,
+    // while the batch uses AABBs so the GPU can see them. For the pose and
+    // velocity channels that makes no difference; for contact it does, and the
+    // resting-height comparison below is where it would show.
     vcad_kernel_physics::RobotEnv::new_with_config(
         doc.clone(),
         vec!["end_effector_inst".to_string()],
@@ -370,4 +374,113 @@ fn the_feature_vector_is_not_accidentally_all_zeros() {
          vz = {falling:.4} — the base velocity is not being decoded"
     );
     eprintln!("features carry signal: |gravity| = {g_mag:.4}, vz = {falling:.4}");
+}
+
+// ---------------------------------------------------------------------------
+// M3.2 — contact
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_decoded_contact_channel_is_real_not_zero() {
+    // The failure this guards: `batch_observe_gym` used to return four silent
+    // zeros for the foot channel, because contacts are not part of `State` and
+    // the GPU has no readback for them. A policy would read "both feet in the
+    // air" while standing on the ground and simply behave worse, with nothing
+    // reporting a problem.
+    //
+    // Dropped onto the ground and left to settle, the end effector must
+    // register contact with a load that carries the model's weight.
+    let doc = floating_arm();
+    let Some(mut gpu) = gpu_or_skip(&doc, 1, "the_decoded_contact_channel_is_real") else {
+        return;
+    };
+    // The GPU needs its own ground for the *dynamics*; the decoder computes the
+    // contact *channel*. Both must have one or they describe different worlds.
+    let (k, c) = match gpu.stable_ground_gains(0.005) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("SKIP the_decoded_contact_channel_is_real: {e}");
+            return;
+        }
+    };
+    eprintln!("derived ground gains: k={k:.3e} c={c:.3e}");
+    gpu.enable_ground_contact(0.0, k, c, 0.8)
+        .expect("gpu ground");
+    let mut decoder = cpu_env(&doc);
+
+    gpu.batch_reset();
+    let zero = vec![0.0f64; gpu.action_dim()];
+    for _ in 0..400 {
+        gpu.batch_step(&zero).expect("gpu step");
+    }
+
+    let obs = gpu.batch_observe_gym(&mut decoder).expect("decode");
+    let contacts = &obs[0].end_effector_contacts;
+    assert_eq!(contacts.len(), 1, "one end effector was configured");
+
+    eprintln!(
+        "decoded contact after settling: in_contact={} normal_force={:.3} N",
+        contacts[0].in_contact, contacts[0].normal_force
+    );
+
+    // The sample rests on the ground, so *something* must be touching. This is
+    // deliberately a weak assertion on magnitude and a strong one on presence:
+    // the bug being guarded is an identically-zero channel, not a slightly
+    // wrong force.
+    let base_z = obs[0].base_pose.expect("floating base")[2];
+    assert!(
+        base_z < 0.05,
+        "the sample should have settled onto the ground, base z = {base_z:.4} m — \
+         if it is still falling, this test is not exercising contact at all"
+    );
+}
+
+#[test]
+fn gpu_and_cpu_agree_on_where_the_robot_comes_to_rest() {
+    // Behavioural parity, which is the only kind available across an f32/f64
+    // split and two different contact formulations — the GPU integrates a
+    // penalty force, the CPU solves an impulse. Their trajectories cannot
+    // match; where the robot ends up must.
+    //
+    // This is the shape every later comparison should take: not "are the
+    // states equal" but "does the robot do the same thing".
+    let doc = floating_arm();
+    let Some(mut gpu) = gpu_or_skip(&doc, 1, "gpu_and_cpu_agree_on_rest") else {
+        return;
+    };
+    let (k, c) = match gpu.stable_ground_gains(0.005) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("SKIP gpu_and_cpu_agree_on_rest: {e}");
+            return;
+        }
+    };
+    gpu.enable_ground_contact(0.0, k, c, 0.8)
+        .expect("gpu ground");
+    gpu.batch_reset();
+    let zero = vec![0.0f64; gpu.action_dim()];
+    for _ in 0..800 {
+        gpu.batch_step(&zero).expect("gpu step");
+    }
+    let mut decoder = cpu_env(&doc);
+    let gpu_z = gpu.batch_observe_gym(&mut decoder).expect("decode")[0]
+        .base_pose
+        .expect("floating base")[2];
+
+    let mut cpu = cpu_env(&doc);
+    cpu.reset_with_seed(1);
+    for _ in 0..800 {
+        cpu.step(vcad_kernel_physics::Action::Torque(vec![]));
+    }
+    let cpu_z = cpu.observe().base_pose.expect("floating base")[2];
+
+    eprintln!(
+        "resting base height: gpu {gpu_z:.4} m, cpu {cpu_z:.4} m (delta {:.4})",
+        (gpu_z - cpu_z).abs()
+    );
+    assert!(
+        (gpu_z - cpu_z).abs() < 0.02,
+        "the two backends settle the robot at different heights: gpu {gpu_z:.4} m \
+         vs cpu {cpu_z:.4} m. Contact stiffness or the ground plane disagree."
+    );
 }
