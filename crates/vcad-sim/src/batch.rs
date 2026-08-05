@@ -21,14 +21,27 @@ pub struct BatchSimPipeline {
     servo_joints: Vec<(String, usize, usize, Option<f64>)>,
     /// Number of servoed DOFs once [`Self::enable_pd`] has run.
     pd_dofs: usize,
+    /// Timestep the GPU captured at construction.
+    dt: f64,
 }
 
 impl BatchSimPipeline {
     /// Create a batch simulation pipeline from a vcad Document.
     ///
     /// Builds the phyz Model from the assembly, then initializes `n_envs`
-    /// parallel GPU environments.
-    pub fn from_document(doc: &Document, n_envs: usize) -> Result<Self, SimError> {
+    /// parallel GPU environments stepping at `dt` seconds.
+    ///
+    /// **`dt` is required, deliberately.** `GpuBatchSimulator` reads
+    /// `model.dt` once at construction and steps at it forever, while the CPU
+    /// env overrides `model.dt` per `PhysicsWorld::step(dt)` call. With no
+    /// argument here the batch silently ran at the model default of 1/240 s
+    /// while the gym ran at 1/1000 — a 4.17x mismatch that is not a small
+    /// error but a different plant. Measured on the floating-arm sample, the
+    /// GPU diverged to non-finite state by step 185 while the CPU was stable;
+    /// the K1's leg gains need the 1 kHz tick and come apart at 200 Hz.
+    ///
+    /// A default would have hidden that again, so there isn't one.
+    pub fn from_document(doc: &Document, n_envs: usize, dt: f64) -> Result<Self, SimError> {
         // One model builder for the whole stack: `PhysicsWorld::from_document`
         // is what the CPU gym env runs, with authored inertials, collider
         // masses, joint frames and limits. The GPU batch inherits it verbatim
@@ -36,7 +49,9 @@ impl BatchSimPipeline {
         // density-guessed box inertias, which silently trained against the
         // wrong robot.
         let world = vcad_kernel_physics::PhysicsWorld::from_document(doc)?;
-        let model = world.model().clone();
+        let mut model = world.model().clone();
+        // Stamp the timestep into the model before the GPU captures it.
+        model.dt = dt;
         let initial_state = world.phyz_state().clone();
         let nv = model.nv;
 
@@ -62,6 +77,7 @@ impl BatchSimPipeline {
             initial_state,
             servo_joints,
             pd_dofs: 0,
+            dt,
         })
     }
 
@@ -241,6 +257,11 @@ impl BatchSimPipeline {
             .enable_ground_contact(height, stiffness, damping, friction)
             .map_err(SimError::Gpu)?;
         Ok(())
+    }
+
+    /// The timestep every environment steps at, in seconds.
+    pub fn dt(&self) -> f64 {
+        self.dt
     }
 
     /// Get the number of parallel environments.

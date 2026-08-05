@@ -27,6 +27,11 @@
 use vcad_ir::Document;
 use vcad_sim::BatchSimPipeline;
 
+/// The tick the CPU reference and the RL rollouts use. The GPU must be told —
+/// it reads `model.dt` once at construction and would otherwise run at the
+/// model default of 1/240, which is a different plant, not a rounding.
+const DT: f64 = 1.0 / 1000.0;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
@@ -72,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "envs", "submit substeps/s", "readback substeps/s", "vs CPU"
     );
     for n_envs in [64usize, 256, 1024, 4096] {
-        let mut batch = match BatchSimPipeline::from_document(&doc, n_envs) {
+        let mut batch = match BatchSimPipeline::from_document(&doc, n_envs, DT) {
             Ok(b) => b,
             Err(e) => {
                 println!("{n_envs:>7}  construction failed: {e}");
@@ -111,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // --- Sanity: gravity acts. A zero-torque K1 must be falling. ---
-    let mut batch = BatchSimPipeline::from_document(&doc, 4)?;
+    let mut batch = BatchSimPipeline::from_document(&doc, 4, DT)?;
     batch.batch_reset();
     let z0 = batch.batch_observe()[0].joint_positions[2];
     let nv = batch.action_dim();
@@ -138,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // wrong DOF indexing leaves some joint untouched at 0.3 rad of error.
     // (No contact geometry yet, so the robot falls forever; joint tracking
     // is the thing under test.)
-    let mut batch = BatchSimPipeline::from_document(&doc, 4)?;
+    let mut batch = BatchSimPipeline::from_document(&doc, 4, DT)?;
     let gains: std::collections::HashMap<String, (f64, f64)> = batch
         .servo_joint_ids()
         .iter()
