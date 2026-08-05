@@ -45,7 +45,7 @@
     "@types/three": "^0.184.1",
     "three": "^0.184.0",
     "typescript": "^5.7",
-    "vite": "^8.0.16",
+    "vite": "^8.2.0",
     "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^3.0"
   }
