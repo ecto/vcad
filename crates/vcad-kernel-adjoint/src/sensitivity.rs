@@ -289,9 +289,16 @@ impl Sensitivity {
         self
     }
 
-    /// Attach a note.
+    /// Attach a note, accumulating rather than replacing. A row often has
+    /// several things worth saying (a non-smooth quantity *and* a searched
+    /// trust radius), and the second one must not silently delete the
+    /// first.
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.note = Some(note.into());
+        let note = note.into();
+        self.note = Some(match self.note.take() {
+            Some(existing) => format!("{existing}; {note}"),
+            None => note,
+        });
         self
     }
 

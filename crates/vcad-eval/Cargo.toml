@@ -17,6 +17,7 @@ vcad-kernel-sweep.workspace = true
 vcad-kernel-text.workspace = true
 vcad-kernel-tessellate.workspace = true
 vcad-kernel-diff.workspace = true
+vcad-kernel-adjoint.workspace = true
 vcad-kernel-geom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
