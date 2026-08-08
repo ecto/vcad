@@ -2381,6 +2381,32 @@ export class WasmDocumentEngine {
         return ret;
     }
     /**
+     * Rewrite v1 parameter-binding keys onto this engine's node ids.
+     *
+     * Bindings are stored outside the CRDT as `"<nodeId>:<fieldPath>"` keyed
+     * on v1 node ids. Migration renumbers every node, so a binding loaded
+     * verbatim points at an arbitrary node in the rebuilt document — the
+     * symptom being a `radius` binding landing on a `Scale` wrapper and
+     * failing the whole document's evaluation.
+     *
+     * Returns `{ bindings, dropped }`. Bindings whose node did not survive
+     * are dropped with a reason rather than carried forward, because one
+     * dangling key costs the user every other binding in the document.
+     * Engines not built from a v1 migration return the input unchanged —
+     * a CRDT-native load already has matching ids.
+     * @param {string} bindings_json
+     * @returns {any}
+     */
+    remapBindings(bindings_json) {
+        const ptr0 = passStringToWasm0(bindings_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmdocumentengine_remapBindings(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Rename a feature.
      * @param {string} stable_id
      * @param {string} name
@@ -4364,6 +4390,47 @@ export function documentParameterGradient(doc_json, parameter, density, probe_st
 }
 
 /**
+ * Differentiate a set of quantities with respect to a set of named document
+ * parameters, returning a ranked, trust-bounded sensitivity table.
+ *
+ * The difference from [`document_parameter_gradient`] is not the arithmetic
+ * but what comes back with it: each row carries its unit, the route that
+ * produced it, whether that route is exact, and a **trust radius** — the
+ * interval of the parameter over which the derivative describes the same
+ * solid. The radius is *searched for*, by bisecting outward until the
+ * document's topology signature changes, rather than assumed.
+ *
+ * # Arguments
+ *
+ * * `doc_json` — JSON string of a vcad Document.
+ * * `request_json` — JSON string of a
+ *   [`vcad_eval::sensitivity::SensitivityRequest`]: `{ parameters?,
+ *   quantities?, part?, density?, probeStep?, findTrustRadius?,
+ *   topologyReach? }`. Omitting `parameters` differentiates every named
+ *   parameter; omitting `quantities` reports volume and mass.
+ *
+ * # Returns
+ *
+ * A [`vcad_eval::sensitivity::SensitivityReport`]: the table, a rendered
+ * view, the per-objective ranking, any rows that may not steer an
+ * optimizer, and one receipt claim per row.
+ * @param {string} doc_json
+ * @param {string} request_json
+ * @returns {any}
+ */
+export function documentSensitivities(doc_json, request_json) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.documentSensitivities(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Convert a Document (as JSON) back to loon source code.
  * @param {string} doc_json
  * @returns {string}
@@ -4395,6 +4462,16 @@ export function documentToLoon(doc_json) {
  * Returns a JS object `{ source: string, unsupported: string[] }`.
  * When `unsupported` is non-empty, the output contains comment placeholders for
  * those nodes and callers should warn the user that data will be lost.
+ *
+ * **Serializer note:** the result must go through
+ * [`serde_wasm_bindgen::Serializer::json_compatible`], not the plain
+ * `to_value`. `serde_json::json!` builds a `Value::Object`, which serde
+ * emits through `serialize_map` — and the default serde-wasm-bindgen
+ * serializer turns maps into a JS `Map`, whose `.source` and `.unsupported`
+ * are both `undefined`. Derived structs go through `serialize_struct` and
+ * become plain objects, which is why every other export in this file is
+ * unaffected. Reading `.unsupported.length` off the `Map` crashed the whole
+ * Source panel.
  * @param {string} doc_json
  * @returns {any}
  */
@@ -10438,12 +10515,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3805, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3806, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3818, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3819, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3830, function: Function { arguments: [Externref], shim_idx: 3831, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3843, function: Function { arguments: [Externref], shim_idx: 3844, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
