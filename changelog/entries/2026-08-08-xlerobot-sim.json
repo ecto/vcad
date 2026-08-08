@@ -1,0 +1,15 @@
+{
+  "id": "2026-08-08-xlerobot-sim",
+  "version": "0.9.4",
+  "date": "2026-08-08",
+  "category": "feat",
+  "title": "Simulate XLeRobot, the dual-arm mobile manipulator",
+  "summary": "XLeRobot ships as a sample: 17 actuated DOF at ~20k steps/s, with closed-loop arm control. Importing it fixed URDF links whose collision and visual geometry interleave, and meshes that sit under a transform.",
+  "features": [
+    "simulation",
+    "physics",
+    "urdf",
+    "robotics",
+    "import"
+  ]
+}
