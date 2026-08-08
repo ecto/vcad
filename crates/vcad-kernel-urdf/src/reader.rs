@@ -92,7 +92,15 @@ fn group_children_by_tag(
             Event::Eof => break,
             // Comments / text / whitespace between children are dropped by
             // the reorder — they get folded into the gaps between elements
-            // in the rebuilt string. URDF semantics don't care about them.
+            // in the rebuilt string. This is intended, not an oversight:
+            // URDF carries no significant whitespace or text content, and the
+            // rebuilt string exists only to be handed to the serde parse.
+            //
+            // The one place a dropped comment *would* matter is
+            // `commented_out_floating_joint`, which reads a floating joint out
+            // of a comment. It is safe because it scans the **original** xml —
+            // `read_urdf_from_str_with_options` passes `xml`, not `normalized`,
+            // to `apply_floating_base`. Keep it that way.
             _ => continue,
         };
         let pos_after = reader.buffer_position() as usize + body_start;

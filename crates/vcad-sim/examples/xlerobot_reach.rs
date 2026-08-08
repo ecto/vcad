@@ -77,14 +77,24 @@ const ARM_JOINTS: [&str; 12] = [
 
 /// Give the arm joints the STS3215's real limits, replacing the URDF's zeros.
 ///
-/// Returns the number of joints patched. Joints that already carry a nonzero
-/// effort limit (head, base) are left exactly as the URDF declared them.
-fn apply_actuator_profile(doc: &mut Document) -> usize {
+/// Joints that already carry a nonzero effort limit (head, base) are left
+/// exactly as the URDF declared them.
+///
+/// Errors when it does not find all twelve arm joints. Matching is by exact
+/// joint id, so a document whose joints are named differently — a re-import
+/// under another convention, a renamed fork of the URDF — would otherwise
+/// patch nothing, and the run would go on to report a "tracking error" of
+/// order 90 degrees that is really twelve inert actuators. That failure looks
+/// like a physics or tuning result, which is the worst way for it to present,
+/// so it fails closed instead.
+fn apply_actuator_profile(doc: &mut Document) -> Result<usize, String> {
     let mut patched = 0;
+    let mut seen = Vec::new();
     for joint in doc.joints.iter_mut().flatten() {
         if !ARM_JOINTS.contains(&joint.id.as_str()) {
             continue;
         }
+        seen.push(joint.id.clone());
         if let JointKind::Revolute {
             effort_limit,
             velocity_limit,
@@ -100,7 +110,24 @@ fn apply_actuator_profile(doc: &mut Document) -> usize {
             }
         }
     }
-    patched
+
+    if seen.len() != ARM_JOINTS.len() {
+        let missing: Vec<&str> = ARM_JOINTS
+            .iter()
+            .copied()
+            .filter(|j| !seen.iter().any(|s| s == j))
+            .collect();
+        return Err(format!(
+            "expected all {} arm joints, found {} — missing: {}. This document \
+             is not the XLeRobot import this example drives; without the \
+             actuator profile its arms carry the URDF's effort=\"0\" and cannot \
+             move at all.",
+            ARM_JOINTS.len(),
+            seen.len(),
+            missing.join(", ")
+        ));
+    }
+    Ok(patched)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -115,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vcad_eval::resolve_mesh_paths(&mut doc, dir);
     }
 
-    let patched = apply_actuator_profile(&mut doc);
+    let patched = apply_actuator_profile(&mut doc)?;
     println!(
         "actuator profile: patched {patched} inert arm joints to {STS3215_STALL_NM} N·m (STS3215)"
     );

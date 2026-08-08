@@ -1821,6 +1821,24 @@ impl PhysicsWorld {
 
         match &node.op {
             vcad_ir::CsgOp::MeshImport { path, scale } => {
+                // `.ok()` deliberately flattens a load failure — missing file,
+                // unparseable STL — into "no geometry" rather than erroring.
+                // A browser-flow URDF import keeps the raw URDF filename with
+                // no filesystem behind it, so an unopenable reference is an
+                // expected state here, not a fault.
+                //
+                // This is *not* a silent swallow at the level that matters:
+                // the decision is deferred, not discarded. `eval_instance` is
+                // where it gets made, and it fails closed — a part with no
+                // resolvable geometry and no authored `<inertial>` is a hard
+                // error there ("cannot derive mass properties"), because the
+                // alternative is inventing the mass properties the dynamics
+                // run on. Only a part that *has* authored inertials is allowed
+                // to fall back to a placeholder collider.
+                //
+                // A future caller that needs the underlying I/O error should
+                // call `crate::stl::load_stl` directly rather than reaching
+                // for this helper and re-deriving the cause from `None`.
                 Ok(crate::stl::load_stl(std::path::Path::new(path), *scale).ok())
             }
             // Inline ImportedMesh (e.g. browser pre-parsed STL/DAE) ships its
