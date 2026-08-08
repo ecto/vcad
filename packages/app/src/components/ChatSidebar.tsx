@@ -447,9 +447,16 @@ function SourcePanel() {
     syncTimerRef.current = setTimeout(() => {
       try {
         const { source, unsupported } = documentToLoonChecked(document);
-        setLocalSource(source);
-        setUnsupportedVariants(unsupported);
-        setError(null);
+        // Defensive: a read-only source *view* must never take the sidebar
+        // down. Anything malformed coming back from the binding degrades to
+        // an empty view with an error line, not an unmounted panel.
+        setLocalSource(typeof source === "string" ? source : "");
+        setUnsupportedVariants(Array.isArray(unsupported) ? unsupported : []);
+        setError(
+          typeof source === "string"
+            ? null
+            : "loon export returned no source for this document",
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
         setUnsupportedVariants([]);

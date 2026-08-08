@@ -48,10 +48,10 @@ fn inspect(src: &str) -> Inspection {
         let ntri = mesh.indices.len() / 3;
         for t in 0..ntri {
             let mut p = [[0.0f64; 3]; 3];
-            for k in 0..3 {
+            for (k, corner) in p.iter_mut().enumerate() {
                 let vi = mesh.indices[t * 3 + k] as usize;
-                for c in 0..3 {
-                    p[k][c] = mesh.vertices[vi * 3 + c] as f64;
+                for (c, coord) in corner.iter_mut().enumerate() {
+                    *coord = mesh.vertices[vi * 3 + c] as f64;
                 }
             }
             let [a, b, c] = p;

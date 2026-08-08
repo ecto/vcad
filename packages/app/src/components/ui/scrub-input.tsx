@@ -44,6 +44,34 @@ interface ScrubInputProps {
   primeKey?: string;
   /** Called after the user commits a value (Enter/blur) while editing. */
   onCommit?: () => void;
+  /**
+   * The expression currently driving this field, if it is bound to one.
+   * When set, the input shows the formula rather than the number, and the
+   * resolved value moves into the unit slot.
+   */
+  expression?: string | null;
+  /**
+   * Accept expressions, not just numbers. Called when the user types
+   * something that is not a number but *is* a valid expression over the
+   * document's parameters — `wall`, `bore * 0.5`, `plate_t + 2`.
+   *
+   * Without this, a typed formula is silently discarded and the field snaps
+   * back to its number: the failure mode that made parameters unreachable
+   * from the property panel. Pass `null` back to clear an existing binding.
+   */
+  onBind?: (expression: string | null) => void;
+  /**
+   * Validate an expression before binding. Return an error string to reject
+   * it (unknown parameter, parse error) — the input shows the message and
+   * keeps the text so the user can fix it rather than losing what they typed.
+   */
+  validateExpression?: (expression: string) => string | null;
+  /**
+   * What the bound expression currently evaluates to. Shown instead of
+   * `value`, which for a bound field is the document's *unbound* literal —
+   * bindings resolve at evaluation time, so `value` never moves.
+   */
+  resolvedValue?: number;
 }
 
 export function ScrubInput({
@@ -61,28 +89,57 @@ export function ScrubInput({
   onScrubEnd,
   primeKey,
   onCommit,
+  expression = null,
+  onBind,
+  validateExpression,
+  resolvedValue,
 }: ScrubInputProps) {
-  const [text, setText] = useState(String(round(value)));
+  const display = expression ?? String(round(value));
+  const [text, setText] = useState(display);
   const [isEditing, setIsEditing] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [bindError, setBindError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrubStartX = useRef(0);
   const scrubStartValue = useRef(0);
 
-  // Sync text with value when not editing
+  // Sync text with value (or the bound expression) when not editing
   useEffect(() => {
     if (!isEditing && !isScrubbing) {
-      setText(String(round(value)));
+      setText(expression ?? String(round(value)));
+      setBindError(null);
     }
-  }, [value, isEditing, isScrubbing]);
+  }, [value, expression, isEditing, isScrubbing]);
 
   function commit() {
-    const num = parseFloat(text);
-    if (!isNaN(num)) {
+    const trimmed = text.trim();
+    const num = parseFloat(trimmed);
+    // A bare number always wins, and clears any binding that was there —
+    // typing a literal over a formula is how you unbind.
+    if (!isNaN(num) && String(num) === trimmed) {
       const clamped = Math.max(min, Math.min(max, num));
+      if (expression && onBind) onBind(null);
       onChange(clamped);
+      setBindError(null);
+    } else if (trimmed.length > 0 && onBind) {
+      const err = validateExpression?.(trimmed) ?? null;
+      if (err) {
+        // Keep what the user typed — losing a half-written formula on a
+        // typo is worse than showing the typo.
+        setBindError(err);
+        setIsEditing(false);
+        onCommit?.();
+        return;
+      }
+      onBind(trimmed);
+      setBindError(null);
+    } else if (!isNaN(num)) {
+      // Numeric with trailing junk ("12mm") — take the number.
+      onChange(Math.max(min, Math.min(max, num)));
+      setBindError(null);
     } else {
-      setText(String(round(value)));
+      setText(expression ?? String(round(value)));
+      setBindError(null);
     }
     setIsEditing(false);
     onCommit?.();
@@ -92,6 +149,8 @@ export function ScrubInput({
     (e: React.PointerEvent) => {
       // Only scrub with mouse (coarse/touch devices get stepper buttons instead)
       if (isCoarsePointer || e.pointerType !== "mouse" || e.button !== 0 || isEditing) return;
+      // Scrubbing a bound field would write a number over the formula.
+      if (expression != null) return;
 
       e.preventDefault();
       setIsScrubbing(true);
@@ -99,7 +158,7 @@ export function ScrubInput({
       scrubStartValue.current = value;
       onScrubStart?.();
     },
-    [isEditing, value, onScrubStart],
+    [isEditing, value, onScrubStart, expression],
   );
 
   const bump = useCallback(
@@ -178,8 +237,18 @@ export function ScrubInput({
     )}>{label}</span>
   );
 
+  const isBound = expression != null;
+
   return (
-    <label className={cn("flex items-center gap-1.5 text-xs", className)}>
+    <label
+      className={cn("flex items-center gap-1.5 text-xs", className)}
+      title={
+        bindError ??
+        (isBound
+          ? `${expression} = ${round(resolvedValue ?? value)}${unit ? ` ${unit}` : ""}`
+          : undefined)
+      }
+    >
       {tooltip ? <Tooltip content={tooltip} side="top">{labelSpan}</Tooltip> : labelSpan}
       {isCoarsePointer && !compact && (
         <button
@@ -195,7 +264,7 @@ export function ScrubInput({
         ref={inputRef}
         type={isCoarsePointer && isEditing ? "number" : "text"}
         inputMode={isCoarsePointer ? "decimal" : undefined}
-        value={isEditing ? text : String(round(value))}
+        value={isEditing ? text : display}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
         onFocus={() => {
@@ -207,17 +276,26 @@ export function ScrubInput({
         onKeyDown={(e) => {
           if (e.key === "Enter") commit();
           if (e.key === "Escape") {
-            setText(String(round(value)));
+            setText(display);
             setIsEditing(false);
+            setBindError(null);
           }
         }}
         onPointerDown={handlePointerDown}
         onDoubleClick={handleDoubleClick}
         readOnly={!isEditing && !isCoarsePointer}
         className={cn(
-          "flex-1 min-w-0 rounded-md bg-card border border-border text-text outline-none transition-colors text-center",
+          "flex-1 min-w-0 rounded-md bg-card border text-text outline-none transition-colors text-center",
           "hover:border-text-muted focus:border-brand",
-          !isEditing && !isCoarsePointer && "cursor-ew-resize select-none",
+          bindError
+            ? "border-red-500"
+            : isBound
+              ? "border-brand/50 text-brand font-mono"
+              : "border-border",
+          // A bound field's value comes from its formula — dragging it would
+          // be a lie. Double-click still edits (to rebind or unbind).
+          !isEditing && !isCoarsePointer && !isBound && "cursor-ew-resize select-none",
+          !isEditing && isBound && "cursor-text",
           isScrubbing && "cursor-ew-resize",
           compact ? "px-1 py-0.5 text-[10px]" : "px-2 py-1 text-xs",
           isCoarsePointer && !compact && "h-9 text-sm tabular-nums",
@@ -233,7 +311,18 @@ export function ScrubInput({
           <Plus size={14} />
         </button>
       )}
-      {unit && !compact && <span className="text-[10px] text-text-muted shrink-0">{unit}</span>}
+      {!compact && (
+        <span
+          className={cn(
+            "text-[10px] shrink-0",
+            bindError ? "text-red-500" : "text-text-muted",
+          )}
+        >
+          {/* A bound field spends its own slot on the formula, so the
+              resolved number moves here — you can still see what it is. */}
+          {isBound ? `= ${round(resolvedValue ?? value)}` : unit}
+        </span>
+      )}
     </label>
   );
 }

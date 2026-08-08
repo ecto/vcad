@@ -6,8 +6,59 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
 use vcad_ir::{CsgOp, Document, JointKind, NodeId, Vec3};
+
+/// Which node of a materialized feature's transform chain an old v1 node
+/// corresponds to.
+///
+/// Migration collapses a `Translate → Rotate → Scale → primitive` chain into
+/// one CRDT feature, and the materializer expands it again into four fresh
+/// nodes with new ids. A v1 binding points at one specific node in the old
+/// chain, so remapping it needs to know *which* — a `radius` binding belongs
+/// on the primitive, an `offset` binding on the translate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeRole {
+    /// The leaf: primitive, boolean, fillet — whatever the feature is *of*.
+    Primitive,
+    /// The scale wrapper.
+    Scale,
+    /// The rotation wrapper.
+    Rotate,
+    /// The translation wrapper (the feature's root node).
+    Translate,
+}
+
+/// One old-node → (feature, role) correspondence produced by migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeMapping {
+    /// Node id in the v1 document.
+    pub old_node_id: NodeId,
+    /// Serialized `FeatureId` (`"replica:seq"`), matching `PartInfo::id`.
+    pub feature_id: String,
+    /// Which node of the rebuilt chain this old node became.
+    pub role: NodeRole,
+}
+
+/// The full old-node → feature correspondence for one migration.
+///
+/// Migration renumbers every node. Anything that referenced v1 node ids from
+/// *outside* the document — parameter bindings, most importantly — is dangling
+/// after a load unless it is remapped through this. Without it a binding like
+/// `"2:radius"` silently lands on whatever node 2 happens to be in the rebuilt
+/// document (in practice a `Scale` wrapper), and the document fails to
+/// evaluate with a confusing "field path not valid on op Scale".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationMap {
+    /// Every old node that has a correspondence. Nodes whose op has no CRDT
+    /// feature representation are absent.
+    pub mappings: Vec<NodeMapping>,
+}
 
 /// Migrate a v1 document (IR DAG + parts metadata) into a CRDT document.
 ///
@@ -17,6 +68,15 @@ use vcad_ir::{CsgOp, Document, JointKind, NodeId, Vec3};
 /// (partDefs / instances / joints) migrates to its own feature kinds after
 /// the regular scene roots.
 pub fn migrate_v1(doc: &Document) -> CrdtDocument {
+    migrate_v1_mapped(doc).0
+}
+
+/// [`migrate_v1`], also returning the old-node → feature correspondence.
+///
+/// Callers holding v1 node references outside the document (parameter
+/// bindings) must remap them through the returned [`MigrationMap`], composed
+/// with the materializer's per-feature node ids from `PartInfo`.
+pub fn migrate_v1_mapped(doc: &Document) -> (CrdtDocument, MigrationMap) {
     let mut crdt = CrdtDocument::new(ReplicaId(0));
     let mut ctx = MigrationCtx::new();
 
@@ -46,7 +106,121 @@ pub fn migrate_v1(doc: &Document) -> CrdtDocument {
         }
     }
 
-    crdt
+    let map = MigrationMap {
+        mappings: std::mem::take(&mut ctx.node_roles),
+    };
+    (crdt, map)
+}
+
+/// Outcome of remapping one document's parameter bindings across a
+/// migration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemappedBindings {
+    /// Binding keys rewritten to post-migration node ids.
+    pub bindings: HashMap<String, String>,
+    /// Keys that could not be remapped, with the reason. These are
+    /// **dropped** rather than carried forward: a binding pointing at a node
+    /// that no longer exists (or is now a different op) fails the whole
+    /// document evaluation, which costs the user every other binding too.
+    pub dropped: Vec<String>,
+}
+
+/// Which node of a feature's rebuilt chain a field path belongs on.
+///
+/// Transform fields live on the wrappers the materializer creates; anything
+/// else belongs on the leaf. Bindings are authored against v1 nodes, so the
+/// *field* is what tells us the role — the old node id alone cannot, since a
+/// whole `Translate → … → primitive` chain collapses into one feature.
+fn role_for_field(field_path: &str) -> NodeRole {
+    let head = field_path.split('.').next().unwrap_or(field_path);
+    match head {
+        "offset" => NodeRole::Translate,
+        "angles" | "rotation" => NodeRole::Rotate,
+        "factor" | "scale" => NodeRole::Scale,
+        _ => NodeRole::Primitive,
+    }
+}
+
+/// Read one role's node id out of a serialized `PartInfo`.
+///
+/// Goes through JSON rather than a 20-variant match per role: every variant
+/// names these fields identically in camelCase, and a variant that genuinely
+/// lacks one (a feature with no transform chain) correctly yields `None`.
+/// This runs once per document load, not per frame.
+fn role_node_id(part: &serde_json::Value, role: NodeRole) -> Option<NodeId> {
+    let key = match role {
+        NodeRole::Primitive => "primitiveNodeId",
+        NodeRole::Scale => "scaleNodeId",
+        NodeRole::Rotate => "rotateNodeId",
+        NodeRole::Translate => "translateNodeId",
+    };
+    part.get(key)?.as_u64()
+}
+
+/// Rewrite v1 parameter-binding keys (`"<nodeId>:<fieldPath>"`) onto the node
+/// ids the materializer produced after migration.
+///
+/// Bindings live outside the CRDT schema, so they survive a load as raw
+/// v1 node references while the document around them is renumbered. Left
+/// alone they point at arbitrary nodes — the reported symptom was a
+/// `"2:radius"` binding landing on a `Scale` wrapper and taking the whole
+/// document's evaluation down with it.
+///
+/// `parts_json` is the materializer's `Vec<PartInfo>` as JSON, which carries
+/// each feature's four node ids alongside its feature id.
+pub fn remap_bindings(
+    bindings: &HashMap<String, String>,
+    map: &MigrationMap,
+    parts_json: &serde_json::Value,
+) -> RemappedBindings {
+    // feature id -> its serialized PartInfo
+    let mut by_feature: HashMap<&str, &serde_json::Value> = HashMap::new();
+    if let Some(arr) = parts_json.as_array() {
+        for p in arr {
+            if let Some(id) = p.get("id").and_then(|v| v.as_str()) {
+                by_feature.insert(id, p);
+            }
+        }
+    }
+    // old node id -> feature id (a node appears once; later wins, harmless)
+    let mut old_to_feature: HashMap<NodeId, &str> = HashMap::new();
+    for m in &map.mappings {
+        old_to_feature.insert(m.old_node_id, m.feature_id.as_str());
+    }
+
+    let mut out = RemappedBindings::default();
+    for (key, expr) in bindings {
+        let Some((node_str, field)) = key.split_once(':') else {
+            out.dropped.push(format!("{key}: malformed binding key"));
+            continue;
+        };
+        let Ok(old_id) = node_str.parse::<NodeId>() else {
+            out.dropped.push(format!("{key}: node id is not a number"));
+            continue;
+        };
+        let Some(fid) = old_to_feature.get(&old_id) else {
+            out.dropped.push(format!(
+                "{key}: node {old_id} did not survive migration (its op has no feature)"
+            ));
+            continue;
+        };
+        let Some(part) = by_feature.get(fid) else {
+            out.dropped
+                .push(format!("{key}: feature {fid} was not materialized"));
+            continue;
+        };
+        let role = role_for_field(field);
+        let Some(new_id) = role_node_id(part, role) else {
+            out.dropped.push(format!(
+                "{key}: feature {fid} has no {role:?} node to carry field {field:?}"
+            ));
+            continue;
+        };
+        out.bindings
+            .insert(format!("{new_id}:{field}"), expr.clone());
+    }
+    out
 }
 
 /// Tracks the position cursor so each new feature appends at the end of
@@ -56,6 +230,9 @@ pub fn migrate_v1(doc: &Document) -> CrdtDocument {
 struct MigrationCtx {
     last_pos: Option<FractionalIndex>,
     node_to_feature: HashMap<NodeId, FeatureId>,
+    /// Every old node that became part of a feature, with the role it plays
+    /// in the rebuilt transform chain. Drives [`MigrationMap`].
+    node_roles: Vec<NodeMapping>,
 }
 
 impl MigrationCtx {
@@ -63,7 +240,17 @@ impl MigrationCtx {
         Self {
             last_pos: None,
             node_to_feature: HashMap::new(),
+            node_roles: Vec::new(),
         }
+    }
+
+    /// Record that `old` became the `role` node of `fid`.
+    fn record_role(&mut self, old: NodeId, fid: FeatureId, role: NodeRole) {
+        self.node_roles.push(NodeMapping {
+            old_node_id: old,
+            feature_id: format!("{}:{}", fid.0 .0, fid.1),
+            role,
+        });
     }
 
     /// Allocate the next ordered position (strictly greater than all prior).
@@ -89,6 +276,9 @@ fn migrate_node(
     let top_id = node_id;
     let mut params: HashMap<String, Value> = HashMap::new();
     let mut current_id = node_id;
+    // Old nodes consumed by the transform peel, with the role each played.
+    // Recorded against the feature id once we know it.
+    let mut chain: Vec<(NodeId, NodeRole)> = Vec::new();
 
     // Peel off the Translate → Rotate → Scale chain, accumulating
     // offset/rotation/scale/name params on the resulting feature.
@@ -105,6 +295,7 @@ fn migrate_node(
                 if let Some(name) = &node.name {
                     params.insert("name".to_string(), Value::String(name.clone()));
                 }
+                chain.push((current_id, NodeRole::Translate));
                 current_id = *child;
             }
             CsgOp::Rotate { child, angles } => {
@@ -114,6 +305,7 @@ fn migrate_node(
                         Value::Vec3([angles.x, angles.y, angles.z]),
                     );
                 }
+                chain.push((current_id, NodeRole::Rotate));
                 current_id = *child;
             }
             CsgOp::Scale { child, factor } => {
@@ -123,11 +315,14 @@ fn migrate_node(
                         Value::Vec3([factor.x, factor.y, factor.z]),
                     );
                 }
+                chain.push((current_id, NodeRole::Scale));
                 current_id = *child;
             }
             _ => break,
         }
     }
+    // The node the peel stopped on is the feature's leaf.
+    chain.push((current_id, NodeRole::Primitive));
 
     let leaf = doc.nodes.get(&current_id)?;
     // The materializer writes feature names onto the core/leaf node
@@ -408,6 +603,9 @@ fn migrate_node(
     };
     if let Some(id) = fid {
         ctx.node_to_feature.insert(top_id, id);
+        for (old, role) in chain {
+            ctx.record_role(old, id, role);
+        }
     }
     fid
 }
@@ -624,6 +822,145 @@ mod tests {
         let doc = Document::new();
         let crdt = migrate_v1(&doc);
         assert_eq!(crdt.ordered_features().len(), 0);
+    }
+
+    /// The exact document that broke: a plate with a through-hole, one
+    /// binding on the cube's `size.z` and one on the cylinder's `radius`.
+    fn plate_with_hole() -> Document {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("plate".into()),
+                op: CsgOp::Cube {
+                    size: Vec3::new(40.0, 40.0, 6.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: Some("drill".into()),
+                op: CsgOp::Cylinder {
+                    radius: 6.0,
+                    height: 40.0,
+                    segments: 48,
+                },
+            },
+        );
+        doc.nodes.insert(
+            3,
+            Node {
+                id: 3,
+                name: Some("drill_at".into()),
+                op: CsgOp::Translate {
+                    child: 2,
+                    offset: Vec3::new(20.0, 20.0, -10.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            4,
+            Node {
+                id: 4,
+                name: Some("drilled".into()),
+                op: CsgOp::Difference { left: 1, right: 3 },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 4,
+            material: "default".into(),
+            visible: None,
+        });
+        doc
+    }
+
+    /// Migration renumbers every node, so bindings authored against v1 ids
+    /// must be rewritten. Before this existed, `"2:radius"` survived a load
+    /// pointing at whatever node 2 became — a `Scale` wrapper — and the
+    /// document failed to evaluate with "field path not valid on op Scale",
+    /// taking every other binding down with it.
+    #[test]
+    fn bindings_are_remapped_onto_the_materialized_nodes() {
+        let doc = plate_with_hole();
+        let (crdt, map) = migrate_v1_mapped(&doc);
+        let result = crate::materializer::materialize(&crdt);
+        let parts_json = serde_json::to_value(&result.parts).unwrap();
+
+        let mut bindings = HashMap::new();
+        bindings.insert("1:size.z".to_string(), "plate_t".to_string());
+        bindings.insert("2:radius".to_string(), "hole_r".to_string());
+
+        let out = remap_bindings(&bindings, &map, &parts_json);
+        assert!(
+            out.dropped.is_empty(),
+            "nothing should be dropped here: {:?}",
+            out.dropped
+        );
+        assert_eq!(out.bindings.len(), 2);
+
+        // Every remapped key must name a node that exists and whose op
+        // actually carries that field — the property the old code violated.
+        for (key, expr) in &out.bindings {
+            let (node_str, field) = key.split_once(':').unwrap();
+            let id: NodeId = node_str.parse().unwrap();
+            let node = result
+                .document
+                .nodes
+                .get(&id)
+                .unwrap_or_else(|| panic!("{key} -> node {id} does not exist"));
+            match (expr.as_str(), &node.op) {
+                ("plate_t", CsgOp::Cube { .. }) => assert_eq!(field, "size.z"),
+                ("hole_r", CsgOp::Cylinder { .. }) => assert_eq!(field, "radius"),
+                (e, op) => panic!("{e} landed on the wrong op: {op:?}"),
+            }
+        }
+    }
+
+    /// A field on a transform wrapper follows the wrapper, not the leaf.
+    #[test]
+    fn transform_fields_remap_onto_their_wrapper() {
+        let doc = plate_with_hole();
+        let (crdt, map) = migrate_v1_mapped(&doc);
+        let result = crate::materializer::materialize(&crdt);
+        let parts_json = serde_json::to_value(&result.parts).unwrap();
+
+        let mut bindings = HashMap::new();
+        // Node 3 is the Translate wrapping the cylinder.
+        bindings.insert("3:offset.x".to_string(), "hole_x".to_string());
+        let out = remap_bindings(&bindings, &map, &parts_json);
+        assert!(out.dropped.is_empty(), "{:?}", out.dropped);
+        let key = out.bindings.keys().next().unwrap();
+        let id: NodeId = key.split_once(':').unwrap().0.parse().unwrap();
+        assert!(
+            matches!(
+                result.document.nodes.get(&id).map(|n| &n.op),
+                Some(CsgOp::Translate { .. })
+            ),
+            "offset must land on a Translate, got {:?}",
+            result.document.nodes.get(&id).map(|n| &n.op)
+        );
+    }
+
+    /// A binding whose node did not survive is dropped with a reason, not
+    /// carried forward to poison the evaluation.
+    #[test]
+    fn unmappable_bindings_are_dropped_with_a_reason() {
+        let doc = plate_with_hole();
+        let (crdt, map) = migrate_v1_mapped(&doc);
+        let result = crate::materializer::materialize(&crdt);
+        let parts_json = serde_json::to_value(&result.parts).unwrap();
+
+        let mut bindings = HashMap::new();
+        bindings.insert("999:radius".to_string(), "ghost".to_string());
+        bindings.insert("nonsense".to_string(), "bad".to_string());
+        let out = remap_bindings(&bindings, &map, &parts_json);
+        assert!(out.bindings.is_empty());
+        assert_eq!(out.dropped.len(), 2);
+        assert!(out.dropped.iter().any(|d| d.contains("did not survive")));
+        assert!(out.dropped.iter().any(|d| d.contains("malformed")));
     }
 
     #[test]
@@ -1038,8 +1375,7 @@ mod timeline_roundtrip_tests {
 
     #[test]
     fn timeline_survives_migrate_and_materialize() {
-        let mut doc = Document::default();
-        doc.timeline = serde_json::from_value(serde_json::json!({
+        let timeline = serde_json::from_value(serde_json::json!({
             "durationS": 2.0,
             "fps": 30.0,
             "tracks": [{
@@ -1052,6 +1388,10 @@ mod timeline_roundtrip_tests {
             "camera": []
         }))
         .ok();
+        let doc = Document {
+            timeline,
+            ..Document::default()
+        };
         assert!(doc.timeline.is_some());
 
         let crdt = migrate_v1(&doc);

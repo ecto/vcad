@@ -17,6 +17,7 @@ function BackButton() {
 }
 import { Tooltip } from "@/components/ui/tooltip";
 import { ScrubInput } from "@/components/ui/scrub-input";
+import { useFieldBinding } from "@/hooks/useFieldBinding";
 import { useDocumentStore, useUiStore, useEngineStore, useSimulationStore, isPrimitivePart, isBooleanPart, isSweepPart, isEmbroideryPatternPart, isStitchPart, isPcbBoardPart, isExtrudePart, isRevolvePart, isFilletPart, isChamferPart, isShellPart, isLinearPatternPart, isCircularPatternPart, isLoftPart, isTextPart, isMirrorPart, f64, vec3, bool, t, tFmt } from "@vcad/core";
 import type { SelectionItem } from "@vcad/core";
 import { Vector3 } from "three";
@@ -201,6 +202,10 @@ function ScaleSection({
 function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
   const document = useDocumentStore((s) => s.document);
   const updatePrimitiveOp = useDocumentStore((s) => s.updatePrimitiveOp);
+  // Bindings key on the primitive node, which is where these fields live.
+  const bindX = useFieldBinding(part.primitiveNodeId, "size.x");
+  const bindY = useFieldBinding(part.primitiveNodeId, "size.y");
+  const bindZ = useFieldBinding(part.primitiveNodeId, "size.z");
 
   const node = document.nodes[String(part.primitiveNodeId)];
   if (!node || node.op.type !== "Cube") return null;
@@ -221,6 +226,7 @@ function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
           }
           onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
+          {...bindX}
         />
         <ScrubInput
           label="H"
@@ -232,6 +238,7 @@ function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
           }
           onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
+          {...bindY}
         />
         <ScrubInput
           label="D"
@@ -243,6 +250,7 @@ function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
           }
           onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
+          {...bindZ}
         />
       </div>
     </div>
@@ -252,6 +260,8 @@ function CubeDimensions({ part }: { part: PrimitivePartInfo }) {
 function CylinderDimensions({ part }: { part: PrimitivePartInfo }) {
   const document = useDocumentStore((s) => s.document);
   const updatePrimitiveOp = useDocumentStore((s) => s.updatePrimitiveOp);
+  const bindR = useFieldBinding(part.primitiveNodeId, "radius");
+  const bindH = useFieldBinding(part.primitiveNodeId, "height");
 
   const node = document.nodes[String(part.primitiveNodeId)];
   if (!node || node.op.type !== "Cylinder") return null;
@@ -270,6 +280,7 @@ function CylinderDimensions({ part }: { part: PrimitivePartInfo }) {
           onChange={(v) => updatePrimitiveOp(part.id, { ...op, radius: v })}
           onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
+          {...bindR}
         />
         <ScrubInput
           label="H"
@@ -279,6 +290,7 @@ function CylinderDimensions({ part }: { part: PrimitivePartInfo }) {
           onChange={(v) => updatePrimitiveOp(part.id, { ...op, height: v })}
           onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
+          {...bindH}
         />
       </div>
     </div>
@@ -288,6 +300,7 @@ function CylinderDimensions({ part }: { part: PrimitivePartInfo }) {
 function SphereDimensions({ part }: { part: PrimitivePartInfo }) {
   const document = useDocumentStore((s) => s.document);
   const updatePrimitiveOp = useDocumentStore((s) => s.updatePrimitiveOp);
+  const bindR = useFieldBinding(part.primitiveNodeId, "radius");
 
   const node = document.nodes[String(part.primitiveNodeId)];
   if (!node || node.op.type !== "Sphere") return null;
@@ -306,6 +319,7 @@ function SphereDimensions({ part }: { part: PrimitivePartInfo }) {
           onChange={(v) => updatePrimitiveOp(part.id, { ...op, radius: v })}
           onCommit={() => useUiStore.getState().setFocusZone("viewport")}
           unit="mm"
+          {...bindR}
         />
       </div>
     </div>

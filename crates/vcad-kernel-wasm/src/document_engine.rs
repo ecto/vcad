@@ -23,6 +23,11 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct WasmDocumentEngine {
     api: DocumentApi,
+    /// Old-node -> feature correspondence, when this engine was built by
+    /// migrating a v1 document. Parameter bindings live outside the CRDT and
+    /// still reference v1 node ids after a load, so they must be remapped
+    /// through this before the document is evaluated.
+    migration: Option<vcad_app::migrate::MigrationMap>,
 }
 
 #[wasm_bindgen]
@@ -33,6 +38,7 @@ impl WasmDocumentEngine {
         let replica_id = ReplicaId(js_sys::Date::now() as u64);
         Self {
             api: DocumentApi::new(replica_id),
+            migration: None,
         }
     }
 
@@ -231,6 +237,41 @@ impl WasmDocumentEngine {
         Self::from_v1_bytes(json.as_bytes())
     }
 
+    /// Rewrite v1 parameter-binding keys onto this engine's node ids.
+    ///
+    /// Bindings are stored outside the CRDT as `"<nodeId>:<fieldPath>"` keyed
+    /// on v1 node ids. Migration renumbers every node, so a binding loaded
+    /// verbatim points at an arbitrary node in the rebuilt document — the
+    /// symptom being a `radius` binding landing on a `Scale` wrapper and
+    /// failing the whole document's evaluation.
+    ///
+    /// Returns `{ bindings, dropped }`. Bindings whose node did not survive
+    /// are dropped with a reason rather than carried forward, because one
+    /// dangling key costs the user every other binding in the document.
+    /// Engines not built from a v1 migration return the input unchanged —
+    /// a CRDT-native load already has matching ids.
+    #[wasm_bindgen(js_name = remapBindings)]
+    pub fn remap_bindings(&self, bindings_json: &str) -> Result<JsValue, JsError> {
+        let bindings: std::collections::HashMap<String, String> =
+            serde_json::from_str(bindings_json)
+                .map_err(|e| JsError::new(&format!("Failed to parse bindings: {e}")))?;
+        let out = match &self.migration {
+            Some(map) => {
+                let result = materialize(self.api.crdt());
+                let parts_json = serde_json::to_value(&result.parts)
+                    .map_err(|e| JsError::new(&e.to_string()))?;
+                vcad_app::migrate::remap_bindings(&bindings, map, &parts_json)
+            }
+            None => vcad_app::migrate::RemappedBindings {
+                bindings,
+                dropped: Vec::new(),
+            },
+        };
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+        out.serialize(&serializer)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Import IR JSON into the current document (e.g. AI-generated geometry).
     pub fn import_ir(&mut self, ir_json: &str) -> JsValue {
         let doc: vcad_ir::Document = match serde_json::from_str(ir_json) {
@@ -314,15 +355,24 @@ impl WasmDocumentEngine {
         // Rebuild the stable-id map so existing features can be resolved
         // by their stable IDs (delete, rename, set_translation, etc.).
         api.rebuild_stable_ids();
-        Self { api }
+        Self {
+            api,
+            migration: None,
+        }
     }
 
     /// Parse legacy v1 bytes and migrate to CRDT.
+    ///
+    /// Keeps the migration's node correspondence so
+    /// [`WasmDocumentEngine::remap_bindings`] can rewrite v1 binding keys
+    /// onto the renumbered document.
     fn from_v1_bytes(bytes: &[u8]) -> Result<WasmDocumentEngine, JsError> {
         let doc: vcad_ir::Document =
             serde_json::from_slice(bytes).map_err(|e| JsError::new(&e.to_string()))?;
-        let crdt = migrate_v1(&doc);
-        Ok(Self::from_crdt(crdt))
+        let (crdt, map) = vcad_app::migrate::migrate_v1_mapped(&doc);
+        let mut engine = Self::from_crdt(crdt);
+        engine.migration = Some(map);
+        Ok(engine)
     }
 
     /// Build the legacy mutation result: `{ document, parts, createdFeatureId? }`
