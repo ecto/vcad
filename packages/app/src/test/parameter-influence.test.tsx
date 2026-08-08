@@ -15,7 +15,11 @@ import { render, cleanup, screen } from "@testing-library/react";
 import type { SensitivityReport, SensitivityRow } from "@vcad/engine";
 import { ParametersPanel } from "@/components/ParametersPanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useDocumentStore, useParametersStore } from "@vcad/core";
+import {
+  mergeParametersIntoDocument,
+  useDocumentStore,
+  useParametersStore,
+} from "@vcad/core";
 import {
   documentRevision,
   formatDerivative,
@@ -58,6 +62,22 @@ function report(rows: SensitivityRow[]): SensitivityReport {
     allUsable: rows.every((r) => r.verdict !== "unverifiable"),
     claims: [],
   };
+}
+
+/**
+ * The revision the panel computes: parameters and bindings live in their own
+ * store, so the panel differentiates the *merged* document. Mirroring that
+ * here is what keeps a seeded report from being invalidated on first render.
+ */
+function panelRevision(): string {
+  const { parameters, bindings } = useParametersStore.getState();
+  return documentRevision(
+    mergeParametersIntoDocument(
+      useDocumentStore.getState().document,
+      parameters,
+      bindings,
+    ),
+  );
 }
 
 describe("influence helpers", () => {
@@ -136,7 +156,7 @@ describe("ParametersPanel influence rows", () => {
         row("fin_thickness", 100, [0.99, 1.01]),
         row("wall", 1, [0, 10]),
       ]),
-      computedFor: documentRevision(useDocumentStore.getState().document),
+      computedFor: panelRevision(),
     });
     const { container } = render(
       <TooltipProvider>
@@ -167,7 +187,7 @@ describe("ParametersPanel influence rows", () => {
         }),
         row("fin_thickness", 1, [0, 1]),
       ]),
-      computedFor: documentRevision(useDocumentStore.getState().document),
+      computedFor: panelRevision(),
     });
     const { container } = render(
       <TooltipProvider>
@@ -185,7 +205,7 @@ describe("ParametersPanel influence rows", () => {
       report: report([
         row("wall", 1, [0, 10], { route: { route: "finite_difference", step: 1e-3 } }),
       ]),
-      computedFor: documentRevision(useDocumentStore.getState().document),
+      computedFor: panelRevision(),
     });
     const { container } = render(
       <TooltipProvider>

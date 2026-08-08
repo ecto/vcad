@@ -7,6 +7,7 @@ import { ChartBar } from "@phosphor-icons/react/dist/ssr/ChartBar";
 import type { SensitivityRow } from "@vcad/engine";
 import type { Expr, Parameter } from "@vcad/ir";
 import {
+  mergeParametersIntoDocument,
   useDocumentStore,
   useEngineStore,
   useParametersStore,
@@ -308,8 +309,19 @@ function ParameterRow({
  * the same question, and much too expensive to run on every keystroke.
  */
 function InfluenceControls() {
-  const document = useDocumentStore((s) => s.document);
+  const rawDocument = useDocumentStore((s) => s.document);
+  const parameters = useParametersStore((s) => s.parameters);
+  const bindings = useParametersStore((s) => s.bindings);
   const engine = useEngineStore((s) => s.engine);
+
+  // Named parameters and their bindings live in their own store; the
+  // document only carries them once merged. Differentiating the raw
+  // document would silently see zero parameters and report nothing —
+  // the same merge every `engine.evaluate` call does.
+  const document = useMemo(
+    () => mergeParametersIntoDocument(rawDocument, parameters, bindings),
+    [rawDocument, parameters, bindings],
+  );
   const { report, loading, error, quantity, computedFor } = useSensitivityStore();
   const setQuantity = useSensitivityStore((s) => s.setQuantity);
   const compute = useSensitivityStore((s) => s.compute);
