@@ -1,7 +1,14 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import * as THREE from "three";
 import { Line, Html } from "@react-three/drei";
-import { useUiStore, useDocumentStore, useEngineStore, isPrimitivePart } from "@vcad/core";
+import {
+  useUiStore,
+  useDocumentStore,
+  useEngineStore,
+  useParametersStore,
+  isPrimitivePart,
+} from "@vcad/core";
+import { resolveBoundFields } from "@/hooks/useFieldBinding";
 import type { CsgOp } from "@vcad/ir";
 
 const DIM_COLOR = "#94a3b8"; // muted accent
@@ -224,6 +231,11 @@ export function DimensionOverlay() {
   const parts = useDocumentStore((s) => s.parts);
   const document = useDocumentStore((s) => s.document);
   const scene = useEngineStore((s) => s.scene);
+  // Bound fields resolve at evaluation time, so the node's stored literal is
+  // stale the moment a parameter drives it. Labels must show the effective
+  // value or they contradict the geometry they are annotating.
+  const parameters = useParametersStore((s) => s.parameters);
+  const bindings = useParametersStore((s) => s.bindings);
 
   const dimensionData = useMemo(() => {
     // Only show for single selected primitive
@@ -253,7 +265,14 @@ export function DimensionOverlay() {
     let dimensions: DimensionInfo[] | null = null;
 
     if (primNode.op.type === "Cube") {
-      const { size } = primNode.op;
+      const raw = primNode.op.size;
+      const r = resolveBoundFields(
+        part.primitiveNodeId,
+        { "size.x": raw.x, "size.y": raw.y, "size.z": raw.z },
+        parameters,
+        bindings,
+      );
+      const size = { x: r["size.x"]!, y: r["size.y"]!, z: r["size.z"]! };
       const halfW = size.x / 2;
       const halfH = size.y / 2;
       const halfD = size.z / 2;
@@ -287,7 +306,12 @@ export function DimensionOverlay() {
     }
 
     if (primNode.op.type === "Cylinder") {
-      const { radius, height } = primNode.op;
+      const { radius, height } = resolveBoundFields(
+        part.primitiveNodeId,
+        { radius: primNode.op.radius, height: primNode.op.height },
+        parameters,
+        bindings,
+      ) as { radius: number; height: number };
       const halfH = height / 2;
 
       dimensions = [
@@ -311,7 +335,12 @@ export function DimensionOverlay() {
     }
 
     if (primNode.op.type === "Sphere") {
-      const { radius } = primNode.op;
+      const { radius } = resolveBoundFields(
+        part.primitiveNodeId,
+        { radius: primNode.op.radius },
+        parameters,
+        bindings,
+      ) as { radius: number };
 
       dimensions = [
         // Radius
@@ -326,7 +355,7 @@ export function DimensionOverlay() {
     }
 
     return dimensions ? { dimensions, partId, primitiveNodeId: part.primitiveNodeId } : null;
-  }, [selectedPartIds, parts, document, scene]);
+  }, [selectedPartIds, parts, document, scene, parameters, bindings]);
 
   if (!dimensionData || isDraggingGizmo) return null;
 

@@ -17,7 +17,12 @@
  * See the follow-up issue.
  */
 
-import type { Engine, PartParameterGradient } from "@vcad/engine";
+import type {
+  Engine,
+  PartParameterGradient,
+  SensitivityReport,
+  SensitivityRequest,
+} from "@vcad/engine";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { resolveParameters, solveDesignConstraints } from "@vcad/engine";
 import type { Document, Expr, Parameter } from "@vcad/ir";
@@ -311,6 +316,80 @@ export function parameterGradient(input: unknown, engine: Engine): ToolResult {
   return jsonResult({ parameter, density, parts });
 }
 
+// ─── sensitivity ────────────────────────────────────────────────────────────────
+
+export const sensitivitySchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id from open_document.",
+    },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to differentiate instead of a session (stateless path).",
+    },
+    parameters: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Named parameters to differentiate. Omit to differentiate every parameter the document declares.",
+    },
+    quantities: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Quantities to differentiate: volume, mass, centroid_x|y|z, bbox_x|y|z. Defaults to volume and mass.",
+    },
+    part: {
+      type: "number" as const,
+      description:
+        "Restrict to one solid part by index. Omit for whole-document quantities (volume and mass sum; the centroid is mass-weighted; the bbox is the union).",
+    },
+    density: {
+      type: "number" as const,
+      description:
+        "Density fed to the mass integrals (mass = density · volume). Geometry is in mm, so pass g/cm^3 * 1e-3 for grams. Defaults to 1.",
+    },
+    find_trust_radius: {
+      type: "boolean" as const,
+      description:
+        "Search for each parameter's topology trust radius by bisection (default true). Costs a bounded handful of extra document evaluations per parameter; turn it off for speed and every row falls back to the author's declared scrub bounds.",
+    },
+  },
+  required: [],
+};
+
+export function sensitivity(input: unknown, engine: Engine): ToolResult {
+  const args = (input ?? {}) as Record<string, unknown>;
+  const { doc } = resolveDocInput(args);
+
+  const request: SensitivityRequest = {};
+  if (Array.isArray(args.parameters)) {
+    request.parameters = args.parameters as string[];
+  }
+  if (Array.isArray(args.quantities)) {
+    request.quantities = args.quantities as string[];
+  }
+  if (typeof args.part === "number") request.part = args.part as number;
+  if (typeof args.density === "number") request.density = args.density as number;
+  if (typeof args.find_trust_radius === "boolean") {
+    request.findTrustRadius = args.find_trust_radius as boolean;
+  }
+
+  const report: SensitivityReport = engine.documentSensitivities(doc, request);
+
+  return jsonResult({
+    rendered: report.rendered,
+    rows: report.table.rows,
+    ranked: report.ranked,
+    allUsable: report.allUsable,
+    unusable: report.unusable,
+    claims: report.claims,
+  });
+}
+
 export const toolDefs: ToolDef[] = [
   {
     name: "list_parameters",
@@ -339,6 +418,15 @@ export const toolDefs: ToolDef[] = [
       "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/d\u03b8, d(mass)/d\u03b8, d(centroid)/d\u03b8 (exact analytic seam derivatives) and d(bbox extents)/d\u03b8 (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
     inputSchema: parameterGradientSchema,
     handler: (a, c) => parameterGradient(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sensitivity",
+    pack: null,
+    description:
+      "Which knob actually moves this number, and by how much. Differentiates a document's quantities (volume, mass, centroid, bbox) with respect to its named parameters and returns a ranked table: dJ/dθ with its unit, the route that produced it, and a **trust radius** — the interval of the parameter over which the derivative still describes the same solid, found by bisecting outward until the topology changes rather than assumed. Read `rendered` first. Rows ranked by influence (|dJ/dθ| × span), so the top row is the knob that commands the quantity. Volume/mass/centroid are exact seam derivatives; bbox extents are a max over vertices and come back as finite differences that can never claim `verified`. Use this instead of rebuilding the document N times to see what a change does.",
+    inputSchema: sensitivitySchema,
+    handler: (a, c) => sensitivity(a, c.engine),
     behavior: behavior({}),
   },
 ];

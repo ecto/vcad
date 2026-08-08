@@ -10,6 +10,7 @@ repository.workspace = true
 serde = { workspace = true }
 vcad-receipt = { workspace = true }
 vcad-kernel-thermal = { workspace = true }
+vcad-kernel-adjoint = { workspace = true }
 vcad-kernel-gpu = { workspace = true, optional = true }
 wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }
 bytemuck = { workspace = true, optional = true }

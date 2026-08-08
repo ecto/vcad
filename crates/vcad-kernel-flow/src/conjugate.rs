@@ -145,6 +145,211 @@ pub struct ConjugateResult {
     pub wetted_area_m2: f64,
 }
 
+/// The fluid↔solid interface, extracted once.
+#[derive(Debug, Clone)]
+pub struct Wetted {
+    /// Solid voxel index per wetted face (a voxel appears once per face
+    /// it presents to the fluid).
+    pub faces: Vec<usize>,
+    /// Unique wetted solid voxels.
+    pub solids: Vec<usize>,
+    /// Interface area, m².
+    pub area_m2: f64,
+}
+
+/// Extract the fluid↔solid interface of a flow model.
+pub fn wetted_surface(flow_model: &FlowModel) -> Result<Wetted, ConjugateError> {
+    let (nx, ny, nz) = (
+        flow_model.divisions[0],
+        flow_model.divisions[1],
+        flow_model.divisions[2],
+    );
+    let n = nx * ny * nz;
+    let dx_m = flow_model.voxel_mm() / 1000.0;
+    let dirs: [(isize, isize, isize); 6] = [
+        (-1, 0, 0),
+        (1, 0, 0),
+        (0, -1, 0),
+        (0, 1, 0),
+        (0, 0, -1),
+        (0, 0, 1),
+    ];
+    let mut faces: Vec<usize> = Vec::new();
+    let mut solids: Vec<usize> = Vec::new();
+    let mut seen = vec![false; n];
+    for k in 0..nz as isize {
+        for j in 0..ny as isize {
+            for i in 0..nx as isize {
+                let x = ((k * ny as isize + j) * nx as isize + i) as usize;
+                if flow_model.cells[x] != Cell::Fluid {
+                    continue;
+                }
+                for (di, dj, dk) in dirs {
+                    let (si, sj, sk) = (i + di, j + dj, k + dk);
+                    if si < 0
+                        || sj < 0
+                        || sk < 0
+                        || si >= nx as isize
+                        || sj >= ny as isize
+                        || sk >= nz as isize
+                    {
+                        continue;
+                    }
+                    let sx = ((sk * ny as isize + sj) * nx as isize + si) as usize;
+                    if flow_model.cells[sx] == Cell::Solid {
+                        faces.push(sx);
+                        if !seen[sx] {
+                            seen[sx] = true;
+                            solids.push(sx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if faces.is_empty() {
+        return Err(ConjugateError::NoWettedSurface);
+    }
+    let area_m2 = faces.len() as f64 * dx_m * dx_m;
+    Ok(Wetted {
+        faces,
+        solids,
+        area_m2,
+    })
+}
+
+/// The two scalars the fluid hands the solid.
+///
+/// This pair is the *entire* flow→thermal channel: the thermal model's
+/// exposed boundary takes a film coefficient and a bulk temperature, and
+/// nothing else about the flow solution reaches it. That fact is what
+/// makes the coupled adjoint in [`crate::conjugate_adjoint`] a 2×2
+/// problem rather than a field-sized one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FilmState {
+    /// Film coefficient, W/(m²·K).
+    pub h_w_m2k: f64,
+    /// Bulk fluid temperature, °C.
+    pub t_bulk_c: f64,
+}
+
+/// Solve the flow with `wall_t` painted on the wetted solids, then price
+/// the film from the heat the scalar lattice actually moved.
+///
+/// This is the Φ half of the conjugate loop: wall temperatures in, film
+/// state out. `bootstrap` enables the laminar-correlation seed used on
+/// the first primal iteration, when the walls still sit at the bulk
+/// temperature and the exchange cannot price anything; a converged
+/// evaluation must pass `false` so a degenerate film is an error rather
+/// than a silent substitution.
+pub fn price_film(
+    flow_model: &FlowModel,
+    wetted: &Wetted,
+    wall_t: &[f64],
+    flow_opts: &SolveOptions,
+    bootstrap: bool,
+) -> Result<(Solution, FilmState), ConjugateError> {
+    let transport = flow_model
+        .thermal
+        .as_ref()
+        .ok_or(ConjugateError::NoThermalTransport)?;
+    let n = flow_model.cells.len();
+    let mut fm = flow_model.clone();
+    let mut st = vec![f64::NAN; n];
+    for &sx in &wetted.solids {
+        st[sx] = wall_t[sx];
+    }
+    fm.solid_temp_c = Some(st);
+    let flow_sol = solve_steady(&fm, flow_opts).map_err(ConjugateError::Flow)?;
+
+    let q_wall = flow_sol
+        .wall_heat_walls_only_w
+        .ok_or(ConjugateError::DegenerateFilm)?;
+    let temp_field = flow_sol
+        .temperature_c
+        .as_ref()
+        .ok_or(ConjugateError::DegenerateFilm)?;
+    let mut t_bulk = 0.0;
+    let mut fluid_count = 0usize;
+    for (cell, tf) in flow_model.cells.iter().zip(temp_field.iter()) {
+        if *cell == Cell::Fluid {
+            t_bulk += tf;
+            fluid_count += 1;
+        }
+    }
+    t_bulk /= fluid_count.max(1) as f64;
+    let mut t_wall_mean = 0.0;
+    for &sx in &wetted.faces {
+        t_wall_mean += wall_t[sx];
+    }
+    t_wall_mean /= wetted.faces.len() as f64;
+    let dt_film = t_wall_mean - t_bulk;
+
+    let h = if dt_film.abs() < 1e-6 {
+        if !bootstrap {
+            return Err(ConjugateError::DegenerateFilm);
+        }
+        let k_fluid = transport.diffusivity_m2_s
+            * flow_model.fluid.density_kg_m3
+            * transport.heat_capacity_j_kg_k;
+        let dh_m = flow_model
+            .inlet_hydraulic_diameter_mm()
+            .unwrap_or(flow_model.voxel_mm())
+            / 1000.0;
+        3.66 * k_fluid / dh_m
+    } else {
+        // Heat flows wall->fluid when the wall is hotter; h is positive
+        // by construction or the film is degenerate.
+        let h = q_wall / (wetted.area_m2 * dt_film);
+        if !h.is_finite() || h <= 0.0 {
+            return Err(ConjugateError::DegenerateFilm);
+        }
+        h
+    };
+
+    Ok((
+        flow_sol,
+        FilmState {
+            h_w_m2k: h,
+            t_bulk_c: t_bulk,
+        },
+    ))
+}
+
+/// Conduct through the solid with a film state as the exposed boundary.
+///
+/// This is the W half of the conjugate loop: film state in, solid
+/// temperature field out.
+pub fn conduct(
+    thermal_model: &ThermalModel,
+    film: FilmState,
+    opts: &thermal_solve::SolveOptions,
+) -> Result<thermal_solve::Solution, ConjugateError> {
+    let mut tm = thermal_model.clone();
+    tm.exposed = Boundary::Convection {
+        h_w_m2k: film.h_w_m2k,
+        ambient_c: film.t_bulk_c,
+    };
+    thermal_solve::solve_steady(&tm, opts).map_err(ConjugateError::Thermal)
+}
+
+/// Check that two models can be coupled at all.
+pub(crate) fn check_pair(
+    flow_model: &FlowModel,
+    thermal_model: &ThermalModel,
+) -> Result<(), ConjugateError> {
+    if flow_model.thermal.is_none() {
+        return Err(ConjugateError::NoThermalTransport);
+    }
+    if flow_model.divisions != thermal_model.divisions {
+        return Err(ConjugateError::GridMismatch {
+            flow: flow_model.divisions,
+            thermal: thermal_model.divisions,
+        });
+    }
+    Ok(())
+}
+
 /// Iterate flow ⇄ thermal to a wall-temperature fixed point.
 ///
 /// Contract: both models describe the same box on the same grid; the
@@ -158,73 +363,13 @@ pub fn solve_conjugate(
     thermal_model: &ThermalModel,
     opts: &ConjugateOptions,
 ) -> Result<ConjugateResult, ConjugateError> {
+    check_pair(flow_model, thermal_model)?;
     let transport = flow_model
         .thermal
         .as_ref()
         .ok_or(ConjugateError::NoThermalTransport)?;
-    if flow_model.divisions != thermal_model.divisions {
-        return Err(ConjugateError::GridMismatch {
-            flow: flow_model.divisions,
-            thermal: thermal_model.divisions,
-        });
-    }
-
-    let (nx, ny, nz) = (
-        flow_model.divisions[0],
-        flow_model.divisions[1],
-        flow_model.divisions[2],
-    );
-    let n = nx * ny * nz;
-    let dx_m = flow_model.voxel_mm() / 1000.0;
-
-    // Wetted interface: (fluid cell, solid neighbor) faces.
-    let dirs: [(isize, isize, isize); 6] = [
-        (-1, 0, 0),
-        (1, 0, 0),
-        (0, -1, 0),
-        (0, 1, 0),
-        (0, 0, -1),
-        (0, 0, 1),
-    ];
-    let mut wetted_faces: Vec<usize> = Vec::new(); // solid voxel index per face
-    let mut wetted_solids: Vec<usize> = Vec::new(); // unique solid voxels
-    {
-        let mut seen = vec![false; n];
-        for k in 0..nz as isize {
-            for j in 0..ny as isize {
-                for i in 0..nx as isize {
-                    let x = ((k * ny as isize + j) * nx as isize + i) as usize;
-                    if flow_model.cells[x] != Cell::Fluid {
-                        continue;
-                    }
-                    for (di, dj, dk) in dirs {
-                        let (si, sj, sk) = (i + di, j + dj, k + dk);
-                        if si < 0
-                            || sj < 0
-                            || sk < 0
-                            || si >= nx as isize
-                            || sj >= ny as isize
-                            || sk >= nz as isize
-                        {
-                            continue;
-                        }
-                        let sx = ((sk * ny as isize + sj) * nx as isize + si) as usize;
-                        if flow_model.cells[sx] == Cell::Solid {
-                            wetted_faces.push(sx);
-                            if !seen[sx] {
-                                seen[sx] = true;
-                                wetted_solids.push(sx);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if wetted_faces.is_empty() {
-        return Err(ConjugateError::NoWettedSurface);
-    }
-    let wetted_area = wetted_faces.len() as f64 * dx_m * dx_m;
+    let wetted = wetted_surface(flow_model)?;
+    let n = flow_model.cells.len();
 
     // Initial wall temperature: the transport's initial fluid temp.
     let mut wall_t = vec![transport.initial_temp_c; n];
@@ -236,79 +381,12 @@ pub fn solve_conjugate(
     };
 
     for outer in 1..=opts.max_outer {
-        // Flow side: solve with the current wall temperatures painted
-        // onto the wetted solids.
-        let mut fm = flow_model.clone();
-        let mut st = vec![f64::NAN; n];
-        for &sx in &wetted_solids {
-            st[sx] = wall_t[sx];
-        }
-        fm.solid_temp_c = Some(st);
-        let flow_sol = solve_steady(&fm, &opts.flow).map_err(ConjugateError::Flow)?;
-
-        // Price the film from what the scalar lattice actually moved.
-        let q_wall = flow_sol
-            .wall_heat_walls_only_w
-            .ok_or(ConjugateError::DegenerateFilm)?;
-        let temp_field = flow_sol
-            .temperature_c
-            .as_ref()
-            .ok_or(ConjugateError::DegenerateFilm)?;
-        let mut t_bulk = 0.0;
-        let mut fluid_count = 0usize;
-        for (cell, tf) in flow_model.cells.iter().zip(temp_field.iter()) {
-            if *cell == Cell::Fluid {
-                t_bulk += tf;
-                fluid_count += 1;
-            }
-        }
-        t_bulk /= fluid_count.max(1) as f64;
-        let mut t_wall_mean = 0.0;
-        for &sx in &wetted_faces {
-            t_wall_mean += wall_t[sx];
-        }
-        t_wall_mean /= wetted_faces.len() as f64;
-        let dt_film = t_wall_mean - t_bulk;
-        // Bootstrap: on the first pass the walls sit at the bulk
-        // temperature (nothing has heated yet), so the film cannot be
-        // priced from the exchange. Seed it with the laminar
-        // developed-duct correlation h = Nu·k/D_h (Nu = 3.66) — the
-        // same closed form the cross-route check compares against.
-        // From iteration 2 on, a degenerate film is a real error.
-        let h = if dt_film.abs() < 1e-6 {
-            if outer > 1 {
-                return Err(ConjugateError::DegenerateFilm);
-            }
-            let k_fluid = transport.diffusivity_m2_s
-                * flow_model.fluid.density_kg_m3
-                * transport.heat_capacity_j_kg_k;
-            let dh_m = flow_model
-                .inlet_hydraulic_diameter_mm()
-                .unwrap_or(flow_model.voxel_mm())
-                / 1000.0;
-            3.66 * k_fluid / dh_m
-        } else {
-            // Heat flows wall->fluid when the wall is hotter; h is
-            // positive by construction or the film is degenerate.
-            let h = q_wall / (wetted_area * dt_film);
-            if !h.is_finite() || h <= 0.0 {
-                return Err(ConjugateError::DegenerateFilm);
-            }
-            h
-        };
-
-        // Thermal side: conduct with the film as the exposed BC.
-        let mut tm = thermal_model.clone();
-        tm.exposed = Boundary::Convection {
-            h_w_m2k: h,
-            ambient_c: t_bulk,
-        };
-        let thermal_sol =
-            thermal_solve::solve_steady(&tm, &t_opts).map_err(ConjugateError::Thermal)?;
+        let (flow_sol, film) = price_film(flow_model, &wetted, &wall_t, &opts.flow, outer == 1)?;
+        let thermal_sol = conduct(thermal_model, film, &t_opts)?;
 
         // Hand wall temperatures back and measure the fixed-point step.
         delta = 0.0f64;
-        for &sx in &wetted_solids {
+        for &sx in &wetted.solids {
             let t_new = thermal_sol.t_c[sx];
             if t_new.is_finite() {
                 delta = delta.max((t_new - wall_t[sx]).abs());
@@ -321,12 +399,12 @@ pub fn solve_conjugate(
             return Ok(ConjugateResult {
                 flow: flow_sol,
                 thermal: thermal_sol,
-                film_h_w_m2k: h,
-                t_bulk_c: t_bulk,
+                film_h_w_m2k: film.h_w_m2k,
+                t_bulk_c: film.t_bulk_c,
                 hotspot_temp_c: hotspot,
                 outer_iters: outer,
                 wall_delta_c: delta,
-                wetted_area_m2: wetted_area,
+                wetted_area_m2: wetted.area_m2,
             });
         }
     }

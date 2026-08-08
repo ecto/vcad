@@ -8,6 +8,7 @@ import { documents } from "../tools/session.js";
 import {
   listParameters,
   parameterGradient,
+  sensitivity,
   setParameters,
 } from "../tools/parameters.js";
 
@@ -206,5 +207,155 @@ describe("parameter tools (end-to-end through MCP server)", () => {
     // Closed form dV/dr for the 64-gon prism is 2·k·r·h > 0 at r = 12.
     expect(parts[0].dVolume).toBeGreaterThan(0);
     expect(parts[0].volume).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A plate with a centred through-hole: two named parameters (`hole_r`,
+ * `plate_t`) so ranking has something to rank, and a real topology boundary
+ * at hole_r = 10 for the trust-radius search to find.
+ */
+function plateDoc(holeR: number, plateT: number): Document {
+  return {
+    version: "0.1",
+    nodes: {
+      "1": { id: 1, name: "plate", op: { type: "Cube", size: { x: 20, y: 20, z: 10 } } },
+      "2": {
+        id: 2,
+        name: "drill",
+        op: { type: "Cylinder", radius: 1, height: 40, segments: 48 },
+      },
+      "3": {
+        id: 3,
+        name: "drill_at",
+        op: { type: "Translate", child: 2, offset: { x: 10, y: 10, z: -10 } },
+      },
+      "4": { id: 4, name: "drilled", op: { type: "Difference", left: 1, right: 3 } },
+    },
+    materials: {
+      default: {
+        name: "default",
+        color: [0.8, 0.8, 0.8],
+        metallic: 0,
+        roughness: 0.5,
+      },
+    },
+    part_materials: {},
+    roots: [{ root: 4, material: "default" }],
+    parameters: {
+      hole_r: { value: holeR, unit: "mm" },
+      plate_t: { value: plateT, unit: "mm" },
+    },
+    bindings: { "2:radius": "hole_r", "1:size.z": "plate_t" },
+  } as unknown as Document;
+}
+
+describe("sensitivity tool", () => {
+  let engine: Engine;
+
+  beforeAll(async () => {
+    engine = await Engine.init();
+  });
+
+  beforeEach(() => {
+    documents.clear();
+  });
+
+  it("ranks parameters by influence and reports units and routes", () => {
+    const out = json(
+      sensitivity(
+        {
+          document: plateDoc(4, 10),
+          quantities: ["volume"],
+          find_trust_radius: false,
+        },
+        engine,
+      ),
+    );
+    const rows = out.rows as Array<Record<string, unknown>>;
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      expect(row.unit).toBe("mm^3/mm");
+      // volume is an exact seam derivative
+      expect((row.route as Record<string, unknown>).route).toBe("dual");
+      expect(row.basis).toBe("verified");
+      expect(row.verdict).toBe("pass");
+    }
+    // Thickening the plate adds volume; widening the hole removes it.
+    const byName = Object.fromEntries(rows.map((r) => [r.parameter, r.value as number]));
+    expect(byName.plate_t).toBeGreaterThan(0);
+    expect(byName.hole_r).toBeLessThan(0);
+    expect(out.allUsable).toBe(true);
+    expect(String(out.rendered)).toContain("d(volume)/d(parameter)");
+  });
+
+  it("searches out the real topology boundary as a trust radius", () => {
+    const out = json(
+      sensitivity(
+        {
+          document: plateDoc(7, 10),
+          parameters: ["hole_r"],
+          quantities: ["volume"],
+          find_trust_radius: true,
+        },
+        engine,
+      ),
+    );
+    const rows = out.rows as Array<Record<string, unknown>>;
+    const trust = rows[0].trust as Record<string, unknown>;
+    expect(trust).toBeTruthy();
+    expect(trust.limited_by).toBe("topology_stable");
+    // The hole becomes tangent to the 20 mm plate's side faces at r = 10.
+    expect(trust.upper as number).toBeGreaterThan(9.5);
+    expect(trust.upper as number).toBeLessThanOrEqual(10.2);
+    expect(trust.lower as number).toBeLessThan(7);
+  });
+
+  it("bbox rows are finite differences and may never claim verified", () => {
+    const out = json(
+      sensitivity(
+        {
+          document: plateDoc(4, 10),
+          parameters: ["plate_t"],
+          quantities: ["bbox_z"],
+          find_trust_radius: false,
+        },
+        engine,
+      ),
+    );
+    const row = (out.rows as Array<Record<string, unknown>>)[0];
+    expect((row.route as Record<string, unknown>).route).toBe("finite_difference");
+    expect(row.basis).toBe("predicted");
+    // The plate's z extent *is* the thickness, so this derivative is 1.
+    expect(row.value as number).toBeCloseTo(1, 2);
+  });
+
+  it("emits one receipt claim per row", () => {
+    const out = json(
+      sensitivity(
+        {
+          document: plateDoc(4, 10),
+          quantities: ["volume", "mass"],
+          find_trust_radius: false,
+        },
+        engine,
+      ),
+    );
+    const claims = out.claims as Array<Record<string, unknown>>;
+    expect(claims.length).toBe(4); // 2 parameters x 2 quantities
+    for (const c of claims) {
+      expect(c.domain).toBe("sensitivity");
+      expect(String(c.id)).toMatch(/^sensitivity\//);
+      expect(c.verdict).toBe("pass");
+    }
+  });
+
+  it("rejects an unknown quantity by name", () => {
+    expect(() =>
+      sensitivity(
+        { document: plateDoc(4, 10), quantities: ["wobble"] },
+        engine,
+      ),
+    ).toThrow(/unknown quantity/i);
   });
 });

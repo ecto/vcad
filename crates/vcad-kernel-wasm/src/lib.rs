@@ -7405,13 +7405,25 @@ pub fn document_to_loon(doc_json: &str) -> Result<String, JsError> {
 /// Returns a JS object `{ source: string, unsupported: string[] }`.
 /// When `unsupported` is non-empty, the output contains comment placeholders for
 /// those nodes and callers should warn the user that data will be lost.
+///
+/// **Serializer note:** the result must go through
+/// [`serde_wasm_bindgen::Serializer::json_compatible`], not the plain
+/// `to_value`. `serde_json::json!` builds a `Value::Object`, which serde
+/// emits through `serialize_map` — and the default serde-wasm-bindgen
+/// serializer turns maps into a JS `Map`, whose `.source` and `.unsupported`
+/// are both `undefined`. Derived structs go through `serialize_struct` and
+/// become plain objects, which is why every other export in this file is
+/// unaffected. Reading `.unsupported.length` off the `Map` crashed the whole
+/// Source panel.
 #[wasm_bindgen(js_name = documentToLoonChecked)]
 pub fn document_to_loon_checked(doc_json: &str) -> Result<JsValue, JsError> {
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
     let (source, unsupported) = vcad_ir::to_loon::document_to_loon_checked(&doc);
     let result = serde_json::json!({ "source": source, "unsupported": unsupported });
-    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    result
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Parse a .vcad file (JSON v0.1, VCode v0.2, or loon v0.3).
@@ -7503,6 +7515,48 @@ pub fn document_parameter_gradient(
         vcad_eval::diff::document_parameter_qoi_gradient(&doc, parameter, density, &tess, step)
             .map_err(|e| JsError::new(&e.to_string()))?;
     serde_wasm_bindgen::to_value(&grads).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Differentiate a set of quantities with respect to a set of named document
+/// parameters, returning a ranked, trust-bounded sensitivity table.
+///
+/// The difference from [`document_parameter_gradient`] is not the arithmetic
+/// but what comes back with it: each row carries its unit, the route that
+/// produced it, whether that route is exact, and a **trust radius** — the
+/// interval of the parameter over which the derivative describes the same
+/// solid. The radius is *searched for*, by bisecting outward until the
+/// document's topology signature changes, rather than assumed.
+///
+/// # Arguments
+///
+/// * `doc_json` — JSON string of a vcad Document.
+/// * `request_json` — JSON string of a
+///   [`vcad_eval::sensitivity::SensitivityRequest`]: `{ parameters?,
+///   quantities?, part?, density?, probeStep?, findTrustRadius?,
+///   topologyReach? }`. Omitting `parameters` differentiates every named
+///   parameter; omitting `quantities` reports volume and mass.
+///
+/// # Returns
+///
+/// A [`vcad_eval::sensitivity::SensitivityReport`]: the table, a rendered
+/// view, the per-objective ranking, any rows that may not steer an
+/// optimizer, and one receipt claim per row.
+#[wasm_bindgen(js_name = documentSensitivities)]
+pub fn document_sensitivities_js(doc_json: &str, request_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let req: vcad_eval::sensitivity::SensitivityRequest = if request_json.trim().is_empty() {
+        Default::default()
+    } else {
+        serde_json::from_str(request_json)
+            .map_err(|e| JsError::new(&format!("Failed to parse request: {}", e)))?
+    };
+    let tess = vcad_kernel_tessellate::TessellationParams::default();
+    let report = vcad_eval::sensitivity::document_sensitivity_report(&doc, &req, &tess)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    report
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 // =============================================================================

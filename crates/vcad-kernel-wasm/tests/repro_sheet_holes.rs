@@ -76,7 +76,11 @@ fn evaluate_flange(outline: Vec<[f64; 2]>, holes: Vec<Vec<[f64; 2]>>, thickness:
             (positions[i * 3 + 2] / q).round() as i64,
         )
     };
-    let mut net: HashMap<((i64, i64, i64), (i64, i64, i64)), i64> = HashMap::new();
+    /// A vertex quantized to the 1e-5 grid.
+    type VKey = (i64, i64, i64);
+    /// A directed edge between two quantized vertices.
+    type EKey = (VKey, VKey);
+    let mut net: HashMap<EKey, i64> = HashMap::new();
     for t in indices.chunks(3) {
         let ks = [key(t[0]), key(t[1]), key(t[2])];
         for e in 0..3 {

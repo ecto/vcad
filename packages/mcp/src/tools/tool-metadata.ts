@@ -150,6 +150,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     outputSchema: objectOut({ changed: { type: "array" } }),
   },
   parameter_gradient: { title: "Parameter Gradient", annotations: RO },
+  sensitivity: { title: "Sensitivity", annotations: RO },
 
   // ── Design constraints (document-level geometric solver) ───────────────
   add_constraint: { title: "Add Constraint", annotations: RW },

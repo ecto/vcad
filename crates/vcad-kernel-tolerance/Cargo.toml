@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+vcad-kernel-adjoint = { workspace = true }
 serde = { workspace = true }
 vcad-receipt = { workspace = true }
 

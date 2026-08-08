@@ -1718,6 +1718,54 @@
     }
   },
   {
+    "name": "sensitivity",
+    "title": "Sensitivity",
+    "description": "Which knob actually moves this number, and by how much. Differentiates a document's quantities (volume, mass, centroid, bbox) with respect to its named parameters and returns a ranked table: dJ/dθ with its unit, the route that produced it, and a **trust radius** — the interval of the parameter over which the derivative still describes the same solid, found by bisecting outward until the topology changes rather than assumed. Read `rendered` first. Rows ranked by influence (|dJ/dθ| × span), so the top row is the knob that commands the quantity. Volume/mass/centroid are exact seam derivatives; bbox extents are a max over vertices and come back as finite differences that can never claim `verified`. Use this instead of rebuilding the document N times to see what a change does.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline Document IR to differentiate instead of a session (stateless path)."
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Named parameters to differentiate. Omit to differentiate every parameter the document declares."
+        },
+        "quantities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Quantities to differentiate: volume, mass, centroid_x|y|z, bbox_x|y|z. Defaults to volume and mass."
+        },
+        "part": {
+          "type": "number",
+          "description": "Restrict to one solid part by index. Omit for whole-document quantities (volume and mass sum; the centroid is mass-weighted; the bbox is the union)."
+        },
+        "density": {
+          "type": "number",
+          "description": "Density fed to the mass integrals (mass = density · volume). Geometry is in mm, so pass g/cm^3 * 1e-3 for grams. Defaults to 1."
+        },
+        "find_trust_radius": {
+          "type": "boolean",
+          "description": "Search for each parameter's topology trust radius by bisection (default true). Costs a bounded handful of extra document evaluations per parameter; turn it off for speed and every row falls back to the author's declared scrub bounds."
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "add_constraint",
     "title": "Add Constraint",
     "description": "Add solver-enforced geometric constraints to the document and solve immediately — KiCad-v11-class constraints generalized to the whole design: PCB footprints and board outline, sketch points, and named mechanical part edges (cross-domain: 'USB connector coincident with the enclosure cutout'). Dimensional values accept formulas over document parameters; set_parameters re-solves. `driven: true` makes a reference dimension (measured, back-annotated, never enforced). Constraints persist and re-verify via build_receipt / verify_receipt as constraint.* claims (Holds/Stale/Violated). The solver moves footprints, outline vertices, and sketch points — never copper or part geometry; re-run route_nets when moved footprints were routed.",

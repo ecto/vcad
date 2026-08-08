@@ -431,6 +431,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "list_parameters",
   "set_parameters",
   "parameter_gradient",
+  "sensitivity",
   // ── Design constraints (document-level geometric solver) ───
   "add_constraint",
   "delete_constraint",

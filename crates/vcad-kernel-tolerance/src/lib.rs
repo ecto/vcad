@@ -66,6 +66,7 @@ pub mod allocate;
 pub mod analysis;
 pub mod capability;
 pub mod dist;
+pub mod economics;
 pub mod gdt;
 pub mod loops;
 pub mod measure;

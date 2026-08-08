@@ -54,10 +54,10 @@ fn inspect(src: &str) -> Inspection {
     let mesh = solid.to_mesh(ORACLE_SEGMENTS);
     let tri = |t: usize| -> [[f64; 3]; 3] {
         let mut out = [[0.0; 3]; 3];
-        for k in 0..3 {
+        for (k, corner) in out.iter_mut().enumerate() {
             let vi = mesh.indices[t * 3 + k] as usize;
-            for c in 0..3 {
-                out[k][c] = mesh.vertices[vi * 3 + c] as f64;
+            for (c, coord) in corner.iter_mut().enumerate() {
+                *coord = mesh.vertices[vi * 3 + c] as f64;
             }
         }
         out
@@ -93,8 +93,8 @@ fn inspect(src: &str) -> Inspection {
         let quantum = 1e-5;
         let vkey = |vi: usize| -> [i64; 3] {
             let mut k = [0i64; 3];
-            for c in 0..3 {
-                k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+            for (c, slot) in k.iter_mut().enumerate() {
+                *slot = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
             }
             k
         };
@@ -162,6 +162,10 @@ const BLADE_FLAT: &str = "[translate 21.5 0 0 [cube 23.5 0.5 12.57]]";
 
 const V_BLADE: f64 = 147.6975;
 const V_BLADE_IN_R45: f64 = 146.3205;
+/// Blade volume inside the R30 cylinder. Retained alongside the R45 figure
+/// as the calibration pair this catalogue's oracle was checked against; no
+/// case exercises it today.
+#[allow(dead_code)]
 const V_BLADE_IN_R30: f64 = 51.3451;
 
 // ===========================================================================

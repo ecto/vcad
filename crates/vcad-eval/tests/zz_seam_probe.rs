@@ -97,9 +97,9 @@ fn probe(src: &str, segments: u32) {
             }
             if hit {
                 println!(
-                    "FACE {:?} surf_kind={} nverts={}",
+                    "FACE {:?} surf_kind={:?} nverts={}",
                     face_id,
-                    format!("{:?}", surf.surface_type()),
+                    surf.surface_type(),
                     pts.len()
                 );
                 for p in pts
@@ -153,8 +153,8 @@ fn probe(src: &str, segments: u32) {
     let quantum = 1e-5;
     let vkey = |vi: usize| -> [i64; 3] {
         let mut k = [0i64; 3];
-        for c in 0..3 {
-            k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+        for (c, slot) in k.iter_mut().enumerate() {
+            *slot = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
         }
         k
     };

@@ -95,6 +95,17 @@ export interface WasmDocumentEngine {
   rename_feature(stable_id: string, name: string): ApiResult;
   set_joint_state(stable_id: string, state: number): ApiResult;
 
+  /**
+   * Rewrite v1 parameter-binding keys (`"<nodeId>:<fieldPath>"`) onto this
+   * engine's node ids. Migration renumbers every node, so bindings loaded
+   * from a legacy/loon file are dangling until remapped. A no-op for
+   * CRDT-native loads. Optional so an older wasm build still loads.
+   */
+  remapBindings?(bindings_json: string): {
+    bindings: Record<string, string>;
+    dropped: string[];
+  };
+
   // Legacy low-level CRDT methods (for electronics, scene settings, param updates)
   create_feature(kind: string, params_json: string): CrdtMutationResult;
   delete_feature(feature_id_json: string): CrdtMutationResult;
@@ -1287,11 +1298,36 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     // Seed the parameters store from the raw file (parameters/bindings are
     // outside the CRDT schema for now; we persist them as top-level JSON).
+    //
+    // Bindings key on node ids, and the v1 migration renumbers every node —
+    // so a legacy/loon load must remap them onto the rebuilt document or they
+    // point at arbitrary nodes and fail the whole evaluation. `remapBindings`
+    // is a no-op for CRDT-native loads, whose ids already match.
     try {
       const src = file.kind === "crdt" ? patch?.document : file.document;
+      const rawBindings = (src?.bindings as Bindings) ?? {};
+      let bindings = rawBindings;
+      if (Object.keys(rawBindings).length > 0) {
+        try {
+          const remapped = newEngine.remapBindings?.(
+            JSON.stringify(rawBindings),
+          ) as { bindings: Bindings; dropped: string[] } | undefined;
+          bindings = remapped?.bindings ?? rawBindings;
+          if (remapped?.dropped?.length) {
+            console.warn(
+              `[document-store] dropped ${remapped.dropped.length} binding(s) that did not survive migration:`,
+              remapped.dropped,
+            );
+          }
+        } catch (e) {
+          // Remap is a repair, not a gate: an engine without it (older wasm)
+          // still loads, just with the pre-existing dangling-binding bug.
+          console.warn("[document-store] binding remap unavailable:", e);
+        }
+      }
       useParametersStore.getState().reset({
         parameters: (src?.parameters as Record<string, Parameter>) ?? {},
-        bindings: (src?.bindings as Bindings) ?? {},
+        bindings,
       });
     } catch {
       useParametersStore.getState().reset();

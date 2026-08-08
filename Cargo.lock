@@ -7208,6 +7208,7 @@ dependencies = [
  "vcad-ecad-pcb",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-adjoint",
  "vcad-kernel-diff",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
@@ -7308,6 +7309,15 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-acoustics"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-receipt",
+]
+
+[[package]]
+name = "vcad-kernel-adjoint"
 version = "0.9.4"
 dependencies = [
  "serde",
@@ -7496,6 +7506,7 @@ dependencies = [
  "pollster",
  "serde",
  "serde_json",
+ "vcad-kernel-adjoint",
  "vcad-kernel-gpu",
  "vcad-kernel-thermal",
  "vcad-receipt",
@@ -7785,6 +7796,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-kernel-adjoint",
  "vcad-receipt",
 ]
 
