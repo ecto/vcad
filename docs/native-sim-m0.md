@@ -244,6 +244,42 @@ Two things to know about it:
   committable. Re-import with `--relative-meshes` or it will only resolve on the
   machine that produced it.
 
+## The XLeRobot sample
+
+`examples/xlerobot.vcad` is [XLeRobot](https://github.com/Vector-Wangel/XLeRobot):
+an IKEA RÅSKOG cart carrying two 6-DOF SO-101 arms and a pan/tilt head, meshes
+vendored under `third_party/xlerobot` (Apache-2.0, 29 meshes, 4.8 MB). It
+renders — 106,480 triangles — and it simulates: **17 actuated DOF**, 86
+observation features, ~20k steps/s at dt = 1/200 s with 4 substeps.
+
+It is the counterpart to the K1 rather than a second copy of it. The K1 is a
+floating-base humanoid whose whole problem is not falling over; XLeRobot's base
+is a *planar* chain (prismatic X, prismatic Y, continuous yaw) on a world-welded
+root, so it cannot tip, cannot leave the ground plane, and never touches the
+ground collider. The wheels are visual-only. Balance and tip-over questions are
+outside what this model can answer; manipulation is the point.
+
+```bash
+cargo run --release -p vcad-kernel-physics --example xlerobot_probe -- examples/xlerobot.vcad
+cargo run --release -p vcad-sim --example xlerobot_reach -- examples/xlerobot.vcad
+```
+
+**The URDF declares `effort="0"` on all twelve arm joints, so as imported the
+arms are inert** — a zero effort limit saturates every controller output to
+zero torque. Measured: a 40 N·m command moves the `Elbow` by exactly 0.0000°.
+Upstream never notices because ManiSkill supplies actuator limits from its own
+controller config and never reads the URDF's. The importer now warns on any
+`effort="0"` joint; it does not invent a replacement. `xlerobot_reach` supplies
+2.94 N·m — the Feetech STS3215's 12 V stall torque, corroborated by upstream's
+own `gripper_force_limit = 2.8` — and then tracks a six-joint pose to **0.000°**
+steady-state error. Starved to 0.02 N·m the same reach misses by **90.3°**,
+which is what makes the first number mean something.
+
+Two more caveats live in `third_party/xlerobot/README.md`: `base_link` is
+authored at 70.13 kg against a real robot of roughly 10 kg (left as upstream
+wrote it, so vcad and ManiSkill agree), and eleven links carry no `<inertial>`
+— all of them pure sensor/TCP frames on fixed joints, which is ordinary URDF.
+
 ## Why the K1 ran at 0.29x, and what it actually was
 
 Worth recording because the plausible answer was wrong, and acting on it would

@@ -51,8 +51,133 @@ fn locate_robot_bounds(reader: &mut quick_xml::Reader<&[u8]>) -> Result<(usize, 
     }
 }
 
+/// Group the immediate children of the element whose body spans
+/// `[body_start, body_end)` of `xml`, bucketing each child by tag name
+/// into the order given by `order` (unlisted tags keep their relative
+/// order and go last). Returns the rebuilt body, or `None` when the body
+/// has no element children worth reordering.
+///
+/// Shared by the `<robot>` and `<link>` passes — both exist for the same
+/// quick-xml reason described on [`normalize_robot_child_order`].
+fn group_children_by_tag(
+    xml: &str,
+    body_start: usize,
+    body_end: usize,
+    order: &[&[u8]],
+) -> Result<Vec<Vec<String>>, UrdfError> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    // One bucket per entry in `order`, plus a trailing bucket for
+    // anything unrecognized.
+    let mut buckets: Vec<Vec<String>> = vec![Vec::new(); order.len() + 1];
+
+    let mut reader = Reader::from_str(&xml[body_start..body_end]);
+    reader.config_mut().trim_text(false);
+
+    loop {
+        let pos_before = reader.buffer_position() as usize + body_start;
+        let event = reader
+            .read_event()
+            .map_err(|e| UrdfError::InvalidFormat(format!("xml scan: {e}")))?;
+        let tag = match &event {
+            Event::Start(e) => {
+                let tag = e.name().as_ref().to_vec();
+                reader
+                    .read_to_end(e.name())
+                    .map_err(|err| UrdfError::InvalidFormat(format!("read_to_end: {err}")))?;
+                tag
+            }
+            Event::Empty(e) => e.name().as_ref().to_vec(),
+            Event::Eof => break,
+            // Comments / text / whitespace between children are dropped by
+            // the reorder — they get folded into the gaps between elements
+            // in the rebuilt string. URDF semantics don't care about them.
+            _ => continue,
+        };
+        let pos_after = reader.buffer_position() as usize + body_start;
+        let slot = order
+            .iter()
+            .position(|t| *t == tag.as_slice())
+            .unwrap_or(order.len());
+        buckets[slot].push(xml[pos_before..pos_after].to_string());
+    }
+
+    Ok(buckets)
+}
+
+/// Reorder the children of a single `<link>` so all `<visual>` siblings
+/// are contiguous and all `<collision>` siblings are contiguous.
+///
+/// Same quick-xml constraint as [`normalize_robot_child_order`], one level
+/// down. URDF puts no ordering constraint on a link's children, and a link
+/// whose collision geometry is a convex decomposition routinely interleaves
+/// the two — XLeRobot's `base_link` is `collision`×4, `visual`×3,
+/// `collision`×4, which parsed as a duplicate `collision` field before this.
+fn normalize_link_child_order(link_xml: &str) -> Result<String, UrdfError> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    // Find the end of the `<link ...>` open tag and the start of `</link>`.
+    let mut reader = Reader::from_str(link_xml);
+    reader.config_mut().trim_text(false);
+    let mut body_start: Option<usize> = None;
+    let mut depth: i32 = 0;
+    let body_end;
+    loop {
+        let pos_before = reader.buffer_position() as usize;
+        match reader
+            .read_event()
+            .map_err(|e| UrdfError::InvalidFormat(format!("xml scan: {e}")))?
+        {
+            Event::Start(e) => {
+                if e.name().as_ref() == b"link" && body_start.is_none() {
+                    body_start = Some(reader.buffer_position() as usize);
+                    depth = 1;
+                } else if body_start.is_some() {
+                    depth += 1;
+                }
+            }
+            Event::End(e) => {
+                if body_start.is_some() {
+                    depth -= 1;
+                    if depth == 0 && e.name().as_ref() == b"link" {
+                        body_end = pos_before;
+                        break;
+                    }
+                }
+            }
+            // A self-closing `<link name="x"/>` has no children to reorder.
+            Event::Eof => return Ok(link_xml.to_string()),
+            _ => {}
+        }
+    }
+    let Some(body_start) = body_start else {
+        return Ok(link_xml.to_string());
+    };
+
+    let buckets = group_children_by_tag(
+        link_xml,
+        body_start,
+        body_end,
+        &[b"inertial", b"visual", b"collision"],
+    )?;
+
+    let mut out = String::with_capacity(link_xml.len());
+    out.push_str(&link_xml[..body_start]);
+    for bucket in &buckets {
+        for s in bucket {
+            out.push('\n');
+            out.push_str(s);
+        }
+    }
+    out.push('\n');
+    out.push_str(&link_xml[body_end..]);
+    Ok(out)
+}
+
 /// Reorder top-level children of `<robot>` so all `<link>` siblings come
-/// before all `<joint>` siblings.
+/// before all `<joint>` siblings, and normalize each link's own children.
 ///
 /// quick-xml's serde adapter (as of 0.37) treats repeated siblings as
 /// `Vec<T>` only when they're contiguous; an interleaved `<link><joint>
@@ -135,7 +260,8 @@ fn normalize_robot_child_order(xml: &str) -> Result<String, UrdfError> {
     }
     for s in &links {
         out.push('\n');
-        out.push_str(s);
+        // Each link's own children need the same contiguity treatment.
+        out.push_str(&normalize_link_child_order(s)?);
     }
     for s in &joints {
         out.push('\n');
@@ -344,8 +470,47 @@ pub fn read_urdf_from_str_with_options(
     }
     let mut robot = robot;
     apply_floating_base(&mut robot, opts, xml)?;
+    warn_zero_authority_joints(&robot);
     let reader = UrdfReader::new(&robot, opts);
     reader.into_document()
+}
+
+/// Warn about movable joints whose `<limit>` declares `effort="0"`.
+///
+/// An effort limit of zero is a hard saturation at zero torque: the joint is
+/// mechanically present and free to swing under gravity, but no controller
+/// input can ever move it. That is almost never what the author meant — it is
+/// what a CAD exporter writes when nobody filled the field in, and simulators
+/// that take their actuator limits from a separate controller config (SAPIEN /
+/// ManiSkill, MuJoCo keyframes) never read it, so the zero survives upstream
+/// unnoticed.
+///
+/// It is not silently rewritten here: an effort limit is a declared physical
+/// claim, and guessing a replacement would fabricate torque the description
+/// does not authorize. The importer reports it and lets the caller supply real
+/// limits. XLeRobot's `xlerobot.urdf` declares `effort="0"` on all twelve arm
+/// joints — see `third_party/xlerobot/README.md`.
+fn warn_zero_authority_joints(robot: &crate::types::Robot) {
+    let zeroed: Vec<&str> = robot
+        .joints
+        .iter()
+        .filter(|j| matches!(j.joint_type.trim(), "revolute" | "continuous" | "prismatic"))
+        .filter(|j| j.limit.as_ref().and_then(|l| l.effort) == Some(0.0))
+        .map(|j| j.name.as_str())
+        .collect();
+
+    if zeroed.is_empty() {
+        return;
+    }
+    eprintln!(
+        "urdf: '{}' declares effort=\"0\" on {} movable joint(s) — they will be \
+         inert, because a zero effort limit saturates every controller output \
+         to zero torque. Supply real actuator limits before simulating. \
+         Affected: {}",
+        robot.name,
+        zeroed.len(),
+        zeroed.join(", ")
+    );
 }
 
 /// Name of the floating joint found inside a commented-out region of `xml`,
@@ -1124,6 +1289,63 @@ mod tests {
         <limit lower="-1.57" upper="1.57" effort="10" velocity="1"/>
     </joint>
 </robot>"#;
+
+    /// A link whose `<collision>` children are split by `<visual>` ones.
+    /// URDF puts no ordering constraint on a link's children, and a convex
+    /// decomposition routinely produces this — XLeRobot's `base_link` is
+    /// collision x4, visual x3, collision x4.
+    const INTERLEAVED_URDF: &str = r#"<?xml version="1.0"?>
+<robot name="interleaved">
+    <link name="base_link">
+        <inertial>
+            <mass value="1.0"/>
+            <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+        </inertial>
+        <collision><geometry><box size="0.1 0.1 0.1"/></geometry></collision>
+        <collision><geometry><box size="0.2 0.2 0.2"/></geometry></collision>
+        <visual><geometry><box size="0.3 0.3 0.3"/></geometry></visual>
+        <visual><geometry><box size="0.4 0.4 0.4"/></geometry></visual>
+        <collision><geometry><box size="0.5 0.5 0.5"/></geometry></collision>
+    </link>
+</robot>"#;
+
+    #[test]
+    fn parses_link_with_interleaved_visual_and_collision() {
+        // quick-xml's serde adapter only folds *contiguous* repeated siblings
+        // into a Vec, so this used to fail with "duplicate field `collision`"
+        // and no document at all.
+        let doc = read_urdf_from_str(INTERLEAVED_URDF)
+            .expect("interleaved visual/collision children are legal URDF");
+        assert_eq!(doc.part_defs.map_or(0, |p| p.len()), 1);
+    }
+
+    #[test]
+    fn interleaved_children_are_all_preserved() {
+        // Reordering must not drop any of them: parse the normalized XML back
+        // and count. A normalizer that kept only the first run of each tag
+        // would still satisfy the test above.
+        let normalized = normalize_robot_child_order(INTERLEAVED_URDF).unwrap();
+        let robot: Robot = quick_xml::de::from_str(&normalized).unwrap();
+        let link = &robot.links[0];
+        assert_eq!(link.collisions.len(), 3, "all three collisions survive");
+        assert_eq!(link.visuals.len(), 2, "both visuals survive");
+        assert!(link.inertial.is_some(), "the inertial survives");
+    }
+
+    #[test]
+    fn warns_but_keeps_zero_effort_limits() {
+        // effort="0" is a real declaration (an inert joint) and must not be
+        // silently rewritten — the importer only reports it.
+        let urdf = SIMPLE_URDF.replace(r#"effort="10""#, r#"effort="0""#);
+        let doc = read_urdf_from_str(&urdf).unwrap();
+        let joint = &doc.joints.unwrap()[0];
+        match &joint.kind {
+            JointKind::Revolute { effort_limit, .. } => {
+                assert_eq!(*effort_limit, Some(0.0), "the declared zero is preserved");
+            }
+            other => panic!("expected a revolute joint, got {other:?}"),
+        }
+    }
 
     #[test]
     fn test_parse_simple_urdf() {
