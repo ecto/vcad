@@ -20,6 +20,9 @@ pub fn validate_document(doc: &Document) -> Result<(), EvalError> {
     if let Some(part_defs) = &doc.part_defs {
         for (id, part_def) in part_defs {
             check_ref(doc, part_def.root, || format!("partDefs[{id:?}].root"))?;
+            for (i, root) in part_def.colliders.iter().flatten().enumerate() {
+                check_ref(doc, *root, || format!("partDefs[{id:?}].colliders[{i}]"))?;
+            }
         }
     }
 
@@ -220,6 +223,7 @@ mod tests {
                 root: 42,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(pd);
@@ -230,6 +234,43 @@ mod tests {
         assert!(
             msg.contains("partDefs[\"arm\"].root"),
             "error should mention partDefs[\"arm\"].root: {msg}"
+        );
+    }
+
+    #[test]
+    fn part_def_dangling_collider_reports_path() {
+        // Collider roots are referenced only by `PartDef::colliders` — nothing
+        // in `roots` or `nodes` points at them — so a dangling one would
+        // otherwise surface as a physics-eval failure far from the cause.
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: None,
+                op: CsgOp::Empty,
+            },
+        );
+        let mut pd = HashMap::new();
+        pd.insert(
+            "arm".to_string(),
+            PartDef {
+                id: "arm".to_string(),
+                name: None,
+                root: 1,
+                default_material: None,
+                inertial: None,
+                colliders: Some(vec![1, 777]),
+            },
+        );
+        doc.part_defs = Some(pd);
+
+        let err = validate_document(&doc).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("777"), "error should mention 777: {msg}");
+        assert!(
+            msg.contains("partDefs[\"arm\"].colliders[1]"),
+            "error should mention the offending index: {msg}"
         );
     }
 

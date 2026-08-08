@@ -789,6 +789,7 @@ mod tests {
                 root: 1,
                 default_material: Some("steel".to_string()),
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);

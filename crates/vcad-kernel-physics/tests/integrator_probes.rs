@@ -72,6 +72,7 @@ fn base_doc() -> Document {
                 root,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
     }
