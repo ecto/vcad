@@ -1866,6 +1866,75 @@ impl PhysicsWorld {
         ids
     }
 
+    /// Resolve a triangle mesh directly out of `node_id` when the node *is*
+    /// a mesh — a fast path that skips wrapping the soup in a `Solid` and
+    /// tessellating it straight back out.
+    ///
+    /// Only a bare mesh node qualifies. Anything else (including a mesh under
+    /// a transform) returns `Ok(None)` and goes to the canonical evaluator,
+    /// which handles mesh-backed solids properly — including flipping triangle
+    /// winding when a transform has negative determinant, which this path has
+    /// no way to know about.
+    fn evaluate_mesh_leaf(
+        doc: &Document,
+        node_id: vcad_ir::NodeId,
+    ) -> Result<Option<vcad_kernel_tessellate::TriangleMesh>, PhysicsError> {
+        use vcad_kernel_tessellate::TriangleMesh;
+
+        let node = doc
+            .nodes
+            .get(&node_id)
+            .ok_or_else(|| PhysicsError::Evaluation(format!("Node {} not found", node_id)))?;
+
+        match &node.op {
+            vcad_ir::CsgOp::MeshImport { path, scale } => {
+                // `.ok()` deliberately flattens a load failure — missing file,
+                // unparseable STL — into "no geometry" rather than erroring.
+                // A browser-flow URDF import keeps the raw URDF filename with
+                // no filesystem behind it, so an unopenable reference is an
+                // expected state here, not a fault.
+                //
+                // This is *not* a silent swallow at the level that matters:
+                // the decision is deferred, not discarded. `eval_instance` is
+                // where it gets made, and it fails closed — a part with no
+                // resolvable geometry and no authored `<inertial>` is a hard
+                // error there ("cannot derive mass properties"), because the
+                // alternative is inventing the mass properties the dynamics
+                // run on. Only a part that *has* authored inertials is allowed
+                // to fall back to a placeholder collider.
+                //
+                // A future caller that needs the underlying I/O error should
+                // call `crate::stl::load_stl` directly rather than reaching
+                // for this helper and re-deriving the cause from `None`.
+                Ok(crate::stl::load_stl(std::path::Path::new(path), *scale).ok())
+            }
+            // Inline ImportedMesh (e.g. browser pre-parsed STL/DAE) ships its
+            // triangle data inside the IR node — pull positions / indices /
+            // optional normals straight across into the physics TriangleMesh
+            // (units stay millimetres).
+            vcad_ir::CsgOp::ImportedMesh {
+                positions,
+                indices,
+                normals,
+                ..
+            } => {
+                let n_verts = positions.len() / 3;
+                let vertices: Vec<f32> = positions.iter().map(|v| *v as f32).collect();
+                let normals_f32: Vec<f32> = normals
+                    .as_ref()
+                    .map(|n| n.iter().map(|v| *v as f32).collect())
+                    .unwrap_or_else(|| vec![0.0; n_verts * 3]);
+                Ok(Some(TriangleMesh {
+                    vertices,
+                    indices: indices.clone(),
+                    normals: normals_f32,
+                    face_kinds: Vec::new(),
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Evaluate a part's geometry to get a mesh, or `None` when the tree
     /// carries no resolvable geometry (an unresolved external mesh reference,
     /// an `Empty` node). Callers decide whether that is fatal — see
@@ -1882,44 +1951,18 @@ impl PhysicsWorld {
         doc: &Document,
         node_id: vcad_ir::NodeId,
     ) -> Result<Option<vcad_kernel_tessellate::TriangleMesh>, PhysicsError> {
-        let node = doc
-            .nodes
-            .get(&node_id)
-            .ok_or_else(|| PhysicsError::Evaluation(format!("Node {} not found", node_id)))?;
-
         // STL meshes bypass the BRep solid path — load straight to a
         // triangle mesh in the IR's millimetre frame. If the path can't
         // be opened (e.g. browser-flow URDF imports keep the raw URDF
         // filename and have no filesystem behind it), report "no geometry".
-        if let vcad_ir::CsgOp::MeshImport { path, scale } = &node.op {
-            return Ok(crate::stl::load_stl(std::path::Path::new(path), *scale).ok());
+        //
+        // This only catches a *bare* mesh node. A mesh under a transform —
+        // what a URDF `<visual>` with an `origin` offset imports as — goes
+        // through the evaluator below, which returns it as a mesh-backed
+        // `Solid` with the transform applied.
+        if let Some(mesh) = Self::evaluate_mesh_leaf(doc, node_id)? {
+            return Ok(Some(mesh));
         }
-        // Inline ImportedMesh (e.g. browser pre-parsed STL/DAE) ships its
-        // triangle data inside the IR node — pull positions / indices /
-        // optional normals straight across into the physics TriangleMesh
-        // (units stay millimetres).
-        if let vcad_ir::CsgOp::ImportedMesh {
-            positions,
-            indices,
-            normals,
-            ..
-        } = &node.op
-        {
-            use vcad_kernel_tessellate::TriangleMesh;
-            let n_verts = positions.len() / 3;
-            let vertices: Vec<f32> = positions.iter().map(|v| *v as f32).collect();
-            let normals_f32: Vec<f32> = normals
-                .as_ref()
-                .map(|n| n.iter().map(|v| *v as f32).collect())
-                .unwrap_or_else(|| vec![0.0; n_verts * 3]);
-            return Ok(Some(TriangleMesh {
-                vertices,
-                indices: indices.clone(),
-                normals: normals_f32,
-                face_kinds: Vec::new(),
-            }));
-        }
-
         // Everything else goes through the canonical evaluator, which
         // understands booleans, transforms, sketches, sweeps and the rest.
         let mut cache = std::collections::HashMap::new();
@@ -2084,6 +2127,149 @@ fn solve_contacts_pgs(problem: &ContactProblem) -> Vec<Vec3> {
 mod tests {
     use super::*;
     use vcad_ir::{Instance, Joint, JointKind, PartDef, Vec3 as VcadVec3};
+
+    /// A unit tetrahedron as an inline `ImportedMesh`, in millimetres.
+    fn tetra_mesh_op(size: f64) -> vcad_ir::CsgOp {
+        vcad_ir::CsgOp::ImportedMesh {
+            positions: vec![
+                0.0, 0.0, 0.0, size, 0.0, 0.0, 0.0, size, 0.0, 0.0, 0.0, size,
+            ],
+            indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+            normals: None,
+            source: None,
+        }
+    }
+
+    /// A part whose mesh sits under a transform, with **no** authored
+    /// inertial — so its mass properties can only come from the geometry.
+    ///
+    /// Regression: the BRep evaluator returns no solid for a mesh op, so the
+    /// physics builder's mesh fast-path was the only thing that could resolve
+    /// one — and it matched a *bare* mesh node only. A URDF `<visual>` with an
+    /// `origin` offset imports as `Translate { MeshImport }`, which fell
+    /// through to the evaluator and reported "no resolvable geometry", failing
+    /// the whole build. XLeRobot's arm-camera links are exactly this shape.
+    fn create_transformed_mesh_document() -> Document {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: Some("anchor_geom".to_string()),
+                op: vcad_ir::CsgOp::Cube {
+                    size: VcadVec3::new(100.0, 100.0, 50.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            vcad_ir::Node {
+                id: 2,
+                name: Some("cam_geom".to_string()),
+                op: tetra_mesh_op(40.0),
+            },
+        );
+        doc.nodes.insert(
+            3,
+            vcad_ir::Node {
+                id: 3,
+                name: Some("cam_translate".to_string()),
+                op: vcad_ir::CsgOp::Translate {
+                    child: 2,
+                    offset: VcadVec3::new(0.0, 0.0, 30.0),
+                },
+            },
+        );
+
+        let mut part_defs = HashMap::new();
+        for (id, root) in [("anchor", 1), ("cam", 3)] {
+            part_defs.insert(
+                id.to_string(),
+                PartDef {
+                    id: id.to_string(),
+                    name: Some(id.to_string()),
+                    root,
+                    default_material: None,
+                    inertial: None,
+                    colliders: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(vec![
+            Instance {
+                id: "anchor_inst".to_string(),
+                part_def_id: "anchor".to_string(),
+                name: None,
+                tags: Vec::new(),
+                transform: None,
+                material: None,
+            },
+            Instance {
+                id: "cam_inst".to_string(),
+                part_def_id: "cam".to_string(),
+                name: None,
+                tags: Vec::new(),
+                transform: None,
+                material: None,
+            },
+        ]);
+        doc.joints = Some(vec![Joint {
+            id: "cam_joint".to_string(),
+            name: None,
+            parent_instance_id: Some("anchor_inst".to_string()),
+            child_instance_id: "cam_inst".to_string(),
+            parent_anchor: VcadVec3::new(0.0, 0.0, 25.0),
+            child_anchor: VcadVec3::new(0.0, 0.0, 0.0),
+            kind: JointKind::Revolute {
+                axis: VcadVec3::new(0.0, 0.0, 1.0),
+                limits: None,
+                effort_limit: None,
+                velocity_limit: None,
+            },
+            state: 0.0,
+        }]);
+        doc.ground_instance_id = Some("anchor_inst".to_string());
+        doc
+    }
+
+    #[test]
+    fn resolves_a_mesh_under_a_transform() {
+        let doc = create_transformed_mesh_document();
+        PhysicsWorld::from_document(&doc).expect(
+            "a mesh wrapped in a Translate must resolve — the BRep evaluator \
+             yields no solid for a mesh op, so this is the only path to \
+             geometry for a part with no authored inertial",
+        );
+    }
+
+    #[test]
+    fn transform_under_mesh_moves_the_centre_of_mass() {
+        // Resolving the mesh is not enough: the transform has to actually be
+        // applied. A fast-path that returned the *untransformed* leaf would
+        // pass the test above while placing the collider 30 mm out of place.
+        let mut doc = create_transformed_mesh_document();
+        let shifted = PhysicsWorld::evaluate_part(&doc, 3)
+            .unwrap()
+            .expect("transformed mesh resolves");
+        doc.nodes.get_mut(&3).unwrap().op = vcad_ir::CsgOp::Translate {
+            child: 2,
+            offset: VcadVec3::new(0.0, 0.0, 0.0),
+        };
+        let unshifted = PhysicsWorld::evaluate_part(&doc, 3)
+            .unwrap()
+            .expect("untransformed mesh resolves");
+
+        let mean_z = |m: &vcad_kernel_tessellate::TriangleMesh| {
+            let zs: Vec<f32> = m.vertices.chunks(3).map(|v| v[2]).collect();
+            zs.iter().sum::<f32>() / zs.len() as f32
+        };
+        let delta = mean_z(&shifted) - mean_z(&unshifted);
+        assert!(
+            (delta - 30.0).abs() < 1e-3,
+            "the 30 mm Translate must move the mesh, got {delta} mm"
+        );
+    }
 
     fn create_test_document() -> Document {
         let mut doc = Document::new();

@@ -603,11 +603,36 @@ fn read_document(input: &Path) -> Result<String, String> {
     let raw =
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
     if !is_loon(input) {
-        return Ok(raw);
+        return Ok(anchor_mesh_paths(&raw, input));
     }
     let doc = vcad_loon::eval_vcad(raw.trim(), input.parent())
         .map_err(|e| format!("{}: {}", input.display(), e))?;
     serde_json::to_string(&doc).map_err(|e| format!("{}: serialize: {}", input.display(), e))
+}
+
+/// Rewrite relative `MeshImport` paths against the document's own directory.
+///
+/// Mesh references are opened verbatim during evaluation, so a document
+/// written by `import-urdf --relative-meshes` — the mode that makes a document
+/// committable — renders only when the renderer happens to be invoked from the
+/// right working directory, and otherwise comes back as an empty page with a
+/// pile of "cannot open" lines on stderr. A robot import is entirely meshes,
+/// so "empty" means the whole subject.
+///
+/// Returns `raw` untouched when the document has no relative mesh references
+/// or cannot be parsed — parsing here is an optimization, not a gate, and the
+/// real parse error should come from the renderer.
+fn anchor_mesh_paths(raw: &str, input: &Path) -> String {
+    let Some(dir) = input.parent() else {
+        return raw.to_string();
+    };
+    let Ok(mut doc) = serde_json::from_str::<vcad_ir::Document>(raw) else {
+        return raw.to_string();
+    };
+    if vcad_eval::resolve_mesh_paths(&mut doc, dir) == 0 {
+        return raw.to_string();
+    }
+    serde_json::to_string(&doc).unwrap_or_else(|_| raw.to_string())
 }
 
 /// Does this path name loon source rather than `.vcad` IR?

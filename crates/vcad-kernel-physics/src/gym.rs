@@ -842,6 +842,36 @@ impl RobotEnv {
             .collect()
     }
 
+    /// Index of a joint's first slot in [`Observation::joint_positions`] /
+    /// [`Observation::joint_velocities`], or `None` when the joint is not in
+    /// this model.
+    ///
+    /// Actions and observations are indexed by *different* orderings, and the
+    /// two coincide often enough to be dangerous. An action vector has one
+    /// entry per **actuated** joint ([`Self::actuated_joint_ids`]); an
+    /// observation has `max(1, ndof)` entries per joint over **all** joints
+    /// ([`Self::joint_ids`]), Fixed ones included. Any Fixed joint or
+    /// multi-DOF joint earlier in the document shifts the two apart, so
+    /// reading `joint_positions[action_index]` silently returns a *different
+    /// joint's* angle. It reads as a plausible tracking error — every joint
+    /// appears to settle one neighbour off — rather than as an index bug, and
+    /// a uniform action vector (every entry the same, as in a hold-pose
+    /// baseline) hides it completely.
+    ///
+    /// XLeRobot is the natural example: `arm_base_joint` is Fixed and sits
+    /// between the base DOFs and `Rotation`, so every arm joint's observation
+    /// index is one past its action index.
+    pub fn joint_observation_index(&self, joint_id: &str) -> Option<usize> {
+        let mut cursor = 0;
+        for id in &self.joint_ids {
+            if id == joint_id {
+                return Some(cursor);
+            }
+            cursor += self.world.joint_dof_count(id).max(1);
+        }
+        None
+    }
+
     /// End-effector instance ids in observation order — the order of
     /// [`Observation::end_effector_poses`] and
     /// [`Observation::end_effector_contacts`].
@@ -1450,6 +1480,125 @@ mod tests {
 
     /// A free 100 mm cube dropped from 1 m plus the mandatory (fixed, and
     /// therefore contact-exempt) ground instance parked off to the side.
+    /// A chain shaped like XLeRobot's: an actuated joint, then a **Fixed**
+    /// joint, then another actuated joint. The Fixed joint in the middle is
+    /// what pushes the action and observation orderings out of step.
+    fn create_fixed_in_the_middle_doc() -> Document {
+        let mut doc = Document::new();
+        for id in 1..=4 {
+            doc.nodes.insert(
+                id,
+                vcad_ir::Node {
+                    id,
+                    name: None,
+                    op: vcad_ir::CsgOp::Cube {
+                        size: Vec3::new(40.0, 40.0, 40.0),
+                    },
+                },
+            );
+        }
+        let names = ["base", "link_a", "bracket", "link_b"];
+        let mut part_defs = HashMap::new();
+        for (i, name) in names.iter().enumerate() {
+            part_defs.insert(
+                name.to_string(),
+                PartDef {
+                    id: name.to_string(),
+                    name: None,
+                    root: (i + 1) as vcad_ir::NodeId,
+                    default_material: None,
+                    inertial: None,
+                    colliders: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+        doc.instances = Some(
+            names
+                .iter()
+                .map(|n| Instance {
+                    id: format!("{n}_inst"),
+                    part_def_id: n.to_string(),
+                    name: None,
+                    tags: std::vec::Vec::new(),
+                    transform: None,
+                    material: None,
+                })
+                .collect(),
+        );
+        let revolute = || JointKind::Revolute {
+            axis: Vec3::new(0.0, 0.0, 1.0),
+            limits: None,
+            effort_limit: None,
+            velocity_limit: None,
+        };
+        let joint = |id: &str, parent: &str, child: &str, kind: JointKind| Joint {
+            id: id.to_string(),
+            name: None,
+            parent_instance_id: Some(format!("{parent}_inst")),
+            child_instance_id: format!("{child}_inst"),
+            parent_anchor: Vec3::new(0.0, 0.0, 20.0),
+            child_anchor: Vec3::new(0.0, 0.0, -20.0),
+            kind,
+            state: 0.0,
+        };
+        doc.joints = Some(vec![
+            joint("shoulder", "base", "link_a", revolute()),
+            joint("weld", "link_a", "bracket", JointKind::Fixed),
+            joint("elbow", "bracket", "link_b", revolute()),
+        ]);
+        doc.ground_instance_id = Some("base_inst".to_string());
+        doc
+    }
+
+    #[test]
+    fn observation_index_accounts_for_fixed_joints() {
+        let env =
+            RobotEnv::new(create_fixed_in_the_middle_doc(), vec![], None, None, None).unwrap();
+
+        // Actions skip Fixed joints; observations do not.
+        assert_eq!(env.actuated_joint_ids(), &["shoulder", "elbow"]);
+        assert_eq!(env.action_dim(), 2);
+
+        assert_eq!(env.joint_observation_index("shoulder"), Some(0));
+        assert_eq!(
+            env.joint_observation_index("elbow"),
+            Some(2),
+            "the Fixed joint's zero slot sits between them, so 'elbow' is at \
+             observation index 2 while its action index is 1"
+        );
+        assert_eq!(env.joint_observation_index("nonexistent"), None);
+    }
+
+    #[test]
+    fn commanded_joint_is_the_joint_that_moves() {
+        // The end-to-end version of the above: drive *only* the second
+        // actuated joint and confirm the angle shows up at its observation
+        // index and not at its action index. Reading `joint_positions[1]`
+        // here returns the welded bracket's permanent zero, which looks
+        // exactly like a servo that failed to track.
+        let mut env =
+            RobotEnv::new(create_fixed_in_the_middle_doc(), vec![], None, None, None).unwrap();
+        env.reset();
+        let elbow_action = 1;
+        let elbow_obs = env.joint_observation_index("elbow").unwrap();
+        for _ in 0..400 {
+            let mut action = vec![0.0; env.action_dim()];
+            action[elbow_action] = 25.0;
+            env.step(Action::PositionTarget(action));
+        }
+        let obs = env.observe();
+        assert!(
+            (obs.joint_positions[elbow_obs] - 25.0).abs() < 2.0,
+            "elbow should track its 25 deg target, got {}",
+            obs.joint_positions[elbow_obs]
+        );
+        assert_eq!(
+            obs.joint_positions[elbow_action], 0.0,
+            "the action index lands on the Fixed joint's zero slot — the trap"
+        );
+    }
+
     fn create_drop_test_doc() -> Document {
         let mut doc = Document::new();
         doc.nodes.insert(

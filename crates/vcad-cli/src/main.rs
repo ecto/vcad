@@ -627,8 +627,17 @@ fn load_doc(path: &std::path::Path) -> Result<vcad_ir::Document> {
     }
     let json = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
-    vcad_ir::Document::from_json(&json)
-        .map_err(|e| anyhow::anyhow!("cannot parse {}: {e}", path.display()))
+    let mut doc = vcad_ir::Document::from_json(&json)
+        .map_err(|e| anyhow::anyhow!("cannot parse {}: {e}", path.display()))?;
+    // Mesh references are opened verbatim during evaluation, so a document
+    // written with `import-urdf --relative-meshes` — the mode that makes a
+    // document committable — resolves only when the CLI happens to be run
+    // from the right directory, and otherwise silently evaluates to nothing.
+    // Anchor them to the document's own location now that it is known.
+    if let Some(dir) = path.parent() {
+        vcad_eval::resolve_mesh_paths(&mut doc, dir);
+    }
+    Ok(doc)
 }
 
 fn run_diff(a: &std::path::Path, b: &std::path::Path, json: bool, exit_code: bool) -> Result<()> {
@@ -1023,6 +1032,17 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 /// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes. A `.loon` input is
 /// evaluated to a document first.
 fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
+    let mut doc = load_vcad_document_raw(file)?;
+    // Anchor relative mesh references to the document's own directory — see
+    // the note in `load_doc`. Without this, a committed URDF import evaluates
+    // to nothing unless the CLI happens to be run from the right place.
+    if let Some(dir) = file.parent() {
+        vcad_eval::resolve_mesh_paths(&mut doc, dir);
+    }
+    Ok(doc)
+}
+
+fn load_vcad_document_raw(file: &PathBuf) -> Result<vcad_ir::Document> {
     use std::fs;
 
     if is_loon(file) {
