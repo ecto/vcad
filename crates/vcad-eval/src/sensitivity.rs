@@ -123,6 +123,40 @@ impl QoiRequest {
             part: Some(index),
         }
     }
+
+    /// Parse a quantity name: `volume`, `mass`, `centroid_x|y|z`,
+    /// `bbox_x|y|z`. Case-insensitive.
+    pub fn parse(name: &str, part: Option<usize>) -> Option<Self> {
+        let n = name.trim().to_ascii_lowercase();
+        let axis = |s: &str| match s {
+            "x" => Some(0),
+            "y" => Some(1),
+            "z" => Some(2),
+            _ => None,
+        };
+        let qoi = match n.as_str() {
+            "volume" => Qoi::Volume,
+            "mass" => Qoi::Mass,
+            other => match other.split_once('_') {
+                Some(("centroid", a)) => Qoi::CentroidAxis(axis(a)?),
+                Some(("bbox", a)) => Qoi::BboxExtent(axis(a)?),
+                _ => return None,
+            },
+        };
+        Some(QoiRequest { qoi, part })
+    }
+
+    /// Every quantity name [`Self::parse`] accepts.
+    pub const NAMES: [&'static str; 8] = [
+        "volume",
+        "mass",
+        "centroid_x",
+        "centroid_y",
+        "centroid_z",
+        "bbox_x",
+        "bbox_y",
+        "bbox_z",
+    ];
 }
 
 /// Options for a sensitivity sweep.
@@ -174,6 +208,13 @@ pub enum SensitivityError {
     },
     /// Parameter resolution failed.
     Resolve(String),
+    /// A requested quantity name is not one this layer knows.
+    UnknownQuantity {
+        /// The name asked for.
+        name: String,
+        /// The names that would work.
+        known: String,
+    },
 }
 
 impl std::fmt::Display for SensitivityError {
@@ -186,6 +227,9 @@ impl std::fmt::Display for SensitivityError {
                 "part {index} does not exist ({available} solid part(s) in the document)"
             ),
             SensitivityError::Resolve(e) => write!(f, "parameter resolution: {e}"),
+            SensitivityError::UnknownQuantity { name, known } => {
+                write!(f, "unknown quantity {name:?}; known quantities are {known}")
+            }
         }
     }
 }
@@ -565,4 +609,135 @@ pub fn by_objective(table: &SensitivityTable) -> BTreeMap<String, Vec<&Sensitivi
         out.insert(obj.to_string(), table.ranked_for(obj));
     }
     out
+}
+
+/// A whole sensitivity request, deserializable straight off the WASM / MCP
+/// boundary.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SensitivityRequest {
+    /// Parameters to differentiate. Empty or absent means every named
+    /// parameter the document declares.
+    pub parameters: Option<Vec<String>>,
+    /// Quantity names ([`QoiRequest::NAMES`]). Absent means volume + mass.
+    pub quantities: Option<Vec<String>>,
+    /// Part index, or absent for the whole document.
+    pub part: Option<usize>,
+    /// Density for the mass integrals.
+    pub density: Option<f64>,
+    /// Seeding-synthesis probe step.
+    pub probe_step: Option<f64>,
+    /// Whether to search for the topology trust radius.
+    pub find_trust_radius: Option<bool>,
+    /// How far the topology search reaches, relative to |θ|.
+    pub topology_reach: Option<f64>,
+}
+
+/// The answer to a sensitivity request: the table, a rendered view of it,
+/// the ranking, and receipt claims.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SensitivityReport {
+    /// Every row.
+    pub table: SensitivityTable,
+    /// Fixed-width rendering — what an agent should read first.
+    pub rendered: String,
+    /// Objective → parameter names, most influential first.
+    pub ranked: BTreeMap<String, Vec<String>>,
+    /// Rows that may not steer an optimizer, with the reason.
+    pub unusable: Vec<String>,
+    /// Whether every row is safe to act on.
+    pub all_usable: bool,
+    /// One receipt claim per row, ready for `build_receipt`. Rows whose
+    /// derivative is not established come through as `Unverifiable` rather
+    /// than being dropped.
+    pub claims: Vec<vcad_kernel_adjoint::ReceiptClaim>,
+}
+
+/// Run a whole sensitivity request and package the answer.
+///
+/// The single entry point for the WASM export and the MCP tool: parses
+/// quantity names, defaults the parameter list to everything the document
+/// declares, and attaches receipt claims so a sensitivity can be carried
+/// into a receipt instead of being re-derived.
+pub fn document_sensitivity_report(
+    doc: &Document,
+    req: &SensitivityRequest,
+    tess: &TessellationParams,
+) -> Result<SensitivityReport, SensitivityError> {
+    let parameters: Vec<String> = match &req.parameters {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => {
+            let mut names: Vec<String> = doc.parameters.keys().cloned().collect();
+            names.sort();
+            names
+        }
+    };
+    let qois: Vec<QoiRequest> = match &req.quantities {
+        Some(q) if !q.is_empty() => q
+            .iter()
+            .map(|n| {
+                QoiRequest::parse(n, req.part).ok_or_else(|| SensitivityError::UnknownQuantity {
+                    name: n.clone(),
+                    known: QoiRequest::NAMES.join(", "),
+                })
+            })
+            .collect::<Result<_, _>>()?,
+        _ => vec![
+            QoiRequest {
+                qoi: Qoi::Volume,
+                part: req.part,
+            },
+            QoiRequest {
+                qoi: Qoi::Mass,
+                part: req.part,
+            },
+        ],
+    };
+
+    let defaults = SensitivityOptions::default();
+    let opts = SensitivityOptions {
+        density: req.density.unwrap_or(defaults.density),
+        probe_step: req.probe_step.unwrap_or(defaults.probe_step),
+        topology_reach: req.topology_reach.unwrap_or(defaults.topology_reach),
+        topology_refinements: defaults.topology_refinements,
+        find_topology_radius: req.find_trust_radius.unwrap_or(true),
+    };
+
+    let table = document_sensitivities(doc, &parameters, &qois, tess, &opts)?;
+    let oracle =
+        vcad_kernel_adjoint::OracleRef::new("vcad-eval/sensitivity", env!("CARGO_PKG_VERSION"));
+    let claims = table
+        .rows
+        .iter()
+        .map(|r| r.to_claim(oracle.clone()))
+        .collect();
+    let ranked = table
+        .objectives()
+        .into_iter()
+        .map(|o| {
+            (
+                o.to_string(),
+                table
+                    .ranked_for(o)
+                    .into_iter()
+                    .map(|r| r.parameter.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+    let unusable = table
+        .unusable()
+        .into_iter()
+        .map(|(r, why)| format!("{}/{}: {why}", r.objective, r.parameter))
+        .collect();
+
+    Ok(SensitivityReport {
+        rendered: table.render(),
+        all_usable: table.all_usable(),
+        ranked,
+        unusable,
+        claims,
+        table,
+    })
 }

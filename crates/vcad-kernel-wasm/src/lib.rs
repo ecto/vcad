@@ -7505,6 +7505,48 @@ pub fn document_parameter_gradient(
     serde_wasm_bindgen::to_value(&grads).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Differentiate a set of quantities with respect to a set of named document
+/// parameters, returning a ranked, trust-bounded sensitivity table.
+///
+/// The difference from [`document_parameter_gradient`] is not the arithmetic
+/// but what comes back with it: each row carries its unit, the route that
+/// produced it, whether that route is exact, and a **trust radius** — the
+/// interval of the parameter over which the derivative describes the same
+/// solid. The radius is *searched for*, by bisecting outward until the
+/// document's topology signature changes, rather than assumed.
+///
+/// # Arguments
+///
+/// * `doc_json` — JSON string of a vcad Document.
+/// * `request_json` — JSON string of a
+///   [`vcad_eval::sensitivity::SensitivityRequest`]: `{ parameters?,
+///   quantities?, part?, density?, probeStep?, findTrustRadius?,
+///   topologyReach? }`. Omitting `parameters` differentiates every named
+///   parameter; omitting `quantities` reports volume and mass.
+///
+/// # Returns
+///
+/// A [`vcad_eval::sensitivity::SensitivityReport`]: the table, a rendered
+/// view, the per-objective ranking, any rows that may not steer an
+/// optimizer, and one receipt claim per row.
+#[wasm_bindgen(js_name = documentSensitivities)]
+pub fn document_sensitivities_js(doc_json: &str, request_json: &str) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let req: vcad_eval::sensitivity::SensitivityRequest = if request_json.trim().is_empty() {
+        Default::default()
+    } else {
+        serde_json::from_str(request_json)
+            .map_err(|e| JsError::new(&format!("Failed to parse request: {}", e)))?
+    };
+    let tess = vcad_kernel_tessellate::TessellationParams::default();
+    let report = vcad_eval::sensitivity::document_sensitivity_report(&doc, &req, &tess)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    report
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 // =============================================================================
 // Embroidery module (feature-gated)
 // =============================================================================

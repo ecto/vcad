@@ -592,6 +592,8 @@ export interface KernelModule {
     density: number,
     probeStep: number,
   ) => unknown;
+  /** Ranked, trust-bounded sensitivity table for a set of parameters. */
+  documentSensitivities?: (docJson: string, requestJson: string) => unknown;
   /** JSON-serialized parts manifest for the stdlib. */
   getPartsManifest?: () => string;
   /** Build a stdlib part's sub-document given path and params JSON. */
@@ -909,6 +911,79 @@ export interface PartParameterGradient {
   dBboxExtents: [number, number, number];
 }
 
+/**
+ * The interval of a parameter over which a derivative is meaningful, and
+ * why it ends. `topology_stable` radii are *searched for* — bisected
+ * outward until the document's topology signature changes — not assumed.
+ */
+export interface TrustRadius {
+  lower: number;
+  upper: number;
+  limited_by:
+    | "linearity"
+    | "topology_stable"
+    | "grid_resolution"
+    | "parameter_bounds"
+    | "model_validity";
+}
+
+/** One fully-described derivative. */
+export interface SensitivityRow {
+  /** Named document parameter. */
+  parameter: string;
+  /** Quantity name, e.g. `volume`, `mass`, `bbox_z`. */
+  objective: string;
+  /** dJ/dθ. */
+  value: number;
+  /** Unit of the derivative, e.g. `mm^3/mm`. */
+  unit: string;
+  /** Parameter value the derivative was taken at. */
+  at: number;
+  /** How it was obtained. */
+  route: { route: string; step?: number; completeness?: unknown };
+  /** `predicted` | `verified` | `measured`. */
+  basis: "predicted" | "verified" | "measured";
+  /** `pass` | `fail` | `unverifiable`. */
+  verdict: "pass" | "fail" | "unverifiable";
+  /** Where it stops being true, when a radius could be established. */
+  trust?: TrustRadius;
+  /** Caveats worth reading. */
+  note?: string;
+}
+
+/** A ranked, trust-bounded sensitivity table plus its receipt claims. */
+export interface SensitivityReport {
+  table: { rows: SensitivityRow[] };
+  /** Fixed-width rendering — read this first. */
+  rendered: string;
+  /** Objective → parameter names, most influential first. */
+  ranked: Record<string, string[]>;
+  /** Rows that may not steer an optimizer, with the reason. */
+  unusable: string[];
+  /** Whether every row is safe to act on. */
+  allUsable: boolean;
+  /** One receipt claim per row. */
+  claims: unknown[];
+}
+
+/** Request shape for {@link Engine.documentSensitivities}. */
+export interface SensitivityRequest {
+  /** Parameters to differentiate. Omit for every named parameter. */
+  parameters?: string[];
+  /** Quantity names. Omit for volume + mass. */
+  quantities?: string[];
+  /** Part index; omit for the whole document. */
+  part?: number;
+  /** Density for the mass integrals (mass = density · volume). */
+  density?: number;
+  /** Seeding-synthesis probe step. */
+  probeStep?: number;
+  /** Search for the topology trust radius (default true). */
+  findTrustRadius?: boolean;
+  /** How far the topology search reaches, relative to |θ|. */
+  topologyReach?: number;
+}
+
 /** Rendered dimension types from the annotation layer */
 export interface RenderedText {
   position: { x: number; y: number };
@@ -1110,6 +1185,7 @@ export class Engine {
       evalVcadSourceWithModules: (wasmModule as Record<string, unknown>).evalVcadSourceWithModules as KernelModule["evalVcadSourceWithModules"],
       evalVcadSourceParametric: (wasmModule as Record<string, unknown>).evalVcadSourceParametric as KernelModule["evalVcadSourceParametric"],
       documentParameterGradient: (wasmModule as Record<string, unknown>).documentParameterGradient as KernelModule["documentParameterGradient"],
+      documentSensitivities: (wasmModule as Record<string, unknown>).documentSensitivities as KernelModule["documentSensitivities"],
       getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
       evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
@@ -1200,6 +1276,31 @@ export class Engine {
       density,
       probeStep,
     ) as PartParameterGradient[];
+  }
+
+  /**
+   * Differentiate a set of quantities with respect to a set of named
+   * document parameters, returning a ranked, trust-bounded table.
+   *
+   * Where {@link parameterGradient} returns bare numbers for one parameter,
+   * this returns rows that say what they mean: unit, route, whether that
+   * route is exact, and the interval over which the derivative still
+   * describes the same solid. That interval is searched for, not assumed.
+   */
+  documentSensitivities(
+    doc: Document,
+    request: SensitivityRequest = {},
+  ): SensitivityReport {
+    const fn = this.kernel.documentSensitivities;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "kernel WASM is missing documentSensitivities — rebuild @vcad/kernel-wasm",
+      );
+    }
+    return fn(
+      JSON.stringify(doc),
+      JSON.stringify(request),
+    ) as SensitivityReport;
   }
 
   /**
