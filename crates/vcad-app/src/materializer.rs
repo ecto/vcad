@@ -1183,6 +1183,7 @@ fn materialize_part_def(
             root,
             default_material,
             inertial: None,
+            colliders: None,
         },
     );
 }

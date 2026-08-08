@@ -244,6 +244,24 @@ pub struct PartDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub inertial: Option<InertialProperties>,
+    /// Collision geometry roots, when the part's collider differs from the
+    /// geometry it renders as.
+    ///
+    /// Each entry is an **independent** DAG root evaluated in the part's own
+    /// frame — deliberately a list rather than a single node, because the
+    /// shapes it describes are a *convex decomposition*: a URDF link routinely
+    /// ships one `<visual>` mesh plus several `<collision>` pieces, and the
+    /// pieces exist precisely because the single mesh is a bad collider.
+    /// Unioning them back together would throw away the decomposition; the
+    /// physics layer instead turns each entry into its own collider shape
+    /// (phyz's `Body::collisions`).
+    ///
+    /// Absent means "the collider is [`Self::root`]", which is what every
+    /// non-URDF authoring path wants — a part you modelled *is* its own
+    /// collision shape. Collider roots are not scene entries and never render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, type = "number[]"))]
+    pub colliders: Option<Vec<NodeId>>,
 }
 
 /// Authored mass / inertia / center-of-mass for a part.
@@ -2592,6 +2610,7 @@ mod tests {
                 root: cube_id,
                 default_material: Some("aluminum".to_string()),
                 inertial: None,
+                colliders: None,
             },
         );
         part_defs.insert(
@@ -2602,6 +2621,7 @@ mod tests {
                 root: cyl_id,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);

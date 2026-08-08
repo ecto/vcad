@@ -867,16 +867,41 @@ impl<'a> UrdfReader<'a> {
     ) -> Result<(PartDef, Vec<(NodeId, Node)>), UrdfError> {
         let mut nodes = Vec::new();
 
-        // Get geometry from the first visual, falling back to the first
-        // collision. URDFs that ship multiple visuals per link describe
-        // multi-mesh parts; the importer picks one geometry to evaluate
-        // (full multi-mesh support is a future extension — the rest of
-        // the parts come along for free once the IR can carry a list of
-        // child geometries here).
-        let (geom, origin) = if let Some(visual) = link.visuals.first() {
-            (&visual.geometry, visual.origin.as_ref())
-        } else if let Some(collision) = link.collisions.first() {
-            (&collision.geometry, collision.origin.as_ref())
+        // Every `<collision>` becomes its own DAG root. URDF links routinely
+        // declare several — a convex decomposition of the link — and the
+        // pieces exist precisely because the single visual mesh is a bad
+        // collider, so they must stay separate rather than being unioned
+        // back into one shape. `PartDef::colliders` carries the list; the
+        // physics layer turns each entry into its own collider.
+        let mut colliders = Vec::with_capacity(link.collisions.len());
+        for (i, collision) in link.collisions.iter().enumerate() {
+            let label = collision
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}_collision{i}", link.name));
+            colliders.push(self.geometry_subtree(
+                &collision.geometry,
+                collision.origin.as_ref(),
+                &label,
+                &mut nodes,
+            )?);
+        }
+
+        // Rendering geometry: the first `<visual>`. URDFs that ship multiple
+        // visuals per link describe multi-mesh parts; the importer picks one
+        // to render (full multi-visual support needs an IR grouping op —
+        // `Union` is a boolean and would weld the meshes together). A link
+        // with no visual falls back to its first collider root rather than
+        // duplicating that subtree.
+        let root_id = if let Some(visual) = link.visuals.first() {
+            self.geometry_subtree(
+                &visual.geometry,
+                visual.origin.as_ref(),
+                &link.name,
+                &mut nodes,
+            )?
+        } else if let Some(first) = colliders.first() {
+            *first
         } else {
             // Link with no geometry - create empty cube placeholder
             let node_id = self.alloc_node_id();
@@ -890,125 +915,7 @@ impl<'a> UrdfReader<'a> {
                     },
                 },
             ));
-            return Ok((
-                PartDef {
-                    id: format!("part_{}", link.name),
-                    name: Some(link.name.clone()),
-                    root: node_id,
-                    default_material: Some("default".to_string()),
-                    inertial: None,
-                },
-                nodes,
-            ));
-        };
-
-        // Create geometry node
-        let geom_node_id = self.alloc_node_id();
-        let (geom_op, center_offset) = self.geometry_to_csg(geom)?;
-        nodes.push((
-            geom_node_id,
-            Node {
-                id: geom_node_id,
-                name: Some(format!("{}_geom", link.name)),
-                op: geom_op,
-            },
-        ));
-
-        // URDF box/cylinder/cone primitives are centered on the link frame
-        // origin. vcad's Cube extends from the origin into the +X/+Y/+Z
-        // octant, and Cylinder/Cone sit on z=0 → z=height. Wrap each
-        // primitive in a Translate so the geometry lines up with the URDF
-        // convention before any visual <origin> rotation/translation is
-        // applied.
-        let centered_node_id = if center_offset.x.abs() > 1e-9
-            || center_offset.y.abs() > 1e-9
-            || center_offset.z.abs() > 1e-9
-        {
-            let id = self.alloc_node_id();
-            nodes.push((
-                id,
-                Node {
-                    id,
-                    name: Some(format!("{}_center", link.name)),
-                    op: CsgOp::Translate {
-                        child: geom_node_id,
-                        offset: center_offset,
-                    },
-                },
-            ));
-            id
-        } else {
-            geom_node_id
-        };
-
-        // Apply origin transform if present
-        let root_id = if let Some(origin) = origin {
-            let xyz = origin.xyz_vec();
-            let rpy = origin.rpy_vec();
-
-            // URDF uses meters, vcad uses mm
-            let xyz_mm = [xyz[0] * 1000.0, xyz[1] * 1000.0, xyz[2] * 1000.0];
-
-            // URDF uses radians, vcad uses degrees
-            let rpy_deg = [
-                rpy[0].to_degrees(),
-                rpy[1].to_degrees(),
-                rpy[2].to_degrees(),
-            ];
-
-            let has_translation = xyz_mm.iter().any(|v| v.abs() > 1e-6);
-            let has_rotation = rpy_deg.iter().any(|v| v.abs() > 1e-6);
-
-            if has_rotation {
-                let rotate_id = self.alloc_node_id();
-                nodes.push((
-                    rotate_id,
-                    Node {
-                        id: rotate_id,
-                        name: Some(format!("{}_rotate", link.name)),
-                        op: CsgOp::Rotate {
-                            child: centered_node_id,
-                            angles: Vec3::new(rpy_deg[0], rpy_deg[1], rpy_deg[2]),
-                        },
-                    },
-                ));
-
-                if has_translation {
-                    let translate_id = self.alloc_node_id();
-                    nodes.push((
-                        translate_id,
-                        Node {
-                            id: translate_id,
-                            name: Some(format!("{}_translate", link.name)),
-                            op: CsgOp::Translate {
-                                child: rotate_id,
-                                offset: Vec3::new(xyz_mm[0], xyz_mm[1], xyz_mm[2]),
-                            },
-                        },
-                    ));
-                    translate_id
-                } else {
-                    rotate_id
-                }
-            } else if has_translation {
-                let translate_id = self.alloc_node_id();
-                nodes.push((
-                    translate_id,
-                    Node {
-                        id: translate_id,
-                        name: Some(format!("{}_translate", link.name)),
-                        op: CsgOp::Translate {
-                            child: centered_node_id,
-                            offset: Vec3::new(xyz_mm[0], xyz_mm[1], xyz_mm[2]),
-                        },
-                    },
-                ));
-                translate_id
-            } else {
-                centered_node_id
-            }
-        } else {
-            centered_node_id
+            node_id
         };
 
         let inertial = link.inertial.as_ref().map(|i| {
@@ -1046,9 +953,117 @@ impl<'a> UrdfReader<'a> {
                 root: root_id,
                 default_material: Some("default".to_string()),
                 inertial,
+                colliders: (!colliders.is_empty()).then_some(colliders),
             },
             nodes,
         ))
+    }
+
+    /// Build the node subtree for one URDF `<geometry>` + `<origin>` pair and
+    /// return its root, appending every node it creates to `nodes`.
+    ///
+    /// Shared by `<visual>` and `<collision>`: the two elements have identical
+    /// shape in URDF, and a collision piece needs exactly the same primitive
+    /// re-centering and origin placement a visual does.
+    fn geometry_subtree(
+        &mut self,
+        geom: &Geometry,
+        origin: Option<&crate::types::Origin>,
+        label: &str,
+        nodes: &mut Vec<(NodeId, Node)>,
+    ) -> Result<NodeId, UrdfError> {
+        // Create geometry node
+        let geom_node_id = self.alloc_node_id();
+        let (geom_op, center_offset) = self.geometry_to_csg(geom)?;
+        nodes.push((
+            geom_node_id,
+            Node {
+                id: geom_node_id,
+                name: Some(format!("{label}_geom")),
+                op: geom_op,
+            },
+        ));
+
+        // URDF box/cylinder/cone primitives are centered on the link frame
+        // origin. vcad's Cube extends from the origin into the +X/+Y/+Z
+        // octant, and Cylinder/Cone sit on z=0 → z=height. Wrap each
+        // primitive in a Translate so the geometry lines up with the URDF
+        // convention before any <origin> rotation/translation is applied.
+        let centered_node_id = if center_offset.x.abs() > 1e-9
+            || center_offset.y.abs() > 1e-9
+            || center_offset.z.abs() > 1e-9
+        {
+            let id = self.alloc_node_id();
+            nodes.push((
+                id,
+                Node {
+                    id,
+                    name: Some(format!("{label}_center")),
+                    op: CsgOp::Translate {
+                        child: geom_node_id,
+                        offset: center_offset,
+                    },
+                },
+            ));
+            id
+        } else {
+            geom_node_id
+        };
+
+        // Apply origin transform if present
+        let Some(origin) = origin else {
+            return Ok(centered_node_id);
+        };
+        let xyz = origin.xyz_vec();
+        let rpy = origin.rpy_vec();
+
+        // URDF uses meters, vcad uses mm
+        let xyz_mm = [xyz[0] * 1000.0, xyz[1] * 1000.0, xyz[2] * 1000.0];
+
+        // URDF uses radians, vcad uses degrees
+        let rpy_deg = [
+            rpy[0].to_degrees(),
+            rpy[1].to_degrees(),
+            rpy[2].to_degrees(),
+        ];
+
+        let has_translation = xyz_mm.iter().any(|v| v.abs() > 1e-6);
+        let has_rotation = rpy_deg.iter().any(|v| v.abs() > 1e-6);
+
+        let rotated_id = if has_rotation {
+            let rotate_id = self.alloc_node_id();
+            nodes.push((
+                rotate_id,
+                Node {
+                    id: rotate_id,
+                    name: Some(format!("{label}_rotate")),
+                    op: CsgOp::Rotate {
+                        child: centered_node_id,
+                        angles: Vec3::new(rpy_deg[0], rpy_deg[1], rpy_deg[2]),
+                    },
+                },
+            ));
+            rotate_id
+        } else {
+            centered_node_id
+        };
+
+        if !has_translation {
+            return Ok(rotated_id);
+        }
+        let translate_id = self.alloc_node_id();
+        nodes.push((
+            translate_id,
+            Node {
+                id: translate_id,
+                name: Some(format!("{label}_translate")),
+                op: CsgOp::Translate {
+                    child: rotated_id,
+                    offset: Vec3::new(xyz_mm[0], xyz_mm[1], xyz_mm[2]),
+                },
+            },
+        ));
+        Ok(translate_id)
     }
 
     /// Convert a URDF `<geometry>` to a vcad `CsgOp` and return the
@@ -1697,6 +1712,231 @@ mod tests {
             }
             _ => panic!("Expected Slider joint"),
         }
+    }
+
+    /// A cart-shaped link whose collision geometry is a convex decomposition,
+    /// modelled on XLeRobot's `base_link` (3 `<visual>` / 8 `<collision>`) and
+    /// `Moving_Jaw` (1 / 3). Visual and collision children interleave, which is
+    /// what `normalize_robot_child_order` and quick-xml's contiguous-sibling
+    /// rule have to survive. Primitives rather than meshes so the fixture needs
+    /// no files on disk.
+    const DECOMPOSED_URDF: &str = r#"<?xml version="1.0"?>
+<robot name="cart">
+    <link name="base_link">
+        <visual><geometry><box size="0.30 0.20 0.05"/></geometry></visual>
+        <collision>
+            <origin xyz="-0.12 0 0"/>
+            <geometry><box size="0.06 0.20 0.05"/></geometry>
+        </collision>
+        <visual>
+            <origin xyz="0 0 0.06"/>
+            <geometry><box size="0.10 0.10 0.08"/></geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.12 0 0"/>
+            <geometry><box size="0.06 0.20 0.05"/></geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 -0.08 0"/>
+            <geometry><box size="0.30 0.04 0.05"/></geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0.08 0"/>
+            <geometry><box size="0.30 0.04 0.05"/></geometry>
+        </collision>
+        <visual>
+            <origin xyz="0 0 -0.03"/>
+            <geometry><cylinder radius="0.04" length="0.02"/></geometry>
+        </visual>
+        <collision>
+            <origin xyz="-0.12 -0.08 -0.04" rpy="1.5708 0 0"/>
+            <geometry><cylinder radius="0.03" length="0.02"/></geometry>
+        </collision>
+        <collision>
+            <origin xyz="0.12 -0.08 -0.04" rpy="1.5708 0 0"/>
+            <geometry><cylinder radius="0.03" length="0.02"/></geometry>
+        </collision>
+        <collision>
+            <origin xyz="-0.12 0.08 -0.04" rpy="1.5708 0 0"/>
+            <geometry><cylinder radius="0.03" length="0.02"/></geometry>
+        </collision>
+        <collision>
+            <origin xyz="0.12 0.08 -0.04" rpy="1.5708 0 0"/>
+            <geometry><cylinder radius="0.03" length="0.02"/></geometry>
+        </collision>
+    </link>
+    <link name="Moving_Jaw">
+        <visual><geometry><box size="0.04 0.02 0.06"/></geometry></visual>
+        <collision><geometry><box size="0.04 0.02 0.02"/></geometry></collision>
+        <collision>
+            <origin xyz="0 0 0.02"/>
+            <geometry><box size="0.02 0.02 0.02"/></geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0 0.04"/>
+            <geometry><sphere radius="0.01"/></geometry>
+        </collision>
+    </link>
+    <joint name="jaw" type="revolute">
+        <parent link="base_link"/>
+        <child link="Moving_Jaw"/>
+        <origin xyz="0.15 0 0"/>
+        <axis xyz="0 1 0"/>
+        <limit lower="0" upper="1" effort="5" velocity="1"/>
+    </joint>
+</robot>"#;
+
+    #[test]
+    fn every_collision_element_becomes_its_own_collider_root() {
+        let doc = read_urdf_from_str(DECOMPOSED_URDF).unwrap();
+        let part_defs = doc.part_defs.as_ref().unwrap();
+
+        let base = &part_defs["part_base_link"];
+        let colliders = base
+            .colliders
+            .as_ref()
+            .expect("a link with <collision> children must author colliders");
+        assert_eq!(
+            colliders.len(),
+            8,
+            "all 8 <collision> elements must survive as separate roots — collapsing \
+             them to one throws away the convex decomposition"
+        );
+        let jaw = &part_defs["part_Moving_Jaw"];
+        assert_eq!(jaw.colliders.as_ref().unwrap().len(), 3);
+
+        // Every collider root is a real node, and they are all distinct.
+        let unique: std::collections::HashSet<_> = colliders.iter().collect();
+        assert_eq!(
+            unique.len(),
+            colliders.len(),
+            "collider roots must be distinct"
+        );
+        for root in colliders {
+            assert!(
+                doc.nodes.contains_key(root),
+                "collider root {root} is dangling"
+            );
+        }
+    }
+
+    #[test]
+    fn visual_geometry_still_drives_the_rendered_root() {
+        let doc = read_urdf_from_str(DECOMPOSED_URDF).unwrap();
+        let part_defs = doc.part_defs.as_ref().unwrap();
+        let base = &part_defs["part_base_link"];
+
+        // The part's root is the *first visual* — the 300×200×50 plate — not
+        // any collision piece. Collision geometry is for contact; the visual
+        // is what renders.
+        let root = &doc.nodes[&base.root];
+        let size = match &root.op {
+            CsgOp::Cube { size } => *size,
+            // The first visual has no <origin>, so its root is the centering
+            // Translate over the cube.
+            CsgOp::Translate { child, .. } => match &doc.nodes[child].op {
+                CsgOp::Cube { size } => *size,
+                other => {
+                    panic!("expected the visual box under the centering translate, got {other:?}")
+                }
+            },
+            other => panic!("expected the visual box at the part root, got {other:?}"),
+        };
+        assert!((size.x - 300.0).abs() < 1e-6, "got {size:?}");
+        assert!((size.y - 200.0).abs() < 1e-6, "got {size:?}");
+
+        // None of the collider roots is the render root.
+        assert!(!base.colliders.as_ref().unwrap().contains(&base.root));
+
+        // Collider roots never render: `roots` carries one scene entry per
+        // link, pointing at the part root.
+        let scene_roots: std::collections::HashSet<_> = doc.roots.iter().map(|e| e.root).collect();
+        for c in base.colliders.as_ref().unwrap() {
+            assert!(
+                !scene_roots.contains(c),
+                "collider root {c} leaked into the scene and would render"
+            );
+        }
+    }
+
+    #[test]
+    fn collision_origin_places_each_piece() {
+        let doc = read_urdf_from_str(DECOMPOSED_URDF).unwrap();
+        let part_defs = doc.part_defs.as_ref().unwrap();
+        let colliders = part_defs["part_base_link"].colliders.clone().unwrap();
+
+        // Piece 0: `<origin xyz="-0.12 0 0">` over a 60×200×50 box. The
+        // subtree is Translate(origin) → Translate(centering) → Cube.
+        let CsgOp::Translate { child, offset } = &doc.nodes[&colliders[0]].op else {
+            panic!("expected the <origin> translate at the collider root");
+        };
+        assert!(
+            (offset.x - -120.0).abs() < 1e-6,
+            "URDF metres → mm: {offset:?}"
+        );
+        let CsgOp::Translate { child, offset } = &doc.nodes[child].op else {
+            panic!("expected the primitive centering translate");
+        };
+        assert!(
+            (offset.x - -30.0).abs() < 1e-6,
+            "cube centering: {offset:?}"
+        );
+        assert!(matches!(doc.nodes[child].op, CsgOp::Cube { .. }));
+
+        // Piece 4 carries an rpy, so it gains a Rotate between the two.
+        let CsgOp::Translate { child, .. } = &doc.nodes[&colliders[4]].op else {
+            panic!("expected the <origin> translate");
+        };
+        let CsgOp::Rotate { angles, .. } = &doc.nodes[child].op else {
+            panic!("expected an rpy Rotate under the origin translate");
+        };
+        assert!(
+            (angles.x - 90.0).abs() < 1e-3,
+            "1.5708 rad → 90°, got {angles:?}"
+        );
+    }
+
+    #[test]
+    fn link_without_collisions_authors_no_colliders() {
+        // The overwhelmingly common case, and the one every non-URDF authoring
+        // path relies on: no `<collision>` means "the part is its own
+        // collider", spelled as an absent list rather than a copy of `root`.
+        let doc = read_urdf_from_str(SIMPLE_URDF).unwrap();
+        for part in doc.part_defs.as_ref().unwrap().values() {
+            assert!(part.colliders.is_none(), "{:?}", part.name);
+        }
+    }
+
+    #[test]
+    fn collision_only_link_reuses_its_first_piece_as_the_render_root() {
+        let urdf = r#"<?xml version="1.0"?>
+<robot name="collision_only">
+    <link name="hidden">
+        <collision><geometry><box size="0.1 0.1 0.1"/></geometry></collision>
+        <collision>
+            <origin xyz="0.2 0 0"/>
+            <geometry><box size="0.1 0.1 0.1"/></geometry>
+        </collision>
+    </link>
+</robot>"#;
+        let doc = read_urdf_from_str(urdf).unwrap();
+        let part = &doc.part_defs.as_ref().unwrap()["part_hidden"];
+        let colliders = part.colliders.as_ref().unwrap();
+        assert_eq!(colliders.len(), 2);
+        // With no <visual> to render, the root falls back to the first piece —
+        // reusing that subtree rather than building a second copy of it.
+        assert_eq!(part.root, colliders[0]);
+
+        // That piece therefore *does* render, and should: collision geometry is
+        // the only geometry the link has, so drawing nothing would be worse.
+        // What must not happen is the other pieces leaking into the scene —
+        // exactly one entry, pointing at the root.
+        let scene_roots: Vec<_> = doc.roots.iter().map(|e| e.root).collect();
+        assert_eq!(scene_roots, vec![part.root]);
+        assert!(
+            !scene_roots.contains(&colliders[1]),
+            "collider piece 1 leaked into the scene and would render twice"
+        );
     }
 
     #[test]

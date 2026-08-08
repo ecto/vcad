@@ -6,7 +6,8 @@ use phyz::aba_with_external_forces;
 use phyz::math::{Mat3, Quat, SpatialInertia, SpatialTransform, Vec3};
 use phyz::model::{Model, ModelBuilder, State};
 use phyz::{
-    forward_kinematics, Collision, ContactMaterial, ContactProblem, ContactSolverConfig, Geometry,
+    forward_kinematics, Collision, ContactMaterial, ContactProblem, ContactSolverConfig,
+    GeomInstance, Geometry,
 };
 use serde::{Deserialize, Serialize};
 use vcad_ir::{Document, InertialProperties, JointKind};
@@ -182,17 +183,19 @@ pub struct PhysicsWorld {
     // RobotEnv turns it on for gym use.
     ground: GroundConfig,
 
-    // Per-body collision geometry used for ground contact, `None` for bodies
-    // that cannot move (welded to the world through Fixed joints only) —
-    // contacts on those would contribute empty Jacobian rows.
-    contact_geometries: Vec<Option<Geometry>>,
+    // Per-body collision shapes used for ground contact — one entry per piece
+    // of the body's convex decomposition (a URDF link's `<collision>` list),
+    // or a single entry when the collider is one shape. Empty for bodies that
+    // cannot move (welded to the world through Fixed joints only) — contacts
+    // on those would contribute empty Jacobian rows.
+    contact_geometries: Vec<Vec<Geometry>>,
 
-    // Per-body, body-frame support points for mesh colliders — the only
+    // Per-shape, body-frame support points for mesh colliders — the only
     // vertices that can be the deepest point of a plane contact. Precomputed
     // once (see `colliders::support_points`) so the per-substep candidate
-    // scan doesn't walk the whole tessellation. `None` for bodies with no
-    // contact geometry or a non-mesh collider.
-    contact_support: Vec<Option<Vec<Vec3>>>,
+    // scan doesn't walk the whole tessellation. Parallel to
+    // `contact_geometries` shape-for-shape; `None` for a non-mesh collider.
+    contact_support: Vec<Vec<Option<Vec<Vec3>>>>,
 
     // True when any joint is Free — i.e. the document describes a
     // floating-base robot. Gates gravity-compensation feedforward (see
@@ -289,7 +292,10 @@ impl PhysicsWorld {
         let mut instance_to_body: HashMap<String, usize> = HashMap::new();
         let mut joint_to_index: HashMap<String, usize> = HashMap::new();
         let mut joint_kinds: HashMap<String, JointKind> = HashMap::new();
-        let mut body_geometries: Vec<Option<Geometry>> = Vec::new();
+        // Per-body collision shapes. One entry per piece of the part's convex
+        // decomposition; exactly one when the part's collider is its own
+        // geometry.
+        let mut body_geometries: Vec<Vec<Geometry>> = Vec::new();
         let mut body_part_frames: Vec<(Mat3, Vec3)> = Vec::new();
         let mut body_count = 0usize;
 
@@ -310,13 +316,19 @@ impl PhysicsWorld {
         // any authored inertial) is re-expressed in the body frame before
         // mass/collider/inertia are computed, because phyz body frames
         // coincide with the joint frame, not the part's local frame.
+        //
+        // The returned `Vec<Geometry>` is the body's collision shapes: one per
+        // entry in `PartDef::colliders` when the part authors a collider
+        // distinct from its rendered geometry (the URDF `<collision>` list),
+        // otherwise a single shape derived from the part's own mesh. It is
+        // never empty.
         let eval_instance = |inst: &vcad_ir::Instance,
                              part_frame: Option<(&Mat3, &vcad_ir::Vec3)>|
          -> Result<
             (
                 vcad_kernel_tessellate::TriangleMesh,
                 f64,
-                Geometry,
+                Vec<Geometry>,
                 Option<InertialProperties>,
             ),
             PhysicsError,
@@ -354,17 +366,7 @@ impl PhysicsWorld {
                 }
             };
             if let Some((rot, anchor_mm)) = part_frame {
-                for v in mesh.vertices.chunks_mut(3) {
-                    let p = Vec3::new(
-                        v[0] as f64 - anchor_mm.x,
-                        v[1] as f64 - anchor_mm.y,
-                        v[2] as f64 - anchor_mm.z,
-                    );
-                    let q = rot.mul_vec(p);
-                    v[0] = q.x as f32;
-                    v[1] = q.y as f32;
-                    v[2] = q.z as f32;
-                }
+                mesh_to_body_frame(&mut mesh, rot, anchor_mm);
                 if let Some(props) = authored.as_mut() {
                     // COM is in mm, inertia about COM in kg·m² — rotate both
                     // into the body frame.
@@ -388,6 +390,11 @@ impl PhysicsWorld {
                     ];
                 }
             }
+            // Mass properties stay tied to the part's own geometry (or the
+            // authored `<inertial>` block). The collision decomposition
+            // describes the contact surface, not the material distribution —
+            // its pieces routinely overlap, so summing their volumes would
+            // over-count.
             let mass = match authored {
                 Some(props) => props.mass_kg,
                 None => {
@@ -399,8 +406,45 @@ impl PhysicsWorld {
                     estimate_mass(&mesh, density)
                 }
             };
-            let geometry = mesh_to_collider(&mesh, collider_strategy, &inst.id)?;
-            Ok((mesh, mass, geometry, authored))
+
+            // Collision shapes: one per authored collider root. A URDF link's
+            // `<collision>` elements are a convex decomposition of the link —
+            // the pieces exist precisely because the single visual mesh is a
+            // bad collider — so each becomes its own shape rather than being
+            // merged. Vertices are already baked into the body frame, so every
+            // shape sits centered on it.
+            let collider_roots = part_def.colliders.as_deref().unwrap_or_default();
+            let mut colliders = Vec::with_capacity(collider_roots.len());
+            for (i, root) in collider_roots.iter().enumerate() {
+                let cached = mesh_cache.borrow().get(root).cloned();
+                let mut piece = match cached {
+                    Some(m) => m,
+                    None => match Self::evaluate_part(doc, *root)? {
+                        Some(m) => {
+                            mesh_cache.borrow_mut().insert(*root, m.clone());
+                            m
+                        }
+                        // An unresolvable collider piece (a `package://` mesh
+                        // with no file behind it) is skipped rather than fatal:
+                        // the remaining pieces still describe the link, and if
+                        // none resolve we fall back to the part's own geometry
+                        // below — the same stand-in the single-shape path uses.
+                        None => continue,
+                    },
+                };
+                if let Some((rot, anchor_mm)) = part_frame {
+                    mesh_to_body_frame(&mut piece, rot, anchor_mm);
+                }
+                colliders.push(mesh_to_collider(
+                    &piece,
+                    collider_strategy,
+                    &format!("{}#collision{i}", inst.id),
+                )?);
+            }
+            if colliders.is_empty() {
+                colliders.push(mesh_to_collider(&mesh, collider_strategy, &inst.id)?);
+            }
+            Ok((mesh, mass, colliders, authored))
         };
 
         // Build a SpatialInertia, preferring authored mass/inertia/COM
@@ -464,7 +508,7 @@ impl PhysicsWorld {
             let xform = instance_transform(ground_inst);
             builder = builder.add_fixed_body(&ground_inst.id, -1, xform, inertia);
             instance_to_body.insert(ground_inst.id.clone(), body_count);
-            body_geometries.push(Some(geometry));
+            body_geometries.push(geometry);
             body_count += 1;
         }
 
@@ -518,7 +562,7 @@ impl PhysicsWorld {
 
                 // Store geometry on the body
                 instance_to_body.insert(child_inst.id.clone(), body_count);
-                body_geometries.push(Some(geometry));
+                body_geometries.push(geometry);
 
                 // Track joint mapping
                 joint_to_index.insert(joint.id.clone(), body_count);
@@ -552,7 +596,7 @@ impl PhysicsWorld {
 
             builder = builder.add_free_body(&inst.id, -1, xform, inertia);
             instance_to_body.insert(inst.id.clone(), body_count);
-            body_geometries.push(Some(geometry));
+            body_geometries.push(geometry);
             body_count += 1;
             visited.insert(inst.id.clone());
         }
@@ -560,11 +604,15 @@ impl PhysicsWorld {
         // Build model
         let mut model = builder.build();
 
-        // Attach geometries to model bodies
-        for (i, geom) in body_geometries.into_iter().enumerate() {
-            if i < model.bodies.len() {
-                model.bodies[i].geometry = geom;
+        // Attach geometries to model bodies. `collisions` carries the full
+        // decomposition; `geometry` mirrors the first piece so phyz's
+        // single-shape consumers (and its GPU contact pass) keep working.
+        for (i, geoms) in body_geometries.into_iter().enumerate() {
+            if i >= model.bodies.len() {
+                break;
             }
+            model.bodies[i].geometry = geoms.first().cloned();
+            model.bodies[i].collisions = geoms.into_iter().map(GeomInstance::centered).collect();
         }
 
         let nbodies = model.bodies.len();
@@ -579,19 +627,30 @@ impl PhysicsWorld {
             let own_dof = model.joints[body.joint_idx].ndof() > 0;
             movable[i] = own_dof || (body.parent >= 0 && movable[body.parent as usize]);
         }
-        let contact_geometries: Vec<Option<Geometry>> = model
+        let contact_geometries: Vec<Vec<Geometry>> = model
             .bodies
             .iter()
             .enumerate()
-            .map(|(i, b)| if movable[i] { b.geometry.clone() } else { None })
-            .collect();
-        let contact_support: Vec<Option<Vec<Vec3>>> = contact_geometries
-            .iter()
-            .map(|g| match g {
-                Some(Geometry::Mesh { vertices, .. }) => {
-                    Some(crate::colliders::support_points(vertices))
+            .map(|(i, b)| {
+                if movable[i] {
+                    b.collisions.iter().map(|c| c.geometry.clone()).collect()
+                } else {
+                    Vec::new()
                 }
-                _ => None,
+            })
+            .collect();
+        let contact_support: Vec<Vec<Option<Vec<Vec3>>>> = contact_geometries
+            .iter()
+            .map(|shapes| {
+                shapes
+                    .iter()
+                    .map(|g| match g {
+                        Geometry::Mesh { vertices, .. } => {
+                            Some(crate::colliders::support_points(vertices))
+                        }
+                        _ => None,
+                    })
+                    .collect()
             })
             .collect();
 
@@ -912,43 +971,51 @@ impl PhysicsWorld {
         let h = self.ground.height;
         let mut contacts = Vec::new();
 
-        for (i, geom) in self.contact_geometries.iter().enumerate() {
-            let Some(geom) = geom else { continue };
+        for (i, shapes) in self.contact_geometries.iter().enumerate() {
+            if shapes.is_empty() {
+                continue;
+            }
             let xform = &self.state.body_xform[i];
             let (pos, e_t) = (xform.pos, xform.rot.transpose());
             if !(pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite()) {
                 continue;
             }
 
-            // World-frame candidate support points.
-            let candidates: Vec<Vec3> = match geom {
-                Geometry::Mesh { vertices, .. } => {
-                    // Precomputed support points when available (every mesh
-                    // collider built here); the raw vertex cloud otherwise.
-                    let src = self.contact_support[i].as_deref().unwrap_or(vertices);
-                    src.iter().map(|v| e_t.mul_vec(*v) + pos).collect()
-                }
-                Geometry::Box { half_extents } => {
-                    let he = half_extents;
-                    let mut v = Vec::with_capacity(8);
-                    for sx in [-1.0, 1.0] {
-                        for sy in [-1.0, 1.0] {
-                            for sz in [-1.0, 1.0] {
-                                v.push(
-                                    e_t.mul_vec(Vec3::new(sx * he.x, sy * he.y, sz * he.z)) + pos,
-                                );
+            // World-frame candidate support points, gathered across every
+            // shape of the body's convex decomposition before the manifold is
+            // capped — the cap is per *body*, so a cart resting on two of its
+            // eight pieces keeps support under both rather than spending the
+            // whole budget on whichever piece was listed first.
+            let mut candidates: Vec<Vec3> = Vec::new();
+            for (s, geom) in shapes.iter().enumerate() {
+                match geom {
+                    Geometry::Mesh { vertices, .. } => {
+                        // Precomputed support points when available (every mesh
+                        // collider built here); the raw vertex cloud otherwise.
+                        let src = self.contact_support[i][s].as_deref().unwrap_or(vertices);
+                        candidates.extend(src.iter().map(|v| e_t.mul_vec(*v) + pos));
+                    }
+                    Geometry::Box { half_extents } => {
+                        let he = half_extents;
+                        for sx in [-1.0, 1.0] {
+                            for sy in [-1.0, 1.0] {
+                                for sz in [-1.0, 1.0] {
+                                    candidates.push(
+                                        e_t.mul_vec(Vec3::new(sx * he.x, sy * he.y, sz * he.z))
+                                            + pos,
+                                    );
+                                }
                             }
                         }
                     }
-                    v
+                    Geometry::Sphere { radius } => {
+                        candidates.push(pos - Vec3::new(0.0, 0.0, *radius));
+                    }
+                    // Colliders built by this crate are Mesh or Box; anything
+                    // else has no ground support here yet.
+                    _ => continue,
                 }
-                Geometry::Sphere { radius } => {
-                    vec![pos - Vec3::new(0.0, 0.0, *radius)]
-                }
-                // Colliders built by this crate are Mesh or Box; anything
-                // else has no ground support here yet.
-                _ => continue,
-            };
+            }
 
             // Penetrating points, deduplicated (tessellated meshes repeat
             // each corner per incident face), deepest first, capped.
@@ -1906,6 +1973,29 @@ impl PhysicsWorld {
     }
 }
 
+/// Re-express a mesh in the body frame: `p_body = R * (p_part − anchor_mm)`.
+///
+/// phyz body frames coincide with the joint frame, not the part's local frame,
+/// so every mesh a part contributes — its own geometry and each piece of its
+/// collision decomposition alike — has to make the same trip.
+fn mesh_to_body_frame(
+    mesh: &mut vcad_kernel_tessellate::TriangleMesh,
+    rot: &Mat3,
+    anchor_mm: &vcad_ir::Vec3,
+) {
+    for v in mesh.vertices.chunks_mut(3) {
+        let p = Vec3::new(
+            v[0] as f64 - anchor_mm.x,
+            v[1] as f64 - anchor_mm.y,
+            v[2] as f64 - anchor_mm.z,
+        );
+        let q = rot.mul_vec(p);
+        v[0] = q.x as f32;
+        v[1] = q.y as f32;
+        v[2] = q.z as f32;
+    }
+}
+
 /// A 1 cm cube centred on the body origin, used as a stand-in collider for a
 /// link whose geometry could not be resolved. Centred deliberately: a
 /// corner-at-origin cube would place the centre of mass 5 mm off the joint
@@ -2101,6 +2191,7 @@ mod tests {
                     root,
                     default_material: None,
                     inertial: None,
+                    colliders: None,
                 },
             );
         }
@@ -2215,6 +2306,7 @@ mod tests {
                 root: 1,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         part_defs.insert(
@@ -2225,6 +2317,7 @@ mod tests {
                 root: 2,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);
@@ -2500,6 +2593,7 @@ mod tests {
                 root: 1,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         part_defs.insert(
@@ -2510,6 +2604,7 @@ mod tests {
                 root: 2,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);
@@ -2610,6 +2705,7 @@ mod tests {
                 root: 2,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         part_defs.insert(
@@ -2620,6 +2716,7 @@ mod tests {
                 root: 3,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);
@@ -2858,6 +2955,7 @@ mod tests {
                     root: 1,
                     default_material: None,
                     inertial: None,
+                    colliders: None,
                 },
             );
         }
@@ -2885,7 +2983,7 @@ mod tests {
 
         let world = PhysicsWorld::from_document(&doc).unwrap();
         assert!(
-            world.contact_geometries.iter().any(|g| g.is_some()),
+            world.contact_geometries.iter().any(|g| !g.is_empty()),
             "free body was built without contact geometry — it can never touch the ground"
         );
     }

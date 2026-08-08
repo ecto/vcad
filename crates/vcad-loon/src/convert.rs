@@ -202,6 +202,7 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
                 root: root_id,
                 default_material: Some(material),
                 inertial: None,
+                colliders: None,
             },
         );
     }
