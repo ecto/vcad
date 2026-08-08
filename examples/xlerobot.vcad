@@ -1,0 +1,2071 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "14": {
+      "id": 14,
+      "name": "Fixed_Jaw_tip",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "Moving_Jaw_tip",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "30": {
+      "id": 30,
+      "name": "top_base_link_translate",
+      "op": {
+        "type": "Translate",
+        "child": 29,
+        "offset": {
+          "x": 16.0,
+          "y": -6.0,
+          "z": -727.0
+        }
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "Base_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Base.stl"
+      }
+    },
+    "34": {
+      "id": 34,
+      "name": "head_tilt_link_translate",
+      "op": {
+        "type": "Translate",
+        "child": 33,
+        "offset": {
+          "x": 162.64999999999998,
+          "y": -6.0,
+          "z": -1168.15
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "root_arm_1_link_2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "Wrist_Pitch_Roll_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Wrist_Pitch_Roll.stl"
+      }
+    },
+    "37": {
+      "id": 37,
+      "name": "head_camera_rgb_optical_frame",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "27": {
+      "id": 27,
+      "name": "Left_Arm_Camera_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/XLeRobot_camera1.stl",
+        "scale": {
+          "x": 0.001,
+          "y": 0.001,
+          "z": 0.001
+        }
+      }
+    },
+    "39": {
+      "id": 39,
+      "name": "head_camera_depth_optical_frame",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "Upper_Arm_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Upper_Arm.stl"
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "Fixed_Jaw_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Fixed_Jaw.stl"
+      }
+    },
+    "24": {
+      "id": 24,
+      "name": "Moving_Jaw_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Moving_Jaw.stl"
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Base_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Base.stl"
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": "root",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "Right_Arm_Camera_translate",
+      "op": {
+        "type": "Translate",
+        "child": 16,
+        "offset": {
+          "x": -15.0,
+          "y": -26.0,
+          "z": 0.0
+        }
+      }
+    },
+    "25": {
+      "id": 25,
+      "name": "Fixed_Jaw_tip_2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "26": {
+      "id": 26,
+      "name": "Moving_Jaw_tip_2",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "base_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/raskogbody.stl",
+        "scale": {
+          "x": 0.0009,
+          "y": 0.001,
+          "z": 0.0009
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Rotation_Pitch_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Rotation_Pitch.stl"
+      }
+    },
+    "35": {
+      "id": 35,
+      "name": "head_camera_link",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Wrist_Pitch_Roll_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Wrist_Pitch_Roll.stl"
+      }
+    },
+    "28": {
+      "id": 28,
+      "name": "Left_Arm_Camera_translate",
+      "op": {
+        "type": "Translate",
+        "child": 27,
+        "offset": {
+          "x": -15.0,
+          "y": -26.0,
+          "z": 0.0
+        }
+      }
+    },
+    "36": {
+      "id": 36,
+      "name": "head_camera_rgb_frame",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Lower_Arm_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Lower_Arm.stl"
+      }
+    },
+    "33": {
+      "id": 33,
+      "name": "head_tilt_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/tophead5.stl",
+        "scale": {
+          "x": 0.001,
+          "y": 0.001,
+          "z": 0.001
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "base_link_rotate",
+      "op": {
+        "type": "Rotate",
+        "child": 4,
+        "angles": {
+          "x": 90.00021045914971,
+          "y": 0.0,
+          "z": 0.0
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "root_arm_1_link_1",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "Lower_Arm_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Lower_Arm.stl"
+      }
+    },
+    "38": {
+      "id": 38,
+      "name": "head_camera_depth_frame",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 0.01,
+          "y": 0.01,
+          "z": 0.01
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "base_link_translate",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": -16.68,
+          "y": 502.0,
+          "z": 895.0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Upper_Arm_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Upper_Arm.stl"
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Fixed_Jaw_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Fixed_Jaw.stl"
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "Moving_Jaw_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Moving_Jaw.stl"
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "Rotation_Pitch_2_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/Rotation_Pitch.stl"
+      }
+    },
+    "29": {
+      "id": 29,
+      "name": "top_base_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/topbase1.stl",
+        "scale": {
+          "x": 0.001,
+          "y": 0.001,
+          "z": 0.001
+        }
+      }
+    },
+    "32": {
+      "id": 32,
+      "name": "head_pan_link_translate",
+      "op": {
+        "type": "Translate",
+        "child": 31,
+        "offset": {
+          "x": 194.0,
+          "y": -6.0,
+          "z": -730.0
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "Right_Arm_Camera_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/XLeRobot_camera1.stl",
+        "scale": {
+          "x": 0.001,
+          "y": 0.001,
+          "z": 0.001
+        }
+      }
+    },
+    "31": {
+      "id": 31,
+      "name": "head_pan_link_geom",
+      "op": {
+        "type": "mesh_import",
+        "path": "../third_party/xlerobot/meshes/tophead3.stl",
+        "scale": {
+          "x": 0.001,
+          "y": 0.001,
+          "z": 0.001
+        }
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "name": "default",
+      "color": [
+        0.7,
+        0.7,
+        0.7
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "blue": {
+      "name": "blue",
+      "color": [
+        0.2,
+        0.3,
+        0.6
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "green": {
+      "name": "green",
+      "color": [
+        0.6,
+        0.5,
+        0.1
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "grey": {
+      "name": "grey",
+      "color": [
+        0.6,
+        0.6,
+        0.6
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "motor": {
+      "name": "motor",
+      "color": [
+        0.02,
+        0.02,
+        0.02
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    },
+    "white": {
+      "name": "white",
+      "color": [
+        0.3,
+        0.3,
+        0.3
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 15,
+      "material": "default"
+    },
+    {
+      "root": 17,
+      "material": "default"
+    },
+    {
+      "root": 18,
+      "material": "default"
+    },
+    {
+      "root": 19,
+      "material": "default"
+    },
+    {
+      "root": 20,
+      "material": "default"
+    },
+    {
+      "root": 21,
+      "material": "default"
+    },
+    {
+      "root": 22,
+      "material": "default"
+    },
+    {
+      "root": 23,
+      "material": "default"
+    },
+    {
+      "root": 24,
+      "material": "default"
+    },
+    {
+      "root": 25,
+      "material": "default"
+    },
+    {
+      "root": 26,
+      "material": "default"
+    },
+    {
+      "root": 28,
+      "material": "default"
+    },
+    {
+      "root": 30,
+      "material": "default"
+    },
+    {
+      "root": 32,
+      "material": "default"
+    },
+    {
+      "root": 34,
+      "material": "default"
+    },
+    {
+      "root": 35,
+      "material": "default"
+    },
+    {
+      "root": 36,
+      "material": "default"
+    },
+    {
+      "root": 37,
+      "material": "default"
+    },
+    {
+      "root": 38,
+      "material": "default"
+    },
+    {
+      "root": 39,
+      "material": "default"
+    }
+  ],
+  "partDefs": {
+    "part_Right_Arm_Camera": {
+      "id": "part_Right_Arm_Camera",
+      "name": "Right_Arm_Camera",
+      "root": 17,
+      "defaultMaterial": "default"
+    },
+    "part_head_tilt_link": {
+      "id": "part_head_tilt_link",
+      "name": "head_tilt_link",
+      "root": 34,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.9087,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.0061,
+          0.0014,
+          0.0061,
+          -0.0,
+          0.0002,
+          -0.0001
+        ]
+      }
+    },
+    "part_Rotation_Pitch": {
+      "id": "part_Rotation_Pitch",
+      "name": "Rotation_Pitch",
+      "root": 8,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.119226314127197,
+        "com": {
+          "x": -0.0907886224712597,
+          "y": 59.0971820568318,
+          "z": 31.089016892169
+        },
+        "inertia": [
+          0.0000590408775624429,
+          0.0000321498601038881,
+          0.0000586058514263952,
+          4.90800532852998e-7,
+          -5.90451772654387e-8,
+          -4.58026206663885e-6
+        ]
+      }
+    },
+    "part_Fixed_Jaw_tip_2": {
+      "id": "part_Fixed_Jaw_tip_2",
+      "name": "Fixed_Jaw_tip_2",
+      "root": 25,
+      "defaultMaterial": "default"
+    },
+    "part_head_camera_depth_optical_frame": {
+      "id": "part_head_camera_depth_optical_frame",
+      "name": "head_camera_depth_optical_frame",
+      "root": 39,
+      "defaultMaterial": "default"
+    },
+    "part_Base_2": {
+      "id": "part_Base_2",
+      "name": "Base_2",
+      "root": 18,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.193184127927598,
+        "com": {
+          "x": -0.000245960666746703,
+          "y": 31.141816968790902,
+          "z": 17.5746661003382
+        },
+        "inertia": [
+          0.000137030709467877,
+          0.000169089551209259,
+          0.000145097720857224,
+          2.10136126944992e-8,
+          4.24087422551286e-9,
+          0.0000226514711036514
+        ]
+      }
+    },
+    "part_root_arm_1_link_2": {
+      "id": "part_root_arm_1_link_2",
+      "name": "root_arm_1_link_2",
+      "root": 3,
+      "defaultMaterial": "default"
+    },
+    "part_Moving_Jaw": {
+      "id": "part_Moving_Jaw",
+      "name": "Moving_Jaw",
+      "root": 13,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.0202443794940372,
+        "com": {
+          "x": -1.61744605468241,
+          "y": -30.3472584046471,
+          "z": 0.449645961853651
+        },
+        "inertia": [
+          0.0000110911325081525,
+          3.03576451001973e-6,
+          8.9916083370498e-6,
+          -5.35076503033314e-7,
+          -9.46105662101403e-9,
+          -1.71146075110632e-7
+        ]
+      }
+    },
+    "part_Moving_Jaw_tip": {
+      "id": "part_Moving_Jaw_tip",
+      "name": "Moving_Jaw_tip",
+      "root": 15,
+      "defaultMaterial": "default"
+    },
+    "part_head_pan_link": {
+      "id": "part_head_pan_link",
+      "name": "head_pan_link",
+      "root": 32,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 2.2556,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.0129,
+          0.0095,
+          0.0184,
+          0.0002,
+          0.0007,
+          -0.0
+        ]
+      }
+    },
+    "part_Base": {
+      "id": "part_Base",
+      "name": "Base",
+      "root": 7,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.193184127927598,
+        "com": {
+          "x": -0.000245960666746703,
+          "y": 31.141816968790902,
+          "z": 17.5746661003382
+        },
+        "inertia": [
+          0.000137030709467877,
+          0.000169089551209259,
+          0.000145097720857224,
+          2.10136126944992e-8,
+          4.24087422551286e-9,
+          0.0000226514711036514
+        ]
+      }
+    },
+    "part_root": {
+      "id": "part_root",
+      "name": "root",
+      "root": 1,
+      "defaultMaterial": "default"
+    },
+    "part_Fixed_Jaw": {
+      "id": "part_Fixed_Jaw",
+      "name": "Fixed_Jaw",
+      "root": 12,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.0929859131176897,
+        "com": {
+          "x": 5.52376906426563,
+          "y": -28.0167153359021,
+          "z": 0.483582592841092
+        },
+        "inertia": [
+          0.000043328249304211,
+          0.0000304451747368212,
+          0.0000502460913506734,
+          7.09654328670947e-6,
+          5.99838530879484e-7,
+          -1.58743247545413e-7
+        ]
+      }
+    },
+    "part_Fixed_Jaw_2": {
+      "id": "part_Fixed_Jaw_2",
+      "name": "Fixed_Jaw_2",
+      "root": 23,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.0929859131176897,
+        "com": {
+          "x": 5.52376906426563,
+          "y": -28.0167153359021,
+          "z": 0.483582592841092
+        },
+        "inertia": [
+          0.000043328249304211,
+          0.0000304451747368212,
+          0.0000502460913506734,
+          7.09654328670947e-6,
+          5.99838530879484e-7,
+          -1.58743247545413e-7
+        ]
+      }
+    },
+    "part_Fixed_Jaw_tip": {
+      "id": "part_Fixed_Jaw_tip",
+      "name": "Fixed_Jaw_tip",
+      "root": 14,
+      "defaultMaterial": "default"
+    },
+    "part_root_arm_1_link_1": {
+      "id": "part_root_arm_1_link_1",
+      "name": "root_arm_1_link_1",
+      "root": 2,
+      "defaultMaterial": "default"
+    },
+    "part_Upper_Arm_2": {
+      "id": "part_Upper_Arm_2",
+      "name": "Upper_Arm_2",
+      "root": 20,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.162409284599177,
+        "com": {
+          "x": -0.017205170190925,
+          "y": 70.1802156327694,
+          "z": 3.10545118155671
+        },
+        "inertia": [
+          0.000167153146617081,
+          0.0000701946992214245,
+          0.000213280241160769,
+          1.03902689187701e-6,
+          -1.20161820645189e-8,
+          2.11884806298698e-6
+        ]
+      }
+    },
+    "part_Wrist_Pitch_Roll_2": {
+      "id": "part_Wrist_Pitch_Roll_2",
+      "name": "Wrist_Pitch_Roll_2",
+      "root": 22,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.066132067097723,
+        "com": {
+          "x": -8.526531273724181,
+          "y": -35.227899789792694,
+          "z": -0.0234622481569413
+        },
+        "inertia": [
+          0.0000195717492443445,
+          0.0000238028417569933,
+          0.000034540143384536,
+          -6.62714374412293e-7,
+          5.20089016442066e-9,
+          4.09549055863776e-8
+        ]
+      }
+    },
+    "part_Lower_Arm": {
+      "id": "part_Lower_Arm",
+      "name": "Lower_Arm",
+      "root": 10,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.147967774582291,
+        "com": {
+          "x": -3.39603710186651,
+          "y": 1.37796353960074,
+          "z": 76.8006751156044
+        },
+        "inertia": [
+          0.000105333995841409,
+          0.000138766654485212,
+          0.0000508741652515214,
+          1.73059237226499e-7,
+          -0.000011720305455211,
+          1.77429964684103e-6
+        ]
+      }
+    },
+    "part_head_camera_depth_frame": {
+      "id": "part_head_camera_depth_frame",
+      "name": "head_camera_depth_frame",
+      "root": 38,
+      "defaultMaterial": "default"
+    },
+    "part_Upper_Arm": {
+      "id": "part_Upper_Arm",
+      "name": "Upper_Arm",
+      "root": 9,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.162409284599177,
+        "com": {
+          "x": -0.017205170190925,
+          "y": 70.1802156327694,
+          "z": 3.10545118155671
+        },
+        "inertia": [
+          0.000167153146617081,
+          0.0000701946992214245,
+          0.000213280241160769,
+          1.03902689187701e-6,
+          -1.20161820645189e-8,
+          2.11884806298698e-6
+        ]
+      }
+    },
+    "part_head_camera_link": {
+      "id": "part_head_camera_link",
+      "name": "head_camera_link",
+      "root": 35,
+      "defaultMaterial": "default"
+    },
+    "part_Moving_Jaw_2": {
+      "id": "part_Moving_Jaw_2",
+      "name": "Moving_Jaw_2",
+      "root": 24,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.0202443794940372,
+        "com": {
+          "x": -1.61744605468241,
+          "y": -30.3472584046471,
+          "z": 0.449645961853651
+        },
+        "inertia": [
+          0.0000110911325081525,
+          3.03576451001973e-6,
+          8.9916083370498e-6,
+          -5.35076503033314e-7,
+          -9.46105662101403e-9,
+          -1.71146075110632e-7
+        ]
+      }
+    },
+    "part_base_link": {
+      "id": "part_base_link",
+      "name": "base_link",
+      "root": 6,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 70.1294,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 380.0
+        },
+        "inertia": [
+          1.225,
+          1.2853,
+          0.987,
+          0.0099,
+          0.0062,
+          -0.0034
+        ]
+      }
+    },
+    "part_Lower_Arm_2": {
+      "id": "part_Lower_Arm_2",
+      "name": "Lower_Arm_2",
+      "root": 21,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.147967774582291,
+        "com": {
+          "x": -3.39603710186651,
+          "y": 1.37796353960074,
+          "z": 76.8006751156044
+        },
+        "inertia": [
+          0.000105333995841409,
+          0.000138766654485212,
+          0.0000508741652515214,
+          1.73059237226499e-7,
+          -0.000011720305455211,
+          1.77429964684103e-6
+        ]
+      }
+    },
+    "part_Moving_Jaw_tip_2": {
+      "id": "part_Moving_Jaw_tip_2",
+      "name": "Moving_Jaw_tip_2",
+      "root": 26,
+      "defaultMaterial": "default"
+    },
+    "part_Wrist_Pitch_Roll": {
+      "id": "part_Wrist_Pitch_Roll",
+      "name": "Wrist_Pitch_Roll",
+      "root": 11,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.066132067097723,
+        "com": {
+          "x": -8.526531273724181,
+          "y": -35.227899789792694,
+          "z": -0.0234622481569413
+        },
+        "inertia": [
+          0.0000195717492443445,
+          0.0000238028417569933,
+          0.000034540143384536,
+          -6.62714374412293e-7,
+          5.20089016442066e-9,
+          4.09549055863776e-8
+        ]
+      }
+    },
+    "part_top_base_link": {
+      "id": "part_top_base_link",
+      "name": "top_base_link",
+      "root": 30,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 4.3542,
+        "com": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "inertia": [
+          0.0045,
+          0.005,
+          0.0045,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "part_head_camera_rgb_frame": {
+      "id": "part_head_camera_rgb_frame",
+      "name": "head_camera_rgb_frame",
+      "root": 36,
+      "defaultMaterial": "default"
+    },
+    "part_Left_Arm_Camera": {
+      "id": "part_Left_Arm_Camera",
+      "name": "Left_Arm_Camera",
+      "root": 28,
+      "defaultMaterial": "default"
+    },
+    "part_head_camera_rgb_optical_frame": {
+      "id": "part_head_camera_rgb_optical_frame",
+      "name": "head_camera_rgb_optical_frame",
+      "root": 37,
+      "defaultMaterial": "default"
+    },
+    "part_Rotation_Pitch_2": {
+      "id": "part_Rotation_Pitch_2",
+      "name": "Rotation_Pitch_2",
+      "root": 19,
+      "defaultMaterial": "default",
+      "inertial": {
+        "mass": 0.119226314127197,
+        "com": {
+          "x": -0.0907886224712597,
+          "y": 59.0971820568318,
+          "z": 31.089016892169
+        },
+        "inertia": [
+          0.0000590408775624429,
+          0.0000321498601038881,
+          0.0000586058514263952,
+          4.90800532852998e-7,
+          -5.90451772654387e-8,
+          -4.58026206663885e-6
+        ]
+      }
+    }
+  },
+  "instances": [
+    {
+      "id": "root_inst",
+      "partDefId": "part_root",
+      "name": "root"
+    },
+    {
+      "id": "root_arm_1_link_1_inst",
+      "partDefId": "part_root_arm_1_link_1",
+      "name": "root_arm_1_link_1"
+    },
+    {
+      "id": "root_arm_1_link_2_inst",
+      "partDefId": "part_root_arm_1_link_2",
+      "name": "root_arm_1_link_2"
+    },
+    {
+      "id": "base_link_inst",
+      "partDefId": "part_base_link",
+      "name": "base_link"
+    },
+    {
+      "id": "Base_inst",
+      "partDefId": "part_Base",
+      "name": "Base"
+    },
+    {
+      "id": "Rotation_Pitch_inst",
+      "partDefId": "part_Rotation_Pitch",
+      "name": "Rotation_Pitch"
+    },
+    {
+      "id": "Upper_Arm_inst",
+      "partDefId": "part_Upper_Arm",
+      "name": "Upper_Arm"
+    },
+    {
+      "id": "Lower_Arm_inst",
+      "partDefId": "part_Lower_Arm",
+      "name": "Lower_Arm"
+    },
+    {
+      "id": "Wrist_Pitch_Roll_inst",
+      "partDefId": "part_Wrist_Pitch_Roll",
+      "name": "Wrist_Pitch_Roll"
+    },
+    {
+      "id": "Fixed_Jaw_inst",
+      "partDefId": "part_Fixed_Jaw",
+      "name": "Fixed_Jaw"
+    },
+    {
+      "id": "Moving_Jaw_inst",
+      "partDefId": "part_Moving_Jaw",
+      "name": "Moving_Jaw"
+    },
+    {
+      "id": "Fixed_Jaw_tip_inst",
+      "partDefId": "part_Fixed_Jaw_tip",
+      "name": "Fixed_Jaw_tip"
+    },
+    {
+      "id": "Moving_Jaw_tip_inst",
+      "partDefId": "part_Moving_Jaw_tip",
+      "name": "Moving_Jaw_tip"
+    },
+    {
+      "id": "Right_Arm_Camera_inst",
+      "partDefId": "part_Right_Arm_Camera",
+      "name": "Right_Arm_Camera"
+    },
+    {
+      "id": "Base_2_inst",
+      "partDefId": "part_Base_2",
+      "name": "Base_2"
+    },
+    {
+      "id": "Rotation_Pitch_2_inst",
+      "partDefId": "part_Rotation_Pitch_2",
+      "name": "Rotation_Pitch_2"
+    },
+    {
+      "id": "Upper_Arm_2_inst",
+      "partDefId": "part_Upper_Arm_2",
+      "name": "Upper_Arm_2"
+    },
+    {
+      "id": "Lower_Arm_2_inst",
+      "partDefId": "part_Lower_Arm_2",
+      "name": "Lower_Arm_2"
+    },
+    {
+      "id": "Wrist_Pitch_Roll_2_inst",
+      "partDefId": "part_Wrist_Pitch_Roll_2",
+      "name": "Wrist_Pitch_Roll_2"
+    },
+    {
+      "id": "Fixed_Jaw_2_inst",
+      "partDefId": "part_Fixed_Jaw_2",
+      "name": "Fixed_Jaw_2"
+    },
+    {
+      "id": "Moving_Jaw_2_inst",
+      "partDefId": "part_Moving_Jaw_2",
+      "name": "Moving_Jaw_2"
+    },
+    {
+      "id": "Fixed_Jaw_tip_2_inst",
+      "partDefId": "part_Fixed_Jaw_tip_2",
+      "name": "Fixed_Jaw_tip_2"
+    },
+    {
+      "id": "Moving_Jaw_tip_2_inst",
+      "partDefId": "part_Moving_Jaw_tip_2",
+      "name": "Moving_Jaw_tip_2"
+    },
+    {
+      "id": "Left_Arm_Camera_inst",
+      "partDefId": "part_Left_Arm_Camera",
+      "name": "Left_Arm_Camera"
+    },
+    {
+      "id": "top_base_link_inst",
+      "partDefId": "part_top_base_link",
+      "name": "top_base_link"
+    },
+    {
+      "id": "head_pan_link_inst",
+      "partDefId": "part_head_pan_link",
+      "name": "head_pan_link"
+    },
+    {
+      "id": "head_tilt_link_inst",
+      "partDefId": "part_head_tilt_link",
+      "name": "head_tilt_link"
+    },
+    {
+      "id": "head_camera_link_inst",
+      "partDefId": "part_head_camera_link",
+      "name": "head_camera_link"
+    },
+    {
+      "id": "head_camera_rgb_frame_inst",
+      "partDefId": "part_head_camera_rgb_frame",
+      "name": "head_camera_rgb_frame"
+    },
+    {
+      "id": "head_camera_rgb_optical_frame_inst",
+      "partDefId": "part_head_camera_rgb_optical_frame",
+      "name": "head_camera_rgb_optical_frame"
+    },
+    {
+      "id": "head_camera_depth_frame_inst",
+      "partDefId": "part_head_camera_depth_frame",
+      "name": "head_camera_depth_frame"
+    },
+    {
+      "id": "head_camera_depth_optical_frame_inst",
+      "partDefId": "part_head_camera_depth_optical_frame",
+      "name": "head_camera_depth_optical_frame"
+    }
+  ],
+  "joints": [
+    {
+      "id": "root_x_axis_joint",
+      "name": "root_x_axis_joint",
+      "parentInstanceId": "root_inst",
+      "childInstanceId": "root_arm_1_link_1_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Slider",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -20000.0,
+          20000.0
+        ],
+        "effort_limit": 100.0,
+        "velocity_limit": 500.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "root_y_axis_joint",
+      "name": "root_y_axis_joint",
+      "parentInstanceId": "root_arm_1_link_1_inst",
+      "childInstanceId": "root_arm_1_link_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Slider",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -20000.0,
+          20000.0
+        ],
+        "effort_limit": 100.0,
+        "velocity_limit": 500.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "root_z_rotation_joint",
+      "name": "root_z_rotation_joint",
+      "parentInstanceId": "root_arm_1_link_2_inst",
+      "childInstanceId": "base_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        }
+      },
+      "state": 0.0
+    },
+    {
+      "id": "arm_base_joint",
+      "name": "arm_base_joint",
+      "parentInstanceId": "base_link_inst",
+      "childInstanceId": "Base_inst",
+      "parentAnchor": {
+        "x": -135.0,
+        "y": -133.0,
+        "z": 760.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Rotation",
+      "name": "Rotation",
+      "parentInstanceId": "Base_inst",
+      "childInstanceId": "Rotation_Pitch_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -45.199999999999996,
+        "z": 16.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": -1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -120.32113697747289,
+          120.32113697747289
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Pitch",
+      "name": "Pitch",
+      "parentInstanceId": "Rotation_Pitch_inst",
+      "childInstanceId": "Upper_Arm_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 102.5,
+        "z": 30.599999999999998
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": -1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -5.729577951308233,
+          197.67043932013402
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Elbow",
+      "name": "Elbow",
+      "parentInstanceId": "Upper_Arm_inst",
+      "childInstanceId": "Lower_Arm_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 112.57000000000001,
+        "z": 28.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -11.459155902616466,
+          179.9998479605043
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Wrist_Pitch",
+      "name": "Wrist_Pitch",
+      "parentInstanceId": "Lower_Arm_inst",
+      "childInstanceId": "Wrist_Pitch_Roll_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 5.2,
+        "z": 134.9
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -103.13240312354819,
+          103.13240312354819
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Wrist_Roll",
+      "name": "Wrist_Roll",
+      "parentInstanceId": "Wrist_Pitch_Roll_inst",
+      "childInstanceId": "Fixed_Jaw_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -60.1,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": -1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -179.9998479605043,
+          179.9998479605043
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Jaw",
+      "name": "Jaw",
+      "parentInstanceId": "Fixed_Jaw_inst",
+      "childInstanceId": "Moving_Jaw_inst",
+      "parentAnchor": {
+        "x": -20.2,
+        "y": -24.400000000000002,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          0.0,
+          97.40282517223994
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Fixed_Jaw_tip_joint",
+      "name": "Fixed_Jaw_tip_joint",
+      "parentInstanceId": "Fixed_Jaw_inst",
+      "childInstanceId": "Fixed_Jaw_tip_inst",
+      "parentAnchor": {
+        "x": 10.0,
+        "y": -97.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Moving_Jaw_tip_joint",
+      "name": "Moving_Jaw_tip_joint",
+      "parentInstanceId": "Moving_Jaw_inst",
+      "childInstanceId": "Moving_Jaw_tip_inst",
+      "parentAnchor": {
+        "x": -10.0,
+        "y": -73.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Right_Arm_Camera_joint",
+      "name": "Right_Arm_Camera_joint",
+      "parentInstanceId": "Fixed_Jaw_inst",
+      "childInstanceId": "Right_Arm_Camera_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -20.0,
+        "z": 50.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "arm_base_joint_2",
+      "name": "arm_base_joint_2",
+      "parentInstanceId": "base_link_inst",
+      "childInstanceId": "Base_2_inst",
+      "parentAnchor": {
+        "x": -135.0,
+        "y": 133.0,
+        "z": 760.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Rotation_2",
+      "name": "Rotation_2",
+      "parentInstanceId": "Base_2_inst",
+      "childInstanceId": "Rotation_Pitch_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -45.199999999999996,
+        "z": 16.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": -1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -120.32113697747289,
+          120.32113697747289
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Pitch_2",
+      "name": "Pitch_2",
+      "parentInstanceId": "Rotation_Pitch_2_inst",
+      "childInstanceId": "Upper_Arm_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 102.5,
+        "z": 30.599999999999998
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": -1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -5.729577951308233,
+          197.67043932013402
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Elbow_2",
+      "name": "Elbow_2",
+      "parentInstanceId": "Upper_Arm_2_inst",
+      "childInstanceId": "Lower_Arm_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 112.57000000000001,
+        "z": 28.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -11.459155902616466,
+          179.9998479605043
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Wrist_Pitch_2",
+      "name": "Wrist_Pitch_2",
+      "parentInstanceId": "Lower_Arm_2_inst",
+      "childInstanceId": "Wrist_Pitch_Roll_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 5.2,
+        "z": 134.9
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "limits": [
+          -103.13240312354819,
+          103.13240312354819
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Wrist_Roll_2",
+      "name": "Wrist_Roll_2",
+      "parentInstanceId": "Wrist_Pitch_Roll_2_inst",
+      "childInstanceId": "Fixed_Jaw_2_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -60.1,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": -1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -179.9998479605043,
+          179.9998479605043
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Jaw_2",
+      "name": "Jaw_2",
+      "parentInstanceId": "Fixed_Jaw_2_inst",
+      "childInstanceId": "Moving_Jaw_2_inst",
+      "parentAnchor": {
+        "x": -20.2,
+        "y": -24.400000000000002,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          0.0,
+          97.40282517223994
+        ],
+        "effort_limit": 0.0,
+        "velocity_limit": 0.0
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Fixed_Jaw_tip_joint_2",
+      "name": "Fixed_Jaw_tip_joint_2",
+      "parentInstanceId": "Fixed_Jaw_2_inst",
+      "childInstanceId": "Fixed_Jaw_tip_2_inst",
+      "parentAnchor": {
+        "x": 10.0,
+        "y": -97.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Moving_Jaw_tip_joint_2",
+      "name": "Moving_Jaw_tip_joint_2",
+      "parentInstanceId": "Moving_Jaw_2_inst",
+      "childInstanceId": "Moving_Jaw_tip_2_inst",
+      "parentAnchor": {
+        "x": -10.0,
+        "y": -73.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "Left_Arm_Camera_joint",
+      "name": "Left_Arm_Camera_joint",
+      "parentInstanceId": "Fixed_Jaw_2_inst",
+      "childInstanceId": "Left_Arm_Camera_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": -20.0,
+        "z": 50.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "top_base_joint",
+      "name": "top_base_joint",
+      "parentInstanceId": "base_link_inst",
+      "childInstanceId": "top_base_link_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 730.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_pan_joint",
+      "name": "head_pan_joint",
+      "parentInstanceId": "top_base_link_inst",
+      "childInstanceId": "head_pan_link_inst",
+      "parentAnchor": {
+        "x": -178.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.0
+        },
+        "limits": [
+          -89.95437383553924,
+          89.95437383553924
+        ],
+        "effort_limit": 0.32,
+        "velocity_limit": 89.95437383553924
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_tilt_joint",
+      "name": "head_tilt_joint",
+      "parentInstanceId": "head_pan_link_inst",
+      "childInstanceId": "head_tilt_link_inst",
+      "parentAnchor": {
+        "x": 31.0,
+        "y": 0.0,
+        "z": 438.15
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Revolute",
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -43.54479242994257,
+          83.07888029396936
+        ],
+        "effort_limit": 0.68,
+        "velocity_limit": 89.95437383553924
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_camera_joint",
+      "name": "head_camera_joint",
+      "parentInstanceId": "head_tilt_link_inst",
+      "childInstanceId": "head_camera_link_inst",
+      "parentAnchor": {
+        "x": 55.0,
+        "y": 0.0,
+        "z": 22.5
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_camera_rgb_joint",
+      "name": "head_camera_rgb_joint",
+      "parentInstanceId": "head_camera_link_inst",
+      "childInstanceId": "head_camera_rgb_frame_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 20.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_camera_rgb_optical_joint",
+      "name": "head_camera_rgb_optical_joint",
+      "parentInstanceId": "head_camera_rgb_frame_inst",
+      "childInstanceId": "head_camera_rgb_optical_frame_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_camera_depth_joint",
+      "name": "head_camera_depth_joint",
+      "parentInstanceId": "head_camera_link_inst",
+      "childInstanceId": "head_camera_depth_frame_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 45.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    },
+    {
+      "id": "head_camera_depth_optical_joint",
+      "name": "head_camera_depth_optical_joint",
+      "parentInstanceId": "head_camera_depth_frame_inst",
+      "childInstanceId": "head_camera_depth_optical_frame_inst",
+      "parentAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "kind": {
+        "type": "Fixed"
+      },
+      "state": 0.0
+    }
+  ],
+  "groundInstanceId": "root_inst"
+}

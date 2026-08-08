@@ -36,6 +36,24 @@ export const SENSITIVITY_QUANTITIES = [
   "bbox_z",
 ] as const;
 
+/**
+ * Monotonic request id, so the newest `compute` owns the store.
+ *
+ * The `loading` flag alone cannot do this job. Checking it and setting it are
+ * one synchronous block, so two callers genuinely cannot both get past the
+ * guard — but a caller that arrives during the yield and is turned away is
+ * *silently dropped*, and the user is left looking at a result for the
+ * document they had a moment ago. A generation counter lets the latest
+ * request win instead: the superseded one finishes its work and discards it
+ * rather than writing a stale report. Same pattern as `useEngine`'s
+ * `evalGeneration`.
+ *
+ * Note the WASM call itself is synchronous, so two solves can never overlap —
+ * at worst a superseded one wastes a pass before discarding its result, which
+ * is bounded by how fast a person can click.
+ */
+let computeGeneration = 0;
+
 export const useSensitivityStore = create<SensitivityState>((set, get) => ({
   report: null,
   loading: false,
@@ -46,18 +64,22 @@ export const useSensitivityStore = create<SensitivityState>((set, get) => ({
   setQuantity: (quantity) => set({ quantity, report: null, computedFor: null }),
 
   compute: async (doc, engine, revision) => {
-    if (get().loading) return;
+    const gen = ++computeGeneration;
     set({ loading: true, error: null });
     // Yield a frame so the spinner paints before the synchronous WASM call
     // blocks the main thread.
     await new Promise((r) => setTimeout(r, 0));
+    // Superseded while we yielded — a newer request owns the store now.
+    if (gen !== computeGeneration) return;
     try {
       const report = engine.documentSensitivities(doc, {
         quantities: [get().quantity],
         findTrustRadius: true,
       });
+      if (gen !== computeGeneration) return;
       set({ report, loading: false, computedFor: revision });
     } catch (e) {
+      if (gen !== computeGeneration) return;
       set({
         report: null,
         loading: false,

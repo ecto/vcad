@@ -10,7 +10,7 @@
  *    term can carry the wrong sign, and the UI must not launder that into a
  *    tidy figure next to a scrub input.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 import type { SensitivityReport, SensitivityRow } from "@vcad/engine";
 import { ParametersPanel } from "@/components/ParametersPanel";
@@ -119,8 +119,12 @@ describe("influence helpers", () => {
 });
 
 describe("ParametersPanel influence rows", () => {
+  // `cleanup` belongs in afterEach. Run only in beforeEach it leaves the last
+  // test's panel mounted, and that panel's invalidate() effect then wipes the
+  // store out from under whatever describe runs next.
+  afterEach(cleanup);
+
   beforeEach(() => {
-    cleanup();
     useParametersStore.setState({
       parameters: {
         // Deliberately alphabetical-last for the dominant knob, so a passing
@@ -213,5 +217,74 @@ describe("ParametersPanel influence rows", () => {
       </TooltipProvider>,
     );
     expect(container.textContent).toContain("finite difference");
+  });
+});
+
+describe("compute supersession", () => {
+  const engineFor = (label: string, calls: string[]) =>
+    ({
+      documentSensitivities: () => {
+        calls.push(label);
+        return report([row(label, 1, [0, 10])]);
+      },
+    }) as never;
+
+  beforeEach(() => {
+    useSensitivityStore.setState({
+      report: null,
+      loading: false,
+      error: null,
+      quantity: "mass",
+      computedFor: null,
+    });
+  });
+
+  it("lets the newest request win instead of dropping it", async () => {
+    const calls: string[] = [];
+    const doc = useDocumentStore.getState().document;
+    const store = useSensitivityStore.getState();
+
+    // Two computes issued back to back — the second arrives while the first
+    // is still yielding. Before, the second was silently dropped and the user
+    // was left with a result for the document they had a moment ago.
+    const first = store.compute(doc, engineFor("first", calls), "rev-a");
+    const second = store.compute(doc, engineFor("second", calls), "rev-b");
+    await Promise.all([first, second]);
+
+    const state = useSensitivityStore.getState();
+    expect(state.computedFor).toBe("rev-b");
+    expect(state.report?.table.rows[0]?.parameter).toBe("second");
+    expect(state.loading).toBe(false);
+  });
+
+  it("does not let a superseded request write a stale report", async () => {
+    const calls: string[] = [];
+    const doc = useDocumentStore.getState().document;
+    const store = useSensitivityStore.getState();
+
+    const stale = store.compute(doc, engineFor("stale", calls), "rev-old");
+    const fresh = store.compute(doc, engineFor("fresh", calls), "rev-new");
+    await Promise.all([stale, fresh]);
+
+    // The superseded pass may or may not have run, but it must never be the
+    // one whose result is in the store.
+    expect(useSensitivityStore.getState().report?.table.rows[0]?.parameter).toBe(
+      "fresh",
+    );
+    expect(useSensitivityStore.getState().computedFor).toBe("rev-new");
+  });
+
+  it("a failing solve still clears loading and reports the error", async () => {
+    const doc = useDocumentStore.getState().document;
+    const boom = {
+      documentSensitivities: () => {
+        throw new Error("kernel exploded");
+      },
+    } as never;
+    await useSensitivityStore.getState().compute(doc, boom, "rev");
+    const state = useSensitivityStore.getState();
+    expect(state.loading).toBe(false);
+    expect(state.error).toContain("kernel exploded");
+    expect(state.report).toBeNull();
   });
 });

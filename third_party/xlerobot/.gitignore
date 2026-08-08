@@ -1,0 +1,10 @@
+# The root .gitignore excludes `*.stl` — a sensible rule for generated exports,
+# and the reason the Booster K1's vendored meshes were silently dropped from
+# their own commit (fixed later in 17d7659c). `git add third_party/` skips them
+# without a word, tests still pass locally because the files are present but
+# untracked, and the sample renders nothing on every other machine.
+#
+# These meshes ARE the vendored asset (see README.md), so re-include them.
+!*.STL
+!*.stl
+!*.ply

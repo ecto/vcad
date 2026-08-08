@@ -742,6 +742,7 @@ mod tests {
                 root: 1,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         part_defs.insert(
@@ -752,6 +753,7 @@ mod tests {
                 root: 2,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         part_defs.insert(
@@ -762,6 +764,7 @@ mod tests {
                 root: 3,
                 default_material: None,
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);

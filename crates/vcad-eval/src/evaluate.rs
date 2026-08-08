@@ -813,19 +813,69 @@ fn evaluate_op_timed(
             Ok(Some(solid))
         }
 
-        CsgOp::ImportedMesh { .. } => {
-            // ImportedMesh is handled at the document level via find_imported_mesh.
-            // If we reach here directly, return empty.
-            Ok(None)
+        // A triangle soup is a legitimate `Solid` — `SolidRepr::Mesh` — and
+        // transforms, bounding boxes, tessellation, shell and (degraded)
+        // booleans all handle it. Both mesh ops therefore evaluate to a real
+        // solid rather than to `None`.
+        //
+        // Returning `None` here used to be the single root cause of a whole
+        // family of "the mesh silently isn't there" bugs. `None` means "this
+        // subtree contributes no geometry", so it propagates: a mesh under a
+        // `Translate` — which is what a URDF `<visual>` with an `origin`
+        // offset imports as — made the *entire part* evaluate to nothing.
+        // Downstream that surfaced as an empty render, a volume of zero, a
+        // boolean that quietly dropped its mesh operand, and (in physics) a
+        // hard "no resolvable geometry" failure for any link without an
+        // authored `<inertial>`. Every consumer had to special-case a bare
+        // mesh node at the root of a part to see anything at all.
+        CsgOp::ImportedMesh {
+            positions,
+            indices,
+            normals,
+            ..
+        } => {
+            let n_verts = positions.len() / 3;
+            Ok(Some(Solid::from_mesh(TriangleMesh {
+                vertices: positions.iter().map(|v| *v as f32).collect(),
+                indices: indices.clone(),
+                normals: normals
+                    .as_ref()
+                    .map(|n| n.iter().map(|v| *v as f32).collect())
+                    .unwrap_or_else(|| vec![0.0; n_verts * 3]),
+                face_kinds: Vec::new(),
+            })))
         }
 
         CsgOp::StepImport { path } => Ok(Solid::from_step(path).ok()),
 
-        // STL meshes are loaded by the physics path directly; the editor's
-        // CSG evaluator currently has no path from a triangle soup to a
-        // BRep solid, so we surface a None and let downstream code skip the
-        // mesh-derived steps for this part.
+        // On wasm there is no filesystem to open the STL from; the browser
+        // flow rewrites these nodes to `ImportedMesh` before evaluation, so
+        // this arm is unreachable there and stays a no-geometry result.
+        #[cfg(target_arch = "wasm32")]
         CsgOp::MeshImport { .. } => Ok(None),
+
+        #[cfg(not(target_arch = "wasm32"))]
+        CsgOp::MeshImport {
+            path,
+            scale: urdf_scale,
+        } => {
+            // A missing or unparseable file stays `None` (logged by the
+            // loader) rather than erroring the document — one bad mesh
+            // reference should not take the whole assembly down.
+            let Some((positions, indices, normals)) = load_mesh_import(path, urdf_scale.as_ref())
+            else {
+                return Ok(None);
+            };
+            let n_verts = positions.len() / 3;
+            Ok(Some(Solid::from_mesh(TriangleMesh {
+                vertices: positions.iter().map(|v| *v as f32).collect(),
+                indices,
+                normals: normals
+                    .map(|n| n.iter().map(|v| *v as f32).collect())
+                    .unwrap_or_else(|| vec![0.0; n_verts * 3]),
+                face_kinds: Vec::new(),
+            })))
+        }
 
         CsgOp::PcbBoard { board } => {
             // Extrude the board outline into a 3D solid.

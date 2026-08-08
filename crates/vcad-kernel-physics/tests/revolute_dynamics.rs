@@ -83,6 +83,7 @@ fn doc_with(n_pendula: usize, axis: V, first_state: f64) -> Document {
             root: 1,
             default_material: None,
             inertial: None,
+            colliders: None,
         },
     );
     part_defs.insert(
@@ -93,6 +94,7 @@ fn doc_with(n_pendula: usize, axis: V, first_state: f64) -> Document {
             root: 6,
             default_material: None,
             inertial: None,
+            colliders: None,
         },
     );
     doc.part_defs = Some(part_defs);

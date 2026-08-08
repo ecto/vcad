@@ -1026,6 +1026,7 @@ fn parse_part_def(doc: &mut Document, parts: &[&str], line: usize) -> Result<(),
             root,
             default_material,
             inertial: None,
+            colliders: None,
         },
     );
 
@@ -3774,6 +3775,7 @@ CAM cam2 0 100 0 0 0 0"#;
                 root: 0,
                 default_material: Some("aluminum".to_string()),
                 inertial: None,
+                colliders: None,
             },
         );
         doc.part_defs = Some(part_defs);

@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-08-urdf-collision-decomposition",
+  "version": "0.9.4",
+  "date": "2026-08-08",
+  "category": "fix",
+  "title": "URDF import keeps each link's collision decomposition",
+  "summary": "Imported robots now collide with every <collision> shape a link declares instead of one mesh taken from <visual>, so a link built as a convex decomposition gets its real contact surface.",
+  "features": ["urdf", "physics", "simulation", "import"]
+}
