@@ -7316,6 +7316,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-adjoint"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-receipt",
+]
+
+[[package]]
 name = "vcad-kernel-antenna"
 version = "0.9.4"
 dependencies = [
@@ -7496,6 +7505,7 @@ dependencies = [
  "pollster",
  "serde",
  "serde_json",
+ "vcad-kernel-adjoint",
  "vcad-kernel-gpu",
  "vcad-kernel-thermal",
  "vcad-receipt",

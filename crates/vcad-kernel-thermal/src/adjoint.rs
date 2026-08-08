@@ -99,6 +99,16 @@ pub struct SmoothMaxGradient {
     /// (`face_index` order), 6 is the exposed rule. `None` where the slot
     /// is not a convection BC.
     pub d_film: [Option<f64>; 7],
+    /// dJ/d(ambient temperature) per BC slot, K/K, same slot indexing as
+    /// [`Self::d_film`]. `None` where the slot is not a convection BC.
+    ///
+    /// This is the *other* half of a convection boundary. On its own it
+    /// looks redundant — of course a hotter ambient makes a hotter part —
+    /// but it is the term a conjugate coupling needs: the fluid hands the
+    /// solid both a film coefficient and a bulk temperature, and a
+    /// coupled gradient that differentiates only the film is missing half
+    /// the channel.
+    pub d_ambient: [Option<f64>; 7],
     /// CG iterations of the forward solve.
     pub forward_iterations: usize,
     /// CG iterations of the adjoint solve.
@@ -162,6 +172,7 @@ pub fn smooth_max_gradient(
             d_source_power: vec![0.0; model.sources.len()],
             d_conductivity: vec![[0.0; 3]; model.materials.len()],
             d_film: film_slots(model, |_| 0.0),
+            d_ambient: film_slots(model, |_| 0.0),
             forward_iterations,
             adjoint_iterations: 0,
         };
@@ -235,8 +246,10 @@ pub fn smooth_max_gradient(
             }
         }
     }
-    // Boundary links: half-cell conductivity and film coefficients.
+    // Boundary links: half-cell conductivity, film coefficients, and the
+    // reference temperatures those films are measured against.
     let mut d_film_acc = [0.0_f64; 7];
+    let mut d_ambient_acc = [0.0_f64; 7];
     for l in &sys.links {
         let dj_dg = -lam[l.voxel] * (t[l.voxel] - l.t_ref);
         let d = sys.d_m[l.axis];
@@ -260,10 +273,14 @@ pub fn smooth_max_gradient(
                 let dd = area / (denom * denom);
                 d_conductivity[sys.mat_id[l.voxel]][l.axis] += dj_dg * dd * 0.5 * d / (kv * kv);
                 d_film_acc[slot] += dj_dg * dd / (h * h);
+                // b carries G·T_ambient on this row, so ∂r_v/∂T_amb = −G
+                // and dJ/dT_amb = −λᵀ ∂r/∂T_amb = +λ_v·G.
+                d_ambient_acc[slot] += lam[l.voxel] * l.g;
             }
         }
     }
     let d_film = film_slots(model, |slot| d_film_acc[slot]);
+    let d_ambient = film_slots(model, |slot| d_ambient_acc[slot]);
 
     let solution = assemble_solution(&sys, model, &t, forward_iterations, res_fwd, model_ref);
     Ok((
@@ -277,6 +294,7 @@ pub fn smooth_max_gradient(
             d_source_power,
             d_conductivity,
             d_film,
+            d_ambient,
             forward_iterations,
             adjoint_iterations,
         },
@@ -468,6 +486,93 @@ mod tests {
                 "dJ/dh slot {slot}: adjoint {adj:.9e}, fd {fd_h:.9e} (rel {rel:.3e})"
             );
         }
+
+        // Ambient temperatures, both convection slots — the other half of
+        // a convection boundary, and the half a conjugate coupling needs.
+        for (slot, h) in [(4usize, 0.05), (5, 0.05)] {
+            let fd_a = {
+                let mut up = m.clone();
+                let mut dn = m.clone();
+                if let Boundary::Convection { ambient_c, .. } = &mut up.domain_faces[slot] {
+                    *ambient_c += h;
+                }
+                if let Boundary::Convection { ambient_c, .. } = &mut dn.domain_faces[slot] {
+                    *ambient_c -= h;
+                }
+                (objective(&up) - objective(&dn)) / (2.0 * h)
+            };
+            let adj = grad.d_ambient[slot].expect("convection slot");
+            let rel = (adj - fd_a).abs() / fd_a.abs().max(1e-12);
+            assert!(
+                rel < 1e-5,
+                "dJ/dT_amb slot {slot}: adjoint {adj:.9e}, fd {fd_a:.9e} (rel {rel:.3e})"
+            );
+        }
+    }
+
+    /// Raising *every* ambient together must agree with the sum of the
+    /// per-slot ambient gradients — the composite check the per-slot
+    /// finite differences cannot give, since it exercises all six slots
+    /// at once.
+    ///
+    /// Note the sum is deliberately **not** 1. A uniform ambient shift
+    /// translates the whole field by one degree, but the objective
+    /// measures excess over a *fixed* reference, and the p-norm's weights
+    /// `(x_v/J_ex)^(p−1)` sum to more than 1 whenever several voxels are
+    /// active. The sum is that weight total, which is a property of the
+    /// smoothing, not of the boundary condition.
+    #[test]
+    fn ambient_gradients_compose_across_slots() {
+        let mut m = ThermalModel::new([0.0, 0.0, 0.0], [20.0, 20.0, 4.0], [10, 10, 2]);
+        m.materials.push(MaterialRegion::isotropic(
+            Shape::Box {
+                min_mm: [0.0, 0.0, 0.0],
+                size_mm: [20.0, 20.0, 4.0],
+            },
+            5.0,
+        ));
+        m.sources.push(PowerSource {
+            name: "die".into(),
+            shape: Shape::Box {
+                min_mm: [8.0, 8.0, 0.0],
+                size_mm: [4.0, 4.0, 4.0],
+            },
+            power_w: 1.0,
+        });
+        // Every domain face convects to the same ambient; no fixed
+        // reservoirs, so the ambient is the only thing anchoring the field.
+        for f in 0..6 {
+            m.domain_faces[f] = Boundary::Convection {
+                h_w_m2k: 15.0,
+                ambient_c: 25.0,
+            };
+        }
+        m.reference_c = Some(25.0);
+        let (_, grad) = smooth_max_gradient(&m, &tight(), &ObjectiveOptions::default()).unwrap();
+        let total: f64 = grad.d_ambient.iter().flatten().sum();
+
+        // Central FD on a simultaneous shift of all six ambients.
+        let shift = |d: f64| {
+            let mut mm = m.clone();
+            for f in 0..6 {
+                if let Boundary::Convection { ambient_c, .. } = &mut mm.domain_faces[f] {
+                    *ambient_c += d;
+                }
+            }
+            objective(&mm)
+        };
+        let hstep = 0.05;
+        let fd = (shift(hstep) - shift(-hstep)) / (2.0 * hstep);
+        let rel = (total - fd).abs() / fd.abs();
+        assert!(
+            rel < 1e-5,
+            "summed ambient gradient {total:.9e} vs uniform-shift fd {fd:.9e} (rel {rel:.3e})"
+        );
+        // Several voxels are active here, so the weight total exceeds 1.
+        assert!(
+            total > 1.0,
+            "expected a p-norm weight total above 1, got {total}"
+        );
     }
 
     #[test]

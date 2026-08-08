@@ -25,6 +25,7 @@ members = [
     "crates/vcad-kernel-constraints",
     "crates/vcad-design-constraints",
     "crates/vcad-kernel-diff",
+    "crates/vcad-kernel-adjoint",
     "crates/vcad-kernel-antenna",
     "crates/vcad-kernel-neutronics",
     "crates/vcad-kernel-particle",
@@ -124,6 +125,7 @@ default-members = [
     "crates/vcad-kernel-constraints",
     "crates/vcad-design-constraints",
     "crates/vcad-kernel-diff",
+    "crates/vcad-kernel-adjoint",
     "crates/vcad-kernel-antenna",
     "crates/vcad-kernel-neutronics",
     "crates/vcad-kernel-particle",
@@ -260,6 +262,7 @@ vcad-kernel-export = { path = "crates/vcad-kernel-export", version = "0.9.4" }
 vcad-kernel-constraints = { path = "crates/vcad-kernel-constraints", version = "0.9.4" }
 vcad-design-constraints = { path = "crates/vcad-design-constraints", version = "0.9.4" }
 vcad-kernel-diff = { path = "crates/vcad-kernel-diff", version = "0.9.4" }
+vcad-kernel-adjoint = { path = "crates/vcad-kernel-adjoint", version = "0.9.4" }
 vcad-kernel-antenna = { path = "crates/vcad-kernel-antenna", version = "0.9.4" }
 vcad-kernel-neutronics = { path = "crates/vcad-kernel-neutronics", version = "0.9.4" }
 vcad-kernel-particle = { path = "crates/vcad-kernel-particle", version = "0.9.4" }
