@@ -10,15 +10,20 @@
 //!
 //! The stopping criterion is relative to the load-vector norm, so a
 //! 1 N problem and a 10 kN problem converge to the same relative quality.
+//!
+//! The element assembly, operator, and PCG here are `pub(crate)` so
+//! [`crate::adjoint`] differentiates *exactly* the system this module
+//! solves — a separate reimplementation would leave the gradient
+//! consistent with a model nobody runs.
 
 use crate::mesh::TetMesh;
 use crate::spec::FeaSpec;
 
 /// Per-element data for the matrix-free operator.
-struct Elem {
-    n: [u32; 4],
-    grad: [[f64; 3]; 4],
-    vol: f64,
+pub(crate) struct Elem {
+    pub(crate) n: [usize; 4],
+    pub(crate) grad: [[f64; 3]; 4],
+    pub(crate) vol: f64,
 }
 
 /// Solve failures.
@@ -147,25 +152,16 @@ impl Default for SolveOptions {
     }
 }
 
-/// Solve one static case on a prepared tet mesh (summary only).
-pub fn solve_static(
-    mesh: &TetMesh,
-    spec: &FeaSpec,
-    opts: &SolveOptions,
-) -> Result<Solution, SolveError> {
-    solve_static_full(mesh, spec, opts).map(|f| f.summary)
+/// Lamé constants at **unit** Young's modulus.
+pub(crate) fn lame(nu: f64) -> (f64, f64) {
+    (
+        nu / ((1.0 + nu) * (1.0 - 2.0 * nu)),
+        1.0 / (2.0 * (1.0 + nu)),
+    )
 }
 
-/// Solve one static case, keeping per-node displacement and stress fields.
-pub fn solve_static_full(
-    mesh: &TetMesh,
-    spec: &FeaSpec,
-    opts: &SolveOptions,
-) -> Result<FullSolution, SolveError> {
-    spec.validate()?;
-
-    // Element gradients: for a linear tet with nodes x0..x3, the
-    // barycentric gradients are rows of the inverse edge matrix.
+/// Build the per-element shape gradients and volumes.
+pub(crate) fn build_elements(mesh: &TetMesh) -> Result<Vec<Elem>, SolveError> {
     let mut elems = Vec::with_capacity(mesh.tets.len());
     for (ti, t) in mesh.tets.iter().enumerate() {
         let p = |i: usize| mesh.nodes[t[i] as usize];
@@ -191,22 +187,34 @@ pub fn solve_static_full(
             -g1[2] - g2[2] - g3[2],
         ];
         elems.push(Elem {
-            n: *t,
+            n: [t[0] as usize, t[1] as usize, t[2] as usize, t[3] as usize],
             grad: [g0, g1, g2, g3],
             vol,
         });
     }
+    Ok(elems)
+}
 
-    // Lamé constants at unit E.
-    let nu = spec.poisson;
-    let lam = nu / ((1.0 + nu) * (1.0 - 2.0 * nu));
-    let mu = 1.0 / (2.0 * (1.0 + nu));
+/// Boundary data resolved against a mesh: the fixed-dof mask and the
+/// nodal force vector.
+pub(crate) struct Bc {
+    pub(crate) fixed: Vec<bool>,
+    pub(crate) f: Vec<f64>,
+}
 
+/// Resolve supports and loads onto mesh nodes (fail-closed on an empty
+/// region).
+///
+/// Region membership is a **discrete** selection: it is frozen for the
+/// purposes of differentiation, and a parameter large enough to move a
+/// node across a region boundary changes the model, not just its
+/// geometry. Regions should be padded well clear of the nodes they mean
+/// to catch.
+pub(crate) fn assemble_bc(mesh: &TetMesh, spec: &FeaSpec) -> Result<Bc, SolveError> {
     let nn = mesh.nodes.len();
     let ndof = 3 * nn;
     let tol_geom = mesh.h * 0.25;
 
-    // Supports → fixed-dof mask.
     let mut fixed = vec![false; ndof];
     for (si, s) in spec.supports.iter().enumerate() {
         let mut hit = false;
@@ -225,7 +233,6 @@ pub fn solve_static_full(
         }
     }
 
-    // Loads → force vector, split evenly over selected nodes.
     let mut f = vec![0.0f64; ndof];
     for (li, l) in spec.loads.iter().enumerate() {
         let sel: Vec<usize> = mesh
@@ -251,14 +258,61 @@ pub fn solve_static_full(
         }
     }
 
-    // Jacobi preconditioner: assembled diagonal of K (unit E).
+    Ok(Bc { fixed, f })
+}
+
+/// Isotropic stress from a displacement-gradient matrix, at unit E:
+/// `σ = λ·tr(H)·I + μ·(H + Hᵀ)`.
+pub(crate) fn stress_of(lam: f64, mu: f64, h: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let tr = h[0][0] + h[1][1] + h[2][2];
+    let mut s = [[0.0f64; 3]; 3];
+    for a in 0..3 {
+        for b in 0..3 {
+            s[a][b] = mu * (h[a][b] + h[b][a]);
+        }
+        s[a][a] += lam * tr;
+    }
+    s
+}
+
+/// Displacement gradient `H_ab = Σ_i v_{i,a} g_{i,b}` for one element.
+pub(crate) fn grad_of(e: &Elem, v: &[f64]) -> [[f64; 3]; 3] {
+    let mut h = [[0.0f64; 3]; 3];
+    for (i, g) in e.grad.iter().enumerate() {
+        let base = 3 * e.n[i];
+        for a in 0..3 {
+            let va = v[base + a];
+            for b in 0..3 {
+                h[a][b] += va * g[b];
+            }
+        }
+    }
+    h
+}
+
+/// Von Mises invariant of a stress matrix, MPa.
+pub(crate) fn von_mises(s: &[[f64; 3]; 3]) -> f64 {
+    (0.5 * ((s[0][0] - s[1][1]).powi(2)
+        + (s[1][1] - s[2][2]).powi(2)
+        + (s[2][2] - s[0][0]).powi(2))
+        + 3.0 * (s[0][1] * s[0][1] + s[1][2] * s[1][2] + s[0][2] * s[0][2]))
+        .sqrt()
+}
+
+/// Assembled diagonal of K at unit E, for the Jacobi preconditioner.
+pub(crate) fn jacobi_diag(
+    elems: &[Elem],
+    lam: f64,
+    mu: f64,
+    fixed: &[bool],
+    ndof: usize,
+) -> Vec<f64> {
     let mut diag = vec![0.0f64; ndof];
-    for e in &elems {
+    for e in elems {
         for (i, g) in e.grad.iter().enumerate() {
             let gg = g[0] * g[0] + g[1] * g[1] + g[2] * g[2];
             for a in 0..3 {
-                diag[3 * e.n[i] as usize + a] +=
-                    e.vol * (lam * g[a] * g[a] + mu * (g[a] * g[a] + gg));
+                diag[3 * e.n[i] + a] += e.vol * (lam * g[a] * g[a] + mu * (g[a] * g[a] + gg));
             }
         }
     }
@@ -267,61 +321,66 @@ pub fn solve_static_full(
             *v = 1.0;
         }
     }
+    diag
+}
 
-    let matvec = |u: &[f64], y: &mut [f64]| {
-        y.iter_mut().for_each(|v| *v = 0.0);
-        for e in &elems {
-            // Displacement gradient H_ab = sum_i u_i_a * g_i_b.
-            let mut h = [[0.0f64; 3]; 3];
-            for (i, g) in e.grad.iter().enumerate() {
-                let base = 3 * e.n[i] as usize;
-                for a in 0..3 {
-                    let ua = u[base + a];
-                    for b in 0..3 {
-                        h[a][b] += ua * g[b];
-                    }
-                }
-            }
-            let tr = h[0][0] + h[1][1] + h[2][2];
-            // Stress sigma = lam*tr*I + mu*(H + H^T).
-            let mut s = [[0.0f64; 3]; 3];
+/// Matrix-free `y = K·u` at unit E, with fixed rows zeroed.
+pub(crate) fn matvec(elems: &[Elem], lam: f64, mu: f64, fixed: &[bool], u: &[f64], y: &mut [f64]) {
+    y.iter_mut().for_each(|v| *v = 0.0);
+    for e in elems {
+        let h = grad_of(e, u);
+        let s = stress_of(lam, mu, &h);
+        for (i, g) in e.grad.iter().enumerate() {
+            let base = 3 * e.n[i];
             for a in 0..3 {
-                for b in 0..3 {
-                    s[a][b] = mu * (h[a][b] + h[b][a]);
-                }
-                s[a][a] += lam * tr;
-            }
-            for (i, g) in e.grad.iter().enumerate() {
-                let base = 3 * e.n[i] as usize;
-                for a in 0..3 {
-                    y[base + a] += e.vol * (s[a][0] * g[0] + s[a][1] * g[1] + s[a][2] * g[2]);
-                }
+                y[base + a] += e.vol * (s[a][0] * g[0] + s[a][1] * g[1] + s[a][2] * g[2]);
             }
         }
-        for (d, v) in fixed.iter().zip(y.iter_mut()) {
-            if *d {
-                *v = 0.0;
-            }
+    }
+    for (d, v) in fixed.iter().zip(y.iter_mut()) {
+        if *d {
+            *v = 0.0;
         }
-    };
+    }
+}
 
-    // Jacobi-PCG at unit E.
+/// Jacobi-PCG for `K·u = rhs` at unit E.
+///
+/// A zero right-hand side returns a zero solution in zero iterations
+/// rather than an error — an adjoint objective that happens not to
+/// depend on the displacement is legitimate, while a zero *load* is
+/// caught by the caller as a spec problem.
+pub(crate) fn pcg(
+    elems: &[Elem],
+    lam: f64,
+    mu: f64,
+    fixed: &[bool],
+    rhs: &[f64],
+    opts: &SolveOptions,
+) -> Result<(Vec<f64>, usize, f64), SolveError> {
+    let ndof = rhs.len();
+    let diag = jacobi_diag(elems, lam, mu, fixed, ndof);
+
     let mut u = vec![0.0f64; ndof];
-    let mut r = f.clone();
+    let mut r = rhs.to_vec();
+    for (d, v) in fixed.iter().zip(r.iter_mut()) {
+        if *d {
+            *v = 0.0;
+        }
+    }
+    let fnorm = norm(&r);
+    if fnorm == 0.0 {
+        return Ok((u, 0, 0.0));
+    }
+
     let mut z: Vec<f64> = r.iter().zip(&diag).map(|(r, d)| r / d).collect();
     let mut p = z.clone();
     let mut ap = vec![0.0f64; ndof];
-    let fnorm = norm(&f);
-    if fnorm == 0.0 {
-        return Err(SolveError::Spec(crate::spec::SpecError::Invalid(
-            "all load force lands on fixed nodes — nothing to solve".into(),
-        )));
-    }
     let mut rz = dot(&r, &z);
     let mut iterations = 0;
     let mut residual_rel = 1.0;
     for it in 0..opts.max_iters {
-        matvec(&p, &mut ap);
+        matvec(elems, lam, mu, fixed, &p, &mut ap);
         let pap = dot(&p, &ap);
         if pap <= 0.0 {
             break; // Numerical breakdown; report the residual we reached.
@@ -353,11 +412,74 @@ pub fn solve_static_full(
             iterations,
         });
     }
+    Ok((u, iterations, residual_rel))
+}
+
+/// Solve one static case on a prepared tet mesh (summary only).
+pub fn solve_static(
+    mesh: &TetMesh,
+    spec: &FeaSpec,
+    opts: &SolveOptions,
+) -> Result<Solution, SolveError> {
+    solve_static_full(mesh, spec, opts).map(|f| f.summary)
+}
+
+/// Solve one static case, keeping per-node displacement and stress fields.
+pub fn solve_static_full(
+    mesh: &TetMesh,
+    spec: &FeaSpec,
+    opts: &SolveOptions,
+) -> Result<FullSolution, SolveError> {
+    spec.validate()?;
+
+    let elems = build_elements(mesh)?;
+    let (lam, mu) = lame(spec.poisson);
+    let bc = assemble_bc(mesh, spec)?;
+
+    if norm(&bc.f) == 0.0 {
+        return Err(SolveError::Spec(crate::spec::SpecError::Invalid(
+            "all load force lands on fixed nodes — nothing to solve".into(),
+        )));
+    }
+
+    let (u, iterations, residual_rel) = pcg(&elems, lam, mu, &bc.fixed, &bc.f, opts)?;
+
+    Ok(summarize(
+        mesh,
+        spec,
+        &elems,
+        lam,
+        mu,
+        &bc.f,
+        &u,
+        iterations,
+        residual_rel,
+    ))
+}
+
+/// Build the reported QoIs and node fields from a solved displacement
+/// vector (at unit E).
+///
+/// Shared with [`crate::adjoint`] so a gradient call reports exactly the
+/// solution it differentiated, without a second solve.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn summarize(
+    mesh: &TetMesh,
+    spec: &FeaSpec,
+    elems: &[Elem],
+    lam: f64,
+    mu: f64,
+    f: &[f64],
+    u: &[f64],
+    iterations: usize,
+    residual_rel: f64,
+) -> FullSolution {
+    let nn = mesh.nodes.len();
 
     // QoIs. Displacement rescales by 1/E; stress from the unit-E solve is
     // already physical (E cancels for force-driven loads).
     let e_mod = spec.youngs_modulus_mpa;
-    let compliance = dot(&f, &u) / e_mod;
+    let compliance = dot(f, u) / e_mod;
     let mut max_d2 = 0.0f64;
     let mut max_d_node = 0usize;
     for i in 0..nn {
@@ -374,32 +496,16 @@ pub fn solve_static_full(
     let mut node_vm = vec![0.0f64; nn];
     let mut node_wt = vec![0.0f64; nn];
     for (ei, e) in elems.iter().enumerate() {
-        let mut h = [[0.0f64; 3]; 3];
-        for (i, g) in e.grad.iter().enumerate() {
-            let base = 3 * e.n[i] as usize;
-            for a in 0..3 {
-                for b in 0..3 {
-                    h[a][b] += u[base + a] * g[b];
-                }
-            }
-        }
-        let tr = h[0][0] + h[1][1] + h[2][2];
-        let sxx = lam * tr + 2.0 * mu * h[0][0];
-        let syy = lam * tr + 2.0 * mu * h[1][1];
-        let szz = lam * tr + 2.0 * mu * h[2][2];
-        let sxy = mu * (h[0][1] + h[1][0]);
-        let syz = mu * (h[1][2] + h[2][1]);
-        let sxz = mu * (h[0][2] + h[2][0]);
-        let vm = (0.5 * ((sxx - syy).powi(2) + (syy - szz).powi(2) + (szz - sxx).powi(2))
-            + 3.0 * (sxy * sxy + syz * syz + sxz * sxz))
-            .sqrt();
+        let h = grad_of(e, u);
+        let s = stress_of(lam, mu, &h);
+        let vm = von_mises(&s);
         if vm > max_vm {
             max_vm = vm;
             max_vm_elem = ei;
         }
         for &ni in &e.n {
-            node_vm[ni as usize] += vm * e.vol;
-            node_wt[ni as usize] += e.vol;
+            node_vm[ni] += vm * e.vol;
+            node_wt[ni] += e.vol;
         }
     }
     for (v, w) in node_vm.iter_mut().zip(&node_wt) {
@@ -422,7 +528,7 @@ pub fn solve_static_full(
         .map(|i| (u[3 * i].powi(2) + u[3 * i + 1].powi(2) + u[3 * i + 2].powi(2)).sqrt() / e_mod)
         .collect();
 
-    Ok(FullSolution {
+    FullSolution {
         summary: Solution {
             max_displacement_mm: max_d2.sqrt() / e_mod,
             max_displacement_at: mesh.nodes[max_d_node],
@@ -443,7 +549,7 @@ pub fn solve_static_full(
             von_mises_mpa: node_vm,
             h_mm: mesh.h,
         },
-    })
+    }
 }
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -470,11 +576,11 @@ fn inv3(m: [[f64; 3]; 3], det: f64) -> [[f64; 3]; 3] {
     out
 }
 
-fn dot(a: &[f64], b: &[f64]) -> f64 {
+pub(crate) fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-fn norm(a: &[f64]) -> f64 {
+pub(crate) fn norm(a: &[f64]) -> f64 {
     dot(a, a).sqrt()
 }
 

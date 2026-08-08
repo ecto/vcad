@@ -174,7 +174,17 @@ What this does *not* cover: a non-prismatic thin-walled part (a bent sheet
 bracket with cutouts) still has no audited answer. Shell and beam *elements*
 remain the real fix, and are the top of the M4+ list below.
 
-## M4+ — out of scope for this pass
+## M4 — the shape adjoint ✅
+
+`d(QoI)/d(geometry)` by discrete adjoint, at one extra solve: compliance,
+region-mean displacement, and a thresholded smooth-max von Mises, validated
+against central differences to ~2e-9 and mutation-tested. This is the
+structural constraint pond's co-design loop needs (`POND.md` §4b) — the
+forward solve gives a verdict, the adjoint gives a direction. Full write-up
+in [`fea-m4.md`](fea-m4.md); seam registration with `vcad-kernel-diff` (a
+named `.vcad` parameter → node velocities) is the open next step.
+
+## M5+ — out of scope for this pass
 
 Deliberately not started, in rough order of value:
 
@@ -188,9 +198,6 @@ Deliberately not started, in rough order of value:
   integrating the rasterized section, so `beam_check` can be handed a part
   instead of a profile. `J` for an arbitrary section needs a warping (Poisson)
   solve, so torsion would stay profile-driven until that lands.
-- **Adjoint gradients** (`d(max stress)/d(parameter)` via the discrete
-  adjoint; the max-QoI needs the thermal crate's smooth-max treatment) and
-  seam registration with `vcad-kernel-diff`.
 - **Boundary-conforming Delaunay tet mesh** (snap lattice boundary nodes to
   the surface / true CDT) — removes the staircase, sharpens stress at
   surfaces, and makes face-selection exact instead of box-region-based.

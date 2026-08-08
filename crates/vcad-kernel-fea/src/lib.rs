@@ -41,8 +41,15 @@
 //! loads; constant-strain tets smear stress concentrations, so
 //! `max_von_mises` at a re-entrant corner is a lower bound that grows with
 //! refinement (the true elastic solution is singular there). Every claim
-//! note says so. Adjoint gradients are deliberately out of scope for this
-//! pass (M3+).
+//! note says so.
+//!
+//! **Gradients** ([`adjoint`], M4): `dJ/d(node coordinates)` for
+//! compliance, region-mean displacement, and a thresholded smooth-max von
+//! Mises, at one extra solve (K is symmetric). Fixed topology on a frozen
+//! discretization — the parameter moves node coordinates, never the mesh
+//! or the region selections. Contract the result with a nodal velocity
+//! field `dx/dθ` to get `dJ/dθ` for a design parameter. See
+//! `docs/fea-m4.md`.
 //!
 //! **Thin walls are a different discretization, not a finer one.** A
 //! staircase lattice needs several cells through the thinnest load-bearing
@@ -66,6 +73,7 @@
 //! Units: geometry in **millimeters**, forces in Newtons, moduli and
 //! stresses in MPa (N/mm²) — the consistent mm-N-MPa system.
 
+pub mod adjoint;
 pub mod convergence;
 pub mod mesh;
 pub mod receipt;
