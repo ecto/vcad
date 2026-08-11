@@ -244,6 +244,24 @@ pub fn split_face_by_curve(
     // How far the cut path departs from the straight entry→exit chord. A
     // curved cut (an ellipse where a bore meets an oblique face) bulges;
     // a cut that merely retraces an existing edge does not.
+    //
+    // This is measured from `via`, so it is only ever non-zero for a
+    // `Sampled` curve — `cut_polyline_between` yields nothing for the
+    // analytic variants. That is deliberate, and it is a real restriction on
+    // the bite path below, so state it rather than leave it implicit:
+    //
+    // * `Line`/`TwoLines`/`Point` — a straight cut entering and leaving
+    //   through one edge genuinely bounds no area. Zero bulge is the right
+    //   answer and the old rejection is the right behaviour.
+    // * `Circle` — a circular mouth CAN bite. It never arrives here in
+    //   practice: `split_planar_face` routes circles to
+    //   `split_planar_face_by_arc`, which carries its own `same_edge` case,
+    //   and curved faces go to the cylindrical/conical/spherical splitters.
+    //   Were one to arrive, admitting it on an analytic bulge alone would be
+    //   worse than declining: the loops below close along `via`, so the
+    //   bite's curved side would be built as a straight chord and would not
+    //   weld against the mating wall. Making it work needs arc points, i.e.
+    //   the `segments` this function is not given. The decline is logged.
     let chord_bulge = {
         let a = *entry_point;
         let ab = *exit_point - a;
@@ -267,6 +285,15 @@ pub fn split_face_by_curve(
     let same_edge_bite = entry_edge == exit_edge
         && (*exit_point - *entry_point).norm() >= 1e-6
         && chord_bulge > 1e-9;
+
+    if entry_edge == exit_edge && !same_edge_bite && via.is_empty() {
+        // Surfaces the case the paragraph above reasons about, so a curve
+        // type that starts reaching here shows up in the debug channel
+        // instead of silently taking the old rejection.
+        split_dbg!(
+            "sfbc: same-edge cut declined — no interior samples to prove a bulge (curve {curve:?})"
+        );
+    }
 
     if !same_edge_bite && (entry_edge == exit_edge || (*exit_point - *entry_point).norm() < 1e-6) {
         // Curve enters and exits on the same edge, or grazes a single
