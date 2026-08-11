@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-11-bore-breakout-faces",
+  "version": "0.9.4",
+  "date": "2026-08-11",
+  "category": "fix",
+  "title": "Bores that break out through a face now cut correctly",
+  "summary": "A cylinder cut whose opening crosses a side face or an angled face is no longer silently skipped or left short, and its rim exports watertight; Difference now fails closed when it removes nothing from a tool it overlaps.",
+  "features": ["booleans", "kernel", "tessellation", "validation"]
+}

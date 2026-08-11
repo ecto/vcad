@@ -571,25 +571,45 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                 u_angles.dedup_by(|a, b| (*a - *b).abs() < 0.01);
 
                 if u_angles.len() >= 2 {
-                    let u_min = u_angles[0];
-                    let u_max = u_angles[u_angles.len() - 1];
-
-                    // Check if face wraps around 2π (gap between max and min is small)
-                    let direct_span = u_max - u_min;
-                    let wrap_span = 2.0 * PI - direct_span;
-
-                    let u_mid = if wrap_span < direct_span {
-                        // Face wraps around: use midpoint of the wrap region
-                        let mid = (u_max + u_min + 2.0 * PI) / 2.0;
-                        if mid >= 2.0 * PI {
-                            mid - 2.0 * PI
-                        } else {
-                            mid
+                    // The face occupies the complement of the LARGEST angular
+                    // gap between consecutive boundary angles — the same rule
+                    // the cylindrical tessellator uses to recover a band's
+                    // u-range.
+                    //
+                    // The previous rule was "the face is whichever of the two
+                    // arcs is shorter", which silently mis-samples any face
+                    // spanning more than half the cylinder. Those are routine:
+                    // a bore wall broken through a side face is cut into two
+                    // fragments by the u = 0 seam, and the large fragment
+                    // (231° in the 2026-08-11 boss-and-bore case) got its
+                    // sample placed in the middle of its 129° complement —
+                    // i.e. inside the *neighbouring* fragment, on the far side
+                    // of the wall, where the point reads Outside. The whole
+                    // fragment was then dropped and the Difference returned
+                    // the bare union, with no error.
+                    //
+                    // With two unique angles the two gaps are the only
+                    // candidates and this reduces to the old shorter-arc
+                    // choice, so genuinely ambiguous 2-vertex bands keep their
+                    // battle-tested behaviour.
+                    let n_u = u_angles.len();
+                    let mut gap_idx = n_u - 1; // wrap gap ⇒ face is contiguous
+                    let mut max_gap = 2.0 * PI - (u_angles[n_u - 1] - u_angles[0]);
+                    for i in 0..n_u - 1 {
+                        let gap = u_angles[i + 1] - u_angles[i];
+                        if gap > max_gap {
+                            max_gap = gap;
+                            gap_idx = i;
                         }
+                    }
+                    let (u_lo, u_hi) = if gap_idx == n_u - 1 {
+                        (u_angles[0], u_angles[n_u - 1])
                     } else {
-                        // Normal face: use midpoint of direct span
-                        (u_min + u_max) / 2.0
+                        // Face straddles the seam: it runs from just past the
+                        // gap, through 2π, round to just before it.
+                        (u_angles[gap_idx + 1], u_angles[gap_idx] + 2.0 * PI)
                     };
+                    let u_mid = (0.5 * (u_lo + u_hi)).rem_euclid(2.0 * PI);
 
                     // Compute V (height) at centroid
                     let v_mid = (centroid - cyl.center).dot(cyl.axis.as_ref());
