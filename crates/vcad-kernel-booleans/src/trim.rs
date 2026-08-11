@@ -462,8 +462,62 @@ fn point_in_face_inner(brep: &BRepSolid, face_id: FaceId, point_3d: &Point3) -> 
             }
         }
 
-        // Full cone lateral face with ≤2 unique vertices: check V range only
-        if unique_verts.len() <= 2 {
+        // A frozen full band (dense canonical rims from freeze_circle_loops)
+        // spans the whole turn just like the analytic ≤2-vertex seam loop:
+        // every vertex sits on one of two rims and the u coverage has no
+        // wide gap. Mirrors the cylinder branch's detection above.
+        let frozen_full_band = unique_verts.len() > 2
+            && surface
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+                .map(|cone| {
+                    let ca = cone.half_angle.cos();
+                    let axis = *cone.axis.as_ref();
+                    let vs: Vec<f64> = unique_verts
+                        .iter()
+                        .map(|p| (*p - cone.apex).dot(axis) / ca)
+                        .collect();
+                    let v_min = vs.iter().cloned().fold(f64::INFINITY, f64::min);
+                    let v_max = vs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    if v_max - v_min < 1e-9
+                        || !vs
+                            .iter()
+                            .all(|v| (v - v_min).abs() < 1e-6 || (v - v_max).abs() < 1e-6)
+                    {
+                        return false;
+                    }
+                    let ref_dir = cone.ref_dir.as_ref();
+                    let y_dir = axis.cross(ref_dir);
+                    let mut us: Vec<f64> = unique_verts
+                        .iter()
+                        .filter_map(|p| {
+                            let d = *p - cone.apex;
+                            let d_perp = d - d.dot(axis) * axis;
+                            if d_perp.norm() < 1e-9 {
+                                return None;
+                            }
+                            let u = d_perp.dot(y_dir).atan2(d_perp.dot(ref_dir));
+                            Some(if u < 0.0 {
+                                u + 2.0 * std::f64::consts::PI
+                            } else {
+                                u
+                            })
+                        })
+                        .collect();
+                    if us.len() < 3 {
+                        return false;
+                    }
+                    us.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let mut max_gap = us[0] + 2.0 * std::f64::consts::PI - us[us.len() - 1];
+                    for w in us.windows(2) {
+                        max_gap = max_gap.max(w[1] - w[0]);
+                    }
+                    max_gap < std::f64::consts::FRAC_PI_2
+                })
+                .unwrap_or(false);
+
+        // Full cone lateral face: check V range only
+        if unique_verts.len() <= 2 || frozen_full_band {
             if let Some(cone) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::ConeSurface>()

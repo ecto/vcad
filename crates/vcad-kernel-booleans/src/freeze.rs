@@ -62,25 +62,33 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
         }
         let twin = he.twin;
 
-        // Find the cylinder that carries this circle (own face or twin's).
-        let cyl_of = |hid: HalfEdgeId| -> Option<CylinderSurface> {
+        // Find the cylinder or cone that carries this circle (own face or
+        // twin's). Both carry rings perpendicular to their axis; all the
+        // machinery below needs is the axis direction and a point on it.
+        let axis_of = |hid: HalfEdgeId| -> Option<(Vec3, vcad_kernel_math::Point3)> {
             let lp = brep.topology.half_edges[hid].loop_id?;
             let face_id = brep.topology.loops[lp].face?;
             let face = &brep.topology.faces[face_id];
-            brep.geometry.surfaces[face.surface_index]
+            let surface = &brep.geometry.surfaces[face.surface_index];
+            if let Some(cyl) = surface.as_any().downcast_ref::<CylinderSurface>() {
+                return Some((*cyl.axis.as_ref(), cyl.center));
+            }
+            if let Some(cone) = surface
                 .as_any()
-                .downcast_ref::<CylinderSurface>()
-                .cloned()
+                .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+            {
+                return Some((*cone.axis.as_ref(), cone.apex));
+            }
+            None
         };
-        let cyl = match cyl_of(he_id).or_else(|| twin.and_then(cyl_of)) {
+        let (axis, axis_pt) = match axis_of(he_id).or_else(|| twin.and_then(axis_of)) {
             Some(c) => c,
-            None => continue, // sphere poles, cone apex rings, etc. — skip
+            None => continue, // sphere poles etc. — skip
         };
 
         let v_pt = brep.topology.vertices[origin].point;
-        let axis = *cyl.axis.as_ref();
-        let d = v_pt - cyl.center;
-        let center = cyl.center + axis * d.dot(axis);
+        let d = v_pt - axis_pt;
+        let center = axis_pt + axis * d.dot(axis);
         let radius = (v_pt - center).norm();
         if radius < 1e-9 {
             continue;
@@ -136,7 +144,7 @@ pub(crate) fn freeze_circle_loops(brep: &mut BRepSolid, segments: u32) {
                     let mut vmin = f64::MAX;
                     for h in brep.topology.loop_half_edges(l) {
                         let p = brep.topology.vertices[brep.topology.half_edges[h].origin].point;
-                        vmin = vmin.min((p - cyl.center).dot(axis));
+                        vmin = vmin.min((p - axis_pt).dot(axis));
                     }
                     (d.dot(axis) - vmin).abs() < 1e-6
                 })

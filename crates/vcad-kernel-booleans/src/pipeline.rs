@@ -172,7 +172,7 @@ fn apply_splits_to_solid(
     ordered.sort_by_key(|(fid, _)| *fid);
     for (face_id, split_list) in ordered {
         let mut current_faces = vec![face_id];
-        for (curve, _entry, _exit) in split_list {
+        for (curve, entry, exit) in split_list {
             let mut new_faces = Vec::new();
             for &fid in &current_faces {
                 if solid.topology.faces.contains_key(fid) {
@@ -194,7 +194,8 @@ fn apply_splits_to_solid(
                                 _ => format!("{:?}", curve),
                             }
                         );
-                        let result = split::split_conical_face(solid, fid, &curve);
+                        let result =
+                            split::split_conical_face(solid, fid, &curve, &entry, &exit, segments);
                         debug_bool!(
                             "    -> Conical split result: {} sub-faces {:?}",
                             result.sub_faces.len(),
@@ -921,15 +922,53 @@ pub(crate) fn brep_boolean(
             for single_curve in &curves_to_process {
                 // Trim curve to A's face boundary (for non-circle curves)
                 let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
+                // Trimmed to B up-front too: a conical face must only be
+                // split where the curve lies on BOTH faces (see below).
+                let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
+                // A ruling (Line) on a cone spans the cone's entire lateral
+                // face, but the split it demands only exists where the other
+                // face actually meets the cone. Recording the full-extent
+                // segment splits sub-bands the cut never reaches (e.g. the
+                // part of a tall cone above a short box), whose rim corners
+                // then have no counterpart on the neighboring cap — an open
+                // T-junction. Clip the conical side's interval to the other
+                // side's. Planar faces keep the full chord: a planar split
+                // must reach the face boundary to partition the face.
+                let clip_to = |segs: &[trim::TrimmedSegment],
+                               other: &[trim::TrimmedSegment]|
+                 -> Vec<(f64, f64)> {
+                    let mut out = Vec::new();
+                    for s in segs {
+                        for o in other {
+                            let lo = s.t_start.max(o.t_start);
+                            let hi = s.t_end.min(o.t_end);
+                            if hi > lo {
+                                out.push((lo, hi));
+                            }
+                        }
+                    }
+                    out
+                };
+                let line_curve = matches!(single_curve, ssi::IntersectionCurve::Line(_));
+                let clipped_a: Option<Vec<(f64, f64)>> = (line_curve
+                    && split::is_conical_face(&a, face_a))
+                .then(|| clip_to(&segs_a, &segs_b));
+                let clipped_b: Option<Vec<(f64, f64)>> = (line_curve
+                    && split::is_conical_face(&b, face_b))
+                .then(|| clip_to(&segs_b, &segs_a));
                 debug_bool!(
                     "    Trim to face A ({:?}): {} segments",
                     face_a,
                     segs_a.len()
                 );
                 let mut recorded_a = false;
-                for seg in &segs_a {
-                    let entry = evaluate_curve(single_curve, seg.t_start);
-                    let exit = evaluate_curve(single_curve, seg.t_end);
+                let intervals_a: Vec<(f64, f64)> = match &clipped_a {
+                    Some(c) => c.clone(),
+                    None => segs_a.iter().map(|s| (s.t_start, s.t_end)).collect(),
+                };
+                for &(t_start, t_end) in &intervals_a {
+                    let entry = evaluate_curve(single_curve, t_start);
+                    let exit = evaluate_curve(single_curve, t_end);
                     let len = (exit - entry).norm();
                     debug_bool!(
                     "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
@@ -979,17 +1018,19 @@ pub(crate) fn brep_boolean(
                     }
                 }
 
-                // Trim curve to B's face boundary (for non-circle curves)
-                let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
                 debug_bool!(
                     "    Trim to face B ({:?}): {} segments",
                     face_b,
                     segs_b.len()
                 );
                 let mut recorded_b = false;
-                for seg in &segs_b {
-                    let entry = evaluate_curve(single_curve, seg.t_start);
-                    let exit = evaluate_curve(single_curve, seg.t_end);
+                let intervals_b: Vec<(f64, f64)> = match &clipped_b {
+                    Some(c) => c.clone(),
+                    None => segs_b.iter().map(|s| (s.t_start, s.t_end)).collect(),
+                };
+                for &(t_start, t_end) in &intervals_b {
+                    let entry = evaluate_curve(single_curve, t_start);
+                    let exit = evaluate_curve(single_curve, t_end);
                     let len = (exit - entry).norm();
                     debug_bool!(
                     "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
