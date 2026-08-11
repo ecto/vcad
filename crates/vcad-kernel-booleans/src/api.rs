@@ -20,10 +20,8 @@ use crate::validate::{validate_boolean_result, ValidityError};
 pub enum BooleanError {
     /// Surface-surface intersection failed for a candidate face pair.
     Ssi(SsiError),
-    /// Both the B-rep pipeline and the mesh-CSG fallback produced a result
-    /// that fails the post-boolean validity oracle (open shell, inverted
-    /// orientation, or disagreement with the operation's set semantics).
-    /// Returned instead of a plausible-looking wrong solid.
+    /// The mesh-CSG fallback produced a solid with negative or non-finite
+    /// volume. Returned instead of a plausible-looking wrong solid.
     InvalidResult(ValidityError),
 }
 
@@ -187,12 +185,50 @@ pub fn boolean_op(
             let mesh_b = tessellate_brep(solid_b, segments);
             crate::validate::volume_disagrees_grossly(&result_mesh, &mesh_a, &mesh_b, op)
         });
-    if !broken {
+    if broken {
+        let mesh_a = tessellate_brep(solid_a, segments);
+        let mesh_b = tessellate_brep(solid_b, segments);
+        return mesh_fallback(&mesh_a, &mesh_b, op);
+    }
+
+    // The result is trustworthy, but it may still be *cracked*: the splitters
+    // routinely leave hairline seams where they conform curved faces. That is
+    // not a correctness failure — which is exactly why it must not gate a
+    // boolean (see `validate`) — but a watertight result is strictly more
+    // useful downstream (STL for printing, STEP, ray tracing), and the mesh
+    // fallback heals its own seams.
+    //
+    // The swap is offered only on arrangements already declared
+    // unrepresentable. Tying it to the capability flag rather than to a
+    // crack-size threshold is what keeps analytic surfaces where they are
+    // worth having: a thin blade cut from a cylinder leaves 3 hairline
+    // seam edges, and its faces are still true cylindrical bands the
+    // tessellator needs — trading those for triangle soup to close 3 edges
+    // is a bad deal. On a flagged arrangement the splitters were already
+    // working outside what they can represent, so the analytic surfaces are
+    // not reliable in the first place.
+    //
+    // Even then the fallback is taken only if it is watertight *and* agrees
+    // on volume. Agreement is what makes this safe: it establishes the two
+    // represent the same solid, so the swap trades analytic surfaces for
+    // watertightness and nothing else.
+    if !(flagged || sphere_unrepresentable) || crate::mesh_report(&result_mesh).open_edges == 0 {
         return Ok(result);
     }
     let mesh_a = tessellate_brep(solid_a, segments);
     let mesh_b = tessellate_brep(solid_b, segments);
-    mesh_fallback(&mesh_a, &mesh_b, op)
+    let Ok(alt) = mesh_fallback(&mesh_a, &mesh_b, op) else {
+        return Ok(result);
+    };
+    let alt_mesh = alt.to_mesh(segments);
+    let alt_report = crate::mesh_report(&alt_mesh);
+    let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
+    let alt_vol = alt_report.signed_volume.abs();
+    let agree = (alt_vol - brep_vol).abs() <= 0.10 * brep_vol.max(alt_vol);
+    if alt_report.open_edges == 0 && alt_report.triangles > 0 && agree {
+        return Ok(alt);
+    }
+    Ok(result)
 }
 
 /// Mesh-CSG fallback: combine the operand tessellations with the BSP
