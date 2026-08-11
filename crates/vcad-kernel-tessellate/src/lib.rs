@@ -667,6 +667,180 @@ fn computed_vertex_normals(vertices: &[f32], indices: &[u32]) -> Vec<f32> {
     acc
 }
 
+/// Distance (mm) within which a vertex counts as lying on a triangle edge.
+///
+/// Matches [`weld_coincident_vertices`]'s 0.001 mm lattice: a point closer
+/// than that to an edge would already have been welded onto its endpoint if
+/// it were meant to be one, so anything still standing off the edge by less
+/// than this is a genuine T-junction rather than a distinct vertex.
+const T_JUNCTION_TOL: f64 = 1e-3;
+
+/// Stitch T-junctions closed.
+///
+/// A T-junction is a vertex sitting in the *interior* of another triangle's
+/// edge. The surface has no actual gap there — the two sides meet exactly —
+/// but the edge is unpaired combinatorially, so every watertightness check
+/// (and every consumer that needs a closed shell: STL for printing, STEP,
+/// ray tracing) reads it as a hole.
+///
+/// They arise wherever the boolean splitters conform one side of a shared
+/// edge and not the other, which is routine on curved faces. Healing them
+/// here rather than in the boolean is what lets the result keep its analytic
+/// surfaces: the alternative — swapping the solid for a re-meshed triangle
+/// soup — closes the same cracks but throws away the cylinders and spheres
+/// downstream code depends on.
+///
+/// The repair is exact, not a tolerance fudge. It only ever inserts a vertex
+/// that already lies on the edge it splits, so no position moves and no
+/// volume changes; only which triangles agree along that edge does.
+///
+/// Triangles that gain edge points are re-emitted as a centroid fan. A fan
+/// from an existing corner would be cheaper, but when the points sit on an
+/// edge adjacent to that corner it emits exactly-degenerate triangles, whose
+/// zero-length normals surface downstream as `DIRECTION((NaN,NaN,NaN))` in
+/// the STEP writer. The centroid lies strictly inside, so every fan triangle
+/// has area; it inherits the interpolated normal and the face-kind tag of the
+/// triangle it replaces.
+fn heal_t_junctions(mesh: &mut TriangleMesh) {
+    // Fast path: a closed mesh has nothing to stitch, and this is the common
+    // case, so it must cost no more than the edge-pairing pass.
+    let open = mesh.boundary_edges();
+    if open.is_empty() || mesh.indices.is_empty() {
+        return;
+    }
+
+    // Only vertices that terminate an open edge can close one, which is a
+    // handful even on a badly cracked mesh — far cheaper than testing every
+    // vertex against every edge.
+    let mut candidates: Vec<u32> = Vec::new();
+    {
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for &(a, b) in &open {
+            for v in [a, b] {
+                if seen.insert(v) {
+                    candidates.push(v);
+                }
+            }
+        }
+    }
+    let pos = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            mesh.vertices[k] as f64,
+            mesh.vertices[k + 1] as f64,
+            mesh.vertices[k + 2] as f64,
+        ]
+    };
+
+    let has_normals = mesh.normals.len() == mesh.vertices.len();
+    let has_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
+    let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
+    let mut new_kinds: Vec<u8> = Vec::new();
+    let mut added_verts: Vec<f32> = Vec::new();
+    let mut added_normals: Vec<f32> = Vec::new();
+    let base_vert_count = mesh.num_vertices() as u32;
+    let mut healed = 0usize;
+
+    for t in 0..mesh.indices.len() / 3 {
+        let corners = [
+            mesh.indices[t * 3],
+            mesh.indices[t * 3 + 1],
+            mesh.indices[t * 3 + 2],
+        ];
+        let kind = if has_kinds { mesh.face_kinds[t] } else { 0 };
+        let mut loop_idx: Vec<u32> = Vec::with_capacity(3);
+        let mut inserted = false;
+
+        for e in 0..3 {
+            let (ai, bi) = (corners[e], corners[(e + 1) % 3]);
+            loop_idx.push(ai);
+            let (a, b) = (pos(ai), pos(bi));
+            let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+            if len2 <= 0.0 {
+                continue;
+            }
+            let mut on_edge: Vec<(f64, u32)> = Vec::new();
+            for &vi in &candidates {
+                if vi == ai || vi == bi {
+                    continue;
+                }
+                let v = pos(vi);
+                let av = [v[0] - a[0], v[1] - a[1], v[2] - a[2]];
+                let s = (av[0] * ab[0] + av[1] * ab[1] + av[2] * ab[2]) / len2;
+                if s <= 0.0 || s >= 1.0 {
+                    continue;
+                }
+                let c = [a[0] + s * ab[0], a[1] + s * ab[1], a[2] + s * ab[2]];
+                let d2 = (v[0] - c[0]).powi(2) + (v[1] - c[1]).powi(2) + (v[2] - c[2]).powi(2);
+                if d2 > T_JUNCTION_TOL * T_JUNCTION_TOL {
+                    continue;
+                }
+                on_edge.push((s, vi));
+            }
+            if on_edge.is_empty() {
+                continue;
+            }
+            on_edge.sort_by(|x, y| x.0.total_cmp(&y.0));
+            on_edge.dedup_by_key(|(_, vi)| *vi);
+            inserted = true;
+            loop_idx.extend(on_edge.into_iter().map(|(_, vi)| vi));
+        }
+
+        if !inserted {
+            new_indices.extend_from_slice(&corners);
+            if has_kinds {
+                new_kinds.push(kind);
+            }
+            continue;
+        }
+        healed += 1;
+
+        // Centroid of the original triangle: strictly interior, so every fan
+        // triangle has area.
+        let (p0, p1, p2) = (pos(corners[0]), pos(corners[1]), pos(corners[2]));
+        let ci = base_vert_count + (added_verts.len() / 3) as u32;
+        for k in 0..3 {
+            added_verts.push(((p0[k] + p1[k] + p2[k]) / 3.0) as f32);
+        }
+        if has_normals {
+            let mut n = [0.0f32; 3];
+            for c in corners {
+                for (k, acc) in n.iter_mut().enumerate() {
+                    *acc += mesh.normals[c as usize * 3 + k];
+                }
+            }
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            for c in n {
+                added_normals.push(if len > 0.0 { c / len } else { 0.0 });
+            }
+        }
+        let n = loop_idx.len();
+        for k in 0..n {
+            let (a, b) = (loop_idx[k], loop_idx[(k + 1) % n]);
+            if a == b {
+                continue;
+            }
+            new_indices.extend_from_slice(&[ci, a, b]);
+            if has_kinds {
+                new_kinds.push(kind);
+            }
+        }
+    }
+
+    if healed == 0 {
+        return;
+    }
+    mesh.vertices.extend_from_slice(&added_verts);
+    if has_normals {
+        mesh.normals.extend_from_slice(&added_normals);
+    }
+    mesh.indices = new_indices;
+    if has_kinds {
+        mesh.face_kinds = new_kinds;
+    }
+}
+
 /// Collapse mesh vertices that share a position to 3 decimal places.
 /// Indices are rewritten; positions kept from the first occurrence.
 /// Normals of the winning vertex are kept as-is — downstream smoothing is
@@ -5192,6 +5366,7 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     }
 
     weld_coincident_vertices(&mut mesh);
+    heal_t_junctions(&mut mesh);
     fill_tiny_boundary_loops(&mut mesh, 6, &sphere_vert_keys);
     mesh
 }
