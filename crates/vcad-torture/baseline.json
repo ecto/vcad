@@ -1,14 +1,66 @@
 {
+  "subset": "full",
+  "categories": {
+    "boolean-chain": {
+      "pass": 8,
+      "graceful_refusal": 0,
+      "bad_geometry": 16,
+      "timeout": 0,
+      "crash": 0
+    },
+    "boolean-coincident": {
+      "pass": 93,
+      "graceful_refusal": 0,
+      "bad_geometry": 0,
+      "timeout": 0,
+      "crash": 0
+    },
+    "boolean-random": {
+      "pass": 350,
+      "graceful_refusal": 0,
+      "bad_geometry": 50,
+      "timeout": 0,
+      "crash": 0
+    },
+    "boolean-sliver": {
+      "pass": 30,
+      "graceful_refusal": 0,
+      "bad_geometry": 3,
+      "timeout": 0,
+      "crash": 0
+    },
+    "boolean-tangent": {
+      "pass": 51,
+      "graceful_refusal": 0,
+      "bad_geometry": 6,
+      "timeout": 0,
+      "crash": 0
+    },
+    "step-roundtrip": {
+      "pass": 60,
+      "graceful_refusal": 0,
+      "bad_geometry": 0,
+      "timeout": 0,
+      "crash": 0
+    },
+    "tessellation": {
+      "pass": 65,
+      "graceful_refusal": 0,
+      "bad_geometry": 20,
+      "timeout": 0,
+      "crash": 0
+    }
+  },
   "cases": {
-    "chain-00": "bad-geometry",
+    "chain-00": "pass",
     "chain-01": "bad-geometry",
-    "chain-02": "bad-geometry",
+    "chain-02": "pass",
     "chain-03": "pass",
     "chain-04": "bad-geometry",
-    "chain-05": "bad-geometry",
+    "chain-05": "pass",
     "chain-06": "bad-geometry",
     "chain-07": "bad-geometry",
-    "chain-08": "bad-geometry",
+    "chain-08": "pass",
     "chain-09": "bad-geometry",
     "chain-10": "bad-geometry",
     "chain-11": "bad-geometry",
@@ -17,7 +69,7 @@
     "chain-14": "pass",
     "chain-15": "bad-geometry",
     "chain-16": "pass",
-    "chain-17": "bad-geometry",
+    "chain-17": "pass",
     "chain-18": "bad-geometry",
     "chain-19": "bad-geometry",
     "chain-20": "bad-geometry",
@@ -155,7 +207,7 @@
     "rand-035": "pass",
     "rand-036": "bad-geometry",
     "rand-037": "pass",
-    "rand-038": "bad-geometry",
+    "rand-038": "pass",
     "rand-039": "pass",
     "rand-040": "pass",
     "rand-041": "pass",
@@ -189,7 +241,7 @@
     "rand-069": "bad-geometry",
     "rand-070": "pass",
     "rand-071": "pass",
-    "rand-072": "bad-geometry",
+    "rand-072": "pass",
     "rand-073": "pass",
     "rand-074": "pass",
     "rand-075": "pass",
@@ -337,7 +389,7 @@
     "rand-217": "pass",
     "rand-218": "bad-geometry",
     "rand-219": "pass",
-    "rand-220": "bad-geometry",
+    "rand-220": "pass",
     "rand-221": "pass",
     "rand-222": "pass",
     "rand-223": "pass",
@@ -753,77 +805,21 @@
     "tess-wedge-s64": "pass",
     "tess-wedge-s8": "pass"
   },
-  "categories": {
-    "boolean-chain": {
-      "bad_geometry": 21,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 3,
-      "timeout": 0
-    },
-    "boolean-coincident": {
-      "bad_geometry": 0,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 93,
-      "timeout": 0
-    },
-    "boolean-random": {
-      "bad_geometry": 53,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 347,
-      "timeout": 0
-    },
-    "boolean-sliver": {
-      "bad_geometry": 3,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 30,
-      "timeout": 0
-    },
-    "boolean-tangent": {
-      "bad_geometry": 6,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 51,
-      "timeout": 0
-    },
-    "step-roundtrip": {
-      "bad_geometry": 0,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 60,
-      "timeout": 0
-    },
-    "tessellation": {
-      "bad_geometry": 20,
-      "crash": 0,
-      "graceful_refusal": 0,
-      "pass": 65,
-      "timeout": 0
-    }
-  },
   "details": {
-    "chain-00": "step 1: result mesh has 64 open boundary edges",
     "chain-01": "step 3: result mesh has 32 open boundary edges",
-    "chain-02": "step 1: result mesh has 267 open boundary edges",
     "chain-04": "step 1: result mesh has 215 open boundary edges",
-    "chain-05": "step 1: result mesh has 223 open boundary edges",
     "chain-06": "step 3: result mesh has 105 open boundary edges",
     "chain-07": "step 1: result mesh has 224 open boundary edges",
-    "chain-08": "step 2: result mesh has 263 open boundary edges",
     "chain-09": "step 0: result mesh has 269 open boundary edges",
     "chain-10": "step 0: result mesh has 64 open boundary edges",
     "chain-11": "step 0: result mesh has 98 open boundary edges",
-    "chain-12": "step 1: result mesh has 47 open boundary edges",
+    "chain-12": "step 1: result mesh has 52 open boundary edges",
     "chain-13": "step 0: result mesh has 64 open boundary edges",
     "chain-15": "step 1: result mesh has 17 open boundary edges",
-    "chain-17": "step 3: result mesh has 228 open boundary edges",
-    "chain-18": "step 2: result mesh has 14 open boundary edges",
+    "chain-18": "step 2: result mesh has 10 open boundary edges",
     "chain-19": "step 2: result mesh has 150 open boundary edges",
     "chain-20": "step 0: result mesh has 267 open boundary edges",
-    "chain-21": "step 1: result mesh has 3 open boundary edges",
+    "chain-21": "step 1: result mesh has 7 open boundary edges",
     "chain-22": "step 2: result mesh has 64 open boundary edges",
     "chain-23": "step 0: result mesh has 128 open boundary edges",
     "rand-002": "result mesh has 144 open boundary edges",
@@ -831,12 +827,10 @@
     "rand-026": "result mesh has 65 open boundary edges",
     "rand-030": "result mesh has 127 open boundary edges",
     "rand-036": "result mesh has 133 open boundary edges",
-    "rand-038": "result mesh has 64 open boundary edges",
     "rand-051": "result mesh has 236 open boundary edges",
     "rand-054": "result mesh has 19 open boundary edges",
     "rand-055": "result mesh has 144 open boundary edges",
     "rand-069": "result mesh has 246 open boundary edges",
-    "rand-072": "result mesh has 87 open boundary edges",
     "rand-076": "result mesh has 30 open boundary edges",
     "rand-086": "result mesh has 232 open boundary edges",
     "rand-094": "result mesh has 2 open boundary edges",
@@ -859,7 +853,6 @@
     "rand-207": "result mesh has 160 open boundary edges",
     "rand-216": "result mesh has 377 open boundary edges",
     "rand-218": "result mesh has 203 open boundary edges",
-    "rand-220": "result mesh has 146 open boundary edges",
     "rand-229": "result mesh has 21 open boundary edges",
     "rand-244": "result mesh has 203 open boundary edges",
     "rand-268": "result mesh has 92 open boundary edges",
@@ -908,6 +901,5 @@
     "tess-torus-s4": "empty tessellation",
     "tess-torus-s64": "empty tessellation",
     "tess-torus-s8": "empty tessellation"
-  },
-  "subset": "full"
+  }
 }
