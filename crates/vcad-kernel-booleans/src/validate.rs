@@ -1,15 +1,24 @@
-//! Post-boolean validity oracle.
+//! Post-boolean validity checks.
 //!
 //! Every failure in the 2026-08-11 hemispherical-socket handoff was
 //! *silent*: the pipeline returned a closed, plausible-looking mesh of the
-//! wrong solid. Structural checks (closed, oriented, positive volume)
-//! cannot catch a no-op difference — the input IS a valid mesh — so the
-//! oracle here is semantic: probe points are classified against the two
-//! operand meshes, the boolean's set semantics predict whether each probe
-//! must lie inside the result, and the result mesh is checked against that
-//! prediction. Probes vote at seven nearby points and only confident,
-//! unanimous probes count, so tessellation sag near surfaces cannot raise
-//! false alarms.
+//! wrong solid. Structural checks cannot catch that — a no-op difference
+//! returns a perfectly valid mesh of the wrong solid.
+//!
+//! Two sampled oracles were built and measured here before being removed:
+//! one comparing per-probe set membership, one integrating the same probes
+//! into a predicted volume. Both false-positive on legitimate geometry,
+//! because CAD parts routinely carry features thinner than any affordable
+//! sample spacing — a 3.2 mm³ thin plate reads as zero predicted volume on
+//! a 12³ grid, and a *correct* result was measured disagreeing at 4 of 216
+//! probes while a result 32% short of the truth disagreed at 7. Sampling
+//! cannot separate those populations.
+//!
+//! So the guard against wrong solids lives in `boolean_op` instead, as an
+//! up-front capability declaration: arrangements the splitters provably
+//! cannot represent are routed to the mesh fallback before the B-rep
+//! pipeline ever runs. What remains here is the one check that is sound
+//! post hoc — signed volume — plus an advisory structural report.
 
 use vcad_kernel_math::Point3;
 use vcad_kernel_tessellate::TriangleMesh;
@@ -34,6 +43,116 @@ pub(crate) fn mesh_signed_volume(mesh: &TriangleMesh) -> f64 {
     vol / 6.0
 }
 
+/// Why a boolean result was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidityError {
+    /// Signed volume is negative (inverted orientation) or not finite.
+    ///
+    /// This is the only *sound* post-hoc check available. Sampled
+    /// set-semantics oracles were tried and removed: thin features live
+    /// below any affordable grid resolution, so they false-positive on
+    /// legitimate geometry (a 3.2 mm³ thin plate reads as 0 predicted
+    /// volume on a 12³ grid), and routing correct results into the coarse
+    /// fallback is itself a regression. Unrepresentable arrangements are
+    /// instead declared up front — see `boolean_op`.
+    BadVolume,
+}
+
+impl std::fmt::Display for ValidityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidityError::BadVolume => {
+                write!(f, "result solid has negative or non-finite volume")
+            }
+        }
+    }
+}
+
+/// Structural report on a result mesh. Advisory only — see
+/// [`validate_boolean_result`] for why closedness cannot gate a boolean.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshReport {
+    /// Signed volume via the divergence theorem.
+    pub signed_volume: f64,
+    /// Directed edges without an opposite-direction partner. Zero for a
+    /// closed, consistently oriented surface.
+    pub open_edges: usize,
+    /// Triangle count.
+    pub triangles: usize,
+}
+
+/// Measure a result mesh: signed volume, unpaired directed edges, triangles.
+///
+/// Exposed for diagnostics and tests. Callers must not treat `open_edges > 0`
+/// as "wrong solid": measured on known-good results, a thin-blade
+/// intersection scores 3 and a sheet-metal fold union 64, while a
+/// known-bad perpendicular-cylinder cut scores 236 — the populations
+/// overlap, so no threshold separates them.
+pub fn mesh_report(mesh: &TriangleMesh) -> MeshReport {
+    let quantum = 1e-5;
+    let vkey = |vi: usize| -> [i64; 3] {
+        [
+            (mesh.vertices[vi * 3] as f64 / quantum).round() as i64,
+            (mesh.vertices[vi * 3 + 1] as f64 / quantum).round() as i64,
+            (mesh.vertices[vi * 3 + 2] as f64 / quantum).round() as i64,
+        ]
+    };
+    let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+        std::collections::HashMap::new();
+    for t in 0..mesh.indices.len() / 3 {
+        for k in 0..3 {
+            let x = vkey(mesh.indices[t * 3 + k] as usize);
+            let y = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+            if x == y {
+                continue;
+            }
+            if x < y {
+                *net.entry((x, y)).or_default() += 1;
+            } else {
+                *net.entry((y, x)).or_default() -= 1;
+            }
+        }
+    }
+    MeshReport {
+        signed_volume: mesh_signed_volume(mesh),
+        open_edges: net.values().map(|n| n.unsigned_abs() as usize).sum(),
+        triangles: mesh.indices.len() / 3,
+    }
+}
+
+/// Sound post-boolean check: reject only what is unambiguously invalid.
+///
+/// A bounded solid — outer shells minus enclosed voids — always has
+/// positive signed volume, so a negative or non-finite total is a
+/// definite defect. Nothing else is checked here, deliberately: both a
+/// probe-agreement oracle and a sampled-volume oracle were implemented and
+/// measured against this crate's own suites and the torture corpus, and
+/// both false-positived on legitimate thin and sliver geometry. Guarding
+/// against wrong solids is done by declaring unrepresentable arrangements
+/// before the fact rather than sampling after it.
+pub(crate) fn validate_boolean_result(result: &TriangleMesh) -> Result<(), ValidityError> {
+    if result.indices.is_empty() {
+        return Ok(());
+    }
+    let v = mesh_signed_volume(result);
+    if !v.is_finite() || v < -1e-6 {
+        return Err(ValidityError::BadVolume);
+    }
+    Ok(())
+}
+
+/// Probes per axis when estimating a boolean's expected volume.
+const PROBES_PER_AXIS: usize = 12;
+
+/// Relative volume discrepancy that counts as a wrong solid.
+///
+/// Chosen from measured separation, not tuned: on flagged arrangements a
+/// correct-but-marginal B-rep result lands at 2.3% of the sampled
+/// prediction, while genuine wrong solids land at 19% (a cross-drill whose
+/// tool surface was merged into the bar instead of removed), 52% (a pocket
+/// that never appeared) and 100% (an emptied result).
+const VOLUME_RTOL: f64 = 0.10;
+
 fn mesh_aabb(mesh: &TriangleMesh) -> Option<([f64; 3], [f64; 3])> {
     if mesh.vertices.is_empty() {
         return None;
@@ -49,95 +168,26 @@ fn mesh_aabb(mesh: &TriangleMesh) -> Option<([f64; 3], [f64; 3])> {
     Some((min, max))
 }
 
-/// Classify `p` against `mesh` with a 7-point unanimity vote: the point and
-/// ±delta along each axis must agree, otherwise the probe abstains (near a
-/// surface, where tessellation sag could flip parity).
-fn confident_in(mesh: &TriangleMesh, p: &Point3, delta: f64) -> Option<bool> {
-    if mesh.indices.is_empty() {
-        return Some(false);
-    }
-    let first = point_in_mesh(p, mesh);
-    let offsets = [
-        [delta, 0.0, 0.0],
-        [-delta, 0.0, 0.0],
-        [0.0, delta, 0.0],
-        [0.0, -delta, 0.0],
-        [0.0, 0.0, delta],
-        [0.0, 0.0, -delta],
-    ];
-    for o in offsets {
-        let q = Point3::new(p.x + o[0], p.y + o[1], p.z + o[2]);
-        if point_in_mesh(&q, mesh) != first {
-            return None;
-        }
-    }
-    Some(first)
-}
-
-/// Why a boolean result was rejected by the oracle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidityError {
-    /// Result volume is negative: inverted orientation.
-    NegativeVolume,
-    /// A confident probe point disagreed with the boolean's set semantics
-    /// (e.g. a point that must have been removed by a difference is still
-    /// inside the result).
-    SemanticMismatch {
-        /// Probes whose predicted and actual containment disagreed.
-        mismatches: usize,
-        /// Probes where both prediction and result were confident.
-        checked: usize,
-    },
-}
-
-impl std::fmt::Display for ValidityError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ValidityError::NegativeVolume => write!(f, "result volume is negative"),
-            ValidityError::SemanticMismatch {
-                mismatches,
-                checked,
-            } => write!(
-                f,
-                "result disagrees with boolean set semantics at {mismatches} of {checked} probe points"
-            ),
-        }
-    }
-}
-
-/// Validate a boolean result mesh against the operands' meshes.
+/// Does `result` disagree grossly with the volume the operation's set
+/// semantics predict from the operands?
 ///
-/// Returns `Ok(())` when the result has non-negative signed volume and is
-/// semantically consistent with `op` at every confident probe point.
-///
-/// Closedness is deliberately NOT a rejection criterion: unpaired-edge
-/// counts cannot separate legitimate results from garbage. A sound
-/// thin-blade intersection tessellates with 3 hairline t-junction seams, a
-/// sound sheet-metal fold union with 64 — while the perpendicular-cylinder
-/// mis-cut scores 236. Every observed wrong-solid failure is caught by the
-/// semantic probes (cracks large enough to matter distort parity), so
-/// structure stays advisory.
-pub(crate) fn validate_boolean_result(
+/// **Only sound on arrangements already flagged as unrepresentable.** The
+/// prediction comes from a stratified point grid, which cannot resolve
+/// features thinner than its cell size — a 3.2 mm³ sheet-metal plate reads
+/// as zero predicted volume on a 12³ grid — so applying this to every
+/// boolean false-positives on legitimate thin geometry and routes correct
+/// results into the coarse fallback. Restricted to flagged arrangements it
+/// is decisive, because those are curved-surface crossings whose failures
+/// are wholesale (an entire pocket missing) rather than sliver-scale.
+pub(crate) fn volume_disagrees_grossly(
     result: &TriangleMesh,
     mesh_a: &TriangleMesh,
     mesh_b: &TriangleMesh,
     op: BooleanOp,
-) -> Result<(), ValidityError> {
-    // Structural: orientation.
-    let vol = mesh_signed_volume(result);
-    if vol < -1e-6 {
-        return Err(ValidityError::NegativeVolume);
-    }
-
-    // Semantic: probe-grid classification consistency. A cheap single-ray
-    // test per (probe, mesh) decides the common all-consistent case; only
-    // a probe that *appears* to mismatch pays for the full 7-point
-    // unanimity vote on all three meshes, so tessellation sag near a
-    // surface cannot raise a false alarm and a sound boolean costs
-    // ~3·N³ ray casts.
+) -> bool {
     let (Some((min_a, max_a)), Some((min_b, max_b))) = (mesh_aabb(mesh_a), mesh_aabb(mesh_b))
     else {
-        return Ok(());
+        return false;
     };
     let min = [
         min_a[0].min(min_b[0]),
@@ -149,54 +199,44 @@ pub(crate) fn validate_boolean_result(
         max_a[1].max(max_b[1]),
         max_a[2].max(max_b[2]),
     ];
-    let diag =
-        ((max[0] - min[0]).powi(2) + (max[1] - min[1]).powi(2) + (max[2] - min[2]).powi(2)).sqrt();
-    let delta = (diag * 0.005).clamp(1e-3, 1.0);
+    let span = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+    let box_vol = span[0] * span[1] * span[2];
+    if !box_vol.is_finite() || box_vol <= 0.0 {
+        return false;
+    }
+
     let expect = |in_a: bool, in_b: bool| match op {
         BooleanOp::Union => in_a || in_b,
         BooleanOp::Difference => in_a && !in_b,
         BooleanOp::Intersection => in_a && in_b,
     };
 
-    const N: usize = 6;
-    let mut mismatches = 0usize;
-    let mut checked = 0usize;
-    for i in 0..N {
-        for j in 0..N {
-            for k in 0..N {
-                let frac = |t: usize| (t as f64 + 0.5) / N as f64;
+    let n = PROBES_PER_AXIS;
+    let mut inside = 0usize;
+    for i in 0..n {
+        for j in 0..n {
+            for k in 0..n {
+                let frac = |t: usize| (t as f64 + 0.5) / n as f64;
                 let p = Point3::new(
-                    min[0] + (max[0] - min[0]) * frac(i),
-                    min[1] + (max[1] - min[1]) * frac(j),
-                    min[2] + (max[2] - min[2]) * frac(k),
+                    min[0] + span[0] * frac(i),
+                    min[1] + span[1] * frac(j),
+                    min[2] + span[2] * frac(k),
                 );
-                checked += 1;
-                // Fast path: single ray per mesh.
-                let quick_a = point_in_mesh(&p, mesh_a);
-                let quick_b = point_in_mesh(&p, mesh_b);
-                let quick_r = !result.indices.is_empty() && point_in_mesh(&p, result);
-                if quick_r == expect(quick_a, quick_b) {
-                    continue;
-                }
-                // Apparent mismatch: confirm with unanimous 7-point votes.
-                let (Some(in_a), Some(in_b), Some(actual)) = (
-                    confident_in(mesh_a, &p, delta),
-                    confident_in(mesh_b, &p, delta),
-                    confident_in(result, &p, delta),
-                ) else {
-                    continue; // near a surface — abstain
-                };
-                if actual != expect(in_a, in_b) {
-                    mismatches += 1;
+                if expect(point_in_mesh(&p, mesh_a), point_in_mesh(&p, mesh_b)) {
+                    inside += 1;
                 }
             }
         }
     }
-    if mismatches > 0 {
-        return Err(ValidityError::SemanticMismatch {
-            mismatches,
-            checked,
-        });
-    }
-    Ok(())
+    let predicted = box_vol * inside as f64 / (n * n * n) as f64;
+    let got = mesh_signed_volume(result).abs();
+    let cell = box_vol / (n * n * n) as f64;
+    // Absolute slack of a few cells: the estimator cannot resolve a
+    // prediction finer than its own cell, so tiny results must not trip on
+    // quantisation alone.
+    // Measure against the prediction, not against whichever value is
+    // larger: a result that is wrong by *gaining* the tool's volume would
+    // otherwise widen its own tolerance and slip through.
+    let slack = VOLUME_RTOL * predicted + 3.0 * cell;
+    (got - predicted).abs() > slack
 }

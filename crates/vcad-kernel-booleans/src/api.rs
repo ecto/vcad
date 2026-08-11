@@ -156,24 +156,43 @@ pub fn boolean_op(
         return mesh_fallback(&mesh_a, &mesh_b, op);
     }
 
-    // Solids overlap — use the classification pipeline, then hold the
-    // result to the validity oracle. Every silently-wrong boolean in the
-    // 2026-08-11 hemispherical-socket handoff would have been caught here:
-    // an unsound classification against curved faces produces a closed,
-    // plausible mesh of the WRONG solid, so the oracle checks set
-    // semantics at probe points, not just mesh structure.
-    let result = brep_boolean(solid_a, solid_b, op, segments)?;
+    // Flag arrangements the splitters provably cannot represent. This is a
+    // capability declaration, not a verdict: the B-rep pipeline often
+    // copes anyway (a crossing may be resolved through other, analytic
+    // face pairs), so a flag alone must not condemn the result — measured,
+    // a flagged sphere × cylinder case came out within 2.3% of truth, and
+    // swapping it for the coarse fallback would have been the regression.
+    let flagged =
+        crate::unrepresentable::arrangement_is_unrepresentable(solid_a, solid_b, segments);
+
+    // `sphere_unrepresentable` reports the one unsound path the pipeline
+    // can only detect from the inside: a spherical face cut by intersecting
+    // circles, which the cap splitter cannot partition.
+    let mut sphere_unrepresentable = false;
+    let result = brep_boolean(solid_a, solid_b, op, segments, &mut sphere_unrepresentable)?;
+    let result_mesh = result.to_mesh(segments);
+
+    // Sound unconditionally: a bounded solid always has positive volume.
+    let inverted = validate_boolean_result(&result_mesh).is_err();
+
+    // The sphere gate is a capability flag like the others, not a verdict.
+    // It fires whenever a spherical face *would* need splitting by
+    // intersecting circles, and the pipeline then returns the operands
+    // unchanged — which is correct whenever the cut removes nothing anyway,
+    // and a silent no-op when it does not. The volume check tells the two
+    // apart, so a flagged-but-correct result keeps its analytic surfaces.
+    let broken = inverted
+        || ((flagged || sphere_unrepresentable) && {
+            let mesh_a = tessellate_brep(solid_a, segments);
+            let mesh_b = tessellate_brep(solid_b, segments);
+            crate::validate::volume_disagrees_grossly(&result_mesh, &mesh_a, &mesh_b, op)
+        });
+    if !broken {
+        return Ok(result);
+    }
     let mesh_a = tessellate_brep(solid_a, segments);
     let mesh_b = tessellate_brep(solid_b, segments);
-    let result_mesh = result.to_mesh(segments);
-    match validate_boolean_result(&result_mesh, &mesh_a, &mesh_b, op) {
-        Ok(()) => Ok(result),
-        Err(_why) => {
-            #[cfg(feature = "debug-boolean")]
-            eprintln!("boolean validity oracle rejected BRep result: {_why} — mesh fallback");
-            mesh_fallback(&mesh_a, &mesh_b, op)
-        }
-    }
+    mesh_fallback(&mesh_a, &mesh_b, op)
 }
 
 /// Mesh-CSG fallback: combine the operand tessellations with the BSP
@@ -187,7 +206,7 @@ fn mesh_fallback(
     op: BooleanOp,
 ) -> Result<BooleanResult, BooleanError> {
     let out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
-    validate_boolean_result(&out, mesh_a, mesh_b, op).map_err(BooleanError::InvalidResult)?;
+    validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;
     Ok(BooleanResult::BRep(Box::new(crate::mesh::mesh_to_brep(
         &out,
     ))))

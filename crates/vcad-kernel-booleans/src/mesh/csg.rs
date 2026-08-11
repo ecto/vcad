@@ -50,9 +50,32 @@ use crate::mesh::point_in_mesh;
 /// Plane-side classification tolerance (mm) for splitting.
 const EPS: f64 = 1e-5;
 
-/// Nudge distance (mm) for the parity probes. Far above f32 vertex noise,
-/// far below feature scale (a 0.5 mm blade wall still separates cleanly).
-const PROBE_EPS: f64 = 1e-3;
+/// Upper bound (mm) on the parity-probe nudge. The actual offset scales
+/// with the fragment (see [`probe_offset`]).
+const PROBE_EPS_MAX: f64 = 1e-3;
+
+/// Lower bound (mm) on the probe nudge: below this, f32 vertex noise makes
+/// the probe's side ambiguous.
+const PROBE_EPS_MIN: f64 = 2e-6;
+
+/// How far to step off a fragment when classifying it.
+///
+/// A fixed offset misclassifies sliver fragments: splitting routinely
+/// produces pieces only a few microns across, and stepping a flat 1e-3 mm
+/// off one lands the probe beyond a *neighbouring* surface rather than in
+/// the material the fragment bounds. Dropping the sliver then leaves a
+/// hairline hole (measured: a 0.003 mm gap in a 7.6 mm part). Scaling the
+/// step to the fragment's own size keeps the probe in the fragment's
+/// neighbourhood, with a floor at f32 resolution.
+fn probe_offset(poly: &Polygon) -> f64 {
+    let mut n = Vec3::new(0.0, 0.0, 0.0);
+    let o = poly.verts[0];
+    for i in 1..poly.verts.len() - 1 {
+        n += (poly.verts[i] - o).cross(poly.verts[i + 1] - o);
+    }
+    let area = 0.5 * n.norm();
+    (0.25 * area.sqrt()).clamp(PROBE_EPS_MIN, PROBE_EPS_MAX)
+}
 
 #[derive(Clone)]
 struct Polygon {
@@ -277,8 +300,9 @@ fn classify(frag: &Polygon, other: &TriangleMesh) -> Class {
     }
     let c = frag.centroid();
     let n = frag.normal;
-    let plus = point_in_mesh(&(c + PROBE_EPS * n), other);
-    let minus = point_in_mesh(&(c - PROBE_EPS * n), other);
+    let eps = probe_offset(frag);
+    let plus = point_in_mesh(&(c + eps * n), other);
+    let minus = point_in_mesh(&(c - eps * n), other);
     match (plus, minus) {
         (false, false) => Class::Out,
         (true, true) => Class::In,
@@ -372,7 +396,206 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
             out.push(f);
         }
     }
-    polygons_to_mesh(&out)
+    let mesh = weld_t_junctions(&polygons_to_mesh(&out));
+    orient_outward(mesh)
+}
+
+/// Pin the global orientation: a bounded solid — outer shells minus any
+/// enclosed voids — always has positive signed volume, so a negative total
+/// means every fragment is wound inside-out and flipping all of them is the
+/// unique correction.
+///
+/// Needed because fragment orientation is inherited from the operand
+/// tessellations, and a few configurations (measured: a torus-like
+/// intersection whose kept fragments came out at −28.42 against a
+/// Monte-Carlo truth of +28.84) invert wholesale. Ray-parity checks cannot
+/// catch this — crossing counts are orientation-blind — so signed volume is
+/// the only available guard. This cannot repair a *partially* inconsistent
+/// surface; that shows up downstream as a watertightness or volume failure
+/// rather than being silently accepted.
+fn orient_outward(mut mesh: TriangleMesh) -> TriangleMesh {
+    let mut vol = 0.0_f64;
+    for tri in mesh.indices.chunks(3) {
+        let p = |k: usize| {
+            let i = tri[k] as usize * 3;
+            [
+                mesh.vertices[i] as f64,
+                mesh.vertices[i + 1] as f64,
+                mesh.vertices[i + 2] as f64,
+            ]
+        };
+        let (a, b, c) = (p(0), p(1), p(2));
+        vol += a[0] * (b[1] * c[2] - c[1] * b[2]) - b[0] * (a[1] * c[2] - c[1] * a[2])
+            + c[0] * (a[1] * b[2] - b[1] * a[2]);
+    }
+    if vol < 0.0 {
+        for tri in mesh.indices.chunks_mut(3) {
+            tri.swap(1, 2);
+        }
+    }
+    mesh
+}
+
+/// Distance (mm) within which a vertex counts as lying on a triangle edge.
+/// Mesh coordinates are `f32`, so a shared split point can land ~1e-5 mm
+/// apart on two fragments; this sits above that and far below any real
+/// feature (0.1 µm).
+const WELD_TOL: f64 = 1e-4;
+
+/// Eliminate T-junctions: a vertex lying in the interior of another
+/// triangle's edge leaves that edge unpaired, which every watertightness
+/// check reads as a hole.
+///
+/// They are unavoidable upstream: splitting is localized by AABB overlap
+/// (without it, every polygon would be cut by every far-away carrier plane
+/// — quadratic and explosive), so a fragment may be split by a plane that
+/// its edge-sharing neighbour never sees. Repairing after the fact is exact
+/// rather than a tolerance fudge: inserting a vertex that already lies on
+/// an edge changes no geometry and no volume, only which triangles agree
+/// combinatorially along that edge.
+///
+/// Each triangle that gains edge points is re-emitted as a centroid fan, so
+/// every boundary edge appears once and every spoke exactly twice with
+/// opposite orientation. The fan preserves the original winding.
+///
+/// Deliberately a **single** sweep. Fanning multiplies a triangle into one
+/// per boundary point, so iterating to a fixed point compounds that growth
+/// — four passes pushed several chained-boolean torture cases past a 20 s
+/// timeout while removing only a handful more junctions than one pass.
+fn weld_t_junctions(mesh: &TriangleMesh) -> TriangleMesh {
+    weld_pass(mesh).0
+}
+
+/// One welding sweep. Returns the rebuilt mesh and how many edge points it
+/// had to insert (zero means the mesh is already junction-free).
+fn weld_pass(mesh: &TriangleMesh) -> (TriangleMesh, usize) {
+    let nv = mesh.vertices.len() / 3;
+    if nv == 0 || mesh.indices.is_empty() {
+        return (mesh.clone(), 0);
+    }
+    let vert = |i: usize| {
+        Point3::new(
+            mesh.vertices[i * 3] as f64,
+            mesh.vertices[i * 3 + 1] as f64,
+            mesh.vertices[i * 3 + 2] as f64,
+        )
+    };
+
+    // Uniform-grid vertex index, so each edge query touches only nearby
+    // vertices instead of all of them.
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for i in 0..nv {
+        let p = vert(i);
+        for (k, c) in [p.x, p.y, p.z].into_iter().enumerate() {
+            min[k] = min[k].min(c);
+            max[k] = max[k].max(c);
+        }
+    }
+    let diag = ((max[0] - min[0]).powi(2) + (max[1] - min[1]).powi(2) + (max[2] - min[2]).powi(2))
+        .sqrt()
+        .max(1e-9);
+    let cell = (diag / 64.0).max(10.0 * WELD_TOL);
+    let key_of = |p: &Point3| -> [i64; 3] {
+        [
+            ((p.x - min[0]) / cell).floor() as i64,
+            ((p.y - min[1]) / cell).floor() as i64,
+            ((p.z - min[2]) / cell).floor() as i64,
+        ]
+    };
+    let mut grid: std::collections::HashMap<[i64; 3], Vec<usize>> =
+        std::collections::HashMap::new();
+    for i in 0..nv {
+        grid.entry(key_of(&vert(i))).or_default().push(i);
+    }
+
+    let mut out = TriangleMesh::new();
+    out.vertices = mesh.vertices.clone();
+    let mut inserted_total = 0usize;
+
+    for tri in mesh.indices.chunks(3) {
+        let corners = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let mut loop_idx: Vec<u32> = Vec::with_capacity(3);
+        let mut inserted_here = 0usize;
+
+        for e in 0..3 {
+            let a_i = corners[e];
+            let b_i = corners[(e + 1) % 3];
+            let (a, b) = (vert(a_i), vert(b_i));
+            loop_idx.push(a_i as u32);
+
+            let ab = b - a;
+            let len2 = ab.dot(ab);
+            if len2 < 1e-18 {
+                continue;
+            }
+            let (ka, kb) = (key_of(&a), key_of(&b));
+            let mut on_edge: Vec<(f64, usize)> = Vec::new();
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            for gx in ka[0].min(kb[0]) - 1..=ka[0].max(kb[0]) + 1 {
+                for gy in ka[1].min(kb[1]) - 1..=ka[1].max(kb[1]) + 1 {
+                    for gz in ka[2].min(kb[2]) - 1..=ka[2].max(kb[2]) + 1 {
+                        let Some(bucket) = grid.get(&[gx, gy, gz]) else {
+                            continue;
+                        };
+                        for &v_i in bucket {
+                            if v_i == a_i || v_i == b_i || !seen.insert(v_i) {
+                                continue;
+                            }
+                            let v = vert(v_i);
+                            let t = (v - a).dot(ab) / len2;
+                            if t <= 0.0 || t >= 1.0 {
+                                continue;
+                            }
+                            if (v - (a + t * ab)).norm() > WELD_TOL {
+                                continue;
+                            }
+                            if (v - a).norm() <= WELD_TOL || (v - b).norm() <= WELD_TOL {
+                                continue;
+                            }
+                            on_edge.push((t, v_i));
+                        }
+                    }
+                }
+            }
+            if on_edge.is_empty() {
+                continue;
+            }
+            on_edge.sort_by(|x, y| x.0.total_cmp(&y.0));
+            inserted_here += on_edge.len();
+            for (_, v_i) in on_edge {
+                loop_idx.push(v_i as u32);
+            }
+        }
+
+        if inserted_here == 0 {
+            out.indices.extend_from_slice(&[
+                corners[0] as u32,
+                corners[1] as u32,
+                corners[2] as u32,
+            ]);
+            continue;
+        }
+        inserted_total += inserted_here;
+
+        let c = Point3::from_vec(
+            (vert(corners[0]).to_vec() + vert(corners[1]).to_vec() + vert(corners[2]).to_vec())
+                / 3.0,
+        );
+        let ci = (out.vertices.len() / 3) as u32;
+        out.vertices.push(c.x as f32);
+        out.vertices.push(c.y as f32);
+        out.vertices.push(c.z as f32);
+        let n = loop_idx.len();
+        for k in 0..n {
+            let a = loop_idx[k];
+            let b = loop_idx[(k + 1) % n];
+            if a != b {
+                out.indices.extend_from_slice(&[ci, a, b]);
+            }
+        }
+    }
+    (out, inserted_total)
 }
 
 #[cfg(test)]
