@@ -1065,7 +1065,13 @@ fn load_vcad_document_raw(file: &PathBuf) -> Result<vcad_ir::Document> {
             Ok(vcad_ir::Document::from_json(json)?)
         }
         FileFormat::Unknown => {
-            anyhow::bail!("unrecognized .vcad file format")
+            // Not CRDT and not JSON — try v0.2 VCode (token-efficient text
+            // format) before giving up, so `vcad info` / `vcad export` can
+            // read VCode documents directly.
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| anyhow::anyhow!("unrecognized .vcad file format"))?;
+            vcad_ir::vcode::from_vcode(text.trim())
+                .map_err(|e| anyhow::anyhow!("unrecognized .vcad file format (VCode parse: {e})"))
         }
     }
 }

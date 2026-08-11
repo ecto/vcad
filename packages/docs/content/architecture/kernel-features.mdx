@@ -54,6 +54,8 @@ The vcad kernel is a purpose-built BRep (boundary representation) modeling kerne
 
 ![Boolean union and difference: a plate with a bossed bore and a notched corner](/assets/kernel/booleans.jpg)
 
+Every result is held to a post-boolean validity oracle: probe points are classified against both operands, the operation's set semantics predict which probes must land inside the result, and a result that disagrees (or has inverted orientation) is rerouted to a mesh-CSG fallback — plane-split fragments classified by exact-predicate ray parity — instead of being returned as a plausible-looking wrong solid. Arrangements the analytic splitters cannot yet represent (intersecting circle arrangements on a sphere, sphere×cylinder crossings, unequal perpendicular cylinders) take the same fallback, trading semantic surfaces for a correct-volume triangle-soup B-rep. If even the fallback fails validation, the boolean returns an error rather than wrong geometry.
+
 ### Fillets and Chamfers
 
 `vcad-kernel-fillet` rounds or bevels edges directly on the BRep — inserting true cylindrical and spherical blend faces rather than faceting the mesh. Left: `[fillet 6 ...]`; right: `[chamfer 6 ...]`.

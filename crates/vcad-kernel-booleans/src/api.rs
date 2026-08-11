@@ -7,6 +7,7 @@ use crate::bbox;
 use crate::cyl_cyl;
 use crate::pipeline::{brep_boolean, non_overlapping_boolean};
 use crate::ssi::SsiError;
+use crate::validate::{validate_boolean_result, ValidityError};
 
 /// Error from a CSG boolean operation.
 ///
@@ -19,12 +20,20 @@ use crate::ssi::SsiError;
 pub enum BooleanError {
     /// Surface-surface intersection failed for a candidate face pair.
     Ssi(SsiError),
+    /// Both the B-rep pipeline and the mesh-CSG fallback produced a result
+    /// that fails the post-boolean validity oracle (open shell, inverted
+    /// orientation, or disagreement with the operation's set semantics).
+    /// Returned instead of a plausible-looking wrong solid.
+    InvalidResult(ValidityError),
 }
 
 impl std::fmt::Display for BooleanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BooleanError::Ssi(e) => write!(f, "boolean operation failed: {e}"),
+            BooleanError::InvalidResult(e) => {
+                write!(f, "boolean operation produced an invalid solid: {e}")
+            }
         }
     }
 }
@@ -33,6 +42,7 @@ impl std::error::Error for BooleanError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             BooleanError::Ssi(e) => Some(e),
+            BooleanError::InvalidResult(_) => None,
         }
     }
 }
@@ -135,6 +145,50 @@ pub fn boolean_op(
         return Ok(result);
     }
 
-    // Solids overlap — use classification pipeline
-    brep_boolean(solid_a, solid_b, op, segments)
+    // Triangle-soup operands (a prior mesh-fallback result, chained): the
+    // BRep pipeline gains nothing from thousands of anonymous planar
+    // triangle faces and its face-pair stages blow up quadratically — a
+    // two-cut chain through a spherical pocket used to produce 246k
+    // triangles in 21 s. Go straight to the mesh boolean.
+    if crate::mesh::is_triangle_soup(solid_a) || crate::mesh::is_triangle_soup(solid_b) {
+        let mesh_a = tessellate_brep(solid_a, segments);
+        let mesh_b = tessellate_brep(solid_b, segments);
+        return mesh_fallback(&mesh_a, &mesh_b, op);
+    }
+
+    // Solids overlap — use the classification pipeline, then hold the
+    // result to the validity oracle. Every silently-wrong boolean in the
+    // 2026-08-11 hemispherical-socket handoff would have been caught here:
+    // an unsound classification against curved faces produces a closed,
+    // plausible mesh of the WRONG solid, so the oracle checks set
+    // semantics at probe points, not just mesh structure.
+    let result = brep_boolean(solid_a, solid_b, op, segments)?;
+    let mesh_a = tessellate_brep(solid_a, segments);
+    let mesh_b = tessellate_brep(solid_b, segments);
+    let result_mesh = result.to_mesh(segments);
+    match validate_boolean_result(&result_mesh, &mesh_a, &mesh_b, op) {
+        Ok(()) => Ok(result),
+        Err(_why) => {
+            #[cfg(feature = "debug-boolean")]
+            eprintln!("boolean validity oracle rejected BRep result: {_why} — mesh fallback");
+            mesh_fallback(&mesh_a, &mesh_b, op)
+        }
+    }
+}
+
+/// Mesh-CSG fallback: combine the operand tessellations with the BSP
+/// boolean and wrap the result as a triangle-soup B-rep. The fallback is
+/// itself held to the validity oracle — if even the mesh boolean cannot
+/// produce a sound result, fail closed with [`BooleanError::InvalidResult`]
+/// rather than returning a wrong solid.
+fn mesh_fallback(
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+    op: BooleanOp,
+) -> Result<BooleanResult, BooleanError> {
+    let out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
+    validate_boolean_result(&out, mesh_a, mesh_b, op).map_err(BooleanError::InvalidResult)?;
+    Ok(BooleanResult::BRep(Box::new(crate::mesh::mesh_to_brep(
+        &out,
+    ))))
 }
