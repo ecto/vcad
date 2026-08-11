@@ -237,7 +237,65 @@ pub fn split_face_by_curve(
         };
     }
 
-    if entry_edge == exit_edge || (*exit_point - *entry_point).norm() < 1e-6 {
+    // The cut edge between exit and entry follows the true intersection
+    // curve when it is sampled (via points), not a single chord.
+    let via = cut_polyline_between(curve, entry_point, exit_point);
+
+    // How far the cut path departs from the straight entry→exit chord. A
+    // curved cut (an ellipse where a bore meets an oblique face) bulges;
+    // a cut that merely retraces an existing edge does not.
+    //
+    // This is measured from `via`, so it is only ever non-zero for a
+    // `Sampled` curve — `cut_polyline_between` yields nothing for the
+    // analytic variants. That is deliberate, and it is a real restriction on
+    // the bite path below, so state it rather than leave it implicit:
+    //
+    // * `Line`/`TwoLines`/`Point` — a straight cut entering and leaving
+    //   through one edge genuinely bounds no area. Zero bulge is the right
+    //   answer and the old rejection is the right behaviour.
+    // * `Circle` — a circular mouth CAN bite. It never arrives here in
+    //   practice: `split_planar_face` routes circles to
+    //   `split_planar_face_by_arc`, which carries its own `same_edge` case,
+    //   and curved faces go to the cylindrical/conical/spherical splitters.
+    //   Were one to arrive, admitting it on an analytic bulge alone would be
+    //   worse than declining: the loops below close along `via`, so the
+    //   bite's curved side would be built as a straight chord and would not
+    //   weld against the mating wall. Making it work needs arc points, i.e.
+    //   the `segments` this function is not given. The decline is logged.
+    let chord_bulge = {
+        let a = *entry_point;
+        let ab = *exit_point - a;
+        let len2 = ab.norm_squared();
+        via.iter().fold(0.0f64, |acc, p| {
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            acc.max((*p - (a + t * ab)).norm())
+        })
+    };
+
+    // Curve enters and leaves through the SAME boundary edge. For a straight
+    // chord that is no cut at all. For a curved one it is: the arc bulges
+    // into the interior and, together with the stretch of edge beneath it,
+    // bounds a genuine sub-face — the elliptical mouth of a bore breaking
+    // out through an oblique face is exactly this shape, and rejecting it
+    // left the mouth unopened and the cut ~20% short with no error raised.
+    let same_edge_bite = entry_edge == exit_edge
+        && (*exit_point - *entry_point).norm() >= 1e-6
+        && chord_bulge > 1e-9;
+
+    if entry_edge == exit_edge && !same_edge_bite && via.is_empty() {
+        // Surfaces the case the paragraph above reasons about, so a curve
+        // type that starts reaching here shows up in the debug channel
+        // instead of silently taking the old rejection.
+        split_dbg!(
+            "sfbc: same-edge cut declined — no interior samples to prove a bulge (curve {curve:?})"
+        );
+    }
+
+    if !same_edge_bite && (entry_edge == exit_edge || (*exit_point - *entry_point).norm() < 1e-6) {
         // Curve enters and exits on the same edge, or grazes a single
         // vertex — no real cut.
         split_dbg!(
@@ -259,13 +317,37 @@ pub fn split_face_by_curve(
     // face — e.g. a blade's tangent bottom plane and its side plane both
     // cross an end cap along the same chord). Splitting again along that
     // chord would emit a duplicate of the face plus a zero-area sliver.
+    //
+    // On a same-edge bite — and ONLY there — probe the midpoint of the cut
+    // PATH rather than of the chord: the chord of a bite lies along the
+    // boundary by construction, so the chord probe would reject every bite.
+    // Everywhere else the chord stays the right proxy. Widening the probe to
+    // all cuts admits genuine along-the-edge duplicates (it reopened the
+    // rotated-blade union's unpaired half-edges, `zz_blade_union`).
     {
-        let mid = Point3::new(
-            0.5 * (entry_point.x + exit_point.x),
-            0.5 * (entry_point.y + exit_point.y),
-            0.5 * (entry_point.z + exit_point.z),
-        );
-        let (_, mid_dist) = find_closest_edge_with_dist(&loop_verts, &mid);
+        let mid_dist = if via.is_empty() || !same_edge_bite {
+            let mid = Point3::new(
+                0.5 * (entry_point.x + exit_point.x),
+                0.5 * (entry_point.y + exit_point.y),
+                0.5 * (entry_point.z + exit_point.z),
+            );
+            find_closest_edge_with_dist(&loop_verts, &mid).1
+        } else {
+            // Probe the sample standing FURTHEST from the boundary, not the
+            // one at the middle index. The middle is not the apex of this
+            // metric: measured on the oblique-bore mouth this fix was built
+            // for, distance-to-boundary runs 0 → 16.9 → 9.6 → 16.9 → 0 along
+            // the arc, because near its centre the arc is closest to the
+            // face's *far* edge. Worse, the samples adjacent to entry and
+            // exit sit at distance 0 by construction, so a fixed index into
+            // a short `via` can read ~0 and reject a legitimate bite as a
+            // boundary-duplicate. The maximum is the only index-independent
+            // answer, and it is the quantity the guard actually wants: does
+            // this cut leave the boundary ANYWHERE?
+            via.iter().fold(0.0f64, |acc, q| {
+                acc.max(find_closest_edge_with_dist(&loop_verts, q).1)
+            })
+        };
         if mid_dist < 1e-7 {
             split_dbg!("sfbc: cut runs along boundary");
             return SplitResult {
@@ -282,34 +364,72 @@ pub fn split_face_by_curve(
     // Loop 1: entry_point → (edges from entry to exit) → exit_point → (cut back)
     // Loop 2: exit_point → (edges from exit to entry) → entry_point → (cut back)
 
-    // The cut edge between exit and entry follows the true intersection
-    // curve when it is sampled (via points), not a single chord.
-    let via = cut_polyline_between(curve, entry_point, exit_point);
-
     let mut loop1_points: Vec<Point3> = Vec::new();
     let mut loop2_points: Vec<Point3> = Vec::new();
 
-    // Walk from entry_edge to exit_edge (one direction)
-    loop1_points.push(*entry_point);
-    let mut idx = (entry_edge + 1) % n;
-    while idx != (exit_edge + 1) % n {
-        loop1_points.push(loop_verts[idx]);
-        idx = (idx + 1) % n;
-    }
-    loop1_points.push(*exit_point);
-    // Close along the cut curve: exit → entry (via reversed).
-    loop1_points.extend(via.iter().rev());
+    if same_edge_bite {
+        // Both endpoints sit on edge `entry_edge`, running A → B. Order them
+        // along it so the bite and the remainder both keep the parent's
+        // winding.
+        let a = loop_verts[entry_edge];
+        let b = loop_verts[(entry_edge + 1) % n];
+        let ab = b - a;
+        let len2 = ab.norm_squared().max(1e-18);
+        let along = |p: &Point3| (*p - a).dot(ab) / len2;
+        let entry_first = along(entry_point) <= along(exit_point);
+        let (p_first, p_second) = if entry_first {
+            (*entry_point, *exit_point)
+        } else {
+            (*exit_point, *entry_point)
+        };
+        // `via` runs entry→exit; re-orient it to run p_first→p_second.
+        let via_fwd: Vec<Point3> = if entry_first {
+            via.clone()
+        } else {
+            via.iter().rev().copied().collect()
+        };
 
-    // Walk from exit_edge to entry_edge (other direction)
-    loop2_points.push(*exit_point);
-    idx = (exit_edge + 1) % n;
-    while idx != (entry_edge + 1) % n {
-        loop2_points.push(loop_verts[idx]);
-        idx = (idx + 1) % n;
+        // The bite: along the edge p_first → p_second, back along the curve.
+        loop1_points.push(p_first);
+        loop1_points.push(p_second);
+        loop1_points.extend(via_fwd.iter().rev());
+
+        // The remainder: the whole loop, with the stretch of edge under the
+        // bite replaced by the curve.
+        let mut idx = (entry_edge + 1) % n;
+        loop {
+            loop2_points.push(loop_verts[idx]);
+            if idx == entry_edge {
+                break;
+            }
+            idx = (idx + 1) % n;
+        }
+        loop2_points.push(p_first);
+        loop2_points.extend(via_fwd.iter());
+        loop2_points.push(p_second);
+    } else {
+        // Walk from entry_edge to exit_edge (one direction)
+        loop1_points.push(*entry_point);
+        let mut idx = (entry_edge + 1) % n;
+        while idx != (exit_edge + 1) % n {
+            loop1_points.push(loop_verts[idx]);
+            idx = (idx + 1) % n;
+        }
+        loop1_points.push(*exit_point);
+        // Close along the cut curve: exit → entry (via reversed).
+        loop1_points.extend(via.iter().rev());
+
+        // Walk from exit_edge to entry_edge (other direction)
+        loop2_points.push(*exit_point);
+        idx = (exit_edge + 1) % n;
+        while idx != (entry_edge + 1) % n {
+            loop2_points.push(loop_verts[idx]);
+            idx = (idx + 1) % n;
+        }
+        loop2_points.push(*entry_point);
+        // Close along the cut curve: entry → exit (via forward).
+        loop2_points.extend(via.iter());
     }
-    loop2_points.push(*entry_point);
-    // Close along the cut curve: entry → exit (via forward).
-    loop2_points.extend(via.iter());
 
     // Remove consecutive duplicate vertices (can happen when split points
     // coincide with existing vertices)
@@ -1724,23 +1844,43 @@ pub fn split_planar_face_by_arc(
         };
     }
 
-    // Build 2D coordinate system from polygon
+    // Build the 2D frame from the CIRCLE's normal, not from the first three
+    // loop vertices. Those three are routinely colinear: every split inserts
+    // vertices along the edge it cuts, so a face that has already been split
+    // once often begins with three points on one straight edge, and
+    // `e1 × e2` is then zero. The bail that followed was silent — it left
+    // the entry mouth of a bore uncut where the tool met an already-split
+    // wall, and the only symptom was an unwelded rim in the exported mesh.
+    //
+    // The circle lies in this face's plane by construction, and the
+    // containment predicates that route here (`circle_fully_inside_polygon`,
+    // `circle_partially_inside_polygon`) already use exactly this frame, so
+    // taking it from the circle also keeps their verdicts consistent with
+    // the split that acts on them.
     let v0 = loop_verts[0];
-    let v1 = loop_verts[1];
-    let v2 = loop_verts[2];
-
-    let e1 = v1 - v0;
-    let e2 = v2 - v0;
-    let normal = e1.cross(e2);
-    let normal_len = normal.norm();
-    if normal_len < 1e-12 {
+    let normal = circle.normal.into_inner();
+    // First loop vertex genuinely distinct from v0, projected into the
+    // plane so u stays orthogonal to the normal under round-off.
+    let u_axis = match loop_verts.iter().skip(1).find_map(|p| {
+        let d = *p - v0;
+        let d = d - d.dot(normal) * normal;
+        (d.norm() > 1e-12).then(|| d.normalize())
+    }) {
+        Some(u) => u,
+        None => {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
+    };
+    let v_axis = normal.cross(u_axis);
+    let v_axis_len = v_axis.norm();
+    if v_axis_len < 1e-12 {
         return SplitResult {
             sub_faces: vec![face_id],
         };
     }
-
-    let u_axis = e1.normalize();
-    let v_axis = normal.cross(e1).normalize();
+    let v_axis = v_axis / v_axis_len;
     let origin = v0;
 
     // Project polygon vertices to 2D

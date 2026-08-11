@@ -174,15 +174,22 @@ pub fn boolean_op(
     let inverted = validate_boolean_result(&result_mesh).is_err();
 
     // Tessellate each operand at most once. Every path below that needs the
-    // operand meshes — the volume check, the fallback, the watertightness
-    // swap — shares these, and nothing pays for them when the B-rep result
-    // is accepted outright (the common case).
-    let operands = (flagged || sphere_unrepresentable || inverted).then(|| {
-        (
-            tessellate_brep(solid_a, segments),
-            tessellate_brep(solid_b, segments),
-        )
-    });
+    // operand meshes — the volume checks, the fallback, the watertightness
+    // swap — shares these.
+    //
+    // Difference always pays for them: its no-op guard below is the only
+    // thing standing between a silently-skipped cut and a plausible mesh of
+    // the wrong solid, and that guard needs both operand meshes. The cost is
+    // two tessellations against a pipeline that has already run SSI,
+    // splitting, classification and sewing — and the guard's expensive half
+    // (the probe grid) still only runs when the cheap volume test trips.
+    let operands = (flagged || sphere_unrepresentable || inverted || op == BooleanOp::Difference)
+        .then(|| {
+            (
+                tessellate_brep(solid_a, segments),
+                tessellate_brep(solid_b, segments),
+            )
+        });
 
     // The sphere gate is a capability flag like the others, not a verdict.
     // It fires whenever a spherical face *would* need splitting by
@@ -190,13 +197,48 @@ pub fn boolean_op(
     // unchanged — which is correct whenever the cut removes nothing anyway,
     // and a silent no-op when it does not. The volume check tells the two
     // apart, so a flagged-but-correct result keeps its analytic surfaces.
-    let broken = inverted
+    let mut broken = inverted
         || match &operands {
             Some((mesh_a, mesh_b)) if flagged || sphere_unrepresentable => {
                 crate::validate::volume_disagrees_grossly(&result_mesh, mesh_a, mesh_b, op)
             }
             _ => false,
         };
+
+    // Fail closed on a Difference that removed nothing at all from a
+    // subtrahend it demonstrably overlaps. This is sound where a general
+    // volume oracle is not (see `validate::difference_removed_nothing`), and
+    // it is the guard that would have caught both 2026-08-11 field reports
+    // at the moment they were produced rather than in a print.
+    if !broken && op == BooleanOp::Difference {
+        if let Some((mesh_a, mesh_b)) = &operands {
+            if crate::validate::difference_removed_nothing(&result_mesh, mesh_a, mesh_b) {
+                eprintln!(
+                    "vcad boolean: Difference removed no volume from a subtrahend that \
+                     overlaps the minuend — rejecting the B-rep result and re-cutting \
+                     with the mesh boolean"
+                );
+                broken = true;
+            }
+        }
+    }
+
+    // Opt-in structural report. Deliberately not on by default: measured on
+    // known-good results a thin-blade intersection scores 3 unpaired edges
+    // and a sheet-metal fold union 64, so an unconditional warning would cry
+    // wolf on correct geometry (see `mesh_report`). It stays available for
+    // exactly the kind of investigation that produced these fixes.
+    if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
+        let report = crate::mesh_report(&result_mesh);
+        if report.open_edges > 0 {
+            eprintln!(
+                "vcad boolean: {op:?} result is not closed — {} unpaired directed edges \
+                 across {} triangles (volume {:.3})",
+                report.open_edges, report.triangles, report.signed_volume
+            );
+        }
+    }
+
     if broken {
         let Some((mesh_a, mesh_b)) = &operands else {
             return Ok(result);
@@ -225,6 +267,18 @@ pub fn boolean_op(
     // on volume. Agreement is what makes this safe: it establishes the two
     // represent the same solid, so the swap trades analytic surfaces for
     // watertightness and nothing else.
+    //
+    // Eligibility is asked of the CAPABILITY FLAGS, never of whether the
+    // operand meshes happen to be in hand — Difference now tessellates them
+    // unconditionally for its no-op guard above, and reading `operands` as
+    // the gate silently offered this swap to every ordinary difference. It
+    // took `torr_boolean_catalogue::b1` immediately: a blade cut from a
+    // cylinder has a few hairline seams, the mesh fallback is watertight and
+    // agrees on volume, so the analytic r45 wall was traded for coarse
+    // triangle soup and the volume fell 529 mm³ short of analytic truth.
+    if !(flagged || sphere_unrepresentable || inverted) {
+        return Ok(result);
+    }
     let Some((mesh_a, mesh_b)) = &operands else {
         return Ok(result);
     };
