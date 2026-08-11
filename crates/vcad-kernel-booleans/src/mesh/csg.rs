@@ -331,10 +331,24 @@ fn mesh_polygons(mesh: &TriangleMesh) -> Vec<Polygon> {
     polys
 }
 
-fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
+/// Distance (mm) within which a stray vertex counts as lying ON a polygon
+/// edge during t-junction healing. Far above f32 vertex noise, far below
+/// the split tolerance that created the junction.
+const TJUNCTION_EPS: f64 = 2e-3;
+
+/// Triangulate the kept fragments, inserting any of `stitch` that lies on a
+/// polygon edge (t-junction healing). Fragments are convex — they start as
+/// triangles and are only ever cut by planes — so a fan triangulation stays
+/// valid after inserting (collinear) points.
+fn triangulate(polys: &[Polygon], stitch: &[Point3]) -> (TriangleMesh, Vec<Point3>) {
     let mut mesh = TriangleMesh::new();
+    // Exact f64 representative per emitted vertex index: healing must hand
+    // the *original* coordinates back into the next pass — reading the f32
+    // mesh back loses more precision than the 1e-7 dedup cell, so a
+    // stitched point would no longer merge with the crack vertex it heals.
+    let mut reps: Vec<Point3> = Vec::new();
     let mut cache: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
-    let mut push = |p: &Point3, mesh: &mut TriangleMesh| -> u32 {
+    let mut push = |p: &Point3, mesh: &mut TriangleMesh, reps: &mut Vec<Point3>| -> u32 {
         let key = [
             (p.x * 1e7).round() as i64,
             (p.y * 1e7).round() as i64,
@@ -345,22 +359,284 @@ fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
             mesh.vertices.push(p.x as f32);
             mesh.vertices.push(p.y as f32);
             mesh.vertices.push(p.z as f32);
+            reps.push(*p);
             idx
         })
     };
+    let mut refined: Vec<Point3> = Vec::new();
+    let mut on_edge: Vec<(f64, Point3)> = Vec::new();
     for poly in polys {
-        for k in 1..poly.verts.len() - 1 {
-            let a = push(&poly.verts[0], &mut mesh);
-            let b = push(&poly.verts[k], &mut mesh);
-            let c = push(&poly.verts[k + 1], &mut mesh);
-            if a != b && b != c && a != c {
-                mesh.indices.push(a);
-                mesh.indices.push(b);
-                mesh.indices.push(c);
+        let verts: &[Point3] = if stitch.is_empty() {
+            &poly.verts
+        } else {
+            refined.clear();
+            let n = poly.verts.len();
+            for i in 0..n {
+                let a = poly.verts[i];
+                let b = poly.verts[(i + 1) % n];
+                refined.push(a);
+                let ab = b - a;
+                let len2 = ab.dot(ab);
+                if len2 < 1e-18 {
+                    continue;
+                }
+                on_edge.clear();
+                for p in stitch {
+                    let ap = *p - a;
+                    let t = ap.dot(ab) / len2;
+                    if !(1e-9..=1.0 - 1e-9).contains(&t) {
+                        continue;
+                    }
+                    let d = ap - t * ab;
+                    if d.dot(d) < TJUNCTION_EPS * TJUNCTION_EPS {
+                        on_edge.push((t, *p));
+                    }
+                }
+                on_edge.sort_by(|x, y| x.0.total_cmp(&y.0));
+                refined.extend(on_edge.iter().map(|&(_, p)| p));
+            }
+            &refined
+        };
+        if verts.len() > poly.verts.len() {
+            // Points were stitched in. A vertex fan would emit exactly
+            // degenerate triangles (fan origin collinear with an inserted
+            // run), whose zero normal turns into NaN in the STEP writer —
+            // fan from the centroid instead so every triangle has area.
+            // The spoke edges pair up inside the polygon's own fan, so
+            // watertightness is unaffected.
+            let center = Point3::from_vec(
+                verts.iter().map(|v| v.to_vec()).sum::<Vec3>() / verts.len() as f64,
+            );
+            let o = push(&center, &mut mesh, &mut reps);
+            for k in 0..verts.len() {
+                let a = push(&verts[k], &mut mesh, &mut reps);
+                let b = push(&verts[(k + 1) % verts.len()], &mut mesh, &mut reps);
+                if o != a && a != b && o != b {
+                    mesh.indices.push(o);
+                    mesh.indices.push(a);
+                    mesh.indices.push(b);
+                }
+            }
+        } else {
+            for k in 1..verts.len().saturating_sub(1) {
+                let a = push(&verts[0], &mut mesh, &mut reps);
+                let b = push(&verts[k], &mut mesh, &mut reps);
+                let c = push(&verts[k + 1], &mut mesh, &mut reps);
+                if a != b && b != c && a != c {
+                    mesh.indices.push(a);
+                    mesh.indices.push(b);
+                    mesh.indices.push(c);
+                }
             }
         }
     }
+    (mesh, reps)
+}
+
+fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
+    let (mut mesh, mut reps) = triangulate(polys, &[]);
+    // Heal t-junctions: AABB-localized splitting legitimately leaves one
+    // side of a shared edge split where the other is not, opening hairline
+    // cracks. Every crack vertex is an endpoint of some open boundary edge,
+    // so re-triangulate with those points stitched into any edge they lie
+    // on. Iterate: an insertion can expose a finer junction on the next
+    // pass. Structure stays advisory for *validity* (see validate.rs), but
+    // consumers (and the torture track) reasonably prefer watertight output.
+    let mut open = mesh.boundary_edges();
+    for _ in 0..3 {
+        if open.is_empty() {
+            break;
+        }
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut stitch: Vec<Point3> = Vec::new();
+        for &(a, b) in &open {
+            for idx in [a, b] {
+                if seen.insert(idx) {
+                    stitch.push(reps[idx as usize]);
+                }
+            }
+        }
+        let (healed, healed_reps) = triangulate(polys, &stitch);
+        let healed_open = healed.boundary_edges();
+        if healed_open.len() >= open.len() {
+            break;
+        }
+        mesh = healed;
+        reps = healed_reps;
+        open = healed_open;
+    }
+    if !open.is_empty() {
+        snap_boundary_vertices(&mut mesh, &reps, &open);
+        let open = mesh.boundary_edges();
+        if !open.is_empty() {
+            fill_small_holes(&mut mesh, &reps, &open);
+        }
+    }
+    collapse_degenerate_triangles(&mut mesh);
     mesh
+}
+
+/// Weld away triangles whose f32-stored vertices are (near-)collinear.
+/// Downstream consumers derive per-face planes from the stored coordinates
+/// (`mesh_to_brep`, the STEP writer) and a zero-area triangle normalizes to
+/// a NaN normal — which the STEP writer then emits verbatim, producing a
+/// file that cannot be re-imported. Collapsing the triangle's shortest
+/// edge removes it while keeping the neighborhood watertight; the shift is
+/// bounded by the sliver's own size.
+fn collapse_degenerate_triangles(mesh: &mut TriangleMesh) {
+    for _ in 0..4 {
+        let v = |i: u32| {
+            let k = i as usize * 3;
+            Point3::new(
+                mesh.vertices[k] as f64,
+                mesh.vertices[k + 1] as f64,
+                mesh.vertices[k + 2] as f64,
+            )
+        };
+        let mut remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for tri in mesh.indices.chunks(3) {
+            let (a, b, c) = (tri[0], tri[1], tri[2]);
+            let (pa, pb, pc) = (v(a), v(b), v(c));
+            let cross = (pb - pa).cross(pc - pa);
+            if cross.dot(cross) > 1e-24 {
+                continue;
+            }
+            // Merge the two closest corners, always dropping the higher
+            // index into the lower so remap chains only ever descend —
+            // no cycles, and resolve() reaches a fixpoint.
+            let pairs = [(a, b, pb - pa), (b, c, pc - pb), (c, a, pa - pc)];
+            if let Some(&(x, y, _)) = pairs
+                .iter()
+                .min_by(|x, y| x.2.dot(x.2).total_cmp(&y.2.dot(y.2)))
+            {
+                let (keep, drop) = (x.min(y), x.max(y));
+                let entry = remap.entry(drop).or_insert(keep);
+                *entry = (*entry).min(keep);
+            }
+        }
+        if remap.is_empty() {
+            return;
+        }
+        // Resolve chains (b→a, c→b) so every index maps to a terminal.
+        let resolve = |mut i: u32| {
+            while let Some(&j) = remap.get(&i) {
+                if j >= i {
+                    break;
+                }
+                i = j;
+            }
+            i
+        };
+        let mut indices = Vec::with_capacity(mesh.indices.len());
+        for tri in mesh.indices.chunks(3) {
+            let (a, b, c) = (resolve(tri[0]), resolve(tri[1]), resolve(tri[2]));
+            if a != b && b != c && a != c {
+                indices.extend_from_slice(&[a, b, c]);
+            }
+        }
+        mesh.indices = indices;
+    }
+}
+
+/// Last-resort closure for cracks stitching can't reach: near-coincident
+/// boundary vertex pairs (e.g. a sliver fragment dropped by `Polygon::new`
+/// leaving a hairline hole). Merge boundary vertices closer than the
+/// stitch tolerance and drop the triangles that degenerate; the paired
+/// boundary edges then cancel. Only boundary vertices move, so closed
+/// regions of the mesh are untouched.
+fn snap_boundary_vertices(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32, u32)]) {
+    let mut verts: Vec<u32> = open.iter().flat_map(|&(a, b)| [a, b]).collect();
+    verts.sort_unstable();
+    verts.dedup();
+    // Map each boundary vertex to the lowest-index boundary vertex within
+    // tolerance (tiny sets: a handful of edges by the time we get here).
+    let mut remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    for (i, &vi) in verts.iter().enumerate() {
+        if remap.contains_key(&vi) {
+            continue;
+        }
+        for &vj in &verts[i + 1..] {
+            if remap.contains_key(&vj) {
+                continue;
+            }
+            let d = reps[vj as usize] - reps[vi as usize];
+            if d.dot(d) < TJUNCTION_EPS * TJUNCTION_EPS {
+                remap.insert(vj, vi);
+            }
+        }
+    }
+    if remap.is_empty() {
+        return;
+    }
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    for tri in mesh.indices.chunks(3) {
+        let m = |i: u32| *remap.get(&i).unwrap_or(&i);
+        let (a, b, c) = (m(tri[0]), m(tri[1]), m(tri[2]));
+        if a != b && b != c && a != c {
+            indices.extend_from_slice(&[a, b, c]);
+        }
+    }
+    mesh.indices = indices;
+}
+
+/// Hairline hole perimeter (mm) below which a boundary loop is capped
+/// outright. Holes this small come from sliver fragments dropped during
+/// splitting (degenerate `Polygon::new` rejections), never from real
+/// geometry at torture-track feature scales.
+const HOLE_PERIMETER_EPS: f64 = 0.5;
+
+/// Cap tiny boundary loops with a triangle fan. Boundary edges are chained
+/// into directed loops (a hole traverses each missing directed edge), and
+/// any loop short enough to be a dropped-sliver artifact is filled.
+fn fill_small_holes(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32, u32)]) {
+    let openset: std::collections::HashSet<(u32, u32)> = open.iter().copied().collect();
+    // The surface contains directed edge (a, b) exactly once; the cap must
+    // supply (b, a). Chain successor b → a; a duplicate key means a
+    // non-manifold boundary vertex — leave those loops alone.
+    let mut succ: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    let mut bad: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for tri in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let a = tri[k];
+            let b = tri[(k + 1) % 3];
+            if openset.contains(&(a.min(b), a.max(b))) && succ.insert(b, a).is_some() {
+                bad.insert(b);
+            }
+        }
+    }
+    let mut done: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let starts: Vec<u32> = succ.keys().copied().collect();
+    for start in starts {
+        if done.contains(&start) {
+            continue;
+        }
+        let mut loop_verts = vec![start];
+        let mut perimeter = 0.0;
+        let mut ok = false;
+        let mut cur = start;
+        while let Some(&next) = succ.get(&cur) {
+            if bad.contains(&cur) || loop_verts.len() > 16 {
+                break;
+            }
+            perimeter += (reps[next as usize] - reps[cur as usize]).norm();
+            if next == start {
+                ok = true;
+                break;
+            }
+            loop_verts.push(next);
+            cur = next;
+        }
+        for &v in &loop_verts {
+            done.insert(v);
+        }
+        if !ok || loop_verts.len() < 3 || perimeter > HOLE_PERIMETER_EPS {
+            continue;
+        }
+        for i in 1..loop_verts.len() - 1 {
+            mesh.indices
+                .extend_from_slice(&[loop_verts[0], loop_verts[i], loop_verts[i + 1]]);
+        }
+    }
 }
 
 /// Boolean of two closed triangle meshes. Returns the result surface as a
