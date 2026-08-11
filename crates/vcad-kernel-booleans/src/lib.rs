@@ -35,7 +35,7 @@ mod validate;
 pub use api::{boolean_op, BooleanError, BooleanOp, BooleanResult};
 pub use mesh::point_in_mesh;
 pub use ssi::SsiError;
-pub use validate::{mesh_report, MeshReport, ValidityError};
+pub use validate::{mesh_report, mesh_signed_volume, MeshReport, ValidityError};
 
 #[cfg(test)]
 mod tests {

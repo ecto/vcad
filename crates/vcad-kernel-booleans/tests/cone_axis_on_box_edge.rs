@@ -27,22 +27,6 @@ fn quarter_frustum_below(rb: f64, rt: f64, h: f64, zmax: f64) -> f64 {
     frustum_volume(rb, rm, zmax) / 4.0
 }
 
-fn mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
-    let verts = &mesh.vertices;
-    let mut vol = 0.0_f64;
-    for tri in mesh.indices.chunks(3) {
-        let i0 = tri[0] as usize * 3;
-        let i1 = tri[1] as usize * 3;
-        let i2 = tri[2] as usize * 3;
-        let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
-        let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
-        let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
-        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2]) - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
-            + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
-    }
-    vol / 6.0
-}
-
 fn check(case: &str, sx: f64, sy: f64, sz: f64, rb: f64, rt: f64, h: f64, union_op: bool) {
     let cube = make_cube(sx, sy, sz);
     let cone = make_cone(rb, rt, h, SEGMENTS);
@@ -60,7 +44,7 @@ fn check(case: &str, sx: f64, sy: f64, sz: f64, rb: f64, rt: f64, h: f64, union_
     let mesh = result.to_mesh(SEGMENTS);
     let open = mesh.boundary_edges().len();
     assert_eq!(open, 0, "{case}: {open} open boundary edges");
-    let v = mesh_volume(&mesh);
+    let v = vcad_kernel_booleans::mesh_signed_volume(&mesh);
     let rel = (v - expected).abs() / expected;
     assert!(
         rel < 0.02,

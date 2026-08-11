@@ -732,6 +732,15 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
         ]
     };
 
+    // Sorted-axis prefilter: on a badly cracked mesh (a chained fallback)
+    // the candidate count can approach the triangle count, and testing every
+    // candidate against every edge goes quadratic. Sorting candidates along
+    // one axis lets each edge binary-search the slab its AABB (padded by the
+    // stitch tolerance) covers and test only those.
+    let mut sorted_candidates: Vec<(f64, u32)> =
+        candidates.iter().map(|&vi| (pos(vi)[0], vi)).collect();
+    sorted_candidates.sort_by(|x, y| x.0.total_cmp(&y.0));
+
     let has_normals = mesh.normals.len() == mesh.vertices.len();
     let has_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
     let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
@@ -761,7 +770,13 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
                 continue;
             }
             let mut on_edge: Vec<(f64, u32)> = Vec::new();
-            for &vi in &candidates {
+            let x_lo = a[0].min(b[0]) - T_JUNCTION_TOL;
+            let x_hi = a[0].max(b[0]) + T_JUNCTION_TOL;
+            let start = sorted_candidates.partition_point(|&(x, _)| x < x_lo);
+            for &(x, vi) in &sorted_candidates[start..] {
+                if x > x_hi {
+                    break;
+                }
                 if vi == ai || vi == bi {
                     continue;
                 }
