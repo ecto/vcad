@@ -267,18 +267,6 @@ pub fn boolean_op(
     // on volume. Agreement is what makes this safe: it establishes the two
     // represent the same solid, so the swap trades analytic surfaces for
     // watertightness and nothing else.
-    //
-    // Eligibility is asked of the CAPABILITY FLAGS, never of whether the
-    // operand meshes happen to be in hand — Difference now tessellates them
-    // unconditionally for its no-op guard above, and reading `operands` as
-    // the gate silently offered this swap to every ordinary difference. It
-    // took `torr_boolean_catalogue::b1` immediately: a blade cut from a
-    // cylinder has a few hairline seams, the mesh fallback is watertight and
-    // agrees on volume, so the analytic r45 wall was traded for coarse
-    // triangle soup and the volume fell 529 mm³ short of analytic truth.
-    if !(flagged || sphere_unrepresentable || inverted) {
-        return Ok(result);
-    }
     let Some((mesh_a, mesh_b)) = &operands else {
         return Ok(result);
     };

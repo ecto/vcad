@@ -296,6 +296,17 @@ pub(crate) fn difference_removed_nothing(
         return false;
     }
     let predicted = box_vol * both as f64 / n as f64;
+    // Under the boolean diagnostics flag, show the numbers behind the
+    // verdict. This is what identified `torture::chain-17` step 2 as an
+    // EXACT no-op (removed 0.000 against a 1068 mm³ overlap resolved by
+    // 1031 of 1728 probes) rather than a marginal cut.
+    if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
+        eprintln!(
+            "vcad boolean: no-op probe — minuend {vol_a:.3}, removed {removed:.3}, \
+             overlap {both}/{n} probes ≈ {predicted:.3}, floor {:.3}",
+            MIN_PREDICTED_REMOVAL_FRACTION * vol_a
+        );
+    }
     if predicted < MIN_PREDICTED_REMOVAL_FRACTION * vol_a {
         // Below the tessellation noise floor — not judgeable. See
         // `MIN_PREDICTED_REMOVAL_FRACTION`.
