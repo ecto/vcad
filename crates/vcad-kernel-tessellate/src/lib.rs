@@ -4502,6 +4502,19 @@ fn tessellate_conical_face(
         return tessellate_cone_direct(&verts, z_min, z_max, r_min, n_circ, n_height, reversed);
     };
 
+    // Sector faces (from boolean ruling splits) carry dense two-rim loops
+    // spanning less than a full turn; render them verbatim from the loop so
+    // the rim vertices conform with the neighboring caps. Full lateral faces
+    // and v-sub-bands (degenerate seam loops) fall through to the grid path.
+    if let Some(cone) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+    {
+        if let Some(mesh) = tessellate_cone_sector_two_chain(cone, &verts, reversed) {
+            return mesh;
+        }
+    }
+
     // Project vertices onto axis to get v parameter range (distance from apex)
     let mut v_min = f64::MAX;
     let mut v_max = f64::MIN;
@@ -4627,6 +4640,184 @@ fn tessellate_conical_face(
     }
 
     mesh
+}
+
+/// Tessellate a conical sector face bounded by two constant-v rim chains
+/// and two rulings — the shape produced by the boolean ruling splitter.
+///
+/// Renders the loop's own vertices verbatim (zipper triangulation between
+/// the two rims) so both rims conform vertex-for-vertex with the
+/// neighboring cap faces. Returns `None` for any loop that is not a plain
+/// two-rim sector (full seam loops, wavy boundaries, apex fans), which
+/// then falls through to the full-circumference grid path.
+fn tessellate_cone_sector_two_chain(
+    cone: &vcad_kernel_geom::ConeSurface,
+    verts: &[Point3],
+    reversed: bool,
+) -> Option<TriangleMesh> {
+    let l = verts.len();
+    if l < 4 {
+        return None;
+    }
+
+    let axis = *cone.axis.as_ref();
+    let ref_dir = *cone.ref_dir.as_ref();
+    let y_dir = axis.cross(ref_dir);
+    let ca = cone.half_angle.cos();
+    let sa = cone.half_angle.sin();
+
+    let uv_of = |p: &Point3| -> Option<(f64, f64)> {
+        let d = *p - cone.apex;
+        let v = d.dot(axis) / ca;
+        let d_perp = d - d.dot(axis) * axis;
+        if d_perp.norm() < 1e-9 {
+            return None; // apex — not a sector loop
+        }
+        let u = d_perp.dot(y_dir).atan2(d_perp.dot(ref_dir));
+        Some((u, v))
+    };
+    let uvs: Vec<(f64, f64)> = verts.iter().map(uv_of).collect::<Option<Vec<_>>>()?;
+
+    let v_min = uvs.iter().map(|p| p.1).fold(f64::MAX, f64::min);
+    let v_max = uvs.iter().map(|p| p.1).fold(f64::MIN, f64::max);
+    if v_max - v_min < 1e-9 {
+        return None;
+    }
+    const V_TOL: f64 = 1e-6;
+    // Every vertex must sit on one of the two rims.
+    if uvs
+        .iter()
+        .any(|p| (p.1 - v_min).abs() >= V_TOL && (p.1 - v_max).abs() >= V_TOL)
+    {
+        return None;
+    }
+    let on_bottom: Vec<bool> = uvs.iter().map(|p| (p.1 - v_min).abs() < V_TOL).collect();
+
+    // Exactly one contiguous bottom run and one top run in the cyclic loop.
+    let transitions = (0..l)
+        .filter(|&i| on_bottom[i] != on_bottom[(i + 1) % l])
+        .count();
+    if transitions != 2 {
+        return None;
+    }
+    // Rotate so the loop starts at the bottom run's first vertex.
+    let start = (0..l)
+        .find(|&i| on_bottom[i] && !on_bottom[(i + l - 1) % l])
+        .unwrap_or(0);
+    let idx = |k: usize| (start + k) % l;
+    let n_bot = (0..l).take_while(|&k| on_bottom[idx(k)]).count();
+    let bot_idx: Vec<usize> = (0..n_bot).map(idx).collect();
+    let top_idx: Vec<usize> = (n_bot..l).map(idx).collect();
+    if bot_idx.len() < 2 || top_idx.len() < 2 {
+        return None;
+    }
+
+    // Unwrap u along each chain by continuity.
+    let unwrap_chain = |ids: &[usize]| -> Vec<f64> {
+        let mut out = Vec::with_capacity(ids.len());
+        out.push(uvs[ids[0]].0);
+        for &i in &ids[1..] {
+            let prev: f64 = *out.last().unwrap();
+            let mut du = (uvs[i].0 - prev).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            out.push(prev + du);
+        }
+        out
+    };
+    let mut bot_u = unwrap_chain(&bot_idx);
+    let mut top_u = unwrap_chain(&top_idx);
+    let mut bot_ids = bot_idx.clone();
+    let mut top_ids = top_idx.clone();
+    // Normalize both chains to ascending u (loop order has the top chain
+    // descending).
+    if bot_u.first() > bot_u.last() {
+        bot_u.reverse();
+        bot_ids.reverse();
+    }
+    if top_u.first() > top_u.last() {
+        top_u.reverse();
+        top_ids.reverse();
+    }
+    // Align top chain's unwrapped frame onto the bottom's.
+    let shift = ((bot_u[0] - top_u[0]) / (2.0 * PI)).round() * 2.0 * PI;
+    for u in &mut top_u {
+        *u += shift;
+    }
+    // Corner columns must agree (rulings are vertical in uv).
+    // Full frozen bands walk the whole turn (span == 2π, with the seam
+    // vertex duplicated at both chain ends); anything beyond that is not a
+    // band loop.
+    let span = (bot_u[bot_u.len() - 1] - bot_u[0]).max(top_u[top_u.len() - 1] - top_u[0]);
+    if !(1e-9..=2.0 * PI + 1e-3).contains(&span) {
+        return None;
+    }
+    let tol = 1e-6_f64.max(span * 1e-9);
+    if (bot_u[0] - top_u[0]).abs() > tol
+        || (bot_u[bot_u.len() - 1] - top_u[top_u.len() - 1]).abs() > tol
+    {
+        return None;
+    }
+
+    // Emit vertices (each rail verbatim) with cone normals.
+    let mut mesh = TriangleMesh::new();
+    let mut push_vert = |p: &Point3, u: f64| -> u32 {
+        let i = (mesh.vertices.len() / 3) as u32;
+        mesh.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let radial = u.cos() * ref_dir + u.sin() * y_dir;
+        let n = ca * radial - sa * axis;
+        let (nx, ny, nz) = if reversed {
+            (-n.x as f32, -n.y as f32, -n.z as f32)
+        } else {
+            (n.x as f32, n.y as f32, n.z as f32)
+        };
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        i
+    };
+    let bot_m: Vec<u32> = bot_ids
+        .iter()
+        .zip(&bot_u)
+        .map(|(&i, &u)| push_vert(&verts[i], u))
+        .collect();
+    let top_m: Vec<u32> = top_ids
+        .iter()
+        .zip(&top_u)
+        .map(|(&i, &u)| push_vert(&verts[i], u))
+        .collect();
+
+    // Zipper triangulation marching by ascending u, using only the loop's
+    // own vertices (no interpolation → no T-junctions against neighbors).
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < bot_m.len() - 1 || j < top_m.len() - 1 {
+        let advance_bottom = if j == top_m.len() - 1 {
+            true
+        } else if i == bot_m.len() - 1 {
+            false
+        } else {
+            bot_u[i + 1] <= top_u[j + 1]
+        };
+        // Quad convention (bl, br, tl, tr) → (bl, br, tl), (br, tr, tl);
+        // zipper equivalents keep the same orientation.
+        let tri = if advance_bottom {
+            [bot_m[i], bot_m[i + 1], top_m[j]]
+        } else {
+            [bot_m[i], top_m[j + 1], top_m[j]]
+        };
+        if reversed {
+            mesh.indices.extend_from_slice(&[tri[0], tri[2], tri[1]]);
+        } else {
+            mesh.indices.extend_from_slice(&tri);
+        }
+        if advance_bottom {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+
+    Some(mesh)
 }
 
 /// Fallback cone tessellation using direct z-axis coordinates.

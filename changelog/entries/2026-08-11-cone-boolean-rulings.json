@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-11-cone-boolean-rulings",
+  "version": "0.9.4",
+  "date": "2026-08-11",
+  "category": "fix",
+  "title": "Cone booleans: apex-plane rulings and frozen rims",
+  "summary": "Booleans against cones no longer drop the lateral wall when a face plane passes through the cone axis; cone rims now freeze onto the canonical grid like cylinders.",
+  "features": ["booleans", "kernel"]
+}
