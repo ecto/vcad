@@ -667,6 +667,195 @@ fn computed_vertex_normals(vertices: &[f32], indices: &[u32]) -> Vec<f32> {
     acc
 }
 
+/// Distance (mm) within which a vertex counts as lying on a triangle edge.
+///
+/// Matches [`weld_coincident_vertices`]'s 0.001 mm lattice: a point closer
+/// than that to an edge would already have been welded onto its endpoint if
+/// it were meant to be one, so anything still standing off the edge by less
+/// than this is a genuine T-junction rather than a distinct vertex.
+const T_JUNCTION_TOL: f64 = 1e-3;
+
+/// Stitch T-junctions closed.
+///
+/// A T-junction is a vertex sitting in the *interior* of another triangle's
+/// edge. The surface has no actual gap there — the two sides meet exactly —
+/// but the edge is unpaired combinatorially, so every watertightness check
+/// (and every consumer that needs a closed shell: STL for printing, STEP,
+/// ray tracing) reads it as a hole.
+///
+/// They arise wherever the boolean splitters conform one side of a shared
+/// edge and not the other, which is routine on curved faces. Healing them
+/// here rather than in the boolean is what lets the result keep its analytic
+/// surfaces: the alternative — swapping the solid for a re-meshed triangle
+/// soup — closes the same cracks but throws away the cylinders and spheres
+/// downstream code depends on.
+///
+/// The repair is exact, not a tolerance fudge. It only ever inserts a vertex
+/// that already lies on the edge it splits, so no position moves and no
+/// volume changes; only which triangles agree along that edge does.
+///
+/// Triangles that gain edge points are re-emitted as a centroid fan. A fan
+/// from an existing corner would be cheaper, but when the points sit on an
+/// edge adjacent to that corner it emits exactly-degenerate triangles, whose
+/// zero-length normals surface downstream as `DIRECTION((NaN,NaN,NaN))` in
+/// the STEP writer. The centroid lies strictly inside, so every fan triangle
+/// has area; it inherits the interpolated normal and the face-kind tag of the
+/// triangle it replaces.
+fn heal_t_junctions(mesh: &mut TriangleMesh) {
+    // Fast path: a closed mesh has nothing to stitch, and this is the common
+    // case, so it must cost no more than the edge-pairing pass.
+    let open = mesh.boundary_edges();
+    if open.is_empty() || mesh.indices.is_empty() {
+        return;
+    }
+
+    // Only vertices that terminate an open edge can close one, which is a
+    // handful even on a badly cracked mesh — far cheaper than testing every
+    // vertex against every edge.
+    let mut candidates: Vec<u32> = Vec::new();
+    {
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for &(a, b) in &open {
+            for v in [a, b] {
+                if seen.insert(v) {
+                    candidates.push(v);
+                }
+            }
+        }
+    }
+    let pos = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            mesh.vertices[k] as f64,
+            mesh.vertices[k + 1] as f64,
+            mesh.vertices[k + 2] as f64,
+        ]
+    };
+
+    // Sorted-axis prefilter: on a badly cracked mesh (a chained fallback)
+    // the candidate count can approach the triangle count, and testing every
+    // candidate against every edge goes quadratic. Sorting candidates along
+    // one axis lets each edge binary-search the slab its AABB (padded by the
+    // stitch tolerance) covers and test only those.
+    let mut sorted_candidates: Vec<(f64, u32)> =
+        candidates.iter().map(|&vi| (pos(vi)[0], vi)).collect();
+    sorted_candidates.sort_by(|x, y| x.0.total_cmp(&y.0));
+
+    let has_normals = mesh.normals.len() == mesh.vertices.len();
+    let has_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
+    let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
+    let mut new_kinds: Vec<u8> = Vec::new();
+    let mut added_verts: Vec<f32> = Vec::new();
+    let mut added_normals: Vec<f32> = Vec::new();
+    let base_vert_count = mesh.num_vertices() as u32;
+    let mut healed = 0usize;
+
+    for t in 0..mesh.indices.len() / 3 {
+        let corners = [
+            mesh.indices[t * 3],
+            mesh.indices[t * 3 + 1],
+            mesh.indices[t * 3 + 2],
+        ];
+        let kind = if has_kinds { mesh.face_kinds[t] } else { 0 };
+        let mut loop_idx: Vec<u32> = Vec::with_capacity(3);
+        let mut inserted = false;
+
+        for e in 0..3 {
+            let (ai, bi) = (corners[e], corners[(e + 1) % 3]);
+            loop_idx.push(ai);
+            let (a, b) = (pos(ai), pos(bi));
+            let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+            if len2 <= 0.0 {
+                continue;
+            }
+            let mut on_edge: Vec<(f64, u32)> = Vec::new();
+            let x_lo = a[0].min(b[0]) - T_JUNCTION_TOL;
+            let x_hi = a[0].max(b[0]) + T_JUNCTION_TOL;
+            let start = sorted_candidates.partition_point(|&(x, _)| x < x_lo);
+            for &(x, vi) in &sorted_candidates[start..] {
+                if x > x_hi {
+                    break;
+                }
+                if vi == ai || vi == bi {
+                    continue;
+                }
+                let v = pos(vi);
+                let av = [v[0] - a[0], v[1] - a[1], v[2] - a[2]];
+                let s = (av[0] * ab[0] + av[1] * ab[1] + av[2] * ab[2]) / len2;
+                if s <= 0.0 || s >= 1.0 {
+                    continue;
+                }
+                let c = [a[0] + s * ab[0], a[1] + s * ab[1], a[2] + s * ab[2]];
+                let d2 = (v[0] - c[0]).powi(2) + (v[1] - c[1]).powi(2) + (v[2] - c[2]).powi(2);
+                if d2 > T_JUNCTION_TOL * T_JUNCTION_TOL {
+                    continue;
+                }
+                on_edge.push((s, vi));
+            }
+            if on_edge.is_empty() {
+                continue;
+            }
+            on_edge.sort_by(|x, y| x.0.total_cmp(&y.0));
+            on_edge.dedup_by_key(|(_, vi)| *vi);
+            inserted = true;
+            loop_idx.extend(on_edge.into_iter().map(|(_, vi)| vi));
+        }
+
+        if !inserted {
+            new_indices.extend_from_slice(&corners);
+            if has_kinds {
+                new_kinds.push(kind);
+            }
+            continue;
+        }
+        healed += 1;
+
+        // Centroid of the original triangle: strictly interior, so every fan
+        // triangle has area.
+        let (p0, p1, p2) = (pos(corners[0]), pos(corners[1]), pos(corners[2]));
+        let ci = base_vert_count + (added_verts.len() / 3) as u32;
+        for k in 0..3 {
+            added_verts.push(((p0[k] + p1[k] + p2[k]) / 3.0) as f32);
+        }
+        if has_normals {
+            let mut n = [0.0f32; 3];
+            for c in corners {
+                for (k, acc) in n.iter_mut().enumerate() {
+                    *acc += mesh.normals[c as usize * 3 + k];
+                }
+            }
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            for c in n {
+                added_normals.push(if len > 0.0 { c / len } else { 0.0 });
+            }
+        }
+        let n = loop_idx.len();
+        for k in 0..n {
+            let (a, b) = (loop_idx[k], loop_idx[(k + 1) % n]);
+            if a == b {
+                continue;
+            }
+            new_indices.extend_from_slice(&[ci, a, b]);
+            if has_kinds {
+                new_kinds.push(kind);
+            }
+        }
+    }
+
+    if healed == 0 {
+        return;
+    }
+    mesh.vertices.extend_from_slice(&added_verts);
+    if has_normals {
+        mesh.normals.extend_from_slice(&added_normals);
+    }
+    mesh.indices = new_indices;
+    if has_kinds {
+        mesh.face_kinds = new_kinds;
+    }
+}
+
 /// Collapse mesh vertices that share a position to 3 decimal places.
 /// Indices are rewritten; positions kept from the first occurrence.
 /// Normals of the winning vertex are kept as-is — downstream smoothing is
@@ -4328,6 +4517,19 @@ fn tessellate_conical_face(
         return tessellate_cone_direct(&verts, z_min, z_max, r_min, n_circ, n_height, reversed);
     };
 
+    // Sector faces (from boolean ruling splits) carry dense two-rim loops
+    // spanning less than a full turn; render them verbatim from the loop so
+    // the rim vertices conform with the neighboring caps. Full lateral faces
+    // and v-sub-bands (degenerate seam loops) fall through to the grid path.
+    if let Some(cone) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+    {
+        if let Some(mesh) = tessellate_cone_sector_two_chain(cone, &verts, reversed) {
+            return mesh;
+        }
+    }
+
     // Project vertices onto axis to get v parameter range (distance from apex)
     let mut v_min = f64::MAX;
     let mut v_max = f64::MIN;
@@ -4453,6 +4655,184 @@ fn tessellate_conical_face(
     }
 
     mesh
+}
+
+/// Tessellate a conical sector face bounded by two constant-v rim chains
+/// and two rulings — the shape produced by the boolean ruling splitter.
+///
+/// Renders the loop's own vertices verbatim (zipper triangulation between
+/// the two rims) so both rims conform vertex-for-vertex with the
+/// neighboring cap faces. Returns `None` for any loop that is not a plain
+/// two-rim sector (full seam loops, wavy boundaries, apex fans), which
+/// then falls through to the full-circumference grid path.
+fn tessellate_cone_sector_two_chain(
+    cone: &vcad_kernel_geom::ConeSurface,
+    verts: &[Point3],
+    reversed: bool,
+) -> Option<TriangleMesh> {
+    let l = verts.len();
+    if l < 4 {
+        return None;
+    }
+
+    let axis = *cone.axis.as_ref();
+    let ref_dir = *cone.ref_dir.as_ref();
+    let y_dir = axis.cross(ref_dir);
+    let ca = cone.half_angle.cos();
+    let sa = cone.half_angle.sin();
+
+    let uv_of = |p: &Point3| -> Option<(f64, f64)> {
+        let d = *p - cone.apex;
+        let v = d.dot(axis) / ca;
+        let d_perp = d - d.dot(axis) * axis;
+        if d_perp.norm() < 1e-9 {
+            return None; // apex — not a sector loop
+        }
+        let u = d_perp.dot(y_dir).atan2(d_perp.dot(ref_dir));
+        Some((u, v))
+    };
+    let uvs: Vec<(f64, f64)> = verts.iter().map(uv_of).collect::<Option<Vec<_>>>()?;
+
+    let v_min = uvs.iter().map(|p| p.1).fold(f64::MAX, f64::min);
+    let v_max = uvs.iter().map(|p| p.1).fold(f64::MIN, f64::max);
+    if v_max - v_min < 1e-9 {
+        return None;
+    }
+    const V_TOL: f64 = 1e-6;
+    // Every vertex must sit on one of the two rims.
+    if uvs
+        .iter()
+        .any(|p| (p.1 - v_min).abs() >= V_TOL && (p.1 - v_max).abs() >= V_TOL)
+    {
+        return None;
+    }
+    let on_bottom: Vec<bool> = uvs.iter().map(|p| (p.1 - v_min).abs() < V_TOL).collect();
+
+    // Exactly one contiguous bottom run and one top run in the cyclic loop.
+    let transitions = (0..l)
+        .filter(|&i| on_bottom[i] != on_bottom[(i + 1) % l])
+        .count();
+    if transitions != 2 {
+        return None;
+    }
+    // Rotate so the loop starts at the bottom run's first vertex.
+    let start = (0..l)
+        .find(|&i| on_bottom[i] && !on_bottom[(i + l - 1) % l])
+        .unwrap_or(0);
+    let idx = |k: usize| (start + k) % l;
+    let n_bot = (0..l).take_while(|&k| on_bottom[idx(k)]).count();
+    let bot_idx: Vec<usize> = (0..n_bot).map(idx).collect();
+    let top_idx: Vec<usize> = (n_bot..l).map(idx).collect();
+    if bot_idx.len() < 2 || top_idx.len() < 2 {
+        return None;
+    }
+
+    // Unwrap u along each chain by continuity.
+    let unwrap_chain = |ids: &[usize]| -> Vec<f64> {
+        let mut out = Vec::with_capacity(ids.len());
+        out.push(uvs[ids[0]].0);
+        for &i in &ids[1..] {
+            let prev: f64 = *out.last().unwrap();
+            let mut du = (uvs[i].0 - prev).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            out.push(prev + du);
+        }
+        out
+    };
+    let mut bot_u = unwrap_chain(&bot_idx);
+    let mut top_u = unwrap_chain(&top_idx);
+    let mut bot_ids = bot_idx.clone();
+    let mut top_ids = top_idx.clone();
+    // Normalize both chains to ascending u (loop order has the top chain
+    // descending).
+    if bot_u.first() > bot_u.last() {
+        bot_u.reverse();
+        bot_ids.reverse();
+    }
+    if top_u.first() > top_u.last() {
+        top_u.reverse();
+        top_ids.reverse();
+    }
+    // Align top chain's unwrapped frame onto the bottom's.
+    let shift = ((bot_u[0] - top_u[0]) / (2.0 * PI)).round() * 2.0 * PI;
+    for u in &mut top_u {
+        *u += shift;
+    }
+    // Corner columns must agree (rulings are vertical in uv).
+    // Full frozen bands walk the whole turn (span == 2π, with the seam
+    // vertex duplicated at both chain ends); anything beyond that is not a
+    // band loop.
+    let span = (bot_u[bot_u.len() - 1] - bot_u[0]).max(top_u[top_u.len() - 1] - top_u[0]);
+    if !(1e-9..=2.0 * PI + 1e-3).contains(&span) {
+        return None;
+    }
+    let tol = 1e-6_f64.max(span * 1e-9);
+    if (bot_u[0] - top_u[0]).abs() > tol
+        || (bot_u[bot_u.len() - 1] - top_u[top_u.len() - 1]).abs() > tol
+    {
+        return None;
+    }
+
+    // Emit vertices (each rail verbatim) with cone normals.
+    let mut mesh = TriangleMesh::new();
+    let mut push_vert = |p: &Point3, u: f64| -> u32 {
+        let i = (mesh.vertices.len() / 3) as u32;
+        mesh.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let radial = u.cos() * ref_dir + u.sin() * y_dir;
+        let n = ca * radial - sa * axis;
+        let (nx, ny, nz) = if reversed {
+            (-n.x as f32, -n.y as f32, -n.z as f32)
+        } else {
+            (n.x as f32, n.y as f32, n.z as f32)
+        };
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        i
+    };
+    let bot_m: Vec<u32> = bot_ids
+        .iter()
+        .zip(&bot_u)
+        .map(|(&i, &u)| push_vert(&verts[i], u))
+        .collect();
+    let top_m: Vec<u32> = top_ids
+        .iter()
+        .zip(&top_u)
+        .map(|(&i, &u)| push_vert(&verts[i], u))
+        .collect();
+
+    // Zipper triangulation marching by ascending u, using only the loop's
+    // own vertices (no interpolation → no T-junctions against neighbors).
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < bot_m.len() - 1 || j < top_m.len() - 1 {
+        let advance_bottom = if j == top_m.len() - 1 {
+            true
+        } else if i == bot_m.len() - 1 {
+            false
+        } else {
+            bot_u[i + 1] <= top_u[j + 1]
+        };
+        // Quad convention (bl, br, tl, tr) → (bl, br, tl), (br, tr, tl);
+        // zipper equivalents keep the same orientation.
+        let tri = if advance_bottom {
+            [bot_m[i], bot_m[i + 1], top_m[j]]
+        } else {
+            [bot_m[i], top_m[j + 1], top_m[j]]
+        };
+        if reversed {
+            mesh.indices.extend_from_slice(&[tri[0], tri[2], tri[1]]);
+        } else {
+            mesh.indices.extend_from_slice(&tri);
+        }
+        if advance_bottom {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+
+    Some(mesh)
 }
 
 /// Fallback cone tessellation using direct z-axis coordinates.
@@ -5192,6 +5572,7 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     }
 
     weld_coincident_vertices(&mut mesh);
+    heal_t_junctions(&mut mesh);
     fill_tiny_boundary_loops(&mut mesh, 6, &sphere_vert_keys);
     mesh
 }

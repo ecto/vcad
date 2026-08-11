@@ -505,6 +505,24 @@ fn plane_cone(plane: &Plane, cone: &ConeSurface) -> IntersectionCurve {
 
     let cos_angle = n.as_ref().dot(axis.as_ref()).abs();
 
+    // Plane passing through the apex: the intersection is not a conic but
+    // 0, 1, or 2 straight rulings through the apex (e.g. a box side plane
+    // containing the cone axis). The marching fallback yields v=0 for every
+    // sample here (numer=0) and returns Empty, silently dropping the cut.
+    // Relative tolerance: at large coordinates the dot product's rounding
+    // error scales with the operand magnitudes, so an absolute 1e-9 would
+    // miss a genuinely apex-containing plane far from the origin.
+    let apex_scale = cone
+        .apex
+        .to_vec()
+        .norm()
+        .max(plane.origin.to_vec().norm())
+        .max(1.0);
+    let apex_dist = (plane.origin - cone.apex).dot(n.as_ref());
+    if apex_dist.abs() < 1e-9 * apex_scale {
+        return plane_through_apex_cone(plane, cone);
+    }
+
     if (cos_angle - 1.0).abs() < 1e-12 {
         // Plane is perpendicular to cone axis → Circle
         // Distance along axis from apex to plane
@@ -543,6 +561,69 @@ fn plane_cone(plane: &Plane, cone: &ConeSurface) -> IntersectionCurve {
         // General case → conic section (ellipse, parabola, or hyperbola)
         // Use sampling with higher density for accuracy
         marching_ssi_cone_plane(plane, cone, 64)
+    }
+}
+
+/// Intersection of a cone with a plane that passes through its apex.
+///
+/// Writing the ruling direction as
+/// `dir(u) = cos(α)·axis + sin(α)·(cos(u)·ref + sin(u)·y)`, a ruling lies in
+/// the plane iff `n·dir(u) = 0`, i.e. `A·cos(u) + B·sin(u) = -C` with
+/// `A = sin(α)·(n·ref)`, `B = sin(α)·(n·y)`, `C = cos(α)·(n·axis)`.
+/// With `R = √(A²+B²)`: no solution (`R < |C|`) → the plane meets the cone
+/// only at the apex; one solution → a single tangent ruling; two solutions
+/// → two rulings through the apex.
+fn plane_through_apex_cone(plane: &Plane, cone: &ConeSurface) -> IntersectionCurve {
+    let n = plane.normal_dir;
+    let ca = cone.half_angle.cos();
+    let sa = cone.half_angle.sin();
+    let y_dir = cone.y_dir();
+
+    let a = sa * n.as_ref().dot(cone.ref_dir.as_ref());
+    let b = sa * n.as_ref().dot(y_dir);
+    let c = ca * n.as_ref().dot(cone.axis.as_ref());
+    let r = (a * a + b * b).sqrt();
+
+    if r < c.abs() - 1e-12 {
+        return IntersectionCurve::Point(cone.apex);
+    }
+
+    let ruling = |u: f64| -> Line3d {
+        let (sin_u, cos_u) = u.sin_cos();
+        let dir =
+            ca * cone.axis.into_inner() + sa * (cos_u * cone.ref_dir.into_inner() + sin_u * y_dir);
+        Line3d {
+            origin: cone.apex,
+            direction: dir,
+        }
+    };
+
+    let phi = b.atan2(a);
+    if r < c.abs() + 1e-12 {
+        // Tangent: exactly one ruling, at cos(u - phi) = ±1.
+        let u = if c <= 0.0 {
+            phi
+        } else {
+            phi + std::f64::consts::PI
+        };
+        return IntersectionCurve::Line(ruling(u));
+    }
+
+    let delta = (-c / r).clamp(-1.0, 1.0).acos();
+    let l1 = ruling(phi + delta);
+    let l2 = ruling(phi - delta);
+
+    // Deterministic ordering (mirrors plane_cylinder's TwoLines sort).
+    let (d1, d2) = (l1.direction, l2.direction);
+    let cmp =
+        d1.x.partial_cmp(&d2.x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(d1.y.partial_cmp(&d2.y).unwrap_or(std::cmp::Ordering::Equal))
+            .then(d1.z.partial_cmp(&d2.z).unwrap_or(std::cmp::Ordering::Equal));
+    if cmp == std::cmp::Ordering::Greater {
+        IntersectionCurve::TwoLines(l2, l1)
+    } else {
+        IntersectionCurve::TwoLines(l1, l2)
     }
 }
 

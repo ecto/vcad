@@ -27,22 +27,6 @@ fn translate(brep: &mut BRepSolid, dx: f64, dy: f64, dz: f64) {
     apply_transform(brep, &Transform::translation(dx, dy, dz));
 }
 
-fn mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {
-    let verts = &mesh.vertices;
-    let mut vol = 0.0_f64;
-    for tri in mesh.indices.chunks(3) {
-        let i0 = tri[0] as usize * 3;
-        let i1 = tri[1] as usize * 3;
-        let i2 = tri[2] as usize * 3;
-        let v0 = [verts[i0] as f64, verts[i0 + 1] as f64, verts[i0 + 2] as f64];
-        let v1 = [verts[i1] as f64, verts[i1 + 1] as f64, verts[i1 + 2] as f64];
-        let v2 = [verts[i2] as f64, verts[i2 + 1] as f64, verts[i2 + 2] as f64];
-        vol += v0[0] * (v1[1] * v2[2] - v2[1] * v1[2]) - v1[0] * (v0[1] * v2[2] - v2[1] * v0[2])
-            + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
-    }
-    vol / 6.0
-}
-
 fn mesh_bbox(mesh: &vcad_kernel_tessellate::TriangleMesh) -> ([f64; 3], [f64; 3]) {
     let mut min = [f64::INFINITY; 3];
     let mut max = [f64::NEG_INFINITY; 3];
@@ -80,12 +64,17 @@ fn box_cut_through_hemispherical_pocket() {
 
     let pocketed = difference(&block, &ball).into_brep().unwrap();
     let pocket_mesh = vcad_kernel_tessellate::tessellate_brep(&pocketed, SEGMENTS);
-    assert_volume_within(mesh_volume(&pocket_mesh), 107_481.0, 0.02, "pocket cut");
+    assert_volume_within(
+        vcad_kernel_booleans::mesh_signed_volume(&pocket_mesh),
+        107_481.0,
+        0.02,
+        "pocket cut",
+    );
 
     let slot = make_cube(80.0, 18.0, 29.5);
     let result = difference(&pocketed, &slot);
     let mesh = result.to_mesh(SEGMENTS);
-    let vol = mesh_volume(&mesh);
+    let vol = vcad_kernel_booleans::mesh_signed_volume(&mesh);
     assert_volume_within(vol, 70_852.0, 0.02, "slot through pocket");
 
     // No part of the lower hemisphere belongs in the result.
@@ -107,7 +96,7 @@ fn sphere_through_two_faces_sharing_an_edge() {
     translate(&mut ball, 40.0, 12.0, 0.0);
 
     let result = difference(&block, &ball);
-    let vol = mesh_volume(&result.to_mesh(SEGMENTS));
+    let vol = vcad_kernel_booleans::mesh_signed_volume(&result.to_mesh(SEGMENTS));
     assert_volume_within(vol, 77_932.0, 0.02, "two-face protrusion");
 }
 
@@ -120,7 +109,7 @@ fn sphere_minus_cylinder_plug() {
     translate(&mut plug, 0.0, 0.0, -40.0);
 
     let result = difference(&ball, &plug);
-    let vol = mesh_volume(&result.to_mesh(SEGMENTS));
+    let vol = vcad_kernel_booleans::mesh_signed_volume(&result.to_mesh(SEGMENTS));
     assert_volume_within(vol, 94_782.0, 0.02, "sphere minus cylinder");
 }
 
@@ -132,9 +121,11 @@ fn cylinder_minus_perpendicular_cylinder() {
     let mut drill = make_cylinder(18.5, 40.0, SEGMENTS);
     apply_transform(&mut drill, &Transform::rotation_x(90.0_f64.to_radians()));
 
-    let bar_vol = mesh_volume(&vcad_kernel_tessellate::tessellate_brep(&bar, SEGMENTS));
+    let bar_vol = vcad_kernel_booleans::mesh_signed_volume(
+        &vcad_kernel_tessellate::tessellate_brep(&bar, SEGMENTS),
+    );
     let result = difference(&bar, &drill);
-    let vol = mesh_volume(&result.to_mesh(SEGMENTS));
+    let vol = vcad_kernel_booleans::mesh_signed_volume(&result.to_mesh(SEGMENTS));
     assert!(
         vol < bar_vol,
         "difference must remove material: result {vol:.1} >= bar {bar_vol:.1}"
@@ -163,7 +154,12 @@ fn chained_cuts_through_pocket_stay_bounded() {
 
     // 70,852 − (107,481 − 70,852): the far slot removes the same volume as
     // the near one by symmetry about the sphere's y=30 equator plane.
-    assert_volume_within(mesh_volume(&mesh), 34_223.0, 0.02, "chained slots");
+    assert_volume_within(
+        vcad_kernel_booleans::mesh_signed_volume(&mesh),
+        34_223.0,
+        0.02,
+        "chained slots",
+    );
     let tris = mesh.indices.len() / 3;
     assert!(
         tris < 20_000,
@@ -180,7 +176,8 @@ fn guard_cube_minus_interior_sphere() {
     let block = make_cube(80.0, 60.0, 60.0);
     let mut ball = make_sphere(25.35, SEGMENTS);
     translate(&mut ball, 40.0, 30.0, 30.0);
-    let vol = mesh_volume(&difference(&block, &ball).to_mesh(SEGMENTS));
+    let vol =
+        vcad_kernel_booleans::mesh_signed_volume(&difference(&block, &ball).to_mesh(SEGMENTS));
     assert_volume_within(vol, 219_763.0, 0.02, "interior sphere");
 }
 
@@ -189,7 +186,8 @@ fn guard_cube_minus_one_face_protruding_sphere() {
     let block = make_cube(80.0, 60.0, 29.5);
     let mut ball = make_sphere(25.35, SEGMENTS);
     translate(&mut ball, 40.0, 30.0, 0.0);
-    let vol = mesh_volume(&difference(&block, &ball).to_mesh(SEGMENTS));
+    let vol =
+        vcad_kernel_booleans::mesh_signed_volume(&difference(&block, &ball).to_mesh(SEGMENTS));
     assert_volume_within(vol, 107_481.0, 0.02, "one-face protrusion");
 }
 
@@ -197,7 +195,8 @@ fn guard_cube_minus_one_face_protruding_sphere() {
 fn guard_sphere_minus_concentric_sphere() {
     let outer = make_sphere(30.0, SEGMENTS);
     let inner = make_sphere(25.0, SEGMENTS);
-    let vol = mesh_volume(&difference(&outer, &inner).to_mesh(SEGMENTS));
+    let vol =
+        vcad_kernel_booleans::mesh_signed_volume(&difference(&outer, &inner).to_mesh(SEGMENTS));
     // 4/3·π·(30³−25³) = 47_647.5
     assert_volume_within(vol, 47_647.0, 0.03, "concentric spheres");
 }

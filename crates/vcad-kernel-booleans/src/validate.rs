@@ -27,7 +27,7 @@ use crate::api::BooleanOp;
 use crate::mesh::point_in_mesh;
 
 /// Signed volume of a triangle mesh via the divergence theorem.
-pub(crate) fn mesh_signed_volume(mesh: &TriangleMesh) -> f64 {
+pub fn mesh_signed_volume(mesh: &TriangleMesh) -> f64 {
     let verts = &mesh.vertices;
     let mut vol = 0.0_f64;
     for tri in mesh.indices.chunks(3) {

@@ -799,19 +799,32 @@ pub fn circle_on_cylinder_wall(other: &BRepSolid, circle: &vcad_kernel_geom::Cir
         .cross(circle.y_dir.into_inner())
         .normalize();
     other.geometry.surfaces.iter().any(|s| {
-        let Some(cyl) = s
+        if let Some(cyl) = s
             .as_any()
             .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
-        else {
-            return false;
-        };
-        let axis = cyl.axis.into_inner();
-        if axis.cross(n).norm() > 1e-6 {
-            return false;
+        {
+            let axis = cyl.axis.into_inner();
+            if axis.cross(n).norm() > 1e-6 {
+                return false;
+            }
+            let d = circle.center - cyl.center;
+            let radial = d - axis * d.dot(axis);
+            return radial.norm() < 1e-6 && (cyl.radius - circle.radius).abs() < 1e-6;
         }
-        let d = circle.center - cyl.center;
-        let radial = d - axis * d.dot(axis);
-        radial.norm() < 1e-6 && (cyl.radius - circle.radius).abs() < 1e-6
+        // Cone walls carry canonical (frozen) rims too: a constant-v circle
+        // on a cone must ride the same canonical grid the frozen band and
+        // its splits use, or the planar hole ring can never conform.
+        if let Some(cone) = s.as_any().downcast_ref::<vcad_kernel_geom::ConeSurface>() {
+            let axis = cone.axis.into_inner();
+            if axis.cross(n).norm() > 1e-6 {
+                return false;
+            }
+            let d = circle.center - cone.apex;
+            let radial = d - axis * d.dot(axis);
+            let r_at = d.dot(axis) * cone.half_angle.tan();
+            return radial.norm() < 1e-6 && (r_at - circle.radius).abs() < 1e-6 && r_at > 1e-9;
+        }
+        false
     })
 }
 
@@ -3484,21 +3497,650 @@ pub fn split_conical_face(
     brep: &mut BRepSolid,
     face_id: FaceId,
     curve: &IntersectionCurve,
+    entry: &Point3,
+    exit: &Point3,
+    segments: u32,
 ) -> SplitResult {
     match curve {
-        IntersectionCurve::Circle(circle) => split_conical_face_by_circle(brep, face_id, circle),
-        IntersectionCurve::Sampled(_) | IntersectionCurve::Line(_) => SplitResult {
+        IntersectionCurve::Circle(circle) => {
+            split_conical_face_by_circle(brep, face_id, circle, segments)
+        }
+        IntersectionCurve::Line(line) => {
+            split_conical_face_by_ruling(brep, face_id, line, entry, exit, segments)
+        }
+        IntersectionCurve::Sampled(_) => SplitResult {
             sub_faces: vec![face_id],
         },
         IntersectionCurve::Empty | IntersectionCurve::Point(_) => SplitResult {
             sub_faces: vec![face_id],
         },
-        IntersectionCurve::TwoLines(line1, _line2) => {
-            split_conical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()))
+        IntersectionCurve::TwoLines(line1, line2) => {
+            // The pipeline expands TwoLines into individual Line splits, so
+            // this arm is normally not reached — but a direct caller gets
+            // both rulings applied: split by the first, then run the second
+            // over every resulting sub-face.
+            let first = split_conical_face_by_ruling(brep, face_id, line1, entry, exit, segments);
+            let mut out = Vec::new();
+            for fid in first.sub_faces {
+                if brep.topology.faces.contains_key(fid) {
+                    out.extend(
+                        split_conical_face_by_ruling(brep, fid, line2, entry, exit, segments)
+                            .sub_faces,
+                    );
+                }
+            }
+            SplitResult { sub_faces: out }
         }
         IntersectionCurve::TwoSampled(_, _) => SplitResult {
             sub_faces: vec![face_id],
         },
+    }
+}
+
+/// Split a conical face along a ruling (a straight line through the apex,
+/// lying on the cone surface — the intersection of the cone with a plane
+/// through its apex, e.g. a box side plane containing the cone axis).
+///
+/// In the cone's UV space `[0, 2π] × [v_min, v_max]` a ruling is a vertical
+/// line at constant `u = u_split`, exactly like an axis-parallel line on a
+/// cylinder. Mirrors `split_cylindrical_face_by_line`: the rim arcs of the
+/// two sub-faces are emitted as DENSE canonical chains
+/// (`canonical_arc_points` on each rim circle) so they conform vertex-for-
+/// vertex with the neighboring cap faces' arcs.
+///
+/// Handles full lateral frustum faces (degenerate seam loop) and sector
+/// faces from previous ruling splits (dense two-rim loops). Pointed cones
+/// (a rim collapsed to the apex) are declined and returned unsplit.
+fn split_conical_face_by_ruling(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    line: &vcad_kernel_geom::Line3d,
+    entry: &Point3,
+    exit: &Point3,
+    segments: u32,
+) -> SplitResult {
+    use std::f64::consts::PI;
+    macro_rules! unsplit {
+        ($fid:expr) => {{
+            split_dbg!("by_ruling declined at split.rs:{}", line!());
+            return SplitResult {
+                sub_faces: vec![$fid],
+            };
+        }};
+    }
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+    let cone = match brep.geometry.surfaces[surface_index]
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+    {
+        Some(c) => c.clone(),
+        None => unsplit!(face_id),
+    };
+
+    let axis = *cone.axis.as_ref();
+    let ref_dir = *cone.ref_dir.as_ref();
+    let y_dir = axis.cross(ref_dir);
+    let ca = cone.half_angle.cos();
+    let sa = cone.half_angle.sin();
+
+    // The line must be a ruling: through the apex, at the cone's half-angle
+    // to the axis (on the positive-v side).
+    let mut dir = line.direction.normalize();
+    if dir.dot(axis) < 0.0 {
+        dir = -dir;
+    }
+    if (dir.dot(axis) - ca).abs() > 1e-6 {
+        unsplit!(face_id);
+    }
+    let apex_off = cone.apex - line.origin;
+    if (apex_off - apex_off.dot(dir) * dir).norm() > 1e-6 {
+        unsplit!(face_id);
+    }
+    let dir_perp = dir - dir.dot(axis) * axis;
+    let u_split = {
+        let u = dir_perp.dot(y_dir).atan2(dir_perp.dot(ref_dir));
+        if u < 0.0 {
+            u + 2.0 * PI
+        } else {
+            u
+        }
+    };
+
+    let cone_u = |p: &Point3| -> Option<f64> {
+        let d = *p - cone.apex;
+        let d_perp = d - d.dot(axis) * axis;
+        if d_perp.norm() < 1e-9 {
+            return None; // apex vertex, u undefined
+        }
+        let u = d_perp.dot(y_dir).atan2(d_perp.dot(ref_dir));
+        Some(if u < 0.0 { u + 2.0 * PI } else { u })
+    };
+    let cone_v = |p: &Point3| -> f64 { (*p - cone.apex).dot(axis) / ca };
+
+    // Collect the loop's unique vertices with (v, u).
+    let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
+    if loop_hes.is_empty() {
+        unsplit!(face_id);
+    }
+    let mut all_verts: Vec<(vcad_kernel_topo::VertexId, f64, f64)> = Vec::new();
+    let mut v_min = f64::INFINITY;
+    let mut v_max = f64::NEG_INFINITY;
+    for &he_id in &loop_hes {
+        let vid = brep.topology.half_edges[he_id].origin;
+        let point = brep.topology.vertices[vid].point;
+        let v = cone_v(&point);
+        v_min = v_min.min(v);
+        v_max = v_max.max(v);
+        if !all_verts.iter().any(|(id, _, _)| *id == vid) {
+            let Some(u) = cone_u(&point) else {
+                // Pointed cone (rim collapsed to the apex) — decline.
+                unsplit!(face_id);
+            };
+            all_verts.push((vid, v, u));
+        }
+    }
+    if v_max - v_min < 1e-9 || v_min < 1e-9 {
+        unsplit!(face_id);
+    }
+
+    // The recorded segment [entry, exit] is the stretch of the ruling that
+    // lies on BOTH intersecting faces (clipped at record time). A sub-band
+    // the cut never reaches must stay unsplit: splitting it would put rim
+    // corner vertices on its rims that the neighboring cap faces (which the
+    // cut also never reaches) don't carry — an open T-junction.
+    {
+        let v_entry = cone_v(entry);
+        let v_exit = cone_v(exit);
+        let (seg_lo, seg_hi) = (v_entry.min(v_exit), v_entry.max(v_exit));
+        if seg_hi < v_min + 1e-6 || seg_lo > v_max - 1e-6 {
+            unsplit!(face_id);
+        }
+    }
+
+    let bottom_verts: Vec<_> = all_verts
+        .iter()
+        .filter(|(_, v, _)| (*v - v_min).abs() < 1e-6)
+        .cloned()
+        .collect();
+    let top_verts: Vec<_> = all_verts
+        .iter()
+        .filter(|(_, v, _)| (*v - v_max).abs() < 1e-6)
+        .cloned()
+        .collect();
+    // Every loop vertex must sit on one of the two rims (constant-v rims are
+    // the only shape this splitter produces or understands).
+    if bottom_verts.len() + top_verts.len() != all_verts.len() {
+        unsplit!(face_id);
+    }
+
+    // Determine the face's u-extent and its four corner vertices.
+    let (u_start, u_end, v_start_bot, v_end_bot, v_start_top, v_end_top, is_full_face) =
+        if bottom_verts.len() == 1 && top_verts.len() == 1 {
+            // Full lateral face: degenerate seam loop, u spans the whole turn.
+            let seam_u = bottom_verts[0].2;
+            (
+                seam_u,
+                seam_u + 2.0 * PI,
+                bottom_verts[0].0,
+                bottom_verts[0].0,
+                top_verts[0].0,
+                top_verts[0].0,
+                true,
+            )
+        } else if bottom_verts.len() >= 2 && top_verts.len() >= 2 {
+            // Sector face (possibly with dense rim chains): walk the loop to
+            // find its corners — a corner is a rim vertex adjacent (in loop
+            // order) to the other rim's chain, i.e. the rim chain's first
+            // and last vertices.
+            let on_bottom = |vid| bottom_verts.iter().any(|(id, _, _)| *id == vid);
+            let n = loop_hes.len();
+            let vid_at = |i: usize| brep.topology.half_edges[loop_hes[i % n]].origin;
+            // Find a loop position where the walk transitions top→bottom;
+            // that position starts the bottom chain.
+            let mut start = None;
+            for i in 0..n {
+                if !on_bottom(vid_at(i)) && on_bottom(vid_at(i + 1)) {
+                    start = Some((i + 1) % n);
+                    break;
+                }
+            }
+            let Some(start) = start else {
+                unsplit!(face_id);
+            };
+            let mut bot_chain: Vec<vcad_kernel_topo::VertexId> = Vec::new();
+            let mut top_chain: Vec<vcad_kernel_topo::VertexId> = Vec::new();
+            let mut i = start;
+            while on_bottom(vid_at(i)) {
+                bot_chain.push(vid_at(i));
+                i += 1;
+                if bot_chain.len() > n {
+                    unsplit!(face_id);
+                }
+            }
+            while !on_bottom(vid_at(i)) {
+                top_chain.push(vid_at(i));
+                i += 1;
+                if top_chain.len() > n {
+                    unsplit!(face_id);
+                }
+            }
+            if bot_chain.len() + top_chain.len() != n {
+                // More than two rim runs — not a plain sector.
+                unsplit!(face_id);
+            }
+            // Loop order: bottom chain ascending u, then top chain
+            // descending u (the convention both make_cone and this splitter
+            // emit). Corners: bottom first/last, top last/first.
+            let u_of = |vid| {
+                all_verts
+                    .iter()
+                    .find(|(id, _, _)| *id == vid)
+                    .map(|(_, _, u)| *u)
+                    .unwrap_or(0.0)
+            };
+            let sb = *bot_chain.first().unwrap();
+            let eb = *bot_chain.last().unwrap();
+            let st = *top_chain.last().unwrap();
+            let et = *top_chain.first().unwrap();
+            let u0 = u_of(sb);
+            let u1 = u_of(eb);
+            // A dense FROZEN full band (freeze_circle_loops rewrote its two
+            // analytic rim circles into canonical polylines) walks the full
+            // turn: its rim chain has no gap wider than a couple of grid
+            // steps. Treat it like the degenerate full face, with the seam
+            // at the chain's start/end vertex.
+            let is_frozen_full = {
+                let mut us: Vec<f64> = bot_chain.iter().map(|&v| u_of(v)).collect();
+                us.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let mut max_gap = 2.0 * PI - (us[us.len() - 1] - us[0]);
+                for w in us.windows(2) {
+                    max_gap = max_gap.max(w[1] - w[0]);
+                }
+                max_gap < 0.5
+            };
+            if is_frozen_full {
+                if angle_dist(u0, u1) > 1e-6 || angle_dist(u_of(st), u_of(et)) > 1e-6 {
+                    unsplit!(face_id);
+                }
+                (u0, u0 + 2.0 * PI, sb, eb, et, st, true)
+            } else {
+                // Corner u values must agree between rims (rulings are
+                // vertical).
+                if angle_dist(u1, u_of(et)) > 1e-6 || angle_dist(u0, u_of(st)) > 1e-6 {
+                    unsplit!(face_id);
+                }
+                let wraps_around = u1 < u0 - 0.01;
+                let end_u = if wraps_around { u1 + 2.0 * PI } else { u1 };
+                (u0, end_u, sb, eb, st, et, false)
+            }
+        } else {
+            unsplit!(face_id);
+        };
+
+    // Is the split ruling within the face's u-range?
+    let in_range = if is_full_face {
+        let seam_u = u_start;
+        angle_dist(u_split, seam_u) > 0.01
+    } else {
+        angle_in_range(u_split, u_start, u_end)
+    };
+    if !in_range {
+        unsplit!(face_id);
+    }
+
+    // 3D points at the split ruling's two rim crossings.
+    let (sin_u, cos_u) = u_split.sin_cos();
+    let ruling_dir = ca * axis + sa * (cos_u * ref_dir + sin_u * y_dir);
+    let point_bottom = cone.apex + v_min * ruling_dir;
+    let point_top = cone.apex + v_max * ruling_dir;
+
+    let tolerance = 1e-6;
+    let v_split_bottom = find_or_create_vertex(brep, &point_bottom, tolerance);
+    let v_split_top = find_or_create_vertex(brep, &point_top, tolerance);
+
+    // Rim circle data: center on the axis, radius v·sin(α).
+    let r_bot = v_min * sa;
+    let r_top = v_max * sa;
+    let bot_center = cone.apex + v_min * ca * axis;
+    let top_center = cone.apex + v_max * ca * axis;
+
+    let chain_vids =
+        |brep: &mut BRepSolid, center: Point3, radius: f64, from: Point3, to: Point3| {
+            // Increasing u = CCW about the cone axis.
+            canonical_arc_points(center, radius, axis, from, to, segments)
+                .into_iter()
+                .map(|p| find_or_create_vertex(brep, &p, tolerance))
+                .collect::<Vec<_>>()
+        };
+    let build_face = |brep: &mut BRepSolid,
+                      v_bot_a: vcad_kernel_topo::VertexId,
+                      v_bot_b: vcad_kernel_topo::VertexId,
+                      v_top_a: vcad_kernel_topo::VertexId,
+                      v_top_b: vcad_kernel_topo::VertexId|
+     -> (FaceId, HalfEdgeId, HalfEdgeId) {
+        let p_bot_a = brep.topology.vertices[v_bot_a].point;
+        let p_bot_b = brep.topology.vertices[v_bot_b].point;
+        let p_top_a = brep.topology.vertices[v_top_a].point;
+        let p_top_b = brep.topology.vertices[v_top_b].point;
+        // Bottom chain ascending u (a→b), up ruling, top chain descending u
+        // (b→a), down ruling — same loop shape as make_cone's lateral face.
+        let mut bot = chain_vids(brep, bot_center, r_bot, p_bot_a, p_bot_b);
+        let mut top = chain_vids(brep, top_center, r_top, p_top_a, p_top_b);
+        *bot.first_mut().unwrap() = v_bot_a;
+        *bot.last_mut().unwrap() = v_bot_b;
+        *top.first_mut().unwrap() = v_top_a;
+        *top.last_mut().unwrap() = v_top_b;
+        top.reverse(); // descending u: b → a
+
+        let mut origins: Vec<vcad_kernel_topo::VertexId> = Vec::new();
+        origins.extend(&bot[..bot.len() - 1]);
+        origins.extend(&top[..top.len() - 1]);
+        origins.insert(bot.len() - 1, bot[bot.len() - 1]);
+        origins.push(top[top.len() - 1]);
+
+        let hes: Vec<_> = origins
+            .iter()
+            .map(|&v| brep.topology.add_half_edge(v))
+            .collect();
+        let lp = brep.topology.add_loop(&hes);
+        let face = brep.topology.add_face(lp, surface_index, orientation);
+        let up_he = hes[bot.len() - 1];
+        let down_he = hes[hes.len() - 1];
+        (face, up_he, down_he)
+    };
+
+    let (face1, he1_up, _he1_down) =
+        build_face(brep, v_start_bot, v_split_bottom, v_start_top, v_split_top);
+    let (face2, _he2_up, he2_down) =
+        build_face(brep, v_split_bottom, v_end_bot, v_split_top, v_end_top);
+
+    // Twin the shared split ruling: face1 goes up at u_split, face2 comes
+    // back down at u_split.
+    brep.topology.add_edge(he1_up, he2_down);
+    if is_full_face {
+        brep.topology.add_edge(_he1_down, _he2_up);
+    }
+
+    if let Some(shell_id) = brep.topology.faces[face_id].shell {
+        brep.topology.shells[shell_id].faces.push(face1);
+        brep.topology.shells[shell_id].faces.push(face2);
+        brep.topology.faces[face1].shell = Some(shell_id);
+        brep.topology.faces[face2].shell = Some(shell_id);
+        brep.topology.shells[shell_id]
+            .faces
+            .retain(|&f| f != face_id);
+    }
+
+    brep.topology.faces.remove(face_id);
+    brep.geometry.add_curve_3d(Box::new(line.clone()));
+
+    SplitResult {
+        sub_faces: vec![face1, face2],
+    }
+}
+
+/// Minimal cyclic distance between two angles in radians.
+fn angle_dist(a: f64, b: f64) -> f64 {
+    use std::f64::consts::PI;
+    let d = (a - b).rem_euclid(2.0 * PI);
+    d.min(2.0 * PI - d)
+}
+
+/// Split a dense (frozen-polyline) full conical band at a constant-v
+/// circle, producing two dense bands.
+///
+/// `freeze_circle_loops` rewrites primitive frusta rims into canonical
+/// polylines before the pipeline runs, so a cone lateral face arrives here
+/// as a dense two-ring loop (bottom ring +u, seam up, top ring −u, seam
+/// down — make_cone's shape, densified). The legacy splitter's degenerate
+/// seam-loop reconstruction would thaw those rims back into analytic
+/// circles that can never conform; instead, keep both existing rings
+/// verbatim and realize the new mid ring on the same canonical grid.
+fn split_dense_conical_band_by_circle(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    cone: &vcad_kernel_geom::ConeSurface,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+) -> SplitResult {
+    use std::f64::consts::PI;
+    let unsplit = |face_id| SplitResult {
+        sub_faces: vec![face_id],
+    };
+    let face = &brep.topology.faces[face_id];
+    let surface_index = face.surface_index;
+    let orientation = face.orientation;
+    let shell = face.shell;
+
+    let axis = *cone.axis.as_ref();
+    let ref_dir = *cone.ref_dir.as_ref();
+    let y_dir = axis.cross(ref_dir);
+    let ca = cone.half_angle.cos();
+    let sa = cone.half_angle.sin();
+    let cone_v = |p: &Point3| -> f64 { (*p - cone.apex).dot(axis) / ca };
+    let cone_u = |p: &Point3| -> Option<f64> {
+        let d = *p - cone.apex;
+        let d_perp = d - d.dot(axis) * axis;
+        if d_perp.norm() < 1e-9 {
+            return None;
+        }
+        let u = d_perp.dot(y_dir).atan2(d_perp.dot(ref_dir));
+        Some(if u < 0.0 { u + 2.0 * PI } else { u })
+    };
+
+    // Loop origins in order, with rim classification.
+    let loop_vids: Vec<vcad_kernel_topo::VertexId> = brep
+        .topology
+        .loop_half_edges(face.outer_loop)
+        .map(|he| brep.topology.half_edges[he].origin)
+        .collect();
+    let vs: Vec<f64> = loop_vids
+        .iter()
+        .map(|&v| cone_v(&brep.topology.vertices[v].point))
+        .collect();
+    let (v_min, v_max) = vs
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+            (a.min(v), b.max(v))
+        });
+    if v_max - v_min < 1e-9 {
+        return unsplit(face_id);
+    }
+    const V_TOL: f64 = 1e-6;
+    if vs
+        .iter()
+        .any(|&v| (v - v_min).abs() >= V_TOL && (v - v_max).abs() >= V_TOL)
+    {
+        return unsplit(face_id); // wavy boundary — not a plain band
+    }
+    let on_bottom: Vec<bool> = vs.iter().map(|&v| (v - v_min).abs() < V_TOL).collect();
+    let n = loop_vids.len();
+    let transitions = (0..n)
+        .filter(|&i| on_bottom[i] != on_bottom[(i + 1) % n])
+        .count();
+    if transitions != 2 {
+        return unsplit(face_id);
+    }
+    let start = match (0..n).find(|&i| on_bottom[i] && !on_bottom[(i + n - 1) % n]) {
+        Some(s) => s,
+        None => return unsplit(face_id),
+    };
+    let idx = |k: usize| (start + k) % n;
+    let n_bot = (0..n).take_while(|&k| on_bottom[idx(k)]).count();
+    let bot_run: Vec<_> = (0..n_bot).map(|k| loop_vids[idx(k)]).collect();
+    let top_run: Vec<_> = (n_bot..n).map(|k| loop_vids[idx(k)]).collect();
+    if bot_run.len() < 3 || top_run.len() < 3 {
+        return unsplit(face_id);
+    }
+
+    // Both rims must be full rings (frozen band); a sector's rim would
+    // leave a wide angular gap.
+    let full_ring = |run: &[vcad_kernel_topo::VertexId]| -> bool {
+        let mut us: Vec<f64> = run
+            .iter()
+            .filter_map(|&v| cone_u(&brep.topology.vertices[v].point))
+            .collect();
+        if us.len() < 3 {
+            return false;
+        }
+        us.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mut max_gap = 2.0 * PI - (us[us.len() - 1] - us[0]);
+        for w in us.windows(2) {
+            max_gap = max_gap.max(w[1] - w[0]);
+        }
+        max_gap < 0.5
+    };
+    if !full_ring(&bot_run) || !full_ring(&top_run) {
+        return unsplit(face_id);
+    }
+    // The runs carry the seam vertex at both ends (ring closing edge +
+    // seam edge origin); drop the duplicate.
+    let dedup_run = |run: &[vcad_kernel_topo::VertexId]| -> Vec<vcad_kernel_topo::VertexId> {
+        let mut r = run.to_vec();
+        if r.len() >= 2 && r[0] == r[r.len() - 1] {
+            r.pop();
+        }
+        r
+    };
+    let bot_ring = dedup_run(&bot_run);
+    let top_ring = dedup_run(&top_run);
+
+    // The split circle's v must be strictly inside the band.
+    let v_split = (circle.center - cone.apex).dot(axis) / ca;
+    if v_split <= v_min + 1e-9 || v_split >= v_max - 1e-9 {
+        return unsplit(face_id);
+    }
+
+    // Travel directions: the mid ring must travel like the run it
+    // replaces. canonical_arc_points travels +u (CCW about the axis); the
+    // bottom run travels whichever way the original loop wound. (Computed
+    // before any topology mutation — cone_u borrows the topology.)
+    let run_ascending = |ring: &[vcad_kernel_topo::VertexId]| -> bool {
+        for w in ring.windows(2) {
+            let (Some(a), Some(b)) = (
+                cone_u(&brep.topology.vertices[w[0]].point),
+                cone_u(&brep.topology.vertices[w[1]].point),
+            ) else {
+                continue;
+            };
+            let mut du = (b - a).rem_euclid(2.0 * PI);
+            if du > PI {
+                du -= 2.0 * PI;
+            }
+            if du.abs() > 1e-9 {
+                return du > 0.0;
+            }
+        }
+        true
+    };
+    let bot_asc = run_ascending(&bot_ring);
+
+    // Realize the mid ring on the canonical grid, seamed at the same u as
+    // the band's own seam.
+    let seam_u = match cone_u(&brep.topology.vertices[bot_ring[0]].point) {
+        Some(u) => u,
+        None => return unsplit(face_id),
+    };
+    let (sin_s, cos_s) = seam_u.sin_cos();
+    let ruling_dir = ca * axis + sa * (cos_s * ref_dir + sin_s * y_dir);
+    let mid_seam_pt = cone.apex + v_split * ruling_dir;
+    let mid_center = cone.apex + v_split * ca * axis;
+    let mid_radius = v_split * sa;
+    let tolerance = 1e-6;
+    let mut mid_ring_pts = canonical_arc_points(
+        mid_center,
+        mid_radius,
+        axis,
+        mid_seam_pt,
+        mid_seam_pt,
+        segments,
+    );
+    mid_ring_pts.pop(); // duplicate seam endpoint
+    let mid_ring_asc: Vec<vcad_kernel_topo::VertexId> = mid_ring_pts
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tolerance))
+        .collect();
+
+    let mid_like_bot: Vec<vcad_kernel_topo::VertexId> = if bot_asc {
+        mid_ring_asc.clone()
+    } else {
+        let mut r = mid_ring_asc.clone();
+        r[1..].reverse();
+        r
+    };
+    let mid_like_top: Vec<vcad_kernel_topo::VertexId> = {
+        // Opposite travel to the bottom-style ring, same seam start.
+        let mut r = mid_like_bot.clone();
+        r[1..].reverse();
+        r
+    };
+
+    // Assemble a band face from two rings (each in its travel order,
+    // starting at its seam vertex): ring1 edges (closing back to seam),
+    // seam-up, ring2 edges, seam-down.
+    let mut build_band = |ring_lo: &[vcad_kernel_topo::VertexId],
+                          ring_hi: &[vcad_kernel_topo::VertexId]|
+     -> (
+        FaceId,
+        Vec<HalfEdgeId>,
+        HalfEdgeId,
+        Vec<HalfEdgeId>,
+        HalfEdgeId,
+    ) {
+        let mut origins: Vec<vcad_kernel_topo::VertexId> = Vec::new();
+        origins.extend(ring_lo);
+        origins.push(ring_lo[0]); // seam-up
+        origins.extend(ring_hi);
+        origins.push(ring_hi[0]); // seam-down
+        let hes: Vec<HalfEdgeId> = origins
+            .iter()
+            .map(|&v| brep.topology.add_half_edge(v))
+            .collect();
+        let lp = brep.topology.add_loop(&hes);
+        let f = brep.topology.add_face(lp, surface_index, orientation);
+        let k = ring_lo.len();
+        let m = ring_hi.len();
+        (
+            f,
+            hes[..k].to_vec(),
+            hes[k],
+            hes[k + 1..k + 1 + m].to_vec(),
+            hes[k + 1 + m],
+        )
+    };
+
+    let (lower_face, _lo_bot, lo_up, lo_top, lo_down) = build_band(&bot_ring, &mid_like_top);
+    let (upper_face, up_bot, up_up, _up_top, up_down) = build_band(&mid_like_bot, &top_ring);
+
+    // Seam edges twin within each band (make_cone's convention).
+    brep.topology.add_edge(lo_up, lo_down);
+    brep.topology.add_edge(up_up, up_down);
+    // Mid-ring edges pair between the bands: lo_top[i] runs
+    // mid_like_top[i] → mid_like_top[i+1]; the upper band traverses the
+    // same ring in the opposite direction. Edge k of one direction pairs
+    // with edge (m-1-k) of the other.
+    let m = lo_top.len();
+    debug_assert_eq!(m, up_bot.len());
+    for i in 0..m {
+        brep.topology.add_edge(lo_top[i], up_bot[m - 1 - i]);
+    }
+
+    if let Some(shell_id) = shell {
+        brep.topology.shells[shell_id].faces.push(lower_face);
+        brep.topology.shells[shell_id].faces.push(upper_face);
+        brep.topology.faces[lower_face].shell = Some(shell_id);
+        brep.topology.faces[upper_face].shell = Some(shell_id);
+        brep.topology.shells[shell_id]
+            .faces
+            .retain(|&f| f != face_id);
+    }
+    brep.topology.faces.remove(face_id);
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+
+    SplitResult {
+        sub_faces: vec![lower_face, upper_face],
     }
 }
 
@@ -3507,6 +4149,7 @@ fn split_conical_face_by_circle(
     brep: &mut BRepSolid,
     face_id: FaceId,
     circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
 ) -> SplitResult {
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
@@ -3529,10 +4172,18 @@ fn split_conical_face_by_circle(
     let apex_to_circle = (circle.center - cone.apex).dot(cone.axis.as_ref());
 
     let loop_hes: Vec<_> = brep.topology.loop_half_edges(face.outer_loop).collect();
+    // This splitter reconstructs its sub-faces as degenerate seam loops
+    // spanning the FULL circumference — only correct when the input face is
+    // itself a full lateral band with analytic rims (primitive frusta and
+    // their circle-split sub-bands, ≤ 6 half-edges). Dense loops (frozen
+    // bands and ruling-split sectors) go through the dense v-split path.
     if loop_hes.is_empty() {
         return SplitResult {
             sub_faces: vec![face_id],
         };
+    }
+    if loop_hes.len() > 6 {
+        return split_dense_conical_band_by_circle(brep, face_id, &cone, circle, segments);
     }
 
     let mut v_min = f64::INFINITY;
