@@ -544,6 +544,7 @@ pub(crate) fn brep_boolean(
     solid_b: &BRepSolid,
     op: BooleanOp,
     segments: u32,
+    sphere_unrepresentable: &mut bool,
 ) -> Result<BooleanResult, BooleanError> {
     debug_bool!("\n========== BREP BOOLEAN START ==========");
     debug_bool!("Operation: {:?}", op);
@@ -1163,7 +1164,13 @@ pub(crate) fn brep_boolean(
             false
         };
     if sphere_arrangement_unsound(&a, &splits_a) || sphere_arrangement_unsound(&b, &splits_b) {
-        debug_bool!("Sphere circle arrangement unrepresentable: conservative fallback");
+        // Report it instead of silently returning the uncut operand: the
+        // caller re-runs the boolean through the mesh fallback, which has
+        // no such representational limit. Returning `A` unchanged for a
+        // difference is exactly the silent no-op the hemispherical-socket
+        // handoff hit (a Ø50 ball pocket that simply never appeared).
+        debug_bool!("Sphere circle arrangement unrepresentable: reporting to caller");
+        *sphere_unrepresentable = true;
         return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
     }
 

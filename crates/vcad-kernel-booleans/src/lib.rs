@@ -28,11 +28,14 @@ pub mod sew;
 pub mod split;
 pub mod ssi;
 pub mod trim;
+mod unrepresentable;
+mod validate;
 
 // Re-export public API
 pub use api::{boolean_op, BooleanError, BooleanOp, BooleanResult};
 pub use mesh::point_in_mesh;
 pub use ssi::SsiError;
+pub use validate::{mesh_report, MeshReport, ValidityError};
 
 #[cfg(test)]
 mod tests {

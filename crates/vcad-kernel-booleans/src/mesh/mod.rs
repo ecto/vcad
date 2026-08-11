@@ -1,5 +1,7 @@
 //! Mesh-based utilities for boolean operations.
 
+pub mod csg;
+
 use std::collections::HashMap;
 
 use vcad_kernel_geom::{GeometryStore, Plane};
@@ -24,6 +26,22 @@ pub fn empty_brep() -> BRepSolid {
         geometry,
         solid_id,
     }
+}
+
+/// Is this solid a triangle-soup B-rep (the [`mesh_to_brep`] stopgap
+/// representation): hundreds of faces, every one a bare planar triangle?
+///
+/// Chained booleans on soup operands skip the B-rep pipeline — its
+/// face-pair stages scale quadratically with face count and its splitters
+/// gain nothing from anonymous triangles.
+pub(crate) fn is_triangle_soup(solid: &BRepSolid) -> bool {
+    let topo = &solid.topology;
+    if topo.faces.len() < 256 {
+        return false;
+    }
+    topo.faces
+        .iter()
+        .all(|(_, f)| f.inner_loops.is_empty() && topo.loop_len(f.outer_loop) == 3)
 }
 
 /// Build a B-rep from a triangle mesh by emitting one planar face per

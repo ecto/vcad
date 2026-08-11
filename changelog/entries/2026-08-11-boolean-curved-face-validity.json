@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-11-boolean-curved-face-validity",
+  "version": "0.9.4",
+  "date": "2026-08-11",
+  "category": "fix",
+  "title": "Booleans against curved faces can no longer fail silently",
+  "summary": "Cuts through spherical pockets, sphere×cylinder and unequal cylinder×cylinder booleans now return the correct solid: a validity oracle checks every result against the operation's set semantics and reroutes unsound ones to a mesh-CSG fallback.",
+  "features": ["booleans", "kernel", "validation"]
+}
