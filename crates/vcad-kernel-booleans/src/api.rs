@@ -173,6 +173,17 @@ pub fn boolean_op(
     // Sound unconditionally: a bounded solid always has positive volume.
     let inverted = validate_boolean_result(&result_mesh).is_err();
 
+    // Tessellate each operand at most once. Every path below that needs the
+    // operand meshes — the volume check, the fallback, the watertightness
+    // swap — shares these, and nothing pays for them when the B-rep result
+    // is accepted outright (the common case).
+    let operands = (flagged || sphere_unrepresentable || inverted).then(|| {
+        (
+            tessellate_brep(solid_a, segments),
+            tessellate_brep(solid_b, segments),
+        )
+    });
+
     // The sphere gate is a capability flag like the others, not a verdict.
     // It fires whenever a spherical face *would* need splitting by
     // intersecting circles, and the pipeline then returns the operands
@@ -180,15 +191,17 @@ pub fn boolean_op(
     // and a silent no-op when it does not. The volume check tells the two
     // apart, so a flagged-but-correct result keeps its analytic surfaces.
     let broken = inverted
-        || ((flagged || sphere_unrepresentable) && {
-            let mesh_a = tessellate_brep(solid_a, segments);
-            let mesh_b = tessellate_brep(solid_b, segments);
-            crate::validate::volume_disagrees_grossly(&result_mesh, &mesh_a, &mesh_b, op)
-        });
+        || match &operands {
+            Some((mesh_a, mesh_b)) if flagged || sphere_unrepresentable => {
+                crate::validate::volume_disagrees_grossly(&result_mesh, mesh_a, mesh_b, op)
+            }
+            _ => false,
+        };
     if broken {
-        let mesh_a = tessellate_brep(solid_a, segments);
-        let mesh_b = tessellate_brep(solid_b, segments);
-        return mesh_fallback(&mesh_a, &mesh_b, op);
+        let Some((mesh_a, mesh_b)) = &operands else {
+            return Ok(result);
+        };
+        return mesh_fallback(mesh_a, mesh_b, op);
     }
 
     // The result is trustworthy, but it may still be *cracked*: the splitters
@@ -212,12 +225,13 @@ pub fn boolean_op(
     // on volume. Agreement is what makes this safe: it establishes the two
     // represent the same solid, so the swap trades analytic surfaces for
     // watertightness and nothing else.
-    if !(flagged || sphere_unrepresentable) || crate::mesh_report(&result_mesh).open_edges == 0 {
+    let Some((mesh_a, mesh_b)) = &operands else {
+        return Ok(result);
+    };
+    if crate::mesh_report(&result_mesh).open_edges == 0 {
         return Ok(result);
     }
-    let mesh_a = tessellate_brep(solid_a, segments);
-    let mesh_b = tessellate_brep(solid_b, segments);
-    let Ok(alt) = mesh_fallback(&mesh_a, &mesh_b, op) else {
+    let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op) else {
         return Ok(result);
     };
     let alt_mesh = alt.to_mesh(segments);
