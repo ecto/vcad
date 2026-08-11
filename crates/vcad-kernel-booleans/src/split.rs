@@ -325,16 +325,29 @@ pub fn split_face_by_curve(
     // all cuts admits genuine along-the-edge duplicates (it reopened the
     // rotated-blade union's unpaired half-edges, `zz_blade_union`).
     {
-        let mid = if via.is_empty() || !same_edge_bite {
-            Point3::new(
+        let mid_dist = if via.is_empty() || !same_edge_bite {
+            let mid = Point3::new(
                 0.5 * (entry_point.x + exit_point.x),
                 0.5 * (entry_point.y + exit_point.y),
                 0.5 * (entry_point.z + exit_point.z),
-            )
+            );
+            find_closest_edge_with_dist(&loop_verts, &mid).1
         } else {
-            via[via.len() / 2]
+            // Probe the sample standing FURTHEST from the boundary, not the
+            // one at the middle index. The middle is not the apex of this
+            // metric: measured on the oblique-bore mouth this fix was built
+            // for, distance-to-boundary runs 0 → 16.9 → 9.6 → 16.9 → 0 along
+            // the arc, because near its centre the arc is closest to the
+            // face's *far* edge. Worse, the samples adjacent to entry and
+            // exit sit at distance 0 by construction, so a fixed index into
+            // a short `via` can read ~0 and reject a legitimate bite as a
+            // boundary-duplicate. The maximum is the only index-independent
+            // answer, and it is the quantity the guard actually wants: does
+            // this cut leave the boundary ANYWHERE?
+            via.iter().fold(0.0f64, |acc, q| {
+                acc.max(find_closest_edge_with_dist(&loop_verts, q).1)
+            })
         };
-        let (_, mid_dist) = find_closest_edge_with_dist(&loop_verts, &mid);
         if mid_dist < 1e-7 {
             split_dbg!("sfbc: cut runs along boundary");
             return SplitResult {
