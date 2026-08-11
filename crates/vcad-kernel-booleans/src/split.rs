@@ -3514,14 +3514,23 @@ pub fn split_conical_face(
         IntersectionCurve::Empty | IntersectionCurve::Point(_) => SplitResult {
             sub_faces: vec![face_id],
         },
-        IntersectionCurve::TwoLines(line1, _line2) => split_conical_face(
-            brep,
-            face_id,
-            &IntersectionCurve::Line(line1.clone()),
-            entry,
-            exit,
-            segments,
-        ),
+        IntersectionCurve::TwoLines(line1, line2) => {
+            // The pipeline expands TwoLines into individual Line splits, so
+            // this arm is normally not reached — but a direct caller gets
+            // both rulings applied: split by the first, then run the second
+            // over every resulting sub-face.
+            let first = split_conical_face_by_ruling(brep, face_id, line1, entry, exit, segments);
+            let mut out = Vec::new();
+            for fid in first.sub_faces {
+                if brep.topology.faces.contains_key(fid) {
+                    out.extend(
+                        split_conical_face_by_ruling(brep, fid, line2, entry, exit, segments)
+                            .sub_faces,
+                    );
+                }
+            }
+            SplitResult { sub_faces: out }
+        }
         IntersectionCurve::TwoSampled(_, _) => SplitResult {
             sub_faces: vec![face_id],
         },

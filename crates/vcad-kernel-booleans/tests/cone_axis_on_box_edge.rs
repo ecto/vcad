@@ -130,3 +130,45 @@ fn rand_130_cube_union_cone_axis_on_corner() {
 fn simple_cube_minus_cone_axis_on_corner() {
     check("simple", 10.0, 10.0, 5.0, 8.0, 2.0, 4.0, false);
 }
+
+/// A direct `TwoLines` split must apply BOTH rulings: on a full lateral
+/// band (seam at u=0) rulings at u=90° and u=270° yield three sectors, not
+/// two. Guards the defensive `TwoLines` arm of `split_conical_face` (the
+/// pipeline itself expands `TwoLines` into individual `Line` splits).
+#[test]
+fn two_lines_applies_both_rulings() {
+    use vcad_kernel_booleans::split::{is_conical_face, split_conical_face};
+    use vcad_kernel_geom::Line3d;
+    use vcad_kernel_math::Point3;
+
+    let mut cone = make_cone(8.0, 2.0, 4.0, SEGMENTS);
+    let lateral = cone
+        .topology
+        .faces
+        .keys()
+        .find(|&f| is_conical_face(&cone, f))
+        .expect("lateral face");
+
+    // Apex of the frustum sits at z = h·rb/(rb−rt) = 16/3 above the base;
+    // rulings run from the apex through the rims at u = ±90°.
+    let apex = Point3::new(0.0, 0.0, 16.0 / 3.0);
+    let ruling = |sy: f64| Line3d {
+        origin: apex,
+        direction: Point3::new(0.0, sy * 8.0, 0.0) - apex,
+    };
+    let curve = vcad_kernel_booleans::ssi::IntersectionCurve::TwoLines(ruling(1.0), ruling(-1.0));
+    // Entry/exit span the full band in v (base rim to top rim).
+    let result = split_conical_face(
+        &mut cone,
+        lateral,
+        &curve,
+        &Point3::new(0.0, 8.0, 0.0),
+        &Point3::new(0.0, 2.0, 4.0),
+        SEGMENTS,
+    );
+    assert_eq!(
+        result.sub_faces.len(),
+        3,
+        "both rulings of a TwoLines split must be applied (seam + 2 cuts → 3 sectors)"
+    );
+}

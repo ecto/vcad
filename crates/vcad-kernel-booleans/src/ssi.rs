@@ -509,8 +509,17 @@ fn plane_cone(plane: &Plane, cone: &ConeSurface) -> IntersectionCurve {
     // 0, 1, or 2 straight rulings through the apex (e.g. a box side plane
     // containing the cone axis). The marching fallback yields v=0 for every
     // sample here (numer=0) and returns Empty, silently dropping the cut.
+    // Relative tolerance: at large coordinates the dot product's rounding
+    // error scales with the operand magnitudes, so an absolute 1e-9 would
+    // miss a genuinely apex-containing plane far from the origin.
+    let apex_scale = cone
+        .apex
+        .to_vec()
+        .norm()
+        .max(plane.origin.to_vec().norm())
+        .max(1.0);
     let apex_dist = (plane.origin - cone.apex).dot(n.as_ref());
-    if apex_dist.abs() < 1e-9 {
+    if apex_dist.abs() < 1e-9 * apex_scale {
         return plane_through_apex_cone(plane, cone);
     }
 
