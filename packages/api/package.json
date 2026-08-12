@@ -5,7 +5,7 @@
   "type": "module",
   "dependencies": {
     "@ai-sdk/anthropic": "^0.0.50",
-    "@ai-sdk/openai": "^0.0.60",
+    "@ai-sdk/openai": "^4.0.36",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@supabase/supabase-js": "^2.45.0",
     "@vcad/core": "*",
