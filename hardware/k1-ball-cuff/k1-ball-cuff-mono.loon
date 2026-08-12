@@ -1,0 +1,90 @@
+; K1 Ball Cuff, rev E "mono" — single-piece slide-on pinch collar
+;
+; THE OBSERVATION THAT MAKES ONE PIECE POSSIBLE
+; The ball is the TERMINAL link of the arm — nothing exists distal of it. So the
+; cuff does not need to open at all: it slides on axially from the fingertip
+; direction over a Ø50.1 bore, the ball seats in an exact spherical zone, and a
+; single M4 pinch bolt across an axial slit ovalizes the mouth ~1 mm. The ball
+; is then captive behind its own equator. One print, one bolt, no hinge, no
+; clamshell, no alignment features — the slit collar IS the preload mechanism,
+; same as a bicycle seatpost clamp.
+;
+; Versus a print-in-place hinge: a hinge still needs a closure bolt row on the
+; far side, its pin becomes a wear part, and PLA living hinges are brittle.
+; The slit deletes all of that.
+;
+; PRINT ORIENTATION — mouth down (collar axis vertical, rod hole at top).
+; The spherical ceiling narrows from the equator to the Ø35 rod hole; at that
+; hole the surface sits at 45.6 degrees from horizontal, i.e. the rod hole
+; truncates the sphere almost exactly at the self-supporting limit. The whole
+; cavity prints clean with no supports; only the handle boss (sideways in this
+; orientation) needs them, and those touch outside surfaces only.
+;
+; Frame: ball center at origin. Collar axis = Y (the forearm axis).
+;   -Y proximal (rod side), +Y distal (open mouth), +Z handle boss.
+;
+; Surfaces are exact per the rev D rule:
+;   ball seat   sphere R 25.05  (0.05 clearance; pinch closes it)
+;   lead-in     cylinder R 25.05, equator to the distal face
+;   rod pass    cylinder R 17.5 (Ø35 bump stop, 1.0 mm clearance)
+;   outer body  cylinder R 31 — round, because it can be now
+;
+; Sized to the robot: arm joints all stop at 14 Nm and the arm pulls 38 N max.
+; One M4 at 0.15 Nm closing the slit gives hundreds of newtons of conforming
+; grip on the equator band — geometric retention axially, friction about the
+; forearm axis with the bump stop as backstop. A second bolt row is provided at
+; the rod end to close the journal onto the rod; leave it loose if the tool
+; should swivel there.
+;
+; NOTE - BLOCKED ON PRINT with rev D by vcad defect D (sphere tessellation puts
+; vertices +/-0.6 mm off-surface). Same acceptance: re-export after the fix.
+
+[let petg [material "petg" 0.15 0.55 0.75 0.0 0.45]]
+[let bx [fn [sx sy sz px py pz] [translate px py pz [cube sx sy sz]]]]
+
+; --- body: round collar + handle boss --------------------------------------
+; Collar: R 31 about Y, y -40 .. +30 (10 mm of wall beyond the ball equator
+; before the mouth; the rod end carries the bump-stop journal).
+[let collar
+  [translate 0.0 -40.0 0.0
+    [rotate -90.0 0.0 0.0
+      [cylinder 31.0 70.0]]]]
+
+; Handle boss embedded into the collar top, 25.8 square pocket for 1 in tube.
+; Pocket floor z = 40 leaves ~15 mm of solid between tube and cavity crown.
+[let body
+  [union [bx 52.0 34.0 26.0 -26.0 -16.0 28.0] collar]]
+
+; --- the one-piece magic: cavity, slit, bolts -------------------------------
+[let seat [sphere 25.05]]
+[let lead-in
+  [rotate -90.0 0.0 0.0
+    [cylinder 25.05 32.0]]]
+[let rod-pass
+  [translate 0.0 -41.0 0.0
+    [rotate -90.0 0.0 0.0
+      [cylinder 17.5 26.0]]]]
+
+; Axial slit, 2.5 mm, from the cavity straight down through the bottom of the
+; collar, full length. This is the compliance that lets one bolt do everything.
+[let slit [bx 2.5 70.0 34.0 -1.25 -40.0 -34.0]]
+
+; Pinch bolts: M4 clearance holes along X through both slit cheeks.
+;   bolt 1 at y = +8  — closes the mouth over the ball equator (the keeper)
+;   bolt 2 at y = -30 — closes the journal on the rod (optional / swivel)
+[let pinch-hole [fn [py]
+  [translate -32.0 py -26.0
+    [rotate 0.0 90.0 0.0
+      [cylinder 2.2 64.0]]]]]
+
+[let mono
+  [pipe body
+    [difference [bx 60.0 25.8 25.8 -30.0 -12.9 40.0]]
+    [difference seat]
+    [difference lead-in]
+    [difference rod-pass]
+    [difference slit]
+    [difference [pinch-hole 8.0]]
+    [difference [pinch-hole -30.0]]]]
+
+[root mono "petg"]
