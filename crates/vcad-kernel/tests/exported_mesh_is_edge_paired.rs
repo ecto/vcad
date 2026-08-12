@@ -44,11 +44,7 @@ fn defective_edges(verts: &[f32], idx: &[u32]) -> usize {
 fn signed_volume(verts: &[f32], idx: &[u32]) -> f64 {
     let p = |i: u32| -> [f64; 3] {
         let k = i as usize * 3;
-        [
-            verts[k] as f64,
-            verts[k + 1] as f64,
-            verts[k + 2] as f64,
-        ]
+        [verts[k] as f64, verts[k + 1] as f64, verts[k + 2] as f64]
     };
     let mut v = 0.0;
     for t in 0..idx.len() / 3 {

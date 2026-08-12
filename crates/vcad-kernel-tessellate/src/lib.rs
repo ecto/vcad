@@ -6325,5 +6325,4 @@ mod tests {
         assert_eq!(mesh.indices, before.indices);
         assert_eq!(mesh.vertices, before.vertices);
     }
-
 }
