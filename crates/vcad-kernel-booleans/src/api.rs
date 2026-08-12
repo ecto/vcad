@@ -1,5 +1,6 @@
 //! Public API types and entry point for boolean operations.
 
+use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
 
@@ -122,6 +123,12 @@ pub fn boolean_op(
     op: BooleanOp,
     segments: u32,
 ) -> Result<BooleanResult, BooleanError> {
+    // Analytic surfaces of both operands, kept so the mesh fallback's
+    // result can be re-projected onto them (defect D: BSP splitting and
+    // seam healing leave quadric-face vertices up to ~0.6 mm off-surface,
+    // which is bigger than a printed part's entire fit budget).
+    let quadrics = QuadricCtx::collect(solid_a, solid_b);
+
     // Check if solids overlap at all
     let aabb_a = bbox::solid_aabb(solid_a);
     let aabb_b = bbox::solid_aabb(solid_b);
@@ -151,7 +158,7 @@ pub fn boolean_op(
     if crate::mesh::is_triangle_soup(solid_a) || crate::mesh::is_triangle_soup(solid_b) {
         let mesh_a = tessellate_brep(solid_a, segments);
         let mesh_b = tessellate_brep(solid_b, segments);
-        return mesh_fallback(&mesh_a, &mesh_b, op);
+        return mesh_fallback(&mesh_a, &mesh_b, op, &quadrics);
     }
 
     // Flag arrangements the splitters provably cannot represent. This is a
@@ -243,7 +250,7 @@ pub fn boolean_op(
         let Some((mesh_a, mesh_b)) = &operands else {
             return Ok(result);
         };
-        return mesh_fallback(mesh_a, mesh_b, op);
+        return mesh_fallback(mesh_a, mesh_b, op, &quadrics);
     }
 
     // The result is trustworthy, but it may still be *cracked*: the splitters
@@ -285,7 +292,7 @@ pub fn boolean_op(
     if crate::mesh_report(&result_mesh).open_edges == 0 {
         return Ok(result);
     }
-    let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op) else {
+    let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics) else {
         return Ok(result);
     };
     let alt_mesh = alt.to_mesh(segments);
@@ -308,10 +315,368 @@ fn mesh_fallback(
     mesh_a: &TriangleMesh,
     mesh_b: &TriangleMesh,
     op: BooleanOp,
+    quadrics: &QuadricCtx,
 ) -> Result<BooleanResult, BooleanError> {
-    let out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
+    let mut out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
+    quadrics.project_mesh(&mut out);
     validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;
-    Ok(BooleanResult::BRep(Box::new(crate::mesh::mesh_to_brep(
-        &out,
-    ))))
+    let mut brep = crate::mesh::mesh_to_brep(&out);
+    // Carry the operands' quadric carriers forward in the result's geometry
+    // store (no face references them; they are dormant). A later boolean
+    // whose operand is this triangle soup can then still recognize sphere
+    // and cylinder vertices and re-project them — without this, the first
+    // fallback in a chain is the LAST time the surfaces are known, and
+    // every subsequent cut re-shatters the quadric regions unrepaired.
+    quadrics.stash_into(&mut brep.geometry);
+    Ok(BooleanResult::BRep(Box::new(brep)))
+}
+
+/// Analytic quadric carriers of the two operands, used to push the mesh
+/// fallback's vertices back onto the surfaces they came from.
+///
+/// The mesh boolean works on tessellations: operand triangles get split by
+/// the other operand's carrier planes and the seams re-welded, so vertices
+/// that belong to a sphere end up on chords, midpoints, and snapped seam
+/// positions — measured up to ~0.6 mm off a R25 sphere, versus a 0.03 mm
+/// chord sag. Planes and cylinders come through exact; spheres do not.
+///
+/// The repair is conservative by construction:
+///  - a vertex is only moved if some quadric is within `BAND` of it, the
+///    move is small, and exactly ONE quadric claims it (seam vertices
+///    between two quadrics are left alone);
+///  - a vertex lying on one operand plane is projected ALONG that plane
+///    (onto the plane∩sphere circle), so planar faces stay planar;
+///  - a vertex on two or more planes (a box edge) is never moved.
+struct QuadricCtx {
+    spheres: Vec<(Point3, f64)>,
+    cylinders: Vec<(Point3, Vec3, f64)>,
+    planes: Vec<(Point3, Vec3)>,
+}
+
+impl QuadricCtx {
+    /// Distance band within which a vertex is considered to belong to a
+    /// quadric. Must exceed the worst observed off-surface error (~0.6 mm)
+    /// with margin, while staying below feature scale.
+    const BAND: f64 = 0.75;
+    /// In-plane snap band for plane-constrained projection. Wider than
+    /// `BAND` because a plane at height h from the sphere center amplifies
+    /// radial error by 1/sin(phi): a 0.62 mm radial error at h = 19.8 on a
+    /// R25 sphere shows up as 0.93 mm in the plane.
+    const INPLANE_BAND: f64 = 1.3;
+    /// Vertices within this of the surface are already correct — leave
+    /// them; only genuinely displaced vertices are snapped. This is what
+    /// keeps legitimate geometry that merely passes near a quadric safe.
+    const GOOD_EPS: f64 = 0.02;
+
+    fn collect(a: &BRepSolid, b: &BRepSolid) -> Self {
+        let mut ctx = QuadricCtx {
+            spheres: Vec::new(),
+            cylinders: Vec::new(),
+            planes: Vec::new(),
+        };
+        let mut plane_keys: std::collections::HashSet<(i64, i64, i64, i64)> =
+            std::collections::HashSet::new();
+        for solid in [a, b] {
+            for surface in &solid.geometry.surfaces {
+                let any = surface.as_any();
+                if let Some(s) = any.downcast_ref::<vcad_kernel_geom::SphereSurface>() {
+                    let r = s.radius.abs();
+                    if r > 1e-9
+                        && !ctx
+                            .spheres
+                            .iter()
+                            .any(|(c, cr)| (*c - s.center).norm() < 1e-6 && (cr - r).abs() < 1e-6)
+                    {
+                        ctx.spheres.push((s.center, r));
+                    }
+                } else if let Some(c) = any.downcast_ref::<vcad_kernel_geom::CylinderSurface>() {
+                    let r = c.radius.abs();
+                    let axis = c.axis.into_inner();
+                    if r > 1e-9
+                        && !ctx.cylinders.iter().any(|(cc, ca, cr)| {
+                            (cr - r).abs() < 1e-6 && ca.cross(axis).norm() < 1e-6 && {
+                                let d = *cc - c.center;
+                                (d - axis * d.dot(axis)).norm() < 1e-6
+                            }
+                        })
+                    {
+                        ctx.cylinders.push((c.center, axis, r));
+                    }
+                } else if let Some(p) = any.downcast_ref::<vcad_kernel_geom::Plane>() {
+                    // Dedupe coincident carriers: a triangle-soup operand
+                    // contributes one Plane per triangle, and thousands of
+                    // copies of the same carrier would pin every vertex as
+                    // "on two planes". Canonical key: normal with its
+                    // largest component made positive, plus signed offset.
+                    let mut n = p.normal_dir.into_inner();
+                    let amax = n.x.abs().max(n.y.abs()).max(n.z.abs());
+                    let flip = if n.x.abs() == amax {
+                        n.x < 0.0
+                    } else if n.y.abs() == amax {
+                        n.y < 0.0
+                    } else {
+                        n.z < 0.0
+                    };
+                    if flip {
+                        n = -n;
+                    }
+                    let o = p.origin;
+                    let d = (o - Point3::origin()).dot(n);
+                    let key = (
+                        (n.x * 1e6).round() as i64,
+                        (n.y * 1e6).round() as i64,
+                        (n.z * 1e6).round() as i64,
+                        (d * 1e4).round() as i64,
+                    );
+                    if plane_keys.insert(key) {
+                        ctx.planes.push((o, n));
+                    }
+                }
+            }
+        }
+        ctx
+    }
+
+    /// Append this context's quadrics as dormant surfaces on a geometry
+    /// store, so `collect` on a chained boolean rediscovers them.
+    fn stash_into(&self, geom: &mut vcad_kernel_geom::GeometryStore) {
+        for (c, r) in &self.spheres {
+            let mut s = vcad_kernel_geom::SphereSurface::new(*r);
+            s.center = *c;
+            geom.add_surface(Box::new(s));
+        }
+        for (c, axis, r) in &self.cylinders {
+            let mut cy = vcad_kernel_geom::CylinderSurface::new(*r);
+            cy.center = *c;
+            cy.axis = vcad_kernel_math::Dir3::new_normalize(*axis);
+            geom.add_surface(Box::new(cy));
+        }
+    }
+
+    fn project_mesh(&self, mesh: &mut TriangleMesh) {
+        let dbg = std::env::var_os("VCAD_PROJ_DEBUG").is_some();
+        if self.spheres.is_empty() && self.cylinders.is_empty() {
+            return;
+        }
+        // Per-vertex incident triangle normals. The constraint a vertex
+        // lives under is decided LOCALLY: an incident face whose normal a
+        // nearby quadric cannot explain is a planar feature the vertex
+        // must stay on. Global plane lists cannot do this — a tessellated
+        // sphere contributes one facet carrier per triangle and pins
+        // everything.
+        let nv = mesh.vertices.len() / 3;
+        let mut inc: Vec<Vec<Vec3>> = vec![Vec::new(); nv];
+        for t in mesh.indices.as_chunks::<3>().0 {
+            let g = |k: u32| {
+                Point3::new(
+                    mesh.vertices[(k as usize) * 3] as f64,
+                    mesh.vertices[(k as usize) * 3 + 1] as f64,
+                    mesh.vertices[(k as usize) * 3 + 2] as f64,
+                )
+            };
+            let (a, b, c) = (g(t[0]), g(t[1]), g(t[2]));
+            let n = (b - a).cross(c - a);
+            let l = n.norm();
+            if l < 1e-12 {
+                continue;
+            }
+            let n = n / l;
+            for &k in t {
+                let bucket = &mut inc[k as usize];
+                if !bucket.iter().any(|m| m.dot(n).abs() > 0.996) {
+                    bucket.push(n);
+                }
+            }
+        }
+        let mut moved = 0usize;
+        for (vi, chunk) in mesh.vertices.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let v = Point3::new(chunk[0] as f64, chunk[1] as f64, chunk[2] as f64);
+            // Split incident normals into quadric-explained and planar.
+            let mut planar: Vec<Vec3> = Vec::new();
+            for n in &inc[vi] {
+                if !self.normal_explained(&v, n) && !planar.iter().any(|m| m.dot(n).abs() > 0.996) {
+                    planar.push(*n);
+                }
+            }
+            if planar.len() >= 2 {
+                continue; // feature edge or corner: pinned
+            }
+            if let Some(p) = self.project_point(&v, planar.first()) {
+                moved += 1;
+                chunk[0] = p.x as f32;
+                chunk[1] = p.y as f32;
+                chunk[2] = p.z as f32;
+            }
+        }
+        if dbg {
+            eprintln!(
+                "[proj] spheres={} cyls={} moved={} of {}",
+                self.spheres.len(),
+                self.cylinders.len(),
+                moved,
+                nv
+            );
+        }
+    }
+
+    /// Can any nearby quadric's surface normal at `v` explain the incident
+    /// facet normal `n`? Facet normals of a tessellated quadric lag the true
+    /// normal by up to the facet's angular pitch; 25 degrees of slack covers
+    /// coarse tessellations without absorbing genuinely planar features.
+    fn normal_explained(&self, v: &Point3, n: &Vec3) -> bool {
+        const COS_SLACK: f64 = 0.90; // ~25 degrees
+        for (c, r) in &self.spheres {
+            let d = *v - *c;
+            let dist = d.norm();
+            if (dist - r).abs() < Self::BAND && dist > 1e-9 && (d / dist).dot(n).abs() > COS_SLACK {
+                return true;
+            }
+        }
+        for (c, axis, r) in &self.cylinders {
+            let d = *v - *c;
+            let radial = d - *axis * d.dot(*axis);
+            let dist = radial.norm();
+            if (dist - r).abs() < Self::BAND
+                && dist > 1e-9
+                && (radial / dist).dot(n).abs() > COS_SLACK
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn project_point(&self, v: &Point3, plane_n: Option<&Vec3>) -> Option<Point3> {
+        // A single planar constraint from the caller: the vertex lies on a
+        // planar feature through v with this normal, and must stay in it.
+        let on_planes: Vec<(Point3, Vec3)> = plane_n.map(|n| (*v, *n)).into_iter().collect();
+
+        // Classify against every quadric: `good` = already on it,
+        // `bad` = near it but displaced.
+        let mut sph_good: Vec<usize> = Vec::new();
+        let mut sph_bad: Vec<usize> = Vec::new();
+        for (i, (c, r)) in self.spheres.iter().enumerate() {
+            let e = ((*v - *c).norm() - r).abs();
+            if e <= Self::GOOD_EPS {
+                sph_good.push(i);
+            } else if e < Self::BAND {
+                sph_bad.push(i);
+            }
+        }
+        let mut cyl_good: Vec<usize> = Vec::new();
+        let mut cyl_bad: Vec<usize> = Vec::new();
+        for (i, (c, axis, r)) in self.cylinders.iter().enumerate() {
+            let d = *v - *c;
+            let radial = d - *axis * d.dot(*axis);
+            let e = (radial.norm() - r).abs();
+            if e <= Self::GOOD_EPS {
+                cyl_good.push(i);
+            } else if e < Self::BAND {
+                cyl_bad.push(i);
+            }
+        }
+
+        let bads = sph_bad.len() + cyl_bad.len();
+        if bads == 0 {
+            return None; // on-surface or far from everything
+        }
+
+        // Seam cases: displaced from a sphere while on (or also displaced
+        // from) a cylinder whose axis passes through the sphere center —
+        // the intersection is an exact circle; snap onto it. This keeps
+        // the vertex on the cylinder too.
+        if on_planes.is_empty() && sph_bad.len() == 1 && (cyl_good.len() + cyl_bad.len()) == 1 {
+            let ci = *cyl_good.first().or(cyl_bad.first()).unwrap();
+            let (sc, sr) = self.spheres[sph_bad[0]];
+            let (cc, axis, cr) = self.cylinders[ci];
+            if let Some(p) = Self::seam_circle(v, &sc, sr, &cc, &axis, cr) {
+                return Some(p).filter(|p| (*p - *v).norm() < Self::INPLANE_BAND);
+            }
+            return None;
+        }
+        if on_planes.is_empty() && cyl_bad.len() == 1 && sph_good.len() == 1 && sph_bad.is_empty() {
+            let (sc, sr) = self.spheres[sph_good[0]];
+            let (cc, axis, cr) = self.cylinders[cyl_bad[0]];
+            if let Some(p) = Self::seam_circle(v, &sc, sr, &cc, &axis, cr) {
+                return Some(p).filter(|p| (*p - *v).norm() < Self::INPLANE_BAND);
+            }
+            return None;
+        }
+        if !sph_good.is_empty() || !cyl_good.is_empty() {
+            return None; // already on some quadric; no clean target
+        }
+        if bads >= 2 {
+            return None; // multi-quadric displacement with no analytic seam
+        }
+
+        // Single displaced quadric.
+        if let Some(&i) = sph_bad.first() {
+            let (c, r) = self.spheres[i];
+            let d = *v - c;
+            let dist = d.norm();
+            if dist < 1e-9 {
+                return None;
+            }
+            let p = if let Some((o, n)) = on_planes.first() {
+                // Stay in the plane: project onto the plane∩sphere circle.
+                let h = (c - *o).dot(*n);
+                let rc2 = r * r - h * h;
+                if rc2 <= 1e-12 {
+                    return None;
+                }
+                let rc = rc2.sqrt();
+                let cc = c - *n * h;
+                let mut u = *v - cc;
+                u -= *n * u.dot(*n);
+                let ul = u.norm();
+                if ul < 1e-9 || (ul - rc).abs() >= Self::INPLANE_BAND {
+                    return None;
+                }
+                cc + u * (rc / ul)
+            } else {
+                c + d * (r / dist)
+            };
+            return Some(p).filter(|p| (*p - *v).norm() < Self::INPLANE_BAND);
+        }
+        if let Some(&i) = cyl_bad.first() {
+            let (c, axis, r) = self.cylinders[i];
+            let d = *v - c;
+            let radial = d - axis * d.dot(axis);
+            let dist = radial.norm();
+            if dist < 1e-9 || !on_planes.is_empty() {
+                return None; // plane-constrained cylinder: skip
+            }
+            let p = *v - radial + radial * (r / dist);
+            return Some(p).filter(|p| (*p - *v).norm() < Self::INPLANE_BAND);
+        }
+        None
+    }
+
+    /// Intersection circle of a sphere and a cylinder whose axis passes
+    /// through the sphere center; projection of `v` onto it, or None when
+    /// the configuration is not that special case.
+    fn seam_circle(
+        v: &Point3,
+        sc: &Point3,
+        sr: f64,
+        cc: &Point3,
+        axis: &Vec3,
+        cr: f64,
+    ) -> Option<Point3> {
+        let co = *sc - *cc;
+        let off = co - *axis * co.dot(*axis);
+        if off.norm() > 1e-6 || sr * sr <= cr * cr {
+            return None;
+        }
+        let h = (sr * sr - cr * cr).sqrt();
+        let d = *v - *sc;
+        let t = d.dot(*axis);
+        let radial = d - *axis * t;
+        let rl = radial.norm();
+        if rl < 1e-9 {
+            return None;
+        }
+        let t_seam = if t >= 0.0 { h } else { -h };
+        Some(*sc + *axis * t_seam + radial * (cr / rl))
+    }
 }

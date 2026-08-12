@@ -1,0 +1,102 @@
+; K1 Ball Capture Cuff, rev D — exact-surface clamshell for the Booster K1 hand ball
+;
+; MEASURED (Left_Arm_4.STL): ball a true sphere, D 50.000 (sphericity 0.002 mm),
+; center 203.0 mm from the Elbow_Yaw origin; forearm rod D 34.00 concentric to
+; 0.06 mm; arm is 4-DOF, no wrist; every arm joint limited to 14 Nm.
+;
+; Frame: ball center at origin, split plane z = 0.
+;   +X = tool handle axis    -Y = proximal, toward the elbow    +Z = up
+;
+; ---------------------------------------------------------------------------
+; WHAT CHANGED FROM REV C AND WHY
+;
+; Rev C approximated the ball with crossed 45-degree V-troughs cut from rotated
+; boxes, because the kernel of the day could not cut a sphere and then keep
+; working on the part. Those kernel bugs are fixed (#789/#792/#793), and the
+; printed rev C did not seat cleanly. Rev D models the mating surfaces as what
+; they are:
+;
+;   ball  -> spherical socket, R 25.00 exact, conforming
+;   rod   -> cylindrical bore, R 17.50 (1.0 mm diametral clearance)
+;
+; Preload is the pillow-block scheme: the sockets are cut at EXACTLY the ball
+; radius, both centered on the true ball center, and the mating FACES are
+; relieved 0.2 mm per side instead. Bolting closes the 0.4 mm face gap and the
+; halves conform elastically onto the ball — zero designed interference, full
+; surface contact, and FDM's natural hole-undersize only adds grip.
+;
+; (Rev D.0 tried displacing each socket center 0.2 mm into the split gap for a
+; "polar pinch". Checked analytically, that undersizes the whole cap above
+; z ~ 6 mm — 204 mm3 of tapering crush, the same small-everywhere-conforming-
+; socket failure this header already warned against. Offset centers are the
+; wrong preload mechanism for conforming sockets; face relief is the right one.)
+;
+; The journal is a BUMP STOP, not a bearing. Rev C's 0.2 mm journal clearance
+; made the cuff kinematically over-constrained (8 constraints on 5 DOF) and was
+; below what FDM holds — the most likely cause of the bad seat. At 1.0 mm
+; clearance the bore carries nothing until ~1.5 degrees of prying rotation,
+; then takes the moment on the 30 mm seat-to-journal arm. Blade slop of 1.5
+; degrees is irrelevant for digging; a clean seat is not.
+;
+; Sized to the robot, not to the material: every arm joint stops at 14 Nm and
+; the arm can pull 38 N, so bolts at 0.15 Nm (four of them, not six) give
+; ~1.1 kN of clamp — friction capacity about the forearm axis then matches the
+; actuator, and everything else is geometric. Rev C's 6 kN / six-bolt spec was
+; strength the robot cannot use, paid for in grams at 369 mm of reach.
+; ---------------------------------------------------------------------------
+
+[let petg [material "petg" 0.15 0.55 0.75 0.0 0.45]]
+
+; corner-positioned box helper, so every dimension reads as a real extent
+[let bx [fn [sx sy sz px py pz] [translate px py pz [cube sx sy sz]]]]
+
+; 5 mm square slot for an M4 carriage bolt, through Z. Square stays: it is the
+; right shape for a carriage-bolt neck, nothing to do with old kernel limits.
+[let bolt-slot [fn [px py pz] [bx 5.0 5.0 40.0 px py pz]]]
+
+; --- exact tools ------------------------------------------------------------
+; Socket: R 25.00 exact, centered on the true ball center for BOTH halves.
+[let socket [sphere 25.0]]
+
+; Neck bore: R 17.5 on the R 17.0 rod, axis -Y, spanning y -44..-16.
+; It may overlap the socket freely — both are exact cuts now, and their union
+; is simply "the robot, offset". No hand-off plane to manage.
+[let neck-bore
+  [translate 0.0 -44.0 0.0
+    [rotate -90.0 0.0 0.0
+      [cylinder 17.5 28.0]]]]
+
+; --- upper half -------------------------------------------------------------
+; Block x +/-38, y -40..22, z 0..20: 4 bolts instead of 6, ~20% less material
+; than rev C. Handle boss on top with the 25.8 square pocket for 1 in square
+; aluminium tube (floor at z = 30 clears the socket crown at 25.0 by 5 mm of
+; solid roof — the load path from handle to clamp).
+; Block face sits at z = +0.2 (the 0.2 mm relief); boss on top as before.
+[let upper-blank
+  [union [bx 52.0 34.0 22.0 -26.0 -16.0 20.0]
+         [bx 76.0 62.0 19.8 -38.0 -40.0 0.2]]]
+
+[let upper
+  [pipe upper-blank
+    [difference socket]
+    [difference neck-bore]
+    [difference [bx 60.0 25.8 25.8 -30.0 -12.9 30.0]]
+    [difference [bolt-slot -34.5 12.0 -5.0]]
+    [difference [bolt-slot 29.5 12.0 -5.0]]
+    [difference [bolt-slot -34.5 -33.0 -5.0]]
+    [difference [bolt-slot 29.5 -33.0 -5.0]]]]
+
+; --- lower half: plain cap, same footprint, same bolt pattern ---------------
+[let lower-blank [bx 76.0 62.0 19.8 -38.0 -40.0 -20.0]]
+
+[let lower
+  [pipe lower-blank
+    [difference socket]
+    [difference neck-bore]
+    [difference [bolt-slot -34.5 12.0 -35.0]]
+    [difference [bolt-slot 29.5 12.0 -35.0]]
+    [difference [bolt-slot -34.5 -33.0 -35.0]]
+    [difference [bolt-slot 29.5 -33.0 -35.0]]]]
+
+[root upper "petg"]
+[root lower "petg"]
