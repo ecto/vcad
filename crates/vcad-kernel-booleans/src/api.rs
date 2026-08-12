@@ -466,7 +466,7 @@ impl QuadricCtx {
         // everything.
         let nv = mesh.vertices.len() / 3;
         let mut inc: Vec<Vec<Vec3>> = vec![Vec::new(); nv];
-        for t in mesh.indices.chunks_exact(3) {
+        for t in mesh.indices.as_chunks::<3>().0 {
             let g = |k: u32| {
                 Point3::new(
                     mesh.vertices[(k as usize) * 3] as f64,
@@ -489,7 +489,7 @@ impl QuadricCtx {
             }
         }
         let mut moved = 0usize;
-        for (vi, chunk) in mesh.vertices.chunks_exact_mut(3).enumerate() {
+        for (vi, chunk) in mesh.vertices.as_chunks_mut::<3>().0.iter_mut().enumerate() {
             let v = Point3::new(chunk[0] as f64, chunk[1] as f64, chunk[2] as f64);
             // Split incident normals into quadric-explained and planar.
             let mut planar: Vec<Vec3> = Vec::new();
