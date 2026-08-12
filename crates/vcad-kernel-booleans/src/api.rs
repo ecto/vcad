@@ -358,8 +358,6 @@ impl QuadricCtx {
     /// quadric. Must exceed the worst observed off-surface error (~0.6 mm)
     /// with margin, while staying below feature scale.
     const BAND: f64 = 0.75;
-    /// A vertex closer than this to a plane carrier is treated as ON it.
-    const PLANE_EPS: f64 = 5e-4;
     /// In-plane snap band for plane-constrained projection. Wider than
     /// `BAND` because a plane at height h from the sphere center amplifies
     /// radial error by 1/sin(phi): a 0.62 mm radial error at h = 19.8 on a
@@ -396,12 +394,10 @@ impl QuadricCtx {
                     let axis = c.axis.into_inner();
                     if r > 1e-9
                         && !ctx.cylinders.iter().any(|(cc, ca, cr)| {
-                            (cr - r).abs() < 1e-6
-                                && ca.cross(&axis).norm() < 1e-6
-                                && {
-                                    let d = *cc - c.center;
-                                    (d - axis * d.dot(&axis)).norm() < 1e-6
-                                }
+                            (cr - r).abs() < 1e-6 && ca.cross(axis).norm() < 1e-6 && {
+                                let d = *cc - c.center;
+                                (d - axis * d.dot(axis)).norm() < 1e-6
+                            }
                         })
                     {
                         ctx.cylinders.push((c.center, axis, r));
@@ -479,7 +475,7 @@ impl QuadricCtx {
                 )
             };
             let (a, b, c) = (g(t[0]), g(t[1]), g(t[2]));
-            let n = (b - a).cross(&(c - a));
+            let n = (b - a).cross(c - a);
             let l = n.norm();
             if l < 1e-12 {
                 continue;
@@ -487,7 +483,7 @@ impl QuadricCtx {
             let n = n / l;
             for &k in t {
                 let bucket = &mut inc[k as usize];
-                if !bucket.iter().any(|m| m.dot(&n).abs() > 0.996) {
+                if !bucket.iter().any(|m| m.dot(n).abs() > 0.996) {
                     bucket.push(n);
                 }
             }
@@ -498,10 +494,8 @@ impl QuadricCtx {
             // Split incident normals into quadric-explained and planar.
             let mut planar: Vec<Vec3> = Vec::new();
             for n in &inc[vi] {
-                if !self.normal_explained(&v, n) {
-                    if !planar.iter().any(|m| m.dot(n).abs() > 0.996) {
-                        planar.push(*n);
-                    }
+                if !self.normal_explained(&v, n) && !planar.iter().any(|m| m.dot(n).abs() > 0.996) {
+                    planar.push(*n);
                 }
             }
             if planar.len() >= 2 {
@@ -534,8 +528,7 @@ impl QuadricCtx {
         for (c, r) in &self.spheres {
             let d = *v - *c;
             let dist = d.norm();
-            if (dist - r).abs() < Self::BAND && dist > 1e-9 && (d / dist).dot(n).abs() > COS_SLACK
-            {
+            if (dist - r).abs() < Self::BAND && dist > 1e-9 && (d / dist).dot(n).abs() > COS_SLACK {
                 return true;
             }
         }

@@ -93,9 +93,8 @@ fn sphere_pocket_through_faces_stays_on_surface() {
     translate(&mut cube, -38.0, -40.0, 0.2);
     let sphere = make_sphere(25.0, SEGMENTS);
 
-    let mesh = result_mesh(
-        boolean_op(&cube, &sphere, BooleanOp::Difference, SEGMENTS).expect("boolean"),
-    );
+    let mesh =
+        result_mesh(boolean_op(&cube, &sphere, BooleanOp::Difference, SEGMENTS).expect("boolean"));
 
     let vol = mesh_volume(&mesh);
     // MC ground truth for this arrangement: 63,228 ± 60.
