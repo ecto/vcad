@@ -675,6 +675,14 @@ fn computed_vertex_normals(vertices: &[f32], indices: &[u32]) -> Vec<f32> {
 /// than this is a genuine T-junction rather than a distinct vertex.
 const T_JUNCTION_TOL: f64 = 1e-3;
 
+/// Maximum stitch passes.
+///
+/// Each pass re-triangulates the triangles that gained edge points, which can
+/// expose a vertex that only became edge-interior once its neighbour was
+/// split. In practice one pass closes a tessellation and two closes a chained
+/// boolean; the cap only bounds pathological input.
+const T_JUNCTION_MAX_PASSES: usize = 8;
+
 /// Stitch T-junctions closed.
 ///
 /// A T-junction is a vertex sitting in the *interior* of another triangle's
@@ -694,6 +702,14 @@ const T_JUNCTION_TOL: f64 = 1e-3;
 /// that already lies on the edge it splits, so no position moves and no
 /// volume changes; only which triangles agree along that edge does.
 ///
+/// The split is decided **per undirected edge, once**, and then applied to
+/// every triangle that uses that edge. Deciding it per triangle instead is
+/// what made the first version of this pass raise the defect count it was
+/// meant to lower: splitting one side of an edge that was already correctly
+/// paired leaves the other side holding the unsplit edge, turning one good
+/// edge into three bad ones — which is why a healed mesh grew non-manifold
+/// edges (use-count 3 and up) it did not start with.
+///
 /// Triangles that gain edge points are re-emitted as a centroid fan. A fan
 /// from an existing corner would be cheaper, but when the points sit on an
 /// edge adjacent to that corner it emits exactly-degenerate triangles, whose
@@ -702,20 +718,62 @@ const T_JUNCTION_TOL: f64 = 1e-3;
 /// has area; it inherits the interpolated normal and the face-kind tag of the
 /// triangle it replaces.
 fn heal_t_junctions(mesh: &mut TriangleMesh) {
-    // Fast path: a closed mesh has nothing to stitch, and this is the common
-    // case, so it must cost no more than the edge-pairing pass.
-    let open = mesh.boundary_edges();
-    if open.is_empty() || mesh.indices.is_empty() {
-        return;
+    let mut before = defective_edge_count(mesh);
+    for _ in 0..T_JUNCTION_MAX_PASSES {
+        if before == 0 {
+            return;
+        }
+        let snapshot = mesh.clone();
+        if !heal_t_junctions_pass(mesh) {
+            return;
+        }
+        let after = defective_edge_count(mesh);
+        // Never hand back a mesh worse than the one handed in. The pass is a
+        // repair, not a heuristic that gets to gamble: if a split did not
+        // reduce the defect count it is churning, so keep the input. This is
+        // also what bounds the work — a pass that stops paying for itself
+        // ends the loop instead of compounding.
+        if after >= before {
+            *mesh = snapshot;
+            return;
+        }
+        before = after;
+    }
+}
+
+/// Undirected edges used by a number of triangles other than two — the
+/// watertightness defect count. Zero on a closed manifold mesh.
+fn defective_edge_count(mesh: &TriangleMesh) -> usize {
+    mesh.edge_use_counts().values().filter(|&&n| n != 2).count()
+}
+
+/// One stitch pass. Returns whether anything changed.
+fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
+    if mesh.indices.is_empty() {
+        return false;
     }
 
-    // Only vertices that terminate an open edge can close one, which is a
+    // Fast path: a mesh whose every edge is used by exactly two triangles has
+    // nothing to stitch, and this is the common case, so it must cost no more
+    // than the edge-pairing pass.
+    let counts = mesh.edge_use_counts();
+    if counts.values().all(|&n| n == 2) {
+        return false;
+    }
+
+    // Only vertices that terminate a defective edge can close one, which is a
     // handful even on a badly cracked mesh — far cheaper than testing every
-    // vertex against every edge.
+    // vertex against every edge. Both under-used (a hole) and over-used
+    // (non-manifold) edges seed candidates: the original pass took boundary
+    // edges alone and so never even looked at the use-count-3+ junctions that
+    // dominate a chained boolean result.
     let mut candidates: Vec<u32> = Vec::new();
     {
         let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        for &(a, b) in &open {
+        for (&(a, b), &n) in counts.iter() {
+            if n == 2 {
+                continue;
+            }
             for v in [a, b] {
                 if seen.insert(v) {
                     candidates.push(v);
@@ -723,6 +781,10 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
             }
         }
     }
+    if candidates.is_empty() {
+        return false;
+    }
+
     let pos = |i: u32| -> [f64; 3] {
         let k = i as usize * 3;
         [
@@ -732,14 +794,69 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
         ]
     };
 
-    // Sorted-axis prefilter: on a badly cracked mesh (a chained fallback)
-    // the candidate count can approach the triangle count, and testing every
+    // Sorted-axis prefilter: on a badly cracked mesh (a chained fallback) the
+    // candidate count can approach the triangle count, and testing every
     // candidate against every edge goes quadratic. Sorting candidates along
     // one axis lets each edge binary-search the slab its AABB (padded by the
     // stitch tolerance) covers and test only those.
     let mut sorted_candidates: Vec<(f64, u32)> =
         candidates.iter().map(|&vi| (pos(vi)[0], vi)).collect();
     sorted_candidates.sort_by(|x, y| x.0.total_cmp(&y.0));
+
+    // Decide the split for each undirected edge exactly once. The list is
+    // stored ordered from the low-index endpoint to the high one, so both
+    // triangles sharing the edge walk the same points in opposite directions
+    // and stay paired.
+    let mut splits: std::collections::HashMap<(u32, u32), Vec<u32>> =
+        std::collections::HashMap::new();
+    for &(lo, hi) in counts.keys() {
+        let (a, b) = (pos(lo), pos(hi));
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+        if len2 <= 0.0 {
+            continue;
+        }
+        // Scale the tolerance to the edge. An absolute 1 µm band is a large
+        // fraction of a sliver edge, so on a freshly-split mesh a sliver
+        // swallows every nearby vertex, splits again, and each pass makes
+        // finer slivers that swallow more — the cascade that took one part
+        // from 164 to 2.9M triangles in five passes. A point genuinely on an
+        // edge is on it to machine precision; only a fudge needs the slack.
+        let tol = T_JUNCTION_TOL.min(0.25 * len2.sqrt());
+        let mut on_edge: Vec<(f64, u32)> = Vec::new();
+        let x_lo = a[0].min(b[0]) - tol;
+        let x_hi = a[0].max(b[0]) + tol;
+        let start = sorted_candidates.partition_point(|&(x, _)| x < x_lo);
+        for &(x, vi) in &sorted_candidates[start..] {
+            if x > x_hi {
+                break;
+            }
+            if vi == lo || vi == hi {
+                continue;
+            }
+            let v = pos(vi);
+            let av = [v[0] - a[0], v[1] - a[1], v[2] - a[2]];
+            let s = (av[0] * ab[0] + av[1] * ab[1] + av[2] * ab[2]) / len2;
+            if s <= 0.0 || s >= 1.0 {
+                continue;
+            }
+            let c = [a[0] + s * ab[0], a[1] + s * ab[1], a[2] + s * ab[2]];
+            let d2 = (v[0] - c[0]).powi(2) + (v[1] - c[1]).powi(2) + (v[2] - c[2]).powi(2);
+            if d2 > tol * tol {
+                continue;
+            }
+            on_edge.push((s, vi));
+        }
+        if on_edge.is_empty() {
+            continue;
+        }
+        on_edge.sort_by(|x, y| x.0.total_cmp(&y.0));
+        on_edge.dedup_by_key(|(_, vi)| *vi);
+        splits.insert((lo, hi), on_edge.into_iter().map(|(_, vi)| vi).collect());
+    }
+    if splits.is_empty() {
+        return false;
+    }
 
     let has_normals = mesh.normals.len() == mesh.vertices.len();
     let has_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
@@ -763,43 +880,16 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
         for e in 0..3 {
             let (ai, bi) = (corners[e], corners[(e + 1) % 3]);
             loop_idx.push(ai);
-            let (a, b) = (pos(ai), pos(bi));
-            let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-            let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
-            if len2 <= 0.0 {
+            let key = if ai < bi { (ai, bi) } else { (bi, ai) };
+            let Some(pts) = splits.get(&key) else {
                 continue;
-            }
-            let mut on_edge: Vec<(f64, u32)> = Vec::new();
-            let x_lo = a[0].min(b[0]) - T_JUNCTION_TOL;
-            let x_hi = a[0].max(b[0]) + T_JUNCTION_TOL;
-            let start = sorted_candidates.partition_point(|&(x, _)| x < x_lo);
-            for &(x, vi) in &sorted_candidates[start..] {
-                if x > x_hi {
-                    break;
-                }
-                if vi == ai || vi == bi {
-                    continue;
-                }
-                let v = pos(vi);
-                let av = [v[0] - a[0], v[1] - a[1], v[2] - a[2]];
-                let s = (av[0] * ab[0] + av[1] * ab[1] + av[2] * ab[2]) / len2;
-                if s <= 0.0 || s >= 1.0 {
-                    continue;
-                }
-                let c = [a[0] + s * ab[0], a[1] + s * ab[1], a[2] + s * ab[2]];
-                let d2 = (v[0] - c[0]).powi(2) + (v[1] - c[1]).powi(2) + (v[2] - c[2]).powi(2);
-                if d2 > T_JUNCTION_TOL * T_JUNCTION_TOL {
-                    continue;
-                }
-                on_edge.push((s, vi));
-            }
-            if on_edge.is_empty() {
-                continue;
-            }
-            on_edge.sort_by(|x, y| x.0.total_cmp(&y.0));
-            on_edge.dedup_by_key(|(_, vi)| *vi);
+            };
             inserted = true;
-            loop_idx.extend(on_edge.into_iter().map(|(_, vi)| vi));
+            if ai < bi {
+                loop_idx.extend(pts.iter().copied());
+            } else {
+                loop_idx.extend(pts.iter().rev().copied());
+            }
         }
 
         if !inserted {
@@ -844,7 +934,7 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
     }
 
     if healed == 0 {
-        return;
+        return false;
     }
     mesh.vertices.extend_from_slice(&added_verts);
     if has_normals {
@@ -854,6 +944,7 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
     if has_kinds {
         mesh.face_kinds = new_kinds;
     }
+    true
 }
 
 /// Collapse mesh vertices that share a position to 3 decimal places.
@@ -6107,4 +6198,132 @@ mod tests {
         assert_eq!(segs.len(), 12, "cube must yield exactly its 12 edges");
         assert!((total - 12.0).abs() < 1e-6);
     }
+
+    /// Signed volume of a mesh via the divergence theorem. Local to these
+    /// tests so the stitch's "no position moves" claim is checked against an
+    /// independent computation rather than a kernel helper it shares code
+    /// with.
+    fn signed_volume(mesh: &TriangleMesh) -> f64 {
+        let p = |i: u32| -> [f64; 3] {
+            let k = i as usize * 3;
+            [
+                mesh.vertices[k] as f64,
+                mesh.vertices[k + 1] as f64,
+                mesh.vertices[k + 2] as f64,
+            ]
+        };
+        let mut v = 0.0;
+        for t in 0..mesh.indices.len() / 3 {
+            let a = p(mesh.indices[t * 3]);
+            let b = p(mesh.indices[t * 3 + 1]);
+            let c = p(mesh.indices[t * 3 + 2]);
+            v += (a[0] * (b[1] * c[2] - c[1] * b[2]) - b[0] * (a[1] * c[2] - c[1] * a[2])
+                + c[0] * (a[1] * b[2] - b[1] * a[2]))
+                / 6.0;
+        }
+        v
+    }
+
+    fn mesh_from(verts: &[[f32; 3]], tris: &[[u32; 3]]) -> TriangleMesh {
+        let mut m = TriangleMesh::new();
+        for v in verts {
+            m.vertices.extend_from_slice(v);
+        }
+        for t in tris {
+            m.indices.extend_from_slice(t);
+        }
+        m
+    }
+
+    fn max_edge_use(mesh: &TriangleMesh) -> u32 {
+        mesh.edge_use_counts().values().copied().max().unwrap_or(0)
+    }
+
+    /// The thing the pass exists for: a vertex in the interior of a
+    /// neighbour's edge gets inserted, and the edge it split stops being
+    /// unpaired.
+    #[test]
+    fn heal_t_junctions_closes_a_t_vertex() {
+        // Edge a-b is spanned by one triangle on the +y side and by two on
+        // the -y side, which meet at d — the midpoint of a-b.
+        let mut mesh = mesh_from(
+            &[
+                [0.0, 0.0, 0.0],  // a
+                [2.0, 0.0, 0.0],  // b
+                [1.0, 1.0, 0.0],  // c
+                [1.0, 0.0, 0.0],  // d, interior to a-b
+                [1.0, -1.0, 0.0], // e
+            ],
+            &[[0, 1, 2], [0, 4, 3], [3, 4, 1]],
+        );
+        let before = defective_edge_count(&mesh);
+        let vol_before = signed_volume(&mesh);
+
+        heal_t_junctions(&mut mesh);
+
+        let counts = mesh.edge_use_counts();
+        assert!(
+            !counts.contains_key(&(0, 1)),
+            "the T-junction edge a-b must no longer exist unsplit"
+        );
+        assert_eq!(counts.get(&(0, 3)).copied(), Some(2), "a-d must be paired");
+        assert_eq!(counts.get(&(1, 3)).copied(), Some(2), "d-b must be paired");
+        assert!(defective_edge_count(&mesh) < before);
+        assert!(
+            (signed_volume(&mesh) - vol_before).abs() < 1e-9,
+            "stitching inserts points that already lie on their edge, so no \
+             volume may move"
+        );
+    }
+
+    /// Regression for the defect that made the first version of this pass
+    /// *raise* the number it was meant to lower.
+    ///
+    /// Edge a-b here is already correctly paired, and a stray vertex from an
+    /// unrelated patch sits on it. Splitting a-b in one of the two triangles
+    /// and not the other leaves the other holding the unsplit edge — one good
+    /// edge becomes three bad ones, and the mesh grows non-manifold edges it
+    /// did not start with. The split must be decided per undirected edge and
+    /// applied to every triangle that uses it.
+    #[test]
+    fn heal_t_junctions_never_unpairs_a_shared_edge() {
+        let mut mesh = mesh_from(
+            &[
+                [0.0, 0.0, 0.0],  // a
+                [2.0, 0.0, 0.0],  // b
+                [1.0, 1.0, 0.0],  // c
+                [1.0, -1.0, 0.0], // d
+                [1.0, 0.0, 0.0],  // stray, exactly on a-b
+                [1.0, 0.0, 3.0],  // detached patch, well away from the quad
+                [2.0, 0.0, 3.0],
+            ],
+            &[[0, 1, 2], [1, 0, 3], [4, 5, 6]],
+        );
+        let before = defective_edge_count(&mesh);
+        assert_eq!(max_edge_use(&mesh), 2, "no edge is over-used to begin with");
+
+        heal_t_junctions(&mut mesh);
+
+        assert!(
+            max_edge_use(&mesh) <= 2,
+            "stitching must never create a non-manifold edge"
+        );
+        assert!(
+            defective_edge_count(&mesh) <= before,
+            "stitching must never raise the defect count"
+        );
+    }
+
+    /// A closed mesh is left exactly as it was — the fast path, and the
+    /// guarantee that the pass cannot disturb geometry that is already fine.
+    #[test]
+    fn heal_t_junctions_leaves_a_closed_mesh_alone() {
+        let mut mesh = tessellate_brep(&make_cube(4.0, 5.0, 6.0), 16);
+        assert_eq!(defective_edge_count(&mesh), 0);
+        let before = mesh.clone();
+        heal_t_junctions(&mut mesh);
+        assert_eq!(mesh.indices, before.indices);
+        assert_eq!(mesh.vertices, before.vertices);
+    }
+
 }
