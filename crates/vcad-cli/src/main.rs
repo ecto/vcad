@@ -847,7 +847,7 @@ fn floating_floor_area(vertices: &[f32], indices: &[u32], up: usize, sign: f64) 
     let mut zmin = f64::INFINITY;
     let mut tris: Vec<([f64; 3], [f64; 3], [f64; 3])> = Vec::new();
     let mut floors: Vec<([f64; 3], f64)> = Vec::new();
-    for t in indices.chunks_exact(3) {
+    for t in indices.as_chunks::<3>().0 {
         let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
         for p in [&a, &b, &c] {
             zmin = zmin.min(p[2]);
