@@ -1,4 +1,21 @@
-; K1 Ball Cuff, rev E.1 "mono" — print-in-place clamshell with integral flexure
+; K1 Ball Cuff, rev E.2 "mono" — print-in-place clamshell, flexure + ratchet latch
+;
+; E.2 DELETES THE BOLTS. Each bolt station becomes a printed cable-tie
+; ratchet: a hook arm rooted on the UPPER cheek wraps around the rib and
+; clicks down a rack of teeth on the LOWER cheek. Squeeze the jaws to
+; latch (1 mm tooth pitch at the rib = ~0.5 mm per click at the seat);
+; press the release tab to let the jaws spring open. Both are ~20 N
+; pushes — robot- or dock-operable, no fasteners, no assembly.
+;
+; WHY IT PRINTS IN PLACE: every latch feature is a CONSTANT CROSS-SECTION
+; ALONG Y — a prism. In the mouth-down orientation Y is vertical, so the
+; hook, teeth, and tab all print as clean stacked slices with no supports,
+; and the 0.5 mm as-printed clearance between hook tip and first tooth is
+; a vertical gap between vertical walls, which FDM renders exactly.
+; The hook's vertical blade is the release flexure, sized for PLA:
+; 1.6 mm thick x 17.5 mm long, 1.0 mm engagement -> 0.9 percent strain at
+; full release (PLA elastic limit ~1.5-2). Click force ~9 N per latch at
+; PLA's modulus. PETG prints of the same geometry are simply softer.
 ;
 ; Rev E.0 was a seatpost-style pinch collar: one axial slit, closed by
 ; ovalizing the whole ring. That works, but the ring is stiff (high bolt
@@ -71,10 +88,11 @@
 ; 25.8 square tube tunnel — E.0's pocket was accidentally an open channel.
 [let boss [bx 52.0 46.0 34.0 -26.0 -16.0 28.0]]
 
-; Bolt rib at -X, also flush to the mouth face and full length: the two
-; jaw cheeks the M4s pull together. Spans z -8..8 so the bolts get ~7 mm
-; of material each side of the gap.
-[let rib [bx 12.0 70.0 16.0 -38.0 -40.0 -8.0]]
+; Latch rib at -X, flush to the mouth face and full length: the two jaw
+; cheeks the ratchets pull together. Upper face z 8; lower reaches z -12
+; so the whole rack (deepest tooth to -9.9) lands on cheek material —
+; at z -8 the third tooth was a floating chip the volume check caught.
+[let rib [bx 12.0 70.0 20.0 -38.0 -40.0 -12.0]]
 
 ; ORDER IS LOAD-BEARING: boxes union first, the cylinder joins LAST.
 ; The other association — a box union'd onto the already-derived
@@ -103,21 +121,60 @@
 ; solid roof over the seat crown at 25.05), ceiling z = 57.8, boss top 62.
 [let tunnel [bx 60.0 25.8 25.8 -30.0 -12.9 32.0]]
 
-; M4 clearance holes through the rib along Z, crossing the gap:
-;   bolt 1 at y = +8  — closes the jaws over the ball equator
-;   bolt 2 at y = -30 — closes the journal half-shells on the rod
-[let pinch-hole [fn [py]
-  [translate -32.0 py -9.0
-    [cylinder 2.2 18.0]]]]
+; --- the ratchet latch: one prism per station, extruded 10 mm in Y -------
+; Frame per station (XZ profile): rib outer face at x = -38. The hook arm
+; roots on the upper cheek (z 4.5..7), runs out to x = -45, drops as a
+; 2.0 mm blade to z = -6.5, and carries an inward tooth at the tip. The
+; lower cheek carries a 3-tooth rack on its outer face. As-printed, the
+; hook tooth hovers 0.5 mm above the first rack tooth.
+[let latch-arm [fn [py]
+  [union
+    ; root + horizontal run (attaches to upper cheek at x = -38 face)
+    [bx 7.5 18.0 2.5 -45.1 py 4.5]
+    [union
+      ; vertical release blade: 1.6 thick, root z 7 down to -10.5 (~17.5
+      ; flexing length) — the PLA-safe spring
+      [bx 1.6 18.0 17.5 -45.1 py -10.5]
+      [union
+        ; hook tooth pointing +X at the tip
+        [bx 2.5 18.0 1.6 -43.5 py -9.0]
+        ; release tab: press +X to flex the blade and free the hook
+        [bx 2.5 18.0 2.0 -47.6 py -10.5]]]]]]
 
+; Rack: three teeth on the lower cheek outer face, 1.5 mm pitch in z,
+; moved down to meet the longer blade. Tips reach x = -42.0: the hook
+; tooth (spanning -43.5..-41.0) engages 1.0 mm in X on square hold faces.
+; As printed the hook tooth sits 0.5 mm ABOVE the first tooth — vertical
+; clearance, nothing fuses. Approach faces get a 45-degree lead so
+; closing clicks over.
+[let rack [fn [py]
+  [pipe
+    [union
+      [bx 4.0 18.0 1.0 -42.0 py -6.9]
+      [union
+        [bx 4.0 18.0 1.0 -42.0 py -8.4]
+        [bx 4.0 18.0 1.0 -42.0 py -9.9]]]
+    ; one 45-degree cut shaves all three approach faces at once
+    [difference
+      [translate -44.0 py -11.4
+        [rotate 0.0 -45.0 0.0
+          [bx 4.0 18.0 8.0 0.0 0.0 0.0]]]]]]]
+
+; ONE latch station, 18 mm wide, FLUSH TO THE MOUTH FACE — so the whole
+; mechanism prints from the plate. Two mid-height stations looked right
+; per-layer but their plate-facing ends were floating shelves 17 mm up
+; (the slicer's "floating cantilever" — and vcad's own steep_overhang DFM
+; rule would flag the same 180-degree floor; it just isn't run at export
+; yet). The rod-end station is deleted, not moved: the 7 mm cheek carries
+; clamp to the journal over 40 mm at prototype loads.
 [let mono
   [pipe body
+    [union [latch-arm 12.0]]
+    [union [rack 12.0]]
     [difference tunnel]
     [difference seat]
     [difference lead-in]
     [difference rod-pass]
-    [difference hinge-gap]
-    [difference [pinch-hole 8.0]]
-    [difference [pinch-hole -30.0]]]]
+    [difference hinge-gap]]]
 
 [root mono "petg"]

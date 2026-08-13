@@ -708,6 +708,7 @@ fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
                     combined_idxs.push(idx + base_idx);
                 }
             }
+            warn_floating_floors(&combined_verts, &combined_idxs);
             let stl_bytes = export_stl_bytes(&combined_verts, &combined_idxs)?;
             fs::write(output, stl_bytes)?;
             println!("Exported STL to {}", output.display());
@@ -759,6 +760,156 @@ fn export_loon(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The `floating_floor` DFM check (vcad.dfm/1, FDM pack): a flat
+/// downward-facing triangle above first-layer height with NO geometry
+/// below its footprint starts printing in mid-air — the slicer's
+/// "floating cantilever", caught at export instead of in someone else's
+/// tool.
+///
+/// Print orientation is the user's choice, not the model frame's, so the
+/// check runs in all six axis-down candidates and reports which ones are
+/// support-free. It only warns; supports are sometimes the plan.
+fn warn_floating_floors(vertices: &[f32], indices: &[u32]) {
+    // (label, index of the "up" coordinate, sign) — "down" = -sign axis.
+    const ORIENTS: [(&str, usize, f64); 6] = [
+        ("+Z up", 2, 1.0),
+        ("-Z up", 2, -1.0),
+        ("+Y up", 1, 1.0),
+        ("-Y up", 1, -1.0),
+        ("+X up", 0, 1.0),
+        ("-X up", 0, -1.0),
+    ];
+    // Below this, hanging floors are bridge-scale slivers, not shelves.
+    const MIN_AREA_MM2: f64 = 3.0;
+    let mut clean: Vec<&str> = Vec::new();
+    let mut counts: Vec<(&str, f64)> = Vec::new();
+    for (label, up, sign) in ORIENTS {
+        let a = floating_floor_area(vertices, indices, up, sign);
+        if a < MIN_AREA_MM2 {
+            clean.push(label);
+        }
+        counts.push((label, a));
+    }
+    if clean.len() == ORIENTS.len() {
+        return; // clean every way up: nothing to say
+    }
+    if clean.is_empty() {
+        eprintln!(
+            "warning[floating_floor]: no support-free print orientation — \
+             every axis-down choice leaves downward faces starting in \
+             mid-air ({}). Re-orient a feature to a face, or plan supports.",
+            counts
+                .iter()
+                .map(|(l, a)| format!("{l}: {a:.0} mm2"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    } else {
+        eprintln!(
+            "note[floating_floor]: support-free print orientation(s): {}. \
+             Other orientations have floating floors ({}).",
+            clean.join(", "),
+            counts
+                .iter()
+                .filter(|(_, a)| *a >= MIN_AREA_MM2)
+                .map(|(l, a)| format!("{l}: {a:.0} mm2"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
+
+/// Total mid-air floor AREA (mm²) with `axes[up]`·`sign` as world up.
+///
+/// Area, not count: seam tessellation leaves sub-nozzle sliver ledges
+/// (measured: a 0.18 mm annulus where a sphere hands off to a bore — 21
+/// facets, bridges trivially). A latch shelf that actually fails is
+/// hundreds of mm². The rule's threshold separates them.
+fn floating_floor_area(vertices: &[f32], indices: &[u32], up: usize, sign: f64) -> f64 {
+    let v = |k: u32| {
+        let i = (k as usize) * 3;
+        let p = [
+            vertices[i] as f64,
+            vertices[i + 1] as f64,
+            vertices[i + 2] as f64,
+        ];
+        // Rotate the chosen axis into +Z: z' = sign * p[up], and keep the
+        // other two as the build-plane coordinates.
+        let (a, b) = match up {
+            0 => (p[1], p[2]),
+            1 => (p[0], p[2]),
+            _ => (p[0], p[1]),
+        };
+        [a, b, sign * p[up]]
+    };
+    let mut zmin = f64::INFINITY;
+    let mut tris: Vec<([f64; 3], [f64; 3], [f64; 3])> = Vec::new();
+    let mut floors: Vec<([f64; 3], f64)> = Vec::new();
+    for t in indices.chunks_exact(3) {
+        let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+        for p in [&a, &b, &c] {
+            zmin = zmin.min(p[2]);
+        }
+        tris.push((a, b, c));
+    }
+    for (a, b, c) in &tris {
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * w[2] - u[2] * w[1],
+            u[2] * w[0] - u[0] * w[2],
+            u[0] * w[1] - u[1] * w[0],
+        ];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if l < 1e-12 {
+            continue;
+        }
+        // Winding orientation is not trusted here (export accepts meshes
+        // from several producers): treat near-horizontal faces as floors
+        // by |nz|, then let the support scan below decide.
+        if (n[2] / l).abs() < 0.985 {
+            continue;
+        }
+        let mid = [
+            (a[0] + b[0] + c[0]) / 3.0,
+            (a[1] + b[1] + c[1]) / 3.0,
+            (a[2] + b[2] + c[2]) / 3.0,
+        ];
+        if mid[2] > zmin + 0.5 {
+            floors.push((mid, l * 0.5));
+        }
+    }
+    let mut hanging = 0.0f64;
+    for (mid, area) in &floors {
+        let mut support_below = false;
+        let mut solid_below = false;
+        for (a, b, c) in &tris {
+            let xmin = a[0].min(b[0]).min(c[0]) - 1e-6;
+            let xmax = a[0].max(b[0]).max(c[0]) + 1e-6;
+            let ymin = a[1].min(b[1]).min(c[1]) - 1e-6;
+            let ymax = a[1].max(b[1]).max(c[1]) + 1e-6;
+            if mid[0] < xmin || mid[0] > xmax || mid[1] < ymin || mid[1] > ymax {
+                continue;
+            }
+            let ztop = a[2].max(b[2]).max(c[2]);
+            if ztop < mid[2] - 1e-4 {
+                support_below = true;
+                break;
+            }
+            let zbot = a[2].min(b[2]).min(c[2]);
+            if zbot < mid[2] - 1e-4 {
+                solid_below = true;
+            }
+        }
+        // A "floor" with same-solid geometry continuing beneath it is a
+        // ceiling seen from inside a cavity — not a floor at all.
+        if !support_below && !solid_below {
+            hanging += area;
+        }
+    }
+    hanging
 }
 
 fn export_stl_bytes(vertices: &[f32], indices: &[u32]) -> Result<Vec<u8>> {

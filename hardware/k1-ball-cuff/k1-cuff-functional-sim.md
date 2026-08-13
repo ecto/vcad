@@ -1,8 +1,11 @@
 # K1 ball cuff — functional verification (quasi-static, mesh-grounded)
 
 Method: the printable STLs (exported by vcad from k1-ball-cuff.loon), trimesh
-signed-distance settle sweeps, and direct force balance. Scripts: settle_mesh.py /
-loads.py alongside; rerunnable against any revision.
+signed-distance settle sweeps, and direct force balance. The sweep drops a
+R25 sphere onto the lower half's signed-distance field and descends
+quasi-statically; the load figures are closed-form from bolt preload. Both
+are a few dozen lines against the exported STL — reproduce from the numbers
+in this doc rather than from a script pinned to one machine's paths.
 
 Note: vcad's STL export still emits some T-junction edges (61 upper / 16 lower,
 tracked as defect C in vcad-boolean-bug-handoff.md). Volumes are verified correct
