@@ -246,6 +246,59 @@
 [let tapped-hole [fn [size depth ox oy oz dx dy dz]
   [TappedHole size depth ox oy oz dx dy dz]]]
 
+; ---------------------------------------------------------------------------
+; Snap-fit design rules (lib/dfm/fdm.toml [rules.snap_fit])
+; ---------------------------------------------------------------------------
+;
+; Cantilever snap-fits fail in four ways, and a CAD kernel can check all
+; four from numbers the designer already knows. After Bayer, "Snap-Fit
+; Joints for Plastics"; BASF and DuPont publish equivalents.
+;
+; Detecting a snap beam from geometry alone is not attempted — the
+; designer declares it, and these enforce the arithmetic. A violated
+; limit is an `assert-eq` failure, so the export refuses rather than
+; producing a latch that cannot work.
+
+; Root strain of a constant-section cantilever deflected `y` at its tip.
+;   eps = 1.5 * t * y / L^2
+[let snap-strain [fn [t y len] [/ [* 1.5 [* t y]] [* len len]]]]
+
+; Largest tip deflection a t x len beam can take at permissible strain.
+[let snap-max-deflection [fn [t len eps] [/ [* eps [* len len]] [* 1.5 t]]]]
+
+; RULE 1 — strain. The beam must stay inside the material's permissible
+; root strain at the deflection the release actually demands. Use the
+; repeated-use figure for anything opened more than once.
+[let snap-strain-ok? [fn [t y len eps] [<= [snap-strain t y len] eps]]]
+
+; RULE 2 — aspect ratio. Below len/t ~ 5 the beam shears rather than
+; bends and the strain formula above stops describing it.
+[let snap-aspect-ok? [fn [t len] [>= [/ len t] 5.0]]]
+
+; RULE 3 — travel. The classic beginner failure, and the one that is
+; invisible in a render: the barb must have somewhere to go. A catch
+; must sit at or past the point where the assembly first contacts
+; (earlier and it latches loose) and within the over-squeeze the parts
+; can absorb (later and it is unreachable).
+[let snap-catch-ok? [fn [catch contact overtravel]
+  [and [>= catch contact] [<= catch [+ contact overtravel]]]]]
+
+; RULE 4 — clearance. Two features that must move relative to each other
+; have to be printed apart. Overlap is a fused mechanism; a gap under the
+; process minimum fuses anyway. Takes the measured gap, negative if the
+; features interpenetrate.
+[let snap-clearance-ok? [fn [gap min-gap] [>= gap min-gap]]]
+
+; One call that checks a whole cantilever latch. Every argument is a
+; number the designer already has; the assert names which rule failed.
+[let snap-check [fn [t len y eps catch contact overtravel gap min-gap]
+  [do
+    [assert-eq [snap-strain-ok? t y len eps] true]
+    [assert-eq [snap-aspect-ok? t len] true]
+    [assert-eq [snap-catch-ok? catch contact overtravel] true]
+    [assert-eq [snap-clearance-ok? gap min-gap] true]
+    true]]]
+
 ; Material (no subject)
 [let material [fn [name r g b metallic roughness]
   [Material name r g b metallic roughness]]]
