@@ -507,7 +507,7 @@ impl QuadricCtx {
                     // Orient consistently before averaging: flip toward the
                     // first normal so opposite-facing duplicates don't cancel.
                     let r = inc[vi][0];
-                    m += if n.dot(&r) < 0.0 { -*n } else { *n };
+                    m += if n.dot(r) < 0.0 { -*n } else { *n };
                 }
                 let l = m.norm();
                 if l > 1e-9 {
@@ -620,13 +620,13 @@ impl QuadricCtx {
             // which surface it belongs to: sphere normals carry an axial
             // component (t/R at axial offset t), cylinder normals carry none.
             let co = sc - cc;
-            let axis_through_center = (co - axis * co.dot(&axis)).norm() < 1e-6;
+            let axis_through_center = (co - axis * co.dot(axis)).norm() < 1e-6;
             if axis_through_center && (sr - cr).abs() < 0.5 {
                 if let Some(n) = mean_n {
                     let d = *v - sc;
-                    let t = d.dot(&axis);
+                    let t = d.dot(axis);
                     let expected_axial = (t / sr).abs().min(1.0);
-                    let axial = n.dot(&axis).abs();
+                    let axial = n.dot(axis).abs();
                     // Choose whichever surface predicts the observed facet
                     // orientation better: a sphere at this axial offset would
                     // show |n·axis| ~ t/R; a cylinder shows ~0.
