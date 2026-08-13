@@ -1,4 +1,20 @@
-; K1 Ball Cuff, rev E.1 "mono" — print-in-place clamshell with integral flexure
+; K1 Ball Cuff, rev E.2 "mono" — print-in-place clamshell, flexure + ratchet latch
+;
+; E.2 DELETES THE BOLTS. Each bolt station becomes a printed cable-tie
+; ratchet: a hook arm rooted on the UPPER cheek wraps around the rib and
+; clicks down a rack of teeth on the LOWER cheek. Squeeze the jaws to
+; latch (1 mm tooth pitch at the rib = ~0.5 mm per click at the seat);
+; press the release tab to let the jaws spring open. Both are ~20 N
+; pushes — robot- or dock-operable, no fasteners, no assembly.
+;
+; WHY IT PRINTS IN PLACE: every latch feature is a CONSTANT CROSS-SECTION
+; ALONG Y — a prism. In the mouth-down orientation Y is vertical, so the
+; hook, teeth, and tab all print as clean stacked slices with no supports,
+; and the 0.5 mm as-printed clearance between hook tip and first tooth is
+; a vertical gap between vertical walls, which FDM renders exactly.
+; The hook's vertical blade (2.0 x 13 mm section) is the release flexure:
+; one-tooth click-over bends it ~1.4 percent strain, full release ~3
+; percent — fine in PETG, occasional-use in PLA.
 ;
 ; Rev E.0 was a seatpost-style pinch collar: one axial slit, closed by
 ; ovalizing the whole ring. That works, but the ring is stiff (high bolt
@@ -103,21 +119,54 @@
 ; solid roof over the seat crown at 25.05), ceiling z = 57.8, boss top 62.
 [let tunnel [bx 60.0 25.8 25.8 -30.0 -12.9 32.0]]
 
-; M4 clearance holes through the rib along Z, crossing the gap:
-;   bolt 1 at y = +8  — closes the jaws over the ball equator
-;   bolt 2 at y = -30 — closes the journal half-shells on the rod
-[let pinch-hole [fn [py]
-  [translate -32.0 py -9.0
-    [cylinder 2.2 18.0]]]]
+; --- the ratchet latch: one prism per station, extruded 10 mm in Y -------
+; Frame per station (XZ profile): rib outer face at x = -38. The hook arm
+; roots on the upper cheek (z 4.5..7), runs out to x = -45, drops as a
+; 2.0 mm blade to z = -6.5, and carries an inward tooth at the tip. The
+; lower cheek carries a 3-tooth rack on its outer face. As-printed, the
+; hook tooth hovers 0.5 mm above the first rack tooth.
+[let latch-arm [fn [py]
+  [union
+    ; root + horizontal run (attaches to upper cheek at x = -38 face)
+    [bx 7.5 10.0 2.5 -45.5 py 4.5]
+    [union
+      ; vertical release blade
+      [bx 2.0 10.0 13.5 -45.5 py -6.5]
+      [union
+        ; hook tooth pointing +X at the tip
+        [bx 2.5 10.0 1.6 -43.5 py -6.5]
+        ; release tab: press +X to flex the blade and free the hook
+        [bx 2.5 10.0 2.0 -48.0 py -6.5]]]]]]
+
+; Rack: three teeth on the lower cheek outer face, 1.5 mm pitch in z.
+; Tips reach x = -42.2: the hook tooth (spanning -43.5..-41.0) overlaps
+; them 1.2 mm in X, engaging square faces that hold against jaw opening.
+; As printed the hook tooth sits 0.5 mm ABOVE the first tooth — vertical
+; clearance, so nothing fuses. Approach faces get a 45-degree lead so
+; closing clicks over; the engagement faces stay square.
+[let rack [fn [py]
+  [pipe
+    [union
+      [bx 4.2 10.0 1.0 -42.2 py -4.4]
+      [union
+        [bx 4.2 10.0 1.0 -42.2 py -5.9]
+        [bx 4.2 10.0 1.0 -42.2 py -7.4]]]
+    ; one 45-degree cut shaves all three approach faces at once
+    [difference
+      [translate -44.0 py -8.9
+        [rotate 0.0 -45.0 0.0
+          [bx 4.0 10.0 8.0 0.0 0.0 0.0]]]]]]]
 
 [let mono
   [pipe body
+    [union [latch-arm 3.0]]
+    [union [rack 3.0]]
+    [union [latch-arm -35.0]]
+    [union [rack -35.0]]
     [difference tunnel]
     [difference seat]
     [difference lead-in]
     [difference rod-pass]
-    [difference hinge-gap]
-    [difference [pinch-hole 8.0]]
-    [difference [pinch-hole -30.0]]]]
+    [difference hinge-gap]]]
 
 [root mono "petg"]
