@@ -233,4 +233,19 @@
     [difference rod-pass]
     [difference hinge-gap]]]
 
+; --- DFM: the latch is checked, not asserted by prose ----------------------
+; lib/dfm/fdm.toml [rules.snap_fit], enforced by lib/src/lib.loon. Every
+; number below is measured off the geometry above; a violation fails the
+; export. Run against the two revisions that printed dead, this refuses
+; both: E.2.2's hook overlapped its catch teeth by 1.00 mm (clearance),
+; and its catch sat at 1.50 mm against 0.69 mm of travel (catch window).
+;
+;   blade      1.6 mm thick x 22.5 mm long
+;   deflection 1.0 mm to clear the catch on release
+;   material   PLA, repeated-use permissible strain 0.008
+;   catch      first catch at 3.60 mm of rib travel
+;   contact    crown contact at 3.47 mm; 0.5 mm of over-squeeze allowed
+;   clearance  0.60 mm of printed air, hook to first catch (min 0.4)
+[assert-eq [snap-check 1.6 22.5 1.0 0.008 3.60 3.47 0.5 0.60 0.4] true]
+
 [root mono "petg"]
