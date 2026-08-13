@@ -47,6 +47,16 @@
 
 [let petg [material "petg" 0.15 0.55 0.75 0.0 0.45]]
 
+; Radial print-fit compensation, mm. The first rev D print at R 25.00 exact
+; left the ball standing proud: FDM builds the socket from stacked extruded
+; arcs and each rides slightly inward, so internal curved cavities print
+; undersize. 0.25 suits the P1S at 0.2 mm layers. The pillow-block face gap
+; still guarantees preload: the bolts simply close a little further before
+; the halves conform. "FDM undersize only adds grip" (the old note below)
+; was wrong for seating — the compensation restores drop-in, the bolts
+; restore grip.
+[let fit-comp 0.25]
+
 ; corner-positioned box helper, so every dimension reads as a real extent
 [let bx [fn [sx sy sz px py pz] [translate px py pz [cube sx sy sz]]]]
 
@@ -56,7 +66,7 @@
 
 ; --- exact tools ------------------------------------------------------------
 ; Socket: R 25.00 exact, centered on the true ball center for BOTH halves.
-[let socket [sphere 25.0]]
+[let socket [sphere [+ 25.0 fit-comp]]]
 
 ; Neck bore: R 17.5 on the R 17.0 rod, axis -Y, spanning y -44..-16.
 ; It may overlap the socket freely — both are exact cuts now, and their union
@@ -64,7 +74,7 @@
 [let neck-bore
   [translate 0.0 -44.0 0.0
     [rotate -90.0 0.0 0.0
-      [cylinder 17.5 28.0]]]]
+      [cylinder [+ 17.5 fit-comp] 28.0]]]]
 
 ; --- upper half -------------------------------------------------------------
 ; Block x +/-38, y -40..22, z 0..20: 4 bolts instead of 6, ~20% less material
