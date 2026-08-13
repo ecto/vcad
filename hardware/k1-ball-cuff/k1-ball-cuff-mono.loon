@@ -1,89 +1,122 @@
-; K1 Ball Cuff, rev E "mono" — single-piece slide-on pinch collar
+; K1 Ball Cuff, rev E.1 "mono" — print-in-place clamshell with integral flexure
 ;
-; THE OBSERVATION THAT MAKES ONE PIECE POSSIBLE
-; The ball is the TERMINAL link of the arm — nothing exists distal of it. So the
-; cuff does not need to open at all: it slides on axially from the fingertip
-; direction over a Ø50.1 bore, the ball seats in an exact spherical zone, and a
-; single M4 pinch bolt across an axial slit ovalizes the mouth ~1 mm. The ball
-; is then captive behind its own equator. One print, one bolt, no hinge, no
-; clamshell, no alignment features — the slit collar IS the preload mechanism,
-; same as a bicycle seatpost clamp.
+; Rev E.0 was a seatpost-style pinch collar: one axial slit, closed by
+; ovalizing the whole ring. That works, but the ring is stiff (high bolt
+; force for little preload), the contact pattern under ovalization is
+; unpredictable, and the handle pocket was accidentally an open channel.
 ;
-; Versus a print-in-place hinge: a hinge still needs a closure bolt row on the
-; far side, its pin becomes a wear part, and PLA living hinges are brittle.
-; The slit deletes all of that.
+; E.1 keeps the one-piece slide-on entry and adds the hinge properly:
 ;
-; PRINT ORIENTATION — mouth down (collar axis vertical, rod hole at top).
-; The spherical ceiling narrows from the equator to the Ø35 rod hole; at that
-; hole the surface sits at 45.6 degrees from horizontal, i.e. the rod hole
-; truncates the sphere almost exactly at the self-supporting limit. The whole
-; cavity prints clean with no supports; only the handle boss (sideways in this
-; orientation) needs them, and those touch outside surfaces only.
+;   A FULL EQUATORIAL GAP (2.0 mm at z = 0) splits the collar into an upper
+;   and lower jaw — functionally rev D's clamshell — except at +X, where a
+;   web of material (3.5 mm radial x 2.0 mm thick, full length) is left as
+;   an INTEGRAL FLEXURE HINGE. Two M4s through a rib at -X close the jaws.
+;   Closing ~1 mm at the bolt line bends the web ~0.9 degrees: peak strain
+;   ~0.5%, elastic even in PLA, forever in PETG.
 ;
-; Frame: ball center at origin. Collar axis = Y (the forearm axis).
+;   The gap doubles as the pillow-block face relief: the jaws close onto
+;   the ball and the remaining gap guarantees preload with no bottoming —
+;   the same scheme rev D uses, with the hinge replacing half the bolts
+;   and all of the alignment features.
+;
+; Entry is still axial from the fingertip direction (the ball is the
+; terminal link; nothing exists distal of it): Ø50.1 lead-in, ball seats in
+; the exact spherical zone, bolts pinch. The jaws spring open by their
+; printed 2 mm, which also makes insertion easier than E.0's rigid bore.
+;
+; PRINT ORIENTATION — mouth down, collar axis vertical. The spherical
+; ceiling meets the Ø35 rod hole at 45.6 degrees (self-supporting); the
+; boss and the bolt rib now both run flush to the mouth face, so they
+; print straight off the plate. NOTHING on this part needs supports.
+;
+; Frame: ball center at origin. Collar axis = Y (forearm axis).
 ;   -Y proximal (rod side), +Y distal (open mouth), +Z handle boss.
+;   Flexure web at +X, bolt rib at -X.
 ;
-; Surfaces are exact per the rev D rule:
-;   ball seat   sphere R 25.05  (0.05 clearance; pinch closes it)
-;   lead-in     cylinder R 25.05, equator to the distal face
-;   rod pass    cylinder R 17.5 (Ø35 bump stop, 1.0 mm clearance)
-;   outer body  cylinder R 31 — round, because it can be now
+; Exact surfaces (defect D fixed upstream, PR #800), plus PRINT-FIT
+; COMPENSATION: FDM prints internal curved cavities undersize — the seat is
+; built from stacked extruded arcs and each rides slightly inward (measured
+; on the rev D print: the ball stood proud of a nominally exact R 25.00
+; socket). fit-comp expands every cavity surface radially. The flexure
+; makes the exact value uncritical: the jaws close 2 mm, so they grip any
+; effective ball fit from ~0.6 mm loose to line-to-line. If the ball
+; drops in sloppy, keep it — the bolts take it up. If it still binds,
+; raise fit-comp by 0.1 and reprint.
 ;
-; Sized to the robot: arm joints all stop at 14 Nm and the arm pulls 38 N max.
-; One M4 at 0.15 Nm closing the slit gives hundreds of newtons of conforming
-; grip on the equator band — geometric retention axially, friction about the
-; forearm axis with the bump stop as backstop. A second bolt row is provided at
-; the rod end to close the journal onto the rod; leave it loose if the tool
-; should swivel there.
+;   seat     sphere R 25.05 + fit-comp
+;   lead-in  cylinder, same radius (osculating by design)
+;   rod pass cylinder R 17.5 + fit-comp (Ø35 bump stop)
+;   body     cylinder R 31
 ;
-; NOTE - BLOCKED ON PRINT with rev D by vcad defect D (sphere tessellation puts
-; vertices +/-0.6 mm off-surface). Same acceptance: re-export after the fix.
+; Sized to the robot: 14 Nm arm joints, 38 N max pull. Two M4s at 0.15 Nm
+; are ample; the second (rod-end) bolt also closes the journal half-shells.
 
 [let petg [material "petg" 0.15 0.55 0.75 0.0 0.45]]
+
+; Radial print-fit compensation for internal curved cavities, mm.
+; 0.25 suits a P1S at 0.2 mm layers per the rev D fit check; tune ±0.1.
+[let fit-comp 0.25]
+[let seat-r [+ 25.05 fit-comp]]
 [let bx [fn [sx sy sz px py pz] [translate px py pz [cube sx sy sz]]]]
 
-; --- body: round collar + handle boss --------------------------------------
-; Collar: R 31 about Y, y -40 .. +30 (10 mm of wall beyond the ball equator
-; before the mouth; the rod end carries the bump-stop journal).
+; --- body -------------------------------------------------------------------
+; Collar R 31 about Y, y -40 .. +30.
 [let collar
   [translate 0.0 -40.0 0.0
     [rotate -90.0 0.0 0.0
       [cylinder 31.0 70.0]]]]
 
-; Handle boss embedded into the collar top, 25.8 square pocket for 1 in tube.
-; Pocket floor z = 40 leaves ~15 mm of solid between tube and cavity crown.
-[let body
-  [union [bx 52.0 34.0 26.0 -26.0 -16.0 28.0] collar]]
+; Handle boss, extended flush to the mouth face (y = 30) so it prints from
+; the plate with zero supports. Tall enough (z 28..62) to fully enclose the
+; 25.8 square tube tunnel — E.0's pocket was accidentally an open channel.
+[let boss [bx 52.0 46.0 34.0 -26.0 -16.0 28.0]]
 
-; --- the one-piece magic: cavity, slit, bolts -------------------------------
-[let seat [sphere 25.05]]
+; Bolt rib at -X, also flush to the mouth face and full length: the two
+; jaw cheeks the M4s pull together. Spans z -8..8 so the bolts get ~7 mm
+; of material each side of the gap.
+[let rib [bx 12.0 70.0 16.0 -38.0 -40.0 -8.0]]
+
+; ORDER IS LOAD-BEARING: boxes union first, the cylinder joins LAST.
+; The other association — a box union'd onto the already-derived
+; boss+collar body — silently inflates the union by 62% (kernel defect,
+; union cousin of defect A; repro in the handoff). Verify by volume.
+[let body [union collar [union rib boss]]]
+
+; --- cavity (exact surfaces) ------------------------------------------------
+[let seat [sphere seat-r]]
 [let lead-in
   [rotate -90.0 0.0 0.0
-    [cylinder 25.05 32.0]]]
+    [cylinder seat-r 32.0]]]
 [let rod-pass
   [translate 0.0 -41.0 0.0
     [rotate -90.0 0.0 0.0
-      [cylinder 17.5 26.0]]]]
+      [cylinder [+ 17.5 fit-comp] 26.0]]]]
 
-; Axial slit, 2.5 mm, from the cavity straight down through the bottom of the
-; collar, full length. This is the compliance that lets one bolt do everything.
-[let slit [bx 2.5 70.0 34.0 -1.25 -40.0 -34.0]]
+; --- the hinge: equatorial gap, stopping short of +X ------------------------
+; 2.0 mm gap on z = 0 from beyond the rib (-38) to x = +27.5. Material from
+; x 27.5..31 (radially 3.5 mm, the full 70 mm length) remains connected:
+; that is the flexure web. The gap plane through the seat equator is the
+; same split rev D uses; seat contact lives above and below it.
+[let hinge-gap [bx 65.5 70.0 2.0 -38.0 -40.0 -1.0]]
 
-; Pinch bolts: M4 clearance holes along X through both slit cheeks.
-;   bolt 1 at y = +8  — closes the mouth over the ball equator (the keeper)
-;   bolt 2 at y = -30 — closes the journal on the rod (optional / swivel)
+; 25.8 square tube tunnel through the boss along X: floor z = 32 (7 mm of
+; solid roof over the seat crown at 25.05), ceiling z = 57.8, boss top 62.
+[let tunnel [bx 60.0 25.8 25.8 -30.0 -12.9 32.0]]
+
+; M4 clearance holes through the rib along Z, crossing the gap:
+;   bolt 1 at y = +8  — closes the jaws over the ball equator
+;   bolt 2 at y = -30 — closes the journal half-shells on the rod
 [let pinch-hole [fn [py]
-  [translate -32.0 py -26.0
-    [rotate 0.0 90.0 0.0
-      [cylinder 2.2 64.0]]]]]
+  [translate -32.0 py -9.0
+    [cylinder 2.2 18.0]]]]
 
 [let mono
   [pipe body
-    [difference [bx 60.0 25.8 25.8 -30.0 -12.9 40.0]]
+    [difference tunnel]
     [difference seat]
     [difference lead-in]
     [difference rod-pass]
-    [difference slit]
+    [difference hinge-gap]
     [difference [pinch-hole 8.0]]
     [difference [pinch-hole -30.0]]]]
 
