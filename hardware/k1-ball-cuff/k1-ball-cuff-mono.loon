@@ -130,16 +130,16 @@
 [let latch-arm [fn [py]
   [union
     ; root + horizontal run (attaches to upper cheek at x = -38 face)
-    [bx 7.5 10.0 2.5 -45.1 py 4.5]
+    [bx 7.5 18.0 2.5 -45.1 py 4.5]
     [union
       ; vertical release blade: 1.6 thick, root z 7 down to -10.5 (~17.5
       ; flexing length) — the PLA-safe spring
-      [bx 1.6 10.0 17.5 -45.1 py -10.5]
+      [bx 1.6 18.0 17.5 -45.1 py -10.5]
       [union
         ; hook tooth pointing +X at the tip
-        [bx 2.5 10.0 1.6 -43.5 py -9.0]
+        [bx 2.5 18.0 1.6 -43.5 py -9.0]
         ; release tab: press +X to flex the blade and free the hook
-        [bx 2.5 10.0 2.0 -47.6 py -10.5]]]]]]
+        [bx 2.5 18.0 2.0 -47.6 py -10.5]]]]]]
 
 ; Rack: three teeth on the lower cheek outer face, 1.5 mm pitch in z,
 ; moved down to meet the longer blade. Tips reach x = -42.0: the hook
@@ -150,22 +150,27 @@
 [let rack [fn [py]
   [pipe
     [union
-      [bx 4.0 10.0 1.0 -42.0 py -6.9]
+      [bx 4.0 18.0 1.0 -42.0 py -6.9]
       [union
-        [bx 4.0 10.0 1.0 -42.0 py -8.4]
-        [bx 4.0 10.0 1.0 -42.0 py -9.9]]]
+        [bx 4.0 18.0 1.0 -42.0 py -8.4]
+        [bx 4.0 18.0 1.0 -42.0 py -9.9]]]
     ; one 45-degree cut shaves all three approach faces at once
     [difference
       [translate -44.0 py -11.4
         [rotate 0.0 -45.0 0.0
-          [bx 4.0 10.0 8.0 0.0 0.0 0.0]]]]]]]
+          [bx 4.0 18.0 8.0 0.0 0.0 0.0]]]]]]]
 
+; ONE latch station, 18 mm wide, FLUSH TO THE MOUTH FACE — so the whole
+; mechanism prints from the plate. Two mid-height stations looked right
+; per-layer but their plate-facing ends were floating shelves 17 mm up
+; (the slicer's "floating cantilever" — and vcad's own steep_overhang DFM
+; rule would flag the same 180-degree floor; it just isn't run at export
+; yet). The rod-end station is deleted, not moved: the 7 mm cheek carries
+; clamp to the journal over 40 mm at prototype loads.
 [let mono
   [pipe body
-    [union [latch-arm 3.0]]
-    [union [rack 3.0]]
-    [union [latch-arm -35.0]]
-    [union [rack -35.0]]
+    [union [latch-arm 12.0]]
+    [union [rack 12.0]]
     [difference tunnel]
     [difference seat]
     [difference lead-in]

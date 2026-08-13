@@ -18,3 +18,14 @@ fix = "manual"
 severity = "warning"
 min_diameter_mm = 0.8
 fix = "manual"
+
+[rules.floating_floor]
+severity = "warning"
+# A flat downward face above first-layer height with no geometry below
+# its footprint starts printing in mid-air (the slicer's "floating
+# cantilever"). Distinct from steep_overhang: 45-degree walls
+# self-support; flat shelves cannot. Checked at STL export (Z-up
+# assumed as print direction).
+min_clearance_mm = 0.5
+min_area_mm2 = 3.0
+fix = "reorient_or_support"
