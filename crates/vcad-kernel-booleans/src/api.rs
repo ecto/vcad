@@ -501,7 +501,22 @@ impl QuadricCtx {
             if planar.len() >= 2 {
                 continue; // feature edge or corner: pinned
             }
-            if let Some(p) = self.project_point(&v, planar.first()) {
+            let mean_n = {
+                let mut m = Vec3::zeros();
+                for n in &inc[vi] {
+                    // Orient consistently before averaging: flip toward the
+                    // first normal so opposite-facing duplicates don't cancel.
+                    let r = inc[vi][0];
+                    m += if n.dot(&r) < 0.0 { -*n } else { *n };
+                }
+                let l = m.norm();
+                if l > 1e-9 {
+                    Some(m / l)
+                } else {
+                    None
+                }
+            };
+            if let Some(p) = self.project_point(&v, planar.first(), mean_n.as_ref()) {
                 moved += 1;
                 chunk[0] = p.x as f32;
                 chunk[1] = p.y as f32;
@@ -546,7 +561,12 @@ impl QuadricCtx {
         false
     }
 
-    fn project_point(&self, v: &Point3, plane_n: Option<&Vec3>) -> Option<Point3> {
+    fn project_point(
+        &self,
+        v: &Point3,
+        plane_n: Option<&Vec3>,
+        mean_n: Option<&Vec3>,
+    ) -> Option<Point3> {
         // A single planar constraint from the caller: the vertex lies on a
         // planar feature through v with this normal, and must stay in it.
         let on_planes: Vec<(Point3, Vec3)> = plane_n.map(|n| (*v, *n)).into_iter().collect();
@@ -591,6 +611,41 @@ impl QuadricCtx {
             let (cc, axis, cr) = self.cylinders[ci];
             if let Some(p) = Self::seam_circle(v, &sc, sr, &cc, &axis, cr) {
                 return Some(p).filter(|p| (*p - *v).norm() < Self::INPLANE_BAND);
+            }
+            // Osculating pair (equal radii, axis through the sphere center):
+            // no seam circle exists — the composite surface hands off from
+            // sphere to cylinder AT the tangency plane, and near it the two
+            // agree to second order, so the projector used to stand down and
+            // leave the whole band unrepaired. The vertex's own facets say
+            // which surface it belongs to: sphere normals carry an axial
+            // component (t/R at axial offset t), cylinder normals carry none.
+            let co = sc - cc;
+            let axis_through_center = (co - axis * co.dot(&axis)).norm() < 1e-6;
+            if axis_through_center && (sr - cr).abs() < 0.5 {
+                if let Some(n) = mean_n {
+                    let d = *v - sc;
+                    let t = d.dot(&axis);
+                    let expected_axial = (t / sr).abs().min(1.0);
+                    let axial = n.dot(&axis).abs();
+                    // Choose whichever surface predicts the observed facet
+                    // orientation better: a sphere at this axial offset would
+                    // show |n·axis| ~ t/R; a cylinder shows ~0.
+                    let p = if (axial - expected_axial).abs() < axial {
+                        let dist = d.norm();
+                        if dist < 1e-9 {
+                            return None;
+                        }
+                        sc + d * (sr / dist)
+                    } else {
+                        let radial = d - axis * t;
+                        let rl = radial.norm();
+                        if rl < 1e-9 {
+                            return None;
+                        }
+                        *v - radial + radial * (cr / rl)
+                    };
+                    return Some(p).filter(|p| (*p - *v).norm() < Self::INPLANE_BAND);
+                }
             }
             return None;
         }

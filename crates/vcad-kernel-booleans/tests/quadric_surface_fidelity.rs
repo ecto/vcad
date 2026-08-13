@@ -183,3 +183,34 @@ fn sphere_cylinder_seam_lands_on_intersection_circle() {
         "seat vertices up to {worst:.3} mm off the sphere near the bore (0.39 pre-fix)"
     );
 }
+
+/// Osculating sphere + coaxial cylinder of the SAME radius (a slide-on
+/// socket with a full-diameter lead-in bore — the K1 mono cuff). No seam
+/// circle exists; the composite surface hands off at the tangency plane,
+/// and the projector must pick the correct surface per vertex from its
+/// incident facet normals instead of standing down.
+#[test]
+fn osculating_sphere_cylinder_seat_stays_on_surface() {
+    let mut cube = make_cube(62.0, 70.0, 62.0);
+    translate(&mut cube, -31.0, -40.0, -31.0);
+    let sphere = make_sphere(25.05, SEGMENTS);
+    let r1 = boolean_op(&cube, &sphere, BooleanOp::Difference, SEGMENTS).expect("seat");
+    let BooleanResult::BRep(s1) = r1;
+
+    // Lead-in: same radius, axis through the sphere center, +Y half only.
+    let mut lead = make_cylinder(25.05, 32.0, SEGMENTS);
+    apply_transform(
+        &mut lead,
+        &Transform::rotation_x(-std::f64::consts::FRAC_PI_2),
+    );
+    let r2 = boolean_op(&s1, &lead, BooleanOp::Difference, SEGMENTS).expect("lead-in");
+
+    let mesh = result_mesh(r2);
+    // The seat is the y < 0 hemisphere; y > 0 belongs to the cylinder wall.
+    let (n, worst) = sphere_fidelity(&mesh, Point3::origin(), 25.05, 0.4, |p| p.y < -1.0);
+    assert!(n > 50, "expected a populated seat band, got {n} verts");
+    assert!(
+        worst < 0.15,
+        "seat vertices up to {worst:.3} mm off the sphere (0.40 before the tangency handoff)"
+    );
+}
