@@ -29,3 +29,45 @@ severity = "warning"
 min_clearance_mm = 0.5
 min_area_mm2 = 3.0
 fix = "reorient_or_support"
+
+# Cantilever snap-fit limits, after Bayer "Snap-Fit Joints for Plastics"
+# (BASF and DuPont publish equivalents). These are MATERIAL rules, not
+# process rules — the same numbers govern an injection-moulded latch — but
+# they live here because FDM is where vcad prints them today.
+#
+# Checked at design time by the `snap-*` helpers in lib/src/lib.loon: a
+# violated limit is an assert failure, so the export refuses rather than
+# handing a slicer a latch that cannot work. Automatic detection of a snap
+# beam from geometry alone is not attempted; the designer declares the
+# beam and the arithmetic is enforced.
+[rules.snap_fit]
+severity = "error"
+fix = "manual"
+# Beam length / thickness. Below this the beam shears instead of bending
+# and the root-strain formula stops being valid.
+min_aspect_ratio = 5.0
+# Root fillet radius / beam thickness. A sharp inside corner at the root
+# roughly doubles the stress concentration.
+min_root_fillet_ratio = 0.5
+# Insertion ramp on the catch (25-35 typical); governs assembly force.
+lead_angle_deg = 30.0
+# Retention face: 90 = permanent (needs an active release feature),
+# <= 45 = separable under pull.
+return_angle_deg = 90.0
+# How far past first contact a latch may be squeezed to reach its catch.
+# A catch beyond this is unreachable; a catch BEFORE contact latches the
+# assembly loose. Both failure modes were printed before this rule existed.
+max_overtravel_mm = 0.5
+
+# Permissible root strain, as a fraction. Use the `_repeated` figure for
+# any latch meant to be opened and closed more than once.
+permissible_strain_pla = 0.015
+permissible_strain_pla_repeated = 0.008
+permissible_strain_petg = 0.030
+permissible_strain_petg_repeated = 0.015
+permissible_strain_abs = 0.025
+permissible_strain_abs_repeated = 0.015
+permissible_strain_nylon = 0.060
+permissible_strain_nylon_repeated = 0.030
+permissible_strain_pp = 0.070
+permissible_strain_pp_repeated = 0.040
