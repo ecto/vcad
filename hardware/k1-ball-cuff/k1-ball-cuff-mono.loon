@@ -12,9 +12,10 @@
 ; hook, teeth, and tab all print as clean stacked slices with no supports,
 ; and the 0.5 mm as-printed clearance between hook tip and first tooth is
 ; a vertical gap between vertical walls, which FDM renders exactly.
-; The hook's vertical blade (2.0 x 13 mm section) is the release flexure:
-; one-tooth click-over bends it ~1.4 percent strain, full release ~3
-; percent — fine in PETG, occasional-use in PLA.
+; The hook's vertical blade is the release flexure, sized for PLA:
+; 1.6 mm thick x 17.5 mm long, 1.0 mm engagement -> 0.9 percent strain at
+; full release (PLA elastic limit ~1.5-2). Click force ~9 N per latch at
+; PLA's modulus. PETG prints of the same geometry are simply softer.
 ;
 ; Rev E.0 was a seatpost-style pinch collar: one axial slit, closed by
 ; ovalizing the whole ring. That works, but the ring is stiff (high bolt
@@ -87,10 +88,11 @@
 ; 25.8 square tube tunnel — E.0's pocket was accidentally an open channel.
 [let boss [bx 52.0 46.0 34.0 -26.0 -16.0 28.0]]
 
-; Bolt rib at -X, also flush to the mouth face and full length: the two
-; jaw cheeks the M4s pull together. Spans z -8..8 so the bolts get ~7 mm
-; of material each side of the gap.
-[let rib [bx 12.0 70.0 16.0 -38.0 -40.0 -8.0]]
+; Latch rib at -X, flush to the mouth face and full length: the two jaw
+; cheeks the ratchets pull together. Upper face z 8; lower reaches z -12
+; so the whole rack (deepest tooth to -9.9) lands on cheek material —
+; at z -8 the third tooth was a floating chip the volume check caught.
+[let rib [bx 12.0 70.0 20.0 -38.0 -40.0 -12.0]]
 
 ; ORDER IS LOAD-BEARING: boxes union first, the cylinder joins LAST.
 ; The other association — a box union'd onto the already-derived
@@ -128,32 +130,33 @@
 [let latch-arm [fn [py]
   [union
     ; root + horizontal run (attaches to upper cheek at x = -38 face)
-    [bx 7.5 10.0 2.5 -45.5 py 4.5]
+    [bx 7.5 10.0 2.5 -45.1 py 4.5]
     [union
-      ; vertical release blade
-      [bx 2.0 10.0 13.5 -45.5 py -6.5]
+      ; vertical release blade: 1.6 thick, root z 7 down to -10.5 (~17.5
+      ; flexing length) — the PLA-safe spring
+      [bx 1.6 10.0 17.5 -45.1 py -10.5]
       [union
         ; hook tooth pointing +X at the tip
-        [bx 2.5 10.0 1.6 -43.5 py -6.5]
+        [bx 2.5 10.0 1.6 -43.5 py -9.0]
         ; release tab: press +X to flex the blade and free the hook
-        [bx 2.5 10.0 2.0 -48.0 py -6.5]]]]]]
+        [bx 2.5 10.0 2.0 -47.6 py -10.5]]]]]]
 
-; Rack: three teeth on the lower cheek outer face, 1.5 mm pitch in z.
-; Tips reach x = -42.2: the hook tooth (spanning -43.5..-41.0) overlaps
-; them 1.2 mm in X, engaging square faces that hold against jaw opening.
+; Rack: three teeth on the lower cheek outer face, 1.5 mm pitch in z,
+; moved down to meet the longer blade. Tips reach x = -42.0: the hook
+; tooth (spanning -43.5..-41.0) engages 1.0 mm in X on square hold faces.
 ; As printed the hook tooth sits 0.5 mm ABOVE the first tooth — vertical
-; clearance, so nothing fuses. Approach faces get a 45-degree lead so
-; closing clicks over; the engagement faces stay square.
+; clearance, nothing fuses. Approach faces get a 45-degree lead so
+; closing clicks over.
 [let rack [fn [py]
   [pipe
     [union
-      [bx 4.2 10.0 1.0 -42.2 py -4.4]
+      [bx 4.0 10.0 1.0 -42.0 py -6.9]
       [union
-        [bx 4.2 10.0 1.0 -42.2 py -5.9]
-        [bx 4.2 10.0 1.0 -42.2 py -7.4]]]
+        [bx 4.0 10.0 1.0 -42.0 py -8.4]
+        [bx 4.0 10.0 1.0 -42.0 py -9.9]]]
     ; one 45-degree cut shaves all three approach faces at once
     [difference
-      [translate -44.0 py -8.9
+      [translate -44.0 py -11.4
         [rotate 0.0 -45.0 0.0
           [bx 4.0 10.0 8.0 0.0 0.0 0.0]]]]]]]
 
