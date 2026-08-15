@@ -224,7 +224,13 @@ pub extern "C" fn vcad_solid_fillet(solid: *const VcadSolid, radius: f64) -> *mu
     catch_unwind(AssertUnwindSafe(|| {
         let s: &VcadSolid = unsafe { &*solid };
         Box::into_raw(Box::new(VcadSolid {
-            inner: s.inner.fillet(radius),
+            inner: match s.inner.fillet(radius) {
+                Ok(f) => f,
+                // The C ABI has no error channel here; a null return is
+                // the honest answer — better than handing back an
+                // unfilleted solid the caller believes is filleted.
+                Err(_) => return ptr::null_mut(),
+            },
         }))
     }))
     .unwrap_or(ptr::null_mut())
@@ -239,7 +245,10 @@ pub extern "C" fn vcad_solid_chamfer(solid: *const VcadSolid, distance: f64) -> 
     catch_unwind(AssertUnwindSafe(|| {
         let s: &VcadSolid = unsafe { &*solid };
         Box::into_raw(Box::new(VcadSolid {
-            inner: s.inner.chamfer(distance),
+            inner: match s.inner.chamfer(distance) {
+                Ok(c) => c,
+                Err(_) => return ptr::null_mut(),
+            },
         }))
     }))
     .unwrap_or(ptr::null_mut())
@@ -2199,7 +2208,11 @@ mod tests {
     fn evaluates_a_loon_program() {
         // The AI-intent path: a loon program (as an agent would emit) compiles
         // and evaluates to geometry just like a loaded .vcad file.
-        let src = "[root [fillet 2.0 [cylinder 10 30]] \"brass\"]";
+        // A cube, not a cylinder: the cap-rim blend on a primitive
+        // cylinder is refused by the kernel (it diverges), which the old
+        // silent fail-soft hid — this test used to assert geometry on an
+        // *unfilleted* cylinder.
+        let src = "[root [fillet 2.0 [cube 10 10 30]] \"brass\"]";
         let scene = vcad_scene_from_loon(src.as_ptr(), src.len());
         assert!(!scene.is_null(), "loon program should compile + evaluate");
         let n = vcad_scene_part_count(scene);

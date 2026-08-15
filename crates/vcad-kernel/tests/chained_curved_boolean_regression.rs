@@ -35,7 +35,12 @@ fn zmax(s: &Solid) -> f64 {
 /// to `z≈28` once the boolean kernel trims the curved face correctly.
 #[test]
 fn chained_curved_boolean_resurfaces_sphere() {
-    let body = Solid::cube(90.0, 60.0, 28.0).fillet(14.0);
+    // r=6, not the original r=14: r=14 on a 28 mm-tall body is refused
+    // (`RadiusTooLargeForFeature`), which the old silent fail-soft hid —
+    // this test used to run against a *plain* cube.
+    let body = Solid::cube(90.0, 60.0, 28.0)
+        .fillet(6.0)
+        .expect("r=6 fits a 90x60x28 body");
     let sphere = Solid::sphere(36.0, 0).translate(45.0, 30.0, 58.0);
     let cyl = Solid::cylinder(5.0, 4.0, 0).translate(45.0, 42.0, 25.0);
 
@@ -70,7 +75,9 @@ fn chained_planar_boolean_is_robust() {
 /// pins the failure to *chaining* a further curved cut, not the first one.
 #[test]
 fn single_curved_difference_is_robust() {
-    let body = Solid::cube(90.0, 60.0, 28.0).fillet(14.0);
+    let body = Solid::cube(90.0, 60.0, 28.0)
+        .fillet(6.0)
+        .expect("r=6 fits a 90x60x28 body");
     let sphere = Solid::sphere(36.0, 0).translate(45.0, 30.0, 58.0);
     let z = zmax(&body.difference(&sphere));
     assert!(

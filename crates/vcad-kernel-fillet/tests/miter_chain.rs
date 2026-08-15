@@ -18,7 +18,6 @@
 
 use std::collections::HashMap;
 use vcad_kernel_fillet::fillet_edges_detailed;
-use vcad_kernel_fillet::FilletResult;
 use vcad_kernel_math::Point3;
 use vcad_kernel_primitives::{make_cube, BRepSolid};
 use vcad_kernel_topo::EdgeId;
@@ -105,7 +104,7 @@ fn run_case(edges: &[EdgeId], cube: &BRepSolid, total_len: f64, corners: usize, 
     let (result, results) = fillet_edges_detailed(cube, edges, R);
     assert_eq!(results.len(), edges.len(), "{label}: one result per edge");
     for r in &results {
-        assert!(matches!(r, FilletResult::Success), "{label}: {r:?}");
+        assert!(r.is_success(), "{label}: {r:?}");
     }
     let mesh = vcad_kernel_tessellate::tessellate_brep(&result, 64);
     assert_watertight(&mesh, label);

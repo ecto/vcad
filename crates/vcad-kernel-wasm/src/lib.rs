@@ -1591,11 +1591,17 @@ impl Solid {
     // =========================================================================
 
     /// Chamfer all edges of the solid by the given distance.
+    ///
+    /// Throws when the chamfer cannot be applied — the kernel would
+    /// otherwise hand back the unchamfered solid with no signal.
     #[wasm_bindgen(js_name = chamfer)]
-    pub fn chamfer(&self, distance: f64) -> Solid {
-        Solid {
-            inner: self.inner.chamfer(distance),
-        }
+    pub fn chamfer(&self, distance: f64) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .chamfer(distance)
+                .map_err(|e| JsError::new(&format!("chamfer: {e}")))?,
+        })
     }
 
     /// Per-edge blend on query-selected edges with a keyed profile.
@@ -1624,24 +1630,38 @@ impl Solid {
         }
         let (query, keys) = kernel_blend_args(&spec.edges, &spec.profile);
         Ok(Solid {
-            inner: self.inner.edge_blend(&query, &keys),
+            inner: self
+                .inner
+                .edge_blend(&query, &keys)
+                .map_err(|e| JsError::new(&format!("edge blend: {e}")))?,
         })
     }
 
     /// Fillet all edges of the solid with the given radius.
+    ///
+    /// Throws when the fillet cannot be applied — a radius the geometry
+    /// can't host, a body with boolean holes, a mesh-only solid. The
+    /// alternative is a part that reaches a fabricator with square edges
+    /// where the design called for radii.
     #[wasm_bindgen(js_name = fillet)]
-    pub fn fillet(&self, radius: f64) -> Solid {
-        Solid {
-            inner: self.inner.fillet(radius),
-        }
+    pub fn fillet(&self, radius: f64) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .fillet(radius)
+                .map_err(|e| JsError::new(&format!("fillet: {e}")))?,
+        })
     }
 
     /// Shell (hollow) the solid by offsetting all faces inward.
     #[wasm_bindgen(js_name = shell)]
-    pub fn shell(&self, thickness: f64) -> Solid {
-        Solid {
-            inner: self.inner.shell(thickness),
-        }
+    pub fn shell(&self, thickness: f64) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .shell(thickness)
+                .map_err(|e| JsError::new(&format!("shell: {e}")))?,
+        })
     }
 
     // =========================================================================
@@ -2179,7 +2199,7 @@ impl Solid {
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("advanced")]
 #[wasm_bindgen]
-pub fn op_fillet(solid: &Solid, radius: f64) -> Solid {
+pub fn op_fillet(solid: &Solid, radius: f64) -> Result<Solid, JsError> {
     solid.fillet(radius)
 }
 
@@ -2188,7 +2208,7 @@ pub fn op_fillet(solid: &Solid, radius: f64) -> Solid {
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("advanced")]
 #[wasm_bindgen]
-pub fn op_chamfer(solid: &Solid, distance: f64) -> Solid {
+pub fn op_chamfer(solid: &Solid, distance: f64) -> Result<Solid, JsError> {
     solid.chamfer(distance)
 }
 
@@ -2197,7 +2217,7 @@ pub fn op_chamfer(solid: &Solid, distance: f64) -> Solid {
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("advanced")]
 #[wasm_bindgen]
-pub fn op_shell(solid: &Solid, thickness: f64) -> Solid {
+pub fn op_shell(solid: &Solid, thickness: f64) -> Result<Solid, JsError> {
     solid.shell(thickness)
 }
 
@@ -4780,17 +4800,17 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
 
         vcad_ir::CsgOp::Shell { child, thickness } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.shell(*thickness))
+            c.shell(*thickness)
         }
 
         vcad_ir::CsgOp::Fillet { child, radius } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.fillet(*radius))
+            c.fillet(*radius)
         }
 
         vcad_ir::CsgOp::Chamfer { child, distance } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.chamfer(*distance))
+            c.chamfer(*distance)
         }
 
         vcad_ir::CsgOp::EdgeBlend {
@@ -4810,7 +4830,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             }
             let (query, keys) = kernel_blend_args(edges, profile);
             Ok(Solid {
-                inner: c.inner.edge_blend(&query, &keys),
+                inner: c
+                    .inner
+                    .edge_blend(&query, &keys)
+                    .map_err(|e| JsError::new(&format!("edge blend: {e}")))?,
             })
         }
 

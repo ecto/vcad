@@ -188,8 +188,12 @@ fn run_kernel_case(name: &str, query: EdgeQuery, keys: Vec<BlendKey>) -> CaseRes
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let cube = Solid::cube(10.0, 10.0, 10.0);
         let ref_volume = cube.volume();
-        let blended = cube.edge_blend(&query, &keys);
-        classify_solid(&blended, ref_volume)
+        match cube.edge_blend(&query, &keys) {
+            Ok(blended) => classify_solid(&blended, ref_volume),
+            // The kernel now names its refusals instead of silently
+            // returning the input — that's `Refused`, not `NoOp`.
+            Err(e) => (Outcome::Refused, e.to_string()),
+        }
     }));
     match outcome {
         Ok((outcome, detail)) => CaseResult {

@@ -42,7 +42,9 @@ fn bore_through_plain_box_is_watertight() {
 /// cut, so this must be exactly as clean as the plain case.
 #[test]
 fn bore_through_filleted_box_is_watertight() {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     let bore = Solid::cylinder(10.0, 200.0, 48).translate(50.0, 50.0, -50.0);
     let result = filleted.difference(&bore);
 

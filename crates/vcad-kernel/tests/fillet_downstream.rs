@@ -31,7 +31,9 @@ fn difference_of_plain_boxes_is_exact() {
 /// Control: shelling a plain box is exact and watertight.
 #[test]
 fn shell_of_plain_box_is_exact() {
-    let result = Solid::cube(40.0, 40.0, 40.0).shell(2.0);
+    let result = Solid::cube(40.0, 40.0, 40.0)
+        .shell(2.0)
+        .expect("2mm shell fits");
     let expected = 40.0f64.powi(3) - 36.0f64.powi(3);
     assert!(
         (result.volume() - expected).abs() < 1e-6,
@@ -46,7 +48,9 @@ fn shell_of_plain_box_is_exact() {
 /// measured against.
 #[test]
 fn filleted_box_is_watertight() {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     assert_eq!(open_edges(&filleted), 0);
     assert!(filleted.volume() < 1e6);
 }
@@ -57,9 +61,13 @@ fn filleted_box_is_watertight() {
 /// filleted solids, and the result must be watertight.
 #[test]
 fn shell_of_filleted_box_is_watertight_and_hollow() {
-    let outer = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
-    let inner = Solid::cube(96.0, 96.0, 96.0).fillet(10.0);
-    let shelled = outer.shell(2.0);
+    let outer = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
+    let inner = Solid::cube(96.0, 96.0, 96.0)
+        .fillet(10.0)
+        .expect("r=10 fits a 96mm cube");
+    let shelled = outer.shell(2.0).expect("2mm shell fits");
 
     assert_eq!(open_edges(&shelled), 0, "shell of a filleted box cracked");
     let expected = outer.volume() - inner.volume();
@@ -79,7 +87,9 @@ fn shell_of_filleted_box_is_watertight_and_hollow() {
 /// blends to flat quads and lost 57 mm³ of material per corner.
 #[test]
 fn pocket_in_filleted_box_is_exact() {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     let pocket = Solid::cube(20.0, 20.0, 20.0).translate(40.0, 40.0, 90.0);
     let result = filleted.difference(&pocket);
 
@@ -114,7 +124,9 @@ fn pocket_in_filleted_box_is_exact() {
 /// asserted by `difference_with_filleted_subject_is_watertight` below.
 #[test]
 fn difference_with_filleted_subject_has_no_duplicate_patches() {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
     let result = filleted.difference(&inner);
 
@@ -163,7 +175,9 @@ fn difference_with_filleted_subject_has_no_duplicate_patches() {
 /// rounded-box SDF minus the inner cube.
 #[test]
 fn difference_with_filleted_subject_is_watertight() {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
     let result = filleted.difference(&inner);
 
@@ -183,7 +197,9 @@ fn difference_with_filleted_subject_is_watertight() {
 /// the signed sum directly pins the orientation.
 #[test]
 fn boolean_against_filleted_subject_keeps_outward_winding() {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
     for result in [filleted.difference(&inner), filleted.union(&inner)] {
         let mesh = result.to_mesh(SEGMENTS);
@@ -221,15 +237,22 @@ fn boolean_against_filleted_subject_keeps_outward_winding() {
 /// — chamfer emits planar faces only, so it never hit any of this.
 #[test]
 fn chamfered_box_survives_shell_and_difference() {
-    let chamfered = Solid::cube(100.0, 100.0, 100.0).chamfer(12.0);
+    let chamfered = Solid::cube(100.0, 100.0, 100.0)
+        .chamfer(12.0)
+        .expect("12mm chamfer fits a 100mm cube");
     assert_eq!(open_edges(&chamfered), 0);
-    assert_eq!(open_edges(&chamfered.shell(2.0)), 0);
+    assert_eq!(
+        open_edges(&chamfered.shell(2.0).expect("2mm shell fits")),
+        0
+    );
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
     assert_eq!(open_edges(&chamfered.difference(&inner)), 0);
 }
 
 fn fillet_boolean_signature() -> String {
-    let filleted = Solid::cube(100.0, 100.0, 100.0).fillet(12.0);
+    let filleted = Solid::cube(100.0, 100.0, 100.0)
+        .fillet(12.0)
+        .expect("r=12 fits a 100mm cube");
     let inner = Solid::cube(96.0, 96.0, 96.0).translate(2.0, 2.0, 2.0);
     let result = filleted.difference(&inner);
     let brep = result.as_brep().expect("brep result");
