@@ -1,0 +1,27 @@
+[package]
+name = "vcad-kernel-features"
+description = "Feature recognition over B-rep solids: holes, bolt circles, linear hole patterns, and coaxial body envelopes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-kernel-math = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-step = { workspace = true, optional = true }
+tang = { workspace = true }
+serde = { workspace = true }
+
+[features]
+# `step` adds the assembly-aware entry points (recognize_step_file). On by
+# default — reading a vendor STEP is the whole point — but a consumer that
+# already has B-rep in hand can drop the STEP reader.
+default = ["step"]
+step = ["dep:vcad-kernel-step"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

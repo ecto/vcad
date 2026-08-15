@@ -278,6 +278,57 @@ impl<'a> AssemblyReader<'a> {
         }
 
         // ---------------------------------------------------------------
+        // Step 6b: follow SHAPE_REPRESENTATION_RELATIONSHIP links.
+        //
+        // An assembly component's anchored SHAPE_REPRESENTATION carries only
+        // placements; its geometry hangs off an
+        // ADVANCED_BREP_SHAPE_REPRESENTATION linked by a plain (identity)
+        // SHAPE_REPRESENTATION_RELATIONSHIP. Creo, SolidWorks and NX all write
+        // component geometry this way, so a walk that stops at the anchored rep
+        // sees an assembly of empty parts. Transformed relationships (RRWT) are
+        // deliberately excluded here — those are placements of *other*
+        // components, and following them would graft a child's geometry onto
+        // its parent.
+        // ---------------------------------------------------------------
+        let mut rep_links: HashMap<u64, Vec<u64>> = HashMap::new();
+        for e in self
+            .file
+            .entities_of_type("SHAPE_REPRESENTATION_RELATIONSHIP")
+        {
+            if let (Ok(rep1), Ok(rep2)) = (e.entity_ref(2), e.entity_ref(3)) {
+                rep_links.entry(rep1).or_default().push(rep2);
+                rep_links.entry(rep2).or_default().push(rep1);
+            }
+        }
+        // `entities_of_type` iterates a HashMap; sort so a part's solids come
+        // back in the same order on every run.
+        for next in rep_links.values_mut() {
+            next.sort_unstable();
+        }
+        let linked_solids = |reps: &[u64]| -> Vec<u64> {
+            let mut seen: Vec<u64> = Vec::new();
+            let mut queue: Vec<u64> = reps.to_vec();
+            let mut solids: Vec<u64> = Vec::new();
+            while let Some(rep) = queue.pop() {
+                if seen.contains(&rep) {
+                    continue;
+                }
+                seen.push(rep);
+                if let Some(found) = shape_rep_to_solids.get(&rep) {
+                    for s in found {
+                        if !solids.contains(s) {
+                            solids.push(*s);
+                        }
+                    }
+                }
+                if let Some(next) = rep_links.get(&rep) {
+                    queue.extend(next.iter().copied());
+                }
+            }
+            solids
+        };
+
+        // ---------------------------------------------------------------
         // Step 7: build StepPart for each PD that has geometry
         //
         // Also build a fallback "all solids in one part" for files with no
@@ -292,10 +343,7 @@ impl<'a> AssemblyReader<'a> {
             // Build one part per PD that has solid geometry
             for (&pd_id, name) in &pd_name {
                 let shape_reps = pd_to_shape_reps.get(&pd_id).cloned().unwrap_or_default();
-                let solid_ids: Vec<u64> = shape_reps
-                    .iter()
-                    .flat_map(|rep_id| shape_rep_to_solids.get(rep_id).cloned().unwrap_or_default())
-                    .collect();
+                let solid_ids: Vec<u64> = linked_solids(&shape_reps);
 
                 if solid_ids.is_empty() {
                     // Assembly node (no direct geometry)
@@ -412,6 +460,33 @@ impl<'a> AssemblyReader<'a> {
                 (e.entity_ref(2), e.entity_ref(3), e.entity_ref(4))
             {
                 rrwt_transforms.insert((rep1, rep2), xf_id);
+            }
+        }
+        // Creo, SolidWorks and NX write the same relationship as a *complex*
+        // entity — `(REPRESENTATION_RELATIONSHIP(...)
+        // REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#xf)
+        // SHAPE_REPRESENTATION_RELATIONSHIP())`. The parser names such an
+        // entity after its first component, so the loop above never sees it and
+        // every instance silently lands at the identity transform (the whole
+        // assembly collapsed onto one another's frames). Pick the transform out
+        // of the trailing typed component instead.
+        for e in self.file.entities_of_type("REPRESENTATION_RELATIONSHIP") {
+            let (Ok(rep1), Ok(rep2)) = (e.entity_ref(2), e.entity_ref(3)) else {
+                continue;
+            };
+            let xf_id = e.args.iter().find_map(|a| match a {
+                stepperoni::StepValue::Typed { type_name, args }
+                    if type_name == "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION" =>
+                {
+                    args.iter().find_map(|v| match v {
+                        stepperoni::StepValue::EntityRef(id) => Some(*id),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            });
+            if let Some(xf_id) = xf_id {
+                rrwt_transforms.entry((rep1, rep2)).or_insert(xf_id);
             }
         }
         // Also handle SHAPE_REPRESENTATION_RELATIONSHIP (identity transform)

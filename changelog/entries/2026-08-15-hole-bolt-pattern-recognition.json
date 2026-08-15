@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-15-hole-bolt-pattern-recognition",
+  "version": "0.9.4",
+  "date": "2026-08-15",
+  "category": "feat",
+  "title": "Read a vendor part's bolt pattern with `vcad features`",
+  "summary": "Recognises holes, bolt circles, and linear patterns in an imported STEP: bolt-circle diameter, count, hole size, angles relative to the pattern, and a body OD taken from the largest coaxial cylinder instead of the bounding box.",
+  "features": ["kernel", "step", "cli", "feature-recognition"]
+}

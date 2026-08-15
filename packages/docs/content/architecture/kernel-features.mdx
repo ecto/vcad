@@ -255,6 +255,18 @@ Honesty: the luminance edge-stopping weight is scaled by the estimator's own var
 
 - **STEP** — `vcad-kernel-step` reads and writes STEP AP214, the lingua franca of mechanical CAD. Drag a `.step` file into the app and it becomes an editable BRep.
 - **URDF** — `vcad-kernel-urdf` imports robot descriptions (links, joints, inertials) as vcad assemblies ready for simulation.
+- **Feature recognition** — `vcad-kernel-features` reads a vendor STEP back into design intent: cylindrical faces become holes and bosses, equal-radius coaxial holes become bolt circles, and the report carries bolt-circle diameter, hole diameter, count, and each hole's angle **relative to its pattern**. Absolute angles depend on how the vendor happened to place the model, so the same part reads differently in two files; relative angles don't. Concentric patterns also get a clocking relation — the RobStride RS03's three output dowels come back as "bisects adjacent holes of the six-hole circle" rather than as three placement-dependent numbers. The envelope is measured from the largest **coaxial** cylinder, not the bounding box: an actuator with an asymmetric connector boss has a bbox far wider than its body, and the body OD is the number you need when cutting the bore for it.
+
+  ```bash
+  vcad features RS03.stp --min-count 3   # or --json for the full report
+  ```
+
+  ```
+  body OD         100.500 mm  (largest coaxial cylinder; bbox across the axis reads 106.000)
+  [4] 8 x Ø4.200 holes on BCD 98.000, 45.0000 deg spacing
+       angles rel. to pattern: 0.000, 45.000, 90.000, ...
+       first hole at 202.500 deg absolute (placement-dependent)
+  ```
 - **Drafting** — `vcad-kernel-drafting` generates shop-ready 2D drawings: orthographic projections with hidden-line removal, full and offset (stepped) section views with hatching and cutting-plane callouts, detail views with scale bubbles, dimensions, GD&T annotations, title block / revision table / BOM entities, and deterministic PDF + DXF sheet export with ANSI/ISO line weights.
 
 ## Simulation and Analysis
