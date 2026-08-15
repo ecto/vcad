@@ -7121,6 +7121,69 @@ pub fn document_to_step_buffer(doc_json: &str) -> Result<Vec<u8>, JsError> {
     vcad_kernel::Solid::solids_to_step_buffer(&refs).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Enumerate the B-rep faces of every visible scene root.
+///
+/// The mesh-based inspection tools (`inspect_cad`, `measure`) are
+/// tessellation-bound and topology-blind: they cannot say which face is a
+/// mounting plane, what a bore's diameter is, or where a shaft axis points.
+/// This walks the kernel B-rep instead and reports, per face, a stable
+/// identifier, surface type, area, bbox, centroid and the *analytic* surface
+/// parameters, plus per-part face groupings and coaxial-cylinder groups
+/// (the honest answer to "true outer diameter" on a part whose bounding box
+/// is inflated by a boss).
+///
+/// # Arguments
+///
+/// * `doc_json` - A JSON string representing a vcad Document
+///
+/// # Returns
+///
+/// A JSON string: `{ "parts": [{ node_id, name, brep: bool, error?, report? }],
+/// "units": "mm" }`. Mesh-only roots report `brep: false` with an `error`
+/// rather than a tessellation-derived guess.
+#[wasm_bindgen(js_name = inspectDocumentFaces)]
+pub fn inspect_document_faces(doc_json: &str) -> Result<String, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+
+    let roots = vcad_eval::evaluate_root_solids(&doc)
+        .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
+
+    let parts: Vec<serde_json::Value> = roots
+        .iter()
+        .enumerate()
+        .map(|(i, root)| {
+            let name = root
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("part_{}", i + 1));
+            match root.solid.as_ref().map(vcad_kernel::Solid::inspect_faces) {
+                Some(Ok(report)) => serde_json::json!({
+                    "node_id": root.node_id,
+                    "name": name,
+                    "brep": true,
+                    "report": report,
+                }),
+                Some(Err(e)) => serde_json::json!({
+                    "node_id": root.node_id,
+                    "name": name,
+                    "brep": false,
+                    "error": e.to_string(),
+                }),
+                None => serde_json::json!({
+                    "node_id": root.node_id,
+                    "name": name,
+                    "brep": false,
+                    "error": "this root produced no kernel solid (imported mesh chain)",
+                }),
+            }
+        })
+        .collect();
+
+    serde_json::to_string(&serde_json::json!({ "parts": parts, "units": "mm" }))
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Solve forward kinematics for an assembly document.
 ///
 /// # Arguments

@@ -133,6 +133,22 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   create_cad_loon: { title: "Create CAD (Loon)", annotations: RW },
   export_cad: { title: "Export CAD", annotations: RW },
   inspect_cad: { title: "Inspect CAD", annotations: RO },
+  inspect_faces: {
+    title: "Inspect Faces",
+    annotations: RO,
+    outputSchema: objectOut({
+      faces: { type: "object" },
+      document_id: { type: "string" },
+    }),
+  },
+  measure_outer_diameter: {
+    title: "Measure Outer Diameter",
+    annotations: RO,
+    outputSchema: objectOut({
+      outer_diameter: { type: "object" },
+      document_id: { type: "string" },
+    }),
+  },
   measure: {
     title: "Measure",
     annotations: RO,

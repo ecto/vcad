@@ -20,6 +20,7 @@ import { TOOL_METADATA } from "./tools/tool-metadata.js";
 
 import { toolDefs as inspectTools } from "./tools/inspect.js";
 import { toolDefs as measureTools } from "./tools/measure.js";
+import { toolDefs as facesTools } from "./tools/faces.js";
 import { toolDefs as clearanceTools } from "./tools/clearance.js";
 import { toolDefs as dfmTools } from "./tools/dfm.js";
 import { toolDefs as toleranceTools } from "./tools/tolerance.js";
@@ -47,6 +48,7 @@ export type { ToolResult } from "./tools/tool-result.js";
 const BROWSER_TOOL_MODULES: ToolDef[][] = [
   inspectTools,
   measureTools,
+  facesTools,
   clearanceTools,
   dfmTools,
   toleranceTools,

@@ -140,6 +140,7 @@ import { toolDefs as loonToolDefs } from "./tools/loon.js";
 import { toolDefs as exportToolDefs } from "./tools/export.js";
 import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
 import { toolDefs as measureToolDefs } from "./tools/measure.js";
+import { toolDefs as facesToolDefs } from "./tools/faces.js";
 import { toolDefs as parametersToolDefs } from "./tools/parameters.js";
 import { toolDefs as designConstraintsToolDefs } from "./tools/design-constraints.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
@@ -332,6 +333,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...exportToolDefs,
   ...inspectToolDefs,
   ...measureToolDefs,
+  ...facesToolDefs,
   ...parametersToolDefs,
   ...designConstraintsToolDefs,
   ...printCheckToolDefs,
@@ -427,6 +429,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "export_cad",
   "inspect_cad",
   "measure",
+  "inspect_faces",
+  "measure_outer_diameter",
   // ── Parametric parameters + differentiable seam ─────────────
   "list_parameters",
   "set_parameters",
