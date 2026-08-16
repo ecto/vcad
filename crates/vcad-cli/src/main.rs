@@ -143,6 +143,9 @@ enum Commands {
         /// Background color (hex, e.g. "1a1a2e" or "transparent")
         #[arg(long, default_value = "1a1a2e")]
         background: String,
+        /// World up axis: z (kernel/CAD convention, default) or y
+        #[arg(long, value_enum, default_value = "z")]
+        up: UpAxisArg,
     },
 
     /// Apply boolean operation
@@ -373,6 +376,24 @@ enum BooleanOp {
     Intersection,
 }
 
+/// World up axis for `vcad render`.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum UpAxisArg {
+    /// +Z up — matches the kernel, loon semantics and the docs.
+    Z,
+    /// +Y up — for meshes authored in a Y-up (graphics) frame.
+    Y,
+}
+
+impl From<UpAxisArg> for crate::render::UpAxis {
+    fn from(a: UpAxisArg) -> Self {
+        match a {
+            UpAxisArg::Z => crate::render::UpAxis::Z,
+            UpAxisArg::Y => crate::render::UpAxis::Y,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     vcad_i18n::init(&vcad_i18n::Locale::from_env());
     let cli = Cli::parse();
@@ -432,6 +453,7 @@ fn main() -> Result<()> {
             elevation,
             distance,
             background,
+            up,
         }) => {
             render_to_image(
                 &input,
@@ -442,6 +464,7 @@ fn main() -> Result<()> {
                 elevation,
                 distance,
                 &background,
+                up.into(),
             )?;
         }
         Some(Commands::Boolean {
@@ -2030,6 +2053,7 @@ fn render_to_image(
     elevation: f64,
     distance: Option<f64>,
     background: &str,
+    up_axis: crate::render::UpAxis,
 ) -> Result<()> {
     use crate::render::{Camera, GraphicsOutput, RenderBuffer};
 
@@ -2105,7 +2129,7 @@ fn render_to_image(
     let max_dim = size[0].max(size[1]).max(size[2]);
 
     // Setup camera
-    let mut camera = Camera::default();
+    let mut camera = Camera::with_up_axis(up_axis);
     let target = crate::render::Vec3::new(center[0], center[1], center[2]);
     let dist = distance.map(|d| d as f32).unwrap_or(max_dim * 2.5);
     camera.set_orbit(azimuth as f32, elevation as f32, dist, target);

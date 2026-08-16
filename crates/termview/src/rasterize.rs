@@ -61,6 +61,40 @@ pub struct Triangle {
     pub pick_id: u32,
 }
 
+/// Which world axis points "up".
+///
+/// The camera orbit, the ground grid plane and the key light are all
+/// derived from this, so a scene authored Z-up (the CAD convention:
+/// X right, Y forward, Z up) renders standing rather than lying on its
+/// side. [`UpAxis::Z`] is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpAxis {
+    /// +Z is up; the ground plane is XY (z = 0). Kernel/CAD convention.
+    #[default]
+    Z,
+    /// +Y is up; the ground plane is XZ (y = 0). OpenGL convention.
+    Y,
+}
+
+impl UpAxis {
+    /// Unit vector along this up axis.
+    pub fn vector(self) -> Vec3 {
+        match self {
+            UpAxis::Z => Vec3::new(0.0, 0.0, 1.0),
+            UpAxis::Y => Vec3::new(0.0, 1.0, 0.0),
+        }
+    }
+
+    /// Build a world point from ground-plane coordinates `(u, v)` and a
+    /// height along the up axis.
+    fn point(self, u: f32, v: f32, height: f32) -> Vec3 {
+        match self {
+            UpAxis::Z => Vec3::new(u, v, height),
+            UpAxis::Y => Vec3::new(u, height, v),
+        }
+    }
+}
+
 /// Camera for 3D viewing.
 #[derive(Debug, Clone)]
 pub struct Camera {
@@ -78,36 +112,41 @@ pub struct Camera {
     pub azimuth: f32,
     /// Vertical angle in degrees.
     pub elevation: f32,
+    /// Which world axis is "up" (default [`UpAxis::Z`]).
+    pub up_axis: UpAxis,
 }
 
 impl Default for Camera {
     fn default() -> Self {
-        let distance = 100.0;
-        let azimuth = 45.0f32;
-        let elevation = 30.0f32;
-
-        let az_rad = azimuth.to_radians();
-        let el_rad = elevation.to_radians();
-
-        let position = Vec3::new(
-            distance * el_rad.cos() * az_rad.sin(),
-            distance * el_rad.sin(),
-            distance * el_rad.cos() * az_rad.cos(),
-        );
-
-        Self {
-            position,
-            target: Vec3::new(0.0, 0.0, 0.0),
-            up: Vec3::new(0.0, 1.0, 0.0),
-            fov: 60.0,
-            distance,
-            azimuth,
-            elevation,
-        }
+        Self::with_up_axis(UpAxis::default())
     }
 }
 
 impl Camera {
+    /// Default orbit camera for the given up axis.
+    pub fn with_up_axis(up_axis: UpAxis) -> Self {
+        let mut camera = Self {
+            position: Vec3::new(0.0, 0.0, 0.0),
+            target: Vec3::new(0.0, 0.0, 0.0),
+            up: up_axis.vector(),
+            fov: 60.0,
+            distance: 100.0,
+            azimuth: 45.0,
+            elevation: 30.0,
+            up_axis,
+        };
+        camera.update_position();
+        camera
+    }
+
+    /// Switch the up axis, keeping the orbit angles and re-deriving the
+    /// eye position and up vector.
+    pub fn set_up_axis(&mut self, up_axis: UpAxis) {
+        self.up_axis = up_axis;
+        self.up = up_axis.vector();
+        self.update_position();
+    }
+
     /// Rotate the camera horizontally (orbit around target).
     pub fn rotate_horizontal(&mut self, degrees: f32) {
         self.azimuth += degrees;
@@ -168,11 +207,21 @@ impl Camera {
     pub fn update_position(&mut self) {
         let az_rad = self.azimuth.to_radians();
         let el_rad = self.elevation.to_radians();
+        let horiz = self.distance * el_rad.cos();
+        let height = self.distance * el_rad.sin();
 
+        // Z-up: azimuth is CCW from +X in the XY plane (kernel convention).
+        // Y-up: azimuth 0 puts the eye on +Z, matching the old behavior.
+        let offset = match self.up_axis {
+            UpAxis::Z => Vec3::new(horiz * az_rad.cos(), horiz * az_rad.sin(), height),
+            UpAxis::Y => Vec3::new(horiz * az_rad.sin(), height, horiz * az_rad.cos()),
+        };
+
+        self.up = self.up_axis.vector();
         self.position = Vec3::new(
-            self.target.x + self.distance * el_rad.cos() * az_rad.sin(),
-            self.target.y + self.distance * el_rad.sin(),
-            self.target.z + self.distance * el_rad.cos() * az_rad.cos(),
+            self.target.x + offset.x,
+            self.target.y + offset.y,
+            self.target.z + offset.z,
         );
     }
 }
@@ -286,8 +335,8 @@ pub fn render_scene(buffer: &mut RenderBuffer, triangles: &[Triangle], camera: &
         return;
     }
 
-    // Light direction (from top-right-front)
-    let light_dir = Vec3::new(0.5, 0.8, 0.3).normalize();
+    // Light direction (from top-right-front), expressed in the scene's frame.
+    let light_dir = camera.up_axis.point(0.5, 0.3, 0.8).normalize();
 
     for tri in triangles {
         let v0 = Vec3::new(tri.v0[0], tri.v0[1], tri.v0[2]);
@@ -370,7 +419,7 @@ pub fn render_scene(buffer: &mut RenderBuffer, triangles: &[Triangle], camera: &
     render_axis_indicator(buffer, camera, 4, buffer.height.saturating_sub(34), 30);
 }
 
-/// Render a ground plane grid on the XZ plane (Y=0) with adaptive spacing.
+/// Render a ground plane grid (XY for Z-up, XZ for Y-up) with adaptive spacing.
 fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
     let dist = camera.distance;
     let w = buffer.width as f32;
@@ -410,29 +459,31 @@ fn render_ground_grid(buffer: &mut RenderBuffer, camera: &Camera, mvp: &Mat4) {
         let lo = -half_extent as f32 * spacing;
         let hi = half_extent as f32 * spacing;
 
-        // Z-line (parallel to X axis)
+        let up = camera.up_axis;
+
+        // Line parallel to the first ground axis (X).
         rasterize_grid_line(
             buffer,
             mvp,
             w,
             h,
-            Vec3::new(lo, 0.0, coord - line_half),
-            Vec3::new(hi, 0.0, coord - line_half),
-            Vec3::new(hi, 0.0, coord + line_half),
-            Vec3::new(lo, 0.0, coord + line_half),
+            up.point(lo, coord - line_half, 0.0),
+            up.point(hi, coord - line_half, 0.0),
+            up.point(hi, coord + line_half, 0.0),
+            up.point(lo, coord + line_half, 0.0),
             color,
         );
 
-        // X-line (parallel to Z axis)
+        // Line parallel to the second ground axis (Y for Z-up, Z for Y-up).
         rasterize_grid_line(
             buffer,
             mvp,
             w,
             h,
-            Vec3::new(coord - line_half, 0.0, lo),
-            Vec3::new(coord + line_half, 0.0, lo),
-            Vec3::new(coord + line_half, 0.0, hi),
-            Vec3::new(coord - line_half, 0.0, hi),
+            up.point(coord - line_half, lo, 0.0),
+            up.point(coord + line_half, lo, 0.0),
+            up.point(coord + line_half, hi, 0.0),
+            up.point(coord - line_half, hi, 0.0),
             color,
         );
     }
@@ -697,6 +748,38 @@ mod tests {
 
         camera.zoom(2.0);
         assert!((camera.distance - initial_dist).abs() < 0.1);
+    }
+
+    #[test]
+    fn default_camera_is_z_up() {
+        let camera = Camera::default();
+        assert_eq!(camera.up_axis, UpAxis::Z);
+        assert!(camera.position.z > 0.0, "eye should be above the XY ground");
+        assert!(camera.up.z > 0.9, "up vector should point along +Z");
+    }
+
+    /// A Z-up model that is tall in Z must project *upward* on screen —
+    /// the regression that made every kernel part render lying on its side.
+    #[test]
+    fn z_up_height_projects_upward_on_screen() {
+        let camera = Camera::default();
+        let view = Mat4::look_at(camera.position, camera.target, camera.up);
+        let proj = Mat4::perspective(camera.fov * PI / 180.0, 1.0, 0.1, 1000.0);
+        let mvp = view.multiply(&proj);
+
+        let (_, base_y, _, _) = mvp.transform_point(Vec3::new(0.0, 0.0, 0.0));
+        let (_, top_y, _, _) = mvp.transform_point(Vec3::new(0.0, 0.0, 50.0));
+        assert!(
+            top_y > base_y,
+            "+Z should map to screen-up (base={base_y}, top={top_y})"
+        );
+    }
+
+    #[test]
+    fn y_up_opt_in_keeps_the_graphics_frame() {
+        let camera = Camera::with_up_axis(UpAxis::Y);
+        assert!(camera.position.y > 0.0);
+        assert!(camera.up.y > 0.9);
     }
 
     #[test]
