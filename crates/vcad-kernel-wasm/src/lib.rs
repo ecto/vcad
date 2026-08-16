@@ -3250,7 +3250,9 @@ struct WasmRegisterStepResult {
     summary: Option<String>,
 }
 
-fn to_wasm_report(report: vcad_kernel::vcad_kernel_step::StepImportReport) -> Vec<WasmSolidImportReport> {
+fn to_wasm_report(
+    report: vcad_kernel::vcad_kernel_step::StepImportReport,
+) -> Vec<WasmSolidImportReport> {
     report
         .solids
         .into_iter()
