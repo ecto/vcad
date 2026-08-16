@@ -1143,12 +1143,18 @@ export class Solid {
     }
     /**
      * Chamfer all edges of the solid by the given distance.
+     *
+     * Throws when the chamfer cannot be applied — the kernel would
+     * otherwise hand back the unchamfered solid with no signal.
      * @param {number} distance
      * @returns {Solid}
      */
     chamfer(distance) {
-        const ret = wasm.op_chamfer(this.__wbg_ptr, distance);
-        return Solid.__wrap(ret);
+        const ret = wasm.solid_chamfer(this.__wbg_ptr, distance);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Create a circular pattern of the solid around an axis.
@@ -1306,12 +1312,20 @@ export class Solid {
     }
     /**
      * Fillet all edges of the solid with the given radius.
+     *
+     * Throws when the fillet cannot be applied — a radius the geometry
+     * can't host, a body with boolean holes, a mesh-only solid. The
+     * alternative is a part that reaches a fabricator with square edges
+     * where the design called for radii.
      * @param {number} radius
      * @returns {Solid}
      */
     fillet(radius) {
-        const ret = wasm.op_fillet(this.__wbg_ptr, radius);
-        return Solid.__wrap(ret);
+        const ret = wasm.solid_fillet(this.__wbg_ptr, radius);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Get the triangle mesh representation.
@@ -1571,8 +1585,11 @@ export class Solid {
      * @returns {Solid}
      */
     shell(thickness) {
-        const ret = wasm.op_shell(this.__wbg_ptr, thickness);
-        return Solid.__wrap(ret);
+        const ret = wasm.solid_shell(this.__wbg_ptr, thickness);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Create a sphere centered at origin with given radius.
@@ -6873,7 +6890,10 @@ export function offsetSectionMesh(mesh_js, plane_json, hatch_json) {
 export function op_chamfer(solid, distance) {
     _assertClass(solid, Solid);
     const ret = wasm.op_chamfer(solid.__wbg_ptr, distance);
-    return Solid.__wrap(ret);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return Solid.__wrap(ret[0]);
 }
 
 /**
@@ -6908,7 +6928,10 @@ export function op_circular_pattern(solid, axis_origin_x, axis_origin_y, axis_or
 export function op_fillet(solid, radius) {
     _assertClass(solid, Solid);
     const ret = wasm.op_fillet(solid.__wbg_ptr, radius);
-    return Solid.__wrap(ret);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return Solid.__wrap(ret[0]);
 }
 
 /**
@@ -6982,7 +7005,10 @@ export function op_revolve(profile_json, axis_origin, axis_dir, angle_deg) {
 export function op_shell(solid, thickness) {
     _assertClass(solid, Solid);
     const ret = wasm.op_shell(solid.__wbg_ptr, thickness);
-    return Solid.__wrap(ret);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return Solid.__wrap(ret[0]);
 }
 
 /**
@@ -10515,12 +10541,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3820, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3821, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3829, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3830, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3845, function: Function { arguments: [Externref], shim_idx: 3846, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3854, function: Function { arguments: [Externref], shim_idx: 3855, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
