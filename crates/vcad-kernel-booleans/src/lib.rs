@@ -38,6 +38,7 @@ pub use api::{
 };
 pub use mesh::is_triangle_soup;
 pub use mesh::point_in_mesh;
+pub use mesh::MeshRayIndex;
 pub use ssi::SsiError;
 pub use validate::{mesh_report, mesh_signed_volume, MeshReport, ValidityError};
 
@@ -253,6 +254,42 @@ mod tests {
         assert!(!point_in_mesh(&Point3::new(5.0, 5.0, 10.001), &mesh));
         assert!(!point_in_mesh(&Point3::new(5.0, 10.001, 5.0), &mesh));
         assert!(!point_in_mesh(&Point3::new(10.001, 5.0, 5.0), &mesh));
+    }
+
+    /// The ray index is only a broadphase: it must answer exactly what the
+    /// linear scan does, everywhere. Sweep a grid of probes — interior,
+    /// exterior, and straddling every face, edge and corner — across meshes
+    /// with flat, curved and doubly-curved geometry.
+    #[test]
+    fn mesh_ray_index_matches_linear_scan() {
+        use crate::mesh::MeshRayIndex;
+        use vcad_kernel_primitives::{make_cylinder, make_sphere, make_torus};
+
+        let meshes = [
+            tessellate_brep(&make_cube(10.0, 10.0, 10.0), 32),
+            tessellate_brep(&make_cylinder(4.0, 12.0, 32), 32),
+            tessellate_brep(&make_sphere(6.0, 24), 24),
+            tessellate_brep(&make_torus(8.0, 2.5, 32), 32),
+        ];
+
+        for mesh in &meshes {
+            let index = MeshRayIndex::new(mesh);
+            // Deterministic lattice with irrational-ish steps, so probes land
+            // both well clear of and right on the tessellation's features.
+            let mut disagreements = 0;
+            for i in -14i32..=14 {
+                for j in -14i32..=14 {
+                    for k in -14i32..=14 {
+                        let p =
+                            Point3::new(i as f64 * 0.9137, j as f64 * 0.9137, k as f64 * 0.9137);
+                        if point_in_mesh(&p, mesh) != index.contains(&p) {
+                            disagreements += 1;
+                        }
+                    }
+                }
+            }
+            assert_eq!(disagreements, 0, "index disagreed with the linear scan");
+        }
     }
 
     #[test]

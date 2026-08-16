@@ -24,7 +24,7 @@ use vcad_kernel_math::Point3;
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::api::BooleanOp;
-use crate::mesh::point_in_mesh;
+use crate::mesh::MeshRayIndex;
 
 /// Signed volume of a triangle mesh via the divergence theorem.
 pub fn mesh_signed_volume(mesh: &TriangleMesh) -> f64 {
@@ -278,6 +278,12 @@ pub(crate) fn difference_removed_nothing(
         return false;
     }
 
+    // Thousands of probes against the same pair of meshes: index them
+    // once instead of re-scanning every triangle per probe. The index
+    // answers exactly what `point_in_mesh` does (see `MeshRayIndex`).
+    let idx_a = MeshRayIndex::new(mesh_a);
+    let idx_b = MeshRayIndex::new(mesh_b);
+
     let n = OVERLAP_PROBES;
     let mut both = 0usize;
     for i in 0..n {
@@ -287,7 +293,7 @@ pub(crate) fn difference_removed_nothing(
             min[1] + span[1] * radical_inverse(i + 1, 3),
             min[2] + span[2] * radical_inverse(i + 1, 5),
         );
-        if point_in_mesh(&p, mesh_a) && point_in_mesh(&p, mesh_b) {
+        if idx_a.contains(&p) && idx_b.contains(&p) {
             both += 1;
         }
     }
@@ -373,6 +379,9 @@ pub(crate) fn volume_disagrees_grossly(
         BooleanOp::Intersection => in_a && in_b,
     };
 
+    let idx_a = MeshRayIndex::new(mesh_a);
+    let idx_b = MeshRayIndex::new(mesh_b);
+
     let n = PROBES_PER_AXIS;
     let mut inside = 0usize;
     for i in 0..n {
@@ -384,7 +393,7 @@ pub(crate) fn volume_disagrees_grossly(
                     min[1] + span[1] * frac(j),
                     min[2] + span[2] * frac(k),
                 );
-                if expect(point_in_mesh(&p, mesh_a), point_in_mesh(&p, mesh_b)) {
+                if expect(idx_a.contains(&p), idx_b.contains(&p)) {
                     inside += 1;
                 }
             }

@@ -10,7 +10,7 @@ use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
 use vcad_kernel_topo::FaceId;
 
-use crate::point_in_mesh;
+use crate::mesh::MeshRayIndex;
 use crate::split::point_to_segment_dist_2d;
 use crate::trim::point_in_face;
 use crate::BooleanOp;
@@ -1225,12 +1225,26 @@ fn extra_probe_points(brep: &BRepSolid, face_id: FaceId, centroid: Point3) -> Ve
 /// when *every* probe lands inside the other solid. This makes the verdict
 /// robust against tangent configurations where the centroid happens to fall
 /// on the boundary of the other solid.
+/// Building the ray index is a pass over `other_mesh`; when classifying many
+/// faces against the same mesh, build it once and call
+/// [`classify_face_indexed`] instead.
 pub fn classify_face(
     brep: &BRepSolid,
     face_id: FaceId,
     other: &BRepSolid,
     other_mesh: &TriangleMesh,
 ) -> FaceClassification {
+    classify_face_indexed(brep, face_id, other, &MeshRayIndex::new(other_mesh))
+}
+
+/// [`classify_face`] against a prebuilt ray index over the other solid's mesh.
+pub fn classify_face_indexed(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    other: &BRepSolid,
+    index: &MeshRayIndex<'_>,
+) -> FaceClassification {
+    let other_mesh = index.mesh();
     let sample = face_sample_point(brep, face_id);
     let oriented_normal = face_oriented_normal(brep, face_id);
     let mut probes = vec![sample];
@@ -1305,8 +1319,8 @@ pub fn classify_face(
                 }
             };
             let inward = *p - eps * normal;
-            let inward_in = point_in_mesh(&inward, other_mesh);
-            let outward_in = point_in_mesh(&(*p + eps * normal), other_mesh);
+            let inward_in = index.contains(&inward);
+            let outward_in = index.contains(&(*p + eps * normal));
             if inward_in != outward_in {
                 None // on the other solid's boundary — abstain
             } else {
@@ -1529,11 +1543,50 @@ pub fn classify_all_faces_with_mesh(
     other: &BRepSolid,
     other_mesh: &TriangleMesh,
 ) -> Vec<(FaceId, FaceClassification)> {
+    // Broadphase. `classify_face` ray-casts every probe against every
+    // triangle of `other_mesh`, so classifying a whole solid costs
+    // O(faces × triangles) — and a cut only ever touches the handful of
+    // faces near the tool. A face whose AABB clears the other mesh's AABB
+    // is Outside by construction: every probe (and every ±1e-4 offset of
+    // one) sits outside the mesh, and it cannot be coincident with a face
+    // of `other`, since `other` is what the mesh was tessellated from.
+    //
+    // The margin is three orders of magnitude above the probe offset and
+    // ~10x the worst split-boundary placement error the confidence vote is
+    // written around (~0.05mm), so no face that classification could
+    // legitimately call anything but Outside is ever skipped.
+    const CLEAR_MARGIN: f64 = 1.0;
+    let mesh_aabb = {
+        let mut aabb = crate::bbox::Aabb3::empty();
+        for v in other_mesh.vertices.chunks(3) {
+            aabb.include_point(&Point3::new(v[0] as f64, v[1] as f64, v[2] as f64));
+        }
+        aabb
+    };
+    let grown = crate::bbox::Aabb3 {
+        min: Point3::new(
+            mesh_aabb.min.x - CLEAR_MARGIN,
+            mesh_aabb.min.y - CLEAR_MARGIN,
+            mesh_aabb.min.z - CLEAR_MARGIN,
+        ),
+        max: Point3::new(
+            mesh_aabb.max.x + CLEAR_MARGIN,
+            mesh_aabb.max.y + CLEAR_MARGIN,
+            mesh_aabb.max.z + CLEAR_MARGIN,
+        ),
+    };
+
+    let index = MeshRayIndex::new(other_mesh);
     brep.topology
         .faces
         .iter()
         .map(|(face_id, _)| {
-            let class = classify_face(brep, face_id, other, other_mesh);
+            if other_mesh.indices.is_empty()
+                || !crate::bbox::face_aabb(brep, face_id).overlaps(&grown)
+            {
+                return (face_id, FaceClassification::Outside);
+            }
+            let class = classify_face_indexed(brep, face_id, other, &index);
             (face_id, class)
         })
         .collect()
