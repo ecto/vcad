@@ -218,7 +218,9 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
                     .map_err(|e| anyhow::anyhow!("edge blend of node {child} did not apply: {e}"))?
             }
         }
-        CsgOp::StepImport { path } => Solid::from_step(path).ok(),
+        CsgOp::StepImport { path, solid_index } => Solid::from_step_all(path)
+            .ok()
+            .and_then(|solids| solids.into_iter().nth(solid_index.unwrap_or(0) as usize)),
         // STL meshes feed the physics path directly; the editor doesn't yet
         // build a BRep from a triangle soup.
         CsgOp::MeshImport { .. } => None,

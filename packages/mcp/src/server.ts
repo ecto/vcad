@@ -33,6 +33,7 @@ import {
   recordHistorySnapshot,
   currentBootToken,
   durabilityWarning,
+  addDocumentEnterHook,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
 import {
@@ -166,7 +167,10 @@ import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
 import { toolDefs as flatPatternToolDefs } from "./tools/flat-pattern.js";
 import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
-import { toolDefs as importToolDefs } from "./tools/import.js";
+import {
+  toolDefs as importToolDefs,
+  registerDocumentStepSources,
+} from "./tools/import.js";
 import { toolDefs as importUrdfToolDefs } from "./tools/import-urdf.js";
 import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
 import { toolDefs as shareToolDefs } from "./tools/share.js";
@@ -731,12 +735,29 @@ function toListDescriptor(def: ToolDef): Record<string, unknown> {
   return desc;
 }
 
+/** Engines whose document-entry hook is already installed (see below). */
+const stepSourceHookedEngines = new WeakSet<Engine>();
+
 export async function createServer(
   existingEngine?: Engine,
   context: ServerContext = { user: null },
 ): Promise<Server> {
   // Initialize the WASM engine (or reuse one provided by the caller)
   const engine = existingEngine ?? await Engine.init();
+
+  // `step_import` nodes resolve their geometry through a kernel-side registry
+  // that lives in WASM memory, so it is empty for any document this process
+  // did not import itself. Rebinding on entry keeps a reopened save (or a
+  // rehydrated session after a restart) B-rep-backed instead of failing to
+  // evaluate. Idempotent: already-registered paths are skipped.
+  // createServer runs per connection, so the hook is registered once per
+  // engine — otherwise every reconnect would stack another copy.
+  if (!stepSourceHookedEngines.has(engine)) {
+    stepSourceHookedEngines.add(engine);
+    addDocumentEnterHook((doc) => {
+      registerDocumentStepSources(doc, engine);
+    });
+  }
 
   // Durable session store for THIS connection's user. With a signed-in user +
   // a Supabase service-role key it persists sessions to the cloud `documents`

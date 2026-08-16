@@ -1264,6 +1264,10 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
                 name: Some(node_name),
                 op: vcad_ir::CsgOp::StepImport {
                     path: input.to_string_lossy().into_owned(),
+                    // Each node names its own body. Before `solid_index`
+                    // existed every node here resolved to solid 0, so a
+                    // multi-body STEP became N copies of the first body.
+                    solid_index: if i == 0 { None } else { Some(i as u32) },
                 },
             },
         );

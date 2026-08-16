@@ -18,6 +18,13 @@
  * the registry surface (registry-dispatch.ts). `measure` is a standalone
  * ToolDef. All three measure from the evaluated triangle mesh, so accuracy is
  * tessellation-bound (increase segment counts for tighter numbers).
+ *
+ * That bound is not specific to imports: the kernel's own `volume()` /
+ * `surface_area()` also tessellate, so there is currently no exact B-rep query
+ * to prefer here — exact face-level measurement is a kernel-side change, not a
+ * dispatch choice in this file. What did improve is the input: a STEP import
+ * now arrives as B-rep (`step_import`) and tessellates at document resolution,
+ * instead of being frozen at the importer's old 16-segment bake.
  */
 
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";

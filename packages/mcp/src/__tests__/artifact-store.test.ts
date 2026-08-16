@@ -211,6 +211,12 @@ describe("import_step large-result offload", () => {
 
   const step64 = Buffer.from("x").toString("base64");
 
+  // These cases are about report surfacing and large-result offload, not about
+  // which representation import_step defaults to — the stub engines implement
+  // only the mesh entry point, so they ask for `as_mesh` explicitly. B-rep
+  // import is covered in step-import.test.ts against the real kernel.
+
+
   it("surfaces skipped faces from the import report", () => {
     const dirtyEngine = {
       importStepWithReport: () => ({
@@ -234,7 +240,7 @@ describe("import_step large-result offload", () => {
         summary: "solid #45: skipped 1 of 3 faces",
       }),
     } as unknown as Engine;
-    const res = importStep({ content_base64: step64, name: "holey" }, dirtyEngine);
+    const res = importStep({ content_base64: step64, name: "holey", as_mesh: true }, dirtyEngine);
     const out = JSON.parse(res.content[0].text);
     expect(out.summary.warning).toContain("1 face(s) skipped");
     expect(out.summary.skipped_faces).toEqual([
@@ -243,7 +249,7 @@ describe("import_step large-result offload", () => {
   });
 
   it("keeps a small import inline", () => {
-    const res = importStep({ content_base64: step64, name: "tiny" }, smallEngine);
+    const res = importStep({ content_base64: step64, name: "tiny", as_mesh: true }, smallEngine);
     const out = JSON.parse(res.content[0].text);
     expect(out.document).toBeTruthy();
     expect(out.document.version).toBeTruthy();
@@ -251,7 +257,7 @@ describe("import_step large-result offload", () => {
   });
 
   it("offloads a large import to a session + artifact handle (no inline IR)", () => {
-    const res = importStep({ content_base64: step64, name: "huge" }, bigEngine);
+    const res = importStep({ content_base64: step64, name: "huge", as_mesh: true }, bigEngine);
     const out = JSON.parse(res.content[0].text);
     // The multi-MB IR never enters context.
     expect(out.document).toBeUndefined();

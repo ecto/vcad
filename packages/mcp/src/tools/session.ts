@@ -34,6 +34,8 @@ import {
   clearHistory,
   setSessionScopeProvider,
   setDurabilityProbe,
+  addDocumentEnterHook,
+  runDocumentEnterHooks,
 } from "./session-core.js";
 import { attachLoonSource, sourceStatus } from "./source-provenance.js";
 
@@ -46,6 +48,7 @@ export {
   documents,
   nextSessionId,
   registerSession,
+  addDocumentEnterHook,
   getSession,
   resolveDocInput,
   recordHistorySnapshot,
@@ -148,6 +151,9 @@ export async function hydrateSession(
   const doc = await store.load(documentId);
   if (doc) {
     documents.set(documentId, doc);
+    // A rehydrated session predates this process, so any file-backed node
+    // (step_import) needs its kernel-side binding re-established.
+    runDocumentEnterHooks(doc);
     return true;
   }
   return false;

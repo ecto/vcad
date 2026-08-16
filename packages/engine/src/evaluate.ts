@@ -973,11 +973,31 @@ function evaluateOp(
     case "ImportedMesh":
       return Solid.empty();
 
-    case "step_import":
+    case "step_import": {
+      // A STEP import stays B-rep: the node carries a path, and the kernel
+      // resolves the body from contents registered under it
+      // (`Engine.registerStepSource`). That is what lets an imported part go
+      // on to boolean, fillet, and export back out as STEP.
+      //
+      // There is no filesystem here, so an unregistered path throws with the
+      // path named — a part that silently isn't there is the worse failure.
+      const fromRegistered = (
+        Solid as unknown as {
+          fromRegisteredStep?: (path: string, solidIndex?: number) => Solid;
+        }
+      ).fromRegisteredStep;
+      if (typeof fromRegistered !== "function") {
+        throw new Error(
+          `STEP import '${op.path}' cannot be evaluated: this kernel build predates ` +
+            `Solid.fromRegisteredStep — rebuild the WASM kernel`,
+        );
+      }
+      return fromRegistered(op.path, op.solid_index);
+    }
+
     case "mesh_import":
-      // File-backed imports (STEP / external mesh). The Rust/WASM evaluator
-      // loads the referenced file; the TS fallback can't read files, so it
-      // yields empty geometry — the WASM path is preferred for these.
+      // External mesh reference. The native evaluator loads the file; the
+      // WASM/TS path can't read files, so it yields empty geometry.
       return Solid.empty();
 
     case "Text2D":

@@ -604,6 +604,27 @@ export interface StepImportResult {
   summary: string | null;
 }
 
+/** Per-solid B-rep stats returned when STEP contents are registered. */
+export interface RegisteredStepSolid {
+  /** 0-based index — the value a `step_import` node stores as `solid_index`. */
+  index: number;
+  /** B-rep face count. Zero would mean the body arrived mesh-only. */
+  faces: number;
+  /** Signed volume, mm³. */
+  volume: number;
+  /** Axis-aligned bounds as `[min, max]`. */
+  bbox: [[number, number, number], [number, number, number]];
+}
+
+/** Result of registering STEP contents for `step_import` resolution. */
+export interface RegisterStepSourceResult {
+  /** The key registered — the exact string a `step_import` node must carry. */
+  path: string;
+  solids: RegisteredStepSolid[];
+  report: StepSolidImportReport[];
+  summary: string | null;
+}
+
 /** Type for the initialized kernel module */
 export interface KernelModule {
   Solid: typeof Solid;
@@ -619,6 +640,13 @@ export interface KernelModule {
   };
   /** Export a document's scene roots to a STEP AP214 buffer (BRep-preserving). */
   documentToStepBuffer?: (docJson: string) => Uint8Array;
+  /** Register STEP bytes so `step_import` nodes with this path resolve to BRep.
+   * Optional: absent on kernel WASM builds older than the registry. */
+  registerStepSource?: (path: string, data: Uint8Array) => RegisterStepSourceResult;
+  /** Whether STEP contents are registered under a path. */
+  stepSourceRegistered?: (path: string) => boolean;
+  /** Forget STEP contents registered under a path. */
+  unregisterStepSource?: (path: string) => void;
   /** Enumerate the B-rep faces of every visible scene root, as a JSON string.
    * Optional: absent on kernel WASM builds older than the face-query API. */
   inspectDocumentFaces?: (docJson: string) => string;
@@ -1262,6 +1290,9 @@ export class Engine {
       importStepBuffer: wasmModule.importStepBuffer,
       importStepBufferWithReport: (wasmModule as Record<string, unknown>).importStepBufferWithReport as KernelModule["importStepBufferWithReport"],
       documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
+      registerStepSource: (wasmModule as Record<string, unknown>).registerStepSource as KernelModule["registerStepSource"],
+      stepSourceRegistered: (wasmModule as Record<string, unknown>).stepSourceRegistered as KernelModule["stepSourceRegistered"],
+      unregisterStepSource: (wasmModule as Record<string, unknown>).unregisterStepSource as KernelModule["unregisterStepSource"],
       inspectDocumentFaces: (wasmModule as Record<string, unknown>).inspectDocumentFaces as KernelModule["inspectDocumentFaces"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
@@ -2012,6 +2043,83 @@ export class Engine {
       report: result.report,
       summary: result.summary,
     };
+  }
+
+  /**
+   * Register STEP file contents so `step_import` nodes resolve to B-rep.
+   *
+   * A `step_import` node keeps only a path, and the WASM kernel has no
+   * filesystem — so without this the node evaluates to nothing. Register the
+   * bytes under the exact path the node stores (do it again after a reload,
+   * the registry is per-process), and every later evaluation resolves real
+   * B-rep: analytic faces survive booleans, fillets, and STEP export.
+   *
+   * Returns per-solid B-rep stats plus the skipped-face report. Throws when
+   * the kernel build predates the registry, or when the STEP fails to parse.
+   */
+  registerStepSource(path: string, data: ArrayBuffer): RegisterStepSourceResult {
+    if (typeof this.kernel.registerStepSource !== "function") {
+      throw new Error(
+        "registerStepSource is not available in this kernel build — rebuild the WASM kernel",
+      );
+    }
+    return this.kernel.registerStepSource(path, new Uint8Array(data));
+  }
+
+  /**
+   * Return a copy of `doc` with every `step_import` node baked into an
+   * `ImportedMesh`, for handing the document to somewhere that cannot resolve
+   * the reference — a vcad.io share URL, a saved file meant to travel alone.
+   *
+   * The B-rep is deliberately lost in the copy: the recipient has no access to
+   * the source STEP, and a node it cannot resolve would render as nothing at
+   * all. The session's own document is untouched, so editing and STEP export
+   * keep their analytic faces.
+   */
+  bakeStepImports(doc: Document): Document {
+    const nodes = doc.nodes ?? {};
+    const stepNodes = Object.entries(nodes).filter(
+      ([, n]) => (n.op as { type?: string })?.type === "step_import",
+    );
+    if (stepNodes.length === 0) return doc;
+
+    const copy = JSON.parse(JSON.stringify(doc)) as Document;
+    for (const [key, node] of stepNodes) {
+      const op = node.op as { path: string; solid_index?: number };
+      const fromRegistered = (
+        this.kernel.Solid as unknown as {
+          fromRegisteredStep?: (path: string, solidIndex?: number) => Solid;
+        }
+      ).fromRegisteredStep;
+      if (typeof fromRegistered !== "function") {
+        throw new Error(
+          "Solid.fromRegisteredStep is not available in this kernel build — rebuild the WASM kernel",
+        );
+      }
+      const solid = fromRegistered(op.path, op.solid_index);
+      const mesh = solid.getMesh();
+      copy.nodes[key] = {
+        ...copy.nodes[key],
+        op: {
+          type: "ImportedMesh",
+          positions: Array.from(mesh.positions),
+          indices: Array.from(mesh.indices),
+          normals: mesh.normals ? Array.from(mesh.normals) : undefined,
+          source: op.path,
+        },
+      } as (typeof copy.nodes)[string];
+    }
+    return copy;
+  }
+
+  /** Whether STEP contents are registered under `path`. */
+  stepSourceRegistered(path: string): boolean {
+    return this.kernel.stepSourceRegistered?.(path) ?? false;
+  }
+
+  /** Forget the STEP contents registered under `path`. */
+  unregisterStepSource(path: string): void {
+    this.kernel.unregisterStepSource?.(path);
   }
 
   /**

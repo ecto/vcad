@@ -58,3 +58,6 @@ typst/vcad/examples/*.pdf
 typst/vcad/examples/*.png
 npm-dist/
 .scratch/
+
+# STEP import byte cache written by the MCP server at runtime
+.vcad-step-cache/

@@ -527,7 +527,7 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             )
         }
 
-        CsgOp::StepImport { path } => OpResult::Unsupported(
+        CsgOp::StepImport { path, .. } => OpResult::Unsupported(
             "StepImport".to_string(),
             format!("; StepImport {:?} — not yet supported in loon", path),
         ),

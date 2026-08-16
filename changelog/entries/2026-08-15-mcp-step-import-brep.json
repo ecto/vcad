@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-15-mcp-step-import-brep",
+  "version": "0.9.4",
+  "date": "2026-08-15",
+  "category": "feat",
+  "title": "MCP STEP import keeps B-rep",
+  "summary": "import_step now emits lazy step_import nodes instead of baked meshes, so imported parts keep analytic faces and can be re-exported as STEP. Pass as_mesh for the old behavior.",
+  "features": ["step", "import", "brep"],
+  "mcpTools": ["import_step", "export_cad"]
+}

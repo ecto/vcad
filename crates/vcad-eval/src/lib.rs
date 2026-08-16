@@ -22,6 +22,7 @@ pub mod evaluate;
 pub mod kinematics;
 pub mod pcb_preview;
 pub mod sensitivity;
+pub mod step_sources;
 
 pub mod validate;
 
@@ -188,6 +189,19 @@ pub enum EvalError {
     /// Sheet-metal flange/fold construction failed.
     #[error("sheet-metal error: {0}")]
     SheetMetal(String),
+
+    /// A `StepImport` node could not be resolved to geometry.
+    ///
+    /// Deliberately an error rather than "no geometry": a document that
+    /// silently evaluates to nothing because its STEP file moved is far
+    /// harder to diagnose than one that names the missing path.
+    #[error("STEP import failed for '{path}': {message}")]
+    StepImport {
+        /// The path stored in the node.
+        path: String,
+        /// What went wrong (missing file, parse failure, no solids).
+        message: String,
+    },
 
     /// A fillet / chamfer / edge-blend / shell node declined to apply.
     ///
