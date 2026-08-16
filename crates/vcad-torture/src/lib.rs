@@ -12,6 +12,8 @@
 
 #![warn(missing_docs)]
 
+pub mod fidelity;
+
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use vcad_kernel::Solid;

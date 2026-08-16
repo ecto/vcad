@@ -5011,6 +5011,332 @@ fn tessellate_cone_direct(
 
     mesh
 }
+/// Invert a point onto a torus's `(u, v)` parameters.
+///
+/// `u` runs around the major axis (along a filleted edge), `v` around the
+/// tube (across the blend). Shared by the toroidal tessellators so the
+/// grid path and the two-chain path agree on what a loop vertex's
+/// parameters are.
+fn torus_uv(torus: &vcad_kernel_geom::TorusSurface, pt: &Point3) -> (f64, f64) {
+    let y = torus.axis.as_ref().cross(torus.ref_dir.as_ref());
+    let d = *pt - torus.center;
+    let ru = d.dot(torus.ref_dir.as_ref());
+    let yu = d.dot(y);
+    let u = yu.atan2(ru);
+    let u = if u < 0.0 { u + 2.0 * PI } else { u };
+    let tube_dir = *torus.ref_dir.as_ref() * u.cos() + y * u.sin();
+    let in_tube_plane = d - tube_dir * torus.major_radius;
+    let cv = in_tube_plane.dot(tube_dir);
+    let sv = in_tube_plane.dot(torus.axis.as_ref());
+    let v = sv.atan2(cv);
+    let v = if v < 0.0 { v + 2.0 * PI } else { v };
+    (u, v)
+}
+
+/// Tessellate a toroidal face by ruling between the two boundary chains
+/// that run along `u`, exactly as [`tessellate_ruled_two_chain`] does for
+/// cylinders.
+///
+/// This is what makes fillet blend patches weld. The grid path below
+/// samples an invented uniform `u` schedule derived only from the loop's
+/// *range*, so it drops vertices onto the rails that the neighbouring
+/// plane and cylinder faces don't have — every patch becomes an island.
+/// (Before torus faces reached a toroidal tessellator at all they meshed
+/// to nothing, which hid this: an arc-profile fillet's 96 blend patches
+/// contributed 6173mm of open boundary against a 276mm tolerance.)
+/// Here the `u` columns come from the loop's own vertices, so the rails
+/// reproduce the neighbours' sampling exactly; only `v` — which runs
+/// across the blend, interior to the patch — is subdivided for smoothness.
+fn tessellate_torus_two_chain(
+    torus: &vcad_kernel_geom::TorusSurface,
+    verts: &[Point3],
+    reversed: bool,
+    n_v: usize,
+) -> Option<TriangleMesh> {
+    // Which vertex the loop happens to start at decides whether both
+    // rails come out contiguous: a rail that spans the loop *closure* is
+    // split in half by any linear scan, and the patch is rejected. Rather
+    // than reason about which rotation is the right one, try them all —
+    // a blend patch's loop is four vertices.
+    let l = verts.len();
+    for rot in 0..l {
+        let rotated: Vec<Point3> = (0..l).map(|i| verts[(rot + i) % l]).collect();
+        if let Some(mesh) = torus_two_chain_rotated(torus, &rotated, reversed, n_v) {
+            return Some(mesh);
+        }
+    }
+    None
+}
+
+/// One rotation attempt for [`tessellate_torus_two_chain`].
+fn torus_two_chain_rotated(
+    torus: &vcad_kernel_geom::TorusSurface,
+    verts: &[Point3],
+    reversed: bool,
+    n_v: usize,
+) -> Option<TriangleMesh> {
+    let l = verts.len();
+    if l < 4 {
+        return None;
+    }
+    let uvs: Vec<(f64, f64)> = verts.iter().map(|p| torus_uv(torus, p)).collect();
+
+    // Unwrap u into a continuous sequence so a patch straddling the u=0
+    // seam doesn't read as a 2π jump.
+    let mut unwrapped: Vec<f64> = Vec::with_capacity(l);
+    unwrapped.push(uvs[0].0);
+    for uv in uvs.iter().skip(1) {
+        let prev = *unwrapped.last().unwrap();
+        let mut du = (uv.0 - prev).rem_euclid(2.0 * PI);
+        if du > PI {
+            du -= 2.0 * PI;
+        }
+        unwrapped.push(prev + du);
+    }
+
+    const RUN_EPS: f64 = 1e-9;
+    // Split the loop into two runs monotonic in u — the two rails.
+    let mut run_dir = 0i8;
+    let mut flips: Vec<usize> = Vec::new();
+    for i in 0..l - 1 {
+        let du = unwrapped[i + 1] - unwrapped[i];
+        let d = if du > RUN_EPS {
+            1
+        } else if du < -RUN_EPS {
+            -1
+        } else {
+            continue;
+        };
+        if run_dir == 0 {
+            run_dir = d;
+        } else if d != run_dir {
+            flips.push(i);
+            run_dir = d;
+        }
+    }
+    if flips.len() != 1 || run_dir == 0 {
+        return None;
+    }
+    // Zero-Δu connector steps (the end edge joining the rails) belong to
+    // the second chain.
+    let mut split_at = flips[0] + 1;
+    while split_at > 1 && (unwrapped[split_at - 1] - unwrapped[split_at - 2]).abs() <= RUN_EPS {
+        split_at -= 1;
+    }
+
+    // Keep each chain's original 3D points alongside its parameters: the
+    // rails must be emitted verbatim, not re-evaluated, or they'd drift
+    // off the neighbour's vertices by rounding.
+    let at = |i: usize| (unwrapped[i], uvs[i].1, verts[i]);
+    let mut chain_a: Vec<(f64, f64, Point3)> = (0..split_at).map(at).collect();
+    let mut chain_b: Vec<(f64, f64, Point3)> = (split_at..l).map(at).collect();
+    // Where the two rails meet at a shared corner instead of being joined
+    // by a connector edge, the disjoint split leaves one side with a
+    // single vertex. Such a patch is still perfectly ruled — the rails
+    // just share their endpoints — so hand the short side those corners
+    // rather than rejecting it. (These are the patches next to a spherical
+    // vertex blend; three of the 96 in an arc-profile fillet.)
+    if chain_b.len() < 2 {
+        chain_b = std::iter::once(at(split_at - 1))
+            .chain((split_at..l).map(at))
+            .chain(std::iter::once({
+                // Close onto the first vertex, carrying its u forward a
+                // whole turn so the chain stays monotonic after unwrap.
+                let (u, v, p) = at(0);
+                (
+                    u + 2.0 * PI * ((unwrapped[l - 1] - u) / (2.0 * PI)).round(),
+                    v,
+                    p,
+                )
+            }))
+            .collect();
+    }
+    if chain_a.len() < 2 {
+        chain_a = ((0..split_at).map(at))
+            .chain(std::iter::once(at(split_at)))
+            .collect();
+    }
+    if chain_a.len() < 2 || chain_b.len() < 2 {
+        return None;
+    }
+    if chain_a[0].0 > chain_a[chain_a.len() - 1].0 {
+        chain_a.reverse();
+    }
+    if chain_b[0].0 > chain_b[chain_b.len() - 1].0 {
+        chain_b.reverse();
+    }
+    // Align the chains' unwrapped frames, which can differ by whole turns.
+    let shift = ((chain_a[0].0 - chain_b[0].0) / (2.0 * PI)).round() * 2.0 * PI;
+    for p in &mut chain_b {
+        p.0 += shift;
+    }
+    let (a0, a1) = (chain_a[0].0, chain_a[chain_a.len() - 1].0);
+    let (b0, b1) = (chain_b[0].0, chain_b[chain_b.len() - 1].0);
+    let span = (a1 - a0).max(b1 - b0);
+    if span < RUN_EPS {
+        return None;
+    }
+    let max_step = span / (chain_a.len().min(chain_b.len()) as f64 - 1.0).max(1.0);
+    let range_tol = (1.5 * max_step).max(1e-6);
+    if (a0 - b0).abs() > range_tol || (a1 - b1).abs() > range_tol {
+        return None;
+    }
+
+    // Columns. When both rails carry the same number of vertices — the
+    // ordinary blend patch, and any patch whose neighbours subdivided both
+    // rails alike — pair them index-for-index and use the loop's points
+    // verbatim. Building a *union* grid instead would invent a column
+    // wherever the two rails' u values differ slightly (they routinely do,
+    // by a hundredth of a radian), and every invented column is a vertex
+    // the neighbouring face does not have — i.e. a crack. Only when the
+    // rails genuinely differ in length do we fall back to the union grid
+    // and interpolate the shorter one.
+    let paired: Option<Vec<(Point3, Point3, f64, f64)>> = if chain_a.len() == chain_b.len() {
+        Some(
+            chain_a
+                .iter()
+                .zip(chain_b.iter())
+                .map(|(a, b)| (a.2, b.2, a.1, b.1))
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    let mut grid: Vec<f64> = chain_a.iter().map(|p| p.0).collect();
+    grid.extend(chain_b.iter().map(|p| p.0));
+    grid.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    grid.dedup_by(|x, y| (*x - *y).abs() < RUN_EPS);
+    if grid.len() < 2 && paired.is_none() {
+        return None;
+    }
+
+    // Sample a chain at u: reuse its own point when u is one of its
+    // vertices, otherwise interpolate v and evaluate on the surface.
+    let sample = |chain: &[(f64, f64, Point3)], u: f64| -> (f64, Option<Point3>) {
+        for p in chain {
+            if (p.0 - u).abs() < RUN_EPS {
+                return (p.1, Some(p.2));
+            }
+        }
+        let first = chain[0];
+        let last = chain[chain.len() - 1];
+        if u <= first.0 {
+            return (first.1, None);
+        }
+        if u >= last.0 {
+            return (last.1, None);
+        }
+        for w in chain.windows(2) {
+            if u >= w[0].0 && u <= w[1].0 {
+                let t = (u - w[0].0) / (w[1].0 - w[0].0).max(RUN_EPS);
+                // v is an angle: interpolate the short way round.
+                let mut dv = w[1].1 - w[0].1;
+                if dv > PI {
+                    dv -= 2.0 * PI;
+                } else if dv < -PI {
+                    dv += 2.0 * PI;
+                }
+                return (w[0].1 + dv * t, None);
+            }
+        }
+        (last.1, None)
+    };
+
+    let n_v = n_v.max(1);
+    let columns: Vec<(f64, f64, Option<Point3>, Option<Point3>)> = match &paired {
+        Some(cols) => cols
+            .iter()
+            .map(|(pa, pb, va, vb)| (*va, *vb, Some(*pa), Some(*pb)))
+            .collect(),
+        None => grid
+            .iter()
+            .map(|&u| {
+                let (v_a, p_a) = sample(&chain_a, u);
+                let (v_b, p_b) = sample(&chain_b, u);
+                (v_a, v_b, p_a, p_b)
+            })
+            .collect(),
+    };
+    let n_cols = columns.len();
+    if n_cols < 2 {
+        return None;
+    }
+
+    let mut mesh = TriangleMesh::new();
+    for &(v_a, v_b, p_a, p_b) in &columns {
+        // The column's u comes from whichever rail point we have; both
+        // rails share it to within the dedup tolerance.
+        let u = p_a.or(p_b).map(|p| torus_uv(torus, &p).0).unwrap_or(v_a);
+        // Cross-tube sweep, the short way round.
+        let mut dv = v_b - v_a;
+        if dv > PI {
+            dv -= 2.0 * PI;
+        } else if dv < -PI {
+            dv += 2.0 * PI;
+        }
+        for j in 0..=n_v {
+            let t = j as f64 / n_v as f64;
+            let v = v_a + dv * t;
+            // Pin the rails to the loop's own points where we have them.
+            let pt = if j == 0 {
+                p_a.unwrap_or_else(|| torus.evaluate(Point2::new(u, v)))
+            } else if j == n_v {
+                p_b.unwrap_or_else(|| torus.evaluate(Point2::new(u, v)))
+            } else {
+                torus.evaluate(Point2::new(u, v))
+            };
+            let normal = *torus.normal(Point2::new(u, v));
+            mesh.vertices
+                .extend_from_slice(&[pt.x as f32, pt.y as f32, pt.z as f32]);
+            let (nx, ny, nz) = if reversed {
+                (-normal.x as f32, -normal.y as f32, -normal.z as f32)
+            } else {
+                (normal.x as f32, normal.y as f32, normal.z as f32)
+            };
+            mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        }
+    }
+
+    let stride = (n_v + 1) as u32;
+    for i in 0..n_cols - 1 {
+        for j in 0..n_v {
+            let bl = i as u32 * stride + j as u32;
+            let tl = bl + 1;
+            let br = bl + stride;
+            let tr = br + 1;
+            // Same orientation test the grid path uses: compare the raw
+            // quad normal against the analytic outward normal and emit the
+            // winding this face actually wants.
+            let idx = |k: u32| {
+                let k = 3 * k as usize;
+                Point3::new(
+                    mesh.vertices[k] as f64,
+                    mesh.vertices[k + 1] as f64,
+                    mesh.vertices[k + 2] as f64,
+                )
+            };
+            let (pbl, pbr, ptl) = (idx(bl), idx(br), idx(tl));
+            let e = pbr - pbl;
+            let f = ptl - pbl;
+            let n = e.cross(f);
+            let mid = idx(bl) + (idx(tr) - idx(bl)) * 0.5;
+            let (mu, mv) = torus_uv(torus, &mid);
+            let outward = *torus.normal(Point2::new(mu, mv));
+            let dot = n.dot(outward);
+            let want_reversed = if reversed { dot > 0.0 } else { dot < 0.0 };
+            if want_reversed {
+                mesh.indices.extend_from_slice(&[bl, tl, br, br, tl, tr]);
+            } else {
+                mesh.indices.extend_from_slice(&[bl, br, tl, br, tr, tl]);
+            }
+        }
+    }
+    if mesh.indices.is_empty() {
+        return None;
+    }
+    Some(mesh)
+}
 
 /// Tessellate a toroidal face.
 ///
@@ -5036,6 +5362,34 @@ fn tessellate_toroidal_face(
     } else {
         params.circle_segments.max(3) as usize
     };
+
+    // Prefer the two-chain path: it takes its u columns from the loop
+    // itself, so the rails weld with the neighbouring plane and cylinder
+    // faces. Falls through to the grid path for loops it can't split into
+    // two u-monotonic rails (a full untrimmed donut, whose four boundary
+    // half-edges all sit on one seam vertex).
+    if let Some(torus) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::TorusSurface>()
+    {
+        let verts: Vec<_> = topo
+            .loop_half_edges(face.outer_loop)
+            .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+            .collect();
+        // Subdivision across the tube, scaled to how much of the tube this
+        // face actually covers. A fillet blend is already split into
+        // several faces along v, so each patch needs little or no interior
+        // subdivision — and patches that share a v range derive the same
+        // count, so the end edges they share stay welded.
+        let uv: Vec<(f64, f64)> = verts.iter().map(|p| torus_uv(torus, p)).collect();
+        let v_span = uv.iter().map(|p| p.1).fold(f64::MIN, f64::max)
+            - uv.iter().map(|p| p.1).fold(f64::MAX, f64::min);
+        let n_full = params.circle_segments_for_radius(torus.minor_radius.abs().max(1e-6)) as f64;
+        let n_v = ((n_full * v_span / (2.0 * PI)).ceil() as usize).max(1);
+        if let Some(mesh) = tessellate_torus_two_chain(torus, &verts, reversed, n_v) {
+            return mesh;
+        }
+    }
 
     let mut mesh = TriangleMesh::new();
 
@@ -5179,7 +5533,15 @@ fn tessellate_toroidal_face(
                 }
             }
 
-            let effective_reversed = reversed ^ flip;
+            // `flip` is already the *absolute* answer — it was computed
+            // against the orientation this face wants (outward for a
+            // Forward face, inward for a Reversed one, i.e. a cavity).
+            // XOR-ing `reversed` back in would apply the correction twice
+            // and wind every cavity torus outward, which makes a subtracted
+            // torus *add* its volume instead of removing it. Fall back to
+            // the raw `reversed` only when there was no TorusSurface to
+            // compare against.
+            let effective_reversed = if torus_ref.is_some() { flip } else { reversed };
             if effective_reversed {
                 mesh.indices.extend_from_slice(&[bl, tl, br, br, tl, tr]);
             } else {
@@ -5526,6 +5888,16 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                 );
                 mesh.merge(&face_mesh);
             }
+            SurfaceKind::Torus => {
+                let face_mesh = tessellate_toroidal_face(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    &params,
+                    reversed,
+                );
+                mesh.merge(&face_mesh);
+            }
             _ => {
                 // Fallback for tessellate(): use winding-aware tessellation
                 let face_mesh = tessellate_planar_face_with_geom(
@@ -5616,6 +5988,16 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
             }
             SurfaceKind::Cone => {
                 let face_mesh = tessellate_conical_face(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    &params,
+                    reversed,
+                );
+                mesh.merge(&face_mesh);
+            }
+            SurfaceKind::Torus => {
+                let face_mesh = tessellate_toroidal_face(
                     &brep.topology,
                     &brep.geometry,
                     face_id,
@@ -6324,5 +6706,52 @@ mod tests {
         heal_t_junctions(&mut mesh);
         assert_eq!(mesh.indices, before.indices);
         assert_eq!(mesh.vertices, before.vertices);
+    }
+    /// A torus must actually mesh, and to the right size.
+    ///
+    /// `tessellate_brep` used to have no `Torus` arm, so torus faces fell
+    /// through to the *planar* tessellator. A whole donut (four boundary
+    /// half-edges meeting at one seam vertex) then produced zero triangles:
+    /// `Solid::torus(..)` had volume 0, and every boolean against a torus
+    /// silently returned the other operand while still reporting an
+    /// analytic B-rep. Pin the closed form so that can't recur.
+    #[test]
+    fn torus_tessellates_to_its_closed_form_volume() {
+        for (major, minor) in [(10.0_f64, 2.5_f64), (10.0, 3.0), (5.0, 1.0)] {
+            let brep = vcad_kernel_primitives::make_torus(major, minor, 32);
+            let mesh = tessellate_brep(&brep, 32);
+            assert!(
+                !mesh.indices.is_empty(),
+                "torus(R={major}, r={minor}) produced no triangles"
+            );
+
+            // Signed volume of the closed mesh via the divergence theorem.
+            let mut vol = 0.0_f64;
+            for tri in mesh.indices.chunks(3) {
+                let p = |k: u32| {
+                    let k = 3 * k as usize;
+                    [
+                        mesh.vertices[k] as f64,
+                        mesh.vertices[k + 1] as f64,
+                        mesh.vertices[k + 2] as f64,
+                    ]
+                };
+                let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+                vol += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0;
+            }
+
+            let exact = 2.0 * PI * PI * major * minor * minor;
+            // A 32-segment inscribed torus under-reports by ~1.3%; anything
+            // outside 5% means the surface is not being meshed as a torus.
+            let err = (vol - exact).abs() / exact;
+            assert!(
+                err < 0.05,
+                "torus(R={major}, r={minor}): meshed volume {vol:.3} vs exact {exact:.3} ({:.2}% off)",
+                err * 100.0
+            );
+            assert!(vol > 0.0, "torus volume must be positive, got {vol:.3}");
+        }
     }
 }

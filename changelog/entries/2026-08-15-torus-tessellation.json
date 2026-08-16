@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-15-torus-tessellation",
+  "version": "0.9.4",
+  "date": "2026-08-15",
+  "category": "fix",
+  "title": "Toruses render, and fillet blends are round",
+  "summary": "Torus faces reached the planar tessellator, so toruses had zero volume, booleans against them silently did nothing, and fillet blends drew as flat chamfers.",
+  "features": ["booleans", "tessellation", "fillets", "primitives"]
+}

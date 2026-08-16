@@ -59,8 +59,11 @@ pub use cam_verify::verify_toolpaths;
 pub mod sheet_fold;
 pub use sheet_fold::folded_sheet_solid;
 
-pub use vcad_kernel_booleans::BooleanError;
-use vcad_kernel_booleans::{boolean_op, BooleanOp, BooleanResult};
+pub mod provenance;
+pub use provenance::{DegradeEvent, LossKind, SolidFidelity};
+
+use vcad_kernel_booleans::{boolean_op_reported, BooleanResult};
+pub use vcad_kernel_booleans::{BooleanError, BooleanOp, BooleanReport, DegradeReason, Fidelity};
 use vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_step::StepError;
@@ -74,7 +77,12 @@ pub use vcad_kernel_tessellate::{compute_mesh_properties, MeshBBox, MeshProperti
 pub enum StepExportError {
     /// The solid has been converted to mesh-only representation (e.g., after boolean operations).
     /// B-rep data is required for STEP export.
-    NotBRep,
+    ///
+    /// The payload names the operation that caused the loss, when the
+    /// solid carries provenance (see [`Solid::why_not_brep`]). Without it
+    /// this error is a dead end: the caller learns only that *something*,
+    /// somewhere in the model's history, dropped the B-rep.
+    NotBRep(Option<String>),
     /// The solid is empty (no geometry).
     Empty,
     /// An error occurred during STEP file writing.
@@ -84,7 +92,11 @@ pub enum StepExportError {
 impl std::fmt::Display for StepExportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StepExportError::NotBRep => write!(
+            StepExportError::NotBRep(Some(why)) => write!(
+                f,
+                "cannot export to STEP: solid has been converted to mesh — {why}"
+            ),
+            StepExportError::NotBRep(None) => write!(
                 f,
                 "cannot export to STEP: solid has been converted to mesh (B-rep data lost after boolean operations)"
             ),
@@ -309,6 +321,14 @@ pub struct Solid {
     /// fail-closed: downstream name resolution reports Lost rather than
     /// guessing.
     names: Option<vcad_kernel_naming::NameMap>,
+    /// Representation losses, oldest first, accumulated across this
+    /// solid's whole construction history. Booleans concatenate both
+    /// operands' ledgers, so the record survives arbitrarily deep DAGs.
+    ///
+    /// Empty means the solid is still a true B-rep (or was built from a
+    /// mesh by a caller that didn't record it — see
+    /// [`Solid::fidelity`], which falls back to a structural check).
+    provenance: Vec<DegradeEvent>,
 }
 
 /// Fallback circular resolution when a curved primitive is created with
@@ -342,6 +362,7 @@ impl Solid {
     pub fn empty() -> Self {
         Self {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::Empty,
             segments: 32,
         }
@@ -361,6 +382,7 @@ impl Solid {
     pub fn from_mesh(mesh: TriangleMesh) -> Self {
         Self {
             names: None,
+            provenance: vec![DegradeEvent::new("from_mesh", LossKind::MeshSource)],
             repr: SolidRepr::Mesh(mesh),
             segments: 32,
         }
@@ -372,6 +394,7 @@ impl Solid {
     pub fn from_brep(brep: BRepSolid) -> Self {
         Self {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         }
@@ -382,6 +405,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_cube(sx, sy, sz);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "cube")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         }
@@ -393,6 +417,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_cylinder(radius, height, segments);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "cylinder")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
@@ -404,6 +429,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_sphere(radius, segments);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "sphere")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
@@ -415,6 +441,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_cone(radius_bottom, radius_top, height, segments);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "cone")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
@@ -428,6 +455,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_torus(major_radius, minor_radius, segments);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "torus")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
@@ -439,6 +467,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_wedge(sx, sy, sz);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "wedge")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         }
@@ -452,6 +481,7 @@ impl Solid {
         let brep = vcad_kernel_primitives::make_prism(sides, radius, height);
         Self {
             names: Some(vcad_kernel_naming::seed_names(&brep, "prism")),
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: sides,
         }
@@ -500,20 +530,59 @@ impl Solid {
     }
 
     /// Fallible boolean union — surfaces kernel errors instead of degrading.
+    ///
+    /// **`Ok` is not a promise the result is still a real B-rep.** A
+    /// boolean can succeed via the mesh-CSG fallback, which returns
+    /// triangle soup wearing a B-rep's clothes. Check
+    /// [`Solid::fidelity`], or use [`Solid::try_boolean_reported`] to get
+    /// the degradation alongside the result.
     pub fn try_union(&self, other: &Solid) -> Result<Solid, BooleanError> {
         self.try_boolean(other, BooleanOp::Union)
     }
 
     /// Fallible boolean difference — surfaces kernel errors instead of
-    /// degrading.
+    /// degrading. See [`Solid::try_union`] on what `Ok` does and does not
+    /// guarantee.
     pub fn try_difference(&self, other: &Solid) -> Result<Solid, BooleanError> {
         self.try_boolean(other, BooleanOp::Difference)
     }
 
     /// Fallible boolean intersection — surfaces kernel errors instead of
-    /// degrading.
+    /// degrading. See [`Solid::try_union`] on what `Ok` does and does not
+    /// guarantee.
     pub fn try_intersection(&self, other: &Solid) -> Result<Solid, BooleanError> {
         self.try_boolean(other, BooleanOp::Intersection)
+    }
+
+    /// Boolean that separates **failed** from **succeeded but degraded**.
+    ///
+    /// `Err` means no result was produced. `Ok((solid, None))` means a
+    /// true B-rep result. `Ok((solid, Some(event)))` means the operation
+    /// produced usable geometry but the representation dropped — the event
+    /// names the operation and why.
+    ///
+    /// This is the call to reach for when the result will be exported as
+    /// STEP, ray-traced, filleted or drafted.
+    pub fn try_boolean_reported(
+        &self,
+        other: &Solid,
+        op: BooleanOp,
+    ) -> Result<(Solid, Option<DegradeEvent>), BooleanError> {
+        let before = self.provenance.len() + other.provenance.len();
+        let result = self.try_boolean(other, op)?;
+        // Anything appended beyond the two operands' inherited ledgers was
+        // caused by this operation.
+        let event = result.provenance.get(before).cloned();
+        Ok((result, event))
+    }
+
+    /// Name for the op, used in provenance events.
+    fn op_name(op: BooleanOp) -> &'static str {
+        match op {
+            BooleanOp::Union => "union",
+            BooleanOp::Difference => "difference",
+            BooleanOp::Intersection => "intersection",
+        }
     }
 
     /// Which "this isn't blendable topology" error applies to this solid.
@@ -525,30 +594,53 @@ impl Solid {
     }
 
     fn boolean(&self, other: &Solid, op: BooleanOp) -> Solid {
-        self.try_boolean(other, op).unwrap_or_else(|_| {
-            // Degrade gracefully instead of panicking: a visible-but-crude
-            // result beats poisoning the process (in the browser a panic
-            // kills the WASM instance for the rest of the session).
-            match op {
-                BooleanOp::Union => {
-                    let segments = resolve_segments(self.segments.max(other.segments));
-                    let mut combined = self.to_mesh(segments);
-                    combined.merge(&other.to_mesh(segments));
-                    Solid {
-                        names: None,
-                        repr: SolidRepr::Mesh(combined),
-                        segments,
+        match self.try_boolean(other, op) {
+            Ok(s) => s,
+            Err(e) => {
+                // Degrade gracefully instead of panicking: a visible-but-crude
+                // result beats poisoning the process (in the browser a panic
+                // kills the WASM instance for the rest of the session).
+                //
+                // The degradation is recorded, not swallowed: this is the
+                // path that used to surface only as `NotBRep` at export.
+                let kind = provenance::failed_boolean_kind(op == BooleanOp::Union, &e);
+                let mut provenance = self.provenance.clone();
+                provenance.extend(other.provenance.iter().cloned());
+                provenance.push(DegradeEvent::new(Self::op_name(op), kind));
+                match op {
+                    BooleanOp::Union => {
+                        let segments = resolve_segments(self.segments.max(other.segments));
+                        let mut combined = self.to_mesh(segments);
+                        combined.merge(&other.to_mesh(segments));
+                        Solid {
+                            names: None,
+                            provenance,
+                            repr: SolidRepr::Mesh(combined),
+                            segments,
+                        }
                     }
+                    // The cut/overlap couldn't be computed — leave the target
+                    // untouched, mirroring how `fillet` returns its input when a
+                    // blend degenerates. The result is the WRONG SOLID, not a
+                    // coarse one, which is why the event is recorded even though
+                    // the representation itself survives.
+                    BooleanOp::Difference | BooleanOp::Intersection => Solid {
+                        provenance,
+                        ..self.clone()
+                    },
                 }
-                // The cut/overlap couldn't be computed — leave the target
-                // untouched, mirroring how `fillet` returns its input when a
-                // blend degenerates.
-                BooleanOp::Difference | BooleanOp::Intersection => self.clone(),
             }
-        })
+        }
     }
 
     fn try_boolean(&self, other: &Solid, op: BooleanOp) -> Result<Solid, BooleanError> {
+        // Both operands' histories carry forward regardless of which path
+        // runs — a loss upstream stays visible downstream.
+        let inherited = || {
+            let mut v = self.provenance.clone();
+            v.extend(other.provenance.iter().cloned());
+            v
+        };
         match (&self.repr, &other.repr) {
             (SolidRepr::Empty, _) => Ok(match op {
                 BooleanOp::Union => other.clone(),
@@ -563,7 +655,7 @@ impl Solid {
                 // raw `0` sentinel (e.g. a BRep built outside the primitive
                 // constructors) must not drive a 0-vertex circle loop.
                 let segments = resolve_segments(self.segments.max(other.segments));
-                let result = boolean_op(a.as_ref(), b.as_ref(), op, segments)?;
+                let (result, report) = boolean_op_reported(a.as_ref(), b.as_ref(), op, segments)?;
                 let BooleanResult::BRep(brep) = result;
                 let names = match (&self.names, &other.names) {
                     (Some(na), Some(nb)) => Some(vcad_kernel_naming::propagate_boolean(
@@ -575,8 +667,19 @@ impl Solid {
                     )),
                     _ => None,
                 };
+                let mut provenance = inherited();
+                // The invisible case: the boolean returned `Ok` with a
+                // perfectly valid-looking B-rep that is actually triangle
+                // soup. Record it here, at the point of loss.
+                if let Some(reason) = report.reason {
+                    provenance.push(DegradeEvent::new(
+                        Self::op_name(op),
+                        LossKind::BooleanFallback(reason),
+                    ));
+                }
                 Ok(Solid {
                     names,
+                    provenance,
                     repr: SolidRepr::BRep(brep),
                     segments,
                 })
@@ -590,8 +693,14 @@ impl Solid {
                 // This is a Phase 1 limitation — proper mesh CSG comes in Phase 2.
                 let mut combined = mesh_a;
                 combined.merge(&mesh_b);
+                let mut provenance = inherited();
+                provenance.push(DegradeEvent::new(
+                    Self::op_name(op),
+                    LossKind::MeshOperandConcat,
+                ));
                 Ok(Solid {
                     names: None,
+                    provenance,
                     repr: SolidRepr::Mesh(combined),
                     segments,
                 })
@@ -631,6 +740,7 @@ impl Solid {
         }
         Ok(Solid {
             names: None,
+            provenance: self.provenance.clone(),
             repr: SolidRepr::BRep(Box::new(chamfered)),
             segments: self.segments,
         })
@@ -793,6 +903,7 @@ impl Solid {
         (
             Ok(Solid {
                 names: None,
+                provenance: self.provenance.clone(),
                 repr: SolidRepr::BRep(Box::new(filleted)),
                 segments: self.segments,
             }),
@@ -903,6 +1014,7 @@ impl Solid {
         (
             Ok(Solid {
                 names: None,
+                provenance: self.provenance.clone(),
                 repr: SolidRepr::BRep(Box::new(blended)),
                 segments: self.segments,
             }),
@@ -1039,6 +1151,7 @@ impl Solid {
                 (
                     Ok(Solid {
                         names: None,
+                        provenance: self.provenance.clone(),
                         repr: SolidRepr::BRep(Box::new(inner)),
                         segments: self.segments,
                     }),
@@ -1048,6 +1161,7 @@ impl Solid {
             SolidRepr::Mesh(mesh) => (
                 Ok(Solid {
                     names: None,
+                    provenance: self.provenance.clone(),
                     repr: SolidRepr::Mesh(vcad_kernel_shell::shell_mesh(mesh, thickness)),
                     segments: self.segments,
                 }),
@@ -1160,6 +1274,7 @@ impl Solid {
         let brep = vcad_kernel_sketch::extrude(&profile, direction)?;
         Ok(Solid {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1179,6 +1294,7 @@ impl Solid {
         let brep = vcad_kernel_sketch::extrude_with_holes(&profile, holes, direction)?;
         Ok(Solid {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1210,6 +1326,7 @@ impl Solid {
         let brep = vcad_kernel_sketch::extrude_with_options(&profile, direction, options)?;
         Ok(Solid {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1241,6 +1358,7 @@ impl Solid {
             vcad_kernel_sketch::revolve(&profile, axis_origin, axis_dir, angle_deg.to_radians())?;
         Ok(Solid {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1265,6 +1383,7 @@ impl Solid {
         let brep = vcad_kernel_sweep::sweep(&profile, path, options)?;
         Ok(Solid {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1287,6 +1406,7 @@ impl Solid {
         let brep = vcad_kernel_sweep::loft(profiles, options)?;
         Ok(Solid {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1348,6 +1468,7 @@ impl Solid {
                 }
                 Solid {
                     names: self.names.clone(),
+                    provenance: self.provenance.clone(),
                     repr: SolidRepr::BRep(Box::new(new_brep)),
                     segments: self.segments,
                 }
@@ -1371,6 +1492,7 @@ impl Solid {
                 }
                 Solid {
                     names: None,
+                    provenance: self.provenance.clone(),
                     repr: SolidRepr::Mesh(new_mesh),
                     segments: self.segments,
                 }
@@ -1575,6 +1697,7 @@ impl Solid {
         let brep = solids.into_iter().next().ok_or(StepError::NoSolids)?;
         Ok(Self {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1612,6 +1735,7 @@ impl Solid {
             .into_iter()
             .map(|brep| Self {
                 names: None,
+                provenance: Vec::new(),
                 repr: SolidRepr::BRep(Box::new(brep)),
                 segments: 32,
             })
@@ -1633,6 +1757,7 @@ impl Solid {
         let brep = solids.into_iter().next().ok_or(StepError::NoSolids)?;
         Ok(Self {
             names: None,
+            provenance: Vec::new(),
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1670,6 +1795,7 @@ impl Solid {
             .into_iter()
             .map(|brep| Self {
                 names: None,
+                provenance: Vec::new(),
                 repr: SolidRepr::BRep(Box::new(brep)),
                 segments: 32,
             })
@@ -1694,7 +1820,7 @@ impl Solid {
                 vcad_kernel_step::write_step(brep.as_ref(), path)?;
                 Ok(())
             }
-            SolidRepr::Mesh(_) => Err(StepExportError::NotBRep),
+            SolidRepr::Mesh(_) => Err(StepExportError::NotBRep(self.why_not_brep())),
             SolidRepr::Empty => Err(StepExportError::Empty),
         }
     }
@@ -1714,7 +1840,7 @@ impl Solid {
                 let buffer = vcad_kernel_step::write_step_to_buffer(brep.as_ref())?;
                 Ok(buffer)
             }
-            SolidRepr::Mesh(_) => Err(StepExportError::NotBRep),
+            SolidRepr::Mesh(_) => Err(StepExportError::NotBRep(self.why_not_brep())),
             SolidRepr::Empty => Err(StepExportError::Empty),
         }
     }
@@ -1729,7 +1855,7 @@ impl Solid {
         for (solid, name) in solids {
             match &solid.repr {
                 SolidRepr::BRep(brep) => breps.push((brep.as_ref(), name)),
-                SolidRepr::Mesh(_) => return Err(StepExportError::NotBRep),
+                SolidRepr::Mesh(_) => return Err(StepExportError::NotBRep(solid.why_not_brep())),
                 SolidRepr::Empty => return Err(StepExportError::Empty),
             }
         }
@@ -1740,8 +1866,124 @@ impl Solid {
     ///
     /// Returns `true` if the solid has B-rep data (not converted to mesh-only).
     /// Returns `false` for mesh-only or empty solids.
+    ///
+    /// **This is a weaker guarantee than it looks.** A triangle-soup result
+    /// from the mesh-CSG fallback answers `true` and exports a STEP made of
+    /// thousands of one-triangle planar faces. Use [`Solid::fidelity`] when
+    /// you care whether the export carries real analytic surfaces.
     pub fn can_export_step(&self) -> bool {
         matches!(&self.repr, SolidRepr::BRep(_))
+    }
+
+    // =========================================================================
+    // Representation fidelity & provenance
+    // =========================================================================
+
+    /// How faithfully this solid still represents its geometry.
+    ///
+    /// Derived from the recorded [`provenance`](Solid::degradations) where
+    /// there is any, and from a structural check of the topology otherwise
+    /// — so a solid handed in via [`Solid::from_brep`] that happens to be
+    /// triangle soup is still reported as such.
+    pub fn fidelity(&self) -> SolidFidelity {
+        match &self.repr {
+            SolidRepr::Empty => SolidFidelity::Empty,
+            SolidRepr::Mesh(_) => SolidFidelity::MeshOnly,
+            SolidRepr::BRep(brep) => {
+                let recorded = self
+                    .provenance
+                    .iter()
+                    .map(|e| e.kind.resulting_fidelity())
+                    .max();
+                match recorded {
+                    // A recorded MeshOnly loss on a solid that is BRep now
+                    // means the loss was a wrong-geometry no-op (the cut was
+                    // skipped, the B-rep survived) — the representation is
+                    // whatever the topology says.
+                    Some(SolidFidelity::TriangleSoup) => SolidFidelity::TriangleSoup,
+                    _ if vcad_kernel_booleans::is_triangle_soup(brep.as_ref()) => {
+                        SolidFidelity::TriangleSoup
+                    }
+                    _ => SolidFidelity::Analytic,
+                }
+            }
+        }
+    }
+
+    /// Every representation loss in this solid's construction history,
+    /// oldest first.
+    ///
+    /// Empty for a solid built entirely from primitives and clean booleans.
+    pub fn degradations(&self) -> &[DegradeEvent] {
+        &self.provenance
+    }
+
+    /// Losses that produced the **wrong solid**, not merely a coarse one.
+    ///
+    /// A mesh fallback still computes the right geometry. A skipped cut
+    /// (`difference` returning its target unchanged after a kernel error)
+    /// does not, and neither does the mesh-concatenation path — those are
+    /// the ones a caller must not ship.
+    pub fn wrong_geometry_events(&self) -> impl Iterator<Item = &DegradeEvent> {
+        self.provenance
+            .iter()
+            .filter(|e| e.kind.is_wrong_geometry())
+    }
+
+    /// Why is this solid not a clean analytic B-rep?
+    ///
+    /// Returns a human-readable explanation naming the **first** operation
+    /// that lost the representation — the one to restructure. `None` when
+    /// the solid is still a true B-rep.
+    ///
+    /// This is the answer `StepExportError::NotBRep` used to be unable to
+    /// give: the loss may have happened dozens of operations before export.
+    pub fn why_not_brep(&self) -> Option<String> {
+        if self.fidelity() == SolidFidelity::Analytic || self.fidelity() == SolidFidelity::Empty {
+            return None;
+        }
+        match self.provenance.first() {
+            Some(first) => {
+                let extra = self.provenance.len() - 1;
+                let tail = match extra {
+                    0 => String::new(),
+                    1 => " (1 further degradation followed)".to_string(),
+                    n => format!(" ({n} further degradations followed)"),
+                };
+                Some(format!("{first}{tail}"))
+            }
+            // Structural detection with no recorded history: the solid was
+            // handed in already degraded.
+            None => Some(
+                "the solid is a triangle-soup B-rep with no recorded provenance \
+                 (built outside the kernel's own operations)"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// Attribute every so-far-unattributed loss to a document node.
+    ///
+    /// A document evaluator calls this after each node it evaluates, so a
+    /// loss carries the id of the node that caused it rather than just the
+    /// operation name. Losses inherited from operand solids already carry
+    /// their own node and are left alone.
+    pub fn attribute_to(&mut self, node: impl Into<String>) {
+        let node = node.into();
+        for event in &mut self.provenance {
+            if event.node.is_none() {
+                event.node = Some(node.clone());
+            }
+        }
+    }
+
+    /// Replace this solid's provenance ledger wholesale.
+    ///
+    /// For callers that reconstruct a `Solid` outside the kernel's own
+    /// operations (round-trips through serialization, grader harnesses) and
+    /// want to keep the history they already know about.
+    pub fn set_degradations(&mut self, events: Vec<DegradeEvent>) {
+        self.provenance = events;
     }
 
     /// Get a reference to the underlying B-rep solid, if available.
