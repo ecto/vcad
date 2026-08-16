@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-16-cli-loon-input-everywhere",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "fix",
+  "title": "CLI accepts .loon input on every subcommand",
+  "summary": "render, slice, simulate, boolean and transform now evaluate .loon source like info and export already did, instead of failing in the JSON parser.",
+  "features": ["cli", "loon"]
+}
