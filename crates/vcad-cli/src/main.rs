@@ -102,6 +102,23 @@ enum Commands {
         relative_meshes: bool,
     },
 
+    /// Recognise holes and bolt patterns in a STEP file
+    ///
+    /// Reads a vendor STEP, places the assembly, and reports each component's
+    /// hole patterns — bolt-circle diameter, count, hole diameter, and the
+    /// angle of every hole *relative to its pattern* — plus the body envelope
+    /// measured from the largest coaxial cylinder rather than the bounding box.
+    Features {
+        /// Input STEP file (.step or .stp)
+        input: PathBuf,
+        /// Emit the full report as JSON instead of a text summary
+        #[arg(long)]
+        json: bool,
+        /// Hide patterns with fewer than this many members (text output only)
+        #[arg(long, default_value = "2", value_name = "N")]
+        min_count: usize,
+    },
+
     /// Render document to image
     Render {
         /// Input vcad file
@@ -398,6 +415,13 @@ fn main() -> Result<()> {
                 },
                 relative_meshes,
             )?;
+        }
+        Some(Commands::Features {
+            input,
+            json,
+            min_count,
+        }) => {
+            recognize_features(&input, json, min_count)?;
         }
         Some(Commands::Render {
             input,
@@ -1108,6 +1132,90 @@ fn write_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
     // the caller's message can't drift from the file if the guard above ever
     // stops rejecting every solid-less root.
     Ok(named.len())
+}
+
+/// Recognise holes and bolt patterns in a STEP file and print them.
+///
+/// The text form is written for someone about to design a mating part: what
+/// the pattern is, how big, and where each hole sits *relative to the pattern*
+/// — absolute angles depend on how the vendor happened to place the model and
+/// make the same part look different in two files.
+fn recognize_features(input: &PathBuf, json: bool, min_count: usize) -> Result<()> {
+    use vcad_kernel_features::{PatternKind, PatternMember};
+
+    let report = vcad_kernel_features::step::recognize_step_file(input)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    let env = report.envelope();
+    let axis = env.dominant_axis;
+    println!("{}", input.display());
+    println!(
+        "  axis            ({:.3}, {:.3}, {:.3})",
+        axis.x, axis.y, axis.z
+    );
+    match env.body_od_mm {
+        Some(od) => println!(
+            "  body OD         {od:.3} mm  (largest coaxial cylinder; bbox across the axis reads {:.3})",
+            env.bbox_across_axis_mm
+        ),
+        None => println!("  body OD         n/a (no coaxial cylinder)"),
+    }
+    println!("  axial length    {:.3} mm", env.axial_length_mm);
+    println!("  components      {}", report.components.len());
+
+    for component in &report.components {
+        let patterns: Vec<_> = component
+            .report
+            .patterns
+            .iter()
+            .filter(|p| p.count >= min_count)
+            .collect();
+        if patterns.is_empty() {
+            continue;
+        }
+        println!("\n{} ({} faces)", component.name, component.face_count);
+        for (idx, p) in component.report.patterns.iter().enumerate() {
+            if p.count < min_count {
+                continue;
+            }
+            println!("  [{idx}] {}", p.describe());
+            if let PatternKind::BoltCircle { .. } = p.kind {
+                let angles: Vec<String> = p
+                    .members
+                    .iter()
+                    .map(|m: &PatternMember| format!("{:.3}", m.angle_deg))
+                    .collect();
+                println!("       angles rel. to pattern: {}", angles.join(", "));
+                if let Some(abs) = p.first_member_absolute_deg {
+                    println!("       first hole at {abs:.3} deg absolute (placement-dependent)");
+                }
+            }
+            let axial = p
+                .members
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |a, m| {
+                    (a.0.min(m.axial_start), a.1.max(m.axial_end))
+                });
+            println!(
+                "       axial extent along the pattern axis: [{:.3}, {:.3}]",
+                axial.0, axial.1
+            );
+        }
+        for rel in &component.report.relations {
+            if !rel.bisects_adjacent {
+                continue;
+            }
+            println!(
+                "  [{}] bisects adjacent holes of [{}] (phase {:.3} deg)",
+                rel.subject, rel.reference, rel.phase_deg
+            );
+        }
+    }
+    Ok(())
 }
 
 fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Result<()> {

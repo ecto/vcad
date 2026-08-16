@@ -1,6 +1,6 @@
 //! STEP file reader: converts parsed STEP data to BRepSolid.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::entities::{
@@ -247,6 +247,12 @@ impl<'a> StepReader<'a> {
     /// present we honor it, so a vcad-written file is read the same way
     /// Shapr3D/SolidWorks/Fusion read it — an anchor that references nothing
     /// becomes a loud error instead of a silent direct-scan pass.
+    ///
+    /// Assemblies add one hop: the anchored `SHAPE_REPRESENTATION` holds only
+    /// placements, and the geometry hangs off it through a
+    /// `SHAPE_REPRESENTATION_RELATIONSHIP` pointing at an
+    /// `ADVANCED_BREP_SHAPE_REPRESENTATION`. Creo, SolidWorks and NX all write
+    /// their assemblies this way, so the walk follows those links transitively.
     fn anchored_solid_ids(&self) -> Option<Vec<u64>> {
         let sdrs = self
             .file
@@ -254,11 +260,36 @@ impl<'a> StepReader<'a> {
         if sdrs.is_empty() {
             return None;
         }
-        let mut ids = Vec::new();
-        for sdr in sdrs {
-            let Ok(rep_id) = sdr.entity_ref(1) else {
+
+        // rep -> related reps, via SHAPE_REPRESENTATION_RELATIONSHIP (both
+        // directions: the relationship's orientation varies by writer).
+        let mut linked: HashMap<u64, Vec<u64>> = HashMap::new();
+        for rel in self
+            .file
+            .entities_of_type("SHAPE_REPRESENTATION_RELATIONSHIP")
+        {
+            let (Ok(a), Ok(b)) = (rel.entity_ref(2), rel.entity_ref(3)) else {
                 continue;
             };
+            linked.entry(a).or_default().push(b);
+            linked.entry(b).or_default().push(a);
+        }
+        for next in linked.values_mut() {
+            next.sort_unstable();
+        }
+
+        let mut ids = Vec::new();
+        let mut visited: HashSet<u64> = HashSet::new();
+        // Seed the walk in entity-id order: `entities_of_type` iterates a
+        // HashMap, so without the sort the imported solid order would differ
+        // from run to run.
+        let mut seeds: Vec<u64> = sdrs.iter().filter_map(|s| s.entity_ref(1).ok()).collect();
+        seeds.sort_unstable();
+        let mut queue: std::collections::VecDeque<u64> = seeds.into();
+        while let Some(rep_id) = queue.pop_front() {
+            if !visited.insert(rep_id) {
+                continue;
+            }
             let Some(rep) = self.file.get(rep_id) else {
                 continue;
             };
@@ -273,6 +304,9 @@ impl<'a> StepReader<'a> {
                         ids.push(item_id);
                     }
                 }
+            }
+            if let Some(next) = linked.get(&rep_id) {
+                queue.extend(next.iter().copied());
             }
         }
         Some(ids)

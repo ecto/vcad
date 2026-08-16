@@ -28,6 +28,7 @@ vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
 vcad-kernel-physics = { path = "../vcad-kernel-physics" }
 vcad-kernel-cam = { path = "../vcad-kernel-cam" }
 vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace" }
+vcad-kernel-features = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-export = { workspace = true }
 vcad-ecad-fabprep = { workspace = true }
