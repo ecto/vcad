@@ -163,7 +163,31 @@ fn split_edges_at_interior_vertices_impl(topo: &mut Topology, tolerance: f64, bo
         }
     }
 
+    // Spatial prefilter. The hit test below accepts a vertex only when it
+    // lies within `tolerance` of a point ON the segment, so every hit sits
+    // inside the segment's AABB grown by `tolerance` — yet the scan below
+    // walked ALL of `verts` for every half-edge, i.e. O(E·V). That is the
+    // single dominant cost of a boolean once a solid carries a few dozen
+    // features (a 30-hole plate spent half its wall clock right here), and
+    // it is what makes a chain of cuts against one growing subject cost
+    // quadratically more than one batched cut.
+    //
+    // Sorting the vertex INDICES by x lets each segment binary-search its
+    // own x-slab; re-sorting the surviving candidates by index restores
+    // their original `verts` order, so the hit list — and hence the emitted
+    // half-edge chain — is identical to what the linear scan produced.
+    let mut by_x: Vec<u32> = (0..verts.len() as u32).collect();
+    by_x.sort_by(|&i, &j| {
+        verts[i as usize]
+            .1
+            .x
+            .partial_cmp(&verts[j as usize].1.x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let xs: Vec<f64> = by_x.iter().map(|&i| verts[i as usize].1.x).collect();
+
     let he_ids: Vec<_> = topo.half_edges.keys().collect();
+    let mut cand: Vec<u32> = Vec::new();
     for he_id in he_ids {
         // Only unpaired half-edges: a paired edge already conforms with its
         // twin, and splitting it would need a synchronized twin split.
@@ -188,9 +212,31 @@ fn split_edges_at_interior_vertices_impl(topo: &mut Topology, tolerance: f64, bo
         }
         let len = len2.sqrt();
 
+        // Candidates: vertices in the segment's tolerance-grown AABB.
+        let (lo, hi) = (
+            Point3::new(
+                a.x.min(b.x) - tolerance,
+                a.y.min(b.y) - tolerance,
+                a.z.min(b.z) - tolerance,
+            ),
+            Point3::new(
+                a.x.max(b.x) + tolerance,
+                a.y.max(b.y) + tolerance,
+                a.z.max(b.z) + tolerance,
+            ),
+        );
+        let slab_start = xs.partition_point(|&x| x < lo.x);
+        let slab_end = xs.partition_point(|&x| x <= hi.x);
+        cand.clear();
+        cand.extend(by_x[slab_start..slab_end].iter().copied().filter(|&i| {
+            let p = verts[i as usize].1;
+            p.y >= lo.y && p.y <= hi.y && p.z >= lo.z && p.z <= hi.z
+        }));
+        cand.sort_unstable();
+
         // Interior vertices within `tolerance` of segment ab, ordered by t.
         let mut hits: Vec<(f64, vcad_kernel_topo::VertexId)> = Vec::new();
-        for &(vid, p) in &verts {
+        for &(vid, p) in cand.iter().map(|&i| &verts[i as usize]) {
             if vid == v0 || vid == v1 {
                 continue;
             }
