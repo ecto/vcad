@@ -23,13 +23,13 @@ pub use blend_loft::{
     apply_edge_blend, find_edge_near, loft_blend_edge, loft_blend_edge_keyed, resolve_edge_query,
     BlendKey, BlendOutcome, BlendSection, EdgeQuery, ResolvedEdge,
 };
-pub use chamfer::chamfer_all_edges;
+pub use chamfer::{chamfer_all_edges, chamfer_all_edges_checked};
 pub use closest_point::closest_point_uv;
 pub use fillet_curved::{
     fillet_edges_detailed, fillet_edges_detailed_with_trace, FilletTrace, JunctionOutcome,
     JunctionTrace,
 };
-pub use fillet_planar::fillet_all_edges;
+pub use fillet_planar::{fillet_all_edges, fillet_all_edges_checked};
 pub use rolling_ball::rolling_ball_blend;
 
 use vcad_kernel_geom::{CylinderSurface, Surface, SurfaceKind};
@@ -52,11 +52,63 @@ pub enum FilletCase {
     Unsupported,
 }
 
+/// Why a whole-solid blend pipeline declined to modify its input.
+///
+/// The all-edges fillet and chamfer builders are fail-soft by
+/// construction: rather than emit a cracked or inverted shell they hand
+/// back the input untouched. That is the right *geometry* decision and
+/// the wrong *reporting* decision — so the `*_checked` entry points
+/// return this instead, and callers decide whether an unmodified solid
+/// is acceptable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendRefusal {
+    /// The solid has no edges to blend.
+    NoEdges,
+    /// At least one face is non-planar; this pipeline handles planes only.
+    NonPlanarFace,
+    /// Two adjacent faces are nearly coplanar — there is no real edge
+    /// there to round, and blending one cracks the shell.
+    CoplanarAdjacentFaces,
+    /// A knife edge (dihedral so shallow that the tangent setback
+    /// `r/tan(θ/2)` is unbounded) — no finite blend fits.
+    KnifeEdge,
+    /// The radius exceeds what the local feature can host: the inset
+    /// faces cross over and invert. Equivalent to "radius exceeds
+    /// available edge length".
+    RadiusTooLargeForFeature,
+}
+
+impl std::fmt::Display for BlendRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            BlendRefusal::NoEdges => "solid has no edges to blend",
+            BlendRefusal::NonPlanarFace => {
+                "solid has non-planar faces; the planar blend pipeline cannot rebuild it"
+            }
+            BlendRefusal::CoplanarAdjacentFaces => {
+                "adjacent faces are nearly coplanar — no real edge to blend"
+            }
+            BlendRefusal::KnifeEdge => {
+                "knife edge: dihedral too shallow for any finite tangent setback"
+            }
+            BlendRefusal::RadiusTooLargeForFeature => {
+                "radius exceeds available edge length — trimmed faces invert"
+            }
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::error::Error for BlendRefusal {}
+
 /// Result of a single edge fillet operation.
 #[derive(Debug)]
 pub enum FilletResult {
     /// Successfully created a blend surface.
-    Success,
+    Success {
+        /// The edge that was filleted.
+        edge_id: EdgeId,
+    },
     /// Edge pair not supported for fillet.
     Unsupported {
         /// The edge that could not be filleted.
@@ -76,6 +128,37 @@ pub enum FilletResult {
         /// The edge that could not be filleted.
         edge_id: EdgeId,
     },
+}
+
+impl FilletResult {
+    /// The edge this outcome describes.
+    pub fn edge_id(&self) -> EdgeId {
+        match self {
+            FilletResult::Success { edge_id }
+            | FilletResult::Unsupported { edge_id, .. }
+            | FilletResult::RadiusTooLarge { edge_id, .. }
+            | FilletResult::DegenerateGeometry { edge_id } => *edge_id,
+        }
+    }
+
+    /// True when a blend surface was actually created for this edge.
+    pub fn is_success(&self) -> bool {
+        matches!(self, FilletResult::Success { .. })
+    }
+
+    /// A human-readable reason, or `None` when the edge succeeded.
+    pub fn reason(&self) -> Option<String> {
+        match self {
+            FilletResult::Success { .. } => None,
+            FilletResult::Unsupported { reason, .. } => Some(reason.clone()),
+            FilletResult::RadiusTooLarge { max_radius, .. } => Some(format!(
+                "radius exceeds available edge length (max ≈ {max_radius:.4} mm)"
+            )),
+            FilletResult::DegenerateGeometry { .. } => {
+                Some("degenerate geometry at the edge — blend construction collapsed".into())
+            }
+        }
+    }
 }
 
 /// Classify the fillet case between two faces.
@@ -409,11 +492,7 @@ mod tests {
         let (result, results) = fillet_edges_detailed(&cube, &edge_ids, 1.0);
 
         for r in &results {
-            assert!(
-                matches!(r, FilletResult::Success),
-                "expected Success, got {:?}",
-                r
-            );
+            assert!(r.is_success(), "expected Success, got {:?}", r);
         }
         assert_eq!(results.len(), 12, "should have 12 results for 12 edges");
 
@@ -447,7 +526,7 @@ mod tests {
                 .any(|s| s.surface_type() == SurfaceKind::Torus);
             if has_torus {
                 assert!(
-                    results.iter().any(|r| matches!(r, FilletResult::Success)),
+                    results.iter().any(|r| r.is_success()),
                     "should have at least one successful fillet"
                 );
             }
@@ -509,7 +588,7 @@ mod tests {
 
         let (filleted, results) = fillet_edges_detailed(&cube, &[edge], r);
         assert_eq!(results.len(), 1);
-        assert!(matches!(results[0], FilletResult::Success));
+        assert!(results[0].is_success());
 
         let mesh = vcad_kernel_tessellate::tessellate_brep(&filleted, 32);
         assert_eq!(
@@ -559,7 +638,7 @@ mod tests {
 
         let (filleted, results) = fillet_edges_detailed(&cube, &chosen, r);
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|r| matches!(r, FilletResult::Success)));
+        assert!(results.iter().all(|r| r.is_success()));
 
         let mesh = vcad_kernel_tessellate::tessellate_brep(&filleted, 32);
         assert_eq!(

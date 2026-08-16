@@ -6,7 +6,7 @@
 
 use vcad_kernel::vcad_kernel_fillet::{BlendKey, BlendSection, EdgeQuery};
 use vcad_kernel::vcad_kernel_math::Point3;
-use vcad_kernel::Solid;
+use vcad_kernel::{BlendError, Solid};
 
 fn sorted_names(s: &Solid) -> Vec<String> {
     let mut v: Vec<String> = s
@@ -115,7 +115,7 @@ fn unresolvable_references_fail_closed() {
     assert!(cube.resolve_named_edge("cube:top", "cube:nope").is_err());
     assert!(cube.resolve_named_edge("garbage", "cube:top").is_err());
     // A name map is dropped by ops without a propagation rule.
-    let filleted = cube.fillet(1.0);
+    let filleted = cube.fillet(1.0).expect("r=1 fits a 10mm cube");
     assert!(filleted.names().is_none());
     assert!(filleted
         .resolve_named_edge("cube:top", "cube:right")
@@ -129,13 +129,22 @@ fn unresolvable_references_fail_closed() {
             shape: 1.0,
         },
     }];
-    let noop = cube.edge_blend(
-        &EdgeQuery::Endpoints {
-            a: Point3::new(99.0, 99.0, 99.0),
-            b: Point3::new(99.0, 99.0, 90.0),
-        },
-        &keys,
+    let query = EdgeQuery::Endpoints {
+        a: Point3::new(99.0, 99.0, 99.0),
+        b: Point3::new(99.0, 99.0, 90.0),
+    };
+    // Fail-closed: matching nothing is *reported*, not returned as an
+    // unchanged solid the caller would mistake for a blended one.
+    assert_eq!(
+        cube.edge_blend(&query, &keys).unwrap_err(),
+        BlendError::NoTargetEdges
     );
+
+    // The lenient variant is where "unchanged" lives, and the report
+    // records that nothing was applied.
+    let (noop, report) = cube.edge_blend_lenient(&query, &keys);
+    assert!(report.declined());
+    assert_eq!(report.applied, 0);
     let before = cube.as_brep().unwrap().topology.faces.len();
     let after = noop.as_brep().unwrap().topology.faces.len();
     assert_eq!(before, after);

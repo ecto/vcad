@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-15-fillet-failure-is-reported",
+  "version": "0.9.4",
+  "date": "2026-08-15",
+  "category": "breaking",
+  "title": "Fillet, chamfer, blend and shell now report failure",
+  "summary": "A fillet that can't be applied is an error naming the cause instead of a silently unfilleted solid, multi-edge blends report per edge, and best-effort behavior moved to explicit *_lenient variants.",
+  "features": ["fillet", "chamfer", "shell", "kernel", "validation"]
+}

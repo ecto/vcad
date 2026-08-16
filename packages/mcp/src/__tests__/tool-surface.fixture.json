@@ -1625,6 +1625,129 @@
     }
   },
   {
+    "name": "inspect_faces",
+    "title": "Inspect Faces",
+    "description": "List a part's B-rep faces: stable face id, surface type, area, bbox, centroid, plus the exact surface parameters — a cylinder's radius/diameter, axis direction, point on axis and axial extent (and whether it's a bore or a shaft); a plane's outward normal and a point on it. This is the tool for mechanical reasoning an agent can't do from a bounding box: find the mounting face, read a bore diameter, get a shaft axis. Filter with `surface_type` / `radius_mm` / `min_area_mm2`, page with `limit`/`offset`, or start with `summary_only` to get grouped tallies ('17 cylindrical faces at radius 2.1 mm') instead of hundreds of records. Radii, axes and normals are analytic; areas, bboxes and centroids are tessellation-bound. Complements `inspect_cad` and `measure`, which see only the triangle mesh. Requires B-rep geometry — mesh-only parts are refused by name, not guessed at.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document holding the part."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part id or name to inspect. Omit to inspect every visible part."
+        },
+        "surface_type": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "plane",
+              "cylinder",
+              "cone",
+              "sphere",
+              "torus",
+              "bspline",
+              "bilinear"
+            ]
+          },
+          "description": "Keep only faces of these surface types, e.g. ['cylinder'] for bores and shafts, ['plane'] for mounting faces."
+        },
+        "face_id": {
+          "type": "string",
+          "description": "Return just this face (an id from an earlier call)."
+        },
+        "radius_mm": {
+          "type": "number",
+          "description": "Keep only cylindrical/spherical faces of this radius (within `radius_tolerance_mm`) — e.g. 2.1 to find every M4 clearance hole."
+        },
+        "radius_tolerance_mm": {
+          "type": "number",
+          "description": "Tolerance for `radius_mm`. Default 0.01 mm."
+        },
+        "min_area_mm2": {
+          "type": "number",
+          "description": "Drop faces smaller than this — the fast way past chamfers and fastener detail on a vendor part."
+        },
+        "summary_only": {
+          "type": "boolean",
+          "description": "Return only the grouped tallies and coaxial groups, no per-face records. Best first call on an unfamiliar part."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max faces to return per part. Default 25."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Faces to skip (pagination). Default 0."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "faces": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "measure_outer_diameter",
+    "title": "Measure Outer Diameter",
+    "description": "Measure a part's true outer diameter: the largest cylinder coaxial with a given axis (omit `axis` to use the part's dominant axis — do not assume Z). This is what 'OD' means on a real part; a bounding box overstates it whenever a connector boss, flange or mounting ear sticks out, so the result reports the bbox size alongside for contrast. Also reports the smallest radius on that axis (the innermost bore), every distinct radius present, and the axial extent. Diameters are analytic, so exact regardless of tessellation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document holding the part."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part id or name. Omit to measure every visible part."
+        },
+        "axis": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Axis to measure about, e.g. [0,1,0]. Sign is ignored. Omit to use the part's dominant axis (the one carrying the most cylindrical area) — do not assume Z."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "outer_diameter": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "list_parameters",
     "title": "List Parameters",
     "description": "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",

@@ -202,6 +202,23 @@ pub enum EvalError {
         /// What went wrong (missing file, parse failure, no solids).
         message: String,
     },
+
+    /// A fillet / chamfer / edge-blend / shell node declined to apply.
+    ///
+    /// Fail-closed: the kernel would hand back the *unmodified* solid
+    /// here, and a document that silently evaluates to square edges where
+    /// it asked for radii is a wrong answer nobody sees. The child id
+    /// identifies the subtree the operation was applied to.
+    #[error("{op} of node {child} did not apply: {message}")]
+    Blend {
+        /// Which operation declined (`fillet`, `chamfer`, `edge blend`,
+        /// `shell`).
+        op: &'static str,
+        /// The operand the blend was applied to.
+        child: vcad_ir::NodeId,
+        /// The kernel's reason.
+        message: String,
+    },
 }
 
 /// Triangle mesh output from evaluation.

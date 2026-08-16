@@ -16,7 +16,7 @@ fn analytic_shell_volume(w: f64) -> f64 {
 #[test]
 fn shelled_box_volume_matches_wall_thickness() {
     for &w in &[0.8, 1.2, 2.0, 3.5, 5.0] {
-        let hollow = Solid::cube(100.0, 80.0, 60.0).shell(w);
+        let hollow = Solid::cube(100.0, 80.0, 60.0).shell(w).expect("shell fits");
         let vol = hollow.volume();
         let expected = analytic_shell_volume(w);
         assert!(
@@ -31,7 +31,7 @@ fn shell_then_difference_volume_decreases_with_thinner_wall() {
     // Corner cutter from the /prove demo: overlaps the box at
     // x 55..100, y 45..80, z 5..60.
     let part_volume = |w: f64| -> f64 {
-        let hollow = Solid::cube(100.0, 80.0, 60.0).shell(w);
+        let hollow = Solid::cube(100.0, 80.0, 60.0).shell(w).expect("shell fits");
         let cutter = Solid::cube(60.0, 50.0, 70.0).translate(55.0, 45.0, 5.0);
         hollow.difference(&cutter).volume()
     };

@@ -40,6 +40,7 @@ vcad-kernel-flow = { workspace = true }
 vcad-kernel-fea = { workspace = true }
 vcad-kernel-tolerance = { workspace = true }
 vcad-kernel-calibration = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

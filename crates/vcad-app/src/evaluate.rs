@@ -174,17 +174,26 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
                 )
             })
         }
+        // Blends are fail-closed: the kernel would hand back the
+        // *unmodified* solid, so a document asking for radii would
+        // silently evaluate to square edges. Surface it instead.
         CsgOp::Shell { child, thickness } => {
             let c = evaluate_node(doc, *child)?;
             c.map(|s| s.shell(*thickness))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("shell of node {child} did not apply: {e}"))?
         }
         CsgOp::Fillet { child, radius } => {
             let c = evaluate_node(doc, *child)?;
             c.map(|s| s.fillet(*radius))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("fillet of node {child} did not apply: {e}"))?
         }
         CsgOp::Chamfer { child, distance } => {
             let c = evaluate_node(doc, *child)?;
             c.map(|s| s.chamfer(*distance))
+                .transpose()
+                .map_err(|e| anyhow::anyhow!("chamfer of node {child} did not apply: {e}"))?
         }
         CsgOp::EdgeBlend {
             child,
@@ -205,6 +214,8 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             } else {
                 let (query, keys) = kernel_blend_args(edges, profile);
                 c.map(|s| s.edge_blend(&query, &keys))
+                    .transpose()
+                    .map_err(|e| anyhow::anyhow!("edge blend of node {child} did not apply: {e}"))?
             }
         }
         CsgOp::StepImport { path, solid_index } => Solid::from_step_all(path)

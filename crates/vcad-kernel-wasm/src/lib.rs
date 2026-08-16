@@ -1624,11 +1624,17 @@ impl Solid {
     // =========================================================================
 
     /// Chamfer all edges of the solid by the given distance.
+    ///
+    /// Throws when the chamfer cannot be applied — the kernel would
+    /// otherwise hand back the unchamfered solid with no signal.
     #[wasm_bindgen(js_name = chamfer)]
-    pub fn chamfer(&self, distance: f64) -> Solid {
-        Solid {
-            inner: self.inner.chamfer(distance),
-        }
+    pub fn chamfer(&self, distance: f64) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .chamfer(distance)
+                .map_err(|e| JsError::new(&format!("chamfer: {e}")))?,
+        })
     }
 
     /// Per-edge blend on query-selected edges with a keyed profile.
@@ -1657,24 +1663,38 @@ impl Solid {
         }
         let (query, keys) = kernel_blend_args(&spec.edges, &spec.profile);
         Ok(Solid {
-            inner: self.inner.edge_blend(&query, &keys),
+            inner: self
+                .inner
+                .edge_blend(&query, &keys)
+                .map_err(|e| JsError::new(&format!("edge blend: {e}")))?,
         })
     }
 
     /// Fillet all edges of the solid with the given radius.
+    ///
+    /// Throws when the fillet cannot be applied — a radius the geometry
+    /// can't host, a body with boolean holes, a mesh-only solid. The
+    /// alternative is a part that reaches a fabricator with square edges
+    /// where the design called for radii.
     #[wasm_bindgen(js_name = fillet)]
-    pub fn fillet(&self, radius: f64) -> Solid {
-        Solid {
-            inner: self.inner.fillet(radius),
-        }
+    pub fn fillet(&self, radius: f64) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .fillet(radius)
+                .map_err(|e| JsError::new(&format!("fillet: {e}")))?,
+        })
     }
 
     /// Shell (hollow) the solid by offsetting all faces inward.
     #[wasm_bindgen(js_name = shell)]
-    pub fn shell(&self, thickness: f64) -> Solid {
-        Solid {
-            inner: self.inner.shell(thickness),
-        }
+    pub fn shell(&self, thickness: f64) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .shell(thickness)
+                .map_err(|e| JsError::new(&format!("shell: {e}")))?,
+        })
     }
 
     // =========================================================================
@@ -2212,7 +2232,7 @@ impl Solid {
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("advanced")]
 #[wasm_bindgen]
-pub fn op_fillet(solid: &Solid, radius: f64) -> Solid {
+pub fn op_fillet(solid: &Solid, radius: f64) -> Result<Solid, JsError> {
     solid.fillet(radius)
 }
 
@@ -2221,7 +2241,7 @@ pub fn op_fillet(solid: &Solid, radius: f64) -> Solid {
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("advanced")]
 #[wasm_bindgen]
-pub fn op_chamfer(solid: &Solid, distance: f64) -> Solid {
+pub fn op_chamfer(solid: &Solid, distance: f64) -> Result<Solid, JsError> {
     solid.chamfer(distance)
 }
 
@@ -2230,7 +2250,7 @@ pub fn op_chamfer(solid: &Solid, distance: f64) -> Solid {
 /// This is a standalone wrapper for lazy loading via wasmosis.
 #[module("advanced")]
 #[wasm_bindgen]
-pub fn op_shell(solid: &Solid, thickness: f64) -> Solid {
+pub fn op_shell(solid: &Solid, thickness: f64) -> Result<Solid, JsError> {
     solid.shell(thickness)
 }
 
@@ -4922,17 +4942,17 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
 
         vcad_ir::CsgOp::Shell { child, thickness } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.shell(*thickness))
+            c.shell(*thickness)
         }
 
         vcad_ir::CsgOp::Fillet { child, radius } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.fillet(*radius))
+            c.fillet(*radius)
         }
 
         vcad_ir::CsgOp::Chamfer { child, distance } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.chamfer(*distance))
+            c.chamfer(*distance)
         }
 
         vcad_ir::CsgOp::EdgeBlend {
@@ -4952,7 +4972,10 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             }
             let (query, keys) = kernel_blend_args(edges, profile);
             Ok(Solid {
-                inner: c.inner.edge_blend(&query, &keys),
+                inner: c
+                    .inner
+                    .edge_blend(&query, &keys)
+                    .map_err(|e| JsError::new(&format!("edge blend: {e}")))?,
             })
         }
 
@@ -7281,6 +7304,69 @@ pub fn document_to_step_buffer(doc_json: &str) -> Result<Vec<u8>, JsError> {
     let refs: Vec<(&vcad_kernel::Solid, &str)> =
         named.iter().map(|(s, n)| (*s, n.as_str())).collect();
     vcad_kernel::Solid::solids_to_step_buffer(&refs).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Enumerate the B-rep faces of every visible scene root.
+///
+/// The mesh-based inspection tools (`inspect_cad`, `measure`) are
+/// tessellation-bound and topology-blind: they cannot say which face is a
+/// mounting plane, what a bore's diameter is, or where a shaft axis points.
+/// This walks the kernel B-rep instead and reports, per face, a stable
+/// identifier, surface type, area, bbox, centroid and the *analytic* surface
+/// parameters, plus per-part face groupings and coaxial-cylinder groups
+/// (the honest answer to "true outer diameter" on a part whose bounding box
+/// is inflated by a boss).
+///
+/// # Arguments
+///
+/// * `doc_json` - A JSON string representing a vcad Document
+///
+/// # Returns
+///
+/// A JSON string: `{ "parts": [{ node_id, name, brep: bool, error?, report? }],
+/// "units": "mm" }`. Mesh-only roots report `brep: false` with an `error`
+/// rather than a tessellation-derived guess.
+#[wasm_bindgen(js_name = inspectDocumentFaces)]
+pub fn inspect_document_faces(doc_json: &str) -> Result<String, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+
+    let roots = vcad_eval::evaluate_root_solids(&doc)
+        .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
+
+    let parts: Vec<serde_json::Value> = roots
+        .iter()
+        .enumerate()
+        .map(|(i, root)| {
+            let name = root
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("part_{}", i + 1));
+            match root.solid.as_ref().map(vcad_kernel::Solid::inspect_faces) {
+                Some(Ok(report)) => serde_json::json!({
+                    "node_id": root.node_id,
+                    "name": name,
+                    "brep": true,
+                    "report": report,
+                }),
+                Some(Err(e)) => serde_json::json!({
+                    "node_id": root.node_id,
+                    "name": name,
+                    "brep": false,
+                    "error": e.to_string(),
+                }),
+                None => serde_json::json!({
+                    "node_id": root.node_id,
+                    "name": name,
+                    "brep": false,
+                    "error": "this root produced no kernel solid (imported mesh chain)",
+                }),
+            }
+        })
+        .collect();
+
+    serde_json::to_string(&serde_json::json!({ "parts": parts, "units": "mm" }))
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Solve forward kinematics for an assembly document.
