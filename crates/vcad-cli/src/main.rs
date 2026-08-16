@@ -121,7 +121,7 @@ enum Commands {
 
     /// Render document to image
     Render {
-        /// Input vcad file
+        /// Input .vcad or .loon file
         input: PathBuf,
         /// Output image (PNG, JPEG)
         output: PathBuf,
@@ -147,7 +147,7 @@ enum Commands {
 
     /// Apply boolean operation
     Boolean {
-        /// Input vcad file
+        /// Input .vcad or .loon file (loon requires --output)
         file: PathBuf,
         /// Operation: union, difference, intersection
         #[arg(value_enum)]
@@ -166,7 +166,7 @@ enum Commands {
 
     /// Apply transform to part
     Transform {
-        /// Input vcad file
+        /// Input .vcad or .loon file (loon requires --output)
         file: PathBuf,
         /// Part ID or name
         part: String,
@@ -278,7 +278,7 @@ enum Commands {
 
     /// Run a physics simulation on a robot assembly (.vcad or .urdf)
     Simulate {
-        /// Input file (.vcad or .urdf). URDFs are imported in-memory.
+        /// Input file (.vcad, .loon, or .urdf). URDFs are imported in-memory.
         input: PathBuf,
         /// Number of simulation steps to run
         #[arg(long, default_value = "240")]
@@ -311,7 +311,7 @@ enum Commands {
 
     /// Slice a .vcad file for 3D printing
     Slice {
-        /// Input .vcad file
+        /// Input .vcad or .loon file
         input: PathBuf,
         /// Output file (.gcode or .3mf)
         #[arg(short, long)]
@@ -1534,17 +1534,11 @@ fn simulate_file(
             };
             vcad_kernel_urdf::read_urdf_with_options(input, &opts)?
         }
-        "vcad" | "json" => {
-            let json = std::fs::read_to_string(input)?;
-            let mut d = vcad_ir::Document::from_json(&json)?;
-            // A committed document references its meshes relative to itself.
-            if let Some(dir) = input.parent() {
-                vcad_eval::resolve_mesh_paths(&mut d, dir);
-            }
-            d
-        }
+        // `load_vcad_document` evaluates `.loon` source, auto-detects CRDT vs
+        // v1 JSON, and anchors mesh references to the document's directory.
+        "vcad" | "json" | "loon" => load_vcad_document(input)?,
         other => anyhow::bail!(
-            "simulate: unsupported input extension '{}' (expected .vcad or .urdf)",
+            "simulate: unsupported input extension '{}' (expected .vcad, .loon, or .urdf)",
             other
         ),
     };
@@ -1681,8 +1675,7 @@ fn slice_file(
     use vcad_slicer::{SliceResult, SliceSettings};
     use vcad_slicer_gcode::{GcodeSettings, PrinterProfile};
 
-    let json = std::fs::read_to_string(input)?;
-    let doc = vcad_ir::Document::from_json(&json)?;
+    let doc = load_vcad_document(input)?;
     let meshes = crate::app::evaluate_document(&doc)?;
 
     if meshes.is_empty() {
@@ -2033,9 +2026,8 @@ fn render_to_image(
 ) -> Result<()> {
     use crate::render::{Camera, GraphicsOutput, RenderBuffer};
 
-    // Load and evaluate document
-    let json = std::fs::read_to_string(input)?;
-    let doc = vcad_ir::Document::from_json(&json)?;
+    // Load and evaluate document (`.loon` source is evaluated on the way in)
+    let doc = load_vcad_document(input)?;
     let meshes = crate::app::evaluate_document(&doc)?;
 
     if meshes.is_empty() {
@@ -2158,8 +2150,15 @@ fn apply_boolean(
 ) -> Result<()> {
     use vcad_ir::{CsgOp, Node, SceneEntry};
 
-    let json = std::fs::read_to_string(file)?;
-    let mut doc = vcad_ir::Document::from_json(&json)?;
+    // `.loon` is source, not a build artifact: read it, but never write the
+    // mutated JSON back over it — require an explicit destination.
+    if is_loon(file) && output.is_none() {
+        anyhow::bail!(
+            "{} is loon source; pass --output <file.vcad> to write the result",
+            file.display()
+        );
+    }
+    let mut doc = load_vcad_document(file)?;
 
     // Find part IDs (by ID or name)
     let id_a = find_part_id(&doc, part_a)?;
@@ -2228,8 +2227,15 @@ fn apply_transform(
 ) -> Result<()> {
     use vcad_ir::{CsgOp, Node};
 
-    let json = std::fs::read_to_string(file)?;
-    let mut doc = vcad_ir::Document::from_json(&json)?;
+    // `.loon` is source, not a build artifact: read it, but never write the
+    // mutated JSON back over it — require an explicit destination.
+    if is_loon(file) && output.is_none() {
+        anyhow::bail!(
+            "{} is loon source; pass --output <file.vcad> to write the result",
+            file.display()
+        );
+    }
+    let mut doc = load_vcad_document(file)?;
 
     let part_id = find_part_id(&doc, part)?;
     let mut current_id = part_id;
