@@ -244,7 +244,7 @@ Image height in pixels.
 </Param>
 
 <Param name="--azimuth" type="f64" default="45">
-Camera azimuth angle in degrees.
+Camera azimuth angle in degrees, counter-clockwise from +X in the XY plane.
 </Param>
 
 <Param name="--elevation" type="f64" default="30">
@@ -257,6 +257,12 @@ Camera distance from subject. Auto-calculated if omitted.
 
 <Param name="--background" type="string" default="1a1a2e">
 Background color as a hex string (e.g., `ffffff`) or `transparent`.
+</Param>
+
+<Param name="--up" type="z | y" default="z">
+World up axis. `z` matches the kernel, loon semantics and the docs (grid in
+XY, Z vertical) — a model built Z-up stands up in the render. Use `y` only for
+geometry authored in a Y-up graphics frame.
 </Param>
 
 ```bash

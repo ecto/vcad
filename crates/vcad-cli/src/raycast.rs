@@ -4,17 +4,11 @@
 //! ray and intersect it with the ground plane so the status bar can
 //! show live XYZ coordinates under the cursor.
 //!
-//! Coordinate frames:
-//! - termview::Camera is Y-up internally — `up: (0, 1, 0)` is the
-//!   default and the `elevation` → `position.y` math in
-//!   `Camera::update_position` uses `sin(elev)` on the y axis.
-//! - vcad's mental model and the kernel's stored frame are Z-up per
-//!   CLAUDE.md (grid in XY, Z vertical).
-//!
-//! We raycast in termview's Y-up frame (ground plane is y=0), then swap
-//! the returned tuple to `(x, z, y)` so the status bar's labels line up
-//! with the user's Z-up mental model: mouse moving "up" the screen
-//! changes `z`, not `y`.
+//! Coordinate frames: the camera carries its own [`UpAxis`], and vcad
+//! drives termview Z-up (grid in XY, Z vertical) to match the kernel's
+//! stored frame per CLAUDE.md. The ray is intersected with the plane
+//! `up == 0` in whichever frame the camera is using, so the hit point is
+//! already world space — no axis swap.
 
 use crate::render::Camera;
 
@@ -81,22 +75,26 @@ pub fn raycast_ground_plane(
         forward[2] + right[2] * ru + cam_up[2] * vu,
     ])?;
 
-    // Ground plane: y = 0 in termview's Y-up frame.
-    if dir[1].abs() < 1e-6 {
+    // Ground plane: the coordinate along the camera's up axis is 0.
+    let axis = match camera.up_axis {
+        crate::render::UpAxis::Z => 2,
+        crate::render::UpAxis::Y => 1,
+    };
+    if dir[axis].abs() < 1e-6 {
         return None;
     }
-    let t = -eye[1] / dir[1];
+    let t = -eye[axis] / dir[axis];
     if t <= 0.0 {
         return None;
     }
-    let hit_x = eye[0] + dir[0] * t;
-    let hit_y = 0.0f32;
-    let hit_z = eye[2] + dir[2] * t;
+    let mut hit = [
+        eye[0] + dir[0] * t,
+        eye[1] + dir[1] * t,
+        eye[2] + dir[2] * t,
+    ];
+    hit[axis] = 0.0;
 
-    // Termview Y-up (x, y, z) → user Z-up (x, z, y).
-    // Mouse moving up the screen increases world Z (the user's "up"),
-    // and the ground hit always has Z = 0 in Z-up.
-    Some((hit_x as f64, hit_z as f64, hit_y as f64))
+    Some((hit[0] as f64, hit[1] as f64, hit[2] as f64))
 }
 
 // ---------------------------------------------------------------------------
@@ -135,13 +133,13 @@ mod tests {
     use super::*;
     use crate::render::{Camera, Vec3};
 
-    /// Build a camera at (0, 100, 100) looking at origin with Y up,
+    /// Build a Z-up camera at (0, -100, 100) looking at the origin,
     /// 60° fov. Mirrors termview::Camera's structure.
     fn test_camera() -> Camera {
         let mut c = Camera::default();
-        c.position = Vec3::new(0.0, 100.0, 100.0);
+        c.position = Vec3::new(0.0, -100.0, 100.0);
         c.target = Vec3::new(0.0, 0.0, 0.0);
-        c.up = Vec3::new(0.0, 1.0, 0.0);
+        c.up = Vec3::new(0.0, 0.0, 1.0);
         c.fov = 60.0;
         c
     }

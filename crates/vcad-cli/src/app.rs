@@ -1260,13 +1260,15 @@ impl App {
                 self.set_status("Top view");
             }
             "camera_front" => {
+                // Z-up: looking down +Y means the eye sits on −Y.
                 self.camera
-                    .set_orbit(0.0, 0.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
+                    .set_orbit(-90.0, 0.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
                 self.set_status("Front view");
             }
             "camera_right" => {
+                // Z-up: the eye sits on +X, looking down −X.
                 self.camera
-                    .set_orbit(90.0, 0.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
+                    .set_orbit(0.0, 0.0, 100.0, crate::render::Vec3::new(0.0, 0.0, 0.0));
                 self.set_status("Right view");
             }
             "camera_fit" => {
@@ -1560,9 +1562,11 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
         cam.target.y as f64,
         cam.target.z as f64,
     );
-    let up = vcad_kernel::vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0)
-        .try_normalize()
-        .unwrap_or(vcad_kernel::vcad_kernel_math::Vec3::y());
+    let cam_up = cam.up;
+    let up =
+        vcad_kernel::vcad_kernel_math::Vec3::new(cam_up.x as f64, cam_up.y as f64, cam_up.z as f64)
+            .try_normalize()
+            .unwrap_or(vcad_kernel::vcad_kernel_math::Vec3::z());
     let up_dir = vcad_kernel::vcad_kernel_math::Dir3::new_normalize(up);
 
     // Identity transforms for all solids

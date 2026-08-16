@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-16-render-z-up",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "fix",
+  "title": "vcad render is Z-up, matching the kernel",
+  "summary": "The CLI renderer and TUI viewport used a Y-up camera and grid, so every Z-up model rendered lying on its side; --up y opts back in.",
+  "features": ["cli", "rendering"]
+}
