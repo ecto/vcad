@@ -139,7 +139,36 @@ export function nextSessionId(): string {
 export function registerSession(doc: Document): string {
   const id = nextSessionId();
   documents.set(id, doc);
+  runDocumentEnterHooks(doc);
   return id;
+}
+
+/**
+ * Hooks run whenever a document enters this process's session cache.
+ *
+ * File-backed nodes (`step_import`) resolve through a kernel-side registry
+ * that lives in WASM memory, so it is empty for any document that came from
+ * outside this process — a save reopened later, a durably-stored session
+ * rehydrated after a restart. Re-establishing that binding here means every
+ * entry path is covered at once, rather than each loader remembering to do it.
+ */
+const documentEnterHooks: Array<(doc: Document) => void> = [];
+
+/** Register a hook to run on every document entering the session cache. */
+export function addDocumentEnterHook(hook: (doc: Document) => void): void {
+  documentEnterHooks.push(hook);
+}
+
+/** Run the entry hooks for `doc`. A throwing hook must not lose the document —
+ *  the geometry error surfaces later, at evaluation, naming the failing node. */
+export function runDocumentEnterHooks(doc: Document): void {
+  for (const hook of documentEnterHooks) {
+    try {
+      hook(doc);
+    } catch {
+      // Intentionally ignored: see above.
+    }
+  }
 }
 
 /** Get a session document by id, or throw a helpful error. Synchronous and

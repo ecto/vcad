@@ -6949,7 +6949,7 @@
   {
     "name": "import_step",
     "title": "Import STEP",
-    "description": "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
+    "description": "Import geometry from a STEP file (.step or .stp), keeping B-rep: the document gets one lazy `step_import` node per body, so analytic faces survive into booleans, fillets, and STEP export. Pass `as_mesh: true` for the old tessellated import (rendering / colliders only — mesh parts cannot be exported to STEP). Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6968,6 +6968,10 @@
         "material": {
           "type": "string",
           "description": "Material key (default: 'steel')"
+        },
+        "as_mesh": {
+          "type": "boolean",
+          "description": "Import as a baked triangle mesh instead of B-rep (default false). Mesh-only parts cannot be exported to STEP and have no analytic faces; use this only when a tessellation is what you actually want (rendering, physics colliders)."
         }
       }
     },

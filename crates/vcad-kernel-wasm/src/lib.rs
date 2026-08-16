@@ -1057,6 +1057,39 @@ impl Solid {
         }
     }
 
+    /// Build a solid from STEP contents registered under `path`.
+    ///
+    /// This is how a `step_import` node evaluates where there is no
+    /// filesystem: the caller registers the bytes with `registerStepSource`,
+    /// and the node resolves to the real B-rep body — not a tessellation — so
+    /// analytic faces survive into booleans, fillets, and STEP export.
+    ///
+    /// `solidIndex` selects the body within the file (default 0). Errors
+    /// rather than returning empty geometry, so a missing registration is
+    /// visible instead of showing up later as a part that isn't there.
+    #[wasm_bindgen(js_name = fromRegisteredStep)]
+    pub fn from_registered_step(path: &str, solid_index: Option<u32>) -> Result<Solid, JsError> {
+        let solids = vcad_eval::step_sources::solids(path)
+            .map_err(|e| JsError::new(&format!("STEP import failed for '{}': {}", path, e)))?
+            .ok_or_else(|| {
+                JsError::new(&format!(
+                    "STEP import '{}' has no registered contents — call \
+                     registerStepSource(path, bytes) first",
+                    path
+                ))
+            })?;
+        let index = solid_index.unwrap_or(0) as usize;
+        let inner = solids.get(index).cloned().ok_or_else(|| {
+            JsError::new(&format!(
+                "STEP import '{}': solid index {} out of range ({} solid(s))",
+                path,
+                index,
+                solids.len()
+            ))
+        })?;
+        Ok(Solid { inner })
+    }
+
     /// Create a box with corner at origin and dimensions (sx, sy, sz).
     #[wasm_bindgen(js_name = cube)]
     pub fn cube(sx: f64, sy: f64, sz: f64) -> Solid {
@@ -3173,6 +3206,132 @@ struct WasmStepImportResult {
     summary: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+struct WasmRegisteredSolid {
+    /// Index of this solid within the file — the value a `step_import` node
+    /// stores as `solid_index`.
+    index: usize,
+    /// B-rep face count (0 would mean the solid arrived mesh-only).
+    faces: usize,
+    /// Signed volume in mm³.
+    volume: f64,
+    /// Axis-aligned bounds: `[min, max]`.
+    bbox: [[f64; 3]; 2],
+}
+
+#[derive(serde::Serialize)]
+struct WasmRegisterStepResult {
+    /// The key the geometry was registered under — the same string a
+    /// `step_import` node must carry in its `path`.
+    path: String,
+    solids: Vec<WasmRegisteredSolid>,
+    report: Vec<WasmSolidImportReport>,
+    /// Human-readable warning summary; null when the import is clean.
+    summary: Option<String>,
+}
+
+fn to_wasm_report(report: vcad_kernel::vcad_kernel_step::StepImportReport) -> Vec<WasmSolidImportReport> {
+    report
+        .solids
+        .into_iter()
+        .map(|s| WasmSolidImportReport {
+            solid_id: s.solid_id,
+            total_faces: s.total_faces,
+            skipped_faces: s
+                .skipped_faces
+                .into_iter()
+                .map(|f| WasmSkippedFace {
+                    face_id: f.face_id,
+                    surface_id: f.surface_id,
+                    reason: f.reason,
+                })
+                .collect(),
+            notes: s.notes,
+        })
+        .collect()
+}
+
+/// Explain a failed flat STEP read, naming the assembly case specifically.
+///
+/// The flat reader only follows the product anchor one hop, so a vendor
+/// assembly — where the anchored SHAPE_REPRESENTATION reaches its bodies
+/// through SHAPE_REPRESENTATION_RELATIONSHIP — reads as "no solids". That is a
+/// very different problem from a corrupt file, and the bare error sent readers
+/// looking in the wrong place.
+fn step_read_error(data: &[u8], original: &str) -> String {
+    if let Ok(asm) = vcad_kernel::vcad_kernel_step::read_step_assembly_from_buffer(data) {
+        if !asm.parts.is_empty() {
+            return format!(
+                "{} — this file is a STEP *assembly* ({} part definitions, {} placements). \
+                 Flat import does not traverse assembly structure yet; export the \
+                 component you need as a single-body STEP, or import the assembly \
+                 through the assembly reader.",
+                original,
+                asm.parts.len(),
+                asm.instances.len()
+            );
+        }
+    }
+    original.to_string()
+}
+
+/// Register STEP file bytes under `path` so `step_import` nodes resolve.
+///
+/// The WASM kernel has no filesystem, so a `step_import` node — the B-rep
+/// preserving import form — cannot open its own file here. Registering the
+/// bytes under the exact path the node stores lets the evaluator resolve real
+/// B-rep instead of nothing, which is what keeps analytic faces alive through
+/// booleans, fillets, and STEP export.
+///
+/// Returns `{ path, solids, report, summary }`: per-solid B-rep stats (so a
+/// caller can emit one node per body and verify each is B-rep-backed) plus the
+/// skipped-face report, which is otherwise silent.
+#[module("step")]
+#[wasm_bindgen(js_name = registerStepSource)]
+pub fn register_step_source(path: &str, data: &[u8]) -> Result<JsValue, JsError> {
+    let (solids, report) = vcad_kernel::Solid::from_step_buffer_all_with_report(data)
+        .map_err(|e| JsError::new(&step_read_error(data, &e.to_string())))?;
+
+    let stats: Vec<WasmRegisteredSolid> = solids
+        .iter()
+        .enumerate()
+        .map(|(index, s)| {
+            let (min, max) = s.bounding_box();
+            WasmRegisteredSolid {
+                index,
+                faces: s.as_brep().map_or(0, |b| b.topology.faces.len()),
+                volume: s.volume(),
+                bbox: [min, max],
+            }
+        })
+        .collect();
+
+    let summary = report.summary();
+    vcad_eval::step_sources::register_parsed(path, data.to_vec(), solids);
+
+    let result = WasmRegisterStepResult {
+        path: path.to_string(),
+        solids: stats,
+        report: to_wasm_report(report),
+        summary,
+    };
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Whether STEP contents are registered under `path`.
+#[module("step")]
+#[wasm_bindgen(js_name = stepSourceRegistered)]
+pub fn step_source_registered(path: &str) -> bool {
+    vcad_eval::step_sources::is_registered(path)
+}
+
+/// Forget the STEP contents registered under `path`.
+#[module("step")]
+#[wasm_bindgen(js_name = unregisterStepSource)]
+pub fn unregister_step_source(path: &str) {
+    vcad_eval::step_sources::unregister(path);
+}
+
 /// Import solids from STEP file bytes, reporting skipped faces.
 ///
 /// Like [`import_step_buffer`], but returns `{ meshes, report, summary }`
@@ -3206,24 +3365,7 @@ pub fn import_step_buffer_with_report(data: &[u8]) -> Result<JsValue, JsError> {
     let summary = report.summary();
     let result = WasmStepImportResult {
         meshes,
-        report: report
-            .solids
-            .into_iter()
-            .map(|s| WasmSolidImportReport {
-                solid_id: s.solid_id,
-                total_faces: s.total_faces,
-                skipped_faces: s
-                    .skipped_faces
-                    .into_iter()
-                    .map(|f| WasmSkippedFace {
-                        face_id: f.face_id,
-                        surface_id: f.surface_id,
-                        reason: f.reason,
-                    })
-                    .collect(),
-                notes: s.notes,
-            })
-            .collect(),
+        report: to_wasm_report(report),
         summary,
     };
 
@@ -4930,9 +5072,29 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             }
         }
 
-        vcad_ir::CsgOp::StepImport { .. } => Err(JsError::new(
-            "STEP import not supported in VCode evaluation",
-        )),
+        // Resolvable here only when the bytes were registered (see
+        // `registerStepSource`) — there is no filesystem in wasm.
+        vcad_ir::CsgOp::StepImport { path, solid_index } => {
+            let solids = vcad_eval::step_sources::solids(path)
+                .map_err(|e| JsError::new(&format!("STEP import failed for '{}': {}", path, e)))?
+                .ok_or_else(|| {
+                    JsError::new(&format!(
+                        "STEP import '{}' has no registered contents — call \
+                         registerStepSource(path, bytes) first",
+                        path
+                    ))
+                })?;
+            let index = solid_index.unwrap_or(0) as usize;
+            let inner = solids.get(index).cloned().ok_or_else(|| {
+                JsError::new(&format!(
+                    "STEP import '{}': solid index {} out of range ({} solid(s))",
+                    path,
+                    index,
+                    solids.len()
+                ))
+            })?;
+            Ok(Solid { inner })
+        }
 
         vcad_ir::CsgOp::MeshImport { .. } => Err(JsError::new(
             "Mesh import not supported in VCode evaluation",

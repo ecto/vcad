@@ -329,7 +329,7 @@ impl<'a> UrdfWriter<'a> {
                 });
                 Ok((geometry, origin))
             }
-            CsgOp::StepImport { path } => {
+            CsgOp::StepImport { path, .. } => {
                 // Export as mesh reference
                 let geometry = Geometry {
                     box_geom: None,

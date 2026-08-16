@@ -846,7 +846,57 @@ fn evaluate_op_timed(
             })))
         }
 
-        CsgOp::StepImport { path } => Ok(Solid::from_step(path).ok()),
+        // A `StepImport` keeps the document small and the geometry B-rep:
+        // analytic faces survive into booleans, fillets, and STEP export,
+        // which a baked `ImportedMesh` cannot do.
+        //
+        // Resolution order is registry-then-filesystem. The registry is what
+        // makes this node work on wasm (MCP, browser), where there is no
+        // filesystem at all; natively it also lets a caller hand over bytes it
+        // already has. Failure is an error — see `EvalError::StepImport`.
+        CsgOp::StepImport { path, solid_index } => {
+            let index = solid_index.unwrap_or(0) as usize;
+            let step_err = |message: String| crate::EvalError::StepImport {
+                path: path.clone(),
+                message,
+            };
+
+            let registered = crate::step_sources::solids(path).map_err(step_err)?;
+
+            let solid = match registered {
+                Some(solids) => solids.get(index).cloned().ok_or_else(|| {
+                    step_err(format!(
+                        "solid index {} out of range — the file has {} solid(s)",
+                        index,
+                        solids.len()
+                    ))
+                })?,
+                None => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        return Err(step_err(
+                            "no filesystem on this platform and no contents registered for \
+                             this path — register the STEP bytes before evaluating"
+                                .to_string(),
+                        ));
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let solids =
+                            Solid::from_step_all(path).map_err(|e| step_err(e.to_string()))?;
+                        let count = solids.len();
+                        solids.into_iter().nth(index).ok_or_else(|| {
+                            step_err(format!(
+                                "solid index {} out of range — the file has {} solid(s)",
+                                index, count
+                            ))
+                        })?
+                    }
+                }
+            };
+
+            Ok(Some(solid))
+        }
 
         // On wasm there is no filesystem to open the STL from; the browser
         // flow rewrites these nodes to `ImportedMesh` before evaluation, so

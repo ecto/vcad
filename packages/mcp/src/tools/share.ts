@@ -3,6 +3,7 @@
  */
 
 import type { Document } from "@vcad/ir";
+import type { Engine } from "@vcad/engine";
 import { fromVCode, toVCode } from "@vcad/ir";
 import { gzipSync } from "node:zlib";
 import { behavior, type ToolDef } from "./tool-def.js";
@@ -96,6 +97,7 @@ function compressForUrl(compact: string): string {
 
 export function openInBrowser(
   input: unknown,
+  engine?: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const { document_id, document: docInput, name } = input as ShareInput;
 
@@ -109,7 +111,11 @@ export function openInBrowser(
   // Parse and convert to compact (smallest representation). Documents that
   // VCode can't represent yet (e.g. PCB boards) ship as raw JSON — the
   // app's parseVcadFile loader accepts both formats.
-  const doc = document_id ? getSession(document_id) : parseDocument(docInput!);
+  const live = document_id ? getSession(document_id) : parseDocument(docInput!);
+  // A `step_import` node is a reference into this server's STEP registry — the
+  // browser cannot resolve it and would show an empty part. Bake those nodes
+  // to meshes for the trip only; the session keeps its B-rep.
+  const doc = engine ? engine.bakeStepImports(live) : live;
   let payload: string;
   let format: "vcode" | "json";
   try {
@@ -161,7 +167,7 @@ export const toolDefs: ToolDef[] = [
       "Documents are compressed (gzip + base64url) for URL embedding. " +
       "Note: Very large documents may exceed URL length limits (~2KB).",
     inputSchema: openInBrowserSchema,
-    handler: (a) => openInBrowser(a),
+    handler: (a, c) => openInBrowser(a, c.engine),
     behavior: behavior({}),
   },
 ];

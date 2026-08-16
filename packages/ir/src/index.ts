@@ -129,6 +129,7 @@ export type FilletOp = Extract<CsgOp, { type: "Fillet" }>;
 export type ChamferOp = Extract<CsgOp, { type: "Chamfer" }>;
 export type Text2DOp = Extract<CsgOp, { type: "Text2D" }>;
 export type ImportedMeshOp = Extract<CsgOp, { type: "ImportedMesh" }>;
+export type StepImportOp = Extract<CsgOp, { type: "step_import" }>;
 export type SweepOp = Extract<CsgOp, { type: "Sweep" }>;
 export type LoftOp = Extract<CsgOp, { type: "Loft" }>;
 export type PcbBoardOp = Extract<CsgOp, { type: "PcbBoard" }>;

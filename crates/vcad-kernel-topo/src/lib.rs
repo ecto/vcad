@@ -379,9 +379,27 @@ impl Topology {
     }
 
     /// Get the destination vertex of a half-edge (origin of next).
+    ///
+    /// Falls back to the twin's origin when the half-edge is not in a loop.
+    /// That case is real, not hypothetical: a STEP import builds both
+    /// directions of every edge, but only the half-edges used by a face loop
+    /// get `next` wired up — so an edge on a face the reader skipped (or one
+    /// bounding a single face) has a loop-less side. Panicking there took down
+    /// STEP *export* of any imported solid; the twin's origin is the same
+    /// vertex the loop would have named.
     pub fn half_edge_dest(&self, he: HalfEdgeId) -> VertexId {
-        let next = self.half_edges[he].next.expect("half-edge has no next");
-        self.half_edges[next].origin
+        self.half_edge_dest_opt(he)
+            .expect("half-edge has neither next nor twin")
+    }
+
+    /// Destination vertex of a half-edge, or `None` when neither `next` nor a
+    /// twin resolves it.
+    pub fn half_edge_dest_opt(&self, he: HalfEdgeId) -> Option<VertexId> {
+        if let Some(next) = self.half_edges[he].next {
+            return Some(self.half_edges[next].origin);
+        }
+        let twin = self.half_edges[he].twin?;
+        Some(self.half_edges[twin].origin)
     }
 
     /// Count half-edges in a loop.

@@ -1103,6 +1103,15 @@ pub enum CsgOp {
     StepImport {
         /// Path to the STEP file (relative or absolute).
         path: String,
+        /// Which solid of the file this node refers to (0-based).
+        ///
+        /// A STEP file routinely holds several bodies; without an index only
+        /// the first is reachable, so a multi-body import would silently lose
+        /// every other body. `None` means solid 0 — the historical behavior,
+        /// so documents written before this field still evaluate the same.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        solid_index: Option<u32>,
     },
     #[tool(hidden)]
     /// Imported triangle-mesh geometry (STL).
