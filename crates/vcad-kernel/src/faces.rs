@@ -611,7 +611,9 @@ fn quantize(p: Point3) -> [i64; 3] {
 
 fn vertices(mesh: &TriangleMesh) -> impl Iterator<Item = Point3> + '_ {
     mesh.vertices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| Point3::new(c[0] as f64, c[1] as f64, c[2] as f64))
 }
 
@@ -641,7 +643,9 @@ fn triangles(mesh: &TriangleMesh) -> impl Iterator<Item = (Point3, Point3, Point
         )
     };
     mesh.indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(move |t| (vtx(t[0]), vtx(t[1]), vtx(t[2])))
 }
 
