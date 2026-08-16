@@ -50,6 +50,9 @@ pub use vcad_kernel_tolerance;
 pub use vcad_kernel_topo;
 pub use vcad_kernel_topopt;
 
+pub mod faces;
+pub use faces::{inspect_faces, FaceInfo, FaceQueryError, FaceReport};
+
 pub mod cam_verify;
 pub use cam_verify::verify_toolpaths;
 

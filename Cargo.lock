@@ -7272,6 +7272,7 @@ dependencies = [
 name = "vcad-kernel"
 version = "0.9.4"
 dependencies = [
+ "serde",
  "serde_json",
  "vcad-kernel-acoustics",
  "vcad-kernel-antenna",

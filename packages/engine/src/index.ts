@@ -382,6 +382,94 @@ export { extractEnclosureFeatures } from "./enclosure-mesh.js";
 export type { Solid, WasmAnnotationLayer } from "@vcad/kernel-wasm";
 
 /** 2D projected edge with visibility info */
+/** Analytic parameters of the surface carrying a B-rep face. */
+export type FaceSurfaceInfo =
+  | { kind: "plane"; normal: [number, number, number]; point: [number, number, number] }
+  | {
+      kind: "cylinder";
+      radius_mm: number;
+      diameter_mm: number;
+      axis: [number, number, number];
+      axis_point: [number, number, number];
+      axial_range_mm: [number, number];
+      axial_length_mm: number;
+      /** True for a shaft/boss (material inside), false for a bore. */
+      convex: boolean;
+    }
+  | {
+      kind: "cone";
+      apex: [number, number, number];
+      axis: [number, number, number];
+      half_angle_deg: number;
+    }
+  | { kind: "sphere"; center: [number, number, number]; radius_mm: number }
+  | {
+      kind: "torus";
+      center: [number, number, number];
+      axis: [number, number, number];
+      major_radius_mm: number;
+      minor_radius_mm: number;
+    }
+  | { kind: "other"; surface_type: string };
+
+/** One B-rep face. Areas/bboxes/centroids are tessellation-bound; the
+ * `surface` parameters are analytic. */
+export interface FaceInfo {
+  id: string;
+  name: string | null;
+  stable: boolean;
+  surface_type: string;
+  area_mm2: number;
+  bbox_min_mm: [number, number, number];
+  bbox_max_mm: [number, number, number];
+  centroid_mm: [number, number, number];
+  inner_loops: number;
+  surface: FaceSurfaceInfo;
+}
+
+/** Cylindrical faces sharing one axis line. */
+export interface CoaxialGroup {
+  axis: [number, number, number];
+  axis_point: [number, number, number];
+  max_radius_mm: number;
+  max_diameter_mm: number;
+  min_radius_mm: number;
+  radii_mm: number[];
+  total_area_mm2: number;
+  axial_range_mm: [number, number];
+  face_ids: string[];
+}
+
+/** Faces tallied by surface type (and radius, for cylinders/spheres). */
+export interface FaceGroup {
+  surface_type: string;
+  radius_mm?: number;
+  count: number;
+  total_area_mm2: number;
+  example_face_ids: string[];
+}
+
+/** Face-level report for one solid. */
+export interface FaceReport {
+  face_count: number;
+  named: boolean;
+  faces: FaceInfo[];
+  groups: FaceGroup[];
+  coaxial_groups: CoaxialGroup[];
+}
+
+/** {@link Engine.documentFaces} result: one entry per visible scene root. */
+export interface DocumentFaceReport {
+  units: "mm";
+  parts: Array<{
+    node_id: string;
+    name: string;
+    brep: boolean;
+    error?: string;
+    report?: FaceReport;
+  }>;
+}
+
 export interface ProjectedEdge {
   start: { x: number; y: number };
   end: { x: number; y: number };
@@ -531,6 +619,9 @@ export interface KernelModule {
   };
   /** Export a document's scene roots to a STEP AP214 buffer (BRep-preserving). */
   documentToStepBuffer?: (docJson: string) => Uint8Array;
+  /** Enumerate the B-rep faces of every visible scene root, as a JSON string.
+   * Optional: absent on kernel WASM builds older than the face-query API. */
+  inspectDocumentFaces?: (docJson: string) => string;
   /**
    * Import a URDF (Unified Robot Description Format) file. Returns a
    * JSON-encoded {@link Document} that the caller deserialises with
@@ -1171,6 +1262,7 @@ export class Engine {
       importStepBuffer: wasmModule.importStepBuffer,
       importStepBufferWithReport: (wasmModule as Record<string, unknown>).importStepBufferWithReport as KernelModule["importStepBufferWithReport"],
       documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
+      inspectDocumentFaces: (wasmModule as Record<string, unknown>).inspectDocumentFaces as KernelModule["inspectDocumentFaces"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
       urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
@@ -2210,6 +2302,27 @@ export class Engine {
       );
     }
     return this.kernel.documentToStepBuffer(JSON.stringify(doc));
+  }
+
+  /**
+   * Enumerate the B-rep faces of every visible scene root: per face a stable
+   * id, surface type, area, bbox, centroid and the *analytic* surface
+   * parameters (cylinder radius/axis, plane normal/point, …), plus per-part
+   * groupings and coaxial-cylinder groups.
+   *
+   * Unlike {@link Engine.evaluate}, this reads the kernel's topology, so
+   * radii and axes are exact rather than tessellation-bound. Mesh-only roots
+   * are reported with `brep: false` and an explanation, never a guess.
+   */
+  documentFaces(doc: Document): DocumentFaceReport {
+    if (!this.kernel.inspectDocumentFaces) {
+      throw new Error(
+        "inspectDocumentFaces is not available in this kernel build — rebuild the WASM kernel",
+      );
+    }
+    return JSON.parse(
+      this.kernel.inspectDocumentFaces(JSON.stringify(doc)),
+    ) as DocumentFaceReport;
   }
 
   /** Create a detail view (magnified region) from a projected view.
