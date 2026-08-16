@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-15-face-level-brep-queries",
+  "version": "0.9.4",
+  "date": "2026-08-15",
+  "category": "feat",
+  "title": "Face-level B-rep queries for agents",
+  "summary": "New inspect_faces and measure_outer_diameter MCP tools read the kernel's faces directly — exact bore diameters, shaft axes and mounting-face normals, instead of tessellation-bound bounding boxes.",
+  "features": ["mcp", "kernel", "inspection", "brep"],
+  "mcpTools": ["inspect_faces", "measure_outer_diameter"]
+}

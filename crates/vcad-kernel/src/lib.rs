@@ -50,6 +50,9 @@ pub use vcad_kernel_tolerance;
 pub use vcad_kernel_topo;
 pub use vcad_kernel_topopt;
 
+pub mod faces;
+pub use faces::{inspect_faces, FaceInfo, FaceQueryError, FaceReport};
+
 pub mod cam_verify;
 pub use cam_verify::verify_toolpaths;
 
@@ -150,6 +153,145 @@ impl std::fmt::Display for NamedEdgeError {
 }
 
 impl std::error::Error for NamedEdgeError {}
+
+/// Why a blend or shell operation declined to modify its input.
+///
+/// The fillet/chamfer/blend pipelines are fail-soft internally: rather
+/// than emit a cracked or inverted shell they hand back the input
+/// untouched. Historically that decision was invisible to the caller —
+/// a part could reach a fabricator with square edges where the design
+/// called for radii. [`Solid::fillet`] and friends now return this
+/// instead, so declining is impossible to miss; the `*_lenient` variants
+/// keep the old best-effort behavior for callers that genuinely want it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlendError {
+    /// The solid is mesh-backed — there is no topology to blend.
+    NotBRep,
+    /// The solid is empty.
+    EmptySolid,
+    /// The blend profile carried no keys.
+    NoKeys,
+    /// Faces carry inner boundary loops (holes left by a boolean). The
+    /// rebuild reconstructs faces from outer loops only, so running it
+    /// would silently fill the holes back in.
+    InnerLoops {
+        /// How many faces have inner loops.
+        faces: usize,
+    },
+    /// Nothing was eligible: no edge survived target selection (all
+    /// same-surface seams, or the query matched nothing).
+    NoTargetEdges,
+    /// The whole-solid pipeline refused up front, with a specific reason.
+    Refused(vcad_kernel_fillet::BlendRefusal),
+    /// Every edge that was targeted failed individually. The per-edge
+    /// reasons are in the report.
+    AllEdgesFailed(Box<BlendReport>),
+    /// Output vertices escaped the input AABB grown by 2·radius — some
+    /// blend surface diverged, which in practice means the radius does
+    /// not fit the geometry it was asked to round.
+    Diverged {
+        /// The requested radius / setback in mm.
+        radius: f64,
+    },
+    /// The rebuilt shell failed the post-flight validity gate: it is
+    /// cracked (open boundary edges) or gained volume, which a fillet or
+    /// chamfer can never legitimately do.
+    InvalidResult,
+    /// A named-edge reference could not be resolved.
+    NamedEdge(NamedEdgeError),
+    /// The shell operation could not offset the solid.
+    Shell(String),
+}
+
+impl std::fmt::Display for BlendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotBRep => write!(f, "operation needs a B-rep solid; this one is mesh-backed"),
+            Self::EmptySolid => write!(f, "operation needs a non-empty solid"),
+            Self::NoKeys => write!(f, "blend profile has no keys"),
+            Self::InnerLoops { faces } => write!(
+                f,
+                "{faces} face(s) carry inner loops (holes from a boolean); \
+                 the blend rebuild would fill them in"
+            ),
+            Self::NoTargetEdges => write!(f, "no edges were eligible for blending"),
+            Self::Refused(r) => write!(f, "{r}"),
+            Self::AllEdgesFailed(report) => write!(
+                f,
+                "all {} targeted edge(s) failed: {}",
+                report.requested,
+                report.first_reason().unwrap_or_else(|| "no reason".into())
+            ),
+            Self::Diverged { radius } => write!(
+                f,
+                "blend geometry diverged — output escapes the input bounding box grown \
+                 by 2·{radius} mm; the radius exceeds the available edge length"
+            ),
+            Self::InvalidResult => write!(
+                f,
+                "blend produced invalid geometry (cracked shell or volume gain)"
+            ),
+            Self::NamedEdge(e) => write!(f, "named edge: {e}"),
+            Self::Shell(msg) => write!(f, "shell failed: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for BlendError {}
+
+impl From<NamedEdgeError> for BlendError {
+    fn from(e: NamedEdgeError) -> Self {
+        BlendError::NamedEdge(e)
+    }
+}
+
+/// What happened to one targeted edge during a blend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeBlendOutcome {
+    /// The edge in the *input* topology.
+    pub edge: vcad_kernel_topo::EdgeId,
+    /// Endpoints of that edge, for callers that need to point at it.
+    pub endpoints: Option<(Point3, Point3)>,
+    /// `None` when the edge was blended; otherwise why it was skipped.
+    pub skipped: Option<String>,
+}
+
+/// Per-edge account of a blend, so partial success is visible rather
+/// than collapsed to one boolean.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BlendReport {
+    /// Edges the operation targeted.
+    pub requested: usize,
+    /// Edges that actually received a blend surface.
+    pub applied: usize,
+    /// Per-edge outcomes. Empty for pipelines that are all-or-nothing by
+    /// construction (the planar all-edges fillet/chamfer rebuild), where
+    /// `declined` carries the reason for the whole solid.
+    pub edges: Vec<EdgeBlendOutcome>,
+    /// Set when the operation handed back its input unchanged.
+    pub declined: Option<BlendError>,
+}
+
+impl BlendReport {
+    /// True when the operation left the solid untouched.
+    pub fn declined(&self) -> bool {
+        self.declined.is_some()
+    }
+
+    /// True when some but not all targeted edges were blended.
+    pub fn is_partial(&self) -> bool {
+        self.declined.is_none() && self.applied > 0 && self.applied < self.requested
+    }
+
+    /// Outcomes for the edges that were skipped.
+    pub fn skipped(&self) -> impl Iterator<Item = &EdgeBlendOutcome> {
+        self.edges.iter().filter(|e| e.skipped.is_some())
+    }
+
+    fn first_reason(&self) -> Option<String> {
+        self.edges.iter().find_map(|e| e.skipped.clone())
+    }
+}
 
 /// The internal representation of a solid.
 #[derive(Debug, Clone)]
@@ -443,6 +585,14 @@ impl Solid {
         }
     }
 
+    /// Which "this isn't blendable topology" error applies to this solid.
+    fn non_brep_error(&self) -> BlendError {
+        match &self.repr {
+            SolidRepr::Empty => BlendError::EmptySolid,
+            _ => BlendError::NotBRep,
+        }
+    }
+
     fn boolean(&self, other: &Solid, op: BooleanOp) -> Solid {
         match self.try_boolean(other, op) {
             Ok(s) => s,
@@ -568,26 +718,55 @@ impl Solid {
     /// trimmed inward, and each vertex becomes a triangular face.
     ///
     /// Only works on B-rep solids with planar faces (e.g., cubes, extruded
-    /// prisms). Returns the solid unchanged for mesh-only or empty solids.
-    pub fn chamfer(&self, distance: f64) -> Solid {
-        match &self.repr {
-            SolidRepr::BRep(brep) => {
-                // Same inner-loop hazard as `fillet` — see brep_has_inner_loops.
-                if brep_has_inner_loops(brep) {
-                    return self.clone();
-                }
-                let chamfered = vcad_kernel_fillet::chamfer_all_edges(brep, distance);
-                if !blend_result_is_valid(brep, &chamfered, true) {
-                    return self.clone();
-                }
-                Solid {
-                    names: None,
-                    provenance: self.provenance.clone(),
-                    repr: SolidRepr::BRep(Box::new(chamfered)),
-                    segments: self.segments,
-                }
-            }
-            _ => self.clone(),
+    /// prisms).
+    ///
+    /// Fail-closed: a mesh-only or empty solid, a body with boolean holes,
+    /// or a distance the geometry cannot host is a [`BlendError`], never a
+    /// silently unchamfered solid. Use [`Solid::chamfer_lenient`] for
+    /// best-effort behavior with a report.
+    pub fn chamfer(&self, distance: f64) -> Result<Solid, BlendError> {
+        let SolidRepr::BRep(brep) = &self.repr else {
+            return Err(self.non_brep_error());
+        };
+        // Same inner-loop hazard as `fillet` — see brep_has_inner_loops.
+        let holes = count_inner_loop_faces(brep);
+        if holes > 0 {
+            return Err(BlendError::InnerLoops { faces: holes });
+        }
+        let chamfered = vcad_kernel_fillet::chamfer_all_edges_checked(brep, distance)
+            .map_err(BlendError::Refused)?;
+        if !blend_result_is_valid(brep, &chamfered, true) {
+            return Err(BlendError::InvalidResult);
+        }
+        Ok(Solid {
+            names: None,
+            provenance: self.provenance.clone(),
+            repr: SolidRepr::BRep(Box::new(chamfered)),
+            segments: self.segments,
+        })
+    }
+
+    /// Best-effort [`Solid::chamfer`]: never fails, but the report says
+    /// whether anything actually happened and why not.
+    pub fn chamfer_lenient(&self, distance: f64) -> (Solid, BlendReport) {
+        match self.chamfer(distance) {
+            Ok(s) => (
+                s,
+                BlendReport {
+                    requested: 1,
+                    applied: 1,
+                    ..Default::default()
+                },
+            ),
+            Err(e) => (
+                self.clone(),
+                BlendReport {
+                    requested: 1,
+                    applied: 0,
+                    edges: Vec::new(),
+                    declined: Some(e),
+                },
+            ),
         }
     }
 
@@ -605,54 +784,139 @@ impl Solid {
     /// surface are skipped since they aren't real geometric edges.
     ///
     /// If the chosen fillet path would produce geometry that escapes the
-    /// input AABB expanded by 2·radius, the blend is deemed degenerate and
-    /// the input is returned unchanged — a clean sharp-edged solid is
-    /// always preferable to a fractured shell with outlying vertices.
+    /// input AABB expanded by 2·radius, the blend is deemed degenerate —
+    /// a clean sharp-edged solid is always preferable to a fractured
+    /// shell with outlying vertices.
     ///
-    /// Returns the solid unchanged for mesh-only or empty solids.
-    pub fn fillet(&self, radius: f64) -> Solid {
-        match &self.repr {
-            SolidRepr::BRep(brep) => {
-                // Faces with inner loops (holes from booleans) can't survive
-                // the rebuild — fail soft rather than fill the holes in.
-                if brep_has_inner_loops(brep) {
-                    return self.clone();
+    /// Fail-closed: every one of those declines is a [`BlendError`], not
+    /// a quietly unfilleted solid. Partial success on the curved
+    /// per-edge path is *not* an error — the returned geometry is real —
+    /// but which edges were skipped, and why, is only visible through
+    /// [`Solid::fillet_reported`]. Use [`Solid::fillet_lenient`] when an
+    /// unfilleted fallback is genuinely acceptable.
+    pub fn fillet(&self, radius: f64) -> Result<Solid, BlendError> {
+        self.fillet_reported(radius).0
+    }
+
+    /// [`Solid::fillet`] plus a per-edge account of what happened.
+    ///
+    /// The report distinguishes "nothing was touched, here's why" from
+    /// "most edges rounded, these three were skipped because …" — the
+    /// second case still returns `Ok`, since the geometry is genuine.
+    pub fn fillet_reported(&self, radius: f64) -> (Result<Solid, BlendError>, BlendReport) {
+        let mut report = BlendReport::default();
+
+        let SolidRepr::BRep(brep) = &self.repr else {
+            let e = self.non_brep_error();
+            report.declined = Some(e.clone());
+            return (Err(e), report);
+        };
+
+        // Faces with inner loops (holes from booleans) can't survive
+        // the rebuild — refuse rather than fill the holes in.
+        let holes = count_inner_loop_faces(brep);
+        if holes > 0 {
+            let e = BlendError::InnerLoops { faces: holes };
+            report.declined = Some(e.clone());
+            return (Err(e), report);
+        }
+
+        let is_planar = brep_is_all_planar(brep);
+        let filleted = if is_planar {
+            // All-or-nothing rebuild: every edge or none.
+            report.requested = brep.topology.edges.len();
+            match vcad_kernel_fillet::fillet_all_edges_checked(brep, radius) {
+                Ok(b) => {
+                    report.applied = report.requested;
+                    b
                 }
-                let is_planar = brep_is_all_planar(brep);
-                let filleted = if is_planar {
-                    vcad_kernel_fillet::fillet_all_edges(brep, radius)
-                } else {
-                    let target_edges = collect_fillet_target_edges(brep);
-                    let (result, _details) =
-                        vcad_kernel_fillet::fillet_edges_detailed(brep, &target_edges, radius);
-                    result
-                };
-                // Sanity check: the fillet output must live inside a box
-                // that's at most 2·radius larger than the input AABB. If
-                // any vertex falls outside, some blend diverged — discard
-                // the result and return the input unchanged.
-                if !fillet_aabb_is_reasonable(brep, &filleted, radius) {
-                    return self.clone();
-                }
-                // A cracked or volume-gaining result is silently-bad
-                // geometry — prefer the clean sharp-edged input. The
-                // planar all-edges pipeline is expected to produce a
-                // perfectly watertight shell; the curved per-edge path
-                // intentionally tolerates residual corner-blend gaps
-                // (arc-extrude sphere vertex blends), so it only gets the
-                // volume-sanity check.
-                if !blend_result_is_valid(brep, &filleted, is_planar) {
-                    return self.clone();
-                }
-                Solid {
-                    names: None,
-                    provenance: self.provenance.clone(),
-                    repr: SolidRepr::BRep(Box::new(filleted)),
-                    segments: self.segments,
+                Err(r) => {
+                    let e = BlendError::Refused(r);
+                    report.declined = Some(e.clone());
+                    return (Err(e), report);
                 }
             }
-            _ => self.clone(),
+        } else {
+            let target_edges = collect_fillet_target_edges(brep);
+            if target_edges.is_empty() {
+                let e = BlendError::NoTargetEdges;
+                report.declined = Some(e.clone());
+                return (Err(e), report);
+            }
+            report.requested = target_edges.len();
+            let (result, details) =
+                vcad_kernel_fillet::fillet_edges_detailed(brep, &target_edges, radius);
+            for detail in &details {
+                let edge = detail.edge_id();
+                if detail.is_success() {
+                    report.applied += 1;
+                }
+                report.edges.push(EdgeBlendOutcome {
+                    edge,
+                    endpoints: edge_endpoints(brep, edge),
+                    skipped: detail.reason(),
+                });
+            }
+            // Edges the pipeline never reported on at all (dropped before
+            // classification) still owe the caller an explanation.
+            for &edge in &target_edges {
+                if !report.edges.iter().any(|o| o.edge == edge) {
+                    report.edges.push(EdgeBlendOutcome {
+                        edge,
+                        endpoints: edge_endpoints(brep, edge),
+                        skipped: Some(
+                            "edge was dropped before blend classification (not found in the \
+                             rebuilt topology)"
+                                .into(),
+                        ),
+                    });
+                }
+            }
+            if report.applied == 0 {
+                let e = BlendError::AllEdgesFailed(Box::new(report.clone()));
+                report.declined = Some(e.clone());
+                return (Err(e), report);
+            }
+            result
+        };
+
+        // Sanity check: the fillet output must live inside a box that's at
+        // most 2·radius larger than the input AABB. If any vertex falls
+        // outside, some blend diverged.
+        if !fillet_aabb_is_reasonable(brep, &filleted, radius) {
+            let e = BlendError::Diverged { radius };
+            report.declined = Some(e.clone());
+            report.applied = 0;
+            return (Err(e), report);
         }
+        // A cracked or volume-gaining result is silently-bad geometry.
+        // The planar all-edges pipeline is expected to produce a
+        // perfectly watertight shell; the curved per-edge path
+        // intentionally tolerates residual corner-blend gaps
+        // (arc-extrude sphere vertex blends), so it only gets the
+        // volume-sanity check.
+        if !blend_result_is_valid(brep, &filleted, is_planar) {
+            report.declined = Some(BlendError::InvalidResult);
+            report.applied = 0;
+            return (Err(BlendError::InvalidResult), report);
+        }
+        (
+            Ok(Solid {
+                names: None,
+                provenance: self.provenance.clone(),
+                repr: SolidRepr::BRep(Box::new(filleted)),
+                segments: self.segments,
+            }),
+            report,
+        )
+    }
+
+    /// Best-effort [`Solid::fillet`]: on a decline the input is returned
+    /// unchanged and `report.declined` says why. This is the historical
+    /// behavior, now spelled out at the call site.
+    pub fn fillet_lenient(&self, radius: f64) -> (Solid, BlendReport) {
+        let (result, report) = self.fillet_reported(radius);
+        (result.unwrap_or_else(|_| self.clone()), report)
     }
 
     /// Per-edge blend on query-selected edges with a keyed profile.
@@ -669,22 +933,44 @@ impl Solid {
     /// planar blend surfaces with corner patches). Everything else uses
     /// the per-edge loft builder; edges that share a vertex with an
     /// already-blended edge are skipped (miter corners are a follow-up).
-    /// Returns the solid unchanged for mesh-only or empty solids
-    /// (fail-soft, mirroring `fillet`).
+    ///
+    /// Fail-closed, mirroring [`Solid::fillet`]: a decline is a
+    /// [`BlendError`], never a quietly unblended solid. See
+    /// [`Solid::edge_blend_reported`] for the per-edge account and
+    /// [`Solid::edge_blend_lenient`] for best-effort behavior.
     pub fn edge_blend(
         &self,
         query: &vcad_kernel_fillet::EdgeQuery,
         keys: &[vcad_kernel_fillet::BlendKey],
-    ) -> Solid {
+    ) -> Result<Solid, BlendError> {
+        self.edge_blend_reported(query, keys).0
+    }
+
+    /// [`Solid::edge_blend`] plus matched/blended/skipped edge counts.
+    pub fn edge_blend_reported(
+        &self,
+        query: &vcad_kernel_fillet::EdgeQuery,
+        keys: &[vcad_kernel_fillet::BlendKey],
+    ) -> (Result<Solid, BlendError>, BlendReport) {
+        let mut report = BlendReport::default();
+        let decline = |report: &mut BlendReport, e: BlendError| {
+            report.declined = Some(e.clone());
+            e
+        };
+
         let SolidRepr::BRep(brep) = &self.repr else {
-            return self.clone();
+            let e = decline(&mut report, self.non_brep_error());
+            return (Err(e), report);
         };
         if keys.is_empty() {
-            return self.clone();
+            let e = decline(&mut report, BlendError::NoKeys);
+            return (Err(e), report);
         }
-        // Same inner-loop hazard as `fillet` — see brep_has_inner_loops.
-        if brep_has_inner_loops(brep) {
-            return self.clone();
+        // Same inner-loop hazard as `fillet` — see count_inner_loop_faces.
+        let holes = count_inner_loop_faces(brep);
+        if holes > 0 {
+            let e = decline(&mut report, BlendError::InnerLoops { faces: holes });
+            return (Err(e), report);
         }
 
         // Fast path: whole-solid constant fillet/chamfer already have
@@ -693,23 +979,58 @@ impl Solid {
         if matches!(query, vcad_kernel_fillet::EdgeQuery::All) && keys.len() == 1 {
             let s = keys[0].section;
             if s.shape >= 1.0 - 1e-12 {
-                return self.fillet(s.size);
+                return self.fillet_reported(s.size);
             }
             if s.shape <= 1e-12 {
-                return self.chamfer(s.size);
+                let (solid, report) = self.chamfer_lenient(s.size);
+                let result = match &report.declined {
+                    Some(e) => Err(e.clone()),
+                    None => Ok(solid),
+                };
+                return (result, report);
             }
         }
 
-        let (blended, _outcome) = vcad_kernel_fillet::apply_edge_blend(brep, query, keys);
+        let (blended, outcome) = vcad_kernel_fillet::apply_edge_blend(brep, query, keys);
+        report.requested = outcome.matched;
+        report.applied = outcome.blended;
+        if outcome.matched == 0 {
+            let e = decline(&mut report, BlendError::NoTargetEdges);
+            return (Err(e), report);
+        }
+        if outcome.blended == 0 {
+            // `apply_edge_blend` reports counts, not per-edge reasons —
+            // synthesize the one reason it does distinguish.
+            report.edges = Vec::new();
+            let snapshot = Box::new(report.clone());
+            let e = decline(&mut report, BlendError::AllEdgesFailed(snapshot));
+            return (Err(e), report);
+        }
         if !blend_result_is_valid(brep, &blended, true) {
-            return self.clone();
+            report.applied = 0;
+            let e = decline(&mut report, BlendError::InvalidResult);
+            return (Err(e), report);
         }
-        Solid {
-            names: None,
-            provenance: self.provenance.clone(),
-            repr: SolidRepr::BRep(Box::new(blended)),
-            segments: self.segments,
-        }
+        (
+            Ok(Solid {
+                names: None,
+                provenance: self.provenance.clone(),
+                repr: SolidRepr::BRep(Box::new(blended)),
+                segments: self.segments,
+            }),
+            report,
+        )
+    }
+
+    /// Best-effort [`Solid::edge_blend`]: on a decline the input comes
+    /// back unchanged with `report.declined` set.
+    pub fn edge_blend_lenient(
+        &self,
+        query: &vcad_kernel_fillet::EdgeQuery,
+        keys: &[vcad_kernel_fillet::BlendKey],
+    ) -> (Solid, BlendReport) {
+        let (result, report) = self.edge_blend_reported(query, keys);
+        (result.unwrap_or_else(|_| self.clone()), report)
     }
 
     // =========================================================================
@@ -777,9 +1098,9 @@ impl Solid {
         face_a: &str,
         face_b: &str,
         keys: &[vcad_kernel_fillet::BlendKey],
-    ) -> Result<Solid, NamedEdgeError> {
+    ) -> Result<Solid, BlendError> {
         let (a, b) = self.resolve_named_edge(face_a, face_b)?;
-        Ok(self.edge_blend(&vcad_kernel_fillet::EdgeQuery::Endpoints { a, b }, keys))
+        self.edge_blend(&vcad_kernel_fillet::EdgeQuery::Endpoints { a, b }, keys)
     }
 
     /// Shell (hollow) the solid by offsetting all faces inward.
@@ -794,23 +1115,58 @@ impl Solid {
     ///
     /// # Returns
     ///
-    /// A new solid representing the hollow shell. Returns self unchanged
-    /// for empty solids.
-    pub fn shell(&self, thickness: f64) -> Solid {
+    /// A new solid representing the hollow shell.
+    ///
+    /// Fail-closed on an empty solid — shelling nothing is a no-op the
+    /// caller should hear about, not a silent pass-through. A B-rep whose
+    /// analytic offset fails still succeeds, via the mesh approximation,
+    /// but [`Solid::shell_reported`] flags that degradation so a caller
+    /// that needs analytic surfaces can refuse it.
+    pub fn shell(&self, thickness: f64) -> Result<Solid, BlendError> {
+        self.shell_reported(thickness).0
+    }
+
+    /// [`Solid::shell`], plus the analytic-offset error when the result
+    /// had to fall back to the coarse mesh offset.
+    ///
+    /// `Ok((solid, Some(reason)))` means "you got geometry, but it is the
+    /// tessellated approximation because the analytic offset failed with
+    /// `reason`".
+    #[allow(clippy::type_complexity)]
+    pub fn shell_reported(
+        &self,
+        thickness: f64,
+    ) -> (
+        Result<Solid, BlendError>,
+        Option<vcad_kernel_shell::ShellError>,
+    ) {
         match &self.repr {
-            SolidRepr::Empty => Solid::empty(),
-            SolidRepr::BRep(brep) => Solid {
-                names: None,
-                provenance: self.provenance.clone(),
-                repr: SolidRepr::BRep(Box::new(vcad_kernel_shell::shell_brep(brep, thickness))),
-                segments: self.segments,
-            },
-            SolidRepr::Mesh(mesh) => Solid {
-                names: None,
-                provenance: self.provenance.clone(),
-                repr: SolidRepr::Mesh(vcad_kernel_shell::shell_mesh(mesh, thickness)),
-                segments: self.segments,
-            },
+            SolidRepr::Empty => (Err(BlendError::EmptySolid), None),
+            SolidRepr::BRep(brep) => {
+                let (inner, degraded) =
+                    match vcad_kernel_shell::shell_brep_analytical(brep, thickness, &[]) {
+                        Ok(b) => (b, None),
+                        Err(e) => (vcad_kernel_shell::shell_brep(brep, thickness), Some(e)),
+                    };
+                (
+                    Ok(Solid {
+                        names: None,
+                        provenance: self.provenance.clone(),
+                        repr: SolidRepr::BRep(Box::new(inner)),
+                        segments: self.segments,
+                    }),
+                    degraded,
+                )
+            }
+            SolidRepr::Mesh(mesh) => (
+                Ok(Solid {
+                    names: None,
+                    provenance: self.provenance.clone(),
+                    repr: SolidRepr::Mesh(vcad_kernel_shell::shell_mesh(mesh, thickness)),
+                    segments: self.segments,
+                }),
+                None,
+            ),
         }
     }
 
@@ -1719,11 +2075,24 @@ impl std::ops::BitAnd for &Solid {
 /// them on such a body silently fills the holes back in. Callers use this
 /// to fail soft (return the input unchanged) instead of corrupting the
 /// model.
-fn brep_has_inner_loops(brep: &BRepSolid) -> bool {
+fn count_inner_loop_faces(brep: &BRepSolid) -> usize {
     brep.topology
         .faces
         .iter()
-        .any(|(_, f)| !f.inner_loops.is_empty())
+        .filter(|(_, f)| !f.inner_loops.is_empty())
+        .count()
+}
+
+/// Endpoint positions of an edge, for pointing a caller at the edge a
+/// blend outcome refers to.
+fn edge_endpoints(brep: &BRepSolid, edge: vcad_kernel_topo::EdgeId) -> Option<(Point3, Point3)> {
+    let e = brep.topology.edges.get(edge)?;
+    let he = brep.topology.half_edges.get(e.half_edge)?;
+    let twin = brep.topology.half_edges.get(he.twin?)?;
+    Some((
+        brep.topology.vertices.get(he.origin)?.point,
+        brep.topology.vertices.get(twin.origin)?.point,
+    ))
 }
 
 /// Guard against runaway fillet output. Both the topology vertices AND
@@ -2374,7 +2743,7 @@ mod tests {
     #[test]
     fn test_chamfer_cube() {
         let cube = Solid::cube(10.0, 10.0, 10.0);
-        let chamfered = cube.chamfer(1.0);
+        let chamfered = cube.chamfer(1.0).expect("chamfer r=1 fits a 10mm cube");
         assert!(!chamfered.is_empty());
         let vol = chamfered.volume();
         // Chamfered cube: V = L³ - 6d²(L-d) = 1000 - 54 = 946
@@ -2387,7 +2756,7 @@ mod tests {
     #[test]
     fn test_fillet_cube() {
         let cube = Solid::cube(10.0, 10.0, 10.0);
-        let filleted = cube.fillet(1.0);
+        let filleted = cube.fillet(1.0).expect("fillet r=1 fits a 10mm cube");
         assert!(!filleted.is_empty());
         // Fillet should have more triangles than original cube due to curved surfaces
         assert!(
@@ -2398,9 +2767,10 @@ mod tests {
 
     #[test]
     fn test_chamfer_empty() {
+        // Fail-closed: chamfering nothing is reported, not silently
+        // passed through as an empty solid.
         let empty = Solid::empty();
-        let chamfered = empty.chamfer(1.0);
-        assert!(chamfered.is_empty());
+        assert_eq!(empty.chamfer(1.0).unwrap_err(), BlendError::EmptySolid);
     }
 
     #[test]
@@ -2512,7 +2882,7 @@ mod tests {
     #[test]
     fn test_shell_cube() {
         let cube = Solid::cube(10.0, 10.0, 10.0);
-        let shell = cube.shell(2.0);
+        let shell = cube.shell(2.0).expect("2mm shell fits a 10mm cube");
         assert!(!shell.is_empty());
         // Analytical shell creates 12 faces (6 outer + 6 inner)
         let shell_vol = shell.volume();
@@ -2526,8 +2896,7 @@ mod tests {
     #[test]
     fn test_shell_empty() {
         let empty = Solid::empty();
-        let shell = empty.shell(1.0);
-        assert!(shell.is_empty());
+        assert_eq!(empty.shell(1.0).unwrap_err(), BlendError::EmptySolid);
     }
 
     #[test]
@@ -3244,7 +3613,19 @@ mod tests {
         // (plus a small margin from the blend arc). A diverging rolling-ball
         // would push a vertex far outside, so this catches that regression.
         let cyl = Solid::cylinder(10.0, 20.0, 32);
-        let filleted = cyl.fillet(2.0);
+        // The cap-rim torus blend on a primitive cylinder still diverges,
+        // so the kernel refuses. That refusal is the point: before it was
+        // reportable, this test passed *vacuously* on the untouched
+        // cylinder handed back by the AABB guard.
+        assert_eq!(
+            cyl.fillet(2.0).unwrap_err(),
+            BlendError::Diverged { radius: 2.0 },
+            "cylinder cap fillet must report divergence, not return the input silently"
+        );
+        let (filleted, report) = cyl.fillet_lenient(2.0);
+        assert!(matches!(report.declined, Some(BlendError::Diverged { .. })));
+        // Whatever comes back must still be bounded — a diverging blend
+        // that leaked through the guard is the regression to catch.
         let mesh = filleted.to_mesh(32);
         let n = mesh.num_vertices();
         let mut min_x = f64::MAX;
@@ -3335,7 +3716,9 @@ mod tests {
         )
         .expect("valid profile");
         let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
-        let filleted = extruded.fillet(4.0);
+        // Best-effort on purpose: this case is allowed to decline (the AABB
+        // guard), and the assertions below hold either way.
+        let (filleted, _report) = extruded.fillet_lenient(4.0);
 
         let (sphere_surfaces, sphere_faces, shell_face_count) = match &filleted.repr {
             SolidRepr::BRep(b) => {
@@ -3458,7 +3841,9 @@ mod tests {
         )
         .expect("valid profile");
         let extruded = Solid::extrude(profile, Vec3::new(0.0, 0.0, 18.0)).expect("extrude ok");
-        let filleted = extruded.fillet(4.0);
+        // Best-effort on purpose: this case is allowed to decline (the AABB
+        // guard), and the assertions below hold either way.
+        let (filleted, _report) = extruded.fillet_lenient(4.0);
         let mesh = filleted.to_mesh(32);
 
         let boundary = mesh.boundary_edges();
@@ -3646,7 +4031,7 @@ mod tests {
             "expected one analytic cylinder per arc, got {cyl_count_before}"
         );
 
-        let filleted = extruded.fillet(4.0);
+        let (filleted, _report) = extruded.fillet_lenient(4.0);
         let face_count_after = match &filleted.repr {
             SolidRepr::BRep(b) => b.topology.faces.len(),
             _ => 0,
@@ -3700,13 +4085,33 @@ mod tests {
             "difference lost the bore: vol={bored_vol:.1}"
         );
 
+        // A body with a bore has faces carrying inner loops; the blend
+        // rebuild reconstructs faces from outer loops only, so it would
+        // fill the bore back in (the buggy path produced ~23736 — a
+        // filleted *solid* plate). The kernel refuses — and says so,
+        // rather than handing back the input as if it had succeeded.
         for (name, result) in [
             ("fillet", bored.fillet(1.5)),
             ("chamfer", bored.chamfer(1.5)),
         ] {
-            let vol = result.volume();
-            // The buggy path produced ~23736 (a filleted solid plate).
-            // Correct output must stay at or below the bored volume.
+            match result {
+                Err(BlendError::InnerLoops { faces }) => assert!(
+                    faces > 0,
+                    "{name} refused for inner loops but reported none"
+                ),
+                other => panic!("{name} after difference should refuse, got {other:?}"),
+            }
+        }
+
+        // The lenient variants still hand back the untouched body — but
+        // only for a caller that asked for best-effort, and the report
+        // carries the reason.
+        for (name, (solid, report)) in [
+            ("fillet", bored.fillet_lenient(1.5)),
+            ("chamfer", bored.chamfer_lenient(1.5)),
+        ] {
+            assert!(report.declined(), "{name} report should record the decline");
+            let vol = solid.volume();
             assert!(
                 vol <= bored_vol + 1.0,
                 "{name} after difference regrew material: vol={vol:.1} > bored={bored_vol:.1}"

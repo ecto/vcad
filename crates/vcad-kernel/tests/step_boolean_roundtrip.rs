@@ -77,7 +77,9 @@ fn filleted_boolean_roundtrips_or_refuses_cleanly() {
     // A boolean against a filleted part exercises the NURBS face path.
     // Whether the kernel keeps BRep here or degrades, the exporter must
     // either produce a re-readable file or refuse — never emit garbage.
-    let plate = Solid::cube(40.0, 40.0, 10.0).fillet(2.0);
+    let plate = Solid::cube(40.0, 40.0, 10.0)
+        .fillet(2.0)
+        .expect("r=2 fits a 40mm plate");
     let bore = Solid::cylinder(5.0, 12.0, 32).translate(20.0, 20.0, -1.0);
     let cut = plate.difference(&bore);
     if cut.can_export_step() {
