@@ -1328,6 +1328,30 @@ export class Solid {
         return Solid.__wrap(ret[0]);
     }
     /**
+     * Build a solid from STEP contents registered under `path`.
+     *
+     * This is how a `step_import` node evaluates where there is no
+     * filesystem: the caller registers the bytes with `registerStepSource`,
+     * and the node resolves to the real B-rep body — not a tessellation — so
+     * analytic faces survive into booleans, fillets, and STEP export.
+     *
+     * `solidIndex` selects the body within the file (default 0). Errors
+     * rather than returning empty geometry, so a missing registration is
+     * visible instead of showing up later as a part that isn't there.
+     * @param {string} path
+     * @param {number | null} [solid_index]
+     * @returns {Solid}
+     */
+    static fromRegisteredStep(path, solid_index) {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.solid_fromRegisteredStep(ptr0, len0, isLikeNone(solid_index) ? 0x100000001 : (solid_index) >>> 0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
+    }
+    /**
      * Get the triangle mesh representation.
      *
      * Returns a JS object with `positions` (Float32Array) and `indices` (Uint32Array).
@@ -7416,6 +7440,34 @@ export function recommendPrintSettings(analysis_json, printer_profile) {
 }
 
 /**
+ * Register STEP file bytes under `path` so `step_import` nodes resolve.
+ *
+ * The WASM kernel has no filesystem, so a `step_import` node — the B-rep
+ * preserving import form — cannot open its own file here. Registering the
+ * bytes under the exact path the node stores lets the evaluator resolve real
+ * B-rep instead of nothing, which is what keeps analytic faces alive through
+ * booleans, fillets, and STEP export.
+ *
+ * Returns `{ path, solids, report, summary }`: per-solid B-rep stats (so a
+ * caller can emit one node per body and verify each is B-rep-backed) plus the
+ * skipped-face report, which is otherwise silent.
+ * @param {string} path
+ * @param {Uint8Array} data
+ * @returns {any}
+ */
+export function registerStepSource(path, data) {
+    const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.registerStepSource(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Run the render-bake pipeline on a raw triangle mesh.
  *
  * Used by the imported-mesh path (STL / STEP drops) so meshes that arrive
@@ -8473,6 +8525,18 @@ export function solveSketchSegments(segments_json, constraints_json) {
 }
 
 /**
+ * Whether STEP contents are registered under `path`.
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function stepSourceRegistered(path) {
+    const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.stepSourceRegistered(ptr0, len0);
+    return ret !== 0;
+}
+
+/**
  * Get the bounding box of rendered text.
  *
  * Returns the width and height of the text in mm without creating geometry.
@@ -8703,6 +8767,16 @@ export function transformMeshBuffers(positions, normals, transform_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Forget the STEP contents registered under `path`.
+ * @param {string} path
+ */
+export function unregisterStepSource(path) {
+    const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.unregisterStepSource(ptr0, len0);
 }
 
 /**
@@ -10586,12 +10660,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3839, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3840, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3850, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3851, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3864, function: Function { arguments: [Externref], shim_idx: 3865, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3875, function: Function { arguments: [Externref], shim_idx: 3876, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
