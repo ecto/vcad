@@ -26,11 +26,20 @@ use crate::trim::{build_vertex_faces, compute_trim_vertices, CornerBlend};
 ///
 /// Panics if the solid has no edges or if offset computation fails.
 pub fn chamfer_all_edges(brep: &BRepSolid, distance: f64) -> BRepSolid {
+    chamfer_all_edges_checked(brep, distance).unwrap_or_else(|_| brep.clone())
+}
+
+/// [`chamfer_all_edges`], but a refusal is reported instead of being
+/// disguised as an unchanged solid.
+pub fn chamfer_all_edges_checked(
+    brep: &BRepSolid,
+    distance: f64,
+) -> Result<BRepSolid, crate::BlendRefusal> {
     let faces = extract_faces(brep);
     let edges = extract_edges(brep);
 
     if edges.is_empty() {
-        return brep.clone();
+        return Err(crate::BlendRefusal::NoEdges);
     }
 
     let trims = compute_trim_vertices(&faces, distance);
@@ -149,9 +158,9 @@ pub fn chamfer_all_edges(brep: &BRepSolid, distance: f64) -> BRepSolid {
     let shell = new_topo.add_shell(all_faces, ShellType::Outer);
     let solid_id = new_topo.add_solid(shell);
 
-    BRepSolid {
+    Ok(BRepSolid {
         topology: new_topo,
         geometry: new_geom,
         solid_id,
-    }
+    })
 }

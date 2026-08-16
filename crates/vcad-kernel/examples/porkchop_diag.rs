@@ -136,7 +136,7 @@ fn main() {
     write_junctions_csv(&out_dir.join("porkchop_junctions.csv"), &trace);
 
     // Weld + boundary detection on the unified mesh.
-    let full = extruded.fillet(4.0).to_mesh(32);
+    let full = extruded.fillet_lenient(4.0).0.to_mesh(32);
     write_boundary_obj(&out_dir.join("porkchop_boundary.obj"), &full);
 
     let n_built = trace

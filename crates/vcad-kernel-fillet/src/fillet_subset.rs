@@ -316,7 +316,7 @@ pub(crate) fn fillet_plane_chain_edges(
                 radius,
             },
         );
-        results.push(FilletResult::Success);
+        results.push(FilletResult::Success { edge_id: e.edge_id });
     }
 
     // Selected edges touching each vertex (1 = cap end, 2 = miter corner).

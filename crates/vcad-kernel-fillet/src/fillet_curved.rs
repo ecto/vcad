@@ -270,7 +270,9 @@ fn fillet_edges_detailed_inner(
                         &mut new_geom,
                         &mut all_faces,
                     ) {
-                        results.push(FilletResult::Success);
+                        results.push(FilletResult::Success {
+                            edge_id: edge_info.edge_id,
+                        });
                     } else {
                         results.push(FilletResult::DegenerateGeometry {
                             edge_id: edge_info.edge_id,
@@ -302,7 +304,9 @@ fn fillet_edges_detailed_inner(
                         &mut new_geom,
                         &mut all_faces,
                     ) {
-                        results.push(FilletResult::Success);
+                        results.push(FilletResult::Success {
+                            edge_id: edge_info.edge_id,
+                        });
                     } else {
                         results.push(FilletResult::DegenerateGeometry {
                             edge_id: edge_info.edge_id,
@@ -329,7 +333,9 @@ fn fillet_edges_detailed_inner(
                         &mut new_geom,
                         &mut all_faces,
                     ) {
-                        results.push(FilletResult::Success);
+                        results.push(FilletResult::Success {
+                            edge_id: edge_info.edge_id,
+                        });
                     } else {
                         results.push(FilletResult::DegenerateGeometry {
                             edge_id: edge_info.edge_id,
@@ -366,7 +372,9 @@ fn fillet_edges_detailed_inner(
                             &mut new_geom,
                             &mut all_faces,
                         ) {
-                            results.push(FilletResult::Success);
+                            results.push(FilletResult::Success {
+                                edge_id: edge_info.edge_id,
+                            });
                         } else {
                             results.push(FilletResult::DegenerateGeometry {
                                 edge_id: edge_info.edge_id,

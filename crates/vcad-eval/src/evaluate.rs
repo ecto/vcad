@@ -458,6 +458,29 @@ fn evaluate_node_timed(
     Ok(result)
 }
 
+/// Lift a kernel blend result into the evaluator's error channel.
+///
+/// The kernel used to hand back the *unmodified* solid when a fillet,
+/// chamfer, blend, or shell couldn't be applied — a wrong answer with no
+/// signal attached. Surfacing it as an `EvalError` means a document with
+/// an inapplicable radius fails loudly instead of quietly exporting
+/// square edges.
+fn blend_result(
+    r: Option<Result<Solid, vcad_kernel::BlendError>>,
+    op: &'static str,
+    child: NodeId,
+) -> Result<Option<Solid>, EvalError> {
+    match r {
+        None => Ok(None),
+        Some(Ok(s)) => Ok(Some(s)),
+        Some(Err(e)) => Err(EvalError::Blend {
+            op,
+            child,
+            message: e.to_string(),
+        }),
+    }
+}
+
 fn evaluate_op(
     op: &CsgOp,
     nodes: &HashMap<NodeId, vcad_ir::Node>,
@@ -601,17 +624,17 @@ fn evaluate_op_timed(
 
         CsgOp::Shell { child, thickness } => {
             let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| s.shell(*thickness)))
+            blend_result(c.map(|s| s.shell(*thickness)), "shell", *child)
         }
 
         CsgOp::Fillet { child, radius } => {
             let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| s.fillet(*radius)))
+            blend_result(c.map(|s| s.fillet(*radius)), "fillet", *child)
         }
 
         CsgOp::Chamfer { child, distance } => {
             let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| s.chamfer(*distance)))
+            blend_result(c.map(|s| s.chamfer(*distance)), "chamfer", *child)
         }
 
         CsgOp::EdgeBlend {
@@ -635,7 +658,7 @@ fn evaluate_op_timed(
                 };
             }
             let (query, keys) = kernel_blend_args(edges, profile);
-            Ok(c.map(|s| s.edge_blend(&query, &keys)))
+            blend_result(c.map(|s| s.edge_blend(&query, &keys)), "edge blend", *child)
         }
 
         CsgOp::Sketch2D { .. } => {

@@ -38,25 +38,35 @@ const COPLANAR_DIHEDRAL_THRESHOLD: f64 = 170.0 * std::f64::consts::PI / 180.0;
 /// When the B-rep contains non-planar surfaces or any pair of adjacent
 /// faces meeting at a near-coplanar dihedral angle (e.g. the tessellated
 /// side wall of an extruded arc), this function returns the input
-/// unchanged rather than producing broken geometry.
+/// unchanged rather than producing broken geometry. Use
+/// [`fillet_all_edges_checked`] to learn *why* nothing happened.
 pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
+    fillet_all_edges_checked(brep, radius).unwrap_or_else(|_| brep.clone())
+}
+
+/// [`fillet_all_edges`], but a refusal is reported instead of being
+/// disguised as an unchanged solid.
+pub fn fillet_all_edges_checked(
+    brep: &BRepSolid,
+    radius: f64,
+) -> Result<BRepSolid, crate::BlendRefusal> {
+    use crate::BlendRefusal;
+
     let faces = extract_faces(brep);
     let edges = extract_edges(brep);
 
     if edges.is_empty() {
-        return brep.clone();
+        return Err(BlendRefusal::NoEdges);
     }
 
-    if !is_fillet_safe(brep, &faces, &edges) {
-        return brep.clone();
-    }
+    fillet_safety(brep, &faces, &edges)?;
 
     // Dihedral-correct tangent setbacks: r/tan(θ/2) per edge, capped at
     // 8·r. An infinite entry marks a knife edge — refuse the whole solid
     // rather than crack the shell around it.
     let setbacks = fillet_edge_setbacks(&faces, &edges, radius, 8.0 * radius);
     if setbacks.values().any(|s| !s.is_finite()) {
-        return brep.clone();
+        return Err(BlendRefusal::KnifeEdge);
     }
 
     let trims = compute_trim_vertices_with_setbacks(&faces, radius, &setbacks);
@@ -67,7 +77,7 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
     // shell is watertight but *wrong* (it can even gain volume). Refuse
     // cleanly instead.
     if !trimmed_faces_are_valid(&faces, &trims) {
-        return brep.clone();
+        return Err(BlendRefusal::RadiusTooLargeForFeature);
     }
     let face_map: HashMap<FaceId, &FaceInfo> = faces.iter().map(|f| (f.face_id, f)).collect();
 
@@ -232,11 +242,11 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
     let shell = new_topo.add_shell(all_faces, ShellType::Outer);
     let solid_id = new_topo.add_solid(shell);
 
-    BRepSolid {
+    Ok(BRepSolid {
         topology: new_topo,
         geometry: new_geom,
         solid_id,
-    }
+    })
 }
 
 /// Check that every trimmed face polygon still faces the same way as the
@@ -275,10 +285,16 @@ fn trimmed_faces_are_valid(faces: &[FaceInfo], trims: &HashMap<TrimKey, Point3>)
 /// geometry for this B-rep. Rejects inputs that would explode the trim
 /// calculation: non-planar surfaces and near-coplanar adjacent faces (the
 /// pattern produced by tessellating an extruded arc profile).
-fn is_fillet_safe(brep: &BRepSolid, faces: &[FaceInfo], edges: &[EdgeInfo]) -> bool {
+fn fillet_safety(
+    brep: &BRepSolid,
+    faces: &[FaceInfo],
+    edges: &[EdgeInfo],
+) -> Result<(), crate::BlendRefusal> {
+    use crate::BlendRefusal;
+
     for surface in &brep.geometry.surfaces {
         if surface.surface_type() != SurfaceKind::Plane {
-            return false;
+            return Err(BlendRefusal::NonPlanarFace);
         }
     }
 
@@ -301,10 +317,10 @@ fn is_fillet_safe(brep: &BRepSolid, faces: &[FaceInfo], edges: &[EdgeInfo]) -> b
         let angle = dot.acos();
         let interior = std::f64::consts::PI - angle;
         if interior > COPLANAR_DIHEDRAL_THRESHOLD {
-            return false;
+            return Err(BlendRefusal::CoplanarAdjacentFaces);
         }
     }
-    true
+    Ok(())
 }
 
 /// Build a plane-plane cylindrical blend (used by fillet_edges_detailed).
