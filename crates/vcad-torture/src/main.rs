@@ -7,6 +7,8 @@
 //! - `vcad-torture run-case <id>` — execute one case in-process and print a
 //!   JSON `CaseResult` line (internal; spawned by `run`).
 //! - `vcad-torture list [--subset pr|full]` — print case ids.
+//! - `vcad-torture fidelity [--md PATH] [--json PATH]` — run the boolean
+//!   representation-fidelity matrix and write the report.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -14,6 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use vcad_torture::fidelity::FidelityMatrix;
 use vcad_torture::{build_corpus, execute_case, Case, CaseResult, Class, Scorecard};
 
 fn main() {
@@ -22,8 +25,9 @@ fn main() {
         Some("run-case") => run_case(&args[1..]),
         Some("run") => run(&args[1..]),
         Some("list") => list(&args[1..]),
+        Some("fidelity") => fidelity(&args[1..]),
         _ => {
-            eprintln!("usage: vcad-torture <run|run-case|list> [options]");
+            eprintln!("usage: vcad-torture <run|run-case|list|fidelity> [options]");
             2
         }
     };
@@ -294,4 +298,47 @@ fn run(args: &[String]) -> i32 {
         }
     }
     i32::from(failed)
+}
+
+/// `vcad-torture fidelity` — characterise where booleans keep an analytic
+/// B-rep and where they fall back.
+fn fidelity(args: &[String]) -> i32 {
+    let matrix = FidelityMatrix::run();
+
+    let total = matrix.cells.len();
+    let degraded = matrix.degraded().count();
+    let wrong = matrix.cells.iter().filter(|c| c.wrong_geometry).count();
+
+    if let Some(path) = flag_value(args, "--md") {
+        if let Err(e) = std::fs::write(path, matrix.to_markdown()) {
+            eprintln!("fidelity: writing {path}: {e}");
+            return 1;
+        }
+        eprintln!("fidelity: wrote {path}");
+    }
+    if let Some(path) = flag_value(args, "--json") {
+        let json = match serde_json::to_string_pretty(&matrix.classes()) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("fidelity: serialising: {e}");
+                return 1;
+            }
+        };
+        if let Err(e) = std::fs::write(path, format!("{json}\n")) {
+            eprintln!("fidelity: writing {path}: {e}");
+            return 1;
+        }
+        eprintln!("fidelity: wrote {path}");
+    }
+
+    for cell in matrix.degraded() {
+        println!(
+            "{}\t{}\t{}",
+            cell.fidelity,
+            cell.reason.as_deref().unwrap_or("-"),
+            cell.id
+        );
+    }
+    println!("{degraded}/{total} cells degraded, {wrong} wrong-geometry");
+    0
 }

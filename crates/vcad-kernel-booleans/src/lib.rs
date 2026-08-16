@@ -32,7 +32,11 @@ mod unrepresentable;
 mod validate;
 
 // Re-export public API
-pub use api::{boolean_op, BooleanError, BooleanOp, BooleanResult};
+pub use api::{
+    boolean_op, boolean_op_reported, BooleanError, BooleanOp, BooleanReport, BooleanResult,
+    DegradeReason, Fidelity,
+};
+pub use mesh::is_triangle_soup;
 pub use mesh::point_in_mesh;
 pub use ssi::SsiError;
 pub use validate::{mesh_report, mesh_signed_volume, MeshReport, ValidityError};
@@ -1815,15 +1819,23 @@ mod tests {
             "Result mesh should have triangles"
         );
 
-        // Note: full torus subtraction requires torus-plane SSI to produce
-        // proper split curves. For now, verify the pipeline doesn't crash
-        // and produces a valid mesh.
+        // The torus sits wholly inside the cube, so the difference is a
+        // cube with a toroidal void: 30³ minus the torus's 2π²Rr².
+        //
+        // The old assertion was only `volume <= 27000`, which passed
+        // vacuously while `tessellate_brep` had no Torus arm and the torus
+        // meshed to nothing — the "cut" removed exactly zero. Pin the real
+        // number so that can't happen again: an un-subtracted torus reads
+        // 27000, and an outward-wound cavity reads 27000 + V_torus.
         let volume = compute_mesh_volume(&mesh);
-        assert!(volume > 0.0, "Volume should be positive");
+        let v_torus = 2.0 * std::f64::consts::PI.powi(2) * 5.0 * 2.0 * 2.0;
+        let expected = 27000.0 - v_torus;
         assert!(
-            volume <= 27000.0 + 1.0,
-            "Volume {:.1} should not exceed box",
-            volume
+            (volume - expected).abs() / expected < 0.02,
+            "Volume {volume:.1} should be 30³ minus the torus ({expected:.1}); \
+             27000 means the cut was skipped, {:.1} means the cavity is \
+             wound outward",
+            27000.0 + v_torus
         );
     }
 

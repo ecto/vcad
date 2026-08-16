@@ -34,7 +34,7 @@ pub fn empty_brep() -> BRepSolid {
 /// Chained booleans on soup operands skip the B-rep pipeline — its
 /// face-pair stages scale quadratically with face count and its splitters
 /// gain nothing from anonymous triangles.
-pub(crate) fn is_triangle_soup(solid: &BRepSolid) -> bool {
+pub fn is_triangle_soup(solid: &BRepSolid) -> bool {
     let topo = &solid.topology;
     if topo.faces.len() < 256 {
         return false;

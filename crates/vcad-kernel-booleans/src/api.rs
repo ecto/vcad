@@ -99,6 +99,178 @@ impl BooleanResult {
     }
 }
 
+/// How faithfully a boolean result is carried by analytic surfaces.
+///
+/// [`BooleanResult`] is *always* a `BRep`, so "is it a B-rep?" no longer
+/// separates a real result from a degraded one. Every mesh fallback is
+/// re-wrapped as a triangle-soup B-rep by [`crate::mesh::mesh_to_brep`] —
+/// topologically valid, but every face is a one-triangle `Plane`. Such a
+/// solid still passes `Solid::can_export_step()` and still exports STEP;
+/// it just exports thousands of facets instead of the cylinder, sphere or
+/// cone the model was authored from. This enum is the signal that
+/// distinguishes the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fidelity {
+    /// The B-rep pipeline produced the result; faces carry their analytic
+    /// surfaces (Plane, Cylinder, Cone, Sphere, Torus, NURBS).
+    Analytic,
+    /// The result came from the mesh-CSG fallback and was re-wrapped as a
+    /// triangle-soup B-rep. Analytic surfaces are lost.
+    TriangleSoup,
+}
+
+impl Fidelity {
+    /// Stable identifier, for reports and serialization.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Fidelity::Analytic => "analytic",
+            Fidelity::TriangleSoup => "triangle-soup",
+        }
+    }
+}
+
+/// Why a boolean dropped from analytic surfaces to triangle soup.
+///
+/// One variant per fallback site in [`boolean_op_reported`]. These are not
+/// errors — each one produced a *usable* solid — but each one is a point
+/// where the model stopped being a B-rep in any useful sense, and a caller
+/// restructuring a design to avoid the loss needs to know which fired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DegradeReason {
+    /// Two perpendicular, intersecting, equal-radius cylinders (the
+    /// Steinmetz cross-shaft). The cylindrical-face splitter cannot
+    /// decompose the figure-8 SSI boundary, so a specialised mesh path
+    /// emits the result directly.
+    SteinmetzCylinders,
+    /// An operand was *already* triangle soup (a prior fallback, chained).
+    /// The B-rep pipeline is skipped entirely — it gains nothing from
+    /// anonymous triangles and its face-pair stages scale quadratically.
+    /// Degradation is therefore contagious: one fallback poisons every
+    /// downstream boolean on that branch.
+    SoupOperand,
+    /// The B-rep result had negative or non-finite volume — provably wrong,
+    /// since a bounded solid always has positive volume.
+    InvertedVolume,
+    /// The arrangement was flagged unrepresentable *and* the B-rep result's
+    /// volume disagreed grossly with what the operands imply.
+    VolumeDisagreement,
+    /// A Difference removed no volume at all from a subtrahend it
+    /// demonstrably overlaps — a silently skipped cut.
+    DifferenceRemovedNothing,
+    /// A spherical face needed splitting by intersecting circles, which the
+    /// cap splitter cannot partition. The pipeline reports this from the
+    /// inside rather than returning the uncut operand.
+    SphereArrangement,
+    /// The B-rep result was sound but *cracked* (open edges) on an
+    /// arrangement already declared unrepresentable, and the mesh fallback
+    /// was watertight and agreed on volume. Analytic surfaces were traded
+    /// for watertightness.
+    WatertightnessSwap,
+}
+
+impl DegradeReason {
+    /// Stable identifier, for reports and serialization.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DegradeReason::SteinmetzCylinders => "steinmetz-cylinders",
+            DegradeReason::SoupOperand => "soup-operand",
+            DegradeReason::InvertedVolume => "inverted-volume",
+            DegradeReason::VolumeDisagreement => "volume-disagreement",
+            DegradeReason::DifferenceRemovedNothing => "difference-removed-nothing",
+            DegradeReason::SphereArrangement => "sphere-arrangement",
+            DegradeReason::WatertightnessSwap => "watertightness-swap",
+        }
+    }
+}
+
+impl std::fmt::Display for DegradeReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            DegradeReason::SteinmetzCylinders => {
+                "perpendicular equal-radius cylinders (Steinmetz) take the specialised mesh path"
+            }
+            DegradeReason::SoupOperand => {
+                "an operand was already triangle soup from an earlier fallback"
+            }
+            DegradeReason::InvertedVolume => "the B-rep result had negative or non-finite volume",
+            DegradeReason::VolumeDisagreement => {
+                "the B-rep result's volume disagreed grossly with the operands"
+            }
+            DegradeReason::DifferenceRemovedNothing => {
+                "the difference removed no volume from an overlapping subtrahend"
+            }
+            DegradeReason::SphereArrangement => {
+                "a spherical face needed splitting by intersecting circles"
+            }
+            DegradeReason::WatertightnessSwap => {
+                "the B-rep result was cracked and the watertight mesh result was taken instead"
+            }
+        };
+        write!(f, "{msg}")
+    }
+}
+
+/// What a single boolean operation did to the representation.
+///
+/// Returned alongside the result by [`boolean_op_reported`]. `boolean_op`
+/// discards it, which is why degradation used to be invisible until STEP
+/// export several operations later.
+#[derive(Debug, Clone)]
+pub struct BooleanReport {
+    /// The operation performed.
+    pub op: BooleanOp,
+    /// Whether the result kept its analytic surfaces.
+    pub fidelity: Fidelity,
+    /// Which fallback fired, when `fidelity` is `TriangleSoup`.
+    pub reason: Option<DegradeReason>,
+    /// The arrangement was flagged as one the splitters provably cannot
+    /// represent. This is a *capability declaration*, not a verdict — a
+    /// flagged arrangement often still comes out analytic and correct.
+    pub flagged_unrepresentable: bool,
+    /// Unpaired directed edges in the result's tessellation. Advisory
+    /// only: known-good results score 3 and 64, so no threshold separates
+    /// good from bad (see [`crate::mesh_report`]).
+    pub open_edges: usize,
+    /// Face count of the result B-rep. A four-digit count with
+    /// `fidelity == TriangleSoup` is the signature of soup.
+    pub faces: usize,
+}
+
+impl BooleanReport {
+    fn analytic(op: BooleanOp) -> Self {
+        Self {
+            op,
+            fidelity: Fidelity::Analytic,
+            reason: None,
+            flagged_unrepresentable: false,
+            open_edges: 0,
+            faces: 0,
+        }
+    }
+
+    fn degraded(op: BooleanOp, reason: DegradeReason) -> Self {
+        Self {
+            op,
+            fidelity: Fidelity::TriangleSoup,
+            reason: Some(reason),
+            flagged_unrepresentable: false,
+            open_edges: 0,
+            faces: 0,
+        }
+    }
+
+    /// Did this operation lose the analytic surfaces?
+    pub fn degraded_p(&self) -> bool {
+        self.fidelity == Fidelity::TriangleSoup
+    }
+
+    fn with_result(mut self, result: &BooleanResult) -> Self {
+        let BooleanResult::BRep(brep) = result;
+        self.faces = brep.topology.faces.len();
+        self
+    }
+}
+
 /// Perform a CSG boolean operation on two B-rep solids.
 ///
 /// Uses a B-rep classification pipeline:
@@ -110,6 +282,11 @@ impl BooleanResult {
 /// For non-overlapping solids, shortcuts are taken (e.g., union is
 /// just both solids combined). Falls back to mesh-based approach
 /// when the B-rep pipeline can't handle a case.
+///
+/// This wrapper discards the [`BooleanReport`]. Callers that need to know
+/// whether the result kept its analytic surfaces — anything that will
+/// export STEP, ray-trace, fillet or draft the result — should call
+/// [`boolean_op_reported`] instead.
 ///
 /// # Errors
 ///
@@ -123,6 +300,25 @@ pub fn boolean_op(
     op: BooleanOp,
     segments: u32,
 ) -> Result<BooleanResult, BooleanError> {
+    boolean_op_reported(solid_a, solid_b, op, segments).map(|(result, _)| result)
+}
+
+/// [`boolean_op`], plus a [`BooleanReport`] describing what the operation
+/// did to the representation.
+///
+/// A successful return is *not* a promise that the result is still a real
+/// B-rep: check [`BooleanReport::fidelity`]. See [`DegradeReason`] for the
+/// seven ways a result can come back as triangle soup.
+///
+/// # Errors
+///
+/// Same as [`boolean_op`].
+pub fn boolean_op_reported(
+    solid_a: &BRepSolid,
+    solid_b: &BRepSolid,
+    op: BooleanOp,
+    segments: u32,
+) -> Result<(BooleanResult, BooleanReport), BooleanError> {
     // Analytic surfaces of both operands, kept so the mesh fallback's
     // result can be re-projected onto them (defect D: BSP splitting and
     // seam healing leave quadric-face vertices up to ~0.6 mm off-surface,
@@ -135,7 +331,9 @@ pub fn boolean_op(
 
     if !aabb_a.overlaps(&aabb_b) {
         // No overlap — shortcut
-        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
+        let result = non_overlapping_boolean(solid_a, solid_b, op, segments);
+        let report = BooleanReport::analytic(op).with_result(&result);
+        return Ok((result, report));
     }
 
     // Specialized fast path: two simple cylinders with perpendicular,
@@ -147,7 +345,9 @@ pub fn boolean_op(
     // tessellated mesh whose discretization respects the Steinmetz
     // boundary directly.
     if let Some(result) = cyl_cyl::cylinder_cylinder_mesh_boolean(solid_a, solid_b, op) {
-        return Ok(result);
+        let report =
+            BooleanReport::degraded(op, DegradeReason::SteinmetzCylinders).with_result(&result);
+        return Ok((result, report));
     }
 
     // Triangle-soup operands (a prior mesh-fallback result, chained): the
@@ -158,7 +358,9 @@ pub fn boolean_op(
     if crate::mesh::is_triangle_soup(solid_a) || crate::mesh::is_triangle_soup(solid_b) {
         let mesh_a = tessellate_brep(solid_a, segments);
         let mesh_b = tessellate_brep(solid_b, segments);
-        return mesh_fallback(&mesh_a, &mesh_b, op, &quadrics);
+        let result = mesh_fallback(&mesh_a, &mesh_b, op, &quadrics)?;
+        let report = BooleanReport::degraded(op, DegradeReason::SoupOperand).with_result(&result);
+        return Ok((result, report));
     }
 
     // Flag arrangements the splitters provably cannot represent. This is a
@@ -204,13 +406,24 @@ pub fn boolean_op(
     // unchanged — which is correct whenever the cut removes nothing anyway,
     // and a silent no-op when it does not. The volume check tells the two
     // apart, so a flagged-but-correct result keeps its analytic surfaces.
-    let mut broken = inverted
-        || match &operands {
+    // Which condition condemned the B-rep result, for the report. `None`
+    // means nothing did.
+    let mut broken_reason: Option<DegradeReason> = if inverted {
+        Some(DegradeReason::InvertedVolume)
+    } else {
+        match &operands {
             Some((mesh_a, mesh_b)) if flagged || sphere_unrepresentable => {
                 crate::validate::volume_disagrees_grossly(&result_mesh, mesh_a, mesh_b, op)
+                    .then_some(if sphere_unrepresentable {
+                        DegradeReason::SphereArrangement
+                    } else {
+                        DegradeReason::VolumeDisagreement
+                    })
             }
-            _ => false,
-        };
+            _ => None,
+        }
+    };
+    let mut broken = broken_reason.is_some();
 
     // Fail closed on a Difference that removed nothing at all from a
     // subtrahend it demonstrably overlaps. This is sound where a general
@@ -226,6 +439,7 @@ pub fn boolean_op(
                      with the mesh boolean"
                 );
                 broken = true;
+                broken_reason = Some(DegradeReason::DifferenceRemovedNothing);
             }
         }
     }
@@ -246,11 +460,33 @@ pub fn boolean_op(
         }
     }
 
+    // Cheap structural stat carried on every report so a caller can see a
+    // cracked-but-analytic result without re-tessellating. One hashed pass
+    // over a mesh the pipeline already built.
+    let result_open_edges = crate::mesh_report(&result_mesh).open_edges;
+    // Analytic outcome, shared by the four "keep the B-rep" returns below.
+    let keep = |result: BooleanResult| {
+        let report = BooleanReport {
+            flagged_unrepresentable: flagged || sphere_unrepresentable,
+            open_edges: result_open_edges,
+            ..BooleanReport::analytic(op)
+        }
+        .with_result(&result);
+        (result, report)
+    };
+
     if broken {
         let Some((mesh_a, mesh_b)) = &operands else {
-            return Ok(result);
+            // Nothing to re-cut with — the condemned B-rep is all there is.
+            // Report it as flagged so the caller can see the result was not
+            // trusted even though it kept its surfaces.
+            return Ok(keep(result));
         };
-        return mesh_fallback(mesh_a, mesh_b, op, &quadrics);
+        let alt = mesh_fallback(mesh_a, mesh_b, op, &quadrics)?;
+        let reason = broken_reason.unwrap_or(DegradeReason::VolumeDisagreement);
+        let mut report = BooleanReport::degraded(op, reason).with_result(&alt);
+        report.flagged_unrepresentable = flagged || sphere_unrepresentable;
+        return Ok((alt, report));
     }
 
     // The result is trustworthy, but it may still be *cracked*: the splitters
@@ -284,16 +520,16 @@ pub fn boolean_op(
     // agrees on volume, so the analytic r45 wall was traded for coarse
     // triangle soup and the volume fell 529 mm³ short of analytic truth.
     if !(flagged || sphere_unrepresentable || inverted) {
-        return Ok(result);
+        return Ok(keep(result));
     }
     let Some((mesh_a, mesh_b)) = &operands else {
-        return Ok(result);
+        return Ok(keep(result));
     };
-    if crate::mesh_report(&result_mesh).open_edges == 0 {
-        return Ok(result);
+    if result_open_edges == 0 {
+        return Ok(keep(result));
     }
     let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics) else {
-        return Ok(result);
+        return Ok(keep(result));
     };
     let alt_mesh = alt.to_mesh(segments);
     let alt_report = crate::mesh_report(&alt_mesh);
@@ -301,9 +537,12 @@ pub fn boolean_op(
     let alt_vol = alt_report.signed_volume.abs();
     let agree = (alt_vol - brep_vol).abs() <= 0.10 * brep_vol.max(alt_vol);
     if alt_report.open_edges == 0 && alt_report.triangles > 0 && agree {
-        return Ok(alt);
+        let mut report =
+            BooleanReport::degraded(op, DegradeReason::WatertightnessSwap).with_result(&alt);
+        report.flagged_unrepresentable = true;
+        return Ok((alt, report));
     }
-    Ok(result)
+    Ok(keep(result))
 }
 
 /// Mesh-CSG fallback: combine the operand tessellations with the BSP
