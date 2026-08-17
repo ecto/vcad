@@ -7135,6 +7135,94 @@ export function op_sweep_line(profile_json, start, end, twist_angle, scale_start
 }
 
 /**
+ * Parse an Altium ASCII-exported `.PcbDoc` into a `Pcb`.
+ *
+ * # Arguments
+ * * `content` - The ASCII `.PcbDoc` text (*File ▸ Save As ▸ PCB ASCII*)
+ *
+ * # Returns
+ * JSON-serialized `Pcb` struct as JsValue, or error.
+ * @param {string} content
+ * @returns {any}
+ */
+export function parseAltiumAsciiPcb(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseAltiumAsciiPcb(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Parse a native binary Altium `.PcbDoc` (OLE compound file) into a `Pcb`.
+ *
+ * Fails closed: a primitive stream whose record layout this importer does
+ * not recognise aborts the import rather than yielding a partially-correct
+ * board. The error message names the ASCII export as the fallback.
+ *
+ * # Arguments
+ * * `bytes` - Raw `.PcbDoc` file bytes
+ *
+ * # Returns
+ * JSON-serialized `Pcb` struct as JsValue, or error.
+ * @param {Uint8Array} bytes
+ * @returns {any}
+ */
+export function parseAltiumPcbDoc(bytes) {
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseAltiumPcbDoc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Parse an Altium `.PcbLib` footprint library (binary or ASCII).
+ *
+ * # Arguments
+ * * `bytes` - Raw `.PcbLib` file bytes
+ *
+ * # Returns
+ * JSON-serialized `FootprintLib` struct as JsValue, or error.
+ * @param {Uint8Array} bytes
+ * @returns {any}
+ */
+export function parseAltiumPcbLib(bytes) {
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseAltiumPcbLib(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Parse an Eagle `.brd` (XML, Eagle 6+) board into a `Pcb`.
+ *
+ * # Arguments
+ * * `content` - The `.brd` file content as a string
+ *
+ * # Returns
+ * JSON-serialized `Pcb` struct as JsValue, or error.
+ * @param {string} content
+ * @returns {any}
+ */
+export function parseEagleBrd(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parseEagleBrd(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Parse a KiCad `.kicad_pcb` file content into a JSON-serialized `Pcb`.
  *
  * # Arguments
@@ -10660,12 +10748,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3853, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3854, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3895, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3896, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wgpu_43013bc91c6d6b83___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3878, function: Function { arguments: [Externref], shim_idx: 3879, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3920, function: Function { arguments: [Externref], shim_idx: 3921, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_fdb3f87e5dacef0f___closure__destroy___dyn_core_9b3796e30d99ddb7___ops__function__FnMut__wasm_bindgen_fdb3f87e5dacef0f___JsValue____Output_______, wasm_bindgen_fdb3f87e5dacef0f___convert__closures_____invoke___wasm_bindgen_fdb3f87e5dacef0f___JsValue_____);
             return ret;
         },
