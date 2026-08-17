@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-16-cli-sheet-metal-fold",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "fix",
+  "title": "Sheet-metal parts export from the CLI again",
+  "summary": "vcad info/export and vcad-render now fold sheet-metal chains — including jogs and bend relief — instead of reporting zero triangles, and a root that fails to evaluate says why.",
+  "features": ["sheet-metal", "cli", "loon", "export"]
+}

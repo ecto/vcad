@@ -101,3 +101,106 @@ fn the_material_reaches_the_bend_table() {
         "sanity: same nominal part, {al} vs {steel}"
     );
 }
+
+// --- hem / jog / bend relief -------------------------------------------
+//
+// These three ops used to bail out of `build_sheet_model` with a blanket
+// "not yet buildable in kernel-direct eval", so any chain containing one
+// exported zero triangles from the CLI. Same trick as the flange test: two
+// lengths of the same feature share an identical bend region, so the
+// difference between them is exactly the extra plate.
+
+#[test]
+fn a_hem_is_refused_by_name_not_by_a_bend_index() {
+    // `folded_sheet_solid` cannot build a 180° fold (its bend construction
+    // degenerates as the panel planes become parallel), so a hem chain has to
+    // fail — but it must fail saying "hem", not "bend #0: angle 3.1416".
+    let doc = eval_vcad(
+        r#"[pipe [sheet-base-flange-rect 200.0 120.0 3.0 "al-soft"]
+                 [sheet-hem "north" 8.0]]"#,
+        None,
+    )
+    .expect("loon eval");
+    let scene =
+        evaluate_document_with_sheet_metal(&doc, &EvalOptions::default()).expect("kernel eval");
+    let msg = scene
+        .failures
+        .first()
+        .map(|f| f.error.clone())
+        .expect("a hem chain must report a failure, not silently fold to nothing");
+    assert!(
+        msg.contains("hem") && msg.contains("180"),
+        "the error must name the op and what is missing, got: {msg}"
+    );
+}
+
+#[test]
+fn a_jog_adds_both_riser_and_tail() {
+    let jogged = |offset: f64, length: f64| {
+        volume(&format!(
+            r#"[pipe [sheet-base-flange-rect 200.0 120.0 3.0 "al-soft"]
+                     [sheet-jog "east" {offset} {length}]]"#
+        ))
+    };
+    let flat = volume(r#"[sheet-base-flange-rect 200.0 120.0 3.0 "al-soft"]"#);
+    assert!(jogged(10.0, 30.0) > flat, "the jog must add material");
+
+    // The east edge runs the 120 mm depth. Growing only the tail leaves both
+    // bends and the riser untouched: 20 mm more tail is 20 x 120 x 3.
+    let extra = jogged(10.0, 50.0) - jogged(10.0, 30.0);
+    let nominal = 20.0 * 120.0 * 3.0;
+    assert!(
+        (extra - nominal).abs() < 1.0,
+        "20 mm more tail added {extra} mm^3, expected {nominal}"
+    );
+
+    // Growing only the riser is the same deal on the other leg: 15 mm more
+    // riser is 15 x 120 x 3.
+    let taller = jogged(25.0, 30.0) - jogged(10.0, 30.0);
+    let nominal = 15.0 * 120.0 * 3.0;
+    assert!(
+        (taller - nominal).abs() < 1.0,
+        "15 mm more offset added {taller} mm^3, expected {nominal}"
+    );
+}
+
+#[test]
+fn bend_relief_cuts_notches_at_the_bend_ends() {
+    // A flange taken off the MIDDLE segment of a split edge leaves parent
+    // material at both bend ends — exactly what relief notches exist for.
+    // (A full-width flange needs none, so it would make this test vacuous.)
+    let base = r#"[pipe [sheet-base-flange
+                          #[0.0 0.0 60.0 0.0 140.0 0.0 200.0 0.0 200.0 120.0 0.0 120.0]
+                          #[] 3.0 "al-soft"]
+                        [sheet-edge-flange-at 0 1 40.0 90.0 0.0 "up" 0.0]]"#;
+    let without = volume(base);
+    let with = volume(&format!("[pipe {base} [sheet-bend-relief]]"));
+    assert!(with > 0.0, "a relieved chain must still fold to a solid");
+
+    // Two notches, each at the kernel's default sizing for t = 3, r = 3:
+    // max(1.5t, 1) = 4.5 wide x (r + t) = 6 deep, through 3 mm of plate.
+    let cut = without - with;
+    let nominal = 2.0 * 4.5 * 6.0 * 3.0;
+    assert!(
+        (cut - nominal).abs() < 1.0,
+        "relief removed {cut} mm^3, expected {nominal}"
+    );
+}
+
+#[test]
+fn a_chain_of_every_foldable_op_still_folds() {
+    // The end-to-end symptom: this is the chain that used to export zero
+    // triangles from `vcad info` / `vcad-render`. (Hem is excluded — see
+    // `a_hem_is_refused_by_name_not_by_a_bend_index`.)
+    let v = volume(
+        r#"[pipe [sheet-base-flange-rect 200.0 120.0 3.0 "al-soft"]
+                 [sheet-edge-flange "east" 40.0 90.0]
+                 [sheet-edge-flange "west" 40.0 90.0]
+                 [sheet-jog "north" 10.0 30.0]
+                 [sheet-bend-relief]]"#,
+    );
+    assert!(
+        v > 72_000.0,
+        "the folded chain must beat the bare plate: {v}"
+    );
+}

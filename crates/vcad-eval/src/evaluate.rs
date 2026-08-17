@@ -1112,6 +1112,9 @@ fn evaluate_op_timed(
         CsgOp::SheetMetalBaseFlangeRect { .. }
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
+        | CsgOp::SheetMetalHem { .. }
+        | CsgOp::SheetMetalJog { .. }
+        | CsgOp::SheetMetalBendRelief { .. }
             if FOLD_SHEET_METAL.with(|f| f.get()) =>
         {
             let model = build_sheet_model(op, nodes)?;
@@ -1122,8 +1125,7 @@ fn evaluate_op_timed(
             Ok(Some(solid))
         }
 
-        // Default path (web/MCP) + any not-yet-buildable op (hem/jog/relief, even
-        // under the fold flag): return empty so the engine's sheet-metal fallback
+        // Default path (web/MCP): return empty so the engine's sheet-metal fallback
         // takes over. Never a sub-solid, never an error — preserves the contract.
         CsgOp::SheetMetalBaseFlangeRect { .. }
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
@@ -1179,7 +1181,10 @@ fn build_sheet_model(
 ) -> Result<vcad_kernel::vcad_kernel_sheet::SheetMetalModel, EvalError> {
     use vcad_kernel::vcad_kernel_sheet::{
         add_edge_flange, base_flange_polygon_with_holes, base_flange_rect,
-        edge_flange::EdgeFlangeParams, BendDirection, BendTable, FlangePosition,
+        edge_flange::EdgeFlangeParams,
+        jog::{add_jog, JogParams},
+        relief::{apply_bend_relief, ReliefParams},
+        BendTable, FlangePosition,
     };
     use vcad_kernel_math::Point2;
     let sm = |e: String| EvalError::SheetMetal(e);
@@ -1242,10 +1247,7 @@ fn build_sheet_model(
                     length: *length,
                     angle: *angle,
                     radius: r,
-                    direction: match direction {
-                        vcad_ir::SheetMetalDirection::Up => BendDirection::Up,
-                        vcad_ir::SheetMetalDirection::Down => BendDirection::Down,
-                    },
+                    direction: to_bend_direction(direction),
                     position: FlangePosition::MaterialInside,
                     // Inherit the base flange's material so the bend-table
                     // K-factor matches the actual sheet (steel ≠ aluminium).
@@ -1257,11 +1259,89 @@ fn build_sheet_model(
             Ok(model)
         }
 
-        _ => Err(sm(
-            "sheet-metal chain references hem/jog/bend-relief, not yet buildable in \
-             kernel-direct eval"
-                .into(),
-        )),
+        // A hem builds fine as a model (`vcad_kernel_sheet::add_hem` is a 180°
+        // edge flange), but `folded_sheet_solid` refuses any bend past
+        // MAX_BEND_ANGLE ≈ 169.6°: its tangent construction degenerates as the
+        // two panel planes become parallel. Refuse here, where we still know
+        // which op the designer wrote, rather than surfacing a bend index from
+        // deep inside the fold.
+        CsgOp::SheetMetalHem {
+            panel_id,
+            edge_index,
+            ..
+        } => Err(sm(format!(
+            "sheet-metal hem (panel {panel_id}, edge {edge_index}): the folded-solid \
+             builder cannot construct a 180° fold — its bend construction degenerates \
+             as the two panel planes become parallel. Hems still unfold, flat-pattern \
+             and export to DXF on the sheet-metal path; only the kernel-direct fold \
+             (vcad info / export / render) is missing them"
+        ))),
+
+        CsgOp::SheetMetalJog {
+            parent,
+            panel_id,
+            edge_index,
+            offset,
+            length,
+            radius,
+            direction,
+        } => {
+            let parent_op = &nodes.get(parent).ok_or(EvalError::MissingNode(*parent))?.op;
+            let mut model = build_sheet_model(parent_op, nodes)?;
+            let bend_radius = radius.unwrap_or(model.thickness);
+            add_jog(
+                &mut model,
+                &BendTable::builtin(),
+                JogParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    offset: *offset,
+                    length: *length,
+                    bend_radius,
+                    direction: to_bend_direction(direction),
+                },
+            )
+            .map_err(|e| sm(e.to_string()))?;
+            Ok(model)
+        }
+
+        CsgOp::SheetMetalBendRelief {
+            parent,
+            width,
+            depth,
+        } => {
+            let parent_op = &nodes.get(parent).ok_or(EvalError::MissingNode(*parent))?.op;
+            let mut model = build_sheet_model(parent_op, nodes)?;
+            // `None` fields fall back to the kernel's formula defaults
+            // (`max(1.5·t, 1)` wide, `R + t` deep) — the same ones the DFM
+            // rule and the web path use.
+            apply_bend_relief(
+                &mut model,
+                &ReliefParams {
+                    width_mm: *width,
+                    depth_mm: *depth,
+                    die_width_mm: None,
+                },
+            )
+            .map_err(|e| sm(e.to_string()))?;
+            Ok(model)
+        }
+
+        _ => Err(sm(format!(
+            "sheet-metal chain references {}, which is not a sheet-metal operation",
+            op_name(op)
+        ))),
+    }
+}
+
+/// Map the IR's fold direction onto the kernel's.
+fn to_bend_direction(
+    d: &vcad_ir::SheetMetalDirection,
+) -> vcad_kernel::vcad_kernel_sheet::BendDirection {
+    use vcad_kernel::vcad_kernel_sheet::BendDirection;
+    match d {
+        vcad_ir::SheetMetalDirection::Up => BendDirection::Up,
+        vcad_ir::SheetMetalDirection::Down => BendDirection::Down,
     }
 }
 
