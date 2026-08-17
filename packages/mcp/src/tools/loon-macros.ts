@@ -60,6 +60,10 @@ const RESERVED = new Set([
   "sweep-line", "sweep-helix", "loft", "loft-closed", "linear-pattern",
   "circular-pattern", "sketch", "line", "arc", "root", "pipe", "let",
   "fn", "type", "assembly", "part", "instance",
+  "cylinder-n", "sphere-n", "cone-n", "torus-n",
+  "import-step", "import-step-body", "import-mesh", "import-mesh-scaled",
+  "sheet-base-flange-rect", "sheet-base-flange", "sheet-edge-flange",
+  "sheet-jog", "sheet-hem", "sheet-bend-relief",
 ]);
 
 /** Process-warm registry. Hosted instances keep this for their lifetime;

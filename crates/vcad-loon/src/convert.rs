@@ -8,7 +8,17 @@ use crate::fastener;
 
 /// Walk a loon `Value::Adt` tree and produce a vcad-ir `Document`.
 pub fn value_to_document(value: &Value) -> Result<Document, String> {
-    let mut ctx = ConvertCtx::new();
+    value_to_document_in(value, None)
+}
+
+/// As [`value_to_document`], resolving relative import paths (`import-step`,
+/// `import-mesh`) against `base_dir` — normally the directory of the `.loon`
+/// file being evaluated, so a model and its vendor STEPs travel together.
+pub fn value_to_document_in(
+    value: &Value,
+    base_dir: Option<&std::path::Path>,
+) -> Result<Document, String> {
+    let mut ctx = ConvertCtx::new(base_dir);
 
     match value {
         // Single solid
@@ -557,19 +567,64 @@ fn is_solid_tag(tag: &str) -> bool {
             | "BoltCircle"
             | "ClearanceHole"
             | "TappedHole"
+            | "CylinderN"
+            | "SphereN"
+            | "ConeN"
+            | "TorusN"
+            | "MeshImport"
+            | "StepImport"
+            | "SheetBaseFlangeRect"
+            | "SheetBaseFlangePolygon"
+            | "SheetEdgeFlange"
+            | "SheetJog"
+            | "SheetHem"
+            | "SheetBendRelief"
     )
+}
+
+/// What a converted sheet-metal node is, from the point of view of the ops
+/// that reference it. Only the rectangular base flange has named edges, and
+/// only on its own panel — everywhere else an edge is an index, because the
+/// outline is not known until the chain is evaluated.
+#[derive(Debug, Clone, Copy)]
+struct SheetChain {
+    /// The chain's root is a `SheetBaseFlangeRect`, so panel 0's edges are
+    /// south/east/north/west = 0/1/2/3.
+    rect_root: bool,
+}
+
+/// Map a named edge of a rectangular base flange to its outline index.
+///
+/// `base_flange_rect` emits the outline `(0,0) → (w,0) → (w,d) → (0,d)`, so
+/// edge 0 runs along -Y and the rest follow CCW.
+fn rect_edge_index(name: &str) -> Option<usize> {
+    match name.to_ascii_lowercase().as_str() {
+        "south" | "front" | "-y" => Some(0),
+        "east" | "right" | "+x" => Some(1),
+        "north" | "back" | "+y" => Some(2),
+        "west" | "left" | "-x" => Some(3),
+        _ => None,
+    }
 }
 
 struct ConvertCtx {
     doc: Document,
     next_id: NodeId,
+    /// Directory to resolve relative import paths against — the directory of
+    /// the `.loon` file being evaluated, when there is one.
+    base_dir: Option<std::path::PathBuf>,
+    /// Sheet-metal nodes emitted so far. Doubles as the check that a sheet op
+    /// was actually handed a sheet chain and not a solid.
+    sheet_chains: HashMap<NodeId, SheetChain>,
 }
 
 impl ConvertCtx {
-    fn new() -> Self {
+    fn new(base_dir: Option<&std::path::Path>) -> Self {
         Self {
             doc: Document::default(),
             next_id: 0,
+            base_dir: base_dir.map(|p| p.to_path_buf()),
+            sheet_chains: HashMap::new(),
         }
     }
 
@@ -627,6 +682,37 @@ impl ConvertCtx {
         match v {
             Value::Vec(items) => items.iter().map(|i| self.str_val(i)).collect(),
             _ => Err(format!("expected a list of strings, got {v}")),
+        }
+    }
+
+    /// A pinned segment count. `0` is the kernel's "auto" and is reachable
+    /// through the plain `[cylinder ...]` forms, so asking for it here is a
+    /// mistake; so is anything under 3, which cannot close a face loop.
+    fn segments_val(&self, tag: &str, v: &Value) -> Result<u32, String> {
+        let n = self.u32_val(v)?;
+        if n < 3 {
+            return Err(format!(
+                "{tag}: segments must be at least 3, got {n} \
+                 (drop the -n form to let the kernel choose)"
+            ));
+        }
+        Ok(n)
+    }
+
+    /// Resolve an import path against the source file's directory, so a model
+    /// can name its vendor geometry relative to itself.
+    fn import_path(&self, tag: &str, v: &Value) -> Result<String, String> {
+        let raw = self.str_val(v)?;
+        if raw.trim().is_empty() {
+            return Err(format!("{tag}: path must not be empty"));
+        }
+        let path = std::path::Path::new(&raw);
+        if path.is_absolute() {
+            return Ok(raw);
+        }
+        match &self.base_dir {
+            Some(dir) => Ok(dir.join(path).to_string_lossy().into_owned()),
+            None => Ok(raw),
         }
     }
 
@@ -880,6 +966,339 @@ impl ConvertCtx {
         }))
     }
 
+    // -------------------------------------------------------------------
+    // Sheet metal
+    //
+    // These build a bend graph, not a CSG tree: the engine detects a
+    // sheet-metal root and routes the whole chain to the sheet kernel,
+    // which returns a body *and* an exact flat pattern. That is the whole
+    // point of authoring them natively — the alternative is unioned plates
+    // whose bends have to be inferred back out of the solid afterwards.
+    // -------------------------------------------------------------------
+
+    fn convert_sheet_metal(&mut self, tag: &str, fields: &[Value]) -> Result<NodeId, String> {
+        let (op, chain) = match tag {
+            "SheetBaseFlangeRect" => {
+                assert_fields(tag, fields, 6)?;
+                let width = self.f64_val(&fields[0])?;
+                let depth = self.f64_val(&fields[1])?;
+                let thickness = self.f64_val(&fields[2])?;
+                self.check_positive(tag, "width", width)?;
+                self.check_positive(tag, "depth", depth)?;
+                self.check_positive(tag, "thickness", thickness)?;
+                (
+                    CsgOp::SheetMetalBaseFlangeRect {
+                        width,
+                        depth,
+                        thickness,
+                        material: self.str_val(&fields[3])?,
+                        shop_profile: self.opt_str(&fields[4])?,
+                        engravings: self.engravings(&fields[5])?,
+                    },
+                    SheetChain { rect_root: true },
+                )
+            }
+            "SheetBaseFlangePolygon" => {
+                assert_fields(tag, fields, 6)?;
+                let outline = self.point_loop(tag, "outline", &fields[0])?;
+                let holes = match &fields[1] {
+                    Value::Vec(items) => items
+                        .iter()
+                        .map(|h| self.point_loop(tag, "hole", h))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    other => return Err(format!("{tag}: expected a list of holes, got {other}")),
+                };
+                let thickness = self.f64_val(&fields[2])?;
+                self.check_positive(tag, "thickness", thickness)?;
+                (
+                    CsgOp::SheetMetalBaseFlangePolygon {
+                        outline,
+                        holes,
+                        thickness,
+                        material: self.str_val(&fields[3])?,
+                        shop_profile: self.opt_str(&fields[4])?,
+                        engravings: self.engravings(&fields[5])?,
+                    },
+                    SheetChain { rect_root: false },
+                )
+            }
+            "SheetEdgeFlange" => {
+                assert_fields(tag, fields, 8)?;
+                let (parent, chain) = self.sheet_parent(tag, &fields[0])?;
+                let panel_id = self.usize_val(&fields[1])?;
+                let length = self.f64_val(&fields[3])?;
+                let angle_deg = self.f64_val(&fields[4])?;
+                self.check_positive(tag, "length", length)?;
+                if angle_deg <= 0.0 || angle_deg > 180.0 {
+                    return Err(format!(
+                        "{tag}: angle must be in (0, 180] degrees, got {angle_deg}"
+                    ));
+                }
+                (
+                    CsgOp::SheetMetalEdgeFlange {
+                        parent,
+                        panel_id,
+                        edge_index: self.edge_index(tag, &fields[2], panel_id, chain)?,
+                        length,
+                        angle: angle_deg.to_radians(),
+                        radius: self.opt_positive(tag, "radius", &fields[5])?,
+                        direction: self.direction(tag, &fields[6])?,
+                        manual_k: self.opt_positive(tag, "k", &fields[7])?,
+                    },
+                    chain,
+                )
+            }
+            "SheetJog" => {
+                assert_fields(tag, fields, 7)?;
+                let (parent, chain) = self.sheet_parent(tag, &fields[0])?;
+                let panel_id = self.usize_val(&fields[1])?;
+                let offset = self.f64_val(&fields[3])?;
+                let length = self.f64_val(&fields[4])?;
+                self.check_positive(tag, "offset", offset)?;
+                self.check_positive(tag, "length", length)?;
+                (
+                    CsgOp::SheetMetalJog {
+                        parent,
+                        panel_id,
+                        edge_index: self.edge_index(tag, &fields[2], panel_id, chain)?,
+                        offset,
+                        length,
+                        radius: self.opt_positive(tag, "radius", &fields[5])?,
+                        direction: self.direction(tag, &fields[6])?,
+                    },
+                    chain,
+                )
+            }
+            "SheetHem" => {
+                assert_fields(tag, fields, 7)?;
+                let (parent, chain) = self.sheet_parent(tag, &fields[0])?;
+                let panel_id = self.usize_val(&fields[1])?;
+                let kind = self.hem_kind(tag, &fields[3])?;
+                let length = self.f64_val(&fields[4])?;
+                let gap = self.f64_val(&fields[5])?;
+                self.check_positive(tag, "length", length)?;
+                if kind == SheetMetalHemKind::Open && gap <= 0.0 {
+                    return Err(format!(
+                        "{tag}: an open hem needs a positive gap, got {gap}"
+                    ));
+                }
+                (
+                    CsgOp::SheetMetalHem {
+                        parent,
+                        panel_id,
+                        edge_index: self.edge_index(tag, &fields[2], panel_id, chain)?,
+                        kind,
+                        length,
+                        gap,
+                        direction: self.direction(tag, &fields[6])?,
+                    },
+                    chain,
+                )
+            }
+            "SheetBendRelief" => {
+                assert_fields(tag, fields, 3)?;
+                let (parent, chain) = self.sheet_parent(tag, &fields[0])?;
+                (
+                    CsgOp::SheetMetalBendRelief {
+                        parent,
+                        width: self.opt_positive(tag, "width", &fields[1])?,
+                        depth: self.opt_positive(tag, "depth", &fields[2])?,
+                    },
+                    chain,
+                )
+            }
+            _ => return Err(format!("unknown sheet-metal variant: {tag}")),
+        };
+
+        let id = self.insert_node(op);
+        self.sheet_chains.insert(id, chain);
+        Ok(id)
+    }
+
+    /// Convert a sheet op's parent, refusing anything that isn't a sheet
+    /// chain. A solid here would otherwise reach the engine as a sheet
+    /// parent and fail deep in the kernel with no mention of the loon form
+    /// that produced it.
+    fn sheet_parent(&mut self, tag: &str, value: &Value) -> Result<(NodeId, SheetChain), String> {
+        let parent = self.convert_solid(value)?;
+        match self.sheet_chains.get(&parent).copied() {
+            Some(chain) => Ok((parent, chain)),
+            None => Err(format!(
+                "{tag}: expected a sheet-metal chain, got a solid — a sheet chain \
+                 must start at [sheet-base-flange-rect ...] or [sheet-base-flange ...]"
+            )),
+        }
+    }
+
+    /// An outline edge: an index, or a compass name on a rectangular base
+    /// flange's own panel (the only place the outline is known here).
+    fn edge_index(
+        &self,
+        tag: &str,
+        value: &Value,
+        panel_id: usize,
+        chain: SheetChain,
+    ) -> Result<usize, String> {
+        match value {
+            Value::Str(name) => {
+                let Some(index) = rect_edge_index(name) else {
+                    return Err(format!(
+                        "{tag}: unknown edge name {name:?} — expected \
+                         \"south\" \"east\" \"north\" \"west\", or an edge index"
+                    ));
+                };
+                if !chain.rect_root || panel_id != 0 {
+                    return Err(format!(
+                        "{tag}: edge name {name:?} is only defined on panel 0 of a \
+                         rectangular base flange — use a numeric edge index here"
+                    ));
+                }
+                Ok(index)
+            }
+            _ => self.usize_val(value),
+        }
+    }
+
+    fn direction(&self, tag: &str, value: &Value) -> Result<SheetMetalDirection, String> {
+        match self.str_val(value)?.to_ascii_lowercase().as_str() {
+            "up" => Ok(SheetMetalDirection::Up),
+            "down" => Ok(SheetMetalDirection::Down),
+            other => Err(format!(
+                "{tag}: direction must be \"up\" or \"down\", got {other:?}"
+            )),
+        }
+    }
+
+    fn hem_kind(&self, tag: &str, value: &Value) -> Result<SheetMetalHemKind, String> {
+        match self.str_val(value)?.to_ascii_lowercase().as_str() {
+            "closed" => Ok(SheetMetalHemKind::Closed),
+            "open" => Ok(SheetMetalHemKind::Open),
+            other => Err(format!(
+                "{tag}: hem kind must be \"closed\" or \"open\", got {other:?}"
+            )),
+        }
+    }
+
+    fn usize_val(&self, v: &Value) -> Result<usize, String> {
+        match v {
+            Value::Int(i) if *i >= 0 => Ok(*i as usize),
+            Value::Float(f) if *f >= 0.0 && f.fract() == 0.0 => Ok(*f as usize),
+            _ => Err(format!("expected a non-negative integer, got {v}")),
+        }
+    }
+
+    /// An optional string field: empty means "not set".
+    fn opt_str(&self, v: &Value) -> Result<Option<String>, String> {
+        let s = self.str_val(v)?;
+        Ok((!s.trim().is_empty()).then_some(s))
+    }
+
+    /// An optional dimension: `0.0` means "use the default" (material
+    /// thickness, the shop profile's fixed radius, the bend table). Negative
+    /// is always a mistake.
+    fn opt_positive(&self, tag: &str, what: &str, v: &Value) -> Result<Option<f64>, String> {
+        let x = self.f64_val(v)?;
+        if x < 0.0 {
+            return Err(format!("{tag}: {what} must not be negative, got {x}"));
+        }
+        Ok((x > 0.0).then_some(x))
+    }
+
+    fn check_positive(&self, tag: &str, what: &str, x: f64) -> Result<(), String> {
+        if x <= 0.0 || x.is_nan() {
+            return Err(format!("{tag}: {what} must be positive, got {x}"));
+        }
+        Ok(())
+    }
+
+    /// A closed loop given as a flat `#[x0 y0 x1 y1 ...]`.
+    fn point_loop(&self, tag: &str, what: &str, v: &Value) -> Result<Vec<Vec2>, String> {
+        let items = match v {
+            Value::Vec(items) => items,
+            other => return Err(format!("{tag}: expected a {what} point list, got {other}")),
+        };
+        if items.len() % 2 != 0 {
+            return Err(format!(
+                "{tag}: {what} needs an even number of coordinates (x y x y ...), got {}",
+                items.len()
+            ));
+        }
+        if items.len() < 6 {
+            return Err(format!(
+                "{tag}: {what} needs at least 3 points, got {}",
+                items.len() / 2
+            ));
+        }
+        (0..items.len() / 2)
+            .map(|i| {
+                Ok(Vec2::new(
+                    self.f64_val(&items[2 * i])?,
+                    self.f64_val(&items[2 * i + 1])?,
+                ))
+            })
+            .collect()
+    }
+
+    fn engravings(&self, v: &Value) -> Result<Option<Vec<SheetMetalEngraving>>, String> {
+        let items = match v {
+            Value::Vec(items) => items,
+            other => return Err(format!("expected a list of engravings, got {other}")),
+        };
+        if items.is_empty() {
+            return Ok(None);
+        }
+        let marks = items
+            .iter()
+            .map(|item| self.engraving(item))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(marks))
+    }
+
+    fn engraving(&self, v: &Value) -> Result<SheetMetalEngraving, String> {
+        let (tag, fields) = match v {
+            Value::Adt(tag, fields) => (tag.as_str(), fields.as_slice()),
+            other => return Err(format!("expected an engraving, got {other}")),
+        };
+        match tag {
+            "EngravePolyline" => {
+                assert_fields(tag, fields, 1)?;
+                let items = match &fields[0] {
+                    Value::Vec(items) => items,
+                    other => return Err(format!("{tag}: expected a point list, got {other}")),
+                };
+                if items.len() % 2 != 0 || items.len() < 4 {
+                    return Err(format!(
+                        "{tag}: needs at least 2 points as x y x y ..., got {} coordinates",
+                        items.len()
+                    ));
+                }
+                Ok(SheetMetalEngraving::Polyline {
+                    points: (0..items.len() / 2)
+                        .map(|i| {
+                            Ok(Vec2::new(
+                                self.f64_val(&items[2 * i])?,
+                                self.f64_val(&items[2 * i + 1])?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                })
+            }
+            "EngraveText" => {
+                assert_fields(tag, fields, 5)?;
+                let height = self.f64_val(&fields[3])?;
+                self.check_positive(tag, "height", height)?;
+                Ok(SheetMetalEngraving::Text {
+                    text: self.str_val(&fields[0])?,
+                    x: self.f64_val(&fields[1])?,
+                    y: self.f64_val(&fields[2])?,
+                    height,
+                    angle: self.f64_val(&fields[4])?.to_radians(),
+                })
+            }
+            _ => Err(format!("unknown engraving variant: {tag}")),
+        }
+    }
+
     fn convert_solid(&mut self, value: &Value) -> Result<NodeId, String> {
         let (tag, fields) = match value {
             Value::Adt(tag, fields) => (tag.as_str(), fields.as_slice()),
@@ -901,6 +1320,12 @@ impl ConvertCtx {
             }
             "BoltCircle" => return self.convert_bolt_circle(fields),
             "ClearanceHole" | "TappedHole" => return self.convert_hole(tag, fields),
+            "SheetBaseFlangeRect"
+            | "SheetBaseFlangePolygon"
+            | "SheetEdgeFlange"
+            | "SheetJog"
+            | "SheetHem"
+            | "SheetBendRelief" => return self.convert_sheet_metal(tag, fields),
             _ => {}
         }
 
@@ -944,6 +1369,58 @@ impl ConvertCtx {
                     segments: 0,
                 }
             }
+            // Same primitives with the segment count pinned by the author.
+            "CylinderN" => {
+                assert_fields(tag, fields, 3)?;
+                CsgOp::Cylinder {
+                    radius: self.f64_val(&fields[0])?,
+                    height: self.f64_val(&fields[1])?,
+                    segments: self.segments_val(tag, &fields[2])?,
+                }
+            }
+            "SphereN" => {
+                assert_fields(tag, fields, 2)?;
+                CsgOp::Sphere {
+                    radius: self.f64_val(&fields[0])?,
+                    segments: self.segments_val(tag, &fields[1])?,
+                }
+            }
+            "ConeN" => {
+                assert_fields(tag, fields, 4)?;
+                CsgOp::Cone {
+                    radius_bottom: self.f64_val(&fields[0])?,
+                    radius_top: self.f64_val(&fields[1])?,
+                    height: self.f64_val(&fields[2])?,
+                    segments: self.segments_val(tag, &fields[3])?,
+                }
+            }
+            "TorusN" => {
+                assert_fields(tag, fields, 3)?;
+                CsgOp::Torus {
+                    major_radius: self.f64_val(&fields[0])?,
+                    minor_radius: self.f64_val(&fields[1])?,
+                    segments: self.segments_val(tag, &fields[2])?,
+                }
+            }
+
+            // Imported vendor geometry.
+            "MeshImport" => {
+                assert_fields(tag, fields, 4)?;
+                let scale = self.vec3(fields, 1)?;
+                CsgOp::MeshImport {
+                    path: self.import_path(tag, &fields[0])?,
+                    scale: (scale.x != 1.0 || scale.y != 1.0 || scale.z != 1.0).then_some(scale),
+                }
+            }
+            "StepImport" => {
+                assert_fields(tag, fields, 2)?;
+                let index = self.u32_val(&fields[1])?;
+                CsgOp::StepImport {
+                    path: self.import_path(tag, &fields[0])?,
+                    solid_index: (index != 0).then_some(index),
+                }
+            }
+
             "Wedge" => {
                 assert_fields(tag, fields, 3)?;
                 CsgOp::Wedge {

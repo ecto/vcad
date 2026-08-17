@@ -15,7 +15,7 @@ mod convert;
 pub mod fastener;
 pub mod params;
 pub mod recover;
-pub use convert::value_to_document;
+pub use convert::{value_to_document, value_to_document_in};
 
 /// The bundled vcad loon library source.
 pub const VCAD_LIB_SOURCE: &str = include_str!("../../../lib/src/lib.loon");
@@ -60,14 +60,14 @@ pub fn eval_vcad_parametric(
     let run = |env: &HashMap<String, f64>| -> Result<Document, String> {
         let rewritten = params::rewrite(&exprs, env)?;
         let value = run_program(&rewritten, base_dir, provider.clone())?;
-        value_to_document(&value)
+        value_to_document_in(&value, base_dir)
     };
 
     if decls.is_empty() {
         // Nothing declared: run the program as parsed, with no rewrite pass
         // and no AST clone. This is the path every existing model takes.
         let value = run_program(&exprs, base_dir, provider)?;
-        return Ok((value_to_document(&value)?, Vec::new()));
+        return Ok((value_to_document_in(&value, base_dir)?, Vec::new()));
     }
 
     let env0 = decls.env()?;
