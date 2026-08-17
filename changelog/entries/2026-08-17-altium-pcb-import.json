@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-17-altium-pcb-import",
+  "version": "0.9.4",
+  "date": "2026-08-17",
+  "category": "feat",
+  "title": "Altium and Eagle PCB import",
+  "summary": "Import Altium .PcbDoc boards (native binary or ASCII) and .PcbLib libraries, plus Eagle .brd boards, straight into a live session.",
+  "features": ["pcb", "import", "ecad", "altium", "eagle"],
+  "mcpTools": ["import_altium", "import_altium_library", "import_eagle"]
+}

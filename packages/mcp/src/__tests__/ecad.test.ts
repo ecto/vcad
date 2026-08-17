@@ -54,7 +54,12 @@ import {
   unconnectedPinSeverity,
 } from "../tools/ecad.js";
 import { renderRatsnest, renderStackup } from "../tools/render.js";
-import { importKicad, importEagle } from "../tools/import-pcb.js";
+import {
+  importKicad,
+  importEagle,
+  importAltium,
+  importAltiumLibrary,
+} from "../tools/import-pcb.js";
 import {
   documents,
   getSession,
@@ -450,10 +455,124 @@ describe("import_kicad / import_eagle", () => {
     expect((none as { isError?: boolean }).isError).toBe(true);
   });
 
-  it("import_eagle returns a not-yet-supported stub pointing at import_kicad", () => {
-    const res = importEagle({ filename: "board.brd" });
-    expect((res as { isError?: boolean }).isError).toBe(true);
-    expect(res.content[0].text).toContain("import_kicad");
+  it("imports an Eagle .brd into a live, tool-ready session", async () => {
+    // Minimal Eagle 6+ XML board: a 10x8 outline on layer 20, one package
+    // placed as an element, and one signal carrying a routed wire.
+    const brd = `<?xml version="1.0"?>
+<eagle version="9.6.0"><drawing><board>
+<plain>
+  <wire x1="0" y1="0" x2="10" y2="0" width="0.05" layer="20"/>
+  <wire x1="10" y1="0" x2="10" y2="8" width="0.05" layer="20"/>
+  <wire x1="10" y1="8" x2="0" y2="8" width="0.05" layer="20"/>
+  <wire x1="0" y1="8" x2="0" y2="0" width="0.05" layer="20"/>
+</plain>
+<libraries><library name="lib"><packages><package name="R0805">
+  <smd name="1" x="-0.9" y="0" dx="1" dy="1.3" layer="1"/>
+  <smd name="2" x="0.9" y="0" dx="1" dy="1.3" layer="1"/>
+</package></packages></library></libraries>
+<elements><element name="R1" library="lib" package="R0805" value="10k" x="5" y="4"/></elements>
+<signals><signal name="N$1">
+  <contactref element="R1" pad="2"/>
+  <wire x1="5.9" y1="4" x2="8" y2="4" width="0.25" layer="1"/>
+  <via x="8" y="4" drill="0.3" diameter="0.6"/>
+</signal></signals>
+</board></drawing></eagle>`;
+    const res = out(
+      await importEagle({ content_base64: Buffer.from(brd, "utf8").toString("base64") }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.summary.footprints).toBe(1);
+    expect(res.summary.nets).toBe(1);
+    expect(res.summary.outline_vertices).toBe(4);
+    expect(res.summary.traces).toBe(1);
+    expect(res.summary.vias).toBe(1);
+
+    const board = getPcbBoard(getSession(res.document_id));
+    expect(board.footprints[0]!.ref).toBe("R1");
+    const pads = out(await getPadPositions({ document_id: res.document_id }));
+    expect(pads.count).toBe(2);
+  });
+
+  it("rejects a pre-6 binary Eagle .brd with an explanation", async () => {
+    const bad = await importEagle({
+      content_base64: Buffer.from("\u0010\u0000binary eagle", "utf8").toString("base64"),
+    });
+    expect((bad as { isError?: boolean }).isError).toBe(true);
+    expect((bad as { content: { text: string }[] }).content[0]!.text).toContain("Eagle 6+");
+  });
+});
+
+describe("import_altium / import_altium_library", () => {
+  // ASCII-exported .PcbDoc: 2 nets, a 20x15 outline, one 0805 with 2 pads,
+  // one trace per side, one via.
+  const MINIMAL_ALTIUM = [
+    "|RECORD=Board|BOARDTHICKNESS=1.6mm|VX0=0mm|VY0=0mm|VX1=20mm|VY1=0mm|VX2=20mm|VY2=15mm|VX3=0mm|VY3=15mm|",
+    "|RECORD=Net|NAME=GND|",
+    "|RECORD=Net|NAME=VCC|",
+    "|RECORD=Component|SOURCEDESIGNATOR=R1|PATTERN=0805|COMMENT=10k|LAYER=TOPLAYER|X=10mm|Y=7mm|ROTATION=90.000|",
+    "|RECORD=Pad|NAME=1|COMPONENT=0|LAYER=TOPLAYER|NET=0|X=10mm|Y=6mm|XSIZE=1.2mm|YSIZE=1.4mm|SHAPE=RECTANGLE|HOLESIZE=0mm|ROTATION=90.000|",
+    "|RECORD=Pad|NAME=2|COMPONENT=0|LAYER=TOPLAYER|NET=1|X=10mm|Y=8mm|XSIZE=1.2mm|YSIZE=1.4mm|SHAPE=RECTANGLE|HOLESIZE=0mm|ROTATION=90.000|",
+    "|RECORD=Track|LAYER=TOPLAYER|NET=1|X1=10mm|Y1=8mm|X2=14mm|Y2=8mm|WIDTH=0.25mm|",
+    "|RECORD=Track|LAYER=BOTTOMLAYER|NET=0|X1=10mm|Y1=6mm|X2=4mm|Y2=6mm|WIDTH=0.3mm|",
+    "|RECORD=Via|X=14mm|Y=8mm|DIAMETER=0.6mm|HOLESIZE=0.3mm|STARTLAYER=TOPLAYER|ENDLAYER=BOTTOMLAYER|NET=1|",
+  ].join("\n");
+
+  const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+
+  it("imports an ASCII .PcbDoc into a live, tool-ready session", async () => {
+    const res = out(
+      await importAltium({ content_base64: b64(MINIMAL_ALTIUM), name: "Altium board" }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.source_format).toBe("PcbDoc (ASCII)");
+    expect(res.summary.footprints).toBe(1);
+    expect(res.summary.nets).toBe(2);
+    expect(res.summary.outline_vertices).toBe(4);
+    expect(res.summary.traces).toBe(2);
+    expect(res.summary.vias).toBe(1);
+
+    // The returned id drives the rest of the toolchain, same as import_kicad.
+    const board = getPcbBoard(getSession(res.document_id));
+    expect(board.footprints[0]!.ref).toBe("R1");
+    const pads = out(await getPadPositions({ document_id: res.document_id }));
+    expect(pads.count).toBe(2);
+  });
+
+  it("recovers absolute pad positions through the footprint frame", async () => {
+    // The component is rotated 90°, so this only holds if the importer
+    // inverted that rotation when storing pads in the local frame.
+    const res = out(await importAltium({ content_base64: b64(MINIMAL_ALTIUM) }));
+    const pads = out(await getPadPositions({ document_id: res.document_id }));
+    const ys = (pads.pads as { y: number }[]).map((p) => p.y).sort((a, b) => a - b);
+    expect(ys[0]).toBeCloseTo(6, 6);
+    expect(ys[1]).toBeCloseTo(8, 6);
+  });
+
+  it("rejects a binary .PcbDoc that is not a compound file, with actionable text", async () => {
+    const bad = await importAltium({ content_base64: b64("not an altium file") });
+    expect((bad as { isError?: boolean }).isError).toBe(true);
+    expect((bad as { content: { text: string }[] }).content[0]!.text).toContain(
+      "PCB ASCII",
+    );
+  });
+
+  it("errors on missing input", async () => {
+    const none = await importAltium({});
+    expect((none as { isError?: boolean }).isError).toBe(true);
+  });
+
+  it("reads an ASCII .PcbLib without minting a document", async () => {
+    const lib = [
+      "|RECORD=Component|SOURCEDESIGNATOR=R_0805|PATTERN=R_0805|LAYER=TOPLAYER|X=0mm|Y=0mm|ROTATION=0|",
+      "|RECORD=Pad|NAME=1|COMPONENT=0|LAYER=TOPLAYER|X=-1mm|Y=0mm|XSIZE=1mm|YSIZE=1.2mm|SHAPE=RECTANGLE|HOLESIZE=0mm|",
+      "|RECORD=Pad|NAME=2|COMPONENT=0|LAYER=TOPLAYER|X=1mm|Y=0mm|XSIZE=1mm|YSIZE=1.2mm|SHAPE=RECTANGLE|HOLESIZE=0mm|",
+    ].join("\n");
+    const res = out(await importAltiumLibrary({ content_base64: b64(lib) }));
+    expect(res.success).toBe(true);
+    expect(res.footprint_count).toBe(1);
+    expect(res.footprints[0].name).toBe("R_0805");
+    expect(res.footprints[0].pad_count).toBe(2);
+    expect(res.document_id).toBeUndefined();
   });
 });
 

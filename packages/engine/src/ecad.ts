@@ -1087,6 +1087,106 @@ export async function parseKicadPcb(content: string): Promise<Pcb | null> {
 }
 
 /**
+ * The Altium and Eagle entry points, narrowed off the WASM module.
+ *
+ * The checked-in `kernel-wasm` type declarations are regenerated on main by
+ * the wasm-refresh workflow, not by feature branches, so these bindings are
+ * reached through a cast until that lands. The `bind` helper keeps the failure
+ * mode a clear message rather than "x is not a function".
+ */
+function importBindings(wasm: NonNullable<typeof wasmModule>): {
+  parseAltiumAsciiPcb(content: string): unknown;
+  parseAltiumPcbDoc(bytes: Uint8Array): unknown;
+  parseAltiumPcbLib(bytes: Uint8Array): unknown;
+  parseEagleBrd(content: string): unknown;
+} {
+  const mod = wasm as unknown as Record<string, unknown>;
+  const bind = (name: string) => {
+    const fn = mod[name];
+    if (typeof fn !== "function") {
+      throw new Error(
+        `Altium import is unavailable: this kernel WASM build predates ${name}. ` +
+          "Rebuild the kernel WASM (npm run build -w vcad-kernel-wasm) or update @vcad/mcp.",
+      );
+    }
+    return fn as (arg: never) => unknown;
+  };
+  return {
+    parseAltiumAsciiPcb: (content) => bind("parseAltiumAsciiPcb")(content as never),
+    parseAltiumPcbDoc: (bytes) => bind("parseAltiumPcbDoc")(bytes as never),
+    parseAltiumPcbLib: (bytes) => bind("parseAltiumPcbLib")(bytes as never),
+    parseEagleBrd: (content) => bind("parseEagleBrd")(content as never),
+  };
+}
+
+/**
+ * Parse an Eagle `.brd` (XML, Eagle 6+) board into a Pcb. Throws on parse
+ * failure; null means the ECAD WASM is unavailable.
+ */
+export async function parseEagleBrd(content: string): Promise<Pcb | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  return importBindings(wasm).parseEagleBrd(content) as Pcb;
+}
+
+/**
+ * Parse an Altium ASCII-exported `.PcbDoc` into a Pcb.
+ *
+ * Unlike {@link parseKicadPcb}, parse failures **throw** rather than
+ * degrading to null: the Altium importer fails closed on purpose and its
+ * error text tells the caller what to do next (usually "re-export as PCB
+ * ASCII"), which is worthless if it is swallowed. Null still means only one
+ * thing — the ECAD WASM is unavailable.
+ */
+export async function parseAltiumAsciiPcb(content: string): Promise<Pcb | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  return importBindings(wasm).parseAltiumAsciiPcb(content) as Pcb;
+}
+
+/**
+ * Parse a native binary Altium `.PcbDoc` (OLE compound file) into a Pcb.
+ * Throws with actionable text when a record stream cannot be decoded; returns
+ * null only when the ECAD WASM is unavailable.
+ */
+export async function parseAltiumPcbDoc(bytes: Uint8Array): Promise<Pcb | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  return importBindings(wasm).parseAltiumPcbDoc(bytes) as Pcb;
+}
+
+/**
+ * Parse an Altium `.PcbLib` footprint library (binary or ASCII) into a
+ * footprint library. Throws on parse failure; null means no ECAD WASM.
+ */
+export async function parseAltiumPcbLib(bytes: Uint8Array): Promise<AltiumFootprintLib | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  return importBindings(wasm).parseAltiumPcbLib(bytes) as AltiumFootprintLib;
+}
+
+/** A footprint library parsed out of an Altium `.PcbLib`. */
+export interface AltiumFootprintLib {
+  footprints: AltiumFootprintDef[];
+}
+
+/** One pattern from an Altium `.PcbLib`. */
+export interface AltiumFootprintDef {
+  name: string;
+  pads: {
+    number: string;
+    pad_type: string;
+    shape: unknown;
+    position: [number, number];
+    rotation: number;
+    layers: string[];
+    drill: { diameter: number; oval: boolean; ovalHeight?: number } | null;
+  }[];
+  graphics: unknown[];
+  model_3d: string | null;
+}
+
+/**
  * Export a Pcb to a native, editable KiCad 9 `.kicad_pcb` board file (the
  * inverse of {@link parseKicadPcb}). Returns null if the ECAD WASM is
  * unavailable so callers can distinguish "no kernel" from "export failed".

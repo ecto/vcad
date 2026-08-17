@@ -6921,6 +6921,63 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Parse an Eagle `.brd` (XML, Eagle 6+) board into a `Pcb`.
+    ///
+    /// # Arguments
+    /// * `content` - The `.brd` file content as a string
+    ///
+    /// # Returns
+    /// JSON-serialized `Pcb` struct as JsValue, or error.
+    #[wasm_bindgen(js_name = parseEagleBrd)]
+    pub fn parse_eagle_brd(content: &str) -> Result<JsValue, JsError> {
+        let pcb = vcad_ecad_symbols::parse_eagle_brd(content).map_err(|e| JsError::new(&e))?;
+        serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Parse an Altium ASCII-exported `.PcbDoc` into a `Pcb`.
+    ///
+    /// # Arguments
+    /// * `content` - The ASCII `.PcbDoc` text (*File ▸ Save As ▸ PCB ASCII*)
+    ///
+    /// # Returns
+    /// JSON-serialized `Pcb` struct as JsValue, or error.
+    #[wasm_bindgen(js_name = parseAltiumAsciiPcb)]
+    pub fn parse_altium_ascii_pcb(content: &str) -> Result<JsValue, JsError> {
+        let pcb =
+            vcad_ecad_symbols::parse_altium_ascii_pcb(content).map_err(|e| JsError::new(&e))?;
+        serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Parse a native binary Altium `.PcbDoc` (OLE compound file) into a `Pcb`.
+    ///
+    /// Fails closed: a primitive stream whose record layout this importer does
+    /// not recognise aborts the import rather than yielding a partially-correct
+    /// board. The error message names the ASCII export as the fallback.
+    ///
+    /// # Arguments
+    /// * `bytes` - Raw `.PcbDoc` file bytes
+    ///
+    /// # Returns
+    /// JSON-serialized `Pcb` struct as JsValue, or error.
+    #[wasm_bindgen(js_name = parseAltiumPcbDoc)]
+    pub fn parse_altium_pcbdoc(bytes: &[u8]) -> Result<JsValue, JsError> {
+        let pcb = vcad_ecad_symbols::parse_altium_pcbdoc(bytes).map_err(|e| JsError::new(&e))?;
+        serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Parse an Altium `.PcbLib` footprint library (binary or ASCII).
+    ///
+    /// # Arguments
+    /// * `bytes` - Raw `.PcbLib` file bytes
+    ///
+    /// # Returns
+    /// JSON-serialized `FootprintLib` struct as JsValue, or error.
+    #[wasm_bindgen(js_name = parseAltiumPcbLib)]
+    pub fn parse_altium_pcblib(bytes: &[u8]) -> Result<JsValue, JsError> {
+        let lib = vcad_ecad_symbols::parse_altium_pcblib(bytes).map_err(|e| JsError::new(&e))?;
+        serde_wasm_bindgen::to_value(&lib).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Export a `Pcb` to a native, editable KiCad 9 `.kicad_pcb` board file.
     ///
     /// The inverse of [`parse_kicad_pcb`]: footprints, pads, nets, traces,
