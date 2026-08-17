@@ -67,7 +67,7 @@ pub mod sheet;
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use vcad_eval::{evaluate_document, EvalOptions};
+use vcad_eval::{evaluate_document_with_sheet_metal, EvalOptions};
 use vcad_ir::file_io::parse_vcad_file;
 use vcad_kernel::vcad_kernel_math::Transform;
 use vcad_kernel::Solid;
@@ -599,7 +599,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     // is O(n²) pairwise booleans across scene roots — fatal for many-root
     // documents (an imported chip die has ~90k roots).
     let scene = catch_unwind(AssertUnwindSafe(|| {
-        evaluate_document(
+        evaluate_document_with_sheet_metal(
             &parsed.document,
             &EvalOptions {
                 skip_clash_detection: true,

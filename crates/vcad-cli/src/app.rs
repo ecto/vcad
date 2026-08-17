@@ -1300,12 +1300,19 @@ impl App {
 }
 
 /// Evaluate a document to meshes using the canonical vcad-eval evaluator.
+///
+/// Uses the sheet-metal opt-in: there is no `evaluateSheetMetalChain`
+/// fallback out here, so a sheet-metal root that evaluates empty would
+/// simply export nothing. (The web/MCP engine wants the empty root — see
+/// `vcad_eval::evaluate_document`.)
 pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
     let opts = vcad_eval::EvalOptions {
         skip_clash_detection: true,
         ..Default::default()
     };
-    let scene = vcad_eval::evaluate_document(doc, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    warn_root_failures(&scene);
 
     Ok(scene
         .parts
@@ -1315,6 +1322,18 @@ pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
             indices: p.mesh.indices,
         })
         .collect())
+}
+
+/// Report roots that failed to evaluate on stderr.
+///
+/// `vcad-eval` turns a per-root error into an empty part plus a
+/// `RootFailure` so one bad root can't sink the scene — but a CLI that
+/// silently prints "Total triangles: 0" reads as a broken document format,
+/// not a failed operation.
+fn warn_root_failures(scene: &vcad_eval::EvaluatedScene) {
+    for f in &scene.failures {
+        eprintln!("warning: {} failed to evaluate: {}", f.scope, f.error);
+    }
 }
 
 /// `vcad_eval::Clock` impl backed by `std::time::Instant`. Lives in the CLI
@@ -1343,7 +1362,9 @@ pub fn evaluate_document_timed(
         skip_clash_detection,
         clock: Some(clock),
     };
-    let scene = vcad_eval::evaluate_document(doc, &opts).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    warn_root_failures(&scene);
     let timing = scene
         .timing
         .clone()

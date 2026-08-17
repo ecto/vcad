@@ -1019,7 +1019,8 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
         skip_clash_detection: true,
         ..Default::default()
     };
-    let scene = vcad_eval::evaluate_document(doc, &opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let mut f32_data: Vec<f32> = Vec::new();
     let mut u32_data: Vec<u32> = Vec::new();
