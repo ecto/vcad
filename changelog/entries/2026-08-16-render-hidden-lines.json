@@ -1,0 +1,9 @@
+{
+  "id": "2026-08-16-render-hidden-lines",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "fix",
+  "title": "SVG renders draw complete, actually-dashed hidden lines",
+  "summary": "Hidden edges on curved features were mostly deleted and the survivors drew solid, leaving a stray line across the part; they now run the full occluded length as proper dashes.",
+  "features": ["rendering", "drafting"]
+}

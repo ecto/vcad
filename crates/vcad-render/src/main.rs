@@ -261,6 +261,13 @@ struct Cli {
     #[arg(long, default_value_t = 92)]
     quality: u8,
 
+    /// Supersampling factor, 1-4, for the tessellated raster path
+    /// (JPEG/PNG only). Default scales with `--size`: 3x up to 1024px,
+    /// 2x up to 2048px, 1x above. `--aa 1` is the old point-sampled
+    /// output; raising it costs NxN memory and time.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=4))]
+    aa: Option<u32>,
+
     /// Render raster output via direct BRep ray tracing instead of
     /// tessellation: pixel-perfect curved silhouettes. Needs a raster
     /// output (`.png`/`.jpg`).
@@ -423,6 +430,7 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
         focus: cli.focus.clone(),
         section: cli.section,
         annotations: cli.annotations(),
+        aa: cli.aa,
     }
 }
 

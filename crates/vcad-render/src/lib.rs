@@ -1683,6 +1683,7 @@ impl DepthBuffer {
                     a: (start.0 / scale, start.1 / scale),
                     b: (end.0 / scale, end.1 / scale),
                     len_cells,
+                    edge_frac: if len > 0.0 { len_cells / len } else { 1.0 },
                     over_bg,
                 };
                 if vis {
@@ -1728,6 +1729,75 @@ impl DepthBuffer {
     }
 }
 
+/// Link segments that share endpoints into open polylines.
+///
+/// Hidden-line removal emits one segment per mesh edge, so a tessellated
+/// curve arrives as hundreds of separate two-point pieces. Written out as
+/// individual `<line>` elements that is *visually* fine for a solid stroke
+/// but wrong for a dashed one: SVG restarts `stroke-dasharray` at every
+/// element, so a segment shorter than one dash period renders entirely
+/// inside its first "on" dash. Every dashed hidden line along a curve
+/// therefore drew solid — indistinguishable from real visible linework.
+/// Chaining lets the dash phase run along the whole curve.
+fn chain_segments(segs: &[Seg]) -> Vec<Vec<(f64, f64)>> {
+    /// Endpoint match tolerance, in SVG user units. Shared vertices are
+    /// computed from the same projected point, so they agree to well
+    /// within this; it only absorbs the rounding in the walk's endpoints.
+    const EPS: f64 = 1e-3;
+    let key = |p: (f64, f64)| ((p.0 / EPS).round() as i64, (p.1 / EPS).round() as i64);
+    // Chain from a canonical ordering. Edges reach here in the iteration
+    // order of a `HashMap`, which varies run to run; that was invisible
+    // while every segment became its own `<line>`, but which segment starts
+    // a chain decides how the curve is partitioned, so without this the
+    // same document renders to different (equivalent) SVG bytes each time.
+    // Normalising each segment's endpoints makes the sort a total order.
+    let mut segs: Vec<Seg> = segs
+        .iter()
+        .map(|&(a, b)| if key(a) <= key(b) { (a, b) } else { (b, a) })
+        .collect();
+    segs.sort_by(|p, q| {
+        (key(p.0), key(p.1))
+            .partial_cmp(&(key(q.0), key(q.1)))
+            .expect("integer keys are totally ordered")
+    });
+    let segs = &segs[..];
+    let mut ends: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, &(a, b)) in segs.iter().enumerate() {
+        ends.entry(key(a)).or_default().push(i);
+        ends.entry(key(b)).or_default().push(i);
+    }
+    let mut used = vec![false; segs.len()];
+    let mut out: Vec<Vec<(f64, f64)>> = Vec::new();
+    for start in 0..segs.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let (a, b) = segs[start];
+        let mut chain = vec![a, b];
+        // Grow from the far end, reverse, then grow from the near end, so
+        // a chain started mid-curve still collects both directions.
+        for pass in 0..2 {
+            while let Some(&tip) = chain.last() {
+                let Some(cands) = ends.get(&key(tip)) else {
+                    break;
+                };
+                let Some(&next) = cands.iter().find(|&&i| !used[i]) else {
+                    break;
+                };
+                used[next] = true;
+                let (na, nb) = segs[next];
+                chain.push(if key(na) == key(tip) { nb } else { na });
+            }
+            if pass == 0 {
+                chain.reverse();
+            }
+        }
+        out.push(chain);
+    }
+    out
+}
+
 /// The visible and hidden sub-segments of one edge after the depth-buffer walk.
 struct EdgeClip {
     visible: Vec<VisSpan>,
@@ -1740,6 +1810,11 @@ struct VisSpan {
     b: (f64, f64),
     /// Length in depth-buffer cells (resolution-independent measure).
     len_cells: f64,
+    /// Fraction of the parent edge's projected length this span covers.
+    /// `1.0` means the whole edge fell on one side of the depth test;
+    /// a small value means the edge was chopped, which is what
+    /// z-fighting on a coplanar surface looks like.
+    edge_frac: f64,
     /// True if any sample ran over / beside open background.
     over_bg: bool,
 }
@@ -2265,9 +2340,23 @@ fn render_svg_impl(
     // background) and long interior runs are kept; short interior stubs —
     // the generatrix hanging off a bore's rim tangent — are dropped.
     const SMOOTH_INTERIOR_MIN_CELLS: f64 = 18.0;
-    // A hidden (occluded) span must be at least this long to be drawn
-    // dashed — shorter ones are z-fighting noise, not real occluded edges.
+    // A hidden (occluded) *fragment* of an edge must be at least this long
+    // to be drawn dashed — shorter ones are z-fighting noise, not real
+    // occluded edges.
     const HIDDEN_MIN_CELLS: f64 = 6.0;
+    // …but an edge that is hidden along essentially its whole length is not
+    // a fragment, however short it projects. Measuring only absolute length
+    // silently deleted the middle of long hidden curves: a tessellated rim
+    // arrives as hundreds of separate short edges, each fully occluded and
+    // each yielding exactly one span, and those spans foreshorten as the
+    // curve turns away from the viewer. On a Ø120 disc the bottom rim's
+    // hidden half ran 130°–320°, but per-segment length fell under 6 cells
+    // outside 190°–260°, so the ends — the part that reads as "this is the
+    // bottom of the disc", where the dashes meet the visible silhouette at
+    // the tangent points — were dropped and the surviving 61° floated in
+    // the middle of the part looking like a stray curve belonging to
+    // nothing.
+    const HIDDEN_WHOLE_EDGE_FRAC: f64 = 0.9;
     let mut crease_lines: Vec<Seg> = Vec::new();
     let mut outline_lines: Vec<Seg> = Vec::new();
     let mut hidden_lines: Vec<Seg> = Vec::new();
@@ -2304,7 +2393,7 @@ fn render_svg_impl(
         // context, not the subject.
         if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) && e.emphasis != Emphasis::Ghost {
             for span in &clip.hidden {
-                if span.len_cells >= HIDDEN_MIN_CELLS {
+                if span.len_cells >= HIDDEN_MIN_CELLS || span.edge_frac >= HIDDEN_WHOLE_EDGE_FRAC {
                     hidden_lines.push((span.a, span.b));
                 }
             }
@@ -2464,13 +2553,24 @@ fn render_svg_impl(
             None => String::new(),
         };
         out.push_str(&format!(
-                r#"<g stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
+                r#"<g stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="{opacity}"{dash_attr}>"#
             ));
-        for &(a, b) in lines {
-            out.push_str(&format!(
-                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}"/>"#,
-                a.0, a.1, b.0, b.1,
-            ));
+        for chain in chain_segments(lines) {
+            if let [a, b] = chain[..] {
+                out.push_str(&format!(
+                    r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}"/>"#,
+                    a.0, a.1, b.0, b.1,
+                ));
+                continue;
+            }
+            out.push_str(r#"<polyline points=""#);
+            for (i, p) in chain.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                out.push_str(&format!("{:.2},{:.2}", p.0, p.1));
+            }
+            out.push_str(r#""/>"#);
         }
         for d in arcs {
             out.push_str(&format!(r#"<path d="{d}"/>"#));
@@ -2923,6 +3023,26 @@ mod raster {
         /// dimensions). All-off by default; the default render is
         /// byte-identical to an annotation-free build.
         pub annotations: RenderAnnotations,
+        /// Supersampling factor for the tessellated raster path: geometry
+        /// and linework rasterize on an `aa`× canvas and box-filter down,
+        /// so silhouettes and edge strokes anti-alias. `None` picks a
+        /// factor from `size_px` (see [`auto_aa`]); `Some(1)` is the old
+        /// point-sampled output. Clamped to 1..=4. Ignored by the
+        /// ray-traced path, which supersamples on its own.
+        pub aa: Option<u32>,
+    }
+
+    /// Supersampling factor for a given output width when the caller
+    /// didn't pick one. Small renders alias worst and cost least, so they
+    /// get the most samples; past 2048px the point-sampled output already
+    /// reads clean and the `ss²` memory is not worth it (`--aa` still
+    /// overrides).
+    pub(crate) fn auto_aa(size_px: u32) -> u32 {
+        match size_px {
+            0..=1024 => 3,
+            1025..=2048 => 2,
+            _ => 1,
+        }
     }
 
     impl Default for RasterOptions {
@@ -2938,6 +3058,7 @@ mod raster {
                 focus: None,
                 section: None,
                 annotations: RenderAnnotations::default(),
+                aa: None,
             }
         }
     }
@@ -2962,7 +3083,7 @@ mod raster {
             .map(|f| focus_mask(&scene, f))
             .transpose()?;
         encode_jpeg(
-            rasterize(&solids, &tints, &names, opts, mask.as_deref())?,
+            rasterize(&solids, &tints, &names, opts, mask.as_deref(), false)?,
             opts,
         )
     }
@@ -2973,7 +3094,10 @@ mod raster {
     pub fn render_jpeg_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
-        encode_jpeg(rasterize(solids, &no_tints, &no_names, opts, None)?, opts)
+        encode_jpeg(
+            rasterize(solids, &no_tints, &no_names, opts, None, false)?,
+            opts,
+        )
     }
 
     /// Render raw `.vcad` document JSON to RGBA PNG bytes with a fully
@@ -2991,7 +3115,7 @@ mod raster {
             .map(|f| focus_mask(&scene, f))
             .transpose()?;
         encode_png(
-            rasterize(&solids, &tints, &names, opts, mask.as_deref())?,
+            rasterize(&solids, &tints, &names, opts, mask.as_deref(), true)?,
             opts,
         )
     }
@@ -3001,7 +3125,10 @@ mod raster {
     pub fn render_png_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
-        encode_png(rasterize(solids, &no_tints, &no_names, opts, None)?, opts)
+        encode_png(
+            rasterize(solids, &no_tints, &no_names, opts, None, true)?,
+            opts,
+        )
     }
 
     /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
@@ -3057,6 +3184,7 @@ mod raster {
         names: &[Option<String>],
         opts: &RasterOptions,
         focus: Option<&[bool]>,
+        png: bool,
     ) -> Result<Frame, String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
@@ -3181,7 +3309,9 @@ mod raster {
         let cx = (min[0] + max[0]) / 2.0;
         let cy = (min[1] + max[1]) / 2.0;
         let (halfx, halfy) = (canvas.w as f64 / 2.0, canvas.h as f64 / 2.0);
-        // World point → (pixel x, pixel y, depth toward camera in mm).
+        // World point → (output pixel x, output pixel y, depth toward
+        // camera in mm). Annotations draw in this space; geometry and
+        // linework scale it up by `ss` (below).
         let to_px = |v: [f64; 3]| -> (f64, f64, f64) {
             (
                 (dot(v, right) - cx) * px_per_mm + halfx,
@@ -3190,14 +3320,27 @@ mod raster {
             )
         };
 
+        // Supersampling. The tessellated path point-samples at pixel
+        // centres, so at 1× every silhouette and every edge stroke is hard
+        // aliased. Rasterizing `ss`× oversized and box-filtering down
+        // anti-aliases both, and — unlike blending partial coverage in
+        // place — leaves no seam where two triangles of one flat face
+        // abut, since both sub-samples land on geometry.
+        let ss = opts.aa.unwrap_or_else(|| auto_aa(opts.size_px)).clamp(1, 4) as usize;
+        let sc = Canvas {
+            w: canvas.w * ss,
+            h: canvas.h * ss,
+        };
+        let to_ss = |p: (f64, f64, f64)| (p.0 * ss as f64, p.1 * ss as f64, p.2);
+
         let mut rgb: Vec<u8> = BACKGROUND
             .iter()
             .copied()
             .cycle()
-            .take(canvas.len() * 3)
+            .take(sc.len() * 3)
             .collect();
-        let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; canvas.len()];
-        let mut mask: Vec<u8> = vec![0; canvas.len()];
+        let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; sc.len()];
+        let mut mask: Vec<u8> = vec![0; sc.len()];
 
         // Depth range for depth cueing (below).
         let mut dmin = f64::INFINITY;
@@ -3216,31 +3359,30 @@ mod raster {
         // makes axis-aligned recesses invisible in axis-aligned views — a
         // mild depth cue (farther → darker) separates them.
         for (ai, art) in arts.iter().enumerate() {
-            let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
+            let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_ss(to_px(*v))).collect();
             let tinted = tints.get(ai).copied().flatten().is_some();
             for (ti, t) in art.tris.iter().enumerate() {
                 if !art.visible[ti] {
                     continue;
                 }
-                let centroid_d = (proj[t[0]].2 + proj[t[1]].2 + proj[t[2]].2) / 3.0;
-                let cue = 0.78 + 0.22 * ((centroid_d - dmin) / dspan).clamp(0.0, 1.0);
-                let lit = (lambertian(art.normals[ti], light) * cue).clamp(0.0, 1.0);
                 // Tinted parts sample their material ramp (same as the SVG
-                // path); untinted parts keep the original monochrome shade
-                // byte-for-byte (mecheval reference images).
-                let shade = if tinted {
-                    ramp_sample(&art.ramp, lit)
-                } else {
-                    mix_rgb(FILL_DARK, FILL_LIGHT, lit)
+                // path); untinted parts keep the original two-stop
+                // monochrome shade.
+                let shade = TriShade {
+                    lit: lambertian(art.normals[ti], light),
+                    ramp: tinted.then_some(art.ramp),
+                    dmin,
+                    dspan,
                 };
                 fill_triangle(
                     &mut rgb,
                     &mut zbuf,
                     &mut mask,
-                    canvas,
+                    sc,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
                     art.cut[ti],
+                    ss,
                 );
             }
         }
@@ -3254,20 +3396,69 @@ mod raster {
         let bias_base = 0.5 + 0.005 * diag;
         // Stroke width scales with the canvas so lines keep the same
         // apparent weight at high resolution (2px at ≤1024, 8px at 4096).
-        let stroke_px = (canvas.min_side() / 512).max(2);
+        // Measured on the *output* canvas and scaled by `ss` so the
+        // downsampled weight is independent of the supersampling factor.
+        let stroke_px = (canvas.min_side() / 512).max(2) * ss;
         for art in &arts {
-            let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
+            let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_ss(to_px(*v))).collect();
             for &(a, b, _kind) in &art.edges {
                 draw_edge(
-                    &mut rgb, &zbuf, &mut mask, canvas, proj[a], proj[b], bias_base, stroke_px,
+                    &mut rgb, &zbuf, &mut mask, sc, proj[a], proj[b], bias_base, stroke_px,
                 );
             }
         }
 
+        // Box-filter the supersampled buffer down to the output canvas.
+        // Colour is the mean of the *covered* sub-pixels only, so a
+        // partly-covered edge pixel isn't tinted by the vellum ground it
+        // overlaps; the coverage goes to the mask instead. As in the
+        // ray-traced path, a JPEG frame composites that coverage over
+        // BACKGROUND here and a PNG frame keeps straight alpha.
+        let (mut rgb, mut mask) = if ss == 1 {
+            (rgb, mask)
+        } else {
+            let n = (ss * ss) as f64;
+            let mut out_rgb: Vec<u8> = Vec::with_capacity(canvas.len() * 3);
+            let mut out_mask: Vec<u8> = Vec::with_capacity(canvas.len());
+            for y in 0..canvas.h {
+                for x in 0..canvas.w {
+                    let mut acc = [0.0f64; 3];
+                    let mut hits = 0u32;
+                    for sy in 0..ss {
+                        for sx in 0..ss {
+                            let i = sc.idx(x * ss + sx, y * ss + sy);
+                            if mask[i] == 0 {
+                                continue;
+                            }
+                            hits += 1;
+                            for (k, a) in acc.iter_mut().enumerate() {
+                                *a += rgb[i * 3 + k] as f64;
+                            }
+                        }
+                    }
+                    if hits == 0 {
+                        out_rgb.extend_from_slice(&BACKGROUND);
+                        out_mask.push(0);
+                        continue;
+                    }
+                    out_mask.push(((hits as f64 / n) * 255.0).round() as u8);
+                    for (k, a) in acc.iter().enumerate() {
+                        let v = if png {
+                            a / hits as f64
+                        } else {
+                            (a + (n - hits as f64) * BACKGROUND[k] as f64) / n
+                        };
+                        out_rgb.push(v.round().clamp(0.0, 255.0) as u8);
+                    }
+                }
+            }
+            (out_rgb, out_mask)
+        };
+
         // Pass 3 (opt-in): engineering-context overlays, drawn over the
-        // finished render in pixel space. Overlay pixels also mark the
-        // coverage mask so gizmo/dimension linework over the background
-        // stays opaque in the transparent PNG output.
+        // finished render in output pixel space. Overlay pixels also mark
+        // the coverage mask so gizmo/dimension linework over the
+        // background stays opaque in the transparent PNG output.
         if opts.annotations.any() {
             draw_annotations(
                 &mut rgb, &mut mask, canvas, &arts, names, opts, &to_px, lo3, hi3,
@@ -3289,14 +3480,50 @@ mod raster {
     /// Cut-face background — a pale ice tint (matches the SVG `HATCH_BG`).
     const HATCH_BG_RGB: [u8; 3] = [220, 232, 242];
 
+    /// A triangle's shading inputs, resolved to a colour **per pixel**.
+    ///
+    /// The Lambertian term is constant over a flat-shaded triangle, but the
+    /// depth cue is not: evaluating it once at the centroid quantizes it to
+    /// the triangulation, so a single flat face reads as a fan of hard
+    /// tonal wedges (worst on the large top faces that dominate an
+    /// isometric view). Interpolating the same cue from the z-buffer depth
+    /// the rasterizer already computes makes it continuous across triangle
+    /// boundaries — matching what the ray-traced path does per hit point.
+    #[derive(Clone, Copy)]
+    struct TriShade {
+        /// Lambertian term for the triangle's normal, before the cue.
+        lit: f64,
+        /// Material ramp for a tinted solid; `None` = two-stop monochrome.
+        ramp: Option<[[u8; 3]; 4]>,
+        /// Depth-cue normalization over the whole scene.
+        dmin: f64,
+        dspan: f64,
+    }
+
+    impl TriShade {
+        /// Colour at a pixel whose interpolated depth is `depth`.
+        fn at(&self, depth: f64) -> [u8; 3] {
+            let cue = 0.78 + 0.22 * ((depth - self.dmin) / self.dspan).clamp(0.0, 1.0);
+            let lit = (self.lit * cue).clamp(0.0, 1.0);
+            match &self.ramp {
+                Some(ramp) => ramp_sample(ramp, lit),
+                None => mix_rgb(FILL_DARK, FILL_LIGHT, lit),
+            }
+        }
+    }
+
+    /// `hatch_scale` stretches the section-cut hatch pattern so it keeps
+    /// its output-space period when rasterizing supersampled.
+    #[allow(clippy::too_many_arguments)]
     fn fill_triangle(
         rgb: &mut [u8],
         zbuf: &mut [f64],
         mask: &mut [u8],
         canvas: Canvas,
         p: [(f64, f64, f64); 3],
-        shade: [u8; 3],
+        shade: TriShade,
         hatch: bool,
+        hatch_scale: usize,
     ) {
         let area = edge_fn(p[0], p[1], p[2].0, p[2].1);
         if area.abs() < 1e-12 {
@@ -3350,13 +3577,14 @@ mod raster {
                     mask[idx] = 255;
                     let c = if hatch {
                         // 45° drafting hatch: ink line over pale ice.
-                        if (px + py) % HATCH_PERIOD_PX < HATCH_LINE_PX {
+                        if (px + py) % (HATCH_PERIOD_PX * hatch_scale) < HATCH_LINE_PX * hatch_scale
+                        {
                             FILL_DARK
                         } else {
                             HATCH_BG_RGB
                         }
                     } else {
-                        shade
+                        shade.at(depth)
                     };
                     rgb[idx * 3] = c[0];
                     rgb[idx * 3 + 1] = c[1];
@@ -3370,10 +3598,52 @@ mod raster {
 
     /// Visible linework ink as RGB (the raster twin of [`INK`]).
     const INK_RGB: [u8; 3] = [11, 39, 66];
-    /// Axis gizmo colours (X, Y, Z), matching [`AXIS_COLORS`].
-    const AXIS_RGB: [[u8; 3]; 3] = [[192, 57, 43], [30, 142, 62], [43, 108, 176]];
-    /// Text glyph pixel scale (5×7 font → 10×14 px per glyph).
+    /// Axis gizmo colours (X, Y, Z), matching [`AXIS_COLORS`]. These appear
+    /// nowhere else in a render, which makes them a clean handle on the
+    /// overlay in tests.
+    pub(crate) const AXIS_RGB: [[u8; 3]; 3] = [[192, 57, 43], [30, 142, 62], [43, 108, 176]];
+    /// Text glyph pixel scale (5×7 font → 10×14 px per glyph) on the
+    /// reference canvas; multiplied by [`AnnoScale`] in practice.
     const FONT_SCALE: usize = 2;
+
+    /// Canvas the annotation overlay's pixel constants were tuned on.
+    const ANNO_REFERENCE_PX: f64 = 1024.0;
+
+    /// Converts *annotation units* — the pixel sizes that read correctly on
+    /// a 1024px canvas — into output pixels.
+    ///
+    /// Every constant in the overlay (glyph size, leader offsets, gizmo arm
+    /// length, line weights) used to be a bare pixel count, so the overlay
+    /// only ever looked right at one canvas size: at 2048px+ the gizmo
+    /// shrivelled into the corner and the dimension leaders, offset a fixed
+    /// 18px, ran straight through the part they were measuring; at 256px
+    /// they swamped it. Scaling them keeps a thumbnail and a hero render
+    /// carrying the same-looking annotation.
+    #[derive(Clone, Copy)]
+    struct AnnoScale(f64);
+
+    impl AnnoScale {
+        fn for_canvas(canvas: Canvas) -> Self {
+            AnnoScale(canvas.min_side() as f64 / ANNO_REFERENCE_PX)
+        }
+        /// Annotation units → output pixels.
+        fn u(self, units: f64) -> f64 {
+            units * self.0
+        }
+        /// Annotation units → a whole-pixel span, never rounded away to
+        /// nothing (a 1px hairline must survive a 256px canvas).
+        fn i(self, units: f64) -> i64 {
+            self.u(units).round().max(1.0) as i64
+        }
+        /// Magnification of the 5×7 glyph grid.
+        fn font(self) -> usize {
+            self.i(FONT_SCALE as f64) as usize
+        }
+        /// Height of a line of text, in output pixels.
+        fn text_h(self) -> f64 {
+            (7 * self.font()) as f64
+        }
+    }
 
     /// Draw the opt-in overlays (axes gizmo, part labels, bbox dimensions)
     /// over a finished raster render, in pixel space.
@@ -3390,13 +3660,27 @@ mod raster {
         hi3: [f64; 3],
     ) {
         let annos = &opts.annotations;
+        let s = AnnoScale::for_canvas(canvas);
+        let hair = s.i(1.0);
         if annos.dims {
+            // Every projected vertex, so a dimension line can be pushed
+            // clear of the silhouette rather than a fixed distance off the
+            // bounding box (see `off` below).
+            let screen: Vec<(f64, f64)> = arts
+                .iter()
+                .flat_map(|a| a.verts.iter())
+                .map(|v| {
+                    let (x, y, _) = to_px(*v);
+                    (x, y)
+                })
+                .filter(|p| p.0.is_finite() && p.1.is_finite())
+                .collect();
             for dim in bbox_dim_specs(lo3, hi3) {
                 let (ax, ay, _) = to_px(dim.a);
                 let (bx, by, _) = to_px(dim.b);
                 let (dx, dy) = (bx - ax, by - ay);
                 let len = (dx * dx + dy * dy).sqrt();
-                if len < 6.0 {
+                if len < s.u(6.0) {
                     continue; // axis parallel to the camera in this view
                 }
                 let mut n = (-dy / len, dx / len);
@@ -3405,7 +3689,19 @@ mod raster {
                 if n.0 * (mid.0 - halfx) + n.1 * (mid.1 - halfy) < 0.0 {
                     n = (-n.0, -n.1);
                 }
-                let off = 18.0;
+                // Stand the dimension line off the *silhouette*, not the
+                // bounding box. A fixed offset works for a box, whose bbox
+                // corners are its own corners, but on anything round the
+                // corner projects inside the outline — so the dimension
+                // line and its label landed on top of the part. Reach past
+                // the furthest projected vertex along `n` instead, and keep
+                // the same clear margin beyond it.
+                let clear = screen
+                    .iter()
+                    .map(|p| (p.0 - ax) * n.0 + (p.1 - ay) * n.1)
+                    .fold(0.0, f64::max);
+                let off = clear + s.u(18.0);
+                let tick = s.u(4.0);
                 let a1 = (ax + n.0 * off, ay + n.1 * off);
                 let a2 = (bx + n.0 * off, by + n.1 * off);
                 for (p, e) in [((ax, ay), a1), ((bx, by), a2)] {
@@ -3414,15 +3710,15 @@ mod raster {
                         mask,
                         canvas,
                         p,
-                        (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0),
+                        (e.0 + n.0 * tick, e.1 + n.1 * tick),
                         INK_RGB,
-                        1,
+                        hair,
                     );
                 }
-                draw_line_col(rgb, mask, canvas, a1, a2, INK_RGB, 1);
+                draw_line_col(rgb, mask, canvas, a1, a2, INK_RGB, hair);
                 let (ux, uy) = (dx / len, dy / len);
                 for p in [a1, a2] {
-                    let t = ((ux - n.0) * 4.0, (uy - n.1) * 4.0);
+                    let t = ((ux - n.0) * tick, (uy - n.1) * tick);
                     draw_line_col(
                         rgb,
                         mask,
@@ -3430,11 +3726,12 @@ mod raster {
                         (p.0 - t.0, p.1 - t.1),
                         (p.0 + t.0, p.1 + t.1),
                         INK_RGB,
-                        1,
+                        hair,
                     );
                 }
-                let text = (mid.0 + n.0 * (off + 14.0), mid.1 + n.1 * (off + 14.0));
-                draw_text_centered(rgb, mask, canvas, text, &dim.label, INK_RGB);
+                let out = off + s.u(14.0);
+                let text = (mid.0 + n.0 * out, mid.1 + n.1 * out);
+                draw_text_centered(rgb, mask, canvas, text, &dim.label, INK_RGB, s);
             }
         }
         if annos.labels {
@@ -3442,47 +3739,72 @@ mod raster {
                 let Some(name) = names.get(art.src).and_then(|n| n.as_deref()) else {
                     continue;
                 };
-                let mut lo = (f64::INFINITY, f64::INFINITY);
-                let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-                for v in &art.verts {
-                    let (x, y, _) = to_px(*v);
-                    lo = (lo.0.min(x), lo.1.min(y));
-                    hi = (hi.0.max(x), hi.1.max(y));
-                }
-                if !lo.0.is_finite() {
+                let pts: Vec<(f64, f64)> = art
+                    .verts
+                    .iter()
+                    .map(|v| {
+                        let (x, y, _) = to_px(*v);
+                        (x, y)
+                    })
+                    .filter(|p| p.0.is_finite() && p.1.is_finite())
+                    .collect();
+                if pts.is_empty() {
                     continue;
                 }
-                let anchor = ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0);
-                let dir = if anchor.0 + 120.0 > canvas.w as f64 {
+                let cx = pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64;
+                // Lead away from whichever side of the canvas the part sits on.
+                let dir = if cx > canvas.w as f64 * 0.5 {
                     -1.0
                 } else {
                     1.0
                 };
-                let elbow = (anchor.0 + 22.0 * dir, anchor.1 - 22.0);
-                draw_line_col(rgb, mask, canvas, anchor, elbow, INK_RGB, 1);
+                // Anchor on the silhouette, not the centre of the bounding
+                // box: a centred leader plants its dot and its text on top
+                // of the very geometry it names — for a single-part document
+                // that is dead centre of the render. The extreme vertex along
+                // the leader's own diagonal is always on the projection's
+                // convex hull, so the dot lands on the part and the leader
+                // runs straight out into empty background.
+                let score = |p: &(f64, f64)| p.0 * dir - p.1;
+                let anchor = *pts
+                    .iter()
+                    .max_by(|a, b| score(a).total_cmp(&score(b)))
+                    .expect("pts is non-empty");
+                let reach = s.u(22.0);
+                let elbow = (anchor.0 + reach * dir, anchor.1 - reach);
+                draw_line_col(rgb, mask, canvas, anchor, elbow, INK_RGB, hair);
                 // Anchor dot.
+                let dot = s.u(1.0);
                 draw_line_col(
                     rgb,
                     mask,
                     canvas,
-                    (anchor.0 - 1.0, anchor.1),
-                    (anchor.0 + 1.0, anchor.1),
+                    (anchor.0 - dot, anchor.1),
+                    (anchor.0 + dot, anchor.1),
                     INK_RGB,
-                    2,
+                    s.i(2.0),
                 );
-                let tw = text_width_px(name);
+                let tw = text_width_px(name, s) as f64;
+                let gap = s.u(4.0);
                 let tx = if dir > 0.0 {
-                    elbow.0 + 4.0
+                    elbow.0 + gap
                 } else {
-                    elbow.0 - 4.0 - tw as f64
+                    elbow.0 - gap - tw
                 };
-                draw_text(rgb, mask, canvas, (tx, elbow.1 - 7.0), name, INK_RGB);
+                // Keep the plate on-canvas even when the part crowds an edge.
+                let tx = tx.clamp(0.0, (canvas.w as f64 - tw).max(0.0));
+                let ty = (elbow.1 - s.text_h() / 2.0).clamp(0.0, canvas.h as f64 - s.text_h());
+                draw_text(rgb, mask, canvas, (tx, ty), name, INK_RGB, s);
             }
         }
         if annos.axes {
-            let origin = (48.0, canvas.h as f64 - 48.0);
+            let inset = s.u(48.0);
+            let origin = (inset, canvas.h as f64 - inset);
             let right = normalize(opts.view.right());
             let down = normalize(opts.view.down());
+            let arm = s.u(26.0);
+            let barb = s.u(6.0);
+            let weight = s.i(2.0);
             for i in 0..3 {
                 let mut e = [0.0; 3];
                 e[i] = 1.0;
@@ -3492,29 +3814,30 @@ mod raster {
                     continue;
                 }
                 let (ux, uy) = (d.0 / m, d.1 / m);
-                let l = 26.0;
-                let tip = (origin.0 + ux * l, origin.1 + uy * l);
+                let tip = (origin.0 + ux * arm, origin.1 + uy * arm);
                 let color = AXIS_RGB[i];
-                draw_line_col(rgb, mask, canvas, origin, tip, color, 2);
-                for s in [0.45f64, -0.45] {
-                    let (bx, by) = (-ux * s.cos() - uy * s.sin(), ux * s.sin() - uy * s.cos());
+                draw_line_col(rgb, mask, canvas, origin, tip, color, weight);
+                for a in [0.45f64, -0.45] {
+                    let (bx, by) = (-ux * a.cos() - uy * a.sin(), ux * a.sin() - uy * a.cos());
                     draw_line_col(
                         rgb,
                         mask,
                         canvas,
                         tip,
-                        (tip.0 + bx * 6.0, tip.1 + by * 6.0),
+                        (tip.0 + bx * barb, tip.1 + by * barb),
                         color,
-                        2,
+                        weight,
                     );
                 }
+                let label = s.u(10.0);
                 draw_text_centered(
                     rgb,
                     mask,
                     canvas,
-                    (tip.0 + ux * 10.0, tip.1 + uy * 10.0),
+                    (tip.0 + ux * label, tip.1 + uy * label),
                     AXIS_NAMES[i],
                     color,
+                    s,
                 );
             }
         }
@@ -3605,9 +3928,9 @@ mod raster {
         }
     }
 
-    /// Rendered width of `text` in pixels at [`FONT_SCALE`].
-    fn text_width_px(text: &str) -> usize {
-        text.chars().count() * 6 * FONT_SCALE
+    /// Rendered width of `text` in output pixels at scale `s`.
+    fn text_width_px(text: &str, s: AnnoScale) -> usize {
+        text.chars().count() * 6 * s.font()
     }
 
     /// Draw `text` with its top-left at `pos`, over a paper-coloured pad so
@@ -3619,15 +3942,18 @@ mod raster {
         pos: (f64, f64),
         text: &str,
         color: [u8; 3],
+        s: AnnoScale,
     ) {
+        let font = s.font();
         let x0 = pos.0.round() as i64;
         let y0 = pos.1.round() as i64;
-        let w = text_width_px(text) as i64;
-        let h = (7 * FONT_SCALE) as i64;
+        let w = text_width_px(text, s) as i64;
+        let h = (7 * font) as i64;
+        let pad = s.i(2.0);
         // Halo pad — opaque so the label stays legible over the transparent
         // PNG background as well as over part fills.
-        for py in (y0 - 2)..(y0 + h + 2) {
-            for px in (x0 - 2)..(x0 + w + 2) {
+        for py in (y0 - pad)..(y0 + h + pad) {
+            for px in (x0 - pad)..(x0 + w + pad) {
                 if !canvas.contains(px, py) {
                     continue;
                 }
@@ -3641,16 +3967,16 @@ mod raster {
         }
         for (ci, c) in text.chars().enumerate() {
             let cols = glyph5x7(c);
-            let gx = x0 + (ci * 6 * FONT_SCALE) as i64;
+            let gx = x0 + (ci * 6 * font) as i64;
             for (col, bits) in cols.iter().enumerate() {
                 for row in 0..7 {
                     if bits & (1 << row) == 0 {
                         continue;
                     }
-                    for sy in 0..FONT_SCALE {
-                        for sx in 0..FONT_SCALE {
-                            let px = gx + (col * FONT_SCALE + sx) as i64;
-                            let py = y0 + (row * FONT_SCALE + sy) as i64;
+                    for sy in 0..font {
+                        for sx in 0..font {
+                            let px = gx + (col * font + sx) as i64;
+                            let py = y0 + (row * font + sy) as i64;
                             if !canvas.contains(px, py) {
                                 continue;
                             }
@@ -3668,6 +3994,7 @@ mod raster {
     }
 
     /// Draw `text` centred on `pos`.
+    #[allow(clippy::too_many_arguments)]
     fn draw_text_centered(
         rgb: &mut [u8],
         mask: &mut [u8],
@@ -3675,16 +4002,17 @@ mod raster {
         pos: (f64, f64),
         text: &str,
         color: [u8; 3],
+        s: AnnoScale,
     ) {
-        let w = text_width_px(text) as f64;
-        let h = (7 * FONT_SCALE) as f64;
+        let w = text_width_px(text, s) as f64;
         draw_text(
             rgb,
             mask,
             canvas,
-            (pos.0 - w / 2.0, pos.1 - h / 2.0),
+            (pos.0 - w / 2.0, pos.1 - s.text_h() / 2.0),
             text,
             color,
+            s,
         );
     }
 
@@ -3743,11 +4071,14 @@ mod raster {
             if !visible {
                 continue;
             }
-            // Paint a stroke_px × stroke_px block anchored at the sample
-            // (right/down, matching the original 2px behaviour).
+            // Paint a stroke_px × stroke_px block *centred* on the sample.
+            // Anchoring it right/down (as it once was) offsets linework
+            // from its geometry by half the stroke — invisible at 2px,
+            // a clear 4px misregistration at the 4096px stroke weight.
+            let half = stroke_px as i64 / 2;
             for dy in 0..stroke_px as i64 {
                 for dx in 0..stroke_px as i64 {
-                    let (qx, qy) = (ix + dx, iy + dy);
+                    let (qx, qy) = (ix + dx - half, iy + dy - half);
                     if !canvas.contains(qx, qy) {
                         continue;
                     }
@@ -4705,6 +5036,194 @@ mod tests {
             (n(16), n(20))
         }
 
+        /// Count of pixels exactly matching `want`.
+        fn count_rgb(png: &[u8], want: [u8; 3]) -> usize {
+            image::load_from_memory(png)
+                .expect("valid PNG")
+                .to_rgba8()
+                .pixels()
+                .filter(|p| p.0[0] == want[0] && p.0[1] == want[1] && p.0[2] == want[2])
+                .count()
+        }
+
+        /// The overlay's pixel constants used to be bare pixel counts, so the
+        /// gizmo, glyphs and leaders were a fixed size no matter how big the
+        /// canvas — legible at 1024px, a speck at 4096px. Scaled, the gizmo
+        /// covers a constant *fraction* of the canvas, so doubling the
+        /// canvas roughly quadruples its pixel count. The X axis' red is
+        /// unique to the gizmo, which makes it a clean thing to count.
+        #[test]
+        fn annotation_overlay_scales_with_the_canvas() {
+            let doc = cube_vcad(30.0, 30.0, 30.0);
+            let ink = |size| {
+                let png = render_png_str(
+                    &doc,
+                    &RasterOptions {
+                        size_px: size,
+                        annotations: RenderAnnotations {
+                            axes: true,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                count_rgb(&png, super::super::raster::AXIS_RGB[0])
+            };
+            let (small, big) = (ink(400), ink(800));
+            assert!(small > 20, "gizmo should be drawn at 400px, got {small} px");
+            let growth = big as f64 / small as f64;
+            assert!(
+                growth > 2.5,
+                "doubling the canvas should roughly quadruple the gizmo's area; \
+                 it grew {growth:.2}x ({small} → {big} px)"
+            );
+        }
+
+        /// A part label used to anchor its leader at the centre of the
+        /// part's projected bounding box, which planted the dot — and, for a
+        /// single-part document, the text plate — right on the middle of the
+        /// geometry being named. The leader now starts on the silhouette, so
+        /// the centre of the render must come through untouched.
+        #[test]
+        fn part_label_keeps_off_the_middle_of_the_part() {
+            // A *single* named part, so the part's projected centre is the
+            // canvas centre — exactly the case the old centre-anchored
+            // leader drew straight through. A two-part document would pass
+            // either way and prove nothing.
+            let doc = cube_vcad(30.0, 30.0, 30.0);
+            let render = |labels| {
+                let png = render_png_str(
+                    &doc,
+                    &RasterOptions {
+                        size_px: 400,
+                        annotations: RenderAnnotations {
+                            labels,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                image::load_from_memory(&png).expect("valid PNG").to_rgba8()
+            };
+            let plain = render(false);
+            let labelled = render(true);
+            let (cx, cy) = (plain.width() / 2, plain.height() / 2);
+            for y in (cy - 6)..=(cy + 6) {
+                for x in (cx - 6)..=(cx + 6) {
+                    assert_eq!(
+                        plain.get_pixel(x, y),
+                        labelled.get_pixel(x, y),
+                        "label overlay painted over the centre of the part at ({x}, {y})"
+                    );
+                }
+            }
+            // …and it did draw something, somewhere.
+            let changed = plain
+                .pixels()
+                .zip(labelled.pixels())
+                .filter(|(a, b)| a != b)
+                .count();
+            assert!(changed > 50, "labels drew almost nothing ({changed} px)");
+        }
+
+        /// Every distinct alpha value in an RGBA PNG.
+        fn alphas(png: &[u8]) -> std::collections::BTreeSet<u8> {
+            image::load_from_memory(png)
+                .expect("valid PNG")
+                .to_rgba8()
+                .pixels()
+                .map(|p| p.0[3])
+                .collect()
+        }
+
+        /// Supersampling is what anti-aliases the tessellated path: at
+        /// `aa: 1` a pixel is point-sampled, so coverage is all-or-nothing
+        /// and a curved silhouette staircases. Above 1 the box filter has
+        /// to produce partial coverage along that silhouette.
+        #[test]
+        fn supersampling_gives_silhouettes_partial_coverage() {
+            let doc = cylinder_vcad(20.0, 8.0);
+            let opts = |aa| RasterOptions {
+                size_px: 192,
+                aa: Some(aa),
+                ..Default::default()
+            };
+            let flat = alphas(&render_png_str(&doc, &opts(1)).unwrap());
+            let aa = alphas(&render_png_str(&doc, &opts(3)).unwrap());
+
+            assert_eq!(
+                flat,
+                [0, 255].into_iter().collect(),
+                "aa:1 must stay point-sampled (binary coverage), got {} levels",
+                flat.len()
+            );
+            let partial = aa.iter().filter(|&&a| a != 0 && a != 255).count();
+            assert!(
+                partial >= 2,
+                "aa:3 should anti-alias the disc silhouette; got {partial} partial-coverage levels"
+            );
+        }
+
+        /// The depth cue must be continuous across a face. Evaluating it
+        /// once per triangle quantizes it to the triangulation, so a flat
+        /// top face reads as a fan of hard tonal wedges; interpolating it
+        /// from the rasterizer's own depth makes the same face a smooth
+        /// gradient. Scanned at `aa: 1` so no downsampling smooths over a
+        /// step that is really there.
+        #[test]
+        fn flat_face_shading_has_no_triangulation_steps() {
+            // A thin disc seen isometrically: the top face is a wide flat
+            // fan whose triangles differ a lot in depth (an axis-aligned
+            // view would give the face no depth spread at all, and no cue
+            // to be discontinuous), and it covers the whole mid scanline.
+            let png = render_png_str(
+                &cylinder_vcad(20.0, 0.5),
+                &RasterOptions {
+                    view: View::Isometric,
+                    size_px: 256,
+                    aa: Some(1),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let img = image::load_from_memory(&png).expect("valid PNG").to_rgba8();
+
+            // Scan *down* the image, not across: `right`, `down` and `cam`
+            // are orthonormal, so on a Z-const face depth is constant along
+            // a screen row and varies only down the screen. A horizontal
+            // scan would see no cue at all and pass either way.
+            //
+            // Keep only the top face — opaque, and lighter than the midpoint
+            // of the shading ramp, which excludes both the ink linework and
+            // the much darker rim (in an isometric view of a disc the top is
+            // the one upward-facing surface).
+            let lum = |c: [u8; 3]| luma([c[0] as f64, c[1] as f64, c[2] as f64]);
+            let mid = (lum(FILL_DARK) + lum(FILL_LIGHT)) / 2.0;
+            let col: Vec<f64> = (0..img.height())
+                .map(|y| *img.get_pixel(img.width() / 2, y))
+                .filter(|p| p.0[3] == 255)
+                .map(|p| lum([p.0[0], p.0[1], p.0[2]]))
+                .filter(|&l| l > mid)
+                .collect();
+            assert!(
+                col.len() > 60,
+                "the disc's top face should span a good part of the column, \
+                 got {} interior pixels",
+                col.len()
+            );
+            let step = col
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f64::max);
+            assert!(
+                step < 1.5,
+                "flat face should shade as a continuous gradient; \
+                 largest adjacent luma jump was {step:.2}"
+            );
+        }
+
         #[test]
         fn size_px_alone_still_renders_a_square() {
             let png = render_png_str(
@@ -5051,6 +5570,128 @@ mod tests {
             "no arcs expected for a cube"
         );
         assert!(svg.contains("<line "));
+    }
+
+    /// Points of every `<line>`/`<polyline>` inside the `<g>` whose stroke
+    /// width is `width`, one `Vec` per element.
+    fn stroke_group_chains(svg: &str, width: f64) -> Vec<Vec<(f64, f64)>> {
+        let open = format!(r#"stroke-width="{width}""#);
+        let Some(start) = svg.find(&open) else {
+            return Vec::new();
+        };
+        let body_start = start + svg[start..].find('>').expect("group tag closes");
+        let body = &svg[body_start..];
+        let body = &body[..body.find("</g>").unwrap_or(body.len())];
+        let num = |s: &str| s.parse::<f64>().expect("numeric SVG coordinate");
+        let mut out = Vec::new();
+        for chunk in body.split("<polyline points=\"").skip(1) {
+            let pts = &chunk[..chunk.find('"').expect("points attribute closes")];
+            out.push(
+                pts.split_whitespace()
+                    .map(|p| {
+                        let (x, y) = p.split_once(',').expect("x,y pair");
+                        (num(x), num(y))
+                    })
+                    .collect(),
+            );
+        }
+        for chunk in body.split("<line ").skip(1) {
+            let tag = &chunk[..chunk.find("/>").expect("line tag closes")];
+            let v: Vec<f64> = ["x1=\"", "y1=\"", "x2=\"", "y2=\""]
+                .iter()
+                .map(|k| {
+                    let at = tag.find(k).expect("line coordinate attribute") + k.len();
+                    num(&tag[at..][..tag[at..].find('"').expect("attribute closes")])
+                })
+                .collect();
+            out.push(vec![(v[0], v[1]), (v[2], v[3])]);
+        }
+        out
+    }
+
+    /// Hidden-line spans arrive one per mesh edge, so a tessellated curve is
+    /// hundreds of two-point pieces. Emitted as separate `<line>` elements
+    /// a dashed stroke restarts its pattern at each one, and any piece
+    /// shorter than a dash period draws 100% "on" — so every dashed hidden
+    /// line along a curve came out solid, reading as stray visible linework.
+    /// They must be chained into polylines for the dash phase to run.
+    #[test]
+    fn hidden_lines_chain_into_polylines() {
+        let svg = render_svg_str(&cylinder_vcad(30.0, 20.0), 4.0).unwrap();
+        let longest = stroke_group_chains(&svg, STROKE_HIDDEN_PX)
+            .into_iter()
+            .map(|c| c.len())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            longest >= 10,
+            "the hidden bottom rim should be one chained polyline; \
+             longest hidden run was {longest} points"
+        );
+    }
+
+    /// A fully-occluded edge is not a z-fighting fragment however short it
+    /// projects. Judging hidden spans purely on absolute projected length
+    /// ate the ends of long hidden curves — a rim's segments foreshorten as
+    /// it turns away from the viewer — leaving a fragment floating in the
+    /// middle of the part, attached to nothing. The hidden bottom rim of a
+    /// cylinder must run tangent point to tangent point, i.e. span the
+    /// drawing.
+    ///
+    /// A *plain* cylinder does not reproduce this — its rim is coarse
+    /// enough that every segment clears the absolute threshold. It takes a
+    /// boolean result, whose rims get a sag-adaptive canonical grid of a
+    /// few hundred points, for the per-segment projection to fall under it.
+    #[test]
+    fn fully_occluded_edges_survive_a_short_projection() {
+        // Ø120 × 15 disc with a Ø40 bore through it.
+        let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Disc", "op": { "type": "Cylinder", "radius": 60.0, "height": 15.0, "segments": 0 } },
+    "2": { "id": 2, "name": "Bore", "op": { "type": "Cylinder", "radius": 20.0, "height": 17.0, "segments": 0 } },
+    "3": { "id": 3, "name": "BoreT", "op": { "type": "Translate", "child": 2, "offset": { "x": 0.0, "y": 0.0, "z": -1.0 } } },
+    "4": { "id": 4, "name": "Drilled", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#;
+        let svg = render_svg_str(vcad, 4.0).unwrap();
+        let span_x = |chains: Vec<Vec<(f64, f64)>>| {
+            let xs: Vec<f64> = chains.into_iter().flatten().map(|p| p.0).collect();
+            let lo = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hi = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            (hi - lo).max(0.0)
+        };
+        let hidden = span_x(stroke_group_chains(&svg, STROKE_HIDDEN_PX));
+        let outline = span_x(stroke_group_chains(&svg, STROKE_OUTLINE_PX));
+        assert!(outline > 0.0, "cylinder should have an outline");
+        let ratio = hidden / outline;
+        assert!(
+            ratio >= 0.9,
+            "the hidden rim should span the part, not float in the middle of it; \
+             it covered {ratio:.2} of the outline's width"
+        );
+    }
+
+    /// Edges reach the emitter in `HashMap` iteration order, which varies
+    /// between runs. That was harmless while each was its own `<line>`, but
+    /// chaining turns it into a different partition of the same curve, so
+    /// the same document would render to different bytes each time —
+    /// churning any committed or cached SVG. Chaining sorts canonically
+    /// first; this holds it to that.
+    #[test]
+    fn the_same_document_renders_to_identical_bytes() {
+        let doc = cylinder_vcad(30.0, 20.0);
+        let first = render_svg_str(&doc, 4.0).unwrap();
+        for i in 0..4 {
+            assert_eq!(
+                first,
+                render_svg_str(&doc, 4.0).unwrap(),
+                "render {i} differed from the first"
+            );
+        }
     }
 
     /// Default (non-exact) output stays polyline-only — the flag is opt-in.
