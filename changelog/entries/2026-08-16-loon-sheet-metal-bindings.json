@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-16-loon-sheet-metal-bindings",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "feat",
+  "title": "Loon can author sheet metal, faceting and imports",
+  "summary": "Sheet-metal chains, pinned segment counts and vendor STEP/STL imports are now expressible in loon, so a bent part carries its bends and unfolds exactly instead of having them inferred back out of the solid.",
+  "features": ["loon", "sheet-metal", "import", "tessellation"],
+  "mcpTools": ["create_cad_loon", "sheet_metal_unfold", "flat_pattern_from_solid"]
+}

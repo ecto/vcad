@@ -192,35 +192,67 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             fmt_f64(size.z)
         )),
 
-        CsgOp::Cylinder { radius, height, .. } => OpResult::Ok(format!(
-            "[cylinder {} {}]",
-            fmt_f64(*radius),
-            fmt_f64(*height)
-        )),
+        CsgOp::Cylinder {
+            radius,
+            height,
+            segments,
+        } => OpResult::Ok(if *segments == 0 {
+            format!("[cylinder {} {}]", fmt_f64(*radius), fmt_f64(*height))
+        } else {
+            format!(
+                "[cylinder-n {} {} {}]",
+                fmt_f64(*radius),
+                fmt_f64(*height),
+                segments
+            )
+        }),
 
-        CsgOp::Sphere { radius, .. } => OpResult::Ok(format!("[sphere {}]", fmt_f64(*radius))),
+        CsgOp::Sphere { radius, segments } => OpResult::Ok(if *segments == 0 {
+            format!("[sphere {}]", fmt_f64(*radius))
+        } else {
+            format!("[sphere-n {} {}]", fmt_f64(*radius), segments)
+        }),
 
         CsgOp::Cone {
             radius_bottom,
             radius_top,
             height,
-            ..
-        } => OpResult::Ok(format!(
-            "[cone {} {} {}]",
-            fmt_f64(*radius_bottom),
-            fmt_f64(*radius_top),
-            fmt_f64(*height)
-        )),
+            segments,
+        } => OpResult::Ok(if *segments == 0 {
+            format!(
+                "[cone {} {} {}]",
+                fmt_f64(*radius_bottom),
+                fmt_f64(*radius_top),
+                fmt_f64(*height)
+            )
+        } else {
+            format!(
+                "[cone-n {} {} {} {}]",
+                fmt_f64(*radius_bottom),
+                fmt_f64(*radius_top),
+                fmt_f64(*height),
+                segments
+            )
+        }),
 
         CsgOp::Torus {
             major_radius,
             minor_radius,
-            ..
-        } => OpResult::Ok(format!(
-            "[torus {} {}]",
-            fmt_f64(*major_radius),
-            fmt_f64(*minor_radius)
-        )),
+            segments,
+        } => OpResult::Ok(if *segments == 0 {
+            format!(
+                "[torus {} {}]",
+                fmt_f64(*major_radius),
+                fmt_f64(*minor_radius)
+            )
+        } else {
+            format!(
+                "[torus-n {} {} {}]",
+                fmt_f64(*major_radius),
+                fmt_f64(*minor_radius),
+                segments
+            )
+        }),
 
         CsgOp::Wedge { size } => OpResult::Ok(format!(
             "[wedge {} {} {}]",
@@ -527,15 +559,21 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             )
         }
 
-        CsgOp::StepImport { path, .. } => OpResult::Unsupported(
-            "StepImport".to_string(),
-            format!("; StepImport {:?} — not yet supported in loon", path),
-        ),
+        CsgOp::StepImport { path, solid_index } => OpResult::Ok(match solid_index {
+            Some(i) if *i != 0 => format!("[import-step-body {:?} {}]", path, i),
+            _ => format!("[import-step {:?}]", path),
+        }),
 
-        CsgOp::MeshImport { path, .. } => OpResult::Unsupported(
-            "MeshImport".to_string(),
-            format!("; MeshImport {:?} — not yet supported in loon", path),
-        ),
+        CsgOp::MeshImport { path, scale } => OpResult::Ok(match scale {
+            Some(s) => format!(
+                "[import-mesh-scaled {} {} {} {:?}]",
+                fmt_f64(s.x),
+                fmt_f64(s.y),
+                fmt_f64(s.z),
+                path
+            ),
+            None => format!("[import-mesh {:?}]", path),
+        }),
 
         CsgOp::PcbBoard { .. } => OpResult::Unsupported(
             "PcbBoard".to_string(),
@@ -568,31 +606,198 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             ))
         }
 
-        CsgOp::SheetMetalBaseFlangeRect { .. } => OpResult::Unsupported(
-            "SheetMetalBaseFlangeRect".to_string(),
-            "; SheetMetalBaseFlangeRect — not yet supported in loon".to_string(),
-        ),
-        CsgOp::SheetMetalEdgeFlange { .. } => OpResult::Unsupported(
-            "SheetMetalEdgeFlange".to_string(),
-            "; SheetMetalEdgeFlange — not yet supported in loon".to_string(),
-        ),
-        CsgOp::SheetMetalHem { .. } => OpResult::Unsupported(
-            "SheetMetalHem".to_string(),
-            "; SheetMetalHem — not yet supported in loon".to_string(),
-        ),
-        CsgOp::SheetMetalJog { .. } => OpResult::Unsupported(
-            "SheetMetalJog".to_string(),
-            "; SheetMetalJog — not yet supported in loon".to_string(),
-        ),
-        CsgOp::SheetMetalBaseFlangePolygon { .. } => OpResult::Unsupported(
-            "SheetMetalBaseFlangePolygon".to_string(),
-            "; SheetMetalBaseFlangePolygon — not yet supported in loon".to_string(),
-        ),
-        CsgOp::SheetMetalBendRelief { .. } => OpResult::Unsupported(
-            "SheetMetalBendRelief".to_string(),
-            "; SheetMetalBendRelief — not yet supported in loon".to_string(),
-        ),
+        // Sheet metal. Emitted in the explicit `-at` forms rather than the
+        // short sugar: a document does not record which of several equivalent
+        // spellings the author used, and the explicit form is the one that can
+        // carry every field back out.
+        CsgOp::SheetMetalBaseFlangeRect {
+            width,
+            depth,
+            thickness,
+            material,
+            shop_profile,
+            engravings,
+        } => OpResult::Ok(match (shop_profile, engravings) {
+            (Some(shop), _) => format!(
+                "[sheet-base-flange-rect-shop {} {} {} {:?} {:?}]",
+                fmt_f64(*width),
+                fmt_f64(*depth),
+                fmt_f64(*thickness),
+                material,
+                shop
+            ),
+            (None, Some(marks)) if !marks.is_empty() => format!(
+                "[sheet-base-flange-rect-engraved {} {} {} {:?} #[{}]]",
+                fmt_f64(*width),
+                fmt_f64(*depth),
+                fmt_f64(*thickness),
+                material,
+                fmt_engravings(marks)
+            ),
+            _ => format!(
+                "[sheet-base-flange-rect {} {} {} {:?}]",
+                fmt_f64(*width),
+                fmt_f64(*depth),
+                fmt_f64(*thickness),
+                material
+            ),
+        }),
+
+        CsgOp::SheetMetalBaseFlangePolygon {
+            outline,
+            holes,
+            thickness,
+            material,
+            shop_profile,
+            engravings,
+        } => {
+            let holes_str = holes
+                .iter()
+                .map(|h| format!("#[{}]", fmt_points(h)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            OpResult::Ok(match (shop_profile, engravings) {
+                (Some(shop), _) => format!(
+                    "[sheet-base-flange-shop #[{}] #[{}] {} {:?} {:?}]",
+                    fmt_points(outline),
+                    holes_str,
+                    fmt_f64(*thickness),
+                    material,
+                    shop
+                ),
+                (None, Some(marks)) if !marks.is_empty() => format!(
+                    "[sheet-base-flange-engraved #[{}] #[{}] {} {:?} #[{}]]",
+                    fmt_points(outline),
+                    holes_str,
+                    fmt_f64(*thickness),
+                    material,
+                    fmt_engravings(marks)
+                ),
+                _ => format!(
+                    "[sheet-base-flange #[{}] #[{}] {} {:?}]",
+                    fmt_points(outline),
+                    holes_str,
+                    fmt_f64(*thickness),
+                    material
+                ),
+            })
+        }
+
+        CsgOp::SheetMetalEdgeFlange {
+            parent,
+            panel_id,
+            edge_index,
+            length,
+            angle,
+            radius,
+            direction,
+            manual_k,
+        } => OpResult::Ok(format!(
+            "[sheet-edge-flange-at {} {} {} {} {} {} {} {}]",
+            panel_id,
+            edge_index,
+            fmt_f64(*length),
+            fmt_f64(angle.to_degrees()),
+            fmt_f64(radius.unwrap_or(0.0)),
+            fmt_direction(direction),
+            fmt_f64(manual_k.unwrap_or(0.0)),
+            node_ref(*parent, doc)
+        )),
+
+        CsgOp::SheetMetalJog {
+            parent,
+            panel_id,
+            edge_index,
+            offset,
+            length,
+            radius,
+            direction,
+        } => OpResult::Ok(format!(
+            "[sheet-jog-at {} {} {} {} {} {} {}]",
+            panel_id,
+            edge_index,
+            fmt_f64(*offset),
+            fmt_f64(*length),
+            fmt_f64(radius.unwrap_or(0.0)),
+            fmt_direction(direction),
+            node_ref(*parent, doc)
+        )),
+
+        CsgOp::SheetMetalHem {
+            parent,
+            panel_id,
+            edge_index,
+            kind,
+            length,
+            gap,
+            direction,
+        } => OpResult::Ok(format!(
+            "[sheet-hem-at {} {} {:?} {} {} {} {}]",
+            panel_id,
+            edge_index,
+            match kind {
+                crate::SheetMetalHemKind::Closed => "closed",
+                crate::SheetMetalHemKind::Open => "open",
+            },
+            fmt_f64(*length),
+            fmt_f64(*gap),
+            fmt_direction(direction),
+            node_ref(*parent, doc)
+        )),
+
+        CsgOp::SheetMetalBendRelief {
+            parent,
+            width,
+            depth,
+        } => OpResult::Ok(format!(
+            "[sheet-bend-relief-sized {} {} {}]",
+            fmt_f64(width.unwrap_or(0.0)),
+            fmt_f64(depth.unwrap_or(0.0)),
+            node_ref(*parent, doc)
+        )),
     }
+}
+
+/// `"up"` / `"down"`, quoted for loon.
+fn fmt_direction(d: &crate::SheetMetalDirection) -> &'static str {
+    match d {
+        crate::SheetMetalDirection::Up => "\"up\"",
+        crate::SheetMetalDirection::Down => "\"down\"",
+    }
+}
+
+/// A point loop as the flat `x0 y0 x1 y1 ...` the loon forms take.
+fn fmt_points(pts: &[crate::Vec2]) -> String {
+    pts.iter()
+        .map(|p| format!("{} {}", fmt_f64(p.x), fmt_f64(p.y)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn fmt_engravings(marks: &[crate::SheetMetalEngraving]) -> String {
+    marks
+        .iter()
+        .map(|m| match m {
+            crate::SheetMetalEngraving::Polyline { points } => {
+                format!("[engrave-path #[{}]]", fmt_points(points))
+            }
+            crate::SheetMetalEngraving::Text {
+                text,
+                x,
+                y,
+                height,
+                angle,
+            } => format!(
+                "[engrave-text-at {:?} {} {} {} {}]",
+                text,
+                fmt_f64(*x),
+                fmt_f64(*y),
+                fmt_f64(*height),
+                fmt_f64(angle.to_degrees())
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn fmt_json_value(v: &serde_json::Value) -> String {
@@ -627,6 +832,13 @@ fn get_child_ids(op: &CsgOp) -> Vec<NodeId> {
         | CsgOp::Sweep { sketch, .. } => vec![*sketch],
 
         CsgOp::Loft { sketches, .. } => sketches.clone(),
+
+        // A sheet-metal chain is a parent chain like any other: the base
+        // flange has to be emitted before the flange that folds off it.
+        CsgOp::SheetMetalEdgeFlange { parent, .. }
+        | CsgOp::SheetMetalJog { parent, .. }
+        | CsgOp::SheetMetalHem { parent, .. }
+        | CsgOp::SheetMetalBendRelief { parent, .. } => vec![*parent],
 
         _ => vec![],
     }

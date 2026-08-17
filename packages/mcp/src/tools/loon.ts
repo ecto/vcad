@@ -189,13 +189,46 @@ export function createCadLoon(
     return { content: [{ type: "text", text }] };
   }
 
-  const text = format === "json" ? JSON.stringify(doc, null, 2) : toVCode(doc);
+  const { text, fellBack } = serializeDocument(doc, format);
   const content: Array<{ type: "text"; text: string }> = [{ type: "text", text }];
+  if (fellBack) {
+    content.push({
+      type: "text",
+      text:
+        `Note: returned the JSON IR instead of VCode — this document uses ops VCode ` +
+        `cannot express (${fellBack}). The document itself is complete and every ` +
+        `downstream tool works on it; only the compact text form is unavailable.`,
+    });
+  }
 
   const note = parametricNote(source, modules, engine, doc);
   if (note) content.push({ type: "text", text: note });
 
   return { content };
+}
+
+/**
+ * Render the document as the caller asked, falling back to the JSON IR when
+ * VCode cannot express what the program built.
+ *
+ * VCode is a deliberately compact subset — it has no opcode for a sheet-metal
+ * bend graph, an imported vendor part, or a PCB. Failing the whole call over
+ * the *display* format would mean a loon program that models a perfectly good
+ * part cannot be authored at all, even though the document is fine and every
+ * downstream tool (unfold, export, inspect) works on it. So degrade the text
+ * and say so, rather than refusing the geometry.
+ */
+function serializeDocument(
+  doc: Document,
+  format: "vcode" | "json",
+): { text: string; fellBack: string | null } {
+  if (format === "json") return { text: JSON.stringify(doc, null, 2), fellBack: null };
+  try {
+    return { text: toVCode(doc), fellBack: null };
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    return { text: JSON.stringify(doc, null, 2), fellBack: why };
+  }
 }
 
 /**
@@ -265,7 +298,9 @@ export const toolDefs: ToolDef[] = [
     pack: null,
     description:
       "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\n" +
-      "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h], [torus major-r minor-r], [wedge x y z], [prism sides radius height]\n" +
+      "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h], [torus major-r minor-r], [wedge x y z], [prism sides radius height]. Segment count is the kernel default (32); pin it with [cylinder-n r h n] / [sphere-n r n] / [cone-n rb rt h n] / [torus-n R r n] where the facets are load-bearing (a bore that must accept a real shaft)\n" +
+      "Imports — place a purchased part instead of approximating it, so fit checks test the real envelope and not one you invented: [import-step \"vendor/x6-60.step\"], [import-step-body path index] for a multi-body file, [import-mesh \"part.stl\"], [import-mesh-scaled sx sy sz path]. Relative paths resolve against base_dir / the module source\n" +
+      "Sheet metal (subject-last, so it threads through pipe) — author a cut-and-bent part as a bend chain and it KEEPS its bends, so sheet_metal_unfold is exact instead of inferred back out of a solid by flat_pattern_from_solid: [sheet-base-flange-rect width depth thickness \"al-soft\"] (or [sheet-base-flange #[x0 y0 …] #[holes] t material] for an arbitrary outline) then [sheet-edge-flange edge length angle-deg s], [sheet-jog edge offset length s], [sheet-hem edge length s], [sheet-bend-relief s]. `edge` is an outline index, or \"south\"/\"east\"/\"north\"/\"west\" on a rectangular base flange (edge 0 is the -Y edge, CCW from there). Each has an -at form taking panel id, radius, direction (\"up\"/\"down\") and K-factor, where 0.0 means the default; -shop variants resolve every bend through a shop table. Sheet nodes are a bend graph, NOT solids — never union, transform or fillet them\n" +
       "Booleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\n" +
       "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s], [mirror ox oy oz nx ny nz s] (plane through the origin point with that normal) — plus the axis sugar [mirror-x s] / [mirror-y s] / [mirror-z s], which mirror through the origin, negating that one coordinate. NEVER hand-mirror by negating coordinates; use these.\n" +
       "Features: [fillet r s], [chamfer d s], [shell t s]\n" +
