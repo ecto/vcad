@@ -7190,19 +7190,69 @@
     }
   },
   {
-    "name": "import_eagle",
-    "title": "Import EAGLE",
-    "description": "Import an Eagle .brd file (not yet supported). Export your board from Eagle as KiCad (.kicad_pcb) and use import_kicad instead.",
+    "name": "import_altium",
+    "title": "Import Altium",
+    "description": "Import an Altium .PcbDoc board into a live session — board outline, footprints with pads + nets, design rules, and any routed traces/vias. Accepts both the native binary file and an ASCII export (detected automatically). Returns a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. The binary path fails closed on record layouts it cannot decode rather than importing a partially-correct board. Pass content_base64 on hosted servers.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "filename": {
           "type": "string",
-          "description": "Path to a .brd file (Eagle XML format)."
+          "description": "Path to a .PcbDoc file on the server filesystem (relative to VCAD_MCP_EXPORT_DIR or cwd). Native binary and ASCII exports are both accepted. On hosted servers pass content_base64 instead."
         },
         "content_base64": {
           "type": "string",
-          "description": "Base64-encoded .brd contents."
+          "description": "Base64-encoded .PcbDoc contents (preferred for hosted servers)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Board name for display (default: filename without extension)."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "import_altium_library",
+    "title": "Import Altium Library",
+    "description": "Read an Altium .PcbLib footprint library (binary or ASCII) and return its footprint patterns with pads, shapes, and drills. A library is not a board, so no document_id is minted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "description": "Path to a .PcbLib footprint library (binary or ASCII)."
+        },
+        "content_base64": {
+          "type": "string",
+          "description": "Base64-encoded .PcbLib contents."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "import_eagle",
+    "title": "Import EAGLE",
+    "description": "Import an Eagle .brd board (XML, Eagle 6+) into a live session — board outline, packages placed as footprints with pads, signals as nets, and any hand-routed traces/vias. Returns a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. Pass content_base64 on hosted servers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "description": "Path to a .brd file (Eagle XML, Eagle 6+)."
+        },
+        "content_base64": {
+          "type": "string",
+          "description": "Base64-encoded .brd contents (preferred for hosted servers)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Board name for display (default: filename without extension)."
         }
       }
     },
