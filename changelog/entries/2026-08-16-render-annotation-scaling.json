@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-16-render-annotation-scaling",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "fix",
+  "title": "Render overlays stay readable at any size",
+  "summary": "The axes gizmo, part labels and dimensions now scale with the canvas instead of staying 1024px-sized, dimension lines clear round parts, and labels no longer land on the geometry they name.",
+  "features": ["rendering", "drafting"],
+  "mcpTools": ["render_view"]
+}

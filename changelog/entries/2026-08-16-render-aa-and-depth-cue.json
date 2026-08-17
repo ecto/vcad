@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-16-render-aa-and-depth-cue",
+  "version": "0.9.4",
+  "date": "2026-08-16",
+  "category": "fix",
+  "title": "Smoother renders: anti-aliasing and a per-pixel depth cue",
+  "summary": "Isometric renders anti-alias their silhouettes and linework, flat faces no longer break into hard tonal wedges at triangle boundaries, and edge strokes sit on their geometry instead of half a stroke off.",
+  "features": ["rendering", "tessellation"],
+  "mcpTools": ["render_view"]
+}
