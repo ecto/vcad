@@ -499,6 +499,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "import_step",
   "import_urdf",
   "import_kicad",
+  "import_altium",
+  "import_altium_library",
   "import_eagle",
   "open_in_browser",
   // ── Physics gym ────────────────────────────────────────────

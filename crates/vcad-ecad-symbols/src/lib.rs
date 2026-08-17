@@ -27,6 +27,7 @@
 //! assert_eq!(lib.symbols[0].name, "R");
 //! ```
 
+pub mod altium;
 pub mod builtin;
 pub mod eagle_brd;
 pub mod footprint;
@@ -41,6 +42,7 @@ mod sexpr;
 use serde::{Deserialize, Serialize};
 
 // Re-export public API
+pub use altium::{parse_altium_ascii_pcb, parse_altium_pcbdoc, parse_altium_pcblib};
 pub use eagle_brd::parse_eagle_brd;
 pub use kicad_mod::{parse_footprint_lib, FootprintDef, FootprintLib, GraphicDef, PadDef};
 pub use kicad_pcb::parse_kicad_pcb;
