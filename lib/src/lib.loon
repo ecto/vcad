@@ -89,7 +89,53 @@
   ; Hole tools, sized from the same thread designation as the fastener.
   ; [ClearanceHole size depth ox oy oz dx dy dz]
   [ClearanceHole Str f64 f64 f64 f64 f64 f64 f64]
-  [TappedHole Str f64 f64 f64 f64 f64 f64 f64]]
+  [TappedHole Str f64 f64 f64 f64 f64 f64 f64]
+  ; Faceting overrides for the curved primitives. The plain forms above
+  ; leave segment count to the kernel default (32); these pin it, which is
+  ; what a conforming fit needs — a bore that has to accept a real shaft
+  ; cannot be a 32-gon rounded whichever way the tessellator chose.
+  [CylinderN f64 f64 Int]
+  [SphereN f64 Int]
+  [ConeN f64 f64 f64 Int]
+  [TorusN f64 f64 Int]
+  ; Imported geometry — a vendor part placed as-is, not re-modelled.
+  ; [MeshImport path sx sy sz]  (STL; scale 1 1 1 for none)
+  [MeshImport Str f64 f64 f64]
+  ; [StepImport path solid-index]
+  [StepImport Str Int]
+  ; Sheet metal — a bend graph, NOT a CSG solid. A chain starts at a base
+  ; flange; every later op takes the chain as its first ADT field. Sheet
+  ; nodes cannot be mixed into booleans or transforms: the engine routes a
+  ; sheet-metal root to the sheet kernel, which returns a body *and* an
+  ; exact flat pattern.
+  ;
+  ; `edge` is an outline edge index, or — on the panel of a rectangular
+  ; base flange — one of "south" "east" "north" "west" (0..3, CCW from
+  ; the -Y edge). `radius` and `k` of 0.0 mean "use the default" (material
+  ; thickness, or the shop profile's fixed radius). `dir` is "up" or "down".
+  ;
+  ; [SheetBaseFlangeRect width depth thickness material shop engravings]
+  [SheetBaseFlangeRect f64 f64 f64 Str Str (Vec SheetEngraving)]
+  ; [SheetBaseFlangePolygon outline holes thickness material shop engravings]
+  [SheetBaseFlangePolygon (Vec f64) (Vec (Vec f64)) f64 Str Str (Vec SheetEngraving)]
+  ; [SheetEdgeFlange parent panel edge length angle radius dir k]
+  [SheetEdgeFlange Solid Int Any f64 f64 f64 Str f64]
+  ; [SheetJog parent panel edge offset length radius dir]
+  [SheetJog Solid Int Any f64 f64 f64 Str]
+  ; [SheetHem parent panel edge kind length gap dir]
+  [SheetHem Solid Int Any Str f64 f64 Str]
+  ; [SheetBendRelief parent width depth]  (0.0 = kernel/shop default)
+  [SheetBendRelief Solid f64 f64]]
+
+; ---------------------------------------------------------------------------
+; Sheet-metal engraving — a marking pass on the base flange's outside face.
+; No material removal, so it is exempt from min-feature DFM rules and lands
+; on the flat pattern's ENGRAVE layer. Points are flat: #[x0 y0 x1 y1 ...].
+; ---------------------------------------------------------------------------
+
+[type SheetEngraving
+  [EngravePolyline (Vec f64)]
+  [EngraveText Str f64 f64 f64 f64]]
 
 ; ---------------------------------------------------------------------------
 ; Sketch — 2D profiles for extrude/revolve
@@ -130,6 +176,33 @@
 [let torus [fn [major-r minor-r] [Torus major-r minor-r]]]
 [let wedge [fn [x y z] [Wedge x y z]]]
 [let prism [fn [sides radius height] [Prism sides radius height]]]
+
+; Same primitives with an explicit segment count. The plain forms leave
+; faceting to the kernel default (32); reach for these when the facets are
+; load-bearing — a bore that has to pass a real shaft, a pulley whose pitch
+; diameter is measured off the mesh, anything conforming to a mating part.
+; A 32-segment inscribed circle sits 0.24% inside its nominal radius, which
+; is a 0.05 mm interference on a 20 mm bore.
+[let cylinder-n [fn [r h n] [CylinderN r h n]]]
+[let sphere-n [fn [r n] [SphereN r n]]]
+[let cone-n [fn [r-bottom r-top h n] [ConeN r-bottom r-top h n]]]
+[let torus-n [fn [major-r minor-r n] [TorusN major-r minor-r n]]]
+
+; Imported geometry — place a vendor part instead of approximating it.
+; A purchased actuator modelled as "a cylinder of about the right size"
+; passes envelope checks that the real part fails, because the real part
+; has connector bosses and cable exits the envelope never had.
+;
+; Relative paths resolve against the directory of the .loon file that
+; names them, so a model and its vendor STEPs move together.
+;   [import-step "vendor/x6-60.step"]
+;   [import-mesh "vendor/bracket.stl"]
+[let import-step [fn [path] [StepImport path 0]]]
+; Pick a specific body out of a multi-body STEP (0-based).
+[let import-step-body [fn [path index] [StepImport path index]]]
+[let import-mesh [fn [path] [MeshImport path 1.0 1.0 1.0]]]
+; Scaled import — for an STL authored in metres or inches.
+[let import-mesh-scaled [fn [sx sy sz path] [MeshImport path sx sy sz]]]
 
 ; Booleans (subject-last: [pipe body [difference tool]] → subtract tool from body)
 [let union [fn [other s] [Union s other]]]
@@ -245,6 +318,84 @@
   [ClearanceHole size depth ox oy oz dx dy dz]]]
 [let tapped-hole [fn [size depth ox oy oz dx dy dz]
   [TappedHole size depth ox oy oz dx dy dz]]]
+
+; ---------------------------------------------------------------------------
+; Sheet metal — cut-and-bent parts that carry their bends
+;
+; A sheet chain is subject-last like everything else, so it threads:
+;
+;   [pipe [sheet-base-flange-rect 200.0 120.0 3.0 "al-soft"]
+;         [sheet-edge-flange "east" 40.0 90.0]
+;         [sheet-edge-flange "west" 40.0 90.0]
+;         [sheet-hem "north" 8.0]
+;         [sheet-bend-relief]]
+;
+; Modelling the same bracket as unioned plates loses every bend: the flat
+; pattern then has to be *inferred* back out of the solid. Authored this
+; way the unfold is exact, and the bend table, DXF, nesting and cost come
+; off the model the designer actually wrote.
+;
+; Sheet nodes are not solids. Do not union, transform or fillet them — the
+; engine routes a sheet root to the sheet kernel whole.
+;
+; `edge` is an outline edge index, or "south"/"east"/"north"/"west" on a
+; rectangular base flange's own panel (edge 0 is the -Y edge, CCW from
+; there). Angles are DEGREES, like [rotate]. Materials: "al-soft",
+; "al-hard", "steel-mild", "ss-304", "brass", "copper" (aliases like
+; "5052" and "6061" resolve too).
+
+; Base flanges — the root of a chain.
+[let sheet-base-flange-rect [fn [width depth thickness material]
+  [SheetBaseFlangeRect width depth thickness material "" #[]]]]
+; Resolve every bend radius and K-factor through a shop's published table
+; (e.g. "sendcutsend"); custom radii are then rejected rather than quoted.
+[let sheet-base-flange-rect-shop [fn [width depth thickness material shop]
+  [SheetBaseFlangeRect width depth thickness material shop #[]]]]
+; Arbitrary outline: CCW outer boundary, CW holes, both flat #[x0 y0 x1 y1 ...].
+[let sheet-base-flange [fn [outline holes thickness material]
+  [SheetBaseFlangePolygon outline holes thickness material "" #[]]]]
+[let sheet-base-flange-shop [fn [outline holes thickness material shop]
+  [SheetBaseFlangePolygon outline holes thickness material shop #[]]]]
+
+; Part marking on the base flange's outside face (engrave, not cut).
+[let engrave-path [fn [points] [EngravePolyline points]]]
+[let engrave-text [fn [text x y height] [EngraveText text x y height 0.0]]]
+[let engrave-text-at [fn [text x y height angle] [EngraveText text x y height angle]]]
+; Marks live on the base flange, so they are given when it is built.
+[let sheet-base-flange-rect-engraved [fn [width depth thickness material engravings]
+  [SheetBaseFlangeRect width depth thickness material "" engravings]]]
+[let sheet-base-flange-engraved [fn [outline holes thickness material engravings]
+  [SheetBaseFlangePolygon outline holes thickness material "" engravings]]]
+
+; Edge flange — fold a new panel off an edge of an existing one.
+;   [sheet-edge-flange "east" 40.0 90.0 chain]
+[let sheet-edge-flange [fn [edge length angle s]
+  [SheetEdgeFlange s 0 edge length angle 0.0 "up" 0.0]]]
+[let sheet-edge-flange-down [fn [edge length angle s]
+  [SheetEdgeFlange s 0 edge length angle 0.0 "down" 0.0]]]
+; Full form: pick the panel, pin the inside radius and the K-factor.
+; radius 0.0 → thickness (or the shop's fixed radius); k 0.0 → bend table.
+[let sheet-edge-flange-at [fn [panel edge length angle radius dir k s]
+  [SheetEdgeFlange s panel edge length angle radius dir k]]]
+
+; Jog — a Z-shaped offset from two equal-and-opposite 90 degree bends.
+[let sheet-jog [fn [edge offset length s]
+  [SheetJog s 0 edge offset length 0.0 "up"]]]
+[let sheet-jog-at [fn [panel edge offset length radius dir s]
+  [SheetJog s panel edge offset length radius dir]]]
+
+; Hem — a 180 degree fold that stiffens an edge and kills the sharp corner.
+[let sheet-hem [fn [edge length s]
+  [SheetHem s 0 edge "closed" length 0.0 "up"]]]
+[let sheet-hem-open [fn [edge length gap s]
+  [SheetHem s 0 edge "open" length gap "up"]]]
+[let sheet-hem-at [fn [panel edge kind length gap dir s]
+  [SheetHem s panel edge kind length gap dir]]]
+
+; Bend relief — notch the ends of every bend that needs it. Applies to the
+; whole chain, so it goes last.
+[let sheet-bend-relief [fn [s] [SheetBendRelief s 0.0 0.0]]]
+[let sheet-bend-relief-sized [fn [width depth s] [SheetBendRelief s width depth]]]
 
 ; ---------------------------------------------------------------------------
 ; Snap-fit design rules (lib/dfm/fdm.toml [rules.snap_fit])

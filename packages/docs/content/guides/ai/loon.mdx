@@ -206,6 +206,78 @@ Multiple `root` directives create multi-part documents. Each root gets its own m
 [root pillar "aluminum"]
 ```
 
+## Pattern: Sheet Metal That Carries Its Bends
+
+A cut-and-bent part can be authored as a sheet chain instead of unioned
+plates. The chain is subject-last like everything else, so it threads through
+`pipe`:
+
+```lisp
+[let bracket
+  [pipe [sheet-base-flange-rect 200.0 120.0 3.0 "al-soft"]
+        [sheet-edge-flange "east" 40.0 90.0]
+        [sheet-edge-flange "west" 40.0 90.0]
+        [sheet-hem "north" 8.0]
+        [sheet-bend-relief]]]
+[root bracket "aluminum"]
+```
+
+This matters because the bends are *kept*. Modelled as unioned plates with
+sharp corners, the same bracket has no bend metadata, and the flat pattern has
+to be inferred back out of the solid afterwards by `flat_pattern_from_solid`
+— which works and fails closed, but is a lossy round trip for information the
+author had at design time. Authored as a chain, `sheet_metal_unfold` is exact,
+and the bend table, DXF, nesting and cost all come off the model as written.
+
+`edge` is an outline edge index, or — on the panel of a rectangular base
+flange — `"south"` / `"east"` / `"north"` / `"west"` (edge 0 is the -Y edge,
+counter-clockwise from there). Angles are degrees, as with `rotate`. A radius
+or K-factor of `0.0` means "use the default": material thickness, or the shop
+profile's fixed radius, or the bend table.
+
+The full vocabulary: `sheet-base-flange-rect`, `sheet-base-flange` (arbitrary
+outline plus holes, each a flat `#[x0 y0 x1 y1 ...]`), `sheet-edge-flange`,
+`sheet-jog`, `sheet-hem`, `sheet-bend-relief`, each with an explicit `-at`
+form that takes the panel id, radius, direction and K-factor. Add
+`-shop "sendcutsend"` to resolve every bend through a shop's published table,
+and `-engraved` to put part marking on the flat pattern's `ENGRAVE` layer.
+
+Sheet nodes are a bend graph, not a solid: do not union, transform or fillet
+them. Handing a solid to a sheet op is an error, not a silent reinterpretation.
+
+## Pattern: Faceting You Chose
+
+The plain curved primitives leave segment count to the kernel default (32).
+Where the facets are load-bearing — a bore that has to accept a real shaft, a
+diameter measured off the mesh — pin it:
+
+```lisp
+[let bore [cylinder-n 10.0 40.0 128]]
+```
+
+A 32-segment inscribed circle sits 0.24% inside its nominal radius, which is
+a 0.05 mm interference on a 20 mm bore. `sphere-n`, `cone-n` and `torus-n`
+work the same way.
+
+## Pattern: Vendor Parts, Not Approximations
+
+Place purchased geometry instead of approximating it:
+
+```lisp
+[let actuator [translate 0 0 60 [import-step "vendor/x6-60.step"]]]
+[let plate [difference [cube 100 100 20] actuator]]
+```
+
+Relative paths resolve against the directory of the `.loon` file that names
+them, so a model and its vendor files move together. `import-step-body` picks
+one body out of a multi-body STEP; `import-mesh` and `import-mesh-scaled`
+place an STL.
+
+Substituting "a cylinder of about the right size" for a purchased part means
+fit checks only ever test the envelope you invented — and real parts have
+connector bosses and cable exits that project past the body their datasheet
+advertises.
+
 ## Common Mistakes
 
 **Wrong: VCode opcodes in Loon source.** The `create_cad_loon` tool expects S-expression syntax, not VCode opcodes.

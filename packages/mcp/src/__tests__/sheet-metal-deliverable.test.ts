@@ -139,4 +139,52 @@ describe("sheet_metal_unfold returns its deliverable through full dispatch", () 
     await client.close();
     await server.close();
   });
+
+  // The same part authored in loon must unfold to the same flat pattern as
+  // the one authored through sheet_metal_create. If it doesn't, the loon
+  // bindings are a lossy detour and a part written that way would be cut
+  // wrong — which is the whole failure the bindings exist to prevent.
+  it("a loon-authored chain unfolds identically to sheet_metal_create", async () => {
+    documents.clear();
+    const { client, server } = await connect(engine);
+
+    const created = (await client.callTool({
+      name: "create_cad_loon",
+      arguments: {
+        source: [
+          `[pipe [sheet-base-flange-rect-shop ${BASE_WIDTH}.0 200.0 2.0 "Al-soft" "sendcutsend"]`,
+          `      [sheet-edge-flange "east" ${FLANGE}.0 90.0]`,
+          `      [sheet-edge-flange "west" ${FLANGE}.0 90.0]`,
+          `      [sheet-bend-relief]]`,
+        ].join("\n"),
+      },
+    })) as ToolCallResult;
+    expect(created.isError, JSON.stringify(created.content)).toBeFalsy();
+
+    const docId = created.structuredContent?.document_id as string;
+    expect(typeof docId).toBe("string");
+
+    const unfolded = (await client.callTool({
+      name: "sheet_metal_unfold",
+      arguments: { document_id: docId, include_dxf: true },
+    })) as ToolCallResult;
+    expect(unfolded.isError, JSON.stringify(unfolded.content)).toBeFalsy();
+
+    const flat = (unfolded.structuredContent?.flat_pattern ?? {}) as Record<string, unknown>;
+    const bbox = flat.bbox as number[];
+    expect(bbox, "loon chain produced no flat pattern").toHaveLength(4);
+    expect(bbox[2] - bbox[0]).toBeCloseTo(DEVELOPED_WIDTH, 6);
+    expect(bbox[3] - bbox[1]).toBeCloseTo(200, 6);
+
+    // Both bends resolved through the shop profile's table, not a default.
+    const creases = flat.creases as Array<Record<string, unknown>>;
+    expect(creases).toHaveLength(2);
+    for (const crease of creases) {
+      expect(crease.direction).toBe("Up");
+      expect(crease.k_factor).toBeCloseTo(0.48, 6);
+    }
+
+    await client.close();
+    await server.close();
+  });
 });
