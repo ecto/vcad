@@ -24,7 +24,7 @@ second render is ~1 s and editing one plate re-evaluates one plate
 
 | file | what |
 |---|---|
-| `rose-pro.loon` | **generated** — 108 roots (86 plates, 22 actuator envelopes). Do not hand-edit; regenerate with `rose/pro/rose_pro_loon.py`. |
+| `rose-pro.loon` | **generated** — 137 roots (115 plates, 22 actuator envelopes). Do not hand-edit; regenerate with `rose/pro/rose_pro_loon.py`. |
 | `plates.loon` | hand-maintained loon **module**: `plate-x/y/z` rounded-rect builders, `bore-x/y/z` through-bores, `act-x/y/z` actuator envelopes. `rose-pro.loon` imports it with `[use plates [...]]`; vcad resolves it next to the file. |
 
 ## Actuators

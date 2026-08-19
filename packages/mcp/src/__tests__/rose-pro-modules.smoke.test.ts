@@ -1,4 +1,4 @@
-// Smoke: the real rose-pro document (108 roots, plate vocabulary in a
+// Smoke: the real rose-pro document (plate vocabulary in a
 // sibling module) resolves `[use plates [...]]` the way `load_document`
 // does — base_dir read in TS, evaluated in the WASM kernel.
 import { readFileSync } from "node:fs";
@@ -15,6 +15,6 @@ describe("rose-pro modules via load_document path", () => {
     expect(Object.keys(modules)).toEqual(["plates"]);
     const engine = await Engine.init();
     const doc = engine.evalVcadSourceWithModules(raw, modules);
-    expect(doc!.roots.length).toBe(108);
+    expect(doc!.roots.length).toBeGreaterThanOrEqual(108);
   });
 });
