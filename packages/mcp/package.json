@@ -39,7 +39,7 @@
     "gifenc": "^1.0.3"
   },
   "devDependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@supabase/supabase-js": "^2.45.0",
     "@types/node": "^22",
     "@types/three": "^0.184.1",
