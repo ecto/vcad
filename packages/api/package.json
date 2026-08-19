@@ -11,7 +11,7 @@
     "@vcad/core": "*",
     "@vcad/engine": "*",
     "@vcad/mcp": "*",
-    "ai": "^3.4.0",
+    "ai": "^7.0.66",
     "stripe": "^17.7.0"
   },
   "devDependencies": {
