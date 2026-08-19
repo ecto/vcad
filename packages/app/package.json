@@ -28,7 +28,7 @@
     "@radix-ui/react-visually-hidden": "^1.2.4",
     "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.0.0",
-    "@react-three/postprocessing": "^3.0.4",
+    "@react-three/postprocessing": "^3.0.5",
     "@react-three/xr": "^6.6.29",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/code": "^1.1.1",
