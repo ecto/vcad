@@ -34,7 +34,7 @@
     "@streamdown/code": "^1.1.1",
     "@streamdown/math": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/supabase-js": "^2.112.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-deep-link": "^2.4.8",
     "@tauri-apps/plugin-dialog": "^2.7.0",

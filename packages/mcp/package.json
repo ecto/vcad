@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.4",
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/supabase-js": "^2.112.3",
     "@types/node": "^22",
     "@types/three": "^0.184.1",
     "three": "^0.184.0",
