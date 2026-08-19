@@ -16,6 +16,7 @@
 //! }
 //! ```
 
+pub mod cache;
 pub mod convert;
 pub mod diff;
 pub mod evaluate;
@@ -89,7 +90,20 @@ pub struct EvalOptions {
     pub skip_clash_detection: bool,
     /// Optional clock for timing instrumentation. When `None`, timing is zero-cost.
     pub clock: Option<Box<dyn Clock>>,
+    /// Content-addressed cache of evaluated root meshes (see [`cache`]).
+    /// When set, every cacheable scene root and part definition is looked
+    /// up before evaluation and stored after; a hit yields a part with
+    /// `solid: None`, so leave this unset when the BRep is needed.
+    pub root_cache: Option<std::rc::Rc<dyn cache::RootMeshCache>>,
+    /// Segment count for tessellating each root's solid (`Solid::to_mesh`).
+    /// `0` means the default, 32 — what the web app and exports use. A
+    /// renderer that draws curved faces at 64 or 128 asks for that here, so
+    /// the cached mesh it gets back matches what it would have tessellated.
+    pub mesh_segments: u32,
 }
+
+/// The tessellation segment count `evaluate_document` uses by default.
+pub const DEFAULT_MESH_SEGMENTS: u32 = 32;
 
 /// Rewrite relative `MeshImport` paths to absolute, against `base_dir`.
 ///

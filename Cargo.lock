@@ -7205,6 +7205,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "stl_io",
  "thiserror 2.0.18",
  "vcad-ecad-pcb",

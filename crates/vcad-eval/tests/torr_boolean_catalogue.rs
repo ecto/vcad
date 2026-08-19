@@ -47,6 +47,8 @@ fn inspect(src: &str) -> Inspection {
         &EvalOptions {
             skip_clash_detection: true,
             clock: None,
+            root_cache: None,
+            mesh_segments: 0,
         },
     )
     .expect("evaluate_document");

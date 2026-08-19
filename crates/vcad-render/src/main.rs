@@ -274,6 +274,17 @@ struct Cli {
     #[arg(long)]
     raytrace: bool,
 
+    /// Do not read or write the on-disk cache of evaluated root meshes
+    /// (`$VCAD_CACHE_DIR`, else `$XDG_CACHE_HOME/vcad`, else
+    /// `~/.cache/vcad`; `VCAD_CACHE=0` has the same effect). The cache is
+    /// keyed on each root's resolved expression plus the kernel build, so
+    /// it never serves geometry from a different kernel or an edited root;
+    /// this flag is for timing the kernel itself. `--raytrace`,
+    /// `--photoreal` and `--section` need BRep surfaces and bypass the
+    /// cache regardless.
+    #[arg(long)]
+    no_cache: bool,
+
     /// Photorealistic path tracing: physically-based materials, a studio
     /// softbox rig, global illumination, and a real camera lens. Needs a
     /// raster output (`.png`/`.jpg`). Much slower than `--raytrace` — tune
@@ -650,7 +661,61 @@ fn is_loon(path: &Path) -> bool {
 
 /// Render one input to `dest` (`None` = SVG on stdout) in `format`. With
 /// `--sheet`, a multi-view drawing sheet replaces the single view.
+/// The root-mesh cache for this invocation, if any: off by flag or
+/// environment, and off for the paths that need analytic BRep surfaces
+/// (which a cached mesh can't supply).
+fn root_cache(cli: &Cli) -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
+    if cli.no_cache || cli.raytrace || cli.photoreal || cli.section.is_some() {
+        return None;
+    }
+    vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new)
+}
+
+/// The raster canvas size this render will use, or `None` for SVG.
+#[cfg(feature = "raster")]
+fn raster_size_px(cli: &Cli, format: Format) -> Option<u32> {
+    match format {
+        Format::Svg => None,
+        Format::Jpeg | Format::Png => Some(raster_opts(cli, format == Format::Png).size_px),
+    }
+}
+
+#[cfg(not(feature = "raster"))]
+fn raster_size_px(_cli: &Cli, _format: Format) -> Option<u32> {
+    None
+}
+
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
+    match root_cache(cli) {
+        Some(cache) => {
+            // The cached mesh must carry the facet count this output would
+            // tessellate at, or a hit renders coarser than a miss.
+            let segments = vcad_render::tessellation_segments(raster_size_px(cli, format));
+            let r = vcad_render::with_root_cache(cache.clone(), segments, || {
+                render_one_uncached(input, dest, format, cli)
+            });
+            let s = cache.stats();
+            if s.hits + s.misses > 0 {
+                eprintln!(
+                    "cache: {} hit, {} miss, {} stored ({})",
+                    s.hits,
+                    s.misses,
+                    s.stored,
+                    cache.dir().display()
+                );
+            }
+            r
+        }
+        None => render_one_uncached(input, dest, format, cli),
+    }
+}
+
+fn render_one_uncached(
+    input: &Path,
+    dest: Option<&Path>,
+    format: Format,
+    cli: &Cli,
+) -> Result<(), String> {
     if cli.raytrace && !format.is_raster() {
         return Err(
             "--raytrace needs a raster output: use -o <out.png> / <out.jpg> or --format png/jpeg"

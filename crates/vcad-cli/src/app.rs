@@ -1306,14 +1306,7 @@ impl App {
 /// simply export nothing. (The web/MCP engine wants the empty root — see
 /// `vcad_eval::evaluate_document`.)
 pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
-    let opts = vcad_eval::EvalOptions {
-        skip_clash_detection: true,
-        ..Default::default()
-    };
-    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
-    warn_root_failures(&scene);
-
+    let scene = evaluate_scene(doc)?;
     Ok(scene
         .parts
         .into_iter()
@@ -1322,6 +1315,49 @@ pub fn evaluate_document(doc: &Document) -> Result<Vec<EvaluatedMesh>> {
             indices: p.mesh.indices,
         })
         .collect())
+}
+
+/// Evaluate a document to a full scene (meshes + materials), through the
+/// root-mesh cache, reporting failures and cache counts on stderr. The one
+/// evaluator every mesh-consuming command should call — a second,
+/// uncached evaluation of the same document costs the whole kernel walk
+/// again.
+pub fn evaluate_scene(doc: &Document) -> Result<vcad_eval::EvaluatedScene> {
+    let cache = root_cache();
+    let opts = vcad_eval::EvalOptions {
+        skip_clash_detection: true,
+        root_cache: cache
+            .clone()
+            .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
+        mesh_segments: 0,
+        ..Default::default()
+    };
+    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    warn_root_failures(&scene);
+    report_cache(cache.as_deref());
+    Ok(scene)
+}
+
+/// The on-disk root-mesh cache, unless disabled (`--no-cache` /
+/// `VCAD_CACHE=0`). See `vcad_eval::cache` for what the key covers.
+fn root_cache() -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
+    vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new)
+}
+
+/// One stderr line of cache hit/miss counts, when the cache was consulted.
+fn report_cache(cache: Option<&vcad_eval::cache::DiskMeshCache>) {
+    let Some(cache) = cache else { return };
+    let s = cache.stats();
+    if s.hits + s.misses > 0 {
+        eprintln!(
+            "cache: {} hit, {} miss, {} stored ({})",
+            s.hits,
+            s.misses,
+            s.stored,
+            cache.dir().display()
+        );
+    }
 }
 
 /// Report roots that failed to evaluate on stderr.
@@ -1358,13 +1394,19 @@ pub fn evaluate_document_timed(
     let clock: Box<dyn vcad_eval::Clock> = Box::new(NativeClock {
         start: Instant::now(),
     });
+    let cache = root_cache();
     let opts = vcad_eval::EvalOptions {
         skip_clash_detection,
         clock: Some(clock),
+        root_cache: cache
+            .clone()
+            .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
+        mesh_segments: 0,
     };
     let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     warn_root_failures(&scene);
+    report_cache(cache.as_deref());
     let timing = scene
         .timing
         .clone()

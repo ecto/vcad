@@ -121,6 +121,8 @@ pub fn document_parameter_gradient(
     let options = EvalOptions {
         skip_clash_detection: true,
         clock: None,
+        root_cache: None,
+        mesh_segments: 0,
     };
     let env = vcad_ir::resolve_parameters(&doc.parameters)
         .map_err(|e| DocDiffError::Resolve(e.to_string()))?;
@@ -265,6 +267,8 @@ pub fn document_parameter_qoi_gradient(
     let options = EvalOptions {
         skip_clash_detection: true,
         clock: None,
+        root_cache: None,
+        mesh_segments: 0,
     };
     let env = vcad_ir::resolve_parameters(&doc.parameters)
         .map_err(|e| DocDiffError::Resolve(e.to_string()))?;

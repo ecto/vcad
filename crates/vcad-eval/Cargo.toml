@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 description = "Canonical document evaluator for vcad IR"
 publish = false
+build = "build.rs"
 
 [dependencies]
 vcad-ir.workspace = true
@@ -22,6 +23,7 @@ vcad-kernel-geom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+sha2 = "0.10"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 stl_io = "0.8"

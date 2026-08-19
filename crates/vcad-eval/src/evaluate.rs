@@ -15,6 +15,7 @@ use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
 
+use crate::cache::{root_fingerprint, FingerprintSettings, RootKey};
 use crate::convert::{ir_sketch_to_profile, to_point3, to_vec3};
 use crate::kinematics::solve_forward_kinematics;
 use crate::{
@@ -86,6 +87,37 @@ pub fn evaluate_document(
     let mut tessellate_ms: f64 = 0.0;
     let mut failures: Vec<RootFailure> = Vec::new();
 
+    // Content-addressed root cache (see `crate::cache`). The fingerprint
+    // settings mirror exactly what this function does with a solid below:
+    // `to_mesh(32)` after an optional sheet-metal fold.
+    let root_cache = options.root_cache.as_deref();
+    let segments = match options.mesh_segments {
+        0 => crate::DEFAULT_MESH_SEGMENTS,
+        n => n,
+    };
+    let fp_settings = FingerprintSettings {
+        segments,
+        fold_sheet_metal: FOLD_SHEET_METAL.with(|f| f.get()),
+    };
+    let lookup = |root: NodeId| -> (Option<RootKey>, Option<EvaluatedMesh>) {
+        let Some(c) = root_cache else {
+            return (None, None);
+        };
+        let key = root_fingerprint(root, &doc.nodes, &fp_settings);
+        let hit = key.as_ref().and_then(|k| c.get(k));
+        (key, hit)
+    };
+    let store = |key: &Option<RootKey>, mesh: &EvaluatedMesh| {
+        if let (Some(c), Some(k)) = (root_cache, key) {
+            // An empty mesh is "no geometry" — which is also what a failed
+            // root looks like downstream. Never cache it; re-evaluating an
+            // empty root costs nothing and a cached one could mask a fix.
+            if !mesh.indices.is_empty() {
+                c.put(k, mesh);
+            }
+        }
+    };
+
     // Evaluate visible roots
     let mut parts = Vec::new();
     let mut solids = Vec::new();
@@ -98,6 +130,17 @@ pub fn evaluate_document(
         // Check for ImportedMesh chain
         if let Some(imported) = find_imported_mesh(entry.root, &doc.nodes) {
             let mesh = transform_imported_mesh(&imported);
+            parts.push(EvaluatedPart {
+                mesh,
+                material: entry.material.clone(),
+                solid: None,
+            });
+            solids.push(None);
+            continue;
+        }
+
+        let (cache_key, cached) = lookup(entry.root);
+        if let Some(mesh) = cached {
             parts.push(EvaluatedPart {
                 mesh,
                 material: entry.material.clone(),
@@ -123,7 +166,7 @@ pub fn evaluate_document(
                 )? {
                     Some(s) => {
                         let t_mesh = clock.map(|c| c.now_ms());
-                        let tri = s.to_mesh(32);
+                        let tri = s.to_mesh(segments);
                         if let Some(t0) = t_mesh {
                             let ms = clock.unwrap().now_ms() - t0;
                             tessellate_ms += ms;
@@ -140,6 +183,7 @@ pub fn evaluate_document(
 
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
+                store(&cache_key, &mesh);
                 parts.push(EvaluatedPart {
                     mesh,
                     material: entry.material.clone(),
@@ -205,6 +249,16 @@ pub fn evaluate_document(
                     continue;
                 }
 
+                let (cache_key, cached) = lookup(part_def.root);
+                if let Some(mesh) = cached {
+                    part_def_meshes.insert(id.clone(), mesh.clone());
+                    eval_part_defs.push(EvaluatedPartDef {
+                        id: id.clone(),
+                        mesh,
+                    });
+                    continue;
+                }
+
                 let outcome =
                     catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
                         match evaluate_node_timed(
@@ -216,7 +270,7 @@ pub fn evaluate_document(
                         )? {
                             Some(s) => {
                                 let t_mesh = clock.map(|c| c.now_ms());
-                                let tri = s.to_mesh(32);
+                                let tri = s.to_mesh(segments);
                                 if let Some(t0) = t_mesh {
                                     tessellate_ms += clock.unwrap().now_ms() - t0;
                                 }
@@ -226,7 +280,10 @@ pub fn evaluate_document(
                         }
                     }));
                 let mesh = match outcome {
-                    Ok(Ok(m)) => m,
+                    Ok(Ok(m)) => {
+                        store(&cache_key, &m);
+                        m
+                    }
                     Ok(Err(err)) => {
                         failures.push(RootFailure {
                             scope: format!("partDef[{id:?}]"),

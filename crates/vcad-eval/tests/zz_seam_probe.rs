@@ -9,6 +9,8 @@ fn probe(src: &str, segments: u32) {
         &EvalOptions {
             skip_clash_detection: true,
             clock: None,
+            root_cache: None,
+            mesh_segments: 0,
         },
     )
     .expect("evaluate_document");

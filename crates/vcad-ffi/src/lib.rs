@@ -2350,6 +2350,8 @@ mod tests {
             let opts = EvalOptions {
                 skip_clash_detection: true,
                 clock: None,
+                root_cache: None,
+                mesh_segments: 0,
             };
             let scene = evaluate_document(doc, &opts).unwrap();
             // roots in order: enclosure (4), board (9), bracket (12).
