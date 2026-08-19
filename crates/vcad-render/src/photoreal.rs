@@ -358,6 +358,71 @@ mod tests {
         .to_string()
     }
 
+    /// A document that *names* a material without defining one — how every
+    /// hand-written `.loon` does it — must still shade as that material
+    /// rather than dropping to the path tracer's default clay.
+    fn cube_doc_named(material: &str, defs: &str) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Cube",
+      "op": {{ "type": "Cube", "size": {{ "x": 20, "y": 20, "z": 20 }} }}
+    }}
+  }},
+  "materials": {{{defs}}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "{material}" }}]
+}}"#
+        )
+    }
+
+    #[test]
+    fn undeclared_material_name_resolves_to_the_builtin() {
+        let solids = evaluate_vcad(&cube_doc_named("copper", "")).expect("eval");
+        let def = solids[0].material.as_ref().expect("copper should resolve");
+        assert_eq!(
+            def.color,
+            crate::materials::builtin("copper").unwrap().color
+        );
+
+        let pbr = Pbr::from_material_def(solids[0].material.as_ref(), solids[0].tint);
+        assert_eq!(pbr.metallic, 1.0, "copper must trace as a metal");
+        assert!(
+            pbr.base_color[0] > pbr.base_color[2] + 0.3,
+            "copper must read warm, got {:?}",
+            pbr.base_color
+        );
+        assert_ne!(
+            pbr.base_color,
+            Pbr::default().base_color,
+            "copper fell through to default clay"
+        );
+    }
+
+    #[test]
+    fn authored_material_overrides_the_builtin() {
+        let doc = cube_doc_named(
+            "copper",
+            r#""copper": { "name": "copper", "color": [0.0, 1.0, 0.0],
+                          "metallic": 0.0, "roughness": 0.9 }"#,
+        );
+        let solids = evaluate_vcad(&doc).expect("eval");
+        let pbr = Pbr::from_material_def(solids[0].material.as_ref(), solids[0].tint);
+        assert_eq!(pbr.base_color, [0.0, 1.0, 0.0], "authored def must win");
+        assert_eq!(pbr.metallic, 0.0);
+    }
+
+    #[test]
+    fn unknown_material_name_still_falls_back_to_clay() {
+        let solids = evaluate_vcad(&cube_doc_named("unobtainium", "")).expect("eval");
+        assert!(solids[0].material.is_none());
+        let pbr = Pbr::from_material_def(None, solids[0].tint);
+        assert_eq!(pbr.base_color, Pbr::default().base_color);
+    }
+
     #[test]
     fn renders_a_cube_to_png() {
         let opts = RasterOptions {

@@ -41,6 +41,7 @@
 #[cfg(feature = "raytrace")]
 pub mod envmap;
 mod exact;
+pub mod materials;
 pub mod pcb;
 #[cfg(feature = "raytrace")]
 pub mod photoreal;
@@ -712,6 +713,11 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                     })
                 })
             });
+            // A named-but-undeclared material (`[root rail "aluminum"]` with
+            // no `[material ...]` block, which is how every hand-written
+            // `.loon` does it) falls back to the built-in library rather than
+            // to the renderer's default clay.
+            let material = materials::resolve(materials, &p.material);
             solid.map(|s| {
                 let name = visible_roots
                     .get(i)
@@ -719,8 +725,8 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                     .and_then(|n| n.name.clone());
                 SceneSolid {
                     solid: s,
-                    tint: materials.get(&p.material).map(|m| m.color),
-                    material: materials.get(&p.material).cloned(),
+                    tint: material.as_ref().map(|m| m.color),
+                    material: material.clone(),
                     labels: name.clone().into_iter().collect(),
                     name,
                     id: visible_roots
@@ -810,8 +816,8 @@ fn evaluate_assembly_instances(
             .clone()
             .or_else(|| def.default_material.clone())
             .unwrap_or_else(|| "default".to_string());
-        let color = doc.materials.get(&material).map(|m| m.color);
-        let material_def = doc.materials.get(&material).cloned();
+        let material_def = materials::resolve(&doc.materials, &material);
+        let color = material_def.as_ref().map(|m| m.color);
         let name = inst
             .name
             .clone()
