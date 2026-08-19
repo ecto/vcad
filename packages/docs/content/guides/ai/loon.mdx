@@ -175,6 +175,63 @@ For regular arrays of holes, prefer patterns over manual placement:
 [root result "steel"]
 ```
 
+## Pattern: Modules — Shared Vocabulary in Its Own File
+
+When several files (or several hundred roots) share the same helpers —
+a rounded-rect plate builder, a bore, an actuator envelope — put them in a
+**module**: an ordinary `.loon` file whose top-level `let`s are its exports.
+The file that needs them names the module; it never pastes a preamble.
+
+```lisp
+; plates.loon — a module. Every top-level let is an export.
+[let plate-z [fn [n0 n1 u0 u1 v0 v1 r]
+  [let t [- n1 n0]]
+  ; … rounded-rect as two boxes + four corner cylinders …
+  ]]
+[let bore-z [fn [d cu cv n0 n1]
+  [translate cu cv [- n0 2.0] [cylinder [/ d 2.0] [+ [- n1 n0] 4.0]]]]]
+```
+
+```lisp
+; deck.loon — roots only.
+[use plates [plate-z bore-z]]          ; just these two, unqualified
+[let deck [difference [bore-z 6.0 20.0 20.0 0.0 3.0]
+                      [plate-z 0.0 3.0 0.0 120.0 0.0 80.0 12.0]]]
+[root deck "aluminum"]
+```
+
+Three spellings of `use`:
+
+| Form | Brings in |
+|------|-----------|
+| `[use plates]` | everything, qualified: `plates.plate-z` |
+| `[use plates [plate-z bore-z]]` | the listed names, unqualified |
+| `[use plates :as p]` | everything, as `p.plate-z` |
+
+Dotted names are subdirectories: `[use hardware.fasteners]` is
+`hardware/fasteners.loon`. Mark `pub let` on some names and only those are
+exported; with no `pub` at all, every top-level `let` is.
+
+Why a module and not an include: a module is **evaluated once, in its own
+environment** (with the vcad library in scope) and exports *values* — the
+closures themselves — not text. It cannot see the importer's bindings, two
+files that `use` it share one evaluation, a non-`pub` `let` stays private,
+and a cycle is an error rather than a hang.
+
+Resolution is the same in `vcad info`/`export`, `vcad-render`, and the MCP
+server's `load_document`:
+
+1. next to the importing file (`<dir>/<name>.loon`);
+2. each directory in `$VCAD_LOON_PATH` (`:`-separated) — the *lib path*,
+   for parts shared across projects;
+3. sources the host handed the kernel by value (`create_cad_loon`'s
+   `modules`), which win when they name the same module.
+
+A file beside the importer shadows a lib-path module of the same name, so a
+project can override one locally. See
+[`hardware/rose-pro`](https://github.com/ecto/vcad/tree/main/hardware/rose-pro)
+for a 108-root humanoid whose plate vocabulary is one module.
+
 ## Pattern: Sketch and Extrude
 
 For profiles that go beyond box/cylinder primitives, define a 2D sketch and extrude it.

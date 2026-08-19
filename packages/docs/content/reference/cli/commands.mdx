@@ -28,6 +28,37 @@ vcad new starter.vcad --template cube
 vcad new robot.vcad --template assembly
 ```
 
+## Evaluation cache
+
+`vcad info`, `vcad export` (STL/GLB) and `vcad-render` keep a
+content-addressed cache of evaluated root geometry on disk, so a document
+where one root changed re-evaluates one root. A 108-root sheet-metal
+humanoid (`hardware/rose-pro`) renders cold in ~150 s and warm in 0.8 s; an
+edit to one plate costs ~3 s.
+
+Each root's key is the SHA-256 of its fully resolved IR subgraph
+(renumbered structurally, so node ids and names don't matter), the
+tessellation settings, and the **kernel identity** — the evaluator version,
+target architecture, and a content hash of every kernel / IR / evaluator /
+`tang` source file baked in at build time. Editing the kernel changes the
+id, and the cache simply starts a new directory; nothing is ever served
+across kernel builds. Roots that read files outside the IR (STEP/mesh
+imports, part instances) are never cached, and neither are failed or empty
+roots.
+
+Only the tessellated mesh is cached — `vcad_kernel::Solid` has no
+serialized form — so consumers that need the BRep (STEP export,
+`vcad-render --raytrace` / `--photoreal` / `--section`) bypass it.
+
+| Control | Effect |
+|---------|--------|
+| `$VCAD_CACHE_DIR` | cache root (default `$XDG_CACHE_HOME/vcad`, else `~/.cache/vcad`) |
+| `VCAD_CACHE=0`, `--no-cache` | read and write nothing |
+| `rm -rf ~/.cache/vcad/geom` | drop everything; safe at any time |
+
+Every run that consulted the cache prints one stderr line:
+`cache: 107 hit, 1 miss, 1 stored (<dir>)`.
+
 ## vcad info
 
 Display document metadata and mesh statistics.
@@ -37,7 +68,8 @@ vcad info <file>
 ```
 
 <Param name="file" type="path">
-Path to a `.vcad` file.
+Path to a `.vcad` file or `.loon` source (evaluated on load; `[use …]`
+modules resolve next to the file and on `$VCAD_LOON_PATH`).
 </Param>
 
 The command reads the document, prints its node count, materials, and scene entries, then evaluates the parametric DAG through the kernel to report tessellation statistics.

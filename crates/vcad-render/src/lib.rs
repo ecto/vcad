@@ -587,8 +587,61 @@ struct SceneSolid {
     id: String,
 }
 
+thread_local! {
+    /// Root-mesh cache consulted by [`evaluate_vcad`] on this thread — see
+    /// [`with_root_cache`]. A thread-local rather than a parameter because
+    /// every `render_*_str` entry point funnels through `evaluate_vcad`, and
+    /// threading an option through all of them would change a dozen public
+    /// signatures for one CLI feature.
+    static ROOT_CACHE: std::cell::RefCell<Option<(std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>, u32)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The segment count the tessellated renderers draw curved faces at for a
+/// given output: the SVG path's constant, or the raster path's size-scaled
+/// count. `None` size means SVG. This is what [`with_root_cache`] must be
+/// given so a cached mesh has the same facet count as a fresh tessellation
+/// — the two must be pixel-identical, and they are only at equal segments.
+pub fn tessellation_segments(raster_size_px: Option<u32>) -> u32 {
+    match raster_size_px {
+        None => TESSELLATION_SEGMENTS,
+        #[cfg(feature = "raster")]
+        Some(px) => raster::segments_for(px),
+        #[cfg(not(feature = "raster"))]
+        Some(_) => TESSELLATION_SEGMENTS,
+    }
+}
+
+/// Run `f` with `cache` supplying (and receiving) evaluated root meshes for
+/// every document evaluated on this thread in the meantime, tessellated at
+/// `segments` (see [`tessellation_segments`]).
+///
+/// A cache hit yields a mesh-backed `Solid` (no BRep), which the tessellated
+/// raster and SVG paths render identically to a freshly evaluated root. The
+/// ray-traced, photoreal and `--section` paths need analytic surfaces, so
+/// callers must not wrap those in a cache scope.
+pub fn with_root_cache<T>(
+    cache: std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>,
+    segments: u32,
+    f: impl FnOnce() -> T,
+) -> T {
+    let prev = ROOT_CACHE.with(|c| c.replace(Some((cache, segments))));
+    struct Restore(Option<(std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>, u32)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            ROOT_CACHE.with(|c| *c.borrow_mut() = prev);
+        }
+    }
+    let _restore = Restore(prev);
+    f()
+}
+
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
+    let (root_cache, mesh_segments) = ROOT_CACHE
+        .with(|c| c.borrow().clone())
+        .map_or((None, 0), |(c, n)| (Some(c), n));
     // NOTE: catch_unwind only works on native targets. On
     // wasm32-unknown-unknown a panic compiles to an `unreachable` trap —
     // it never unwinds, this guard never fires, and the WASM instance is
@@ -603,6 +656,8 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
             &parsed.document,
             &EvalOptions {
                 skip_clash_detection: true,
+                root_cache,
+                mesh_segments,
                 ..Default::default()
             },
         )
@@ -2833,6 +2888,15 @@ mod raster {
     /// tolerance, so no facet stripes appear.
     const RASTER_SEGMENTS_HIRES: u32 = 128;
 
+    /// The segment count a raster canvas of `size_px` tessellates at.
+    pub(super) fn segments_for(size_px: u32) -> u32 {
+        if size_px >= HIRES_THRESHOLD_PX {
+            RASTER_SEGMENTS_HIRES
+        } else {
+            RASTER_SEGMENTS
+        }
+    }
+
     /// Looser coplanar tolerance than the SVG path: at 64 segments,
     /// adjacent cylinder facets differ by 5.6°, which the SVG's ~4.5°
     /// threshold would draw as stripes down every curved face. Hiding
@@ -3239,11 +3303,7 @@ mod raster {
         let down = normalize(opts.view.down());
         let light = normalize(LIGHT);
 
-        let segments = if opts.size_px >= HIRES_THRESHOLD_PX {
-            RASTER_SEGMENTS_HIRES
-        } else {
-            RASTER_SEGMENTS
-        };
+        let segments = segments_for(opts.size_px);
         let no_accents = vec![false; solids.len()];
         let arts = build_artifacts(
             solids,

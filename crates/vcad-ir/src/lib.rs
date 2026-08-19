@@ -1318,6 +1318,161 @@ pub enum CsgOp {
     },
 }
 
+impl CsgOp {
+    /// The node ids this operation reads — its operands, in evaluation
+    /// order. Leaves return an empty vector.
+    ///
+    /// This is the one authoritative child list: the match is exhaustive on
+    /// purpose (no wildcard arm), so adding a variant that references another
+    /// node is a compile error until it is listed here. Consumers that walk
+    /// the DAG for correctness — the evaluation cache's structural
+    /// fingerprint in particular — must use this rather than a local match,
+    /// because a missed operand there is a silently stale result.
+    pub fn child_ids(&self) -> Vec<NodeId> {
+        match self {
+            CsgOp::Union { left, right }
+            | CsgOp::Difference { left, right }
+            | CsgOp::Intersection { left, right } => vec![*left, *right],
+            CsgOp::Translate { child, .. }
+            | CsgOp::Rotate { child, .. }
+            | CsgOp::Scale { child, .. }
+            | CsgOp::Mirror { child, .. }
+            | CsgOp::LinearPattern { child, .. }
+            | CsgOp::CircularPattern { child, .. }
+            | CsgOp::Shell { child, .. }
+            | CsgOp::Fillet { child, .. }
+            | CsgOp::Chamfer { child, .. }
+            | CsgOp::EdgeBlend { child, .. } => vec![*child],
+            CsgOp::Extrude { sketch, .. }
+            | CsgOp::Revolve { sketch, .. }
+            | CsgOp::Sweep { sketch, .. } => vec![*sketch],
+            CsgOp::Loft { sketches, .. } => sketches.clone(),
+            CsgOp::SheetMetalEdgeFlange { parent, .. }
+            | CsgOp::SheetMetalJog { parent, .. }
+            | CsgOp::SheetMetalHem { parent, .. }
+            | CsgOp::SheetMetalBendRelief { parent, .. } => vec![*parent],
+            CsgOp::Cube { .. }
+            | CsgOp::Cylinder { .. }
+            | CsgOp::Sphere { .. }
+            | CsgOp::Cone { .. }
+            | CsgOp::Torus { .. }
+            | CsgOp::Wedge { .. }
+            | CsgOp::Prism { .. }
+            | CsgOp::Empty
+            | CsgOp::Sketch2D { .. }
+            | CsgOp::Text2D { .. }
+            | CsgOp::ImportedMesh { .. }
+            | CsgOp::StepImport { .. }
+            | CsgOp::MeshImport { .. }
+            | CsgOp::PcbBoard { .. }
+            | CsgOp::EmbroideryPattern { .. }
+            | CsgOp::PartInstance { .. }
+            | CsgOp::SheetMetalBaseFlangeRect { .. }
+            | CsgOp::SheetMetalBaseFlangePolygon { .. } => Vec::new(),
+        }
+    }
+
+    /// Mutable access to the same operand slots [`child_ids`](Self::child_ids)
+    /// reports, in the same order — for rewriting references (renumbering a
+    /// subgraph, substituting a node) without a per-variant match at the
+    /// call site. Exhaustive for the same reason.
+    pub fn child_ids_mut(&mut self) -> Vec<&mut NodeId> {
+        match self {
+            CsgOp::Union { left, right }
+            | CsgOp::Difference { left, right }
+            | CsgOp::Intersection { left, right } => vec![left, right],
+            CsgOp::Translate { child, .. }
+            | CsgOp::Rotate { child, .. }
+            | CsgOp::Scale { child, .. }
+            | CsgOp::Mirror { child, .. }
+            | CsgOp::LinearPattern { child, .. }
+            | CsgOp::CircularPattern { child, .. }
+            | CsgOp::Shell { child, .. }
+            | CsgOp::Fillet { child, .. }
+            | CsgOp::Chamfer { child, .. }
+            | CsgOp::EdgeBlend { child, .. } => vec![child],
+            CsgOp::Extrude { sketch, .. }
+            | CsgOp::Revolve { sketch, .. }
+            | CsgOp::Sweep { sketch, .. } => vec![sketch],
+            CsgOp::Loft { sketches, .. } => sketches.iter_mut().collect(),
+            CsgOp::SheetMetalEdgeFlange { parent, .. }
+            | CsgOp::SheetMetalJog { parent, .. }
+            | CsgOp::SheetMetalHem { parent, .. }
+            | CsgOp::SheetMetalBendRelief { parent, .. } => vec![parent],
+            CsgOp::Cube { .. }
+            | CsgOp::Cylinder { .. }
+            | CsgOp::Sphere { .. }
+            | CsgOp::Cone { .. }
+            | CsgOp::Torus { .. }
+            | CsgOp::Wedge { .. }
+            | CsgOp::Prism { .. }
+            | CsgOp::Empty
+            | CsgOp::Sketch2D { .. }
+            | CsgOp::Text2D { .. }
+            | CsgOp::ImportedMesh { .. }
+            | CsgOp::StepImport { .. }
+            | CsgOp::MeshImport { .. }
+            | CsgOp::PcbBoard { .. }
+            | CsgOp::EmbroideryPattern { .. }
+            | CsgOp::PartInstance { .. }
+            | CsgOp::SheetMetalBaseFlangeRect { .. }
+            | CsgOp::SheetMetalBaseFlangePolygon { .. } => Vec::new(),
+        }
+    }
+
+    /// Does evaluating this op read something the IR does not contain —
+    /// a file on disk, a fetched part? Such a node's result is not a pure
+    /// function of its serialized form, so a content-addressed cache keyed
+    /// on the IR alone must refuse to cache any subgraph containing one.
+    /// Exhaustive for the same reason as [`child_ids`](Self::child_ids).
+    pub fn reads_external_data(&self) -> bool {
+        match self {
+            CsgOp::StepImport { .. } | CsgOp::MeshImport { .. } | CsgOp::PartInstance { .. } => {
+                true
+            }
+            // `Text2D` rasterizes a font by name — the font comes from the
+            // kernel's bundled set, not the user's disk, so it is as
+            // deterministic as the kernel build it ships in.
+            CsgOp::Cube { .. }
+            | CsgOp::Cylinder { .. }
+            | CsgOp::Sphere { .. }
+            | CsgOp::Cone { .. }
+            | CsgOp::Torus { .. }
+            | CsgOp::Wedge { .. }
+            | CsgOp::Prism { .. }
+            | CsgOp::Empty
+            | CsgOp::Union { .. }
+            | CsgOp::Difference { .. }
+            | CsgOp::Intersection { .. }
+            | CsgOp::Translate { .. }
+            | CsgOp::Rotate { .. }
+            | CsgOp::Scale { .. }
+            | CsgOp::Mirror { .. }
+            | CsgOp::Sketch2D { .. }
+            | CsgOp::Text2D { .. }
+            | CsgOp::Extrude { .. }
+            | CsgOp::Revolve { .. }
+            | CsgOp::LinearPattern { .. }
+            | CsgOp::CircularPattern { .. }
+            | CsgOp::Shell { .. }
+            | CsgOp::Fillet { .. }
+            | CsgOp::Chamfer { .. }
+            | CsgOp::EdgeBlend { .. }
+            | CsgOp::Sweep { .. }
+            | CsgOp::Loft { .. }
+            | CsgOp::ImportedMesh { .. }
+            | CsgOp::PcbBoard { .. }
+            | CsgOp::EmbroideryPattern { .. }
+            | CsgOp::SheetMetalBaseFlangeRect { .. }
+            | CsgOp::SheetMetalBaseFlangePolygon { .. }
+            | CsgOp::SheetMetalEdgeFlange { .. }
+            | CsgOp::SheetMetalJog { .. }
+            | CsgOp::SheetMetalHem { .. }
+            | CsgOp::SheetMetalBendRelief { .. } => false,
+        }
+    }
+}
+
 /// A surface-marking (laser engrave) primitive on a sheet-metal base
 /// flange. Coordinates are base-flange-local 2D (mm, same frame as the
 /// outline). Engraving is a marking pass — no material removal — so it is

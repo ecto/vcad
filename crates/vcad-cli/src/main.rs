@@ -28,6 +28,16 @@ mod ui;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Do not read or write the on-disk cache of evaluated root meshes
+    /// (`$VCAD_CACHE_DIR`, else `$XDG_CACHE_HOME/vcad`, else
+    /// `~/.cache/vcad`; `VCAD_CACHE=0` has the same effect). `export` (STL,
+    /// GLB) and `info` use the cache; it is keyed on each root's resolved
+    /// expression plus the kernel build, so it never serves geometry from a
+    /// different kernel or an edited root. STEP export needs the BRep and
+    /// bypasses it regardless.
+    #[arg(long, global = true)]
+    no_cache: bool,
 }
 
 #[derive(Subcommand)]
@@ -397,6 +407,11 @@ impl From<UpAxisArg> for crate::render::UpAxis {
 fn main() -> Result<()> {
     vcad_i18n::init(&vcad_i18n::Locale::from_env());
     let cli = Cli::parse();
+    if cli.no_cache {
+        // One switch for every evaluation below, however deep; the cache
+        // reads this at construction (`DiskMeshCache::from_env`).
+        std::env::set_var("VCAD_CACHE", "0");
+    }
 
     match cli.command {
         Some(Commands::Tui { file }) => {
@@ -819,6 +834,19 @@ fn export_loon(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
 /// check runs in all six axis-down candidates and reports which ones are
 /// support-free. It only warns; supports are sometimes the plan.
 fn warn_floating_floors(vertices: &[f32], indices: &[u32]) {
+    // The support scan below is O(floors × triangles) per orientation. Past
+    // this size it costs minutes (a 108-plate sheet-metal robot: ~780k
+    // triangles, ~10 min) for a 3D-printing hint that rarely applies to a
+    // mesh that large. Say so and skip, rather than stall the export.
+    const MAX_TRIANGLES: usize = 200_000;
+    let tri_count = indices.len() / 3;
+    if tri_count > MAX_TRIANGLES {
+        eprintln!(
+            "note[floating_floor]: print-orientation check skipped ({tri_count} triangles > \
+             {MAX_TRIANGLES}); check the part you intend to print on its own"
+        );
+        return;
+    }
     // (label, index of the "up" coordinate, sign) — "down" = -sign axis.
     const ORIENTS: [(&str, usize, f64); 6] = [
         ("+Z up", 2, 1.0),
@@ -1015,12 +1043,7 @@ fn export_stl_bytes(vertices: &[f32], indices: &[u32]) -> Result<Vec<u8>> {
 fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
     use vcad_kernel_export::{build_glb, GlbMeshSpec, GlbSpec};
 
-    let opts = vcad_eval::EvalOptions {
-        skip_clash_detection: true,
-        ..Default::default()
-    };
-    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let scene = crate::app::evaluate_scene(doc)?;
 
     let mut f32_data: Vec<f32> = Vec::new();
     let mut u32_data: Vec<u32> = Vec::new();

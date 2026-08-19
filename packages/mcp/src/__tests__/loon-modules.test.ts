@@ -60,6 +60,28 @@ describe("create_cad_loon module resolution", () => {
     expect(fromDisk).toEqual(fromMap);
   });
 
+  it("falls back to $VCAD_LOON_PATH for modules not beside the file", () => {
+    const lib = join(dir, "lib");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, "shared.loon"), "[pub let peg [cylinder 2 8]]");
+    const src = '[use shared]\n[root shared.peg "steel"]';
+    const prev = process.env.VCAD_LOON_PATH;
+    process.env.VCAD_LOON_PATH = lib;
+    try {
+      // Not beside the file: served from the lib path.
+      const modules = composeLoonModules({ source: src, base_dir: dir });
+      expect(Object.keys(modules)).toEqual(["shared"]);
+      expect(modules.shared).toContain("peg");
+      // Beside the file: the file wins over the lib path.
+      writeFileSync(join(dir, "shared.loon"), "[pub let peg [cube 1 1 1]]");
+      const local = composeLoonModules({ source: src, base_dir: dir });
+      expect(local.shared).toContain("cube");
+    } finally {
+      if (prev === undefined) delete process.env.VCAD_LOON_PATH;
+      else process.env.VCAD_LOON_PATH = prev;
+    }
+  });
+
   it("follows nested imports when reading from base_dir", () => {
     mkdirSync(join(dir, "sub"), { recursive: true });
     writeFileSync(join(dir, "sub", "base.loon"), "[pub let slab [cube 10 10 2]]");

@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-19-loon-modules-and-root-cache",
+  "version": "0.9.4",
+  "date": "2026-08-19",
+  "category": "feat",
+  "title": "Loon lib path and a content-addressed evaluation cache",
+  "summary": "[use] modules resolve next to the file then on $VCAD_LOON_PATH, identically in vcad, vcad-render and MCP; evaluated root meshes are cached on disk keyed by expression + kernel build.",
+  "features": ["loon", "modules", "cache", "cli", "render"],
+  "mcpTools": ["load_document", "create_cad_loon"]
+}

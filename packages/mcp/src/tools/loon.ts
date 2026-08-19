@@ -3,7 +3,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { delimiter, isAbsolute, join, resolve, sep } from "node:path";
 import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import type { Document } from "@vcad/ir";
@@ -130,11 +130,23 @@ function readModule(base: string, name: string): string | null {
   return null;
 }
 
+/** The loon lib path: `$VCAD_LOON_PATH` directories, searched — in order —
+ *  for a module that is not beside the importing file. Same variable and
+ *  same order as the native `vcad` / `vcad-render` resolvers
+ *  (`crates/vcad-loon/src/modules.rs`). */
+export function loonLibDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.VCAD_LOON_PATH;
+  if (!raw) return [];
+  return raw.split(delimiter).filter((d) => d.length > 0);
+}
+
 /**
  * The in-memory module map `[use ...]` resolves against: explicit `modules`,
  * plus inline `loons` (a macro passed by value is also an importable
  * module), plus — when `base_dir` is given — files read from disk, following
- * nested imports transitively.
+ * nested imports transitively. A module not found beside the importer is
+ * looked for in each `$VCAD_LOON_PATH` directory (the lib path), so a
+ * project and the CLI resolve the same `[use]` the same way.
  *
  * A name the server can't find is simply left out; the kernel then reports
  * the missing module with loon's own error, rather than the server guessing.
@@ -145,7 +157,8 @@ export function composeLoonModules(input: unknown): Record<string, string> {
   for (const m of loons ?? []) map[m.name] = m.source;
   Object.assign(map, modules ?? {});
 
-  if (base_dir) {
+  const dirs = [...(base_dir ? [base_dir] : []), ...loonLibDirs()];
+  if (dirs.length) {
     const pending = [
       ...importedNames(source),
       ...Object.values(map).flatMap(importedNames),
@@ -155,7 +168,11 @@ export function composeLoonModules(input: unknown): Record<string, string> {
       const name = pending.pop() as string;
       if (seen.has(name) || map[name]) continue;
       seen.add(name);
-      const src = readModule(base_dir, name);
+      let src: string | null = null;
+      for (const dir of dirs) {
+        src = readModule(dir, name);
+        if (src !== null) break;
+      }
       if (src === null) continue;
       map[name] = src;
       pending.push(...importedNames(src));

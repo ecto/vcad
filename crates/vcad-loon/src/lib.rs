@@ -13,9 +13,11 @@ use vcad_ir::Document;
 
 mod convert;
 pub mod fastener;
+pub mod modules;
 pub mod params;
 pub mod recover;
 pub use convert::{value_to_document, value_to_document_in};
+pub use modules::{lib_dirs, LibPathProvider, LIB_PATH_VAR};
 
 /// The bundled vcad loon library source.
 pub const VCAD_LIB_SOURCE: &str = include_str!("../../../lib/src/lib.loon");
@@ -52,8 +54,7 @@ pub fn eval_vcad_parametric(
     base_dir: Option<&Path>,
     modules: Option<&HashMap<String, String>>,
 ) -> Result<(Document, Vec<String>), String> {
-    let provider =
-        modules.map(|m| -> Rc<dyn ModuleProvider> { Rc::new(MapProvider::new(m.clone())) });
+    let provider = modules::provider(modules.map(|m| MapProvider::new(m.clone())));
     let exprs = parse_program(source)?;
     let decls = params::scan(&exprs)?;
 
@@ -111,8 +112,8 @@ pub fn eval_vcad_to_value_with_modules(
     base_dir: Option<&Path>,
     modules: &HashMap<String, String>,
 ) -> Result<Value, String> {
-    let provider: Rc<dyn ModuleProvider> = Rc::new(MapProvider::new(modules.clone()));
-    eval_with_provider(source, base_dir, Some(provider))
+    let provider = modules::provider(Some(MapProvider::new(modules.clone())));
+    eval_with_provider(source, base_dir, provider)
 }
 
 /// Evaluate a `.vcad` loon source string and return the raw loon Value.
@@ -124,7 +125,7 @@ pub fn eval_vcad_to_value_with_modules(
 /// compile (E0277). To write a `.vcad` document, use [`eval_vcad`], which
 /// returns a serializable [`Document`] — see `examples/loon2vcad.rs`.
 pub fn eval_vcad_to_value(source: &str, base_dir: Option<&Path>) -> Result<Value, String> {
-    eval_with_provider(source, base_dir, None)
+    eval_with_provider(source, base_dir, modules::provider(None))
 }
 
 /// Parse a `.vcad` program: rewrite multi-value sources and prepend the vcad
@@ -633,6 +634,41 @@ mod tests {
             serde_json::to_value(&from_disk).unwrap(),
             serde_json::to_value(&from_map).unwrap(),
             "in-memory and filesystem module resolution must agree"
+        );
+    }
+
+    #[test]
+    fn eval_modules_from_lib_path() {
+        // `[use bracket]` with no bracket.loon beside the program resolves
+        // through $VCAD_LOON_PATH; a file beside the program shadows it.
+        let lib = std::env::temp_dir().join(format!("vcad-loon-libpath-{}", std::process::id()));
+        let proj = std::env::temp_dir().join(format!("vcad-loon-libproj-{}", std::process::id()));
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(lib.join("bracket.loon"), BRACKET_MODULE).unwrap();
+        let prev = std::env::var_os(LIB_PATH_VAR);
+        std::env::set_var(LIB_PATH_VAR, &lib);
+        let from_lib = eval_vcad(MAIN_SOURCE, Some(&proj));
+        std::fs::write(
+            proj.join("bracket.loon"),
+            "[pub let plate [cube 1.0 1.0 1.0]]\n[pub let post [sphere 1.0]]",
+        )
+        .unwrap();
+        let from_proj = eval_vcad(MAIN_SOURCE, Some(&proj));
+        match prev {
+            Some(v) => std::env::set_var(LIB_PATH_VAR, v),
+            None => std::env::remove_var(LIB_PATH_VAR),
+        }
+        std::fs::remove_dir_all(&lib).ok();
+        std::fs::remove_dir_all(&proj).ok();
+        let from_lib = from_lib.unwrap();
+        let from_proj = from_proj.unwrap();
+        assert_eq!(from_lib.roots.len(), 2);
+        assert_eq!(from_proj.roots.len(), 2);
+        assert_ne!(
+            serde_json::to_value(&from_lib).unwrap(),
+            serde_json::to_value(&from_proj).unwrap(),
+            "the module beside the program must shadow the lib-path one"
         );
     }
 

@@ -278,6 +278,8 @@ pub fn topology_signature(
     let options = EvalOptions {
         skip_clash_detection: true,
         clock: None,
+        root_cache: None,
+        mesh_segments: 0,
     };
     let scene = evaluate_document(&d, &options).map_err(DocDiffError::from)?;
     Ok(scene
@@ -362,6 +364,8 @@ fn bboxes(
     let options = EvalOptions {
         skip_clash_detection: true,
         clock: None,
+        root_cache: None,
+        mesh_segments: 0,
     };
     let scene = evaluate_document(&d, &options).map_err(DocDiffError::from)?;
 
