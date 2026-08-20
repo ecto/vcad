@@ -279,7 +279,9 @@ fn mesh_render_matches_cpu_reference() {
 
     let cpu_mean = cpu
         .rgb
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) as f64)
         .sum::<f64>()
         / total as f64;
@@ -384,7 +386,7 @@ fn merged_brep_and_mesh_scene_shows_both() {
     let mut cube_mesh = vcad_kernel_tessellate::tessellate(&make_cube(3.0, 3.0, 3.0), 16);
     // `make_cube` spans 0..3 on each axis; centre it on y and z, then push
     // it out to x in 5..8.
-    for v in cube_mesh.vertices.chunks_exact_mut(3) {
+    for v in cube_mesh.vertices.as_chunks_mut::<3>().0 {
         v[0] += 5.0;
         v[1] -= 1.5;
         v[2] -= 1.5;

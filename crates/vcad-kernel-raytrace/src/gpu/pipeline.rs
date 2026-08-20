@@ -1020,7 +1020,9 @@ impl OfflineResult {
         }
         let sum: f64 = self
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) as f64)
             .sum();
         (sum / (self.rgba.len() / 4) as f64) as f32
@@ -1036,7 +1038,7 @@ impl OfflineResult {
         let n = (self.width * self.height) as usize;
         let mut rgb = Vec::with_capacity(n * 3);
         let mut alpha = Vec::with_capacity(n);
-        for p in self.rgba.chunks_exact(4) {
+        for p in self.rgba.as_chunks::<4>().0 {
             rgb.extend_from_slice(&p[..3]);
             alpha.push(p[3]);
         }

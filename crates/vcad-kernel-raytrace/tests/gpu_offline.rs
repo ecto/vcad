@@ -162,7 +162,9 @@ fn offline_hdr_matches_cpu_mean_luminance() {
     );
     assert!(
         out.rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .all(|p| p[..3].iter().all(|&c| c >= 0.0)),
         "HDR buffer contains negative radiance"
     );
@@ -178,7 +180,9 @@ fn offline_hdr_matches_cpu_mean_luminance() {
     // shaded (e.g. every dispatch no-op'd and we read back a cleared buffer).
     let lum: Vec<f32> = out
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|p| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2])
         .collect();
     let (lo, hi) = lum
@@ -218,7 +222,9 @@ fn offline_hdr_matches_cpu_mean_luminance() {
 
     let cpu_mean = cpu
         .rgb
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) as f64)
         .sum::<f64>()
         / total as f64;

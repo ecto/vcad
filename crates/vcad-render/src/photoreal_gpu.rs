@@ -462,8 +462,20 @@ mod tests {
     fn ground_quad_spans_the_subject() {
         let mesh = ground_mesh(Point3::new(5.0, -2.0, 10.0), 1.5, 100.0);
         assert_eq!(mesh.indices.len(), 6);
-        let xs: Vec<f32> = mesh.vertices.chunks_exact(3).map(|v| v[0]).collect();
-        let zs: Vec<f32> = mesh.vertices.chunks_exact(3).map(|v| v[2]).collect();
+        let xs: Vec<f32> = mesh
+            .vertices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|v| v[0])
+            .collect();
+        let zs: Vec<f32> = mesh
+            .vertices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|v| v[2])
+            .collect();
         assert!(
             zs.iter().all(|&z| (z - 1.5).abs() < 1e-6),
             "floor is not flat"
@@ -473,7 +485,7 @@ mod tests {
             "floor does not reach past the subject"
         );
         assert!(
-            mesh.normals.chunks_exact(3).all(|n| n[2] > 0.9),
+            mesh.normals.as_chunks::<3>().0.iter().all(|n| n[2] > 0.9),
             "floor normals must point up"
         );
     }
