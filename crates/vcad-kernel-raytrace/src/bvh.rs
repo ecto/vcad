@@ -17,6 +17,32 @@ use crate::{Ray, RayHit};
 /// Contains: (AABB, is_leaf, left_or_first, right_or_count)
 pub type FlatBvhNode = (Aabb3, bool, u32, u32);
 
+/// [`Bvh::flatten`] was called on a BVH the GPU pipeline cannot consume.
+///
+/// The GPU path tracer traces analytic BRep faces; there is no triangle BLAS
+/// yet. Flattening a mesh-backed BVH used to yield empty node/face lists,
+/// which the GPU scene builder happily uploaded and then rendered as a blank
+/// frame. Failing here instead makes the missing capability visible at the
+/// call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlattenUnsupported {
+    /// Number of triangles the mesh-backed BVH holds.
+    pub triangle_count: usize,
+}
+
+impl std::fmt::Display for FlattenUnsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cannot flatten a mesh-backed BVH ({} triangles) for GPU upload: \
+             the GPU path tracer traces analytic BRep faces only (no triangle BLAS yet)",
+            self.triangle_count
+        )
+    }
+}
+
+impl std::error::Error for FlattenUnsupported {}
+
 /// A BVH node - either a leaf containing primitives or an internal node with
 /// children.
 #[derive(Debug, Clone)]
@@ -543,23 +569,27 @@ impl Bvh {
     /// Also returns the list of face IDs in leaf order.
     ///
     /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
-    /// A mesh-backed BVH flattens to nothing.
-    pub fn flatten(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>) {
+    /// A mesh-backed BVH has no GPU representation yet and is reported as
+    /// [`FlattenUnsupported`] rather than flattening to empty lists (which
+    /// would silently render a blank frame).
+    pub fn flatten(&self) -> Result<(Vec<FlatBvhNode>, Vec<FaceId>), FlattenUnsupported> {
         let mut nodes = Vec::new();
         let mut faces = Vec::new();
 
-        let BvhGeom::BRep {
-            faces: face_ids, ..
-        } = &self.geom
-        else {
-            return (nodes, faces);
+        let face_ids = match &self.geom {
+            BvhGeom::BRep { faces, .. } => faces,
+            BvhGeom::Mesh(mesh) => {
+                return Err(FlattenUnsupported {
+                    triangle_count: mesh.tris.len(),
+                })
+            }
         };
 
         if let Some(root) = &self.root {
             flatten_node(root, face_ids, &mut nodes, &mut faces);
         }
 
-        (nodes, faces)
+        Ok((nodes, faces))
     }
 }
 
@@ -1036,19 +1066,29 @@ mod tests {
     }
 
     #[test]
-    fn mesh_bvh_flattens_to_nothing() {
+    fn mesh_bvh_flatten_is_an_error_not_an_empty_scene() {
         // The GPU pipeline traces analytic surfaces only; a mesh BVH must
-        // not hand it face IDs it doesn't have.
+        // fail loudly rather than flatten to nothing and render blank.
         let bvh = Bvh::build_mesh(&cube_mesh());
-        let (nodes, faces) = bvh.flatten();
-        assert!(nodes.is_empty() && faces.is_empty());
+        let err = bvh.flatten().expect_err("mesh BVH must not flatten");
+        assert_eq!(err.triangle_count, 12);
+        let msg = err.to_string();
+        assert!(msg.contains("mesh-backed"), "{msg}");
+    }
+
+    #[test]
+    fn empty_mesh_bvh_flatten_is_also_an_error() {
+        // Zero triangles is still "no GPU representation" — don't let the
+        // empty case slip through as a success.
+        let bvh = Bvh::build_mesh(&TriangleMesh::new());
+        assert!(bvh.flatten().is_err());
     }
 
     #[test]
     fn brep_flatten_still_round_trips_face_ids() {
         let cube = make_cube(10.0, 10.0, 10.0);
         let bvh = Bvh::build(&cube);
-        let (nodes, faces) = bvh.flatten();
+        let (nodes, faces) = bvh.flatten().expect("BRep BVH flattens");
         assert!(!nodes.is_empty());
         assert_eq!(faces.len(), cube.topology.faces.len());
         assert!(faces.iter().all(|&f| cube.topology.faces.contains_key(f)));

@@ -171,7 +171,36 @@ impl GpuSurface {
             params,
         }
     }
+
+    /// Whether the WGSL `intersect_surface` switch has a case for this
+    /// surface type.
+    ///
+    /// Types 0-4 (plane, cylinder, sphere, cone, torus) are traced
+    /// analytically. Bilinear (5) and B-spline (6) are packed by
+    /// [`Self::from_surface`] but fall into the shader's `default` arm, which
+    /// returns a miss — such a face would silently vanish from the render, so
+    /// [`GpuScene::from_brep`] rejects a scene containing one.
+    pub fn is_gpu_traceable(&self) -> bool {
+        self.surface_type <= SURFACE_TYPE_TORUS
+    }
+
+    /// Human-readable name of a packed surface type code.
+    pub fn type_name(surface_type: u32) -> &'static str {
+        match surface_type {
+            0 => "Plane",
+            1 => "Cylinder",
+            2 => "Sphere",
+            3 => "Cone",
+            4 => "Torus",
+            5 => "Bilinear",
+            6 => "BSpline",
+            _ => "Unknown",
+        }
+    }
 }
+
+/// Highest surface type code the WGSL `intersect_surface` switch handles.
+const SURFACE_TYPE_TORUS: u32 = 4;
 
 /// GPU-compatible material representation (PBR).
 ///
@@ -773,6 +802,27 @@ pub enum GpuSceneError {
     TooManyBvhNodes(usize),
     /// Too many trim vertices.
     TooManyTrimVerts(usize),
+    /// A surface kind the WGSL tracer has no intersection case for.
+    ///
+    /// Carries the surface's index in `brep.geometry.surfaces` and the packed
+    /// type name, so the caller can say *which* geometry it cannot render
+    /// instead of handing back a blank frame.
+    UnsupportedSurface {
+        /// Index into `brep.geometry.surfaces`.
+        index: usize,
+        /// Packed surface type code.
+        surface_type: u32,
+        /// Human-readable name of that type.
+        name: &'static str,
+    },
+    /// The solid's BVH is triangle-backed; there is no GPU triangle BLAS yet.
+    UnsupportedMeshGeometry(crate::bvh::FlattenUnsupported),
+}
+
+impl From<crate::bvh::FlattenUnsupported> for GpuSceneError {
+    fn from(e: crate::bvh::FlattenUnsupported) -> Self {
+        Self::UnsupportedMeshGeometry(e)
+    }
 }
 
 impl std::fmt::Display for GpuSceneError {
@@ -788,6 +838,16 @@ impl std::fmt::Display for GpuSceneError {
             Self::TooManyTrimVerts(n) => {
                 write!(f, "too many trim vertices: {} (max {})", n, MAX_TRIM_VERTS)
             }
+            Self::UnsupportedSurface {
+                index,
+                surface_type,
+                name,
+            } => write!(
+                f,
+                "surface {index} is a {name} (type {surface_type}), which the GPU tracer \
+                 cannot intersect; faces on it would render as empty space"
+            ),
+            Self::UnsupportedMeshGeometry(e) => write!(f, "{e}"),
         }
     }
 }
@@ -877,9 +937,24 @@ impl GpuScene {
             return Err(GpuSceneError::TooManySurfaces(surfaces.len()));
         }
 
+        // Fail closed on surface kinds the WGSL tracer has no case for.
+        // Packing them and uploading anyway makes those faces disappear from
+        // the image with no diagnostic at all.
+        if let Some((index, s)) = surfaces
+            .iter()
+            .enumerate()
+            .find(|(_, s)| !s.is_gpu_traceable())
+        {
+            return Err(GpuSceneError::UnsupportedSurface {
+                index,
+                surface_type: s.surface_type,
+                name: GpuSurface::type_name(s.surface_type),
+            });
+        }
+
         // Build BVH first to get the face ordering
         let bvh = Bvh::build(brep);
-        let (flat_nodes, bvh_faces) = bvh.flatten();
+        let (flat_nodes, bvh_faces) = bvh.flatten()?;
 
         // Build face list in BVH traversal order (so BVH leaf indices are contiguous)
         let mut faces = Vec::with_capacity(bvh_faces.len());
@@ -1212,5 +1287,71 @@ impl GpuScene {
         }
         self.materials[0] =
             GpuMaterial::from_pbr(crate::pathtrace::Pbr::from_material_def(mat, tint));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vcad_kernel_geom::BilinearSurface;
+    use vcad_kernel_math::Point3;
+    use vcad_kernel_primitives::make_cube;
+
+    #[test]
+    fn analytic_surface_types_are_traceable() {
+        for t in 0..=4u32 {
+            let s = GpuSurface {
+                surface_type: t,
+                _pad: [0; 3],
+                params: [0.0; 32],
+            };
+            assert!(s.is_gpu_traceable(), "{} should be traceable", t);
+        }
+    }
+
+    #[test]
+    fn bilinear_and_bspline_are_not_traceable() {
+        // Both are packed by `from_surface` but hit the WGSL `default` arm,
+        // which reports a miss — so they must never reach the GPU.
+        for t in [5u32, 6] {
+            let s = GpuSurface {
+                surface_type: t,
+                _pad: [0; 3],
+                params: [0.0; 32],
+            };
+            assert!(!s.is_gpu_traceable(), "{} must be rejected", t);
+        }
+    }
+
+    #[test]
+    fn cube_builds_a_gpu_scene() {
+        let scene = GpuScene::from_brep(&make_cube(10.0, 10.0, 10.0)).expect("cube is analytic");
+        assert_eq!(scene.faces.len(), 6);
+    }
+
+    #[test]
+    fn unsupported_surface_names_the_offending_geometry() {
+        // Swap one of the cube's planes for a bilinear patch: the shader has
+        // no case for it, so building the scene must fail rather than drop
+        // the face from the image.
+        let mut cube = make_cube(10.0, 10.0, 10.0);
+        cube.geometry.surfaces[2] = Box::new(BilinearSurface::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        ));
+
+        let Err(err) = GpuScene::from_brep(&cube) else {
+            panic!("bilinear surface must be rejected, not silently dropped");
+        };
+        match err {
+            GpuSceneError::UnsupportedSurface { index, name, .. } => {
+                assert_eq!(index, 2);
+                assert_eq!(name, "Bilinear");
+            }
+            other => panic!("wrong error: {other:?}"),
+        }
+        assert!(err.to_string().contains("Bilinear"), "{err}");
     }
 }
