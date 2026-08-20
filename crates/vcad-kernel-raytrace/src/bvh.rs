@@ -10,7 +10,7 @@ use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
 use crate::intersect::{intersect_surface, intersect_triangle, surface_tangent};
-use crate::trim::{face_normal, point_in_face};
+use crate::trim::{face_normal, FaceTrim};
 use crate::{Ray, RayHit};
 
 /// A flattened BVH node tuple for GPU upload.
@@ -106,6 +106,15 @@ enum BvhGeom {
         brep: Arc<BRepSolid>,
         /// Primitive index -> face ID.
         faces: Vec<FaceId>,
+        /// Primitive index -> that face's trim boundary, projected into UV
+        /// once at build time.
+        ///
+        /// Without this, every ray-face hit test reprojected the face's whole
+        /// trim loop — Newton-iterating each vertex back onto the surface and
+        /// allocating three `Vec`s — to answer one point-in-polygon query.
+        /// The work does not depend on the query point, and a frame asks it
+        /// millions of times.
+        trims: Vec<FaceTrim>,
     },
     /// Triangles of a mesh-only solid.
     Mesh(Arc<MeshGeom>),
@@ -135,6 +144,10 @@ impl Bvh {
     pub fn build_shared(brep: Arc<BRepSolid>) -> Self {
         // Collect all faces with their AABBs
         let faces: Vec<FaceId> = brep.topology.faces.iter().map(|(id, _)| id).collect();
+        let trims: Vec<FaceTrim> = faces
+            .iter()
+            .map(|&face_id| FaceTrim::build(&brep, face_id))
+            .collect();
         let mut prim_data: Vec<PrimData> = faces
             .iter()
             .enumerate()
@@ -152,7 +165,7 @@ impl Bvh {
 
         Self {
             root,
-            geom: BvhGeom::BRep { brep, faces },
+            geom: BvhGeom::BRep { brep, faces, trims },
         }
     }
 
@@ -337,15 +350,14 @@ impl Bvh {
     /// of an any-hit query.
     fn prim_occludes(&self, ray: &Ray, prim: u32, t_min: f64, t_max: f64) -> bool {
         match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
+            BvhGeom::BRep { brep, faces, trims } => {
                 let face_id = faces[prim as usize];
+                let trim = &trims[prim as usize];
                 let face = &brep.topology.faces[face_id];
                 let surface = &brep.geometry.surfaces[face.surface_index];
                 intersect_surface(ray, surface.as_ref())
                     .into_iter()
-                    .any(|hit| {
-                        hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
-                    })
+                    .any(|hit| hit.t > t_min && hit.t < t_max && trim.contains(hit.uv))
             }
             // A triangle is convex: at most one hit, so there is nothing to
             // short-circuit past.
@@ -438,8 +450,9 @@ impl Bvh {
     /// Test a ray against a single primitive, appending every hit.
     fn test_prim(&self, ray: &Ray, prim: u32, hits: &mut Vec<RayHit>) {
         match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
+            BvhGeom::BRep { brep, faces, trims } => {
                 let face_id = faces[prim as usize];
+                let trim = &trims[prim as usize];
                 let face = &brep.topology.faces[face_id];
                 let surface = &brep.geometry.surfaces[face.surface_index];
 
@@ -447,7 +460,7 @@ impl Bvh {
 
                 for hit in surface_hits {
                     // Check if the hit is within the face's trim boundaries
-                    if point_in_face(brep, face_id, hit.uv) {
+                    if trim.contains(hit.uv) {
                         let point = ray.at(hit.t);
                         let normal = face_normal(brep, face_id, hit.uv);
                         let tangent = surface_tangent(surface.as_ref(), hit.uv);
@@ -470,8 +483,9 @@ impl Bvh {
     /// strictly past `t_min`.
     fn test_prim_single(&self, ray: &Ray, prim: u32, t_min: f64) -> Option<RayHit> {
         match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
+            BvhGeom::BRep { brep, faces, trims } => {
                 let face_id = faces[prim as usize];
+                let trim = &trims[prim as usize];
                 let face = &brep.topology.faces[face_id];
                 let surface = &brep.geometry.surfaces[face.surface_index];
 
@@ -481,7 +495,7 @@ impl Bvh {
 
                 for hit in surface_hits {
                     if hit.t > t_min
-                        && point_in_face(brep, face_id, hit.uv)
+                        && trim.contains(hit.uv)
                         && (closest.is_none() || hit.t < closest.as_ref().unwrap().t)
                     {
                         let point = ray.at(hit.t);

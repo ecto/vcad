@@ -9,68 +9,118 @@ use vcad_kernel_math::Point2;
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation};
 
+/// A face's trim boundary, projected into UV once and reusable for every
+/// subsequent point test.
+///
+/// Building this is the expensive half of [`point_in_face`]: every loop
+/// vertex is inverse-projected onto the surface (Newton iteration for
+/// B-spline and bilinear faces), pole vertices are repaired, and degenerate
+/// caps are re-synthesised from the adjacent surface. None of it depends on
+/// the query point, so a ray tracer that tests millions of hits against the
+/// same face should do it once — see [`FaceTrim::build`] and
+/// [`FaceTrim::contains`].
+#[derive(Debug, Clone)]
+pub struct FaceTrim {
+    /// The face spans its whole surface: the outer loop is only a seam.
+    untrimmed: bool,
+    /// Outer boundary in UV. Meaningless when `untrimmed`.
+    outer: Vec<Point2>,
+    /// For an untrimmed cylinder or cone, the extent of the loop along the
+    /// unbounded `v` parameter.
+    v_range: Option<(f64, f64)>,
+    /// Hole boundaries in UV.
+    inners: Vec<Vec<Point2>>,
+}
+
+impl FaceTrim {
+    /// Project a face's trim loops into UV.
+    pub fn build(brep: &BRepSolid, face_id: FaceId) -> Self {
+        let topo = &brep.topology;
+        let face = &topo.faces[face_id];
+        let surface = &brep.geometry.surfaces[face.surface_index];
+
+        // Get UV coordinates of the outer loop vertices
+        let raw_uvs = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
+
+        // A closed surface covering the whole primitive (a full sphere or
+        // torus) is bounded only by its seam: the outer loop projects to a
+        // zero-area polygon in UV, which would reject every hit. Treat a
+        // degenerate outer loop as "untrimmed" — the face spans the entire
+        // surface — and still honour inner loops (holes) below.
+        //
+        // The degeneracy verdict is taken on the *raw* projection, before any
+        // pole repair: a full sphere's seam loop passes through both poles,
+        // and repairing those would hand it a non-zero area and reject every
+        // hit.
+        let mut untrimmed = polygon_area(&raw_uvs).abs() < 1e-9;
+        let mut outer = if untrimmed {
+            raw_uvs
+        } else {
+            repair_pole_vertices(surface.as_ref(), &raw_uvs)
+        };
+
+        // A planar cap bounded by a single closed circle edge (cylinder/cone
+        // caps) projects to a degenerate UV polygon too — but "untrimmed" on
+        // a plane means the infinite plane. Rebuild the circle from the
+        // adjacent surface instead.
+        if untrimmed {
+            if let Some(poly) = synthesize_planar_cap_polygon(brep, face_id) {
+                outer = poly;
+                untrimmed = false;
+            }
+        }
+
+        // On a cylinder or cone, v is an unbounded length parameter, so a
+        // seam-degenerate loop (e.g. a full cylinder wall: only seam vertices
+        // survive projection, the rim circles collapse) must still clamp v to
+        // the loop's extent — otherwise the wall traces as an infinite
+        // cylinder. u legitimately wraps the full turn.
+        let v_range = if untrimmed {
+            unbounded_v_range(surface.as_ref(), &outer)
+        } else {
+            None
+        };
+
+        let inners = face
+            .inner_loops
+            .iter()
+            .map(|&inner_loop| loop_uv_coords(brep, inner_loop, surface.as_ref()))
+            .collect();
+
+        Self {
+            untrimmed,
+            outer,
+            v_range,
+            inners,
+        }
+    }
+
+    /// Is `uv` inside the outer boundary and outside every hole?
+    pub fn contains(&self, uv: Point2) -> bool {
+        if self.untrimmed {
+            if let Some((v_min, v_max)) = self.v_range {
+                if uv.y < v_min || uv.y > v_max {
+                    return false;
+                }
+            }
+        } else if !point_in_polygon(&wrap_u_into_polygon(uv, &self.outer), &self.outer) {
+            return false;
+        }
+
+        // Inside a hole is outside the face.
+        !self.inners.iter().any(|inner| point_in_polygon(&uv, inner))
+    }
+}
+
 /// Test if a UV point is inside a face's trim boundaries.
 ///
 /// Returns `true` if the point is inside the outer loop and outside all inner loops (holes).
+///
+/// This reprojects the face's loops on every call. Callers testing the same
+/// face repeatedly — the ray tracer, above all — should hold a [`FaceTrim`]
+/// instead.
 pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
-    let topo = &brep.topology;
-    let face = &topo.faces[face_id];
-    let surface = &brep.geometry.surfaces[face.surface_index];
-
-    // Get UV coordinates of the outer loop vertices
-    let raw_uvs = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
-
-    // A closed surface covering the whole primitive (a full sphere or
-    // torus) is bounded only by its seam: the outer loop projects to a
-    // zero-area polygon in UV, which would reject every hit. Treat a
-    // degenerate outer loop as "untrimmed" — the face spans the entire
-    // surface — and still honour inner loops (holes) below.
-    //
-    // The degeneracy verdict is taken on the *raw* projection, before any
-    // pole repair: a full sphere's seam loop passes through both poles, and
-    // repairing those would hand it a non-zero area and reject every hit.
-    let mut untrimmed = polygon_area(&raw_uvs).abs() < 1e-9;
-    let mut outer_uvs = if untrimmed {
-        raw_uvs
-    } else {
-        repair_pole_vertices(surface.as_ref(), &raw_uvs)
-    };
-
-    // A planar cap bounded by a single closed circle edge (cylinder/cone
-    // caps) projects to a degenerate UV polygon too — but "untrimmed" on a
-    // plane means the infinite plane. Rebuild the circle from the adjacent
-    // surface instead.
-    if untrimmed {
-        if let Some(poly) = synthesize_planar_cap_polygon(brep, face_id) {
-            outer_uvs = poly;
-            untrimmed = false;
-        }
-    }
-
-    if untrimmed {
-        // On a cylinder or cone, v is an unbounded length parameter, so a
-        // seam-degenerate loop (e.g. a full cylinder wall: only seam
-        // vertices survive projection, the rim circles collapse) must still
-        // clamp v to the loop's extent — otherwise the wall traces as an
-        // infinite cylinder. u legitimately wraps the full turn.
-        if let Some((v_min, v_max)) = unbounded_v_range(surface.as_ref(), &outer_uvs) {
-            if uv.y < v_min || uv.y > v_max {
-                return false;
-            }
-        }
-    } else if !point_in_polygon(&wrap_u_into_polygon(uv, &outer_uvs), &outer_uvs) {
-        return false;
-    }
-
-    // Check if point is inside any hole (should be outside all holes)
-    for &inner_loop in &face.inner_loops {
-        let inner_uvs = loop_uv_coords(brep, inner_loop, surface.as_ref());
-        if point_in_polygon(&uv, &inner_uvs) {
-            return false; // Inside a hole
-        }
-    }
-
-    true
+    FaceTrim::build(brep, face_id).contains(uv)
 }
 
 /// Latitude magnitude above which a spherical loop vertex counts as sitting
