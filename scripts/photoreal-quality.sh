@@ -82,8 +82,11 @@ for entry in "${SCENES[@]}"; do
 
     if [ $REGEN -eq 1 ] || [ ! -f "$ref" ]; then
       echo "reference: $name/$variant @ ${REF_SPP}spp ${size}px"
+      # --no-adaptive: a reference is only ground truth if every pixel
+      # actually received the full budget. Adaptive sampling would stop the
+      # easy pixels early and quietly make the reference the thing under test.
       "$BIN" "$path" --photoreal --spp "$REF_SPP" --size "$size" \
-        "${dn[@]}" -o "$ref" >>"$LOG" 2>&1
+        --no-adaptive "${dn[@]}" -o "$ref" >>"$LOG" 2>&1
     fi
 
     cand="$OUT_DIR/$name-$variant.png"

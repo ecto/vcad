@@ -375,6 +375,17 @@ struct Cli {
     #[arg(long, requires = "photoreal")]
     no_denoise: bool,
 
+    /// Sample every pixel to the full `--spp` count (`--photoreal`), instead
+    /// of stopping pixels whose own variance estimate says the remaining
+    /// samples cannot move them visibly.
+    ///
+    /// Adaptive sampling is on by default and typically cuts render time
+    /// substantially at unchanged quality; `--spp` is a ceiling under it.
+    /// Turn it off for reference renders, or to compare two images at a
+    /// genuinely equal sample count.
+    #[arg(long, requires = "photoreal")]
+    no_adaptive: bool,
+
     /// Render a jointed assembly over time (`--photoreal`): one PNG per
     /// timeline sample into the directory given by `-o`, evaluating the
     /// document's geometry exactly once for the whole sequence.
@@ -523,6 +534,7 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
         },
         seed: cli.seed,
         denoise: !cli.no_denoise,
+        adaptive: !cli.no_adaptive,
         exact: cli.exact,
     }
 }

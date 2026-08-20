@@ -74,6 +74,13 @@ pub struct PhotorealOptions {
     /// On by default: it is worth far more per second of render time than the
     /// equivalent extra samples. Turn it off for reference renders.
     pub denoise: bool,
+    /// Stop sampling a pixel early once its own variance says the rest of the
+    /// budget cannot move it visibly (`--no-adaptive` turns this off).
+    ///
+    /// On by default. `spp` becomes a ceiling rather than a fixed count; the
+    /// stopping decision is per-pixel and made from that pixel's own running
+    /// sums, so a fixed `--seed` still gives a byte-stable image.
+    pub adaptive: bool,
     /// Intersect the analytic BRep surfaces instead of a tessellation of them
     /// (`--exact`).
     ///
@@ -151,6 +158,7 @@ impl Default for PhotorealOptions {
             backdrop: Backdrop::Studio,
             seed: 0x5eed_1234,
             denoise: true,
+            adaptive: true,
             exact: false,
         }
     }
@@ -444,6 +452,7 @@ pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOption
         show_background: !png || pr.backdrop == Backdrop::Studio,
         seed: pr.seed,
         denoise: pr.denoise,
+        adaptive: pr.adaptive,
         ..PathTraceOptions::default()
     }
 }

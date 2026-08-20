@@ -923,6 +923,17 @@ pub struct PathTraceOptions {
     pub show_background: bool,
     /// Random seed.
     pub seed: u64,
+    /// Stop sampling a pixel early once its own variance estimate says the
+    /// remaining budget cannot move it visibly.
+    ///
+    /// [`spp`](Self::spp) becomes a *ceiling* rather than a fixed count. Every
+    /// pixel still gets at least a floor of samples, and the decision is made
+    /// from the pixel's own running sums, so the film stays deterministic and
+    /// independent of how the frame was tiled.
+    ///
+    /// Set `false` for a reference render, where a uniform sample count is
+    /// the point.
+    pub adaptive: bool,
     /// Run the edge-aware à-trous denoiser over the film before returning.
     ///
     /// This is a pure post-process on the accumulated radiance — it consumes
@@ -953,6 +964,7 @@ impl Default for PathTraceOptions {
             firefly_clamp: Some(12.0),
             show_background: true,
             seed: 0x5eed_1234,
+            adaptive: true,
             denoise: true,
             denoise_iters: 5,
             sigma_normal: 0.35,
@@ -1840,6 +1852,34 @@ pub struct Film {
 /// to 256 pixels of tracing.
 const TILE: usize = 16;
 
+/// Samples traced between convergence checks.
+///
+/// The check needs a sample variance to be worth anything, so it cannot run
+/// after every sample; 16 gives a usable estimate and is fine enough that a
+/// converged pixel wastes at most 15 samples past the line.
+const ADAPTIVE_BATCH: u32 = 16;
+
+/// Minimum samples every pixel gets, whatever the variance estimate says.
+///
+/// A pixel that happens to draw several near-equal samples early reports a
+/// tiny variance and would quit while genuinely unconverged — the classic
+/// adaptive-sampling failure, and it shows up as blotching in exactly the
+/// smooth regions adaptivity was meant to speed up.
+const ADAPTIVE_FLOOR: u32 = 32;
+
+/// Relative tolerance on the 95% confidence half-width of pixel luminance.
+///
+/// Tuned against the PSNR gate in `scripts/photoreal-quality.sh`: see the
+/// sweep in this change's commit message.
+const ADAPTIVE_TOL: f32 = 0.10;
+
+/// Absolute luminance added to the mean before applying [`ADAPTIVE_TOL`].
+///
+/// Pure relative error never converges in shadow, where the mean approaches
+/// zero; pure absolute error over-samples highlights. Adding the two is the
+/// usual compromise.
+const ADAPTIVE_LUM_FLOOR: f32 = 0.02;
+
 /// Everything one pixel contributes to the [`Film`].
 ///
 /// Traced into a tile-local buffer and blitted into the film afterwards, so
@@ -1905,55 +1945,89 @@ fn trace_pixel(
         variance: 0.0,
     };
 
-    for s in 0..spp {
-        // Pixel jitter and lens position come from a 4D Hammersley set
-        // rotated into this pixel's frame, not from four fresh uniforms. Four
-        // independent uniforms can clump — at 32spp a purely random jitter
-        // leaves visibly uneven coverage of the pixel footprint, and that
-        // shows up as extra aliasing on every silhouette. A Hammersley point
-        // set covers the square evenly by construction, and its error falls
-        // off faster than the 1/sqrt(N) of plain Monte Carlo.
-        let (jx, jy) = (
-            cp_rotate((s as f64 + 0.5) / spp as f64, rot[0]),
-            cp_rotate(radical_inverse::<2>(s as u64), rot[1]),
-        );
-        let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
-        let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
-        let (lu, lv) = concentric_disc(
-            cp_rotate(radical_inverse::<3>(s as u64), rot[2]),
-            cp_rotate(radical_inverse::<5>(s as u64), rot[3]),
-        );
+    // Sample in batches so the estimator can be asked, between batches,
+    // whether it has already resolved this pixel. `traced` is the count
+    // actually spent, which is <= spp under adaptive sampling.
+    let mut traced = 0u32;
+    while traced < spp {
+        let batch = ADAPTIVE_BATCH.min(spp - traced);
+        for k in 0..batch {
+            let s = traced + k;
+            // Pixel jitter and lens position come from a 4D Halton set
+            // rotated into this pixel's frame, not from four fresh uniforms.
+            // Four independent uniforms can clump — at 32spp a purely random
+            // jitter leaves visibly uneven coverage of the pixel footprint,
+            // and that shows up as extra aliasing on every silhouette. A
+            // low-discrepancy set covers the square evenly by construction.
+            //
+            // Halton rather than Hammersley: Hammersley's first dimension is
+            // `s / N`, which needs the final sample count up front. Adaptive
+            // sampling does not know it, and a set that changes shape when
+            // the loop stops early is worse than a slightly weaker set that
+            // is correct at every prefix.
+            let (jx, jy) = (
+                cp_rotate(radical_inverse::<2>(s as u64), rot[0]),
+                cp_rotate(radical_inverse::<3>(s as u64), rot[1]),
+            );
+            let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
+            let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
+            let (lu, lv) = concentric_disc(
+                cp_rotate(radical_inverse::<5>(s as u64), rot[2]),
+                cp_rotate(radical_inverse::<7>(s as u64), rot[3]),
+            );
 
-        let ray = cam.ray(sx, sy, aspect, lu, lv);
-        let (l, primary) = radiance(scene, accel, opts, ray, &mut rng);
-        acc = add3(acc, l);
-        let ls = luminance(l);
-        lsum += ls;
-        lsum2 += ls * ls;
-        if primary.hit {
-            cov += 1.0;
+            let ray = cam.ray(sx, sy, aspect, lu, lv);
+            let (l, primary) = radiance(scene, accel, opts, ray, &mut rng);
+            acc = add3(acc, l);
+            let ls = luminance(l);
+            lsum += ls;
+            lsum2 += ls * ls;
+            if primary.hit {
+                cov += 1.0;
+            }
+            if s == 0 {
+                // Guide buffers come from one primary ray, not an average:
+                // averaging normals and depths across samples would soften
+                // exactly the silhouettes the edge-stopping weights exist to
+                // protect.
+                out.normal = primary.normal;
+                out.depth = primary.depth;
+                out.albedo = primary.albedo;
+            }
         }
-        if s == 0 {
-            // Guide buffers come from one primary ray, not an average:
-            // averaging normals and depths across samples would soften
-            // exactly the silhouettes the edge-stopping weights exist to
-            // protect.
-            out.normal = primary.normal;
-            out.depth = primary.depth;
-            out.albedo = primary.albedo;
+        traced += batch;
+
+        // Stop once the estimator's own error bar says the remaining samples
+        // cannot move this pixel by anything a viewer could see. The floor is
+        // non-negotiable: a pixel that happened to draw several near-equal
+        // samples early would otherwise report a tiny variance and quit while
+        // genuinely unconverged.
+        if opts.adaptive && traced >= ADAPTIVE_FLOOR.min(spp) && traced < spp {
+            let n = traced as f32;
+            let mean = lsum / n;
+            let sample_var = (lsum2 / n - mean * mean).max(0.0) * n / (n - 1.0);
+            // Half-width of the 95% confidence interval on the mean.
+            let ci = 1.96 * (sample_var / n).sqrt();
+            // Relative tolerance with an absolute floor: pure relative error
+            // never converges in shadow, where the mean approaches zero, and
+            // pure absolute error over-samples highlights.
+            if ci <= ADAPTIVE_TOL * (mean + ADAPTIVE_LUM_FLOOR) {
+                break;
+            }
         }
     }
 
-    let inv = 1.0 / spp as f32;
+    let inv = 1.0 / traced as f32;
     out.rgb = [acc[0] * inv, acc[1] * inv, acc[2] * inv];
     out.alpha = cov * inv;
-    // Variance of the *mean*: sample variance / spp. A single sample carries
-    // no information about its own spread, so fall back to the estimate
-    // itself as a scale.
-    out.variance = if spp > 1 {
+    // Variance of the *mean*: sample variance / n. A single sample carries no
+    // information about its own spread, so fall back to the estimate itself
+    // as a scale.
+    out.variance = if traced > 1 {
+        let n = traced as f32;
         let mean = lsum * inv;
-        let sample_var = (lsum2 * inv - mean * mean).max(0.0) * spp as f32 / (spp - 1) as f32;
-        sample_var / spp as f32
+        let sample_var = (lsum2 * inv - mean * mean).max(0.0) * n / (n - 1.0);
+        sample_var / n
     } else {
         lsum * lsum
     };
@@ -2573,6 +2647,105 @@ mod tests {
             let worst = hits.iter().flatten().copied().max().unwrap();
             assert!(worst <= 2, "rotated set clumped {worst} samples in a stratum");
         }
+    }
+
+    /// Below the floor, adaptive sampling must be a no-op — not "almost" a
+    /// no-op. A low-spp render is exactly where an early stop would do the
+    /// most damage, so the floor has to be a hard gate, not a heuristic.
+    #[test]
+    fn adaptive_is_inert_below_the_sample_floor() {
+        let scene = test_scene();
+        let cam = test_camera();
+        let base = PathTraceOptions {
+            spp: ADAPTIVE_FLOOR,
+            denoise: false,
+            ..Default::default()
+        };
+        let fixed = render(
+            &scene,
+            &cam,
+            24,
+            24,
+            &PathTraceOptions {
+                adaptive: false,
+                ..base
+            },
+        );
+        let adaptive = render(
+            &scene,
+            &cam,
+            24,
+            24,
+            &PathTraceOptions {
+                adaptive: true,
+                ..base
+            },
+        );
+        assert_eq!(
+            fixed.rgb, adaptive.rgb,
+            "adaptive sampling fired at or below the floor"
+        );
+    }
+
+    /// Adaptive sampling trades samples for time, and the trade is only
+    /// honest if the picture barely moves. Measured against a converged
+    /// reference, the adaptive film must land close to the fixed-count film
+    /// of the same budget — not merely "differ from it".
+    #[test]
+    fn adaptive_tracks_the_fixed_count_estimate() {
+        let scene = test_scene();
+        let cam = test_camera();
+        let (w, h) = (64, 64);
+        let reference = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                spp: 1024,
+                denoise: false,
+                adaptive: false,
+                ..Default::default()
+            },
+        );
+        let budget = PathTraceOptions {
+            spp: 128,
+            denoise: false,
+            ..Default::default()
+        };
+        let fixed = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                adaptive: false,
+                ..budget
+            },
+        );
+        let adaptive = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                adaptive: true,
+                ..budget
+            },
+        );
+
+        let e_fixed = rmse(&fixed, &reference);
+        let e_adaptive = rmse(&adaptive, &reference);
+        eprintln!("RMSE vs 1024spp: fixed {e_fixed:.5}, adaptive {e_adaptive:.5}");
+        // Adaptive spends fewer samples, so it must be *somewhat* worse; the
+        // bound is on how much. Measured 1.59x on this scene, which is the
+        // pessimistic end — it is small, uniformly lit, and gives adaptivity
+        // almost nothing to skip, where the harness scenes lose only
+        // ~0.3 dB. 2.0x pins the trade without being brittle.
+        assert!(
+            e_adaptive < e_fixed * 2.0,
+            "adaptive sampling lost too much accuracy: RMSE {e_fixed} -> {e_adaptive}"
+        );
     }
 
     /// A frame whose dimensions are not multiples of [`TILE`] must still be
