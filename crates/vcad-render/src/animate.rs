@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use vcad_ir::animation::{AnimTarget, Timeline};
 
 use crate::photoreal::{
-    build_objects, check_raster_opts, dress_scene, frame_view, object_corners, trace_frame,
-    PhotorealOptions,
+    build_objects, check_raster_opts, dress_scene, frame_view, object_corners, object_corners_with,
+    trace_frame, PhotorealOptions,
 };
 use crate::raster::encode_png;
 use crate::RasterOptions;
@@ -247,13 +247,13 @@ pub fn render_photoreal_animation(
     let instance_ids: Vec<String> = part_solids.iter().map(|s| s.id.clone()).collect();
     objects.extend(build_objects(&part_solids)?);
     let articulated = objects.len() - static_count;
-    if articulated != instance_ids.len() {
-        return Err(format!(
-            "--animate: {} of {} instances have no traceable geometry",
-            instance_ids.len() - articulated,
-            instance_ids.len()
-        ));
-    }
+    // build_objects fails closed on untraceable parts, so counts can only
+    // agree here; keep the invariant visible without implying a live branch.
+    debug_assert_eq!(
+        articulated,
+        instance_ids.len(),
+        "build_objects returned fewer objects than instances without erroring"
+    );
 
     // ── sample the timeline, and pose every frame up front ───────────────
     let mut sequence = timeline.sample_sequence();
@@ -314,9 +314,10 @@ pub fn render_photoreal_animation(
         .flat_map(object_corners)
         .collect();
     for pose in &poses {
-        for (obj, t) in objects[static_count..].iter_mut().zip(pose) {
-            obj.transform = t.clone();
-            corners.extend(object_corners(obj));
+        for (obj, t) in objects[static_count..].iter().zip(pose) {
+            // Bounds under this pose, WITHOUT writing the pose onto the
+            // object — the trace loop owns those transforms.
+            corners.extend(object_corners_with(obj, t));
         }
     }
     let framing = frame_view(&corners, opts, pr)?;

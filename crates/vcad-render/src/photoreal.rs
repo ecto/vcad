@@ -163,6 +163,16 @@ pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>,
 /// The eight corners of an object's BVH root AABB, in world space after
 /// `transform`. These are what framing is computed from.
 pub(crate) fn object_corners(obj: &Object) -> Vec<[f64; 3]> {
+    object_corners_with(obj, &obj.transform)
+}
+
+/// `object_corners` under an explicit transform, so a caller can ask "where
+/// would this object's bounds land under pose `t`" without mutating the
+/// object (the --animate camera framing sweeps every pose this way).
+pub(crate) fn object_corners_with(
+    obj: &Object,
+    transform: &vcad_kernel::vcad_kernel_math::Transform,
+) -> Vec<[f64; 3]> {
     let Some(node) = obj.bvh.root() else {
         return Vec::new();
     };
@@ -177,7 +187,7 @@ pub(crate) fn object_corners(obj: &Object) -> Vec<[f64; 3]> {
                 if i & 2 == 0 { aabb.min.y } else { aabb.max.y },
                 if i & 4 == 0 { aabb.min.z } else { aabb.max.z },
             );
-            let w = obj.transform.apply_point(&p);
+            let w = transform.apply_point(&p);
             [w.x, w.y, w.z]
         })
         .collect()
