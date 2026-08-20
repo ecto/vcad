@@ -13,9 +13,8 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 default = ["no-builtin-font"]
-# The kernel's builtin font is vendored from node_modules (absent in fresh
-# worktrees) and a native CAD app doesn't render with it — keep it off so the
-# static lib always builds without a JS toolchain present.
+# A native CAD app doesn't render with the kernel's builtin font — keep it out
+# of the static lib rather than paying ~27 KB for an unused embed.
 no-builtin-font = ["vcad-kernel/no-builtin-font"]
 
 [dependencies]

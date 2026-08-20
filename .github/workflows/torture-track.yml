@@ -13,7 +13,7 @@ name: Kernel Torture Track
 # multi-minute build, so the subset bought nothing and cost a day of red main.
 #
 # Refreshing the baseline after a deliberate change:
-#   cargo run --release -p vcad-torture --features vcad-kernel/no-builtin-font \
+#   cargo run --release -p vcad-torture \
 #     -- run --write-baseline crates/vcad-torture/baseline.json
 #
 # ...but the baseline is PLATFORM-SPECIFIC, so prefer the `torture-scorecard`
@@ -65,7 +65,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build runner
-        run: cargo build --release -p vcad-torture --features vcad-kernel/no-builtin-font
+        run: cargo build --release -p vcad-torture
       - name: Run track
         run: |
           ./target/release/vcad-torture run \
