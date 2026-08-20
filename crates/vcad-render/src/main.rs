@@ -320,6 +320,35 @@ struct Cli {
     #[arg(long, requires = "photoreal")]
     exact: bool,
 
+    /// Path-trace on the GPU instead of the CPU (`--photoreal`).
+    ///
+    /// Same scene, same studio rig, same exposure and tonemap — a wgpu
+    /// compute pipeline integrates it instead of rayon.
+    ///
+    /// HONOURED: --spp, --max-depth, --exposure, --fov, --seed, --size,
+    /// --fill, --auto-aspect, --view/--azimuth/--elevation, --env,
+    /// --env-rotation, per-part materials, and --backdrop studio|none.
+    ///
+    /// REFUSED, with a message rather than a wrong image: --exact,
+    /// --aperture, --ortho, --backdrop shadow-catcher, --animate.
+    ///
+    /// IGNORED: --no-adaptive (the GPU has no adaptive sampler, so --spp is
+    /// an exact count rather than a ceiling), and denoising — it needs
+    /// normal/depth/albedo guide buffers the GPU tracer does not read back,
+    /// so --gpu turns it off and says so on stderr.
+    ///
+    /// Two knowing differences from the CPU image: the studio floor is a
+    /// large quad rather than an infinite plane, and the integrator runs in
+    /// f32 rather than f64. The GPU render converges, but to a slightly
+    /// different picture — around 30 dB PSNR from the CPU render on rose-pro,
+    /// and no closer at 1024 spp than at 256. Use it for fast looks and
+    /// sweeps; render the final hero on the CPU.
+    ///
+    /// An explicit --gpu with no usable adapter is an error, never a silent
+    /// fall back to the CPU.
+    #[arg(long, requires = "photoreal")]
+    gpu: bool,
+
     /// Samples per pixel for `--photoreal`. 32 for a quick look, 512+ for a
     /// clean hero render.
     #[arg(long, default_value_t = 128, requires = "photoreal")]
@@ -539,6 +568,60 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
     }
 }
 
+/// `--photoreal --gpu`: the same scene, path-traced on a wgpu compute
+/// pipeline.
+///
+/// Denoising is turned off here rather than in `photoreal_options`, so the
+/// note fires exactly once and only when the user actually asked for both
+/// `--gpu` and a denoised render. The denoiser is guided by the per-pixel
+/// normal/depth/albedo buffers the CPU integrator records, and the GPU reads
+/// back only radiance; run against the zeroed guides it would not produce a
+/// worse image, it would silently produce *no* filtering at all, which is the
+/// version of this the user must not be left guessing about.
+#[cfg(all(feature = "raytrace", feature = "photoreal-gpu"))]
+fn render_photoreal_gpu(
+    raw: &str,
+    opts: &vcad_render::RasterOptions,
+    pr: &vcad_render::photoreal::PhotorealOptions,
+    png: bool,
+) -> Result<Vec<u8>, String> {
+    use vcad_render::photoreal_gpu;
+
+    // Refusals first, so a run that is about to be rejected outright does not
+    // print a note about a denoiser it will never reach.
+    photoreal_gpu::check_supported(opts, pr)?;
+
+    let mut pr = pr.clone();
+    if pr.denoise {
+        eprintln!("{}", photoreal_gpu::denoise_is_unavailable());
+        pr.denoise = false;
+    }
+    if png {
+        photoreal_gpu::render_photoreal_gpu_png_str(raw, opts, &pr)
+    } else {
+        photoreal_gpu::render_photoreal_gpu_jpeg_str(raw, opts, &pr)
+    }
+}
+
+/// `--gpu` in a build compiled without the `photoreal-gpu` feature.
+///
+/// Deliberately an error naming the feature rather than a silent CPU render:
+/// a user who asked for the GPU and got the CPU would take every timing
+/// afterwards as a GPU number.
+#[cfg(all(feature = "raytrace", not(feature = "photoreal-gpu")))]
+fn render_photoreal_gpu(
+    _raw: &str,
+    _opts: &vcad_render::RasterOptions,
+    _pr: &vcad_render::photoreal::PhotorealOptions,
+    _png: bool,
+) -> Result<Vec<u8>, String> {
+    Err("--gpu: this build of vcad-render was compiled without the \
+         `photoreal-gpu` feature. Rebuild with \
+         `cargo build -p vcad-render --features photoreal-gpu`, or drop --gpu \
+         to path-trace on the CPU."
+        .to_string())
+}
+
 /// Render an animation: one PNG per timeline sample into the `-o` directory,
 /// then (unless told not to) mux them into an mp4.
 ///
@@ -550,6 +633,19 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     use vcad_render::animate::{
         assemble_mp4, parse_timeline_spec, render_photoreal_animation, AnimateOptions,
     };
+
+    // `--gpu` bakes each part's transform into the uploaded vertices — the
+    // WGSL tracer has no instancing layer to put a per-object matrix in — so
+    // every frame of a sequence would mean repacking and re-uploading the
+    // whole scene. That is precisely the cost `--animate` exists to pay once,
+    // so the two do not compose and saying so beats quietly re-uploading.
+    if cli.gpu {
+        return Err("--animate does not compose with --gpu: the GPU scene bakes \
+                    each part's pose into its uploaded vertices, so every frame \
+                    would repack and re-upload the whole assembly — which is the \
+                    one cost --animate exists to avoid. Drop --gpu."
+            .to_string());
+    }
 
     let spec = cli.animate.as_ref().expect("caller checked --animate");
     let Some(out_dir) = cli.output.clone() else {
@@ -643,6 +739,9 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
         #[cfg(feature = "raytrace")]
         {
             let pr = photoreal_options(cli);
+            if cli.gpu {
+                return render_photoreal_gpu(raw, &opts, &pr, png);
+            }
             return if png {
                 vcad_render::photoreal::render_photoreal_png_str(raw, &opts, &pr)
             } else {

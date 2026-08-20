@@ -9,8 +9,9 @@ pub mod shaders;
 
 pub use buffers::{
     depth_for_frame, halton_jitter, GpuAreaLight, GpuBvhNode, GpuCamera, GpuFace, GpuMaterial,
-    GpuRenderState, GpuScene, GpuSceneError, GpuSurface, GpuVec2, DEFAULT_ENV_INTENSITY,
-    DEFAULT_FIREFLY_CLAMP, DEFAULT_MAX_DEPTH, DEFAULT_RR_START,
+    GpuRenderState, GpuScene, GpuSceneError, GpuSurface, GpuVec2, BACKGROUND_ENVIRONMENT,
+    BACKGROUND_BLACK, BACKGROUND_SKY, CAMERA_BASIS_DERIVED, CAMERA_BASIS_EXPLICIT, DEFAULT_ENV_INTENSITY,
+    DEFAULT_FIREFLY_CLAMP, DEFAULT_MAX_DEPTH, DEFAULT_RR_START, MAX_TRAVERSAL_DEPTH,
 };
 pub use pipeline::RayTracePipeline;
 

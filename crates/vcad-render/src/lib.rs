@@ -47,6 +47,8 @@ pub mod materials;
 pub mod pcb;
 #[cfg(feature = "raytrace")]
 pub mod photoreal;
+#[cfg(feature = "photoreal-gpu")]
+pub mod photoreal_gpu;
 
 /// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
 /// checked in node-id order, then the legacy top-level `pcb` field.

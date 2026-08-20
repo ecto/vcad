@@ -17,7 +17,24 @@ pub const MAX_SURFACES: usize = 1024;
 pub const MAX_FACES: usize = 4096;
 
 /// Maximum BVH nodes.
-pub const MAX_BVH_NODES: usize = 8192;
+///
+/// Raised from the original 8192 when `vcad-render --photoreal --gpu` started
+/// merging one mesh BLAS per solid into a single tree: a real assembly is
+/// hundreds of thousands of triangles and its BVH has roughly one node per
+/// two of them, so 8192 refused every scene bigger than a bracket. Nothing in
+/// the shader is sized by this — the node array is a storage buffer sized
+/// from the data — so the ceiling that actually matters is the device's
+/// `max_storage_buffer_binding_size`, which [`GpuScene::validate`] checks
+/// separately. This is the "obviously absurd" guard, not the real limit.
+pub const MAX_BVH_NODES: usize = 4_000_000;
+
+/// Deepest root-to-leaf path the WGSL tracer can walk.
+///
+/// `trace_bvh` holds its traversal stack in a fixed `array<u32, 64>` and
+/// *silently drops* a push that would overflow it — geometry simply
+/// disappears from the render. [`GpuScene::validate`] measures the packed
+/// tree against this so an over-deep scene is a message instead of a hole.
+pub const MAX_TRAVERSAL_DEPTH: usize = 64;
 
 /// Maximum trim loop vertices.
 pub const MAX_TRIM_VERTS: usize = 32768;
@@ -485,15 +502,38 @@ pub struct GpuCamera {
     pub target: [f32; 4],
     /// Up vector.
     pub up: [f32; 4],
+    /// World direction mapping to screen +x. Only read when
+    /// [`basis_mode`](Self::basis_mode) is [`CAMERA_BASIS_EXPLICIT`].
+    pub right: [f32; 4],
     /// Field of view in radians.
     pub fov: f32,
     /// Image width.
     pub width: u32,
     /// Image height.
     pub height: u32,
-    /// Padding.
-    pub _pad: u32,
+    /// How the shader builds the screen basis.
+    ///
+    /// * [`CAMERA_BASIS_DERIVED`] — build it right-handedly from `position`,
+    ///   `target` and `up` (`right = forward × up`). What the viewport has
+    ///   always done, and what [`GpuCamera::new`] still sets.
+    /// * [`CAMERA_BASIS_EXPLICIT`] — use [`right`](Self::right) and
+    ///   [`up`](Self::up) *verbatim*, with `forward = normalize(target -
+    ///   position)`.
+    ///
+    /// The explicit mode exists because [`crate::pathtrace::Camera`] can
+    /// carry a **mirrored** (left-handed) screen basis — `View::Isometric`
+    /// and the named CAD views in `vcad-render` all do — and no
+    /// `look_at`-plus-up-hint construction can reproduce one. Rebuilding such
+    /// a view right-handedly flips the image left-for-right.
+    pub basis_mode: u32,
 }
+
+/// [`GpuCamera::basis_mode`]: derive the screen basis from the up hint.
+pub const CAMERA_BASIS_DERIVED: u32 = 0;
+
+/// [`GpuCamera::basis_mode`]: use the supplied `right`/`up` verbatim, so a
+/// mirrored basis survives the trip to the shader.
+pub const CAMERA_BASIS_EXPLICIT: u32 = 1;
 
 /// Render state for progressive rendering.
 ///
@@ -586,9 +626,37 @@ pub struct GpuRenderState {
     /// Occupies what used to be the first padding word, so the uniform is
     /// still 128 bytes.
     pub seed: u32,
+    /// What a camera ray that hits nothing returns.
+    ///
+    /// * [`BACKGROUND_SKY`] (0) — `sky_color`, the *themed viewport backdrop*.
+    ///   The historical behaviour, and what every viewport constructor sets.
+    /// * [`BACKGROUND_ENVIRONMENT`] (1) — `env_radiance`, the same sky the
+    ///   integrator lights with. This is what `vcad-render --photoreal`
+    ///   shows behind the subject, so an offline render asks for it.
+    ///
+    /// It has to be a shader-side choice rather than a CPU composite: a pixel
+    /// on the subject's silhouette averages background and surface samples
+    /// together, and once that mean exists the two contributions cannot be
+    /// separated again.
+    ///
+    /// Occupies what used to be the first word of `_pad3`, so the uniform is
+    /// still 128 bytes.
+    pub background_mode: u32,
     /// Padding to a 16-byte multiple (required for uniform buffers).
-    pub _pad3: [u32; 2],
+    pub _pad3: u32,
 }
+
+/// [`GpuRenderState::background_mode`]: draw the themed viewport backdrop.
+pub const BACKGROUND_SKY: u32 = 0;
+
+/// [`GpuRenderState::background_mode`]: draw the lighting environment, as the
+/// CPU renderer does with `PathTraceOptions::show_background`.
+pub const BACKGROUND_ENVIRONMENT: u32 = 1;
+
+/// [`GpuRenderState::background_mode`]: leave the backdrop black, matching
+/// the CPU renderer with `show_background` off. Paired with the film's
+/// coverage alpha this is what makes a transparent PNG.
+pub const BACKGROUND_BLACK: u32 = 2;
 
 /// Default silhouette line color: near-black, slightly cool.
 const DEFAULT_SILHOUETTE_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
@@ -664,7 +732,8 @@ impl GpuRenderState {
             env_rotation: 0.0,
             env_marg_int: 0.0,
             seed: 0,
-            _pad3: [0; 2],
+            background_mode: BACKGROUND_SKY,
+            _pad3: 0,
         }
     }
 
@@ -779,7 +848,8 @@ impl GpuRenderState {
             env_rotation: 0.0,
             env_marg_int: 0.0,
             seed: 0,
-            _pad3: [0; 2],
+            background_mode: BACKGROUND_SKY,
+            _pad3: 0,
         }
     }
 
@@ -847,10 +917,49 @@ impl GpuCamera {
             position: [position[0], position[1], position[2], 1.0],
             target: [target[0], target[1], target[2], 1.0],
             up: [up[0], up[1], up[2], 0.0],
+            // Unread in derived mode; zero rather than a made-up axis so a
+            // stale value can never be mistaken for a real basis.
+            right: [0.0; 4],
             fov,
             width,
             height,
-            _pad: 0,
+            basis_mode: CAMERA_BASIS_DERIVED,
+        }
+    }
+
+    /// Create a camera from an explicit — possibly mirrored — screen basis.
+    ///
+    /// `forward`, `right` and `up` are used as given (the shader normalises
+    /// them but does not re-orthogonalise), so a left-handed CAD view reaches
+    /// the GPU unflipped. `focus_dist` only positions the `target` point the
+    /// shader derives `forward` from; it does not focus anything, since the
+    /// GPU tracer is a pinhole.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_basis(
+        position: [f32; 3],
+        forward: [f32; 3],
+        right: [f32; 3],
+        up: [f32; 3],
+        fov: f32,
+        focus_dist: f32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let d = focus_dist.max(1.0);
+        Self {
+            position: [position[0], position[1], position[2], 1.0],
+            target: [
+                position[0] + forward[0] * d,
+                position[1] + forward[1] * d,
+                position[2] + forward[2] * d,
+                1.0,
+            ],
+            up: [up[0], up[1], up[2], 0.0],
+            right: [right[0], right[1], right[2], 0.0],
+            fov,
+            width,
+            height,
+            basis_mode: CAMERA_BASIS_EXPLICIT,
         }
     }
 }
@@ -914,6 +1023,17 @@ pub enum GpuSceneError {
     TooManyTriangles(usize),
     /// [`GpuScene::from_mesh_bvh`] was handed a BRep-backed BVH.
     NotAMeshBvh,
+    /// The packed BVH is deeper than the shader's traversal stack
+    /// ([`MAX_TRAVERSAL_DEPTH`]).
+    BvhTooDeep(usize),
+    /// The largest storage buffer this scene needs is bigger than the
+    /// device's `max_storage_buffer_binding_size`.
+    ExceedsDeviceBinding {
+        /// Bytes the largest single binding would need.
+        bytes: u64,
+        /// The device's limit.
+        cap: u64,
+    },
 }
 
 impl std::fmt::Display for GpuSceneError {
@@ -945,6 +1065,20 @@ impl std::fmt::Display for GpuSceneError {
                  this mesh would need {mb} MB of surface buffer alone",
                 tri_bytes = std::mem::size_of::<GpuSurface>(),
                 mb = n * std::mem::size_of::<GpuSurface>() / (1024 * 1024),
+            ),
+            Self::BvhTooDeep(d) => write!(
+                f,
+                "merged BVH is {d} levels deep (max {MAX_TRAVERSAL_DEPTH}) -- the \
+                 GPU tracer's traversal stack cannot hold it and would silently \
+                 drop geometry. Render fewer parts per pass, or fall back to the \
+                 CPU tracer (drop --gpu)"
+            ),
+            Self::ExceedsDeviceBinding { bytes, cap } => write!(
+                f,
+                "scene needs a {} MB storage binding but this adapter caps one at \
+                 {} MB -- split the render or drop --gpu to trace on the CPU",
+                bytes / (1024 * 1024),
+                cap / (1024 * 1024),
             ),
             Self::NotAMeshBvh => write!(
                 f,
@@ -987,6 +1121,70 @@ fn gpu_bvh_nodes(flat_nodes: &[crate::bvh::FlatBvhNode]) -> Vec<GpuBvhNode> {
             },
         )
         .collect()
+}
+
+/// A triangle moved into world space by `t`.
+///
+/// Positions go through the full matrix; shading normals through
+/// `apply_normal`, which is the inverse-transpose — under a non-uniform scale
+/// a normal does *not* transform like the surface it sits on, and using the
+/// plain vector transform would light a squashed part as if it were not.
+/// Zero-length results are left alone so the shader's
+/// "normals are real" flag keeps meaning what it says.
+fn place_triangle(
+    tri: &crate::bvh::FlatTriangle,
+    t: &vcad_kernel_math::Transform,
+) -> crate::bvh::FlatTriangle {
+    use vcad_kernel_math::{Point3, Vec3};
+
+    let mut out = *tri;
+    for p in out.positions.iter_mut() {
+        let w = t.apply_point(&Point3::new(p[0] as f64, p[1] as f64, p[2] as f64));
+        *p = [w.x as f32, w.y as f32, w.z as f32];
+    }
+    if let Some(normals) = out.normals.as_mut() {
+        for n in normals.iter_mut() {
+            let w = t.apply_normal(&Vec3::new(n[0] as f64, n[1] as f64, n[2] as f64));
+            let len = w.norm();
+            if len > 1e-12 {
+                *n = [
+                    (w.x / len) as f32,
+                    (w.y / len) as f32,
+                    (w.z / len) as f32,
+                ];
+            }
+        }
+    }
+    out
+}
+
+/// Re-fit a packed BVH node's AABB around the eight transformed corners of
+/// its old one. Conservative under rotation — the new box is axis-aligned
+/// around a rotated box — which costs some traversal and can never miss a
+/// primitive the old box contained.
+fn place_aabb(node: &mut GpuBvhNode, t: &vcad_kernel_math::Transform) {
+    use vcad_kernel_math::Point3;
+
+    let (lo, hi) = (node.aabb_min, node.aabb_max);
+    if !lo[..3].iter().chain(&hi[..3]).all(|v| v.is_finite()) {
+        return;
+    }
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for i in 0..8 {
+        let c = Point3::new(
+            if i & 1 == 0 { lo[0] } else { hi[0] } as f64,
+            if i & 2 == 0 { lo[1] } else { hi[1] } as f64,
+            if i & 4 == 0 { lo[2] } else { hi[2] } as f64,
+        );
+        let w = t.apply_point(&c);
+        for (a, v) in [w.x, w.y, w.z].into_iter().enumerate() {
+            min[a] = min[a].min(v as f32);
+            max[a] = max[a].max(v as f32);
+        }
+    }
+    node.aabb_min = [min[0], min[1], min[2], 0.0];
+    node.aabb_max = [max[0], max[1], max[2], 0.0];
 }
 
 fn studio_lights_for_bvh(bvh_nodes: &[GpuBvhNode]) -> Vec<GpuAreaLight> {
@@ -1269,7 +1467,44 @@ impl GpuScene {
     ///
     /// Rejects a BRep-backed BVH with [`GpuSceneError::NotAMeshBvh`] rather
     /// than silently producing an empty scene.
+    ///
+    /// Every face gets material 0, the GPU default grey. Use
+    /// [`Self::from_mesh_bvh_placed`] to give the part its own material and
+    /// world placement, which is what a multi-part scene needs.
     pub fn from_mesh_bvh(bvh: &Bvh) -> Result<Self, GpuSceneError> {
+        Self::from_mesh_bvh_placed(bvh, GpuMaterial::default(), None)
+    }
+
+    /// [`Self::from_mesh_bvh`] with the part's own material and world
+    /// transform.
+    ///
+    /// **The transform is baked into the packed vertices**, not carried as an
+    /// instance: the WGSL tracer walks one flat node array with no instancing
+    /// layer, so there is nowhere to put a per-object matrix. Positions go
+    /// through `apply_point`, shading normals through `apply_normal` (the
+    /// inverse-transpose — a non-uniform scale rotates a normal differently
+    /// from the surface it belongs to, and using `apply_vec` here would shade
+    /// a squashed part wrong), and the BVH node AABBs are re-fitted around
+    /// their transformed corners. Re-fitting corners is conservative rather
+    /// than tight under rotation, which costs a little traversal and cannot
+    /// lose a hit.
+    ///
+    /// Baking means the result is a *static* snapshot: a new pose needs a new
+    /// scene. That is why `--animate` stays on the CPU.
+    pub fn from_mesh_bvh_placed(
+        bvh: &Bvh,
+        material: GpuMaterial,
+        transform: Option<&vcad_kernel_math::Transform>,
+    ) -> Result<Self, GpuSceneError> {
+        let mut scene = Self::pack_mesh_bvh(bvh, transform)?;
+        scene.materials = vec![material];
+        Ok(scene)
+    }
+
+    fn pack_mesh_bvh(
+        bvh: &Bvh,
+        transform: Option<&vcad_kernel_math::Transform>,
+    ) -> Result<Self, GpuSceneError> {
         let (flat_nodes, prims) = bvh.flatten();
         let crate::bvh::FlatPrims::Triangles(tris) = prims else {
             return Err(GpuSceneError::NotAMeshBvh);
@@ -1289,6 +1524,14 @@ impl GpuScene {
         let mut surfaces = Vec::with_capacity(tris.len());
         let mut faces = Vec::with_capacity(tris.len());
         for (i, tri) in tris.iter().enumerate() {
+            let placed;
+            let tri = match transform {
+                None => tri,
+                Some(t) => {
+                    placed = place_triangle(tri, t);
+                    &placed
+                }
+            };
             surfaces.push(GpuSurface::triangle(tri));
 
             let mut lo = tri.positions[0];
@@ -1320,7 +1563,12 @@ impl GpuScene {
             });
         }
 
-        let bvh_nodes = gpu_bvh_nodes(&flat_nodes);
+        let mut bvh_nodes = gpu_bvh_nodes(&flat_nodes);
+        if let Some(t) = transform {
+            for n in bvh_nodes.iter_mut() {
+                place_aabb(n, t);
+            }
+        }
         let lights = studio_lights_for_bvh(&bvh_nodes);
 
         Ok(Self {
@@ -1448,6 +1696,122 @@ impl GpuScene {
         self.inner_loop_descs.extend(other.inner_loop_descs);
 
         self
+    }
+
+    /// Fold many scenes into one with a **balanced** tree of merges.
+    ///
+    /// [`Self::merge`] adds exactly one level of depth per call, so folding N
+    /// parts linearly (`a.merge(b).merge(c)…`) costs N-1 levels of traversal
+    /// stack on top of the deepest part's own tree. A pairwise fold costs
+    /// `ceil(log2(N))` instead — for the 60-odd parts of a real assembly that
+    /// is 6 levels rather than 59, which is the difference between fitting in
+    /// the shader's stack and silently dropping geometry.
+    ///
+    /// Returns `None` for an empty input: a scene with nothing in it has no
+    /// root AABB, and every downstream consumer would rather be told than
+    /// handed a zeroed tree.
+    pub fn merge_all(mut scenes: Vec<Self>) -> Option<Self> {
+        if scenes.is_empty() {
+            return None;
+        }
+        while scenes.len() > 1 {
+            let mut next = Vec::with_capacity(scenes.len().div_ceil(2));
+            let mut it = scenes.into_iter();
+            while let Some(a) = it.next() {
+                match it.next() {
+                    Some(b) => next.push(a.merge(b)),
+                    None => next.push(a),
+                }
+            }
+            scenes = next;
+        }
+        scenes.pop()
+    }
+
+    /// Depth of the packed BVH, in nodes from root to deepest leaf.
+    ///
+    /// This is what the shader's traversal stack has to hold. Computed
+    /// iteratively — a merged assembly tree is deep enough that a recursive
+    /// walk is a real stack-overflow risk on the host too — and defensive
+    /// against a malformed tree: a node index that repeats on the current
+    /// path, or points past the array, terminates that branch rather than
+    /// looping forever.
+    pub fn bvh_depth(&self) -> usize {
+        if self.bvh_nodes.is_empty() {
+            return 0;
+        }
+        let mut best = 0usize;
+        // (node index, depth). Depth is 1 at the root.
+        let mut stack = vec![(0u32, 1usize)];
+        let mut visited = vec![false; self.bvh_nodes.len()];
+        while let Some((idx, depth)) = stack.pop() {
+            let Some(node) = self.bvh_nodes.get(idx as usize) else {
+                continue;
+            };
+            if std::mem::replace(&mut visited[idx as usize], true) {
+                continue;
+            }
+            best = best.max(depth);
+            if node.is_leaf == 0 {
+                stack.push((node.left_or_first, depth + 1));
+                stack.push((node.right_or_count, depth + 1));
+            }
+        }
+        best
+    }
+
+    /// Check the packed scene against every limit that would otherwise fail
+    /// silently or as a driver error, *before* anything is uploaded.
+    ///
+    /// `max_binding_bytes` is the device's `max_storage_buffer_binding_size`
+    /// (`ctx.device.limits()`); pass `None` to skip that check.
+    ///
+    /// [`Self::merge`] deliberately does not validate — it is a building
+    /// block, and checking N times while folding N parts would report the
+    /// wrong totals. This is the gate to call once, on the finished scene.
+    pub fn validate(&self, max_binding_bytes: Option<u64>) -> Result<(), GpuSceneError> {
+        let mesh = self.is_mesh_scene();
+        if mesh {
+            if self.surfaces.len() > MAX_MESH_TRIANGLES {
+                return Err(GpuSceneError::TooManyTriangles(self.surfaces.len()));
+            }
+        } else {
+            if self.surfaces.len() > MAX_SURFACES {
+                return Err(GpuSceneError::TooManySurfaces(self.surfaces.len()));
+            }
+            if self.faces.len() > MAX_FACES {
+                return Err(GpuSceneError::TooManyFaces(self.faces.len()));
+            }
+        }
+        if self.bvh_nodes.len() > MAX_BVH_NODES {
+            return Err(GpuSceneError::TooManyBvhNodes(self.bvh_nodes.len()));
+        }
+        if self.trim_verts.len() > MAX_TRIM_VERTS {
+            return Err(GpuSceneError::TooManyTrimVerts(self.trim_verts.len()));
+        }
+        let depth = self.bvh_depth();
+        if depth > MAX_TRAVERSAL_DEPTH {
+            return Err(GpuSceneError::BvhTooDeep(depth));
+        }
+        if let Some(cap) = max_binding_bytes {
+            let bytes = (self.surfaces.len() * std::mem::size_of::<GpuSurface>())
+                .max(self.faces.len() * std::mem::size_of::<GpuFace>())
+                .max(self.bvh_nodes.len() * std::mem::size_of::<GpuBvhNode>())
+                as u64;
+            if bytes > cap {
+                return Err(GpuSceneError::ExceedsDeviceBinding { bytes, cap });
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether this scene's geometry is triangles rather than trimmed
+    /// analytic surfaces. Mesh scenes count in the hundreds of thousands and
+    /// are held to [`MAX_MESH_TRIANGLES`], not to the BRep-scale caps.
+    fn is_mesh_scene(&self) -> bool {
+        self.surfaces
+            .iter()
+            .all(|s| s.surface_type == SURFACE_TYPE_TRIANGLE)
     }
 
     /// Set the material for all faces in the scene.

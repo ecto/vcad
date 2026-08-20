@@ -7952,6 +7952,7 @@ version = "0.9.3"
 dependencies = [
  "clap",
  "image",
+ "pollster",
  "rayon",
  "serde_json",
  "vcad-ecad-pcb",
@@ -7959,6 +7960,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-gpu",
  "vcad-kernel-raytrace",
  "vcad-loon",
 ]

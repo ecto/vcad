@@ -946,6 +946,20 @@ pub struct OfflineOptions {
     pub env_intensity: f32,
     /// Whether the implicit ground plane participates in the path trace.
     pub ground_enabled: bool,
+    /// The exact counterpart of `PathTraceOptions::show_background`.
+    ///
+    /// `true` puts the *lighting environment* behind the subject; `false`
+    /// leaves it black, which paired with the film's coverage alpha gives a
+    /// transparent RGBA render. Either way the viewport's themed `sky_color`
+    /// backdrop — a UI choice unrelated to the sky the integrator samples —
+    /// is out of the picture.
+    ///
+    /// This has to be a shader-side switch rather than a composite after the
+    /// fact: a pixel on the silhouette has already averaged its background
+    /// and surface samples together.
+    ///
+    /// Defaults to `true` — an offline render is not a viewport.
+    pub show_background: bool,
     /// RNG decorrelation seed. The same seed and the same scene give the
     /// same image, every run, on the same adapter.
     pub seed: u32,
@@ -963,6 +977,7 @@ impl Default for OfflineOptions {
             firefly_clamp: super::buffers::DEFAULT_FIREFLY_CLAMP,
             env_intensity: super::buffers::DEFAULT_ENV_INTENSITY,
             ground_enabled: true,
+            show_background: true,
             seed: 0,
         }
     }
@@ -1367,6 +1382,11 @@ impl RayTracePipeline {
         s.env_intensity = opts.env_intensity;
         s.ground_enabled = u32::from(opts.ground_enabled);
         s.seed = opts.seed;
+        s.background_mode = if opts.show_background {
+            super::buffers::BACKGROUND_ENVIRONMENT
+        } else {
+            super::buffers::BACKGROUND_BLACK
+        };
         s.light_count = scene.lights.len() as u32;
         match &scene.environment {
             Some(e) => {
