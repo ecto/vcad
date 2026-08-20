@@ -28,7 +28,7 @@
 //!   Clearcoat is what sells anodised aluminium and moulded plastic.
 
 use std::sync::Arc;
-use vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_math::{Point3, Transform, Vec3};
 
 use crate::bvh::Bvh;
 use crate::tlas::{Instance, Tlas};
@@ -771,6 +771,34 @@ pub struct Object {
     pub bvh: Arc<Bvh>,
     /// Surface description.
     pub material: Pbr,
+    /// Object → world placement of the BVH, which is otherwise traced
+    /// wherever it was built.
+    ///
+    /// Most callers bake placement into the geometry and leave this at the
+    /// identity. An animation instead holds the geometry (and its BVH) still
+    /// and moves this, so a jointed assembly re-poses with no re-evaluation
+    /// and no BLAS rebuild — only the top-level structure is rebuilt.
+    pub transform: Transform,
+}
+
+impl Object {
+    /// A traceable object placed where its BVH was built.
+    pub fn new(bvh: Arc<Bvh>, material: Pbr) -> Self {
+        Self {
+            bvh,
+            material,
+            transform: Transform::identity(),
+        }
+    }
+
+    /// A traceable object placed by an object→world transform.
+    pub fn placed(bvh: Arc<Bvh>, material: Pbr, transform: Transform) -> Self {
+        Self {
+            bvh,
+            material,
+            transform,
+        }
+    }
 }
 
 /// Everything the integrator needs to render a frame.
@@ -1372,15 +1400,17 @@ pub(crate) struct SceneAccel {
 }
 
 impl SceneAccel {
-    /// Place every object at the identity (path-trace objects arrive already
-    /// world-placed) and gather them under one TLAS. Objects already hold
-    /// `Arc<Bvh>`, so repeated parts share a BLAS without any copying.
+    /// Place every object by its own transform (the identity for the usual
+    /// case of geometry that arrives already world-placed) and gather them
+    /// under one TLAS. Objects already hold `Arc<Bvh>`, so repeated parts
+    /// share a BLAS without any copying — and a re-posed frame rebuilds only
+    /// this structure.
     pub(crate) fn build(scene: &Scene) -> Self {
         let instances = scene
             .objects
             .iter()
             .enumerate()
-            .filter_map(|(i, obj)| Instance::identity(Arc::clone(&obj.bvh), i))
+            .filter_map(|(i, obj)| Instance::new(Arc::clone(&obj.bvh), obj.transform.clone(), i))
             .collect();
         Self {
             tlas: Tlas::build(instances),
@@ -2199,10 +2229,10 @@ mod tests {
     fn test_scene() -> Scene {
         let cube = make_cube(10.0, 10.0, 10.0);
         Scene {
-            objects: vec![Object {
-                bvh: Arc::new(Bvh::build(&cube)),
-                material: Pbr::plastic([0.8, 0.3, 0.2], 0.35, 0.0),
-            }],
+            objects: vec![Object::new(
+                Arc::new(Bvh::build(&cube)),
+                Pbr::plastic([0.8, 0.3, 0.2], 0.35, 0.0),
+            )],
             lights: studio_rig(Point3::new(5.0, 5.0, 5.0), 9.0),
             env: Environment::default(),
             ground: None,
@@ -2265,6 +2295,48 @@ mod tests {
         assert_eq!(film.rgb.len(), 24 * 24 * 3);
         let lit = film.rgb.iter().filter(|v| **v > 0.0).count();
         assert!(lit > 0, "path tracer produced an entirely black frame");
+    }
+
+    /// `Object::transform` must actually place the BLAS. This is what an
+    /// animated render leans on: the same BVH, re-posed per frame.
+    #[test]
+    fn object_transform_moves_the_subject() {
+        let cam = test_camera();
+        let coverage = |t: Transform| {
+            let cube = make_cube(10.0, 10.0, 10.0);
+            let scene = Scene {
+                objects: vec![Object::placed(
+                    Arc::new(Bvh::build(&cube)),
+                    Pbr::plastic([0.8, 0.3, 0.2], 0.35, 0.0),
+                    t,
+                )],
+                // No area lights: they are hittable geometry, and a rig that
+                // stays put while the cube moves would muddy the coverage
+                // signal this test reads.
+                lights: Vec::new(),
+                env: Environment::default(),
+                ground: None,
+            };
+            let film = render(
+                &scene,
+                &cam,
+                32,
+                32,
+                &PathTraceOptions {
+                    spp: 2,
+                    ..Default::default()
+                },
+            );
+            film.alpha.iter().map(|a| *a > 0.5).collect::<Vec<_>>()
+        };
+        let here = coverage(Transform::identity());
+        // Far enough out of frame that nothing overlaps.
+        let there = coverage(Transform::translation(400.0, 0.0, 0.0));
+        assert!(here.iter().any(|c| *c), "identity placement lost the cube");
+        assert!(
+            !there.iter().any(|c| *c),
+            "translated placement was ignored — the cube stayed put"
+        );
     }
 
     #[test]
@@ -2812,10 +2884,7 @@ mod tests {
             ..Default::default()
         };
         let scene_with = |env: Environment| Scene {
-            objects: vec![Object {
-                bvh: Arc::new(Bvh::build(&cube)),
-                material,
-            }],
+            objects: vec![Object::new(Arc::new(Bvh::build(&cube)), material)],
             // No area lights: the environment must be the only illuminant,
             // or light sampling would mask a bad environment PDF.
             lights: Vec::new(),

@@ -13,6 +13,7 @@
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <N|WxH>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--auto-aspect] [--trim [--trim-margin <px>]]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
+//!   vcad-render <path.vcad> --photoreal --animate [keys.json] -o <dir> [--frames N] [--fps F] [--mp4 out.mp4]
 //!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
@@ -38,6 +39,17 @@
 //! bounding box instead of the whole document. `--section` renders a cutaway:
 //! the half of the model on the camera's side of the plane is removed and the
 //! exposed cut faces are cross-hatched.
+//!
+//! `--animate` renders a jointed assembly over time instead of a single
+//! image: one `frame_NNNN.png` per timeline sample into the directory named
+//! by `-o`, then an H.264 mp4 if ffmpeg is on PATH. The document is
+//! evaluated — and its per-part BVHs built — exactly *once* for the whole
+//! sequence; each frame only re-solves forward kinematics, re-places the
+//! parts, and re-traces. Poses come from the document's own timeline, or
+//! from the keyframe file given as `--animate <keys.json>`. The camera is
+//! framed on the union of every pose, so the subject neither swims nor
+//! clips. Photoreal only — the tessellated paths are already cheap enough
+//! that per-frame evaluation is not the bottleneck.
 //!
 //! Raster framing: `--size` takes `N` (square) or `WxH`, `--auto-aspect`
 //! fits the canvas to the subject's projected aspect ratio, and `--trim`
@@ -346,6 +358,36 @@ struct Cli {
     /// the noise itself is the thing being measured.
     #[arg(long, requires = "photoreal")]
     no_denoise: bool,
+
+    /// Render a jointed assembly over time (`--photoreal`): one PNG per
+    /// timeline sample into the directory given by `-o`, evaluating the
+    /// document's geometry exactly once for the whole sequence.
+    ///
+    /// Takes an optional keyframe file; bare `--animate` uses the timeline
+    /// stored on the document. The file is a timeline — `durationS`, `fps`,
+    /// `tracks` — with a shorthand for joint tracks:
+    /// `{"joint":"A","keys":[{"t":0,"value":0},{"t":6,"value":1440}]}`.
+    /// A joint may be named by id (`joint_0`) or by its authored name.
+    #[arg(long, value_name = "KEYFRAMES.json", num_args = 0..=1, requires = "photoreal")]
+    animate: Option<Option<PathBuf>>,
+
+    /// Render only the first N frames of the animation (`--animate`).
+    #[arg(long, requires = "animate")]
+    frames: Option<usize>,
+
+    /// Override the timeline's frame rate (`--animate`).
+    #[arg(long, requires = "animate")]
+    fps: Option<f64>,
+
+    /// Assemble the animation into an H.264 mp4 at this path (`--animate`).
+    /// Defaults to `<out-dir>/<input-stem>.mp4`. Needs ffmpeg on PATH; when
+    /// it is missing the frames are still written and the command is printed.
+    #[arg(long, value_name = "OUT.mp4", requires = "animate")]
+    mp4: Option<PathBuf>,
+
+    /// Skip the mp4 assembly and leave the PNG frames (`--animate`).
+    #[arg(long, requires = "animate", conflicts_with = "mp4")]
+    no_mp4: bool,
 }
 
 /// CLI spelling of the photoreal backdrop options.
@@ -445,6 +487,113 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
     }
 }
 
+/// The photoreal path's options, as selected on the command line.
+#[cfg(feature = "raytrace")]
+fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
+    use vcad_render::photoreal::{Backdrop, PhotorealOptions};
+    PhotorealOptions {
+        environment: vcad_render::envmap::parse_env_arg(&cli.env),
+        env_rotation_deg: cli.env_rotation,
+        spp: cli.spp,
+        max_depth: cli.max_depth,
+        exposure: cli.exposure,
+        fov_deg: cli.fov,
+        orthographic: cli.ortho,
+        aperture_frac: cli.aperture,
+        backdrop: match cli.backdrop {
+            BackdropArg::Studio => Backdrop::Studio,
+            BackdropArg::Shadow => Backdrop::ShadowCatcher,
+            BackdropArg::None => Backdrop::None,
+        },
+        seed: cli.seed,
+        denoise: !cli.no_denoise,
+    }
+}
+
+/// Render an animation: one PNG per timeline sample into the `-o` directory,
+/// then (unless told not to) mux them into an mp4.
+///
+/// The point of this path is that the document is evaluated once, so the
+/// timings are printed per frame: frame 1 versus the steady state is the
+/// measurement that shows it working.
+#[cfg(feature = "raytrace")]
+fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
+    use vcad_render::animate::{
+        assemble_mp4, parse_timeline_spec, render_photoreal_animation, AnimateOptions,
+    };
+
+    let spec = cli.animate.as_ref().expect("caller checked --animate");
+    let Some(out_dir) = cli.output.clone() else {
+        return Err("--animate writes a directory of frames: pass -o <dir>".to_string());
+    };
+    if out_dir.extension().is_some() {
+        return Err(format!(
+            "--animate writes a directory of frames, but -o names a file \
+             ({}); pass a directory",
+            out_dir.display()
+        ));
+    }
+
+    let timeline = match spec {
+        Some(path) => {
+            let json = std::fs::read_to_string(path)
+                .map_err(|e| format!("read {}: {e}", path.display()))?;
+            Some(parse_timeline_spec(&json)?)
+        }
+        None => None,
+    };
+
+    let raw = read_document(input)?;
+    let opts = raster_opts(cli, true);
+    let pr = photoreal_options(cli);
+    let an = AnimateOptions {
+        out_dir: out_dir.clone(),
+        timeline,
+        frames: cli.frames,
+        fps: cli.fps,
+    };
+
+    let report = render_photoreal_animation(&raw, &opts, &pr, &an, &mut |i, n, dt| {
+        eprintln!("frame {i}/{n}  {:.1}s", dt.as_secs_f64());
+    })?;
+
+    eprintln!(
+        "evaluated {} part(s) once in {:.1}s ({} articulated), setup {:.1}s",
+        report.parts,
+        report.eval.as_secs_f64(),
+        report.articulated,
+        report.setup.as_secs_f64()
+    );
+    if let (Some(first), median) = (report.per_frame.first(), report.median_frame()) {
+        eprintln!(
+            "frame 1 {:.1}s, steady state {:.1}s, {} frames in {:.1}s total",
+            first.as_secs_f64(),
+            median.as_secs_f64(),
+            report.frames.len(),
+            report.total().as_secs_f64()
+        );
+    }
+
+    if cli.no_mp4 {
+        return Ok(());
+    }
+    let mp4 = cli.mp4.clone().unwrap_or_else(|| {
+        out_dir.join(format!(
+            "{}.mp4",
+            input
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "animation".to_string())
+        ))
+    });
+    // Never load-bearing: the frames are the deliverable.
+    match assemble_mp4(&out_dir, report.fps, &mp4) {
+        Ok(()) => eprintln!("wrote {}", mp4.display()),
+        Err(e) => eprintln!("{e}"),
+    }
+    Ok(())
+}
+
 /// Render raw `.vcad` to raster bytes in `format` (JPEG or PNG), via the
 /// tessellated path or — when `cli.raytrace` — direct BRep ray tracing.
 #[cfg(feature = "raster")]
@@ -463,24 +612,7 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
         }
         #[cfg(feature = "raytrace")]
         {
-            use vcad_render::photoreal::{Backdrop, PhotorealOptions};
-            let pr = PhotorealOptions {
-                environment: vcad_render::envmap::parse_env_arg(&cli.env),
-                env_rotation_deg: cli.env_rotation,
-                spp: cli.spp,
-                max_depth: cli.max_depth,
-                exposure: cli.exposure,
-                fov_deg: cli.fov,
-                orthographic: cli.ortho,
-                aperture_frac: cli.aperture,
-                backdrop: match cli.backdrop {
-                    BackdropArg::Studio => Backdrop::Studio,
-                    BackdropArg::Shadow => Backdrop::ShadowCatcher,
-                    BackdropArg::None => Backdrop::None,
-                },
-                seed: cli.seed,
-                denoise: !cli.no_denoise,
-            };
+            let pr = photoreal_options(cli);
             return if png {
                 vcad_render::photoreal::render_photoreal_png_str(raw, &opts, &pr)
             } else {
@@ -828,6 +960,16 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
 
     let input = &inputs[0];
+    if cli.animate.is_some() {
+        #[cfg(feature = "raytrace")]
+        {
+            return run_animation(input, cli);
+        }
+        #[cfg(not(feature = "raytrace"))]
+        {
+            return Err("this build of vcad-render lacks the `raytrace` feature".to_string());
+        }
+    }
     // Legacy --jpeg <path> spelling.
     if let Some(path) = &cli.jpeg {
         return render_one(input, Some(path), Format::Jpeg, cli);

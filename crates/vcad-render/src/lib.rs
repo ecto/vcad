@@ -39,8 +39,11 @@
 #![warn(missing_docs)]
 
 #[cfg(feature = "raytrace")]
+pub mod animate;
+#[cfg(feature = "raytrace")]
 pub mod envmap;
 mod exact;
+pub mod materials;
 pub mod pcb;
 #[cfg(feature = "raytrace")]
 pub mod photoreal;
@@ -637,7 +640,127 @@ pub fn with_root_cache<T>(
     f()
 }
 
+// Count of documents evaluated by `evaluate_vcad_document` — the one funnel
+// every render path goes through.
+//
+// Exists so the animation path can *prove* it evaluates geometry once for a
+// whole sequence rather than once per frame; the integration test asserts
+// the counter advances by exactly one across an N-frame render, which is the
+// only thing that would catch a regression putting evaluation back inside
+// the frame loop.
+//
+// Per *thread*, not per process: a render is driven from one thread (rayon
+// parallelism lives inside the tracer, below this level), and a global would
+// be unreadable in a test binary running cases concurrently.
+thread_local! {
+    static DOCUMENT_EVALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many documents this thread has evaluated. See [`DOCUMENT_EVALS`].
+pub fn document_eval_count() -> u64 {
+    DOCUMENT_EVALS.with(|c| c.get())
+}
+
+/// One assembly instance's geometry, still in its part-definition frame.
+///
+/// The world placement is deliberately *not* baked in: an animation re-poses
+/// the same solids every frame, so the geometry (and the BVH built over it)
+/// has to outlive any one pose.
+struct ArticulatedPart {
+    /// Instance id — the key forward kinematics reports world poses under.
+    instance_id: String,
+    /// Local, unplaced geometry. Shared between instances of one part def.
+    solid: Solid,
+    tint: Option<[f64; 3]>,
+    #[cfg_attr(not(feature = "raytrace"), allow(dead_code))]
+    material: Option<vcad_ir::MaterialDef>,
+    name: Option<String>,
+    labels: Vec<String>,
+}
+
+/// A document evaluated once: its static scene roots, world-placed, plus its
+/// assembly instances in local space alongside the document itself (which
+/// carries the joints those instances hang off).
+struct EvaluatedDocument {
+    doc: vcad_ir::Document,
+    statics: Vec<SceneSolid>,
+    parts: Vec<ArticulatedPart>,
+}
+
+/// Forward kinematics for an assembly document — the same solver the app's
+/// assembly mode and the MCP timeline use, so a render agrees with the
+/// viewer by construction rather than by a re-implementation.
+fn assembly_world_transforms(
+    doc: &vcad_ir::Document,
+) -> Result<HashMap<String, vcad_ir::Transform3D>, String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        vcad_eval::solve_forward_kinematics(doc)
+    }))
+    .map_err(|_| "fk panicked".to_string())
+}
+
+/// An articulated part as a scene solid in its *local* frame, keyed by
+/// instance id. The animation path builds its BVHs from these once and then
+/// only ever changes the placement.
+#[cfg(feature = "raytrace")]
+fn part_as_local_scene_solid(part: ArticulatedPart) -> SceneSolid {
+    SceneSolid {
+        solid: part.solid,
+        tint: part.tint,
+        material: part.material,
+        name: part.name,
+        labels: part.labels,
+        id: part.instance_id,
+    }
+}
+
+/// Place an articulated part by the world pose FK gave its instance, falling
+/// back to the instance's own static transform.
+fn place_part(
+    part: ArticulatedPart,
+    world: &HashMap<String, vcad_ir::Transform3D>,
+    fallback: Option<vcad_ir::Transform3D>,
+) -> SceneSolid {
+    let placed = match world.get(&part.instance_id).cloned().or(fallback) {
+        Some(t) => part.solid.apply_transform(&transform3d_to_kernel(&t)),
+        None => part.solid,
+    };
+    SceneSolid {
+        solid: placed,
+        tint: part.tint,
+        material: part.material,
+        name: part.name,
+        labels: part.labels,
+        id: part.instance_id,
+    }
+}
+
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
+    let ev = evaluate_vcad_document(raw_vcad)?;
+    let mut solids = ev.statics;
+    if !ev.parts.is_empty() {
+        let world = assembly_world_transforms(&ev.doc)?;
+        let fallbacks: HashMap<&str, Option<vcad_ir::Transform3D>> = ev
+            .doc
+            .instances
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|i| (i.id.as_str(), i.transform))
+            .collect();
+        for part in ev.parts {
+            let fallback = fallbacks
+                .get(part.instance_id.as_str())
+                .copied()
+                .unwrap_or(None);
+            solids.push(place_part(part, &world, fallback));
+        }
+    }
+    Ok(solids)
+}
+
+fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
+    DOCUMENT_EVALS.with(|c| c.set(c.get() + 1));
     let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
     let (root_cache, mesh_segments) = ROOT_CACHE
         .with(|c| c.borrow().clone())
@@ -686,7 +809,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
             }
             _ => Default::default(),
         };
-    let mut solids: Vec<SceneSolid> = scene
+    let solids: Vec<SceneSolid> = scene
         .parts
         .iter()
         .enumerate()
@@ -712,6 +835,11 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                     })
                 })
             });
+            // A named-but-undeclared material (`[root rail "aluminum"]` with
+            // no `[material ...]` block, which is how every hand-written
+            // `.loon` does it) falls back to the built-in library rather than
+            // to the renderer's default clay.
+            let material = materials::resolve(materials, &p.material);
             solid.map(|s| {
                 let name = visible_roots
                     .get(i)
@@ -719,8 +847,8 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                     .and_then(|n| n.name.clone());
                 SceneSolid {
                     solid: s,
-                    tint: materials.get(&p.material).map(|m| m.color),
-                    material: materials.get(&p.material).cloned(),
+                    tint: material.as_ref().map(|m| m.color),
+                    material: material.clone(),
                     labels: name.clone().into_iter().collect(),
                     name,
                     id: visible_roots
@@ -734,32 +862,31 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
 
     // Assembly instances: `evaluate_document` only carries meshes for
     // instances, not BRep solids, so re-evaluate each referenced part
-    // definition once and place a transformed copy per instance. Without
+    // definition once and hand back a local copy per instance. Without
     // this, an assembly-only document (no scene roots) rendered as
     // "no solids produced" despite being perfectly valid.
-    solids.extend(evaluate_assembly_instances(&parsed.document, &scene)?);
-    Ok(solids)
+    let parts = evaluate_assembly_instances(&parsed.document, &scene)?;
+    Ok(EvaluatedDocument {
+        doc: parsed.document,
+        statics: solids,
+        parts,
+    })
 }
 
-/// Evaluate the document's assembly instances (if any) into world-placed
-/// tinted solids. Part-definition solids are evaluated once and shared;
-/// per-instance world poses come from forward kinematics, falling back to
-/// the instance's static transform.
+/// Evaluate the document's assembly instances (if any) into tinted solids in
+/// part-definition space. Part-definition solids are evaluated once and
+/// shared; placement is the caller's job (see [`place_part`]) so an
+/// animation can re-pose the same geometry without re-evaluating it.
 fn evaluate_assembly_instances(
     doc: &vcad_ir::Document,
     scene: &vcad_eval::EvaluatedScene,
-) -> Result<Vec<SceneSolid>, String> {
+) -> Result<Vec<ArticulatedPart>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
         return Ok(Vec::new());
     };
     if part_defs.is_empty() || instances.is_empty() {
         return Ok(Vec::new());
     }
-
-    let world = catch_unwind(AssertUnwindSafe(|| {
-        vcad_eval::solve_forward_kinematics(doc)
-    }))
-    .map_err(|_| "fk panicked".to_string())?;
 
     let mut cache: HashMap<vcad_ir::NodeId, Option<Solid>> = HashMap::new();
     let mut def_solids: HashMap<&str, Option<Solid>> = HashMap::new();
@@ -800,18 +927,13 @@ fn evaluate_assembly_instances(
             .clone();
         let Some(solid) = solid else { continue };
 
-        let placed = match world.get(&inst.id).cloned().or(inst.transform) {
-            Some(t) => solid.apply_transform(&transform3d_to_kernel(&t)),
-            None => solid,
-        };
-
         let material = inst
             .material
             .clone()
             .or_else(|| def.default_material.clone())
             .unwrap_or_else(|| "default".to_string());
-        let color = doc.materials.get(&material).map(|m| m.color);
-        let material_def = doc.materials.get(&material).cloned();
+        let material_def = materials::resolve(&doc.materials, &material);
+        let color = material_def.as_ref().map(|m| m.color);
         let name = inst
             .name
             .clone()
@@ -821,13 +943,13 @@ fn evaluate_assembly_instances(
         if let Some(n) = &inst.name {
             labels.push(n.clone());
         }
-        out.push(SceneSolid {
-            solid: placed,
+        out.push(ArticulatedPart {
+            instance_id: inst.id.clone(),
+            solid,
             tint: color,
             material: material_def,
             name,
             labels,
-            id: inst.id.clone(),
         });
     }
     Ok(out)

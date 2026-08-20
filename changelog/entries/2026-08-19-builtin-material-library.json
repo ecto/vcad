@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-19-builtin-material-library",
+  "version": "0.9.4",
+  "date": "2026-08-19",
+  "category": "feat",
+  "title": "Renders know the standard material names",
+  "summary": "A part named \"aluminum\" or \"copper\" with no [material] block rendered as clay grey; named materials now resolve to a built-in PBR library.",
+  "details": "Hand-written .loon documents name a material rather than define one — [root frame-rails \"aluminum\"] and nothing else — so the document's materials table stayed empty and every part fell through to the path tracer's default clay. The renderer now resolves an undeclared name against a built-in library of ~40 well-known materials (metals with measured F0 reflectance, plastics, composites, organics), case- and separator-insensitive so abs-black and abs_black are one material. Document-declared materials always win. Both the photoreal and drafting paths resolve through the same table, so their hues agree.",
+  "features": ["rendering", "photoreal", "materials", "loon"]
+}
