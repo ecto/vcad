@@ -1,6 +1,6 @@
 //! Ray-cone intersection (quadratic equation).
 
-use super::SurfaceHit;
+use super::{SurfaceHit, SurfaceHits};
 use crate::Ray;
 use std::f64::consts::PI;
 use vcad_kernel_geom::ConeSurface;
@@ -10,7 +10,7 @@ use vcad_kernel_math::Point2;
 ///
 /// Returns up to 2 intersections, sorted by t.
 /// Only intersections with t >= 0 and v >= 0 (on the cone, not the nappes) are returned.
-pub fn intersect_cone(ray: &Ray, cone: &ConeSurface) -> Vec<SurfaceHit> {
+pub fn intersect_cone(ray: &Ray, cone: &ConeSurface) -> SurfaceHits {
     let axis = cone.axis.as_ref();
     let d = ray.direction.as_ref();
     let co = ray.origin - cone.apex;
@@ -33,7 +33,7 @@ pub fn intersect_cone(ray: &Ray, cone: &ConeSurface) -> Vec<SurfaceHit> {
     let b = 2.0 * (d_dot_a * co_dot_a - cos2 * d.dot(co));
     let c = co_dot_a * co_dot_a - cos2 * co.dot(co);
 
-    let mut hits = Vec::new();
+    let mut hits = SurfaceHits::new();
 
     if a.abs() < 1e-12 {
         // Linear case (ray direction makes exactly the cone half-angle with axis)

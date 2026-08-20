@@ -1,6 +1,6 @@
 //! Ray-bilinear surface intersection (Newton iteration).
 
-use super::SurfaceHit;
+use super::{SurfaceHit, SurfaceHits};
 use crate::Ray;
 use vcad_kernel_geom::BilinearSurface;
 use vcad_kernel_math::Point2;
@@ -14,7 +14,7 @@ const TOLERANCE: f64 = 1e-10;
 ///
 /// Uses Newton iteration to find intersections. Returns all valid intersections
 /// with t >= 0 and (u, v) within [0, 1].
-pub fn intersect_bilinear(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit> {
+pub fn intersect_bilinear(ray: &Ray, surface: &BilinearSurface) -> SurfaceHits {
     // For planar bilinear patches, use the simpler plane intersection
     if surface.is_planar() {
         return intersect_planar_quad(ray, surface);
@@ -29,7 +29,7 @@ pub fn intersect_bilinear(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHi
         Point2::new(0.5, 0.5),
     ];
 
-    let mut hits = Vec::new();
+    let mut hits = SurfaceHits::new();
 
     for start in &starts {
         if let Some(hit) = newton_iteration(ray, surface, *start) {
@@ -139,7 +139,7 @@ fn newton_iteration(ray: &Ray, surface: &BilinearSurface, start: Point2) -> Opti
 }
 
 /// Intersect ray with a planar quad (degenerate bilinear surface).
-fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit> {
+fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> SurfaceHits {
     // Compute plane from first three corners
     let e1 = surface.p10 - surface.p00;
     let e2 = surface.p01 - surface.p00;
@@ -147,7 +147,7 @@ fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit
     let n_len = normal.norm();
 
     if n_len < 1e-12 {
-        return Vec::new(); // Degenerate
+        return SurfaceHits::new(); // Degenerate
     }
 
     let n = normal / n_len;
@@ -155,12 +155,12 @@ fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit
     let denom = d.dot(n);
 
     if denom.abs() < 1e-12 {
-        return Vec::new(); // Parallel to plane
+        return SurfaceHits::new(); // Parallel to plane
     }
 
     let t = (surface.p00 - ray.origin).dot(n) / denom;
     if t < 0.0 {
-        return Vec::new();
+        return SurfaceHits::new();
     }
 
     let point = ray.at(t);
@@ -190,13 +190,13 @@ fn intersect_planar_quad(ray: &Ray, surface: &BilinearSurface) -> Vec<SurfaceHit
     // Check if point is inside quad using cross product signs
     let quad = [(p00x, p00y), (p10x, p10y), (p11x, p11y), (p01x, p01y)];
     if !point_in_quad_2d(px, py, &quad) {
-        return Vec::new();
+        return SurfaceHits::new();
     }
 
     // Compute UV by solving the bilinear inverse
     let uv = inverse_bilinear_2d(px, py, &quad);
 
-    vec![SurfaceHit { t, uv }]
+    smallvec::smallvec![SurfaceHit { t, uv }]
 }
 
 /// Check if a 2D point is inside a convex quad.

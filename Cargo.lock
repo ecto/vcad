@@ -7685,6 +7685,7 @@ dependencies = [
  "js-sys",
  "pollster",
  "rayon",
+ "smallvec",
  "tang",
  "thiserror 2.0.18",
  "vcad-ir",
