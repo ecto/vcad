@@ -17,31 +17,53 @@ use crate::{Ray, RayHit};
 /// Contains: (AABB, is_leaf, left_or_first, right_or_count)
 pub type FlatBvhNode = (Aabb3, bool, u32, u32);
 
-/// [`Bvh::flatten`] was called on a BVH the GPU pipeline cannot consume.
+/// One triangle, resolved out of the mesh's index/vertex arrays and narrowed
+/// to `f32` for GPU upload.
 ///
-/// The GPU path tracer traces analytic BRep faces; there is no triangle BLAS
-/// yet. Flattening a mesh-backed BVH used to yield empty node/face lists,
-/// which the GPU scene builder happily uploaded and then rendered as a blank
-/// frame. Failing here instead makes the missing capability visible at the
-/// call site.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FlattenUnsupported {
-    /// Number of triangles the mesh-backed BVH holds.
-    pub triangle_count: usize,
+/// The BVH stores triangles as indices into shared vertex arrays, which is how
+/// you want them in memory but not how the shader reads them: the WGSL tracer
+/// has no spare storage-buffer binding for a vertex array (the browser cap of
+/// ten is already spent), so each triangle travels self-contained inside a
+/// `GpuSurface`'s parameter block. De-indexing happens here, once, at flatten
+/// time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlatTriangle {
+    /// The three corner positions, in winding order.
+    pub positions: [[f32; 3]; 3],
+    /// Per-corner shading normals, or `None` when the source mesh carried
+    /// none — in which case consumers fall back to the geometric normal, the
+    /// same fallback [`Bvh::trace`] applies on the CPU.
+    pub normals: Option<[[f32; 3]; 3]>,
 }
 
-impl std::fmt::Display for FlattenUnsupported {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "cannot flatten a mesh-backed BVH ({} triangles) for GPU upload: \
-             the GPU path tracer traces analytic BRep faces only (no triangle BLAS yet)",
-            self.triangle_count
-        )
+/// What a flattened BVH's leaves index into.
+///
+/// A leaf's `(first, count)` range addresses this list whichever arm it is.
+/// The two arms are the two things a [`Bvh`] can be built over, so a consumer
+/// learns from the value itself whether it is holding trimmed analytic faces
+/// or triangles, rather than having to ask the BVH again.
+#[derive(Debug, Clone)]
+pub enum FlatPrims {
+    /// Trimmed analytic faces, in leaf order. From a BRep-backed BVH.
+    Faces(Vec<FaceId>),
+    /// De-indexed triangles, in leaf order. From a mesh-backed BVH.
+    Triangles(Vec<FlatTriangle>),
+}
+
+impl FlatPrims {
+    /// Number of primitives, whichever kind they are.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Faces(f) => f.len(),
+            Self::Triangles(t) => t.len(),
+        }
+    }
+
+    /// Whether the BVH flattened to no primitives at all.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
-
-impl std::error::Error for FlattenUnsupported {}
 
 /// A BVH node - either a leaf containing primitives or an internal node with
 /// children.
@@ -120,6 +142,28 @@ impl MeshGeom {
             Point2::new(hit.u, hit.v),
             tri,
         ))
+    }
+
+    /// De-index one triangle into the self-contained, `f32` form the GPU
+    /// wants. Normals come along only when the mesh actually carried them;
+    /// see [`FlatTriangle::normals`].
+    fn flat(&self, tri: u32) -> FlatTriangle {
+        let [i0, i1, i2] = self.tris[tri as usize];
+        let pos = |i: u32| {
+            let p = self.positions[i as usize];
+            [p.x as f32, p.y as f32, p.z as f32]
+        };
+        let normals = (!self.normals.is_empty()).then(|| {
+            let nrm = |i: u32| {
+                let n = self.normals[i as usize];
+                [n.x as f32, n.y as f32, n.z as f32]
+            };
+            [nrm(i0), nrm(i1), nrm(i2)]
+        });
+        FlatTriangle {
+            positions: [pos(i0), pos(i1), pos(i2)],
+            normals,
+        }
     }
 }
 
@@ -566,30 +610,30 @@ impl Bvh {
     /// - For internal nodes: left_or_first = left child index, right_or_count = right child index
     /// - For leaf nodes: left_or_first = start face index in faces array, right_or_count = face count
     ///
-    /// Also returns the list of face IDs in leaf order.
-    ///
-    /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
-    /// A mesh-backed BVH has no GPU representation yet and is reported as
-    /// [`FlattenUnsupported`] rather than flattening to empty lists (which
-    /// would silently render a blank frame).
-    pub fn flatten(&self) -> Result<(Vec<FlatBvhNode>, Vec<FaceId>), FlattenUnsupported> {
+    /// Also returns the primitives in leaf order: face IDs for a BRep-backed
+    /// BVH, de-indexed [`FlatTriangle`]s for a mesh-backed one. Both kinds
+    /// upload; the caller matches on [`FlatPrims`] to learn which it got.
+    pub fn flatten(&self) -> (Vec<FlatBvhNode>, FlatPrims) {
         let mut nodes = Vec::new();
-        let mut faces = Vec::new();
 
-        let face_ids = match &self.geom {
-            BvhGeom::BRep { faces, .. } => faces,
+        let prims = match &self.geom {
+            BvhGeom::BRep { faces, .. } => {
+                let mut out = Vec::new();
+                if let Some(root) = &self.root {
+                    flatten_node(root, &mut nodes, &mut out, |p| faces[p as usize]);
+                }
+                FlatPrims::Faces(out)
+            }
             BvhGeom::Mesh(mesh) => {
-                return Err(FlattenUnsupported {
-                    triangle_count: mesh.tris.len(),
-                })
+                let mut out = Vec::new();
+                if let Some(root) = &self.root {
+                    flatten_node(root, &mut nodes, &mut out, |p| mesh.flat(p));
+                }
+                FlatPrims::Triangles(out)
             }
         };
 
-        if let Some(root) = &self.root {
-            flatten_node(root, face_ids, &mut nodes, &mut faces);
-        }
-
-        Ok((nodes, faces))
+        (nodes, prims)
     }
 }
 
@@ -609,19 +653,23 @@ fn get_aabb(node: &BvhNode) -> Aabb3 {
 }
 
 /// Recursively flatten a BVH node into a vector.
-fn flatten_node(
+///
+/// Generic over the primitive `resolve` produces from a build-order primitive
+/// index, so the BRep (face ID) and mesh (triangle) arms share one traversal
+/// rather than keeping two copies of the index bookkeeping in step.
+fn flatten_node<P>(
     node: &BvhNode,
-    face_ids: &[FaceId],
     nodes: &mut Vec<FlatBvhNode>,
-    faces: &mut Vec<FaceId>,
+    prims_out: &mut Vec<P>,
+    resolve: impl Fn(u32) -> P + Copy,
 ) -> usize {
     let idx = nodes.len();
 
     match node {
         BvhNode::Leaf { aabb, prims } => {
-            let start = faces.len() as u32;
+            let start = prims_out.len() as u32;
             let count = prims.len() as u32;
-            faces.extend(prims.iter().map(|&p| face_ids[p as usize]));
+            prims_out.extend(prims.iter().map(|&p| resolve(p)));
             nodes.push((*aabb, true, start, count));
         }
         BvhNode::Internal { aabb, left, right } => {
@@ -629,8 +677,8 @@ fn flatten_node(
             nodes.push((*aabb, false, 0, 0));
 
             // Recursively flatten children
-            let left_idx = flatten_node(left, face_ids, nodes, faces);
-            let right_idx = flatten_node(right, face_ids, nodes, faces);
+            let left_idx = flatten_node(left, nodes, prims_out, resolve);
+            let right_idx = flatten_node(right, nodes, prims_out, resolve);
 
             // Update this node with child indices
             nodes[idx].2 = left_idx as u32;
@@ -1066,30 +1114,110 @@ mod tests {
     }
 
     #[test]
-    fn mesh_bvh_flatten_is_an_error_not_an_empty_scene() {
-        // The GPU pipeline traces analytic surfaces only; a mesh BVH must
-        // fail loudly rather than flatten to nothing and render blank.
+    fn mesh_bvh_flattens_to_triangles_in_leaf_order() {
         let bvh = Bvh::build_mesh(&cube_mesh());
-        let err = bvh.flatten().expect_err("mesh BVH must not flatten");
-        assert_eq!(err.triangle_count, 12);
-        let msg = err.to_string();
-        assert!(msg.contains("mesh-backed"), "{msg}");
+        let (nodes, prims) = bvh.flatten();
+        assert!(!nodes.is_empty());
+
+        let FlatPrims::Triangles(tris) = prims else {
+            panic!("a mesh-backed BVH must flatten to triangles");
+        };
+        // A cube mesh is 12 triangles and the BVH drops none of them.
+        assert_eq!(tris.len(), 12);
+
+        // Every leaf's (first, count) range must address the triangle list,
+        // and between them the leaves must cover it exactly once — that is
+        // the invariant the GPU leaf walk relies on.
+        let mut covered = vec![0u32; tris.len()];
+        for (_, is_leaf, first, count) in &nodes {
+            if !is_leaf {
+                continue;
+            }
+            for i in *first..*first + *count {
+                covered[i as usize] += 1;
+            }
+        }
+        assert!(
+            covered.iter().all(|&c| c == 1),
+            "leaf ranges must partition the triangle list, got {covered:?}"
+        );
+
+        // De-indexing must reproduce real geometry, not zeros: the cube
+        // spans 0..10 on every axis, so each corner coordinate is 0 or 10.
+        for t in &tris {
+            for p in &t.positions {
+                assert!(
+                    p.iter().all(|c| c.abs() < 1e-4 || (c - 10.0).abs() < 1e-4),
+                    "corner {p:?} is not on the cube"
+                );
+            }
+            // Non-degenerate: the build filter already rejected zero-area
+            // triangles, so a collapsed one here means de-indexing is wrong.
+            let [a, b, c] = t.positions;
+            let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let cr = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            assert!(cr.iter().any(|c| c.abs() > 1e-6), "degenerate {t:?}");
+        }
     }
 
     #[test]
-    fn empty_mesh_bvh_flatten_is_also_an_error() {
-        // Zero triangles is still "no GPU representation" — don't let the
-        // empty case slip through as a success.
+    fn mesh_without_normals_flattens_without_them() {
+        // A mesh with no normal array must flatten to triangles that SAY so,
+        // rather than to zeroed normals — the shader cannot tell an absent
+        // normal from a zero one, and would normalize the latter into NaN.
+        let mut mesh = cube_mesh();
+        mesh.normals.clear();
+        let bvh = Bvh::build_mesh(&mesh);
+        let (_, prims) = bvh.flatten();
+        let FlatPrims::Triangles(tris) = prims else {
+            unreachable!()
+        };
+        assert!(tris.iter().all(|t| t.normals.is_none()));
+    }
+
+    #[test]
+    fn mesh_with_normals_carries_them_through_flatten() {
+        let mut mesh = cube_mesh();
+        // One normal per vertex, parallel to `vertices` — the only shape
+        // `build_mesh` trusts. Point them all +Z; the values are arbitrary,
+        // what matters is that flatten preserves them per corner.
+        mesh.normals = (0..mesh.vertices.len() / 3)
+            .flat_map(|_| [0.0f32, 0.0, 1.0])
+            .collect();
+        let bvh = Bvh::build_mesh(&mesh);
+        let (_, prims) = bvh.flatten();
+        let FlatPrims::Triangles(tris) = prims else {
+            unreachable!()
+        };
+        assert!(!tris.is_empty());
+        for t in &tris {
+            let ns = t.normals.expect("normals survive flatten");
+            assert!(ns.iter().all(|n| *n == [0.0, 0.0, 1.0]), "{ns:?}");
+        }
+    }
+
+    #[test]
+    fn empty_mesh_bvh_flattens_to_nothing() {
         let bvh = Bvh::build_mesh(&TriangleMesh::new());
-        assert!(bvh.flatten().is_err());
+        let (nodes, prims) = bvh.flatten();
+        assert!(nodes.is_empty());
+        assert!(prims.is_empty());
     }
 
     #[test]
     fn brep_flatten_still_round_trips_face_ids() {
         let cube = make_cube(10.0, 10.0, 10.0);
         let bvh = Bvh::build(&cube);
-        let (nodes, faces) = bvh.flatten().expect("BRep BVH flattens");
+        let (nodes, prims) = bvh.flatten();
         assert!(!nodes.is_empty());
+        let FlatPrims::Faces(faces) = prims else {
+            panic!("a BRep-backed BVH must flatten to face IDs");
+        };
         assert_eq!(faces.len(), cube.topology.faces.len());
         assert!(faces.iter().all(|&f| cube.topology.faces.contains_key(f)));
     }

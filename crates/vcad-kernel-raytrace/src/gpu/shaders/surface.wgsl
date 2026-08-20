@@ -10,6 +10,12 @@ const SURFACE_SPHERE: u32 = 2u;
 const SURFACE_CONE: u32 = 3u;
 const SURFACE_TORUS: u32 = 4u;
 const SURFACE_BILINEAR: u32 = 5u;
+// A mesh triangle, packed into a GpuSurface's params by
+// `GpuSurface::triangle` in buffers.rs. Not a parametric surface: it has no
+// dP/du, so `surface_dpdu` deliberately leaves it in the default arm and the
+// shading frame falls back to an arbitrary orthonormal basis — which is what
+// an isotropic BSDF wants anyway.
+const SURFACE_TRIANGLE: u32 = 7u;
 
 const MAX_T: f32 = 1e10;
 const EPSILON: f32 = 1e-6;
