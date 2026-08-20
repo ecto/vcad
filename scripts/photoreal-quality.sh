@@ -36,11 +36,17 @@ EXTRA_ARGS="${EXTRA_ARGS:-}"
 REGEN=0
 [ "${1:-}" = "--regen" ] && REGEN=1
 
-BIN="$ROOT/target/release/vcad-render"
+# BIN can point at a binary built from another revision, which is how a
+# candidate is A/B'd against a baseline over one shared set of references.
+# Setting it also skips the build, so the comparison binary is not clobbered.
+BIN="${BIN:-}"
 PSNR="$ROOT/target/release/examples/psnr"
 
-echo "building..."
-cargo build --release -p vcad-render --bin vcad-render --example psnr >/dev/null 2>&1
+if [ -z "$BIN" ]; then
+  echo "building..."
+  cargo build --release -p vcad-render --bin vcad-render --example psnr >/dev/null 2>&1
+  BIN="$ROOT/target/release/vcad-render"
+fi
 
 mkdir -p "$REF_DIR" "$OUT_DIR"
 LOG="$OUT_DIR/render.log"

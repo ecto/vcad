@@ -997,6 +997,45 @@ impl Rng {
     }
 }
 
+// ─── low-discrepancy sampling ─────────────────────────────────────────────
+
+/// Van der Corput radical inverse of `i` in `BASE`.
+///
+/// Reflects `i`'s digits in `BASE` about the radix point, which spreads
+/// consecutive indices as far apart as the base allows. Successive prime
+/// bases give the Halton sequence; pairing base 2 with `i / N` gives
+/// Hammersley, which is what the camera dimensions use.
+#[inline]
+fn radical_inverse<const BASE: u32>(mut i: u64) -> f64 {
+    let inv_base = 1.0 / BASE as f64;
+    let mut inv_bn = 1.0;
+    let mut acc = 0u64;
+    // Accumulate the reversed digits as an integer, then scale once: doing
+    // the division per digit accumulates rounding error over ~50 digits.
+    while i > 0 {
+        let digit = i % BASE as u64;
+        acc = acc * BASE as u64 + digit;
+        i /= BASE as u64;
+        inv_bn *= inv_base;
+    }
+    (acc as f64 * inv_bn).min(1.0 - f64::EPSILON)
+}
+
+/// Cranley-Patterson rotation: shift `x` by `offset` on the unit torus.
+///
+/// Preserves the point set's discrepancy while randomising its absolute
+/// placement, which is what lets every pixel share one low-discrepancy set
+/// without the shared structure showing up as a visible pattern.
+#[inline]
+fn cp_rotate(x: f64, offset: f64) -> f64 {
+    let v = x + offset;
+    if v >= 1.0 {
+        v - 1.0
+    } else {
+        v
+    }
+}
+
 // ─── small math helpers ───────────────────────────────────────────────────
 
 #[inline]
@@ -1844,6 +1883,14 @@ fn trace_pixel(
     let mut rng = Rng::new(
         opts.seed ^ ((py as u64) << 32) ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
     );
+    // Cranley-Patterson rotations for the four camera dimensions, drawn once
+    // per pixel. The low-discrepancy point set below is the *same* for every
+    // pixel; rotating it by a per-pixel random offset keeps each pixel's
+    // stratification intact while decorrelating neighbours, so the residual
+    // error looks like noise rather than a repeating pattern locked to the
+    // pixel grid. Drawing them from the existing PCG is what keeps --seed
+    // determinism: no global state, no thread-dependent order.
+    let rot = [rng.f64(), rng.f64(), rng.f64(), rng.f64()];
     let mut acc = [0.0f32; 3];
     let mut cov = 0.0f32;
     // Running sums for the estimator's own variance.
@@ -1859,12 +1906,23 @@ fn trace_pixel(
     };
 
     for s in 0..spp {
-        // Jittered pixel position.
-        let jx = rng.f64();
-        let jy = rng.f64();
+        // Pixel jitter and lens position come from a 4D Hammersley set
+        // rotated into this pixel's frame, not from four fresh uniforms. Four
+        // independent uniforms can clump — at 32spp a purely random jitter
+        // leaves visibly uneven coverage of the pixel footprint, and that
+        // shows up as extra aliasing on every silhouette. A Hammersley point
+        // set covers the square evenly by construction, and its error falls
+        // off faster than the 1/sqrt(N) of plain Monte Carlo.
+        let (jx, jy) = (
+            cp_rotate((s as f64 + 0.5) / spp as f64, rot[0]),
+            cp_rotate(radical_inverse::<2>(s as u64), rot[1]),
+        );
         let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
         let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
-        let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
+        let (lu, lv) = concentric_disc(
+            cp_rotate(radical_inverse::<3>(s as u64), rot[2]),
+            cp_rotate(radical_inverse::<5>(s as u64), rot[3]),
+        );
 
         let ray = cam.ray(sx, sy, aspect, lu, lv);
         let (l, primary) = radiance(scene, accel, opts, ray, &mut rng);
@@ -2459,6 +2517,62 @@ mod tests {
         let a = render(&scene, &cam, 16, 16, &o);
         let b = render(&scene, &cam, 16, 16, &o);
         assert_eq!(a.rgb, b.rgb, "render must be seed-deterministic");
+    }
+
+    #[test]
+    fn radical_inverse_matches_hand_computed_values() {
+        // Base 2: 1 -> 0.1b = 1/2, 2 -> 0.01b = 1/4, 3 -> 0.11b = 3/4.
+        assert_eq!(radical_inverse::<2>(0), 0.0);
+        assert!((radical_inverse::<2>(1) - 0.5).abs() < 1e-12);
+        assert!((radical_inverse::<2>(2) - 0.25).abs() < 1e-12);
+        assert!((radical_inverse::<2>(3) - 0.75).abs() < 1e-12);
+        // Base 3: 1 -> 1/3, 2 -> 2/3, 4 = 11_3 -> 0.11_3 = 4/9.
+        assert!((radical_inverse::<3>(1) - 1.0 / 3.0).abs() < 1e-12);
+        assert!((radical_inverse::<3>(2) - 2.0 / 3.0).abs() < 1e-12);
+        assert!((radical_inverse::<3>(4) - 4.0 / 9.0).abs() < 1e-12);
+    }
+
+    /// The whole point of the point set: no gaps and no clumps. A purely
+    /// random 2D sample would routinely leave a stratum empty at these
+    /// counts, which is the aliasing this replaced.
+    ///
+    /// Unrotated, `(i/N, phi_2(i))` for `N = 2^m` is a (0, m)-net in base 2:
+    /// every 8x8 stratum of a 64-point set holds exactly one sample. A
+    /// Cranley-Patterson rotation shifts the set on the torus and so is no
+    /// longer a net, but it stays far more even than random — the strongest
+    /// clump it can produce is two, and no stratum empties by more than that
+    /// allows.
+    #[test]
+    fn camera_point_set_covers_every_stratum() {
+        let n = 64u32;
+        let sample = |s: u32, ox: f64, oy: f64| {
+            (
+                cp_rotate((s as f64 + 0.5) / n as f64, ox),
+                cp_rotate(radical_inverse::<2>(s as u64), oy),
+            )
+        };
+
+        let mut hits = [[0u32; 8]; 8];
+        for s in 0..n {
+            let (x, y) = sample(s, 0.0, 0.0);
+            hits[(y * 8.0) as usize][(x * 8.0) as usize] += 1;
+        }
+        for (row, counts) in hits.iter().enumerate() {
+            for (col, &c) in counts.iter().enumerate() {
+                assert_eq!(c, 1, "unrotated stratum ({col}, {row}) got {c}, want 1");
+            }
+        }
+
+        for &(ox, oy) in &[(0.317, 0.61), (0.94, 0.02)] {
+            let mut hits = [[0u32; 8]; 8];
+            for s in 0..n {
+                let (x, y) = sample(s, ox, oy);
+                assert!((0.0..1.0).contains(&x) && (0.0..1.0).contains(&y));
+                hits[(y * 8.0) as usize][(x * 8.0) as usize] += 1;
+            }
+            let worst = hits.iter().flatten().copied().max().unwrap();
+            assert!(worst <= 2, "rotated set clumped {worst} samples in a stratum");
+        }
     }
 
     /// A frame whose dimensions are not multiples of [`TILE`] must still be
