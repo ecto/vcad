@@ -1920,9 +1920,8 @@ fn trace_pixel(
     px: usize,
     py: usize,
 ) -> PixelResult {
-    let mut rng = Rng::new(
-        opts.seed ^ ((py as u64) << 32) ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
-    );
+    let mut rng =
+        Rng::new(opts.seed ^ ((py as u64) << 32) ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     // Cranley-Patterson rotations for the four camera dimensions, drawn once
     // per pixel. The low-discrepancy point set below is the *same* for every
     // pixel; rotating it by a per-pixel random offset keeps each pixel's
@@ -2650,7 +2649,10 @@ mod tests {
                 hits[(y * 8.0) as usize][(x * 8.0) as usize] += 1;
             }
             let worst = hits.iter().flatten().copied().max().unwrap();
-            assert!(worst <= 2, "rotated set clumped {worst} samples in a stratum");
+            assert!(
+                worst <= 2,
+                "rotated set clumped {worst} samples in a stratum"
+            );
         }
     }
 

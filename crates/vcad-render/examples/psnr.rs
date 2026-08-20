@@ -96,9 +96,7 @@ struct Image {
 }
 
 fn load_rgb(path: &str) -> Result<Image, String> {
-    let img = image::open(path)
-        .map_err(|e| e.to_string())?
-        .to_rgb8();
+    let img = image::open(path).map_err(|e| e.to_string())?.to_rgb8();
     Ok(Image {
         width: img.width(),
         height: img.height(),

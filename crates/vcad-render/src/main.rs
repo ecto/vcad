@@ -640,11 +640,13 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     // whole scene. That is precisely the cost `--animate` exists to pay once,
     // so the two do not compose and saying so beats quietly re-uploading.
     if cli.gpu {
-        return Err("--animate does not compose with --gpu: the GPU scene bakes \
+        return Err(
+            "--animate does not compose with --gpu: the GPU scene bakes \
                     each part's pose into its uploaded vertices, so every frame \
                     would repack and re-upload the whole assembly — which is the \
                     one cost --animate exists to avoid. Drop --gpu."
-            .to_string());
+                .to_string(),
+        );
     }
 
     let spec = cli.animate.as_ref().expect("caller checked --animate");

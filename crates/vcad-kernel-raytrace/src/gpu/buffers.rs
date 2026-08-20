@@ -1147,11 +1147,7 @@ fn place_triangle(
             let w = t.apply_normal(&Vec3::new(n[0] as f64, n[1] as f64, n[2] as f64));
             let len = w.norm();
             if len > 1e-12 {
-                *n = [
-                    (w.x / len) as f32,
-                    (w.y / len) as f32,
-                    (w.z / len) as f32,
-                ];
+                *n = [(w.x / len) as f32, (w.y / len) as f32, (w.z / len) as f32];
             }
         }
     }

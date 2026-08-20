@@ -62,17 +62,15 @@
 //! the numbers every "why was this refused" question turns out to be about.
 
 use vcad_kernel::vcad_kernel_math::{Point3, Transform, Vec3};
+use vcad_kernel::vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_raytrace::gpu::{
     GpuAreaLight, GpuCamera, GpuMaterial, GpuScene, OfflineOptions, RayTracePipeline,
 };
 use vcad_kernel_raytrace::pathtrace::{Environment, Ground, Object, Scene};
 use vcad_kernel_raytrace::Bvh;
-use vcad_kernel::vcad_kernel_tessellate::TriangleMesh;
 
-use super::photoreal::{
-    self, Backdrop, Framing, PhotorealOptions,
-};
+use super::photoreal::{self, Backdrop, Framing, PhotorealOptions};
 use super::raster::{encode_jpeg, encode_png, Frame};
 use super::{evaluate_vcad, RasterOptions};
 
@@ -183,8 +181,10 @@ fn context() -> Result<&'static GpuContext, String> {
         Err(GpuError::NoAdapter) => Err("--gpu: no compatible GPU adapter found. \
                                          Drop --gpu to path-trace on the CPU."
             .to_string()),
-        Err(e) => Err(format!("--gpu: could not initialise the GPU ({e}). \
-                               Drop --gpu to path-trace on the CPU.")),
+        Err(e) => Err(format!(
+            "--gpu: could not initialise the GPU ({e}). \
+                               Drop --gpu to path-trace on the CPU."
+        )),
     }
 }
 
@@ -248,8 +248,8 @@ fn build_scene(scene: &Scene, framing: &Framing) -> Result<GpuScene, String> {
         .iter()
         .map(object_scene)
         .collect::<Result<_, _>>()?;
-    let mut merged = GpuScene::merge_all(parts)
-        .ok_or_else(|| "--gpu: scene has no geometry".to_string())?;
+    let mut merged =
+        GpuScene::merge_all(parts).ok_or_else(|| "--gpu: scene has no geometry".to_string())?;
 
     if let Some(ground) = &scene.ground {
         merged = merged.merge(ground_scene(ground, framing)?);
@@ -259,7 +259,11 @@ fn build_scene(scene: &Scene, framing: &Framing) -> Result<GpuScene, String> {
     // come from `dress_scene`, which is where the CPU renderer gets them,
     // including the empty rig an HDRI environment implies: an image
     // environment already carries its own lighting.
-    merged.lights = scene.lights.iter().map(GpuAreaLight::from_area_light).collect();
+    merged.lights = scene
+        .lights
+        .iter()
+        .map(GpuAreaLight::from_area_light)
+        .collect();
     merged.set_environment(match &scene.env {
         Environment::Image(map) => Some(map),
         // The shader's analytic gradient is a transcription of
@@ -270,11 +274,7 @@ fn build_scene(scene: &Scene, framing: &Framing) -> Result<GpuScene, String> {
 }
 
 fn ground_scene(ground: &Ground, framing: &Framing) -> Result<GpuScene, String> {
-    let mesh = ground_mesh(
-        framing.center,
-        ground.z,
-        framing.radius * GROUND_EXTENT,
-    );
+    let mesh = ground_mesh(framing.center, ground.z, framing.radius * GROUND_EXTENT);
     GpuScene::from_mesh_bvh_placed(
         &Bvh::build_mesh(&mesh),
         GpuMaterial::from_pbr(ground.material),
@@ -337,11 +337,17 @@ fn rasterize(
             gpu_scene.bvh_nodes.len(),
             gpu_scene.bvh_depth(),
             gpu_scene.lights.len(),
-            if gpu_scene.environment.is_some() { "image" } else { "gradient" },
+            if gpu_scene.environment.is_some() {
+                "image"
+            } else {
+                "gradient"
+            },
         );
     }
     gpu_scene
-        .validate(Some(ctx.device.limits().max_storage_buffer_binding_size as u64))
+        .validate(Some(
+            ctx.device.limits().max_storage_buffer_binding_size as u64,
+        ))
         .map_err(|e| format!("--gpu: {e}"))?;
 
     let canvas = framing.canvas;
@@ -458,7 +464,10 @@ mod tests {
         assert_eq!(mesh.indices.len(), 6);
         let xs: Vec<f32> = mesh.vertices.chunks_exact(3).map(|v| v[0]).collect();
         let zs: Vec<f32> = mesh.vertices.chunks_exact(3).map(|v| v[2]).collect();
-        assert!(zs.iter().all(|&z| (z - 1.5).abs() < 1e-6), "floor is not flat");
+        assert!(
+            zs.iter().all(|&z| (z - 1.5).abs() < 1e-6),
+            "floor is not flat"
+        );
         assert!(
             xs.iter().cloned().fold(f32::MIN, f32::max) >= 105.0,
             "floor does not reach past the subject"

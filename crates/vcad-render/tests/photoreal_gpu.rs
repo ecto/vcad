@@ -140,8 +140,8 @@ fn gpu_render_matches_the_cpu_render() {
     let Some(gpu) = gpu_png(&opts, &pr) else {
         return;
     };
-    let cpu = vcad_render::photoreal::render_photoreal_png_str(&doc(), &opts, &pr)
-        .expect("CPU render");
+    let cpu =
+        vcad_render::photoreal::render_photoreal_png_str(&doc(), &opts, &pr).expect("CPU render");
 
     let (gpu, cpu) = (decode(&gpu), decode(&cpu));
     let db = psnr(&gpu, &cpu);
@@ -170,8 +170,8 @@ fn the_isometric_view_is_not_mirrored() {
     let Some(gpu) = gpu_png(&opts, &pr) else {
         return;
     };
-    let cpu = vcad_render::photoreal::render_photoreal_png_str(&doc(), &opts, &pr)
-        .expect("CPU render");
+    let cpu =
+        vcad_render::photoreal::render_photoreal_png_str(&doc(), &opts, &pr).expect("CPU render");
     let (gpu, cpu) = (decode(&gpu), decode(&cpu));
 
     // Per-column mean luminance: a silhouette signature that survives noise
