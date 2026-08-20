@@ -502,8 +502,20 @@ pub struct GpuRenderState {
     pub env_rotation: f32,
     /// Normaliser for the environment's uv-space PDF.
     pub env_marg_int: f32,
+    /// Extra decorrelation term folded into the WGSL per-pixel RNG seed.
+    ///
+    /// The shader's hash is `pixel.x*1973 + pixel.y*9277 + sample*26699 +
+    /// frame_index*12345 + seed*2654435761 + 1`. Zero — the value the
+    /// viewport uses and the value every existing constructor sets —
+    /// reproduces the pre-seed behaviour bit for bit, so the browser path is
+    /// unchanged. An offline render sets it to get a different but
+    /// *reproducible* sample sequence for the same frame indices.
+    ///
+    /// Occupies what used to be the first padding word, so the uniform is
+    /// still 128 bytes.
+    pub seed: u32,
     /// Padding to a 16-byte multiple (required for uniform buffers).
-    pub _pad3: [u32; 3],
+    pub _pad3: [u32; 2],
 }
 
 /// Default silhouette line color: near-black, slightly cool.
@@ -579,7 +591,8 @@ impl GpuRenderState {
             env_height: 0,
             env_rotation: 0.0,
             env_marg_int: 0.0,
-            _pad3: [0; 3],
+            seed: 0,
+            _pad3: [0; 2],
         }
     }
 
@@ -693,7 +706,8 @@ impl GpuRenderState {
             env_height: 0,
             env_rotation: 0.0,
             env_marg_int: 0.0,
-            _pad3: [0; 3],
+            seed: 0,
+            _pad3: [0; 2],
         }
     }
 
@@ -717,6 +731,15 @@ impl GpuRenderState {
             refine_sample_count,
         )
     }
+}
+
+/// Sub-pixel jitter for one accumulation frame, in `[-0.5, 0.5]`.
+///
+/// The same low-discrepancy offsets [`GpuRenderState::new`] bakes in, exposed
+/// so the offline sample loop can advance the jitter without rebuilding the
+/// whole render state each sample.
+pub fn halton_jitter(frame_index: u32) -> (f32, f32) {
+    halton_2_3(frame_index)
 }
 
 /// Generate Halton sequence sample for bases 2 and 3.

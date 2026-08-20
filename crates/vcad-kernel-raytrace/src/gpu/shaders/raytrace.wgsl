@@ -84,7 +84,8 @@ struct RenderState {
     env_height: u32,
     env_rotation: f32,
     env_marg_int: f32,
-    _pad3: u32,
+    // Extra RNG decorrelation term; 0 reproduces the pre-seed noise exactly.
+    seed: u32,
     _pad4: u32,
     _pad5: u32,
 }
@@ -988,8 +989,13 @@ fn in_shadow(p: vec3<f32>, light_dir: vec3<f32>, max_t: f32) -> bool {
 // PCG hash → uniform [0, 1) noise. Per-pixel + per-frame seed so the noise
 // decorrelates across pixels (prevents banding) and animates per frame
 // (so progressive accumulation averages out).
+//
+// `render_state.seed` decorrelates whole renders from one another. The
+// viewport leaves it at 0, which reproduces the original hash exactly; an
+// offline render sets it so a re-run under a different seed is an
+// independent — but still reproducible — estimate of the same image.
 fn rand_uniform(pixel: vec2<u32>, sample_idx: u32) -> f32 {
-    var state = pixel.x * 1973u + pixel.y * 9277u + sample_idx * 26699u + render_state.frame_index * 12345u + 1u;
+    var state = pixel.x * 1973u + pixel.y * 9277u + sample_idx * 26699u + render_state.frame_index * 12345u + render_state.seed * 2654435761u + 1u;
     state = state * 747796405u + 2891336453u;
     let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     let r = (word >> 22u) ^ word;
