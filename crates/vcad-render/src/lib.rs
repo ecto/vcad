@@ -620,9 +620,20 @@ pub fn tessellation_segments(raster_size_px: Option<u32>) -> u32 {
 /// `segments` (see [`tessellation_segments`]).
 ///
 /// A cache hit yields a mesh-backed `Solid` (no BRep), which the tessellated
-/// raster and SVG paths render identically to a freshly evaluated root. The
-/// ray-traced, photoreal and `--section` paths need analytic surfaces, so
-/// callers must not wrap those in a cache scope.
+/// raster and SVG paths render identically to a freshly evaluated root.
+///
+/// The photoreal path is cacheable too, and by default is: it traces
+/// triangles at `photoreal::MESH_SEGMENTS`, so a cached mesh is all the
+/// geometry it wants, and it tessellates on a miss as well so cold and warm
+/// renders agree. Wrap it in a scope built with those segments —
+/// [`tessellation_segments`] answers for the raster and SVG paths, not for
+/// this one.
+///
+/// `--raytrace`, `--section` and photoreal's `--exact`
+/// (`PhotorealOptions::exact`) do need analytic BRep surfaces,
+/// which a cached mesh cannot supply. Callers must not wrap those in a cache
+/// scope: they would pay to populate a cache they can never read, and a hit
+/// would silently downgrade them to triangles.
 pub fn with_root_cache<T>(
     cache: std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>,
     segments: u32,
@@ -3008,7 +3019,9 @@ mod raster {
     /// Segment count for canvases at or above [`HIRES_THRESHOLD_PX`].
     /// Adjacent facets differ by 2.8°, still well under the ~10° coplanar
     /// tolerance, so no facet stripes appear.
-    const RASTER_SEGMENTS_HIRES: u32 = 128;
+    /// Also the photoreal path's fixed count — see
+    /// `photoreal::MESH_SEGMENTS`.
+    pub(crate) const RASTER_SEGMENTS_HIRES: u32 = 128;
 
     /// The segment count a raster canvas of `size_px` tessellates at.
     pub(super) fn segments_for(size_px: u32) -> u32 {

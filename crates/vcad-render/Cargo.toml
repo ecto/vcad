@@ -15,7 +15,9 @@ raster = ["dep:image"]
 cli = ["dep:clap", "dep:vcad-loon"]
 # Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output via
 # vcad-kernel-raytrace. Off for the WASM build so it doesn't grow.
-raytrace = ["raster", "dep:vcad-kernel-raytrace"]
+# vcad-kernel-raytrace already pulls rayon in for the tracer itself; the
+# photoreal scene build uses it directly to fan out per-solid BVH construction.
+raytrace = ["raster", "dep:vcad-kernel-raytrace", "dep:rayon"]
 
 [dependencies]
 vcad-eval = { workspace = true }
@@ -27,6 +29,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr"], optional = true }
 vcad-kernel-raytrace = { workspace = true, optional = true }
 vcad-loon = { workspace = true, optional = true }
+rayon = { version = "1", optional = true }
 
 [lib]
 name = "vcad_render"

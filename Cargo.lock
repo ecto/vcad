@@ -7951,6 +7951,7 @@ version = "0.9.3"
 dependencies = [
  "clap",
  "image",
+ "rayon",
  "serde_json",
  "vcad-ecad-pcb",
  "vcad-ecad-symbols",
