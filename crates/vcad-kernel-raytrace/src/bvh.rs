@@ -10,12 +10,60 @@ use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
 use crate::intersect::{intersect_surface, intersect_triangle, surface_tangent};
-use crate::trim::{face_normal, point_in_face};
+use crate::trim::{face_normal, FaceTrim};
 use crate::{Ray, RayHit};
 
 /// A flattened BVH node tuple for GPU upload.
 /// Contains: (AABB, is_leaf, left_or_first, right_or_count)
 pub type FlatBvhNode = (Aabb3, bool, u32, u32);
+
+/// One triangle, resolved out of the mesh's index/vertex arrays and narrowed
+/// to `f32` for GPU upload.
+///
+/// The BVH stores triangles as indices into shared vertex arrays, which is how
+/// you want them in memory but not how the shader reads them: the WGSL tracer
+/// has no spare storage-buffer binding for a vertex array (the browser cap of
+/// ten is already spent), so each triangle travels self-contained inside a
+/// `GpuSurface`'s parameter block. De-indexing happens here, once, at flatten
+/// time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlatTriangle {
+    /// The three corner positions, in winding order.
+    pub positions: [[f32; 3]; 3],
+    /// Per-corner shading normals, or `None` when the source mesh carried
+    /// none — in which case consumers fall back to the geometric normal, the
+    /// same fallback [`Bvh::trace`] applies on the CPU.
+    pub normals: Option<[[f32; 3]; 3]>,
+}
+
+/// What a flattened BVH's leaves index into.
+///
+/// A leaf's `(first, count)` range addresses this list whichever arm it is.
+/// The two arms are the two things a [`Bvh`] can be built over, so a consumer
+/// learns from the value itself whether it is holding trimmed analytic faces
+/// or triangles, rather than having to ask the BVH again.
+#[derive(Debug, Clone)]
+pub enum FlatPrims {
+    /// Trimmed analytic faces, in leaf order. From a BRep-backed BVH.
+    Faces(Vec<FaceId>),
+    /// De-indexed triangles, in leaf order. From a mesh-backed BVH.
+    Triangles(Vec<FlatTriangle>),
+}
+
+impl FlatPrims {
+    /// Number of primitives, whichever kind they are.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Faces(f) => f.len(),
+            Self::Triangles(t) => t.len(),
+        }
+    }
+
+    /// Whether the BVH flattened to no primitives at all.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 
 /// A BVH node - either a leaf containing primitives or an internal node with
 /// children.
@@ -95,6 +143,28 @@ impl MeshGeom {
             tri,
         ))
     }
+
+    /// De-index one triangle into the self-contained, `f32` form the GPU
+    /// wants. Normals come along only when the mesh actually carried them;
+    /// see [`FlatTriangle::normals`].
+    fn flat(&self, tri: u32) -> FlatTriangle {
+        let [i0, i1, i2] = self.tris[tri as usize];
+        let pos = |i: u32| {
+            let p = self.positions[i as usize];
+            [p.x as f32, p.y as f32, p.z as f32]
+        };
+        let normals = (!self.normals.is_empty()).then(|| {
+            let nrm = |i: u32| {
+                let n = self.normals[i as usize];
+                [n.x as f32, n.y as f32, n.z as f32]
+            };
+            [nrm(i0), nrm(i1), nrm(i2)]
+        });
+        FlatTriangle {
+            positions: [pos(i0), pos(i1), pos(i2)],
+            normals,
+        }
+    }
 }
 
 /// The geometry a [`Bvh`] was built over.
@@ -106,6 +176,15 @@ enum BvhGeom {
         brep: Arc<BRepSolid>,
         /// Primitive index -> face ID.
         faces: Vec<FaceId>,
+        /// Primitive index -> that face's trim boundary, projected into UV
+        /// once at build time.
+        ///
+        /// Without this, every ray-face hit test reprojected the face's whole
+        /// trim loop — Newton-iterating each vertex back onto the surface and
+        /// allocating three `Vec`s — to answer one point-in-polygon query.
+        /// The work does not depend on the query point, and a frame asks it
+        /// millions of times.
+        trims: Vec<FaceTrim>,
     },
     /// Triangles of a mesh-only solid.
     Mesh(Arc<MeshGeom>),
@@ -135,6 +214,10 @@ impl Bvh {
     pub fn build_shared(brep: Arc<BRepSolid>) -> Self {
         // Collect all faces with their AABBs
         let faces: Vec<FaceId> = brep.topology.faces.iter().map(|(id, _)| id).collect();
+        let trims: Vec<FaceTrim> = faces
+            .iter()
+            .map(|&face_id| FaceTrim::build(&brep, face_id))
+            .collect();
         let mut prim_data: Vec<PrimData> = faces
             .iter()
             .enumerate()
@@ -152,7 +235,7 @@ impl Bvh {
 
         Self {
             root,
-            geom: BvhGeom::BRep { brep, faces },
+            geom: BvhGeom::BRep { brep, faces, trims },
         }
     }
 
@@ -337,15 +420,14 @@ impl Bvh {
     /// of an any-hit query.
     fn prim_occludes(&self, ray: &Ray, prim: u32, t_min: f64, t_max: f64) -> bool {
         match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
+            BvhGeom::BRep { brep, faces, trims } => {
                 let face_id = faces[prim as usize];
+                let trim = &trims[prim as usize];
                 let face = &brep.topology.faces[face_id];
                 let surface = &brep.geometry.surfaces[face.surface_index];
                 intersect_surface(ray, surface.as_ref())
                     .into_iter()
-                    .any(|hit| {
-                        hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
-                    })
+                    .any(|hit| hit.t > t_min && hit.t < t_max && trim.contains(hit.uv))
             }
             // A triangle is convex: at most one hit, so there is nothing to
             // short-circuit past.
@@ -438,8 +520,9 @@ impl Bvh {
     /// Test a ray against a single primitive, appending every hit.
     fn test_prim(&self, ray: &Ray, prim: u32, hits: &mut Vec<RayHit>) {
         match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
+            BvhGeom::BRep { brep, faces, trims } => {
                 let face_id = faces[prim as usize];
+                let trim = &trims[prim as usize];
                 let face = &brep.topology.faces[face_id];
                 let surface = &brep.geometry.surfaces[face.surface_index];
 
@@ -447,7 +530,7 @@ impl Bvh {
 
                 for hit in surface_hits {
                     // Check if the hit is within the face's trim boundaries
-                    if point_in_face(brep, face_id, hit.uv) {
+                    if trim.contains(hit.uv) {
                         let point = ray.at(hit.t);
                         let normal = face_normal(brep, face_id, hit.uv);
                         let tangent = surface_tangent(surface.as_ref(), hit.uv);
@@ -470,8 +553,9 @@ impl Bvh {
     /// strictly past `t_min`.
     fn test_prim_single(&self, ray: &Ray, prim: u32, t_min: f64) -> Option<RayHit> {
         match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
+            BvhGeom::BRep { brep, faces, trims } => {
                 let face_id = faces[prim as usize];
+                let trim = &trims[prim as usize];
                 let face = &brep.topology.faces[face_id];
                 let surface = &brep.geometry.surfaces[face.surface_index];
 
@@ -481,7 +565,7 @@ impl Bvh {
 
                 for hit in surface_hits {
                     if hit.t > t_min
-                        && point_in_face(brep, face_id, hit.uv)
+                        && trim.contains(hit.uv)
                         && (closest.is_none() || hit.t < closest.as_ref().unwrap().t)
                     {
                         let point = ray.at(hit.t);
@@ -526,26 +610,30 @@ impl Bvh {
     /// - For internal nodes: left_or_first = left child index, right_or_count = right child index
     /// - For leaf nodes: left_or_first = start face index in faces array, right_or_count = face count
     ///
-    /// Also returns the list of face IDs in leaf order.
-    ///
-    /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
-    /// A mesh-backed BVH flattens to nothing.
-    pub fn flatten(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>) {
+    /// Also returns the primitives in leaf order: face IDs for a BRep-backed
+    /// BVH, de-indexed [`FlatTriangle`]s for a mesh-backed one. Both kinds
+    /// upload; the caller matches on [`FlatPrims`] to learn which it got.
+    pub fn flatten(&self) -> (Vec<FlatBvhNode>, FlatPrims) {
         let mut nodes = Vec::new();
-        let mut faces = Vec::new();
 
-        let BvhGeom::BRep {
-            faces: face_ids, ..
-        } = &self.geom
-        else {
-            return (nodes, faces);
+        let prims = match &self.geom {
+            BvhGeom::BRep { faces, .. } => {
+                let mut out = Vec::new();
+                if let Some(root) = &self.root {
+                    flatten_node(root, &mut nodes, &mut out, |p| faces[p as usize]);
+                }
+                FlatPrims::Faces(out)
+            }
+            BvhGeom::Mesh(mesh) => {
+                let mut out = Vec::new();
+                if let Some(root) = &self.root {
+                    flatten_node(root, &mut nodes, &mut out, |p| mesh.flat(p));
+                }
+                FlatPrims::Triangles(out)
+            }
         };
 
-        if let Some(root) = &self.root {
-            flatten_node(root, face_ids, &mut nodes, &mut faces);
-        }
-
-        (nodes, faces)
+        (nodes, prims)
     }
 }
 
@@ -565,19 +653,23 @@ fn get_aabb(node: &BvhNode) -> Aabb3 {
 }
 
 /// Recursively flatten a BVH node into a vector.
-fn flatten_node(
+///
+/// Generic over the primitive `resolve` produces from a build-order primitive
+/// index, so the BRep (face ID) and mesh (triangle) arms share one traversal
+/// rather than keeping two copies of the index bookkeeping in step.
+fn flatten_node<P>(
     node: &BvhNode,
-    face_ids: &[FaceId],
     nodes: &mut Vec<FlatBvhNode>,
-    faces: &mut Vec<FaceId>,
+    prims_out: &mut Vec<P>,
+    resolve: impl Fn(u32) -> P + Copy,
 ) -> usize {
     let idx = nodes.len();
 
     match node {
         BvhNode::Leaf { aabb, prims } => {
-            let start = faces.len() as u32;
+            let start = prims_out.len() as u32;
             let count = prims.len() as u32;
-            faces.extend(prims.iter().map(|&p| face_ids[p as usize]));
+            prims_out.extend(prims.iter().map(|&p| resolve(p)));
             nodes.push((*aabb, true, start, count));
         }
         BvhNode::Internal { aabb, left, right } => {
@@ -585,8 +677,8 @@ fn flatten_node(
             nodes.push((*aabb, false, 0, 0));
 
             // Recursively flatten children
-            let left_idx = flatten_node(left, face_ids, nodes, faces);
-            let right_idx = flatten_node(right, face_ids, nodes, faces);
+            let left_idx = flatten_node(left, nodes, prims_out, resolve);
+            let right_idx = flatten_node(right, nodes, prims_out, resolve);
 
             // Update this node with child indices
             nodes[idx].2 = left_idx as u32;
@@ -1022,20 +1114,110 @@ mod tests {
     }
 
     #[test]
-    fn mesh_bvh_flattens_to_nothing() {
-        // The GPU pipeline traces analytic surfaces only; a mesh BVH must
-        // not hand it face IDs it doesn't have.
+    fn mesh_bvh_flattens_to_triangles_in_leaf_order() {
         let bvh = Bvh::build_mesh(&cube_mesh());
-        let (nodes, faces) = bvh.flatten();
-        assert!(nodes.is_empty() && faces.is_empty());
+        let (nodes, prims) = bvh.flatten();
+        assert!(!nodes.is_empty());
+
+        let FlatPrims::Triangles(tris) = prims else {
+            panic!("a mesh-backed BVH must flatten to triangles");
+        };
+        // A cube mesh is 12 triangles and the BVH drops none of them.
+        assert_eq!(tris.len(), 12);
+
+        // Every leaf's (first, count) range must address the triangle list,
+        // and between them the leaves must cover it exactly once — that is
+        // the invariant the GPU leaf walk relies on.
+        let mut covered = vec![0u32; tris.len()];
+        for (_, is_leaf, first, count) in &nodes {
+            if !is_leaf {
+                continue;
+            }
+            for i in *first..*first + *count {
+                covered[i as usize] += 1;
+            }
+        }
+        assert!(
+            covered.iter().all(|&c| c == 1),
+            "leaf ranges must partition the triangle list, got {covered:?}"
+        );
+
+        // De-indexing must reproduce real geometry, not zeros: the cube
+        // spans 0..10 on every axis, so each corner coordinate is 0 or 10.
+        for t in &tris {
+            for p in &t.positions {
+                assert!(
+                    p.iter().all(|c| c.abs() < 1e-4 || (c - 10.0).abs() < 1e-4),
+                    "corner {p:?} is not on the cube"
+                );
+            }
+            // Non-degenerate: the build filter already rejected zero-area
+            // triangles, so a collapsed one here means de-indexing is wrong.
+            let [a, b, c] = t.positions;
+            let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let cr = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            assert!(cr.iter().any(|c| c.abs() > 1e-6), "degenerate {t:?}");
+        }
+    }
+
+    #[test]
+    fn mesh_without_normals_flattens_without_them() {
+        // A mesh with no normal array must flatten to triangles that SAY so,
+        // rather than to zeroed normals — the shader cannot tell an absent
+        // normal from a zero one, and would normalize the latter into NaN.
+        let mut mesh = cube_mesh();
+        mesh.normals.clear();
+        let bvh = Bvh::build_mesh(&mesh);
+        let (_, prims) = bvh.flatten();
+        let FlatPrims::Triangles(tris) = prims else {
+            unreachable!()
+        };
+        assert!(tris.iter().all(|t| t.normals.is_none()));
+    }
+
+    #[test]
+    fn mesh_with_normals_carries_them_through_flatten() {
+        let mut mesh = cube_mesh();
+        // One normal per vertex, parallel to `vertices` — the only shape
+        // `build_mesh` trusts. Point them all +Z; the values are arbitrary,
+        // what matters is that flatten preserves them per corner.
+        mesh.normals = (0..mesh.vertices.len() / 3)
+            .flat_map(|_| [0.0f32, 0.0, 1.0])
+            .collect();
+        let bvh = Bvh::build_mesh(&mesh);
+        let (_, prims) = bvh.flatten();
+        let FlatPrims::Triangles(tris) = prims else {
+            unreachable!()
+        };
+        assert!(!tris.is_empty());
+        for t in &tris {
+            let ns = t.normals.expect("normals survive flatten");
+            assert!(ns.iter().all(|n| *n == [0.0, 0.0, 1.0]), "{ns:?}");
+        }
+    }
+
+    #[test]
+    fn empty_mesh_bvh_flattens_to_nothing() {
+        let bvh = Bvh::build_mesh(&TriangleMesh::new());
+        let (nodes, prims) = bvh.flatten();
+        assert!(nodes.is_empty());
+        assert!(prims.is_empty());
     }
 
     #[test]
     fn brep_flatten_still_round_trips_face_ids() {
         let cube = make_cube(10.0, 10.0, 10.0);
         let bvh = Bvh::build(&cube);
-        let (nodes, faces) = bvh.flatten();
+        let (nodes, prims) = bvh.flatten();
         assert!(!nodes.is_empty());
+        let FlatPrims::Faces(faces) = prims else {
+            panic!("a BRep-backed BVH must flatten to face IDs");
+        };
         assert_eq!(faces.len(), cube.topology.faces.len());
         assert!(faces.iter().all(|&f| cube.topology.faces.contains_key(f)));
     }

@@ -7685,6 +7685,7 @@ dependencies = [
  "js-sys",
  "pollster",
  "rayon",
+ "smallvec",
  "tang",
  "thiserror 2.0.18",
  "vcad-ir",
@@ -7951,12 +7952,15 @@ version = "0.9.3"
 dependencies = [
  "clap",
  "image",
+ "pollster",
+ "rayon",
  "serde_json",
  "vcad-ecad-pcb",
  "vcad-ecad-symbols",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-gpu",
  "vcad-kernel-raytrace",
  "vcad-loon",
 ]

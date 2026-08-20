@@ -237,7 +237,7 @@ pub fn render_photoreal_animation(
     // Static scene roots first (their transforms never change), then the
     // assembly instances, whose object→world transform is rewritten per
     // frame.
-    let mut objects = build_objects(&ev.statics).unwrap_or_default();
+    let mut objects = build_objects(&ev.statics, pr.mesh_segments()).unwrap_or_default();
     let static_count = objects.len();
 
     let part_solids: Vec<crate::SceneSolid> = std::mem::take(&mut ev.parts)
@@ -245,7 +245,7 @@ pub fn render_photoreal_animation(
         .map(crate::part_as_local_scene_solid)
         .collect();
     let instance_ids: Vec<String> = part_solids.iter().map(|s| s.id.clone()).collect();
-    objects.extend(build_objects(&part_solids)?);
+    objects.extend(build_objects(&part_solids, pr.mesh_segments())?);
     let articulated = objects.len() - static_count;
     // build_objects fails closed on untraceable parts, so counts can only
     // agree here; keep the invariant visible without implying a live branch.
