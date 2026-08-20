@@ -2005,6 +2005,11 @@ fn trace_pixel(
         if opts.adaptive && traced >= ADAPTIVE_FLOOR.min(spp) && traced < spp {
             let n = traced as f32;
             let mean = lsum / n;
+            // The clamp is load-bearing, not defensive: once the samples agree
+            // closely, `lsum2 / n` and `mean * mean` cancel to within f32
+            // rounding and can land just below zero, which would put a NaN
+            // through the sqrt below — and a NaN compares false, so the pixel
+            // would never converge.
             let sample_var = (lsum2 / n - mean * mean).max(0.0) * n / (n - 1.0);
             // Half-width of the 95% confidence interval on the mean.
             let ci = 1.96 * (sample_var / n).sqrt();

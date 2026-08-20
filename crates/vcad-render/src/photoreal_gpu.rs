@@ -237,13 +237,11 @@ fn is_identity(t: &Transform) -> bool {
 
 /// Turn the CPU-side [`Scene`] into a single validated [`GpuScene`].
 ///
-/// The order here matters. Parts are merged first, in a balanced tree, and
-/// the studio rig is taken from *that* merge — `GpuScene::merge` re-derives
-/// the rig from the combined bounds, which is right for the subject and very
-/// wrong once the floor quad (hundreds of radii across) joins the scene. So
-/// the rig is captured before the floor is merged in and put back afterwards.
-/// The CPU path has the same rig for the same reason: `dress_scene` sizes it
-/// from the subject's bounds, not the floor's.
+/// The order here matters. `GpuScene::merge` re-derives the studio rig from
+/// the combined bounds, which is right for the subject and very wrong once the
+/// floor quad (hundreds of radii across) joins the scene — so the rig is
+/// written once, after the last merge. The CPU path sizes its rig the same way:
+/// `dress_scene` works from the subject's bounds, not the floor's.
 fn build_scene(scene: &Scene, framing: &Framing) -> Result<GpuScene, String> {
     let parts: Vec<GpuScene> = scene
         .objects
@@ -253,16 +251,15 @@ fn build_scene(scene: &Scene, framing: &Framing) -> Result<GpuScene, String> {
     let mut merged = GpuScene::merge_all(parts)
         .ok_or_else(|| "--gpu: scene has no geometry".to_string())?;
 
-    // Lights come from `dress_scene`, which is where the CPU renderer gets
-    // them — including the empty rig an HDRI environment implies, since an
-    // image environment already carries its own lighting.
-    let subject_lights: Vec<GpuAreaLight> =
-        scene.lights.iter().map(GpuAreaLight::from_area_light).collect();
-
     if let Some(ground) = &scene.ground {
         merged = merged.merge(ground_scene(ground, framing)?);
     }
-    merged.lights = subject_lights;
+
+    // After the last merge, never before — see above. The lights themselves
+    // come from `dress_scene`, which is where the CPU renderer gets them,
+    // including the empty rig an HDRI environment implies: an image
+    // environment already carries its own lighting.
+    merged.lights = scene.lights.iter().map(GpuAreaLight::from_area_light).collect();
     merged.set_environment(match &scene.env {
         Environment::Image(map) => Some(map),
         // The shader's analytic gradient is a transcription of
