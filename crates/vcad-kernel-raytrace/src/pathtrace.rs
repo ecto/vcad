@@ -1794,11 +1794,119 @@ pub struct Film {
     pub variance: Vec<f32>,
 }
 
+/// Side of a square render tile, in pixels.
+///
+/// 16 is small enough that a slow corner of the image cannot monopolise a
+/// core for long, and large enough that per-tile bookkeeping disappears next
+/// to 256 pixels of tracing.
+const TILE: usize = 16;
+
+/// Everything one pixel contributes to the [`Film`].
+///
+/// Traced into a tile-local buffer and blitted into the film afterwards, so
+/// the parallel pass needs no aliasing tricks over the shared buffers.
+struct PixelResult {
+    rgb: [f32; 3],
+    alpha: f32,
+    normal: [f32; 3],
+    depth: f32,
+    albedo: [f32; 3],
+    variance: f32,
+}
+
+/// One finished tile, in row-major order within its own `w` x `h` extent.
+struct TileResult {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    pixels: Vec<PixelResult>,
+}
+
+/// Trace one pixel's full sample budget.
+///
+/// The RNG is seeded from the pixel's coordinates and the option seed alone,
+/// never from its position in a work queue — that is what makes the film
+/// independent of how [`render`] chose to divide the frame up.
+#[allow(clippy::too_many_arguments)]
+fn trace_pixel(
+    scene: &Scene,
+    accel: &SceneAccel,
+    cam: &Camera,
+    opts: &PathTraceOptions,
+    width: u32,
+    height: u32,
+    aspect: f64,
+    spp: u32,
+    px: usize,
+    py: usize,
+) -> PixelResult {
+    let mut rng = Rng::new(
+        opts.seed ^ ((py as u64) << 32) ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+    );
+    let mut acc = [0.0f32; 3];
+    let mut cov = 0.0f32;
+    // Running sums for the estimator's own variance.
+    let mut lsum = 0.0f32;
+    let mut lsum2 = 0.0f32;
+    let mut out = PixelResult {
+        rgb: [0.0; 3],
+        alpha: 0.0,
+        normal: [0.0; 3],
+        depth: 0.0,
+        albedo: [0.0; 3],
+        variance: 0.0,
+    };
+
+    for s in 0..spp {
+        // Jittered pixel position.
+        let jx = rng.f64();
+        let jy = rng.f64();
+        let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
+        let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
+        let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
+
+        let ray = cam.ray(sx, sy, aspect, lu, lv);
+        let (l, primary) = radiance(scene, accel, opts, ray, &mut rng);
+        acc = add3(acc, l);
+        let ls = luminance(l);
+        lsum += ls;
+        lsum2 += ls * ls;
+        if primary.hit {
+            cov += 1.0;
+        }
+        if s == 0 {
+            // Guide buffers come from one primary ray, not an average:
+            // averaging normals and depths across samples would soften
+            // exactly the silhouettes the edge-stopping weights exist to
+            // protect.
+            out.normal = primary.normal;
+            out.depth = primary.depth;
+            out.albedo = primary.albedo;
+        }
+    }
+
+    let inv = 1.0 / spp as f32;
+    out.rgb = [acc[0] * inv, acc[1] * inv, acc[2] * inv];
+    out.alpha = cov * inv;
+    // Variance of the *mean*: sample variance / spp. A single sample carries
+    // no information about its own spread, so fall back to the estimate
+    // itself as a scale.
+    out.variance = if spp > 1 {
+        let mean = lsum * inv;
+        let sample_var = (lsum2 * inv - mean * mean).max(0.0) * spp as f32 / (spp - 1) as f32;
+        sample_var / spp as f32
+    } else {
+        lsum * lsum
+    };
+    out
+}
+
 /// Render `scene` from `cam` into a linear-space [`Film`].
 ///
-/// Scanlines are traced in parallel. Each pixel's RNG is seeded from its
+/// Square tiles are traced in parallel. Each pixel's RNG is seeded from its
 /// coordinates and the option seed, so output is deterministic and
-/// independent of thread scheduling.
+/// independent of thread scheduling *and* of the tiling.
 ///
 /// When [`PathTraceOptions::denoise`] is set (the default), the film is run
 /// through [`denoise`] before returning. Pass `denoise: false` for a
@@ -1826,79 +1934,59 @@ pub fn render(
     let mut albedo = vec![0.0f32; (width * height * 3) as usize];
     let mut variance = vec![0.0f32; (width * height) as usize];
 
-    let w3 = width as usize * 3;
-    let w1 = width as usize;
-    rgb.par_chunks_mut(w3)
-        .zip(alpha.par_chunks_mut(w1))
-        .zip(normal.par_chunks_mut(w3))
-        .zip(depth.par_chunks_mut(w1))
-        .zip(albedo.par_chunks_mut(w3))
-        .zip(variance.par_chunks_mut(w1))
-        .enumerate()
-        .for_each(|(py, (((((row, arow), nrow), drow), brow), vrow))| {
-            for px in 0..width as usize {
-                let mut rng = Rng::new(
-                    opts.seed
-                        ^ ((py as u64) << 32)
-                        ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
-                );
-                let mut acc = [0.0f32; 3];
-                let mut cov = 0.0f32;
-                // Running sums for the estimator's own variance.
-                let mut lsum = 0.0f32;
-                let mut lsum2 = 0.0f32;
-
-                for s in 0..spp {
-                    // Jittered pixel position.
-                    let jx = rng.f64();
-                    let jy = rng.f64();
-                    let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
-                    let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
-                    let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
-
-                    let ray = cam.ray(sx, sy, aspect, lu, lv);
-                    let (l, primary) = radiance(scene, &accel, opts, ray, &mut rng);
-                    acc = add3(acc, l);
-                    let ls = luminance(l);
-                    lsum += ls;
-                    lsum2 += ls * ls;
-                    if primary.hit {
-                        cov += 1.0;
-                    }
-                    if s == 0 {
-                        // Guide buffers come from one primary ray, not an
-                        // average: averaging normals and depths across
-                        // samples would soften exactly the silhouettes the
-                        // edge-stopping weights exist to protect.
-                        nrow[px * 3] = primary.normal[0];
-                        nrow[px * 3 + 1] = primary.normal[1];
-                        nrow[px * 3 + 2] = primary.normal[2];
-                        drow[px] = primary.depth;
-                        brow[px * 3] = primary.albedo[0];
-                        brow[px * 3 + 1] = primary.albedo[1];
-                        brow[px * 3 + 2] = primary.albedo[2];
-                    }
+    // Traced in tiles rather than scanlines. A scanline is a poor unit of
+    // work for a path tracer: cost per pixel varies enormously (a pixel that
+    // escapes to the environment is nearly free, one deep inside a fillet is
+    // not), and a row spans the whole image, so every row averages to roughly
+    // the same cost and rayon has nothing left to steal with. Square tiles
+    // concentrate the cheap and the expensive regions into *different* tasks,
+    // which is exactly the imbalance work-stealing exists to fix. Tiles are
+    // also cache-friendlier: a 16x16 neighbourhood of rays hits the same
+    // corner of the BVH.
+    //
+    // Seeding stays per-pixel, so the decomposition is invisible in the
+    // output: this produces byte-identical films to the scanline version.
+    let tiles_x = (width as usize).div_ceil(TILE);
+    let tiles_y = (height as usize).div_ceil(TILE);
+    let tiles: Vec<TileResult> = (0..tiles_x * tiles_y)
+        .into_par_iter()
+        .map(|ti| {
+            let tx = (ti % tiles_x) * TILE;
+            let ty = (ti / tiles_x) * TILE;
+            let tw = TILE.min(width as usize - tx);
+            let th = TILE.min(height as usize - ty);
+            let mut pixels = Vec::with_capacity(tw * th);
+            for py in ty..ty + th {
+                for px in tx..tx + tw {
+                    pixels.push(trace_pixel(
+                        scene, &accel, cam, opts, width, height, aspect, spp, px, py,
+                    ));
                 }
-
-                let inv = 1.0 / spp as f32;
-                row[px * 3] = acc[0] * inv;
-                row[px * 3 + 1] = acc[1] * inv;
-                row[px * 3 + 2] = acc[2] * inv;
-                arow[px] = cov * inv;
-                // Variance of the *mean*: sample variance / spp. A single
-                // sample carries no information about its own spread, so fall
-                // back to the estimate itself as a scale.
-                vrow[px] = if spp > 1 {
-                    let mean = lsum * inv;
-                    let sample_var =
-                        (lsum2 * inv - mean * mean).max(0.0) * spp as f32 / (spp - 1) as f32;
-                    sample_var / spp as f32
-                } else {
-                    let mean = lsum;
-                    mean * mean
-                };
             }
-        });
+            TileResult {
+                x: tx,
+                y: ty,
+                w: tw,
+                h: th,
+                pixels,
+            }
+        })
+        .collect();
+
+    for tile in &tiles {
+        for ly in 0..tile.h {
+            for lx in 0..tile.w {
+                let p = &tile.pixels[ly * tile.w + lx];
+                let i = (tile.y + ly) * width as usize + tile.x + lx;
+                rgb[i * 3..i * 3 + 3].copy_from_slice(&p.rgb);
+                normal[i * 3..i * 3 + 3].copy_from_slice(&p.normal);
+                albedo[i * 3..i * 3 + 3].copy_from_slice(&p.albedo);
+                alpha[i] = p.alpha;
+                depth[i] = p.depth;
+                variance[i] = p.variance;
+            }
+        }
+    }
 
     let mut film = Film {
         width,
@@ -2371,6 +2459,41 @@ mod tests {
         let a = render(&scene, &cam, 16, 16, &o);
         let b = render(&scene, &cam, 16, 16, &o);
         assert_eq!(a.rgb, b.rgb, "render must be seed-deterministic");
+    }
+
+    /// A frame whose dimensions are not multiples of [`TILE`] must still be
+    /// covered completely: the edge tiles are clipped, and an off-by-one in
+    /// the blit would leave an unwritten seam that reads as a black stripe.
+    #[test]
+    fn ragged_frame_leaves_no_untraced_seam() {
+        let scene = test_scene();
+        let cam = test_camera();
+        // 37x23: both axes straddle the tile grid, neither is a multiple.
+        let (w, h) = (37u32, 23u32);
+        let film = render(
+            &scene,
+            &cam,
+            w,
+            h,
+            &PathTraceOptions {
+                spp: 4,
+                denoise: false,
+                ..Default::default()
+            },
+        );
+        // Every pixel either lands on the subject or looks at the lit
+        // environment, so none may hold the all-zero value a skipped blit
+        // would leave behind.
+        for i in 0..(w * h) as usize {
+            let lit =
+                film.rgb[i * 3] != 0.0 || film.rgb[i * 3 + 1] != 0.0 || film.rgb[i * 3 + 2] != 0.0;
+            assert!(
+                lit || film.alpha[i] > 0.0,
+                "pixel ({}, {}) was never written",
+                i % w as usize,
+                i / w as usize
+            );
+        }
     }
 
     /// The BSDF sampling PDF must match the analytic PDF used by MIS, or
