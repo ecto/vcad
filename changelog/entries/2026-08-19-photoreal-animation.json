@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-19-photoreal-animation",
+  "version": "0.9.4",
+  "date": "2026-08-19",
+  "category": "perf",
+  "title": "Photoreal animation evaluates geometry once",
+  "summary": "vcad-render --photoreal --animate poses a jointed assembly over a timeline, evaluating the document once for the whole sequence instead of once per frame.",
+  "details": "A joint-animated assembly is the same parts in different places, so the expensive half of a photoreal render — evaluating the parametric DAG into BReps and building a BVH over each part — belongs outside the frame loop. --animate puts it there: evaluate once, build one BLAS per part, then per frame solve forward kinematics (the same vcad-eval solver the app's assembly mode and the MCP timeline use), hand each object its new object→world transform, and rebuild only the top-level acceleration structure before tracing. Poses come from the document's own timeline, or from a keyframe file with a joint-track shorthand; joints resolve by id or by authored name and a name that matches nothing fails with the list that does. The camera is framed on the union of every pose, so the subject never swims or clips. Frames land as frame_NNNN.png in the -o directory and are muxed to H.264 when ffmpeg is on PATH. On a 35-part machine at 640px/16spp the once-only evaluation was 215s against ~85s of tracing per frame — previously repaid in full on every frame.",
+  "features": ["rendering", "photoreal", "animation", "assemblies", "joints", "cli"]
+}

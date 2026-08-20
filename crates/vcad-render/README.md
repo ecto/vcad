@@ -238,3 +238,46 @@ build so it doesn't grow. Use it for marketing screenshots and
 high-fidelity previews. For vector output, `--exact-edges` delivers
 resolution-independent linework straight from the BRep; and SVG remains the
 right pick for the leaderboard's drafting aesthetic.
+
+## Animation mode (`--animate`)
+
+A jointed assembly posed over time is, geometrically, the *same* parts in
+different places — so the expensive half of a photoreal render (evaluating
+the parametric DAG into BReps and building a BVH over each part) belongs
+outside the frame loop. `--animate` puts it there:
+
+```bash
+vcad-render assembly.loon --photoreal --animate cycle.json \
+    --spp 16 --size 640 --azimuth 258 --elevation 14 -o frames/
+```
+
+Evaluate once, build one BLAS per part, then per frame solve forward
+kinematics, hand each object its new object→world transform, and rebuild
+only the top-level acceleration structure before tracing. Frame 1 costs
+evaluation plus a trace; every frame after it costs a trace. On a 35-part
+machine at 640px/16spp that is ~215 s of evaluation against ~12 s of
+tracing — previously repaid in full on every frame, because each frame was
+a separately baked document.
+
+The poses come from the document's own `timeline` (where the MCP `animate`
+tool leaves one) or from a keyframe file. The file is a timeline —
+`durationS`, `fps`, `tracks` — with a shorthand for the common case:
+
+```json
+{ "durationS": 6.0, "fps": 24,
+  "tracks": [ { "joint": "A", "keys": [ { "t": 0, "value": 0 },
+                                        { "t": 6, "value": 1440 } ] } ] }
+```
+
+A joint may be named by id (`joint_0`) or by its authored name (`A`); a
+name matching neither fails with the list that does, rather than silently
+animating nothing. Interpolation is linear by default, with `step` and
+`ease-in-out` available per key. Only joint tracks are supported —
+parameter tracks would change the geometry, which is exactly the cost this
+path exists to avoid.
+
+Frames land as `frame_NNNN.png` in the `-o` directory, and are muxed into
+an H.264 mp4 when ffmpeg is on `PATH` (`--mp4 <path>` to place it,
+`--no-mp4` to skip; when ffmpeg is missing the frames are still written and
+the command is printed). The camera is framed on the union of *every* pose,
+so the subject neither swims in the canvas nor clips at the extremes.

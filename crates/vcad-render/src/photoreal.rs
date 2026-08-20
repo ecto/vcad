@@ -113,29 +113,17 @@ pub fn render_photoreal_png_str(
     encode_png(rasterize(raw_vcad, opts, pr, true)?, opts)
 }
 
-fn rasterize(
-    raw_vcad: &str,
-    opts: &RasterOptions,
-    pr: &PhotorealOptions,
-    png: bool,
-) -> Result<Frame, String> {
-    let solids = evaluate_vcad(raw_vcad)?;
-    if solids.is_empty() {
-        return Err("no solids produced".to_string());
-    }
-    if opts.size_px < 16 {
-        return Err("size_px too small".to_string());
-    }
-    if !(opts.fill_frac > 0.0 && opts.fill_frac <= 1.0) {
-        return Err("fill_frac must be in (0, 1]".to_string());
-    }
-
-    // One BVH per solid. BRep-backed solids trace analytically; mesh-only
-    // parts (frozen topology-optimization results, imported STL/GLB) trace
-    // as crease-baked triangles, same as the `--raytrace` path.
+/// Build one BVH per solid, world-placed at the identity.
+///
+/// BRep-backed solids trace analytically; mesh-only parts (frozen
+/// topology-optimization results, imported STL/GLB) trace as crease-baked
+/// triangles, same as the `--raytrace` path. Fails closed when any part has
+/// no traceable geometry — a silently missing part reads as a design that
+/// doesn't have it.
+pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>, String> {
     let mut objects: Vec<Object> = Vec::new();
     let mut untraceable: Vec<String> = Vec::new();
-    for s in &solids {
+    for s in solids {
         let bvh = match s.solid.as_brep() {
             Some(brep) => Bvh::build(brep),
             None => {
@@ -148,10 +136,10 @@ fn rasterize(
             untraceable.push(s.name.clone().unwrap_or_else(|| s.id.clone()));
             continue;
         }
-        objects.push(Object {
-            bvh: Arc::new(bvh),
-            material: Pbr::from_material_def(s.material.as_ref(), s.tint),
-        });
+        objects.push(Object::new(
+            Arc::new(bvh),
+            Pbr::from_material_def(s.material.as_ref(), s.tint),
+        ));
     }
     if objects.is_empty() {
         return Err(format!(
@@ -162,8 +150,6 @@ fn rasterize(
         ));
     }
     if !untraceable.is_empty() {
-        // Fail closed rather than silently rendering a subset — a missing
-        // part reads as a design that doesn't have it.
         return Err(format!(
             "photoreal: {} part(s) have no traceable geometry (empty or fully \
              degenerate): {}",
@@ -171,11 +157,52 @@ fn rasterize(
             untraceable.join(", ")
         ));
     }
+    Ok(objects)
+}
 
-    // ── framing ──────────────────────────────────────────────────────────
-    // Project the union of BVH root AABBs onto the view basis, exactly as
-    // the drafting and raytrace paths do, so `--view`, `--fill`, `--size`
-    // and `--auto-aspect` all behave identically across styles.
+/// The eight corners of an object's BVH root AABB, in world space after
+/// `transform`. These are what framing is computed from.
+pub(crate) fn object_corners(obj: &Object) -> Vec<[f64; 3]> {
+    let Some(node) = obj.bvh.root() else {
+        return Vec::new();
+    };
+    let aabb = match node {
+        vcad_kernel_raytrace::bvh::BvhNode::Leaf { aabb, .. }
+        | vcad_kernel_raytrace::bvh::BvhNode::Internal { aabb, .. } => aabb,
+    };
+    (0..8)
+        .map(|i| {
+            let p = Point3::new(
+                if i & 1 == 0 { aabb.min.x } else { aabb.max.x },
+                if i & 2 == 0 { aabb.min.y } else { aabb.max.y },
+                if i & 4 == 0 { aabb.min.z } else { aabb.max.z },
+            );
+            let w = obj.transform.apply_point(&p);
+            [w.x, w.y, w.z]
+        })
+        .collect()
+}
+
+/// Camera, canvas, and the floor height a set of world points implies.
+pub(crate) struct Framing {
+    pub(crate) camera: Camera,
+    pub(crate) canvas: crate::raster::Canvas,
+    /// World-space centre of the subject, for the studio rig.
+    pub(crate) center: Point3,
+    /// Bounding-sphere radius, for the rig and the aperture.
+    pub(crate) radius: f64,
+    /// Lowest world Z — where the studio floor sits.
+    pub(crate) floor_z: f64,
+}
+
+/// Frame `points` (world-space corners) exactly as the drafting and raytrace
+/// paths do, so `--view`, `--fill`, `--size` and `--auto-aspect` behave
+/// identically across styles.
+pub(crate) fn frame_view(
+    points: &[[f64; 3]],
+    opts: &RasterOptions,
+    pr: &PhotorealOptions,
+) -> Result<Framing, String> {
     let cam_dir = normalize(opts.view.cam());
     let right = normalize(opts.view.right());
     let down = normalize(opts.view.down());
@@ -184,27 +211,16 @@ fn rasterize(
     let mut max = [f64::NEG_INFINITY; 2];
     let mut world_min = [f64::INFINITY; 3];
     let mut world_max = [f64::NEG_INFINITY; 3];
-    for obj in &objects {
-        let node = obj.bvh.root().expect("empty BVHs were filtered");
-        let aabb = match node {
-            vcad_kernel_raytrace::bvh::BvhNode::Leaf { aabb, .. }
-            | vcad_kernel_raytrace::bvh::BvhNode::Internal { aabb, .. } => aabb,
-        };
-        for i in 0..8 {
-            let c = [
-                if i & 1 == 0 { aabb.min.x } else { aabb.max.x },
-                if i & 2 == 0 { aabb.min.y } else { aabb.max.y },
-                if i & 4 == 0 { aabb.min.z } else { aabb.max.z },
-            ];
-            let s = [dot(c, right), dot(c, down)];
-            for k in 0..2 {
-                min[k] = min[k].min(s[k]);
-                max[k] = max[k].max(s[k]);
-            }
-            for k in 0..3 {
-                world_min[k] = world_min[k].min(c[k]);
-                world_max[k] = world_max[k].max(c[k]);
-            }
+    for c in points {
+        let c = *c;
+        let s = [dot(c, right), dot(c, down)];
+        for k in 0..2 {
+            min[k] = min[k].min(s[k]);
+            max[k] = max[k].max(s[k]);
+        }
+        for k in 0..3 {
+            world_min[k] = world_min[k].min(c[k]);
+            world_max[k] = world_max[k].max(c[k]);
         }
     }
 
@@ -267,14 +283,28 @@ fn rasterize(
     camera.ortho_half_height = pr.orthographic.then_some(half_h_world);
     let _ = half_w_world;
 
-    // ── lighting ─────────────────────────────────────────────────────────
+    Ok(Framing {
+        camera,
+        canvas,
+        center: center_world,
+        radius,
+        floor_z: world_min[2],
+    })
+}
+
+/// Wrap already-built objects in the studio rig, environment, and floor.
+pub(crate) fn dress_scene(
+    objects: Vec<Object>,
+    framing: &Framing,
+    pr: &PhotorealOptions,
+) -> Result<Scene, String> {
     let env = envmap::resolve(&pr.environment, pr.env_rotation_deg)?;
 
     // The softbox rig exists to give the low-frequency analytic gradient
     // something to make highlights with. An HDRI already carries its own
     // lights, so keeping the rig would double-light the subject.
     let lights: Vec<AreaLight> = match env {
-        Environment::Gradient(_) => pathtrace::studio_rig(center_world, radius),
+        Environment::Gradient(_) => pathtrace::studio_rig(framing.center, framing.radius),
         Environment::Image(_) => Vec::new(),
     };
 
@@ -283,7 +313,7 @@ fn rasterize(
         mode => Some(Ground {
             // Sit the floor exactly on the subject's lowest point so parts
             // read as resting on it rather than floating.
-            z: world_min[2],
+            z: framing.floor_z,
             material: Pbr {
                 base_color: [0.55, 0.55, 0.56],
                 metallic: 0.0,
@@ -295,14 +325,16 @@ fn rasterize(
         }),
     };
 
-    let scene = Scene {
+    Ok(Scene {
         objects,
         lights,
         env,
         ground,
-    };
+    })
+}
 
-    let pt_opts = PathTraceOptions {
+pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOptions {
+    PathTraceOptions {
         spp: pr.spp.max(1),
         max_depth: pr.max_depth.max(1),
         rr_start: 3,
@@ -311,9 +343,24 @@ fn rasterize(
         seed: pr.seed,
         denoise: pr.denoise,
         ..PathTraceOptions::default()
-    };
+    }
+}
 
-    let film = pathtrace::render(&scene, &camera, canvas.w as u32, canvas.h as u32, &pt_opts);
+/// Trace one frame of an already-assembled scene.
+pub(crate) fn trace_frame(
+    scene: &Scene,
+    framing: &Framing,
+    pr: &PhotorealOptions,
+    png: bool,
+) -> Frame {
+    let canvas = framing.canvas;
+    let film = pathtrace::render(
+        scene,
+        &framing.camera,
+        canvas.w as u32,
+        canvas.h as u32,
+        &trace_options(pr, png),
+    );
     let rgba = film.to_srgb8(pr.exposure, png && pr.backdrop != Backdrop::Studio);
 
     // Split into the (rgb, mask) pair the shared encoders expect.
@@ -326,8 +373,35 @@ fn rasterize(
         rgb[i * 3 + 2] = rgba[i * 4 + 2];
         mask[i] = rgba[i * 4 + 3];
     }
+    Frame { rgb, mask, canvas }
+}
 
-    Ok(Frame { rgb, mask, canvas })
+fn rasterize(
+    raw_vcad: &str,
+    opts: &RasterOptions,
+    pr: &PhotorealOptions,
+    png: bool,
+) -> Result<Frame, String> {
+    check_raster_opts(opts)?;
+    let solids = evaluate_vcad(raw_vcad)?;
+    if solids.is_empty() {
+        return Err("no solids produced".to_string());
+    }
+    let objects = build_objects(&solids)?;
+    let corners: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
+    let framing = frame_view(&corners, opts, pr)?;
+    let scene = dress_scene(objects, &framing, pr)?;
+    Ok(trace_frame(&scene, &framing, pr, png))
+}
+
+pub(crate) fn check_raster_opts(opts: &RasterOptions) -> Result<(), String> {
+    if opts.size_px < 16 {
+        return Err("size_px too small".to_string());
+    }
+    if !(opts.fill_frac > 0.0 && opts.fill_frac <= 1.0) {
+        return Err("fill_frac must be in (0, 1]".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
