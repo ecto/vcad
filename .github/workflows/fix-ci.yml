@@ -206,10 +206,10 @@ jobs:
                ../tang, ../phyz, ../loon. Apt deps are installed.
                Typical commands to try:
                  cargo fmt -p <crate> --check
-                 cargo clippy --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font -- -D warnings
-                 cargo test  --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font
-                 cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
-                 cargo doc   --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
+                 cargo clippy --workspace --exclude vcad-desktop -- -D warnings
+                 cargo test  --workspace --exclude vcad-desktop
+                 cargo build --workspace --exclude vcad-desktop --examples
+                 cargo doc   --workspace --exclude vcad-desktop --no-deps
                  npm run build --workspaces
                  npm test --workspaces --if-present
             4. Delete `.ci-fix/` before committing so it never lands in
