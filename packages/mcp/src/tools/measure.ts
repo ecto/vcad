@@ -28,11 +28,26 @@
  */
 
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
-import { transformMesh } from "@vcad/engine";
-import type { Document } from "@vcad/ir";
+import type { Document, JointSweep, Transform3D } from "@vcad/ir";
 import { computeMeshProperties, type BoundingBox } from "./inspect.js";
 import { getSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
+import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
+import {
+  MAX_SWEEP_SAMPLES,
+  parseSweep,
+  placeParts,
+  poseGrid,
+  poseableParts,
+  poseTransforms,
+  resolveSweepAxes,
+  roundPose,
+  sweepSchemaProp,
+  worseThan,
+  type Pose,
+  type PoseablePart,
+  type SweepSample,
+} from "./sweep.js";
 
 /** Round to micron precision so payloads don't carry float noise. */
 const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
@@ -55,44 +70,7 @@ interface ResolvedPart {
  *  placed mesh), skipping hidden roots and empty meshes — mirrors the
  *  clearance tool's part resolution. */
 function evaluateParts(doc: Document, engine: Engine): ResolvedPart[] {
-  const scene = engine.evaluate(doc);
-  const visibleRoots = doc.roots.filter((e) => e.visible !== false);
-  const partMaterials = (doc as { part_materials?: Record<string, string> })
-    .part_materials;
-  const out: ResolvedPart[] = [];
-  for (let i = 0; i < scene.parts.length && i < visibleRoots.length; i++) {
-    const root = visibleRoots[i];
-    const rootId = String(root.root);
-    const mesh = scene.parts[i].mesh;
-    if (!mesh || mesh.positions.length === 0) continue;
-    const node = doc.nodes[rootId];
-    out.push({
-      id: rootId,
-      name: node?.name ?? undefined,
-      material: root.material ?? partMaterials?.[rootId] ?? undefined,
-      mesh,
-    });
-  }
-  // Assembly instances: bake the FK world transform into the part-local mesh
-  // so measurements report poses, not part-local geometry — the same
-  // candidate population check_clearance uses. Without this, assembly-only
-  // documents answered every measure/inspect_part query with "Available: none".
-  for (const inst of scene.instances ?? []) {
-    const mesh = inst.transform
-      ? transformMesh(inst.mesh, {
-          translate: inst.transform.translation,
-          rotate: inst.transform.rotation,
-          scale: inst.transform.scale,
-        })
-      : inst.mesh;
-    if (!mesh || mesh.positions.length === 0) continue;
-    out.push({
-      id: inst.instanceId,
-      name: inst.name ?? undefined,
-      mesh,
-    });
-  }
-  return out;
+  return placeParts(poseableParts(doc, engine));
 }
 
 /** Resolve a part by id first, then by exact name. */
@@ -306,6 +284,125 @@ export function measureResult(
   };
 }
 
+/**
+ * `measure` in sweep mode: the two parts' minimum distance across a whole
+ * range of motion, not the one pose the assembly happens to be stored in.
+ *
+ * The document is evaluated ONCE into re-poseable parts; each pose then costs
+ * one FK solve plus two mesh transforms. The reported `distance_mm` is the
+ * worst case over the grid (interpenetration beats any distance, mirroring
+ * `check_clearance`), and `samples` carries the full margin curve so an agent
+ * can see *where* in the travel the margin collapses rather than only how far.
+ */
+export function measureSweepResult(
+  doc: Document,
+  engine: Engine,
+  partIds: string[],
+  sweep: JointSweep[],
+): Record<string, unknown> {
+  if (partIds.length !== 2) {
+    throw new MeasureError(
+      "`sweep` measures the distance between TWO parts across a range of motion — " +
+        `${partIds.length} part id was given. Pass two \`part_ids\`, or drop \`sweep\` ` +
+        "(a single part's bbox/volume/center of mass is a per-pose property; use " +
+        "`joint_state` to read it at one pose).",
+    );
+  }
+  let base: PoseablePart[];
+  try {
+    base = poseableParts(doc, engine);
+  } catch (e) {
+    throw new MeasureError(e instanceof Error ? e.message : String(e));
+  }
+
+  const pick = (wanted: string): PoseablePart => {
+    const found =
+      base.find((p) => p.id === wanted) ?? base.find((p) => p.name === wanted);
+    if (!found) {
+      const available =
+        base.map((p) => `${p.id}${p.name ? ` (${p.name})` : ""}`).join(", ") || "none";
+      throw new MeasureError(
+        `No part with id or name "${wanted}". Available: ${available}`,
+      );
+    }
+    return found;
+  };
+  const [pa, pb] = partIds.map((id) => pick(String(id)));
+  if (pa.id === pb.id) {
+    throw new MeasureError(
+      `measure needs two distinct parts — "${pa.id}" was given twice.`,
+    );
+  }
+
+  const { axes, warnings, error } = resolveSweepAxes(doc, sweep);
+  if (error || !axes) throw new MeasureError(error ?? "sweep could not be resolved");
+  const poses = poseGrid(axes);
+  let transforms: Array<Map<string, Transform3D>>;
+  try {
+    transforms = poseTransforms(doc, poses);
+  } catch (e) {
+    throw new MeasureError(e instanceof Error ? e.message : String(e));
+  }
+
+  const keepSamples = poses.length <= MAX_SWEEP_SAMPLES;
+  const samples: SweepSample[] = [];
+  let worst:
+    | { r: ClearanceResult; pose: Pose; a: ResolvedPart; b: ResolvedPart }
+    | undefined;
+  for (let i = 0; i < poses.length; i++) {
+    const placed = placeParts([pa, pb], transforms[i]);
+    if (placed.length < 2) {
+      throw new MeasureError(
+        "One of the parts has an empty mesh at some pose — nothing to measure.",
+      );
+    }
+    let r: ClearanceResult;
+    try {
+      r = engine.meshClearance(placed[0].mesh, placed[1].mesh);
+    } catch (e) {
+      throw new MeasureError(e instanceof Error ? e.message : String(e));
+    }
+    if (keepSamples) {
+      samples.push({
+        pose: roundPose(poses[i]),
+        distance_mm: r6(r.distance),
+        intersecting: r.intersecting,
+      });
+    }
+    if (!worst || worseThan(r, worst.r)) {
+      worst = { r, pose: poses[i], a: placed[0], b: placed[1] };
+    }
+  }
+  if (!worst) throw new MeasureError("Sweep produced no poses to measure.");
+
+  const distance = r6(worst.r.distance);
+  return {
+    mode: "sweep",
+    distance_mm: distance,
+    contact: distance <= 0,
+    intersecting: worst.r.intersecting,
+    worst_pose: roundPose(worst.pose),
+    poses_checked: poses.length,
+    sweep: axes,
+    closest_points: {
+      a: worst.r.pointA.map(r6) as [number, number, number],
+      b: worst.r.pointB.map(r6) as [number, number, number],
+    },
+    parts: {
+      a: partSnapshot(worst.a),
+      b: partSnapshot(worst.b),
+    },
+    ...(keepSamples
+      ? { samples }
+      : {
+          samples_omitted: true,
+          samples_note: `Sweep grid is ${poses.length} poses (over the ${MAX_SWEEP_SAMPLES}-pose sample cap) — the per-pose margin curve was omitted. Lower \`steps\` to get it.`,
+        }),
+    ...(warnings && warnings.length > 0 ? { sweep_warnings: warnings } : {}),
+    note: "`distance_mm` is the WORST (minimum) distance over the swept range, not the authored pose; negative means the parts overlap there (penetration depth). `parts` bboxes are those of the worst pose. Measured from evaluated tessellations — accuracy is tessellation-bound. Joint states are restored: a sweep never edits the document.",
+  };
+}
+
 export const measureSchema = {
   type: "object" as const,
   properties: {
@@ -319,6 +416,8 @@ export const measureSchema = {
       description:
         "One or two part ids (or part names). One id → that part's bbox, volume, and center of mass. Two ids → the minimum distance between them (0/negative = contact/overlap) plus each part's bbox.",
     },
+    joint_state: jointStateSchemaProp,
+    sweep: sweepSchemaProp,
   },
   required: ["document_id", "part_ids"],
 } as const;
@@ -340,20 +439,41 @@ export function measure(
       "Pass `part_ids` as an array of one or two part ids (or part names).",
     );
   }
-  let doc: Document;
+  const { sweep, error: sweepParseError } = parseSweep(args.sweep);
+  if (sweepParseError) return err(sweepParseError);
+
+  let stored: Document;
   try {
-    doc = getSession(documentId);
+    stored = getSession(documentId);
   } catch (e) {
     return err(e instanceof Error ? e.message : String(e));
   }
+  // `joint_state` is the base pose, applied to a clone — the session document
+  // is never mutated. A `sweep` then drives its own axes on top of that pose
+  // (overriding the base state for the joints it names) and restores them.
+  let doc: Document;
+  let pose: PoseInfo | undefined;
+  try {
+    ({ doc, pose } = applyJointState(stored, args.joint_state));
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+
   let payload: Record<string, unknown>;
   try {
-    payload = measureResult(doc, engine, partIds);
+    payload =
+      sweep && sweep.length > 0
+        ? measureSweepResult(doc, engine, partIds, sweep)
+        : measureResult(doc, engine, partIds);
   } catch (e) {
     if (e instanceof MeasureError) return err(e.message);
     throw e;
   }
-  const body = { document_id: documentId, ...payload };
+  const body = {
+    document_id: documentId,
+    ...(pose ? { pose } : {}),
+    ...payload,
+  };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(body) }],
     structuredContent: { measure: body, document_id: documentId },
@@ -372,7 +492,7 @@ export const toolDefs: ToolDef[] = [
     name: "measure",
     pack: null,
     description:
-      "Measure geometry in an open session. Pass `part_ids` with two ids to get the minimum distance between those parts (0/negative = contact/overlap) plus each part's world-space bounding box; pass one id to get that part's bbox, volume, and center of mass. Complements `inspect_cad` (whole-document aggregate) and `check_clearance` (named, persisted air-gap assertions). Distances are measured from evaluated tessellations, so accuracy is tessellation-bound.",
+      "Measure geometry in an open session. Pass `part_ids` with two ids to get the minimum distance between those parts (0/negative = contact/overlap) plus each part's world-space bounding box; pass one id to get that part's bbox, volume, and center of mass. Pass `joint_state` (joint id or name → degrees, mm for sliders) to measure a jointed assembly at one real pose instead of the stored one. Pass `sweep` — [{joint, from, to, steps}] — with TWO part ids to drive the mechanism through its range of motion and get the WORST (minimum) distance over the whole travel, the pose that realizes it (`worst_pose`), and `samples`: the full per-pose margin curve, so you can see where the clearance collapses rather than only that it does (omitted above 256 poses). Sweep endpoints outside a joint's declared limits are reported in `sweep_warnings`, not clamped; joint states are always restored, so a sweep never edits the document. Complements `inspect_cad` (whole-document aggregate) and `check_clearance` (named, persisted air-gap assertions with pass/fail and whole-document audits). Distances are measured from evaluated tessellations — swept poses re-place those same meshes — so accuracy is tessellation-bound.",
     inputSchema: measureSchema,
     handler: (a, c) => measure(a, c.engine),
     behavior: behavior({}),
