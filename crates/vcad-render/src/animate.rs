@@ -486,7 +486,7 @@ fn freeze(solid: &Solid, segments: u32) -> Solid {
 #[cfg(feature = "raster")]
 fn accumulate_verts(fb: &mut crate::FramingBuilder, solid: &Solid, t: &KTransform) {
     let mesh = solid.to_mesh(0); // mesh-backed: a clone, not a tessellation
-    for c in mesh.vertices.chunks_exact(3) {
+    for c in mesh.vertices.as_chunks::<3>().0 {
         let p = t.apply_point(&vcad_kernel::vcad_kernel_math::Point3::new(
             c[0] as f64,
             c[1] as f64,
@@ -509,7 +509,7 @@ fn solid_bbox_corners(solid: &Solid) -> [[f64; 3]; 8] {
     let mesh = solid.to_mesh(crate::TESSELLATION_SEGMENTS);
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
-    for c in mesh.vertices.chunks_exact(3) {
+    for c in mesh.vertices.as_chunks::<3>().0 {
         for i in 0..3 {
             lo[i] = lo[i].min(c[i] as f64);
             hi[i] = hi[i].max(c[i] as f64);
