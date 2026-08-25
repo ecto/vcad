@@ -311,7 +311,7 @@ describe("clearance receipts (build_receipt / verify_receipt)", () => {
  * and clears by a wide margin; at 0° it swings straight through it. Modelling
  * one pose is exactly the trap — the authored pose is the pose that works.
  */
-function swingArmDocument(): Document {
+function swingArmDocument(opts?: { limits?: [number, number] }): Document {
   const nodes: Record<string, unknown> = {};
   let id = 0;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -353,7 +353,11 @@ function swingArmDocument(): Document {
         childInstanceId: "arm-1",
         parentAnchor: { x: 0, y: 0, z: 0 },
         childAnchor: { x: 0, y: 0, z: 0 },
-        kind: { type: "Revolute", axis: { x: 0, y: 0, z: 1 } },
+        kind: {
+          type: "Revolute",
+          axis: { x: 0, y: 0, z: 1 },
+          ...(opts?.limits ? { limits: opts.limits } : {}),
+        },
         state: 90, // authored at the one angle that clears
       },
     ],
@@ -477,6 +481,95 @@ describe("check_clearance sweep", () => {
     const res = out(await verifyReceipt({ document_id: docId, receipt: rebuilt }, engine));
     expect(res.status).toBe("Violated");
     expect(res.clearance.checks[0].poses_checked).toBe(10);
+  });
+
+  it("returns the per-pose margin curve on request, and never persists it", async () => {
+    const docId = openSwingArm();
+    const plain = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          sweep: [{ joint: "shoulder", from: 30, to: 90, steps: 6 }],
+        },
+        engine,
+      ),
+    );
+    expect(plain.samples).toBeUndefined();
+
+    const withSamples = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          label: "knee-swing",
+          include_samples: true,
+          sweep: [{ joint: "shoulder", from: 30, to: 90, steps: 6 }],
+        },
+        engine,
+      ),
+    );
+    expect(withSamples.samples).toHaveLength(7);
+    expect(withSamples.samples[0].pose).toEqual([{ joint: "shoulder", state: 30 }]);
+    expect(withSamples.measured_mm).toBeCloseTo(withSamples.samples[0].distance_mm, 6);
+    // The spec is the assertion, not the curve.
+    const spec = getSession(docId).clearance_specs![0];
+    expect(spec.label).toBe("knee-swing");
+    expect((spec as unknown as Record<string, unknown>).samples).toBeUndefined();
+
+    const built = out(await buildReceipt({ document_id: docId }, engine));
+    const claim = built.unified.claims.find(
+      (c: { id: string }) => c.id === "mech.clearance.knee-swing",
+    );
+    expect(JSON.parse(claim.details).samples).toBeUndefined();
+  });
+
+  it("omits samples above the 256-pose cap and says so", async () => {
+    const docId = openSwingArm();
+    const res = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          include_samples: true,
+          sweep: [{ joint: "shoulder", from: 30, to: 90, steps: 300 }],
+        },
+        engine,
+      ),
+    );
+    expect(res.poses_checked).toBe(301);
+    expect(res.samples).toBeUndefined();
+    expect(res.samples_omitted).toBe(true);
+    expect(res.samples_note).toContain("256");
+  });
+
+  it("warns instead of failing when the sweep exceeds a joint's declared limits", async () => {
+    const docId = out(
+      openDocument({ initial: swingArmDocument({ limits: [30, 90] }) }),
+    ).document_id as string;
+    const res = out(
+      await checkClearance(
+        {
+          document_id: docId,
+          group_a: ["arm-1"],
+          group_b: ["post-1"],
+          min_mm: 1,
+          sweep: [{ joint: "shoulder", from: 0, to: 90, steps: 9 }],
+        },
+        engine,
+      ),
+    );
+    expect(res.sweep_warnings).toHaveLength(1);
+    expect(res.sweep_warnings[0]).toContain("[30, 90]");
+    // Reported, not clamped: the unreachable pose still drives the verdict.
+    expect(res.pass).toBe(false);
+    expect(res.worst_pose).toEqual([{ joint: "shoulder", state: 0 }]);
   });
 });
 

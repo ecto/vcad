@@ -1588,7 +1588,7 @@
   {
     "name": "measure",
     "title": "Measure",
-    "description": "Measure geometry in an open session. Pass `part_ids` with two ids to get the minimum distance between those parts (0/negative = contact/overlap) plus each part's world-space bounding box; pass one id to get that part's bbox, volume, and center of mass. Complements `inspect_cad` (whole-document aggregate) and `check_clearance` (named, persisted air-gap assertions). Distances are measured from evaluated tessellations, so accuracy is tessellation-bound.",
+    "description": "Measure geometry in an open session. Pass `part_ids` with two ids to get the minimum distance between those parts (0/negative = contact/overlap) plus each part's world-space bounding box; pass one id to get that part's bbox, volume, and center of mass. Pass `joint_state` (joint id or name → degrees, mm for sliders) to measure a jointed assembly at one real pose instead of the stored one. Pass `sweep` — [{joint, from, to, steps}] — with TWO part ids to drive the mechanism through its range of motion and get the WORST (minimum) distance over the whole travel, the pose that realizes it (`worst_pose`), and `samples`: the full per-pose margin curve, so you can see where the clearance collapses rather than only that it does (omitted above 256 poses). Sweep endpoints outside a joint's declared limits are reported in `sweep_warnings`, not clamped; joint states are always restored, so a sweep never edits the document. Complements `inspect_cad` (whole-document aggregate) and `check_clearance` (named, persisted air-gap assertions with pass/fail and whole-document audits). Distances are measured from evaluated tessellations — swept poses re-place those same meshes — so accuracy is tessellation-bound.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1602,6 +1602,44 @@
             "type": "string"
           },
           "description": "One or two part ids (or part names). One id → that part's bbox, volume, and center of mass. Two ids → the minimum distance between them (0/negative = contact/overlap) plus each part's bbox."
+        },
+        "joint_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Pose the assembly before evaluating: map of joint id (or joint name) → state — degrees for revolute/ball joints, mm for sliders. Joints not listed keep their stored state, so omitting this renders the document exactly as stored. States outside a joint's declared limits are clamped and reported in `pose.warnings`; an unknown joint key is an error."
+        },
+        "sweep": {
+          "type": "array",
+          "description": "Range-of-motion sweep: drive these joints across their travel and report the WORST pose, not the authored one. Each axis is {joint, from, to, steps}; multiple axes form a Cartesian grid (capped at 4096 poses). Endpoints outside a joint's declared limits are reported as warnings, not clamped. Joint states are restored afterwards — the sweep never edits the document.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "joint": {
+                "type": "string",
+                "description": "Joint id or name to drive."
+              },
+              "from": {
+                "type": "number",
+                "description": "Start of travel (degrees for revolute, mm for prismatic)."
+              },
+              "to": {
+                "type": "number",
+                "description": "End of travel."
+              },
+              "steps": {
+                "type": "number",
+                "description": "Number of intervals; steps + 1 poses are sampled."
+              }
+            },
+            "required": [
+              "joint",
+              "from",
+              "to",
+              "steps"
+            ]
+          }
         }
       },
       "required": [
@@ -8781,7 +8819,7 @@
   {
     "name": "check_clearance",
     "title": "Check Clearance",
-    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at one real pose (joint id or name → degrees, or mm for sliders) instead of the stored one. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` — pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. (2) audit — omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
+    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), a clear/touching/intersecting verdict, the worst part pair, and pass/fail. Pass `allow_contact: true` for parts designed to touch (e.g. bolted flush) so exact contact passes instead of reading as an intersection. Pass `joint_state` to measure at one real pose (joint id or name → degrees, or mm for sliders) instead of the stored one. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Two modes beyond the single-pair snapshot: (1) `sweep` — pass [{joint, from, to, steps}] to drive the mechanism through its range of motion and report the WORST pose, not the one it was authored in (a linkage modelled at mid-travel routinely clears there and collides at both ends); persisted with the label, so the assertion re-verifies over the same range. Sweep endpoints beyond a joint's declared limits are reported in `sweep_warnings` rather than clamped, and `include_samples: true` returns the per-pose margin curve as `samples` (one {pose, distance_mm, intersecting} per pose, omitted above 256 poses and never persisted). Swept distances come from the same tessellated meshes, re-placed per pose, so accuracy stays tessellation-bound. (2) audit — omit `group_a`/`group_b` entirely to broadphase EVERY part pair in the document and list everything that interpenetrates, with penetration depth; whitelist intended contact with `ignore_pairs` (Fixed-joint pairs are skipped by default). Combine both for 'does this machine ever hit itself anywhere in its workspace'.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8824,7 +8862,7 @@
         },
         "sweep": {
           "type": "array",
-          "description": "Range-of-motion sweep: drive these joints across their travel and report the WORST pose, not the authored one. Each axis is {joint, from, to, steps}; multiple axes form a Cartesian grid (capped at 4096 poses). Joint states are restored afterwards — the sweep never edits the document.",
+          "description": "Range-of-motion sweep: drive these joints across their travel and report the WORST pose, not the authored one. Each axis is {joint, from, to, steps}; multiple axes form a Cartesian grid (capped at 4096 poses). Endpoints outside a joint's declared limits are reported as warnings, not clamped. Joint states are restored afterwards — the sweep never edits the document.",
           "items": {
             "type": "object",
             "properties": {
@@ -8852,6 +8890,10 @@
               "steps"
             ]
           }
+        },
+        "include_samples": {
+          "type": "boolean",
+          "description": "Swept queries only: return the per-pose margin curve as `samples` — one {pose, distance_mm, intersecting} entry per pose, in grid order. Omitted (with a note) when the grid exceeds 256 poses. Never persisted with a labelled spec."
         },
         "ignore_pairs": {
           "type": "array",
