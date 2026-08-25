@@ -43,6 +43,10 @@ pub fn value_to_document_in(
                 visible: None,
             });
         }
+        // Named SceneEntry — `[root <symbol> "mat"]`
+        Value::Adt(tag, fields) if tag == "NamedSceneEntry" && fields.len() == 3 => {
+            push_named_entry(&mut ctx, fields)?;
+        }
         // Material definition (standalone)
         Value::Adt(tag, fields) if tag == "Material" && fields.len() == 6 => {
             let name = ctx.str_val(&fields[0])?;
@@ -100,6 +104,29 @@ pub fn value_to_document_in(
     Ok(ctx.doc)
 }
 
+/// Push a `NamedSceneEntry` — solid, material name, root-node name — stamping
+/// the name onto the root IR node so it survives into exports.
+fn push_named_entry(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String> {
+    let root_id = ctx.convert_solid(&fields[0])?;
+    let mat_name = match &fields[1] {
+        Value::Str(s) => s.to_string(),
+        _ => "default".into(),
+    };
+    if let Value::Str(name) = &fields[2] {
+        if !name.is_empty() {
+            if let Some(node) = ctx.doc.nodes.get_mut(&root_id) {
+                node.name = Some(name.to_string());
+            }
+        }
+    }
+    ctx.doc.roots.push(SceneEntry {
+        root: root_id,
+        material: mat_name,
+        visible: None,
+    });
+    Ok(())
+}
+
 /// Process a single item from a Vec (can be SceneEntry, Material, or bare Solid).
 fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String> {
     match value {
@@ -130,6 +157,9 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
                 material: mat_name,
                 visible: None,
             });
+        }
+        Value::Adt(tag, fields) if tag == "NamedSceneEntry" && fields.len() == 3 => {
+            push_named_entry(ctx, fields)?;
         }
         Value::Adt(tag, fields) if tag == "Material" && fields.len() == 6 => {
             let name = ctx.str_val(&fields[0])?;

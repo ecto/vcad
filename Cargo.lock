@@ -7960,6 +7960,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-export",
  "vcad-kernel-gpu",
  "vcad-kernel-raytrace",
  "vcad-loon",

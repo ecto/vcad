@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-25-export-web-glb",
+  "version": "0.9.4",
+  "date": "2026-08-25",
+  "category": "feat",
+  "title": "vcad-render: web export (named-node GLB + JSON)",
+  "summary": "--export-web writes a Y-up GLB with one named, materialed glTF node per part; --export-web-js writes a primitive scene graph for web consumers.",
+  "features": ["render", "export", "glb", "web"],
+  "mcpTools": []
+}
