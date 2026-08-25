@@ -13,7 +13,8 @@
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <N|WxH>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--auto-aspect] [--trim [--trim-margin <px>]]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
-//!   vcad-render <path.vcad> --photoreal --animate [keys.json] -o <dir> [--frames N] [--fps F] [--mp4 out.mp4]
+//!   vcad-render <path.vcad> --animate [keys.json] -o <dir> [--frames N] [--fps F] [--mp4 out.mp4]
+//!                              [--raytrace | --photoreal]   # drafting line art by default
 //!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
@@ -43,13 +44,18 @@
 //! `--animate` renders a jointed assembly over time instead of a single
 //! image: one `frame_NNNN.png` per timeline sample into the directory named
 //! by `-o`, then an H.264 mp4 if ffmpeg is on PATH. The document is
-//! evaluated — and its per-part BVHs built — exactly *once* for the whole
-//! sequence; each frame only re-solves forward kinematics, re-places the
-//! parts, and re-traces. Poses come from the document's own timeline, or
+//! evaluated — and its per-part geometry prepared — exactly *once* for the
+//! whole sequence; each frame only re-solves forward kinematics, re-places
+//! the parts, and re-draws. Poses come from the document's own timeline, or
 //! from the keyframe file given as `--animate <keys.json>`. The camera is
 //! framed on the union of every pose, so the subject neither swims nor
-//! clips. Photoreal only — the tessellated paths are already cheap enough
-//! that per-frame evaluation is not the bottleneck.
+//! clips, and every frame comes out the same size.
+//!
+//! Any style animates: bare `--animate` draws the default drafting line art
+//! (tens of milliseconds a frame), `--raytrace --animate` traces analytic
+//! BRep surfaces, and `--photoreal --animate` path-traces. `--trim` is
+//! refused with `--animate` — a per-frame crop is per-frame sizing, which
+//! is the drift the shared camera exists to prevent.
 //!
 //! Raster framing: `--size` takes `N` (square) or `WxH`, `--auto-aspect`
 //! fits the canvas to the subject's projected aspect ratio, and `--trim`
@@ -415,16 +421,17 @@ struct Cli {
     #[arg(long, requires = "photoreal")]
     no_adaptive: bool,
 
-    /// Render a jointed assembly over time (`--photoreal`): one PNG per
-    /// timeline sample into the directory given by `-o`, evaluating the
-    /// document's geometry exactly once for the whole sequence.
+    /// Render a jointed assembly over time: one PNG per timeline sample
+    /// into the directory given by `-o`, evaluating the document's geometry
+    /// exactly once for the whole sequence. Drawn in the default drafting
+    /// style unless `--raytrace` or `--photoreal` picks another tier.
     ///
     /// Takes an optional keyframe file; bare `--animate` uses the timeline
     /// stored on the document. The file is a timeline — `durationS`, `fps`,
     /// `tracks` — with a shorthand for joint tracks:
     /// `{"joint":"A","keys":[{"t":0,"value":0},{"t":6,"value":1440}]}`.
     /// A joint may be named by id (`joint_0`) or by its authored name.
-    #[arg(long, value_name = "KEYFRAMES.json", num_args = 0..=1, requires = "photoreal")]
+    #[arg(long, value_name = "KEYFRAMES.json", num_args = 0..=1)]
     animate: Option<Option<PathBuf>>,
 
     /// Render only the first N frames of the animation (`--animate`).
@@ -631,7 +638,8 @@ fn render_photoreal_gpu(
 #[cfg(feature = "raytrace")]
 fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     use vcad_render::animate::{
-        assemble_mp4, parse_timeline_spec, render_photoreal_animation, AnimateOptions,
+        assemble_mp4, parse_timeline_spec, render_drafting_animation, render_photoreal_animation,
+        render_raytrace_animation, AnimateOptions,
     };
 
     // `--gpu` bakes each part's transform into the uploaded vertices — the
@@ -645,6 +653,16 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
                     each part's pose into its uploaded vertices, so every frame \
                     would repack and re-upload the whole assembly — which is the \
                     one cost --animate exists to avoid. Drop --gpu."
+                .to_string(),
+        );
+    }
+    // The overlays and the section cut are drawn by the projected 2D path,
+    // which the photoreal tier has no counterpart for — the same refusal the
+    // single-image path makes, made here before anything is evaluated.
+    if cli.photoreal && (cli.section.is_some() || cli.annotations().any()) {
+        return Err(
+            "--photoreal does not compose with --section/--axes/--labels/--dims; \
+             drop --photoreal to animate in the drafting style"
                 .to_string(),
         );
     }
@@ -672,7 +690,6 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
 
     let raw = read_document(input)?;
     let opts = raster_opts(cli, true);
-    let pr = photoreal_options(cli);
     let an = AnimateOptions {
         out_dir: out_dir.clone(),
         timeline,
@@ -680,9 +697,20 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
         fps: cli.fps,
     };
 
-    let report = render_photoreal_animation(&raw, &opts, &pr, &an, &mut |i, n, dt| {
-        eprintln!("frame {i}/{n}  {:.1}s", dt.as_secs_f64());
-    })?;
+    // Style tiers, cheapest first. Each one evaluates the document once and
+    // pins one camera across the sequence; they differ only in how a pose
+    // becomes pixels.
+    let progress = &mut |i: usize, n: usize, dt: std::time::Duration| {
+        eprintln!("frame {i}/{n}  {:.2}s", dt.as_secs_f64());
+    };
+    let report = if cli.photoreal {
+        let pr = photoreal_options(cli);
+        render_photoreal_animation(&raw, &opts, &pr, &an, progress)?
+    } else if cli.raytrace {
+        render_raytrace_animation(&raw, &opts, &an, progress)?
+    } else {
+        render_drafting_animation(&raw, &opts, &an, progress)?
+    };
 
     eprintln!(
         "evaluated {} part(s) once in {:.1}s ({} articulated), setup {:.1}s",
@@ -693,7 +721,7 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     );
     if let (Some(first), median) = (report.per_frame.first(), report.median_frame()) {
         eprintln!(
-            "frame 1 {:.1}s, steady state {:.1}s, {} frames in {:.1}s total",
+            "frame 1 {:.2}s, steady state {:.2}s, {} frames in {:.1}s total",
             first.as_secs_f64(),
             median.as_secs_f64(),
             report.frames.len(),
