@@ -53,7 +53,7 @@ fn unique_name(taken: &mut HashMap<String, usize>, raw: Option<&str>, index: usi
 /// `[x, y, z, …]` buffer: `y' = z`, `z' = −y`. Applies to normals as well as
 /// positions — the map is a rotation, so it preserves unit length.
 fn z_up_to_y_up(flat: &mut [f32]) {
-    for v in flat.chunks_exact_mut(3) {
+    for v in flat.as_chunks_mut::<3>().0 {
         let (y, z) = (v[1], v[2]);
         v[1] = z;
         v[2] = -y;
