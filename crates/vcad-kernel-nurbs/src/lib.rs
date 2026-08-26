@@ -223,9 +223,7 @@ impl BSplineCurve {
         let mut new_pts = Vec::with_capacity(self.control_points.len() + 1);
 
         // Points before the affected range
-        for i in 0..=(span.saturating_sub(p)) {
-            new_pts.push(self.control_points[i]);
-        }
+        new_pts.extend_from_slice(&self.control_points[..=span.saturating_sub(p)]);
 
         // Affected points
         for i in (span - p + 1)..=span {
@@ -239,9 +237,7 @@ impl BSplineCurve {
         }
 
         // Points after the affected range
-        for i in span..=n {
-            new_pts.push(self.control_points[i]);
-        }
+        new_pts.extend_from_slice(&self.control_points[span..=n]);
 
         Self::new(new_pts, new_knots, p)
     }
@@ -682,9 +678,7 @@ impl NurbsCurve {
         // New control points — interpolate in homogeneous space
         let mut new_pts = Vec::with_capacity(self.control_points.len() + 1);
 
-        for i in 0..=(span.saturating_sub(p)) {
-            new_pts.push(self.control_points[i]);
-        }
+        new_pts.extend_from_slice(&self.control_points[..=span.saturating_sub(p)]);
 
         for i in (span - p + 1)..=span {
             let alpha = (t - self.knots[i]) / (self.knots[i + p] - self.knots[i]);
@@ -699,9 +693,7 @@ impl NurbsCurve {
             new_pts.push(WeightedPoint::from_homogeneous(h_new));
         }
 
-        for i in span..=n {
-            new_pts.push(self.control_points[i]);
-        }
+        new_pts.extend_from_slice(&self.control_points[span..=n]);
 
         Self::new(new_pts, new_knots, p)
     }
