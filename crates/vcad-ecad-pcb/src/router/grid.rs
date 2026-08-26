@@ -64,10 +64,8 @@ impl GridRouter {
         let x1 = ((max.x / self.resolution).ceil() as usize).min(self.width);
         let y1 = ((max.y / self.resolution).ceil() as usize).min(self.height);
 
-        for x in x0..x1 {
-            for y in y0..y1 {
-                self.grid[x][y] = CellState::Blocked;
-            }
+        for col in &mut self.grid[x0..x1] {
+            col[y0..y1].fill(CellState::Blocked);
         }
     }
 
@@ -81,10 +79,10 @@ impl GridRouter {
         let x1 = ((max.x / self.resolution).ceil() as usize).min(self.width);
         let y1 = ((max.y / self.resolution).ceil() as usize).min(self.height);
 
-        for x in x0..x1 {
-            for y in y0..y1 {
-                if self.grid[x][y] == CellState::Empty {
-                    self.grid[x][y] = CellState::Occupied(net_id);
+        for col in &mut self.grid[x0..x1] {
+            for cell in &mut col[y0..y1] {
+                if *cell == CellState::Empty {
+                    *cell = CellState::Occupied(net_id);
                 }
             }
         }

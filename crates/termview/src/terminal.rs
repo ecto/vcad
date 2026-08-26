@@ -160,11 +160,7 @@ impl TerminalCaps {
         }
 
         // Check for explicit SIXEL environment hint
-        if env::var("TERM_SIXEL").is_ok() {
-            return true;
-        }
-
-        false
+        env::var("TERM_SIXEL").is_ok()
     }
 
     fn kitty_with_tmux(in_tmux: bool) -> Self {
