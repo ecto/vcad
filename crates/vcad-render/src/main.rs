@@ -303,6 +303,26 @@ struct Cli {
     #[arg(long)]
     no_cache: bool,
 
+    /// Export a web-oriented GLB to this path instead of rendering: one
+    /// NAMED glTF node per visible root (name = the loon `[root sym ...]`
+    /// symbol) and per assembly instance, each with its own PBR material
+    /// resolved from the document, converted from the kernel's Z-up to
+    /// glTF's Y-up. Addressable by name from Three.js.
+    #[arg(long, value_name = "PATH.glb")]
+    export_web: Option<PathBuf>,
+
+    /// Export a small JSON scene graph to this path: per root, the primitive
+    /// tree (cube/cylinder/sphere/cone/torus, transforms, union, patterns)
+    /// for consumers that re-render primitives themselves. Subtrees using
+    /// ops outside that set (booleans, fillets, sweeps, …) become a `mesh`
+    /// placeholder rather than an error. Combines with `--export-web`.
+    #[arg(long, value_name = "PATH.json")]
+    export_web_js: Option<PathBuf>,
+
+    /// Curved-face segment count for `--export-web` tessellation.
+    #[arg(long, default_value_t = 64)]
+    web_segments: u32,
+
     /// Photorealistic path tracing: physically-based materials, a studio
     /// softbox rig, global illumination, and a real camera lens. Needs a
     /// raster output (`.png`/`.jpg`). Much slower than `--raytrace` — tune
@@ -1109,8 +1129,64 @@ fn batch_dest(input: &Path, out_dir: Option<&Path>, format: Format) -> Result<Pa
     }
 }
 
+/// `--export-web` / `--export-web-js`: hand the document to a web consumer
+/// rather than rendering it. Short-circuits the render dispatch entirely.
+fn run_web_export(input: &Path, cli: &Cli) -> Result<(), String> {
+    let raw = read_document(input)?;
+
+    if let Some(dest) = &cli.export_web {
+        let (bytes, summary) = match root_cache_for_web(cli) {
+            Some(cache) => vcad_render::with_root_cache(cache, cli.web_segments, || {
+                vcad_render::web::export_web_glb(&raw, cli.web_segments)
+            }),
+            None => vcad_render::web::export_web_glb(&raw, cli.web_segments),
+        }?;
+        std::fs::write(dest, &bytes).map_err(|e| format!("write {}: {}", dest.display(), e))?;
+        eprintln!(
+            "{} -> {} ({} named nodes, {} bytes, {} segments, Y-up)",
+            input.display(),
+            dest.display(),
+            summary.nodes,
+            bytes.len(),
+            cli.web_segments,
+        );
+    }
+
+    if let Some(dest) = &cli.export_web_js {
+        let (json, summary) = vcad_render::web::export_web_json(&raw)?;
+        std::fs::write(dest, &json).map_err(|e| format!("write {}: {}", dest.display(), e))?;
+        eprintln!(
+            "{} -> {} ({} roots: {} fully primitive, {} with mesh fallback)",
+            input.display(),
+            dest.display(),
+            summary.nodes,
+            summary.roots_primitive,
+            summary.roots_mesh_fallback,
+        );
+    }
+    Ok(())
+}
+
+/// The root-mesh cache for a web export: the same disk cache the renderers
+/// use, opened at `--web-segments` so a hit carries the facet count this
+/// export asked for.
+fn root_cache_for_web(cli: &Cli) -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
+    if cli.no_cache {
+        return None;
+    }
+    vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new)
+}
+
 fn run(cli: &Cli) -> Result<(), String> {
     let inputs = expand_inputs(&cli.inputs)?;
+
+    if cli.export_web.is_some() || cli.export_web_js.is_some() {
+        if inputs.len() > 1 {
+            return Err("--export-web/--export-web-js take a single input".into());
+        }
+        return run_web_export(&inputs[0], cli);
+    }
+
     let batch = inputs.len() > 1 || cli.out_dir.is_some();
 
     if batch {

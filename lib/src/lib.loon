@@ -160,7 +160,11 @@
 ; ---------------------------------------------------------------------------
 
 [type SceneEntry
-  [SceneEntry Solid Str]]
+  [SceneEntry Solid Str]
+  ; As SceneEntry, plus a name for the root node (third field). The bridge
+  ; rewrites [root <symbol> "mat"] into [root-named <symbol> "mat" "<symbol>"]
+  ; so a bound part keeps its loon name in the document and in exports.
+  [NamedSceneEntry Solid Str Str]]
 
 ; ---------------------------------------------------------------------------
 ; Convenience constructors (closures — capture ADT constructors)
@@ -457,6 +461,10 @@
 ; Scene (no subject)
 [let root [fn [solid material-name]
   [SceneEntry solid material-name]]]
+
+; Same, with an explicit name for the resulting root node.
+[let root-named [fn [solid material-name name]
+  [NamedSceneEntry solid material-name name]]]
 
 ; ---------------------------------------------------------------------------
 ; Assembly — parts, instances, joints, and robot assemblies

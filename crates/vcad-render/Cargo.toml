@@ -34,6 +34,7 @@ photoreal-gpu = [
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
+vcad-kernel-export = { workspace = true }
 vcad-ecad-pcb = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"], optional = true }

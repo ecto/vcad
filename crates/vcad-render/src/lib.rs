@@ -49,6 +49,7 @@ pub mod pcb;
 pub mod photoreal;
 #[cfg(feature = "photoreal-gpu")]
 pub mod photoreal_gpu;
+pub mod web;
 
 /// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
 /// checked in node-id order, then the legacy top-level `pcb` field.

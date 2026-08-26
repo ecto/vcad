@@ -1099,6 +1099,7 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
             name: scene_name,
             meshes,
             animation: None,
+            scene_extras: None,
         },
         &f32_data,
         &u32_data,

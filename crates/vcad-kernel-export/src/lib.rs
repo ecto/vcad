@@ -147,6 +147,11 @@ pub struct GlbSpec {
     /// Optional keyframe animation.
     #[serde(default)]
     pub animation: Option<AnimationSpec>,
+    /// Optional free-form JSON stamped on the glTF scene object as
+    /// `scenes[0].extras`. `None` emits no `extras` key at all, so existing
+    /// callers produce byte-identical output.
+    #[serde(default)]
+    pub scene_extras: Option<Value>,
 }
 
 /// STL build request: header name + per-mesh geometry spans.
@@ -589,10 +594,13 @@ pub fn build_glb(
         json!({ "version": "2.0", "generator": "vcad" }),
     );
     root.insert("scene".into(), json!(0));
-    root.insert(
-        "scenes".into(),
-        json!([{ "name": spec.name, "nodes": scene_node_indices }]),
-    );
+    let mut scene_obj = Map::new();
+    scene_obj.insert("name".into(), json!(spec.name));
+    scene_obj.insert("nodes".into(), json!(scene_node_indices));
+    if let Some(extras) = &spec.scene_extras {
+        scene_obj.insert("extras".into(), extras.clone());
+    }
+    root.insert("scenes".into(), json!([Value::Object(scene_obj)]));
     root.insert("nodes".into(), Value::Array(nodes_json));
     root.insert("meshes".into(), Value::Array(meshes_json));
     root.insert("materials".into(), Value::Array(materials_json));
@@ -766,12 +774,44 @@ mod tests {
     }
 
     #[test]
+    fn glb_scene_extras_round_trip() {
+        let (f32d, u32d) = tri_buffers();
+        // None emits no `extras` key at all.
+        let bare = GlbSpec {
+            name: "test".into(),
+            meshes: vec![tri_mesh("1:base", 0, 0)],
+            animation: None,
+            scene_extras: None,
+        };
+        let (json, ..) = parse_glb(&build_glb(&bare, &f32d, &u32d).unwrap());
+        assert!(json["scenes"][0].get("extras").is_none());
+
+        let stamped = GlbSpec {
+            scene_extras: Some(json!({
+                "io.vcad/source_up_axis": "+Z",
+                "io.vcad/converted_to_y_up": true,
+            })),
+            ..bare
+        };
+        let (json, ..) = parse_glb(&build_glb(&stamped, &f32d, &u32d).unwrap());
+        assert_eq!(json["scenes"][0]["extras"]["io.vcad/source_up_axis"], "+Z");
+        assert_eq!(
+            json["scenes"][0]["extras"]["io.vcad/converted_to_y_up"],
+            true
+        );
+        // The rest of the scene object survives.
+        assert_eq!(json["scenes"][0]["nodes"], json!([0]));
+        assert_eq!(json["scenes"][0]["name"], "test");
+    }
+
+    #[test]
     fn glb_basic_structure() {
         let (f32d, u32d) = tri_buffers();
         let spec = GlbSpec {
             name: "test".into(),
             meshes: vec![tri_mesh("1:base", 0, 0)],
             animation: None,
+            scene_extras: None,
         };
         let glb = build_glb(&spec, &f32d, &u32d).unwrap();
         let (json, bin_offset, bin_len) = parse_glb(&glb);
@@ -803,6 +843,7 @@ mod tests {
             name: "s".into(),
             meshes: vec![a, b, c],
             animation: None,
+            scene_extras: None,
         };
         let glb = build_glb(&spec, &f32d, &u32d).unwrap();
         let (json, _, _) = parse_glb(&glb);
@@ -830,6 +871,7 @@ mod tests {
             name: "s".into(),
             meshes: vec![a, b],
             animation: None,
+            scene_extras: None,
         };
         let glb = build_glb(&spec, &f32d, &u32d).unwrap();
         let (json, _, _) = parse_glb(&glb);
@@ -875,6 +917,7 @@ mod tests {
                 root_node_name: Some("__scene_root__".into()),
                 extra_nodes: None,
             }),
+            scene_extras: None,
         };
         let glb = build_glb(&spec, &f32d, &u32d).unwrap();
         let (json, bin_offset, _) = parse_glb(&glb);
@@ -922,6 +965,7 @@ mod tests {
                 root_node_name: None,
                 extra_nodes: None,
             }),
+            scene_extras: None,
         };
         let glb = build_glb(&spec, &f32d, &u32d).unwrap();
         let (json, _, _) = parse_glb(&glb);
@@ -964,6 +1008,7 @@ mod tests {
             name: "s".into(),
             meshes: vec![tri_mesh("1:a", 0, 0)],
             animation: None,
+            scene_extras: None,
         };
         assert!(build_glb(&spec, &[0.0; 3], &[0, 1, 2]).is_err());
     }

@@ -16,6 +16,7 @@ pub mod fastener;
 pub mod modules;
 pub mod params;
 pub mod recover;
+mod rootnames;
 pub use convert::{value_to_document, value_to_document_in};
 pub use modules::{lib_dirs, LibPathProvider, LIB_PATH_VAR};
 
@@ -137,7 +138,10 @@ fn parse_program(source: &str) -> Result<Vec<loon_lang::ast::Expr>, String> {
     // top-level value expression is collected into the document.
     let user_source = collect_top_level_values(source);
     let full_source = format!("{VCAD_LIB_SOURCE}\n\n{user_source}");
-    loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())
+    let mut exprs = loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())?;
+    // `[root wheel "steel"]` keeps the binding name on the root node.
+    rootnames::capture(&mut exprs);
+    Ok(exprs)
 }
 
 /// Evaluate a parsed program with the given module resolver.
@@ -411,6 +415,37 @@ mod tests {
         let doc = eval_vcad("[root [cube 10.0 10.0 10.0] \"steel\"]", None).unwrap();
         assert_eq!(doc.roots.len(), 1);
         assert_eq!(doc.roots[0].material, "steel");
+    }
+
+    #[test]
+    fn root_captures_binding_name() {
+        let source = r#"
+[let wheel [cylinder 10.0 5.0]]
+[root wheel "steel"]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.roots.len(), 1);
+        let node = &doc.nodes[&doc.roots[0].root];
+        assert_eq!(node.name.as_deref(), Some("wheel"));
+    }
+
+    #[test]
+    fn root_of_expression_has_no_name() {
+        let doc = eval_vcad("[root [cylinder 10.0 5.0] \"steel\"]", None).unwrap();
+        assert_eq!(doc.nodes[&doc.roots[0].root].name, None);
+    }
+
+    #[test]
+    fn root_named_takes_explicit_name() {
+        let source = r#"
+[let wheel [cylinder 10.0 5.0]]
+[root-named wheel "steel" "front-wheel"]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(
+            doc.nodes[&doc.roots[0].root].name.as_deref(),
+            Some("front-wheel")
+        );
     }
 
     #[test]
