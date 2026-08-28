@@ -307,22 +307,36 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
     if json.is_null() {
         return ptr::null_mut();
     }
+    err::clear_error();
     catch_unwind(AssertUnwindSafe(|| {
         let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
         let text = match std::str::from_utf8(bytes) {
             Ok(t) => t,
-            Err(_) => return ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("document is not UTF-8: {e}"));
+                return ptr::null_mut();
+            }
         };
+        // Why the diagnosis matters here: serde names the offending field and
+        // line ("missing field `partDefId` at line 107"), and dropping it left
+        // callers to render an empty scene with no way to say why. A schema
+        // mismatch then presents as a renderer bug.
         let doc = match Document::from_json(text) {
             Ok(d) => d,
-            Err(_) => return ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("parse: {e}"));
+                return ptr::null_mut();
+            }
         };
         match evaluate_document(&doc, &EvalOptions::default()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
             })),
-            Err(_) => ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("evaluate: {e}"));
+                ptr::null_mut()
+            }
         }
     }))
     .unwrap_or(ptr::null_mut())
@@ -345,13 +359,19 @@ pub extern "C" fn vcad_scene_from_json_in(
     if json.is_null() {
         return ptr::null_mut();
     }
+    err::clear_error();
     catch_unwind(AssertUnwindSafe(|| {
         let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
         let Ok(text) = std::str::from_utf8(bytes) else {
+            err::set_error("document is not UTF-8");
             return ptr::null_mut();
         };
-        let Ok(mut doc) = Document::from_json(text) else {
-            return ptr::null_mut();
+        let mut doc = match Document::from_json(text) {
+            Ok(d) => d,
+            Err(e) => {
+                err::set_error(format!("parse: {e}"));
+                return ptr::null_mut();
+            }
         };
         if !base_dir.is_null() && base_dir_len > 0 {
             let db = unsafe { std::slice::from_raw_parts(base_dir, base_dir_len) };
@@ -364,7 +384,10 @@ pub extern "C" fn vcad_scene_from_json_in(
                 inner: scene,
                 doc: Some(doc),
             })),
-            Err(_) => ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("evaluate: {e}"));
+                ptr::null_mut()
+            }
         }
     }))
     .unwrap_or(ptr::null_mut())
