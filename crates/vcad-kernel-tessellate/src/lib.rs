@@ -7217,18 +7217,89 @@ fn collapse_short_defective_edges(mesh: &mut TriangleMesh) {
     }
 }
 
+/// Collapse exactly-degenerate triangles by merging their two closest
+/// corners. A DP fill or zip can emit a collinear triple; its plane
+/// normal normalizes to NaN, which the STEP writer emits verbatim as
+/// `DIRECTION('', (NaN, NaN, NaN))` — a file that cannot be re-imported.
+/// Merging (rather than dropping) keeps the neighbourhood paired; the
+/// vertex shift is bounded by the sliver's own size.
+fn collapse_zero_area_triangles(mesh: &mut TriangleMesh) {
+    for _ in 0..4 {
+        let v = |i: u32| {
+            let k = i as usize * 3;
+            [
+                mesh.vertices[k] as f64,
+                mesh.vertices[k + 1] as f64,
+                mesh.vertices[k + 2] as f64,
+            ]
+        };
+        let mut remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for tri in mesh.indices.chunks(3) {
+            let (a, b, c) = (tri[0], tri[1], tri[2]);
+            let (pa, pb, pc) = (v(a), v(b), v(c));
+            let u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            let w = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+            let n = [
+                u[1] * w[2] - u[2] * w[1],
+                u[2] * w[0] - u[0] * w[2],
+                u[0] * w[1] - u[1] * w[0],
+            ];
+            if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-24 {
+                continue;
+            }
+            let d2 = |x: [f64; 3], y: [f64; 3]| {
+                (x[0] - y[0]).powi(2) + (x[1] - y[1]).powi(2) + (x[2] - y[2]).powi(2)
+            };
+            let pairs = [(a, b, d2(pa, pb)), (b, c, d2(pb, pc)), (c, a, d2(pc, pa))];
+            if let Some(&(x, y, _)) = pairs.iter().min_by(|p, q| p.2.total_cmp(&q.2)) {
+                let (keep, drop) = (x.min(y), x.max(y));
+                let entry = remap.entry(drop).or_insert(keep);
+                *entry = (*entry).min(keep);
+            }
+        }
+        if remap.is_empty() {
+            return;
+        }
+        let resolve = |mut i: u32| {
+            while let Some(&j) = remap.get(&i) {
+                if j >= i {
+                    break;
+                }
+                i = j;
+            }
+            i
+        };
+        let ntri = mesh.indices.len() / 3;
+        let tagged = mesh.face_kinds.len() == ntri;
+        let mut indices = Vec::with_capacity(mesh.indices.len());
+        let mut kinds = Vec::new();
+        for (t, tri) in mesh.indices.chunks(3).enumerate() {
+            let (a, b, c) = (resolve(tri[0]), resolve(tri[1]), resolve(tri[2]));
+            if a != b && b != c && a != c {
+                indices.extend_from_slice(&[a, b, c]);
+                if tagged {
+                    kinds.push(mesh.face_kinds[t]);
+                }
+            }
+        }
+        mesh.indices = indices;
+        if tagged {
+            mesh.face_kinds = kinds;
+        }
+    }
+}
+
 /// Best-effort watertightness repair: peel redundant patches, snap and
 /// stitch slit rails, bridge narrow boundary loops, and carve-and-refill
 /// what remains. Every constituent pass is individually reverted when it
 /// fails to strictly reduce the defective-edge count, so the result is
 /// never worse than the input.
 pub fn repair_watertightness(mesh: &mut TriangleMesh) {
-    if std::env::var("VCAD_NO_REPAIR").is_ok() {
-        return;
-    }
     if !worth_repairing(mesh) {
         return;
     }
+    let original = mesh.clone();
+    let original_boundary = mesh.boundary_edges().len();
     // Each pass exposes work for the others — a snap closes a slit whose
     // corner then chains, a carve isolates a doubled remnant the peeler
     // can take next round — so iterate the whole set until it stops
@@ -7280,6 +7351,16 @@ pub fn repair_watertightness(mesh: &mut TriangleMesh) {
     // actually there.
     weld_coincident_vertices(mesh);
     heal_t_junctions(mesh);
+    collapse_zero_area_triangles(mesh);
+    // Hard exit invariant: the repair optimizes a position-quantized
+    // defect measure, but plenty of consumers (the torture track's
+    // validity oracle among them) count INDEX-level boundary edges. A
+    // "repair" that closes doubled sheets while leaving more raw boundary
+    // edges than it started with is a regression to them — hand back the
+    // input instead.
+    if mesh.boundary_edges().len() > original_boundary {
+        *mesh = original;
+    }
 }
 
 #[cfg(test)]

@@ -639,7 +639,12 @@ pub fn boolean_op_reported(
     // precisely BECAUSE they take this swap — a fallback that closes every
     // crack while carrying a few over-used edges is still strictly better
     // than the cracked B-rep it replaces.
-    let alt_usable = alt_report.triangles > 0 && agree;
+    // Watertightness is demanded on BOTH metrics: the net directed count
+    // (which a doubled sheet can fool) and raw index-level boundary edges
+    // (what downstream validity oracles — the torture track's included —
+    // actually count). A fallback that only closes one of them is not an
+    // upgrade.
+    let alt_usable = alt_report.triangles > 0 && agree && alt_mesh.boundary_edges().is_empty();
     if alt_usable && alt_report.open_edges == 0 {
         let mut report =
             BooleanReport::degraded(op, DegradeReason::WatertightnessSwap).with_result(&alt);
@@ -838,12 +843,21 @@ fn mesh_fallback(
         // input the parity and patch analyses these passes rest on are
         // unreliable, and letting them "repair" a soup chain measurably
         // added volume (a chained pocket-and-slot part read 4% high).
+        let unrefined = out.clone();
+        let unrefined_boundary = out.boundary_edges().len();
         crate::mesh::remove_interior_membranes(&mut out);
         vcad_kernel_tessellate::repair_watertightness(&mut out);
         // Second projection pulls anything the repair moved back onto its
         // carrier. Vertices the repair did not move are already
         // on-surface, so a changed pinning decision cannot displace them.
         quadrics.project_mesh(&mut out);
+        // Same exit invariant as the repair pipeline itself, held at THIS
+        // level because the passes between the projections interact: the
+        // refinement must not hand back more raw boundary edges than the
+        // plain fallback had.
+        if out.boundary_edges().len() > unrefined_boundary {
+            out = unrefined;
+        }
     }
     validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;
     let mut brep = crate::mesh::mesh_to_brep(&out);
