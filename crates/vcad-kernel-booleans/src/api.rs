@@ -80,7 +80,11 @@ impl BooleanResult {
     /// Get the triangle mesh by tessellating the B-rep.
     pub fn to_mesh(&self, segments: u32) -> TriangleMesh {
         match self {
-            BooleanResult::BRep(brep) => tessellate_brep(brep.as_ref(), segments),
+            BooleanResult::BRep(brep) => {
+                let mut mesh = tessellate_brep(brep.as_ref(), segments);
+                repair_export_mesh(brep.as_ref(), &mut mesh);
+                mesh
+            }
         }
     }
 
@@ -372,7 +376,7 @@ pub fn boolean_op_reported(
     if crate::mesh::is_triangle_soup(solid_a) || crate::mesh::is_triangle_soup(solid_b) {
         let mesh_a = tessellate_brep(solid_a, segments);
         let mesh_b = tessellate_brep(solid_b, segments);
-        let result = mesh_fallback(&mesh_a, &mesh_b, op, &quadrics)?;
+        let result = mesh_fallback(&mesh_a, &mesh_b, op, &quadrics, false)?;
         let report = BooleanReport::degraded(op, DegradeReason::SoupOperand).with_result(&result);
         return Ok((result, report));
     }
@@ -406,12 +410,26 @@ pub fn boolean_op_reported(
     // two tessellations against a pipeline that has already run SSI,
     // splitting, classification and sewing — and the guard's expensive half
     // (the probe grid) still only runs when the cheap volume test trips.
-    let operands = (flagged || sphere_unrepresentable || inverted || op == BooleanOp::Difference)
+    // Wide cracks are decided here, before the operand gate, because a
+    // wide-cracked UNION needs its operand meshes too: the tool side of a
+    // later difference is often exactly such a union, and keeping its
+    // broken analytic result poisons everything downstream.
+    let wide_cracks = max_open_edge_gap(&result_mesh) > WIDE_CRACK_GAP;
+    let operands = (flagged
+        || sphere_unrepresentable
+        || inverted
+        || wide_cracks
+        || op == BooleanOp::Difference)
         .then(|| {
-            (
-                tessellate_brep(solid_a, segments),
-                tessellate_brep(solid_b, segments),
-            )
+            let mut a = tessellate_brep(solid_a, segments);
+            let mut b = tessellate_brep(solid_b, segments);
+            // An operand can arrive carrying interior membranes (an earlier
+            // boolean keeping a wall through solid material); they corrupt
+            // every parity-based consumer of these meshes — the Monte-Carlo
+            // volume oracle as much as the fallback's classifier.
+            crate::mesh::remove_interior_membranes(&mut a);
+            crate::mesh::remove_interior_membranes(&mut b);
+            (a, b)
         });
 
     // The sphere gate is a capability flag like the others, not a verdict.
@@ -499,7 +517,7 @@ pub fn boolean_op_reported(
             // trusted even though it kept its surfaces.
             return Ok(keep(result));
         };
-        let alt = mesh_fallback(mesh_a, mesh_b, op, &quadrics)?;
+        let alt = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true)?;
         let reason = broken_reason.unwrap_or(DegradeReason::VolumeDisagreement);
         let mut report = BooleanReport::degraded(op, reason).with_result(&alt);
         report.flagged_unrepresentable = flagged || sphere_unrepresentable;
@@ -548,30 +566,85 @@ pub fn boolean_op_reported(
     // and lost 505 mm³. The measurement's job is to make doubled surface
     // VISIBLE (`open_edges` is a net directed count and cancels on it);
     // repairing it belongs at its root, in the splitters.
-    if !(flagged || sphere_unrepresentable || inverted) {
+    // One more eligibility trigger, measured rather than flagged: WIDE
+    // cracks. Counts cannot separate good from bad results (see above),
+    // but crack *width* can — a hairline seam's two rails are coincident
+    // to machine precision (b1's blade cut measures well under a micron),
+    // while a splitter that trimmed two adjacent faces to different
+    // polylines leaves rails 0.3–1.25 mm apart (the shell-ring
+    // multi-tool reproducer: a bore crossed by a groove cylinder AND slot
+    // side planes, where the band trim snapped to its arc grid). Material
+    // is genuinely missing from the skin at that scale, so the analytic
+    // surfaces are not worth keeping. The swap still demands the fallback
+    // be watertight and agree on volume before it is taken.
+    // A partially skipped cut hides from every crack metric: the shell-ring
+    // reproducer's chained form dropped one slot of a three-slot pattern
+    // with a gap reading of just 0.159 mm — indistinguishable from the
+    // cone×cylinder overlaps whose analytic surfaces are worth keeping.
+    // But it cannot hide from a probe of the region the cut was supposed
+    // to empty: sample tool ∩ subject, and a missed feature shows up as a
+    // solid block of "removed" material still present in the result. Only
+    // consulted when the result already shows structural damage — a clean
+    // result is not re-litigated.
+    let missed_cut = op == BooleanOp::Difference
+        && (result_open_edges > 0 || result_structure.overused_edges > 0)
+        && !wide_cracks
+        && operands
+            .as_ref()
+            .is_some_and(|(a, b)| difference_left_tool_material(&result_mesh, a, b));
+    // A difference that carries doubled surface at scale is offering flap
+    // membranes to every downstream boolean — the shell-ring chained form
+    // kept such a result (6 open, 5 over-used edges) whose flaps made the
+    // next stage's fallback seal a slot shut. Offer it to the swap. The
+    // floor sits above the catalogue's known-good differences (b1's blade
+    // cut scores 3 open, 1 over-used, and must keep its analytic wall).
+    let doubled_difference = op == BooleanOp::Difference
+        && result_open_edges >= 4
+        && result_structure.overused_edges >= 3;
+    if !(flagged
+        || sphere_unrepresentable
+        || inverted
+        || wide_cracks
+        || missed_cut
+        || doubled_difference)
+    {
         return Ok(keep(result));
     }
     let Some((mesh_a, mesh_b)) = &operands else {
         return Ok(keep(result));
     };
-    if result_open_edges == 0 {
+    if result_open_edges == 0 && result_structure.overused_edges == 0 {
         return Ok(keep(result));
     }
-    let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics) else {
+    let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true) else {
         return Ok(keep(result));
     };
     let alt_mesh = alt.to_mesh(segments);
     let alt_report = crate::mesh_report(&alt_mesh);
     let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
     let alt_vol = alt_report.signed_volume.abs();
-    let agree = (alt_vol - brep_vol).abs() <= 0.10 * brep_vol.max(alt_vol);
+    // Agreement with the analytic result is only meaningful while that
+    // result's own volume is meaningful. A doubled-sheet defect (the very
+    // thing a wide-cracked result tends to carry) double-counts whatever
+    // it encloses, so on the shell-ring reproducer the analytic mesh read
+    // 89 cm³ against a true 43 cm³ — and the correct fallback was refused
+    // for failing to match a garbage number. Fall back to the
+    // operand-implied Monte-Carlo prediction: it asks the operands, not
+    // the broken result, what the volume should be.
+    let agree = (alt_vol - brep_vol).abs() <= 0.10 * brep_vol.max(alt_vol)
+        || !crate::validate::volume_disagrees_grossly(&alt_mesh, mesh_a, mesh_b, op);
     // The fallback is taken only if it is watertight and agrees on volume.
     // Note what is NOT required: that it be manifold. Adding that cost
     // five torture cases (chain-00/08/10, rand-072, rand-220), which pass
     // precisely BECAUSE they take this swap — a fallback that closes every
     // crack while carrying a few over-used edges is still strictly better
     // than the cracked B-rep it replaces.
-    let alt_usable = alt_report.triangles > 0 && agree;
+    // Watertightness is demanded on BOTH metrics: the net directed count
+    // (which a doubled sheet can fool) and raw index-level boundary edges
+    // (what downstream validity oracles — the torture track's included —
+    // actually count). A fallback that only closes one of them is not an
+    // upgrade.
+    let alt_usable = alt_report.triangles > 0 && agree && alt_mesh.boundary_edges().is_empty();
     if alt_usable && alt_report.open_edges == 0 {
         let mut report =
             BooleanReport::degraded(op, DegradeReason::WatertightnessSwap).with_result(&alt);
@@ -580,6 +653,169 @@ pub fn boolean_op_reported(
         return Ok((alt, report));
     }
     Ok(keep(result))
+}
+
+/// Export-boundary mesh repair: run the watertightness pipeline, then pull
+/// every vertex the repair may have moved back onto the analytic carriers
+/// the solid still knows about (a triangle-soup fallback result stashes
+/// its operands' quadrics in its geometry store precisely for this).
+/// Without the re-projection, a repair chasing a slit across a curved seam
+/// flattens it — measured 0.36 mm off a R25 sphere at 32 segments.
+pub fn repair_export_mesh(brep: &BRepSolid, mesh: &mut TriangleMesh) {
+    vcad_kernel_tessellate::repair_watertightness(mesh);
+    // Re-projection is for triangle-soup fallback results only: they
+    // stash their operands' quadric carriers precisely so a repair here
+    // can be pulled back on-surface. An ANALYTIC B-rep's surface list
+    // covers the whole model, and projecting its tessellation against
+    // all of it "corrects" legitimate vertices near unrelated carriers
+    // (measured: a sheet-metal fold losing 46 mm³ of its relief notch).
+    if crate::mesh::is_triangle_soup(brep) {
+        QuadricCtx::collect(brep, brep).project_mesh(mesh);
+    }
+}
+
+/// Rail separation (mm) above which a crack counts as a genuine gap
+/// rather than a hairline seam. Measured across the torture corpus:
+/// hairline rails coincide to well under a micron, a cone×cylinder
+/// generic overlap that is worth keeping analytic peaks at 0.134 mm, and
+/// the real trim mismatches this trigger exists for (the shell-ring
+/// multi-tool reproducer) measure 2.9–4.0 mm. The threshold sits an
+/// order of magnitude clear of both neighbours.
+const WIDE_CRACK_GAP: f64 = 0.5;
+
+/// The widest gap between an open edge and the rest of the open-edge set.
+///
+/// For each unpaired (net directed count ≠ 0) edge, measure the distance
+/// from its midpoint to the nearest other open edge; return the maximum.
+/// A hairline crack's two rails are nearly coincident, so every open edge
+/// has a close partner and the maximum stays tiny. An open edge with no
+/// partner within [`ISOLATED_OPEN_EDGE`] is a pinhole, not a slit, and
+/// contributes nothing — a slit always has two rails.
+fn max_open_edge_gap(mesh: &TriangleMesh) -> f64 {
+    const ISOLATED_OPEN_EDGE: f64 = 5.0;
+    let quantum = 1e-5;
+    let vkey = |vi: usize| -> [i64; 3] {
+        [
+            (mesh.vertices[vi * 3] as f64 / quantum).round() as i64,
+            (mesh.vertices[vi * 3 + 1] as f64 / quantum).round() as i64,
+            (mesh.vertices[vi * 3 + 2] as f64 / quantum).round() as i64,
+        ]
+    };
+    let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+        std::collections::HashMap::new();
+    for t in 0..mesh.indices.len() / 3 {
+        for k in 0..3 {
+            let x = vkey(mesh.indices[t * 3 + k] as usize);
+            let y = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+            if x == y {
+                continue;
+            }
+            if x < y {
+                *net.entry((x, y)).or_default() += 1;
+            } else {
+                *net.entry((y, x)).or_default() -= 1;
+            }
+        }
+    }
+    let open: Vec<([f64; 3], [f64; 3])> = net
+        .iter()
+        .filter(|&(_, &n)| n != 0)
+        .map(|(&(a, b), _)| {
+            let p = |k: [i64; 3]| {
+                [
+                    k[0] as f64 * quantum,
+                    k[1] as f64 * quantum,
+                    k[2] as f64 * quantum,
+                ]
+            };
+            (p(a), p(b))
+        })
+        .collect();
+    let seg_dist = |p: [f64; 3], a: [f64; 3], b: [f64; 3]| -> f64 {
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+        let t = if l2 > 0.0 {
+            (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / l2)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let q = [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]];
+        ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt()
+    };
+    let mut widest = 0.0_f64;
+    for (i, &(a, b)) in open.iter().enumerate() {
+        let mid = [
+            (a[0] + b[0]) / 2.0,
+            (a[1] + b[1]) / 2.0,
+            (a[2] + b[2]) / 2.0,
+        ];
+        let mut nearest = f64::INFINITY;
+        for (j, &(c, d)) in open.iter().enumerate() {
+            if i != j {
+                nearest = nearest.min(seg_dist(mid, c, d));
+            }
+        }
+        if nearest.is_finite() && nearest <= ISOLATED_OPEN_EDGE {
+            widest = widest.max(nearest);
+        }
+    }
+    widest
+}
+
+/// Fraction of tool∩subject sample points still inside a difference's
+/// result above which the cut is judged partially skipped.
+///
+/// Sample points sit on a grid over the TOOL's bounding box, so a missed
+/// feature is a large share of them (one dropped slot of a three-slot
+/// pattern is a third of the removed region), while hairline boundary
+/// noise on a correct result touches only grid points grazing the
+/// surface.
+const MISSED_CUT_FRACTION: f64 = 0.10;
+
+/// Does `result` (of `subject − tool`) still contain material deep inside
+/// the region the tool overlaps the subject?
+fn difference_left_tool_material(
+    result: &TriangleMesh,
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+) -> bool {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for v in mesh_b.vertices.chunks(3) {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v[k] as f64);
+            hi[k] = hi[k].max(v[k] as f64);
+        }
+    }
+    if lo.iter().any(|v| !v.is_finite()) || hi.iter().any(|v| !v.is_finite()) {
+        return false;
+    }
+    let idx_a = crate::mesh::MeshRayIndex::new(mesh_a);
+    let idx_b = crate::mesh::MeshRayIndex::new(mesh_b);
+    let idx_r = crate::mesh::MeshRayIndex::new(result);
+    const N: usize = 14;
+    let mut expected_removed = 0usize;
+    let mut still_present = 0usize;
+    for i in 0..N {
+        for j in 0..N {
+            for k in 0..N {
+                let f = |t: usize| (t as f64 + 0.5) / N as f64;
+                let p = Point3::new(
+                    lo[0] + (hi[0] - lo[0]) * f(i),
+                    lo[1] + (hi[1] - lo[1]) * f(j),
+                    lo[2] + (hi[2] - lo[2]) * f(k),
+                );
+                if idx_a.contains(&p) && idx_b.contains(&p) {
+                    expected_removed += 1;
+                    if idx_r.contains(&p) {
+                        still_present += 1;
+                    }
+                }
+            }
+        }
+    }
+    expected_removed >= 20 && (still_present as f64) > MISSED_CUT_FRACTION * expected_removed as f64
 }
 
 /// Mesh-CSG fallback: combine the operand tessellations with the BSP
@@ -592,9 +828,37 @@ fn mesh_fallback(
     mesh_b: &TriangleMesh,
     op: BooleanOp,
     quadrics: &QuadricCtx,
+    refine: bool,
 ) -> Result<BooleanResult, BooleanError> {
     let mut out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
+    // First projection runs on the pristine topology: the constraint each
+    // vertex lives under is read off its incident triangle normals, so it
+    // must be decided before any repair deletes or moves anything.
     quadrics.project_mesh(&mut out);
+    if refine {
+        // Kept "In" fragments can include an operand's interior structure
+        // — strip membranes from the result as well; then close what the
+        // splitters and classification left open or doubled. This runs
+        // only on FIRST-generation fallbacks: on chained triangle-soup
+        // input the parity and patch analyses these passes rest on are
+        // unreliable, and letting them "repair" a soup chain measurably
+        // added volume (a chained pocket-and-slot part read 4% high).
+        let unrefined = out.clone();
+        let unrefined_boundary = out.boundary_edges().len();
+        crate::mesh::remove_interior_membranes(&mut out);
+        vcad_kernel_tessellate::repair_watertightness(&mut out);
+        // Second projection pulls anything the repair moved back onto its
+        // carrier. Vertices the repair did not move are already
+        // on-surface, so a changed pinning decision cannot displace them.
+        quadrics.project_mesh(&mut out);
+        // Same exit invariant as the repair pipeline itself, held at THIS
+        // level because the passes between the projections interact: the
+        // refinement must not hand back more raw boundary edges than the
+        // plain fallback had.
+        if out.boundary_edges().len() > unrefined_boundary {
+            out = unrefined;
+        }
+    }
     validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;
     let mut brep = crate::mesh::mesh_to_brep(&out);
     // Carry the operands' quadric carriers forward in the result's geometry

@@ -18,6 +18,7 @@ pub mod clearance;
 mod creased_normals;
 pub mod frozen;
 pub mod mesh_props;
+pub mod mesh_ray;
 pub use mesh_props::{compute_mesh_properties, MeshBBox, MeshProperties};
 pub mod placement;
 mod render_bake;
@@ -743,8 +744,157 @@ fn heal_t_junctions(mesh: &mut TriangleMesh) {
 
 /// Undirected edges used by a number of triangles other than two — the
 /// watertightness defect count. Zero on a closed manifold mesh.
+/// Should the heavy repair pipeline touch this mesh at all?
+///
+/// Hairline seams — rails coincident to well under a micron — are already
+/// handled exactly by the weld and T-junction stitch, and the heavy
+/// passes move real vertices (rail snapping alone may shift them by
+/// millimetres), which measurably perturbs volume. So the pipeline only
+/// engages on *structural* defects: an overused or direction-imbalanced
+/// edge (doubled sheet, fin, membrane rim), or an open slit whose two
+/// rails sit visibly apart.
+fn worth_repairing(mesh: &TriangleMesh) -> bool {
+    // Matches the boolean layer's wide-crack threshold: seams narrower
+    // than this belong to results whose analytic form is worth keeping
+    // untouched (a blade-annulus sliver cut reads 0.25 mm), while real
+    // trim mismatches measure 2.9-4.0 mm.
+    const WIDE_GAP: f64 = 0.5;
+    const ISOLATED: f64 = 5.0;
+
+    let q = |x: f32| (x as f64 * 1e4).round() as i64;
+    let vkey = |i: u32| {
+        let k = i as usize * 3;
+        (
+            q(mesh.vertices[k]),
+            q(mesh.vertices[k + 1]),
+            q(mesh.vertices[k + 2]),
+        )
+    };
+    type K = (i64, i64, i64);
+    let mut counts: std::collections::HashMap<(K, K), (u32, i32)> =
+        std::collections::HashMap::new();
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (vkey(t[k]), vkey(t[(k + 1) % 3]));
+            if a == b {
+                continue;
+            }
+            let (key, s) = if a < b { ((a, b), 1) } else { ((b, a), -1) };
+            let e = counts.entry(key).or_default();
+            e.0 += 1;
+            e.1 += s;
+        }
+    }
+    let mut open: Vec<([f64; 3], [f64; 3])> = Vec::new();
+    for (&(a, b), &(n, net)) in &counts {
+        if n > 2 || net.unsigned_abs() > 1 {
+            // Severity, not count, decides: known-good results carry over
+            // a hundred short three-way seam edges (a 23-instance
+            // blade-annulus pattern scores 184, all n=3 and 0.5 mm) and
+            // repairing them buys nothing but vertex perturbation — while
+            // a flap a slicer trips on stands on a LONG or heavily-shared
+            // edge (the chained shell-ring's residuals: n=8, and n=4 at
+            // 2.1-3.5 mm).
+            let p = |k: (i64, i64, i64)| [k.0 as f64 * 1e-4, k.1 as f64 * 1e-4, k.2 as f64 * 1e-4];
+            let (pa, pb) = (p(a), p(b));
+            let len = ((pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2) + (pa[2] - pb[2]).powi(2))
+                .sqrt();
+            if n > 4 || len > 1.5 {
+                return true;
+            }
+            continue;
+        }
+        if n != 2 || net != 0 {
+            let p = |k: K| [k.0 as f64 * 1e-4, k.1 as f64 * 1e-4, k.2 as f64 * 1e-4];
+            open.push((p(a), p(b)));
+        }
+    }
+    // Any open edge whose nearest fellow open edge sits visibly apart is a
+    // real slit; coincident rails (and isolated pinholes) are not.
+    let seg_dist = |p: [f64; 3], a: [f64; 3], b: [f64; 3]| -> f64 {
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+        let t = if l2 > 0.0 {
+            (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / l2)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let qq = [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]];
+        ((qq[0] - p[0]).powi(2) + (qq[1] - p[1]).powi(2) + (qq[2] - p[2]).powi(2)).sqrt()
+    };
+    for (i, &(a, b)) in open.iter().enumerate() {
+        let mid = [
+            (a[0] + b[0]) / 2.0,
+            (a[1] + b[1]) / 2.0,
+            (a[2] + b[2]) / 2.0,
+        ];
+        let mut nearest = f64::INFINITY;
+        for (j, &(c, d)) in open.iter().enumerate() {
+            if i != j {
+                nearest = nearest.min(seg_dist(mid, c, d));
+            }
+        }
+        if nearest > WIDE_GAP && nearest <= ISOLATED {
+            return true;
+        }
+    }
+    false
+}
+
+fn mesh_signed_volume_f64(mesh: &TriangleMesh) -> f64 {
+    let mut vol = 0.0_f64;
+    for tri in mesh.indices.chunks(3) {
+        let p = |k: u32| {
+            let i = k as usize * 3;
+            [
+                mesh.vertices[i] as f64,
+                mesh.vertices[i + 1] as f64,
+                mesh.vertices[i + 2] as f64,
+            ]
+        };
+        let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+        vol += a[0] * (b[1] * c[2] - c[1] * b[2]) - b[0] * (a[1] * c[2] - c[1] * a[2])
+            + c[0] * (a[1] * b[2] - b[1] * a[2]);
+    }
+    vol / 6.0
+}
+
 fn defective_edge_count(mesh: &TriangleMesh) -> usize {
-    mesh.edge_use_counts().values().filter(|&&n| n != 2).count()
+    // Two subtleties both matter here. Direction: a same-winding double
+    // cover pairs "cleanly" in undirected counts (two uses) while both
+    // traversals run the same way (net ±2) — a doubled sheet, not a
+    // closed surface. Position: consumers (STL slicers, the exports) pair
+    // faces by coordinates, not by our vertex indices, so counting on
+    // quantized positions measures what they will actually see.
+    let q = |x: f32| (x as f64 * 1e4).round() as i64;
+    let vkey = |i: u32| {
+        let k = i as usize * 3;
+        (
+            q(mesh.vertices[k]),
+            q(mesh.vertices[k + 1]),
+            q(mesh.vertices[k + 2]),
+        )
+    };
+    type K = (i64, i64, i64);
+    let mut counts: std::collections::HashMap<(K, K), (u32, i32)> =
+        std::collections::HashMap::new();
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (vkey(t[k]), vkey(t[(k + 1) % 3]));
+            if a == b {
+                continue;
+            }
+            let (key, s) = if a < b { ((a, b), 1) } else { ((b, a), -1) };
+            let e = counts.entry(key).or_default();
+            e.0 += 1;
+            e.1 += s;
+        }
+    }
+    counts
+        .values()
+        .filter(|&&(n, net)| n != 2 || net != 0)
+        .count()
 }
 
 /// One stitch pass. Returns whether anything changed.
@@ -945,6 +1095,842 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
         mesh.face_kinds = new_kinds;
     }
     true
+}
+
+/// Maximum mean width (mm) of a boundary loop that counts as a bridgeable
+/// slit: 2·area/perimeter of the min-area triangulation. Real defects the
+/// splitters leave on multi-tool arrangements measure 0.3–1.25 mm across
+/// (the shell-ring reproducer); genuinely missing surface — an unpunched
+/// mouth, a lost cap — is far wider than its perimeter suggests (a 5 mm
+/// disc scores 2.5) and must NOT be papered over.
+const SLIT_MAX_WIDTH: f64 = 2.0;
+
+/// Largest boundary loop (vertices) `bridge_boundary_slits` will attempt.
+/// The min-area triangulation is O(n³); slit loops on real parts run a few
+/// dozen vertices.
+const SLIT_MAX_VERTS: usize = 96;
+
+/// Zip slit rails together by snapping each boundary vertex onto the
+/// nearest opposite boundary edge.
+///
+/// The splitters can trim two adjacent faces to *different* polylines
+/// along what should be one shared curve — measured on the shell-ring
+/// reproducer, a slot side plane crossing a bored cylinder leaves the
+/// cylindrical band's trim snapped to its arc grid while the planar wall
+/// keeps the exact plane∩cylinder line, opening a slit 0.3–1.25 mm wide.
+/// No vertex-on-edge stitch can close a gap that wide.
+///
+/// Each boundary vertex is projected onto the nearest boundary edge it is
+/// not itself part of; if that projection is within [`SLIT_MAX_WIDTH`],
+/// the vertex moves there. The two rails collapse onto one polyline,
+/// after which [`weld_coincident_vertices`] merges coincident points and
+/// [`heal_t_junctions`] pairs the survivors — both exact operations. Like
+/// the other repair passes, the whole thing is reverted unless the
+/// defective-edge count strictly drops.
+fn snap_boundary_rails(mesh: &mut TriangleMesh) {
+    let before = defective_edge_count(mesh);
+    if before == 0 {
+        return;
+    }
+    let snapshot = mesh.clone();
+
+    // Unpaired undirected edges and the vertices on them.
+    let counts = mesh.edge_use_counts();
+    let open: Vec<(u32, u32)> = counts
+        .iter()
+        .filter(|&(_, &n)| n == 1)
+        .map(|(&e, _)| e)
+        .collect();
+    if open.is_empty() {
+        return;
+    }
+    let pos = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            mesh.vertices[k] as f64,
+            mesh.vertices[k + 1] as f64,
+            mesh.vertices[k + 2] as f64,
+        ]
+    };
+    let mut boundary_verts: Vec<u32> = Vec::new();
+    {
+        let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for &(a, b) in &open {
+            for v in [a, b] {
+                if seen.insert(v) {
+                    boundary_verts.push(v);
+                }
+            }
+        }
+    }
+
+    let mut moves: Vec<(u32, [f64; 3])> = Vec::new();
+    for &v in &boundary_verts {
+        let p = pos(v);
+        let mut best: Option<(f64, [f64; 3])> = None;
+        for &(a, b) in &open {
+            if a == v || b == v {
+                continue;
+            }
+            let (pa, pb) = (pos(a), pos(b));
+            let ab = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+            if len2 <= 0.0 {
+                continue;
+            }
+            let t =
+                ((p[0] - pa[0]) * ab[0] + (p[1] - pa[1]) * ab[1] + (p[2] - pa[2]) * ab[2]) / len2;
+            let t = t.clamp(0.0, 1.0);
+            let q = [pa[0] + t * ab[0], pa[1] + t * ab[1], pa[2] + t * ab[2]];
+            let d2 = (q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2);
+            if best.is_none_or(|(bd, _)| d2 < bd) {
+                best = Some((d2, q));
+            }
+        }
+        if let Some((d2, q)) = best {
+            let d = d2.sqrt();
+            // Only genuinely displaced vertices move — coincident ones are
+            // the weld's job, and moving them here would churn.
+            if d > 1e-6 && d <= SLIT_MAX_WIDTH {
+                moves.push((v, q));
+            }
+        }
+    }
+    if moves.is_empty() {
+        return;
+    }
+    for (v, q) in moves {
+        let k = v as usize * 3;
+        mesh.vertices[k] = q[0] as f32;
+        mesh.vertices[k + 1] = q[1] as f32;
+        mesh.vertices[k + 2] = q[2] as f32;
+    }
+    weld_coincident_vertices(mesh);
+    heal_t_junctions(mesh);
+    if defective_edge_count(mesh) >= before {
+        *mesh = snapshot;
+    }
+}
+
+/// Bridge narrow boundary slits closed.
+///
+/// `heal_t_junctions` closes cracks whose two sides pass through the same
+/// points. On a multi-tool boolean arrangement (a bore crossed by both a
+/// groove cylinder and slot side planes) the splitters can trim two
+/// adjacent faces to *different* polylines along what should be one shared
+/// curve, leaving a genuine slit — measured 0.3–1.25 mm wide and up to
+/// 5 mm long on the shell-ring reproducer — that no vertex-on-edge stitch
+/// can reach. The solid is right; only its skin has a gap, so every
+/// watertightness consumer (STL slicing, STEP, ray tracing) reads a hole
+/// and slicers "repair" it by fusing the part solid.
+///
+/// The repair chains unpaired *directed* edges into closed loops and fills
+/// each loop with its minimum-area triangulation (the tightest surface the
+/// boundary admits — correct for the near-ruled slot-wall-to-bore bands
+/// these slits actually are). Emitting the patch along the loop's own
+/// direction supplies exactly the reversed directed edges the surface is
+/// missing, so pairing — including winding — is restored by construction.
+///
+/// Fail-safe on two levels: a loop is only filled when it closes, its
+/// vertices are distinct, and its mean width (2·area/perimeter) is below
+/// [`SLIT_MAX_WIDTH`] — a genuinely missing cap is wider and is left
+/// visible; and like `heal_t_junctions` the whole pass is reverted unless
+/// it strictly reduces the defective-edge count.
+fn bridge_boundary_slits(mesh: &mut TriangleMesh) {
+    let before = defective_edge_count(mesh);
+    if before == 0 {
+        return;
+    }
+    let snapshot = mesh.clone();
+    fill_closed_boundary_loops(mesh, SLIT_MAX_VERTS, Some(SLIT_MAX_WIDTH), false);
+    if defective_edge_count(mesh) >= before {
+        *mesh = snapshot;
+    }
+}
+
+/// Chain unpaired directed edges into closed loops, fill each narrow one
+/// with its minimum-area triangulation, and (when `zip_pairs` is set)
+/// close pairs of leftover loops — the two rims of an annular hole — with
+/// a zipped band. Returns the number of triangles added.
+///
+/// With `width_gate` set, a lone loop is filled only when its mean width
+/// (2·area/perimeter) stays under the gate — the caller is patching slits
+/// in an otherwise intact surface and must not paper over a genuinely
+/// missing cap. Callers refilling holes they themselves carved pass
+/// `None`.
+/// Does a candidate patch CONTINUE the surface it is being sewn onto?
+///
+/// For every patch triangle that consumes an unpaired surface edge,
+/// compare its plane against the surface triangle on the other side of
+/// that edge. A defect slit's fill lies in the surface (normals nearly
+/// parallel); a patch capping a designed cavity mouth meets the cavity
+/// walls edge-on (normals nearly perpendicular) — sealing a relief notch
+/// shut is exactly the "repair" a slicer gets blamed for.
+fn patch_continues_surface(
+    patch: &[u32],
+    edge_normal: &std::collections::HashMap<(u32, u32), [f64; 3]>,
+    pos: &dyn Fn(u32) -> [f64; 3],
+    strict: bool,
+) -> bool {
+    const MIN_DOT: f64 = 0.25;
+    // A slit fill routinely turns a corner (wall to cap), where SOME
+    // triangles legitimately meet one side edge-on; only a patch that
+    // meets the surface steeply along MOST of its rim is capping a
+    // designed opening. Strict mode (width-gated fills) tolerates a
+    // minority of steep edges; zips demand full agreement.
+    let mut checked = 0usize;
+    let mut steep = 0usize;
+    for t in patch.chunks(3) {
+        let (a, b, c) = (pos(t[0]), pos(t[1]), pos(t[2]));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if l < 1e-12 {
+            continue;
+        }
+        for k in 0..3 {
+            let e = (t[k], t[(k + 1) % 3]);
+            if let Some(sn) = edge_normal.get(&e) {
+                let dot = (n[0] * sn[0] + n[1] * sn[1] + n[2] * sn[2]).abs() / l;
+                checked += 1;
+                if dot < MIN_DOT {
+                    steep += 1;
+                }
+            }
+        }
+    }
+    if checked == 0 {
+        return true;
+    }
+    if strict {
+        steep * 3 < checked
+    } else {
+        steep == 0
+    }
+}
+
+fn fill_closed_boundary_loops(
+    mesh: &mut TriangleMesh,
+    max_verts: usize,
+    width_gate: Option<f64>,
+    zip_pairs: bool,
+) -> usize {
+    // Directed edges without a reverse partner. The surface holds (a, b);
+    // the patch must supply (b, a) — so chain successor b → a and walk
+    // loops in that reversed direction (same construction the mesh-CSG
+    // hole capper uses). A duplicate key marks a non-manifold boundary
+    // vertex; loops through those are left alone.
+    let mut dir: std::collections::HashMap<(u32, u32), i32> = std::collections::HashMap::new();
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            *dir.entry((a.min(b), a.max(b))).or_default() += if a < b { 1 } else { -1 };
+        }
+    }
+    // b → [a, …]: multiple unpaired edges may meet at one vertex (two
+    // slits sharing a corner). Loops are chained edge-by-edge, choosing
+    // the straightest continuation at such branch points.
+    let mut succ: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    let mut patch_edges: Vec<(u32, u32)> = Vec::new();
+    // Unit normal of the surface triangle that owns each unpaired edge —
+    // used to decide whether a patch CONTINUES the surface (a defect
+    // slit) or caps a designed cavity mouth (which meets its walls at a
+    // steep angle and must be left open).
+    let mut edge_normal: std::collections::HashMap<(u32, u32), [f64; 3]> =
+        std::collections::HashMap::new();
+    for t in mesh.indices.chunks(3) {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let net = dir.get(&(a.min(b), a.max(b))).copied().unwrap_or(0);
+            let unpaired = if a < b { net > 0 } else { net < 0 };
+            if unpaired {
+                succ.entry(b).or_default().push(a);
+                patch_edges.push((b, a));
+                let g = |i: u32| {
+                    let k = i as usize * 3;
+                    [
+                        mesh.vertices[k] as f64,
+                        mesh.vertices[k + 1] as f64,
+                        mesh.vertices[k + 2] as f64,
+                    ]
+                };
+                let (pa, pb, pc) = (g(t[0]), g(t[1]), g(t[2]));
+                let u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+                let v = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+                let n = [
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                ];
+                let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                if l > 1e-12 {
+                    edge_normal.insert((b, a), [n[0] / l, n[1] / l, n[2] / l]);
+                }
+            }
+        }
+    }
+
+    let pos = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            mesh.vertices[k] as f64,
+            mesh.vertices[k + 1] as f64,
+            mesh.vertices[k + 2] as f64,
+        ]
+    };
+    let tri_area = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| -> f64 {
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        0.5 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt()
+    };
+
+    let mut used: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+    let mut loops: Vec<Vec<u32>> = Vec::new();
+    for &(b0, a0) in &patch_edges {
+        if used.contains(&(b0, a0)) {
+            continue;
+        }
+        let mut lp = vec![b0, a0];
+        let mut trail = vec![(b0, a0)];
+        let mut closed = false;
+        while trail.len() <= max_verts {
+            let &(prev, cur) = trail.last().unwrap();
+            let Some(nexts) = succ.get(&cur) else { break };
+            // Straightest continuation: keeps each slit's own polyline at a
+            // corner where two slits touch.
+            let (pp, pc) = (pos(prev), pos(cur));
+            let dir_in = [pc[0] - pp[0], pc[1] - pp[1], pc[2] - pp[2]];
+            let mut pick: Option<(f64, u32)> = None;
+            for &n in nexts {
+                if used.contains(&(cur, n)) || trail.contains(&(cur, n)) {
+                    continue;
+                }
+                let pn = pos(n);
+                let dir_out = [pn[0] - pc[0], pn[1] - pc[1], pn[2] - pc[2]];
+                let dot = dir_in[0] * dir_out[0] + dir_in[1] * dir_out[1] + dir_in[2] * dir_out[2];
+                let norm = ((dir_in[0].powi(2) + dir_in[1].powi(2) + dir_in[2].powi(2))
+                    * (dir_out[0].powi(2) + dir_out[1].powi(2) + dir_out[2].powi(2)))
+                .sqrt();
+                let score = if norm > 0.0 { dot / norm } else { -2.0 };
+                if pick.is_none_or(|(s, _)| score > s) {
+                    pick = Some((score, n));
+                }
+            }
+            let Some((_, next)) = pick else { break };
+            trail.push((cur, next));
+            if next == b0 {
+                closed = true;
+                break;
+            }
+            lp.push(next);
+        }
+        if !closed {
+            continue;
+        }
+        for &e in &trail {
+            used.insert(e);
+        }
+        let n = lp.len();
+        if n < 3 || n > max_verts {
+            continue;
+        }
+        let set: std::collections::HashSet<u32> = lp.iter().copied().collect();
+        if set.len() != n {
+            continue;
+        }
+        loops.push(lp);
+    }
+
+    let mut new_indices: Vec<u32> = Vec::new();
+    let mut leftovers: Vec<Vec<u32>> = Vec::new();
+    for lp in loops {
+        let n = lp.len();
+        let p: Vec<[f64; 3]> = lp.iter().map(|&v| pos(v)).collect();
+        let mut perimeter = 0.0;
+        for i in 0..n {
+            let (a, b) = (p[i], p[(i + 1) % n]);
+            perimeter +=
+                ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
+        }
+        if perimeter <= 0.0 {
+            continue;
+        }
+
+        // Minimum-area triangulation over the loop (classic interval DP).
+        let mut cost = vec![vec![0.0_f64; n]; n];
+        let mut pick = vec![vec![usize::MAX; n]; n];
+        for span in 2..n {
+            for i in 0..n - span {
+                let j = i + span;
+                let mut best = f64::INFINITY;
+                let mut best_k = usize::MAX;
+                for k in i + 1..j {
+                    let c = cost[i][k] + cost[k][j] + tri_area(p[i], p[k], p[j]);
+                    if c < best {
+                        best = c;
+                        best_k = k;
+                    }
+                }
+                cost[i][j] = best;
+                pick[i][j] = best_k;
+            }
+        }
+        let area = cost[0][n - 1];
+        // A zero-area "loop" is an edge traversed both ways (a fin, not a
+        // hole); filling it would add a degenerate flap and new overused
+        // edges.
+        if area <= 1e-9 {
+            continue;
+        }
+        if let Some(gate) = width_gate {
+            if 2.0 * area / perimeter > gate {
+                leftovers.push(lp);
+                continue;
+            }
+        }
+        let mut fill: Vec<u32> = Vec::new();
+        let mut stack = vec![(0usize, n - 1)];
+        while let Some((i, j)) = stack.pop() {
+            if j - i < 2 {
+                continue;
+            }
+            let k = pick[i][j];
+            fill.extend_from_slice(&[lp[i], lp[k], lp[j]]);
+            stack.push((i, k));
+            stack.push((k, j));
+        }
+        if patch_continues_surface(&fill, &edge_normal, &pos, width_gate.is_some()) {
+            new_indices.extend(fill);
+        }
+    }
+
+    // A hole with two rims — an annular strip carved out around a rim
+    // circle — cannot be disk-filled per loop: each rim alone spans the
+    // whole opening (a fill there would cap the bore). Pair leftover loops
+    // whose vertices stay mutually close and zip each pair into a band.
+    // Both loops are already walked in patch direction, so a band that
+    // uses each loop's consecutive directed edges restores pairing on both
+    // rims, and the alternating advance keeps the shared diagonals paired.
+    if zip_pairs && leftovers.len() >= 2 {
+        let centroid = |lp: &[u32]| -> [f64; 3] {
+            let mut c = [0.0; 3];
+            for &v in lp {
+                let q = pos(v);
+                for k in 0..3 {
+                    c[k] += q[k];
+                }
+            }
+            for k in &mut c {
+                *k /= lp.len() as f64;
+            }
+            c
+        };
+        let mutual_gap = |a: &[u32], b: &[u32]| -> f64 {
+            let mut worst = 0.0_f64;
+            for &v in a {
+                let q = pos(v);
+                let mut best = f64::INFINITY;
+                for &w in b {
+                    let r = pos(w);
+                    let d2 = (q[0] - r[0]).powi(2) + (q[1] - r[1]).powi(2) + (q[2] - r[2]).powi(2);
+                    best = best.min(d2);
+                }
+                worst = worst.max(best);
+            }
+            worst.sqrt()
+        };
+        let mut used = vec![false; leftovers.len()];
+        for i in 0..leftovers.len() {
+            if used[i] {
+                continue;
+            }
+            let ci = centroid(&leftovers[i]);
+            let mut partner: Option<(usize, f64)> = None;
+            for j in i + 1..leftovers.len() {
+                if used[j] {
+                    continue;
+                }
+                let cj = centroid(&leftovers[j]);
+                let d =
+                    ((ci[0] - cj[0]).powi(2) + (ci[1] - cj[1]).powi(2) + (ci[2] - cj[2]).powi(2))
+                        .sqrt();
+                if partner.is_none_or(|(_, pd)| d < pd) {
+                    partner = Some((j, d));
+                }
+            }
+            let Some((j, _)) = partner else { continue };
+            // Every vertex of each rim must be near the other rim — that is
+            // what distinguishes the two edges of one carved strip from two
+            // unrelated holes.
+            if mutual_gap(&leftovers[i], &leftovers[j])
+                .max(mutual_gap(&leftovers[j], &leftovers[i]))
+                > ZIP_MAX_RIM_GAP
+            {
+                continue;
+            }
+            let mut band: Vec<u32> = Vec::new();
+            zip_loop_pair(&leftovers[i], &leftovers[j], &pos, &mut band);
+            if !patch_continues_surface(&band, &edge_normal, &pos, false) {
+                continue;
+            }
+            used[i] = true;
+            used[j] = true;
+            new_indices.extend(band);
+        }
+    }
+
+    if new_indices.is_empty() {
+        return 0;
+    }
+    let added = new_indices.len() / 3;
+    mesh.indices.extend_from_slice(&new_indices);
+    if !mesh.face_kinds.is_empty() {
+        mesh.face_kinds
+            .extend(std::iter::repeat_n(FaceKindTag::Unknown as u8, added));
+    }
+    added
+}
+
+/// Largest distance (mm) any vertex of one hole rim may sit from the other
+/// rim for the two to be zipped as one band. Carved strips are one to two
+/// triangle rings wide; unrelated holes sit whole features apart.
+const ZIP_MAX_RIM_GAP: f64 = 2.5;
+
+/// Zip two hole rims into a band. Both loops arrive in patch direction
+/// (each consecutive pair is a directed edge the surface is missing), so
+/// every band triangle that consumes a rim edge uses it in that direction,
+/// and the alternating advance emits the shared diagonals once in each
+/// direction — the band is manifold by construction.
+fn zip_loop_pair(a: &[u32], b: &[u32], pos: &dyn Fn(u32) -> [f64; 3], out: &mut Vec<u32>) {
+    let (na, nb) = (a.len(), b.len());
+    let d2 = |p: [f64; 3], q: [f64; 3]| {
+        (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)
+    };
+    // Start B at its vertex nearest A's start.
+    let p0 = pos(a[0]);
+    let j0 = (0..nb)
+        .min_by(|&x, &y| d2(pos(b[x]), p0).total_cmp(&d2(pos(b[y]), p0)))
+        .unwrap_or(0);
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < na || j < nb {
+        let av = a[i % na];
+        let bv = b[(j0 + j) % nb];
+        let advance_a = if i >= na {
+            false
+        } else if j >= nb {
+            true
+        } else {
+            let an = pos(a[(i + 1) % na]);
+            let bn = pos(b[(j0 + j + 1) % nb]);
+            d2(an, pos(bv)) <= d2(bn, pos(av))
+        };
+        if advance_a {
+            let an = a[(i + 1) % na];
+            out.extend_from_slice(&[av, an, bv]);
+            i += 1;
+        } else {
+            let bn = b[(j0 + j + 1) % nb];
+            out.extend_from_slice(&[bv, bn, av]);
+            j += 1;
+        }
+    }
+}
+
+/// Remove redundant surface patches — connected triangle clusters whose
+/// removal leaves every edge they border still shared by at least two
+/// triangles.
+///
+/// The split/classify pass can keep two coincident covers of the same
+/// region (each operand's fragment of a seam lune survives its own
+/// classification), or a zero-thickness fin standing on an edge the real
+/// surface already closes. Both show up as edges used by more than two
+/// triangles, and both are exactly the defects slicers report as
+/// non-manifold and "repair" by fusing cavities shut.
+///
+/// Patches are triangle clusters connected across cleanly-paired edges
+/// (position-quantized use count of exactly two), so a redundant cover is
+/// its own patch — its rim is all overused edges. Peeling ascending by
+/// area removes the sliver of a doubled pair first; its partner then no
+/// longer qualifies (its rim would drop below two uses), so exactly one
+/// cover survives. The edge ledger is updated after every removal, which
+/// makes the pass order-safe, and a patch is never removed unless every
+/// rim edge stays closed — so the mesh cannot gain open edges here.
+pub fn prune_redundant_patches(mesh: &mut TriangleMesh) {
+    let ntri = mesh.indices.len() / 3;
+    if ntri == 0 {
+        return;
+    }
+    let q = |x: f32| (x as f64 * 1e5).round() as i64;
+    let vkey = |i: u32| {
+        let k = i as usize * 3;
+        (
+            q(mesh.vertices[k]),
+            q(mesh.vertices[k + 1]),
+            q(mesh.vertices[k + 2]),
+        )
+    };
+    type EdgeKey = ((i64, i64, i64), (i64, i64, i64));
+    // Each entry is (canonical edge, direction sign) so the ledger can
+    // track the directed net alongside the use count — a same-winding
+    // double cover shows up only in the net.
+    let tri_edges = |t: usize, indices: &[u32]| -> [Option<(EdgeKey, i64)>; 3] {
+        let tri = &indices[t * 3..t * 3 + 3];
+        let mut out = [None; 3];
+        for k in 0..3 {
+            let (a, b) = (vkey(tri[k]), vkey(tri[(k + 1) % 3]));
+            if a != b {
+                out[k] = Some(if a < b { ((a, b), 1) } else { ((b, a), -1) });
+            }
+        }
+        out
+    };
+    let mut uses: std::collections::HashMap<EdgeKey, (usize, i64)> =
+        std::collections::HashMap::new();
+    for t in 0..ntri {
+        for (e, s) in tri_edges(t, &mesh.indices).into_iter().flatten() {
+            let entry = uses.entry(e).or_default();
+            entry.0 += 1;
+            entry.1 += s;
+        }
+    }
+    if !uses.values().any(|&(n, net)| n > 2 || net != 0) {
+        return;
+    }
+
+    // Group triangles into patches across cleanly-paired edges.
+    let mut edge_tris: std::collections::HashMap<EdgeKey, Vec<usize>> =
+        std::collections::HashMap::new();
+    for t in 0..ntri {
+        for (e, _) in tri_edges(t, &mesh.indices).into_iter().flatten() {
+            edge_tris.entry(e).or_default().push(t);
+        }
+    }
+    let mut patch = vec![usize::MAX; ntri];
+    let mut n_patches = 0usize;
+    for seed in 0..ntri {
+        if patch[seed] != usize::MAX {
+            continue;
+        }
+        let id = n_patches;
+        n_patches += 1;
+        let mut stack = vec![seed];
+        patch[seed] = id;
+        while let Some(t) = stack.pop() {
+            for (e, _) in tri_edges(t, &mesh.indices).into_iter().flatten() {
+                if uses.get(&e).copied() != Some((2, 0)) {
+                    continue;
+                }
+                for &n in &edge_tris[&e] {
+                    if patch[n] == usize::MAX {
+                        patch[n] = id;
+                        stack.push(n);
+                    }
+                }
+            }
+        }
+    }
+    if n_patches < 2 {
+        return;
+    }
+
+    let area_of = |t: usize| -> f64 {
+        let p = |k: usize| {
+            let i = mesh.indices[t * 3 + k] as usize * 3;
+            [
+                mesh.vertices[i] as f64,
+                mesh.vertices[i + 1] as f64,
+                mesh.vertices[i + 2] as f64,
+            ]
+        };
+        let (a, b, c) = (p(0), p(1), p(2));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        0.5 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt()
+    };
+    let mut patch_tris: Vec<Vec<usize>> = vec![Vec::new(); n_patches];
+    let mut patch_area = vec![0.0_f64; n_patches];
+    for t in 0..ntri {
+        patch_tris[patch[t]].push(t);
+        patch_area[patch[t]] += area_of(t);
+    }
+    let mut order: Vec<usize> = (0..n_patches).collect();
+    order.sort_by(|&a, &b| patch_area[a].total_cmp(&patch_area[b]));
+    // The largest patch is the surface proper; never a candidate. And a
+    // redundant cover, fin or membrane is a sliver against the whole
+    // surface — a patch carrying a real share of the area is a body in
+    // its own right (two solids united along a knife edge form two
+    // patches, both legitimate), so cap candidates at a twentieth of the
+    // total area.
+    order.pop();
+    let total_area: f64 = patch_area.iter().sum();
+    order.retain(|&pid| patch_area[pid] <= 0.05 * total_area);
+
+    let mut removed = vec![false; n_patches];
+    for pid in order {
+        // Per-edge usage inside this patch.
+        let mut mine: std::collections::HashMap<EdgeKey, (usize, i64)> =
+            std::collections::HashMap::new();
+        for &t in &patch_tris[pid] {
+            for (e, s) in tri_edges(t, &mesh.indices).into_iter().flatten() {
+                let entry = mine.entry(e).or_default();
+                entry.0 += 1;
+                entry.1 += s;
+            }
+        }
+        // Redundant iff every edge the patch touches stays at ≥2 uses (or
+        // vanishes) without it, and at least one of them is defective now
+        // — overused, or direction-imbalanced (a same-winding double
+        // cover). A patch whose rim is already clean is real surface.
+        let mut any_defective = false;
+        let removable = mine.iter().all(|(e, &(m, _))| {
+            let (total, net) = uses.get(e).copied().unwrap_or((0, 0));
+            if total > 2 || net != 0 {
+                any_defective = true;
+            }
+            // An edge may vanish with the patch only when the patch held
+            // BOTH of its sides (m == total >= 2). Allowing a lone open
+            // rim edge (total == m == 1) to vanish lets every
+            // crack-bounded face qualify, and the peel then cascades
+            // through an entire mid-pipeline tessellation.
+            (total == m && m >= 2) || total - m >= 2
+        });
+        if !removable || !any_defective {
+            continue;
+        }
+        removed[pid] = true;
+        for (e, (m, s)) in mine {
+            if let Some(n) = uses.get_mut(&e) {
+                n.0 -= m;
+                n.1 -= s;
+            }
+        }
+    }
+    if !removed.iter().any(|&r| r) {
+        return;
+    }
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    let mut kinds = Vec::new();
+    let tagged = mesh.face_kinds.len() == ntri;
+    for t in 0..ntri {
+        if !removed[patch[t]] {
+            indices.extend_from_slice(&mesh.indices[t * 3..t * 3 + 3]);
+            if tagged {
+                kinds.push(mesh.face_kinds[t]);
+            }
+        }
+    }
+    mesh.indices = indices;
+    if tagged {
+        mesh.face_kinds = kinds;
+    }
+}
+
+/// Carve-and-refill: the closer of last resort for defects the gentler
+/// passes cannot reach — overused fins, slit rails meeting at branch
+/// vertices, mismatched trims around a rim corner.
+///
+/// Every triangle touching a defective edge (and, on retry, its
+/// vertex-neighborhood rings) is deleted; the deletion turns each defect
+/// cluster into an ordinary hole whose boundary *does* chain into closed
+/// loops, and those are refilled with the minimum-area triangulation. The
+/// patch is local — triangles away from defects are untouched — and the
+/// result is kept only when the defective-edge count strictly drops (kept
+/// outright when it reaches zero).
+fn refill_defective_neighborhoods(mesh: &mut TriangleMesh) {
+    let before = defective_edge_count(mesh);
+    if before == 0 {
+        return;
+    }
+    let snapshot = mesh.clone();
+    let mut best: Option<(usize, TriangleMesh)> = None;
+    for rings in 0..3 {
+        let mut m = snapshot.clone();
+        // Direction-aware: a same-winding double cover pairs cleanly in
+        // undirected counts but must be carved out all the same.
+        let mut counts: std::collections::HashMap<(u32, u32), (u32, i32)> =
+            std::collections::HashMap::new();
+        for t in m.indices.chunks(3) {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                if a == b {
+                    continue;
+                }
+                let e = counts.entry((a.min(b), a.max(b))).or_default();
+                e.0 += 1;
+                e.1 += if a < b { 1 } else { -1 };
+            }
+        }
+        let defective: std::collections::HashSet<(u32, u32)> = counts
+            .iter()
+            .filter(|&(_, &(n, net))| n != 2 || net != 0)
+            .map(|(&e, _)| e)
+            .collect();
+        let ntri = m.indices.len() / 3;
+        let mut del = vec![false; ntri];
+        let mut doomed_verts: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for (t, tri) in m.indices.chunks(3).enumerate() {
+            for k in 0..3 {
+                let (a, b) = (tri[k], tri[(k + 1) % 3]);
+                if defective.contains(&(a.min(b), a.max(b))) {
+                    del[t] = true;
+                    doomed_verts.extend([tri[0], tri[1], tri[2]]);
+                    break;
+                }
+            }
+        }
+        for _ in 0..rings {
+            let mut next: std::collections::HashSet<u32> = doomed_verts.clone();
+            for (t, tri) in m.indices.chunks(3).enumerate() {
+                if !del[t] && tri.iter().any(|v| doomed_verts.contains(v)) {
+                    del[t] = true;
+                    next.extend([tri[0], tri[1], tri[2]]);
+                }
+            }
+            doomed_verts = next;
+        }
+        let mut indices = Vec::with_capacity(m.indices.len());
+        let mut kinds = Vec::with_capacity(m.face_kinds.len());
+        let tagged = !m.face_kinds.is_empty();
+        for (t, tri) in m.indices.chunks(3).enumerate() {
+            if !del[t] {
+                indices.extend_from_slice(tri);
+                if tagged {
+                    kinds.push(m.face_kinds[t]);
+                }
+            }
+        }
+        m.indices = indices;
+        m.face_kinds = kinds;
+        fill_closed_boundary_loops(&mut m, 256, Some(2.0), true);
+        let after = defective_edge_count(&m);
+        if after == 0 {
+            *mesh = m;
+            return;
+        }
+        if best.as_ref().is_none_or(|(b, _)| after < *b) {
+            best = Some((after, m));
+        }
+    }
+    if let Some((after, m)) = best {
+        if after < before {
+            *mesh = m;
+        }
+    }
 }
 
 /// Collapse mesh vertices that share a position to 3 decimal places.
@@ -6045,7 +7031,336 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     weld_coincident_vertices(&mut mesh);
     heal_t_junctions(&mut mesh);
     fill_tiny_boundary_loops(&mut mesh, 6, &sphere_vert_keys);
+    // NOTE: the heavier `repair_watertightness` pipeline is deliberately
+    // NOT run here. `tessellate_brep` is called mid-pipeline (boolean
+    // classification probes, band checks, blend validation), where
+    // repairing the mesh changes decisions those callers make. Export
+    // boundaries — `Solid::to_mesh`, `BooleanResult::to_mesh` — opt in
+    // explicitly.
     mesh
+}
+
+/// Collapse defective edges shorter than this (mm). Sliver double-cover
+/// residue at rim seams lives at the 0.01-0.03 mm scale — far below any
+/// feature size — and collapsing it moves surviving vertices by less than
+/// the tessellation sag.
+const MICRO_DEFECT_EDGE: f64 = 0.05;
+
+/// Collapse bound (mm) for OVERUSED-but-balanced edges (use count above
+/// two, directed net zero) — the rim an opposed flap stands on. Unlike an
+/// open edge, collapsing one cannot open the surface: the two legitimate
+/// covers stay paired through the merged endpoint while the flap
+/// degenerates away. The whole pass still answers to the driver's
+/// defect-count and volume gates.
+const PINCH_COLLAPSE_EDGE: f64 = 2.0;
+
+/// Drop exact duplicate facets: triangles whose three quantized vertex
+/// positions AND winding match an earlier triangle. A same-winding copy
+/// is pure redundancy (the net-orientation cancellation used elsewhere
+/// deliberately keeps |net| copies, which preserves both of a duplicated
+/// pair), and each copy turns every edge it touches into a four-user
+/// edge. Removing all but the first cannot open the surface — the
+/// surviving copy provides exactly the edges the copy did.
+fn drop_exact_duplicate_triangles(mesh: &mut TriangleMesh) {
+    let q = |x: f32| (x as f64 * 1e4).round() as i64;
+    let vkey = |i: u32| {
+        let k = i as usize * 3;
+        (
+            q(mesh.vertices[k]),
+            q(mesh.vertices[k + 1]),
+            q(mesh.vertices[k + 2]),
+        )
+    };
+    let ntri = mesh.indices.len() / 3;
+    let tagged = mesh.face_kinds.len() == ntri;
+    let mut seen: std::collections::HashSet<[(i64, i64, i64); 3]> =
+        std::collections::HashSet::new();
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    let mut kinds = Vec::new();
+    for (t, tri) in mesh.indices.chunks(3).enumerate() {
+        let ks = [vkey(tri[0]), vkey(tri[1]), vkey(tri[2])];
+        // Canonical rotation preserving winding: start at the smallest key.
+        let start = (0..3).min_by_key(|&i| ks[i]).unwrap_or(0);
+        let canon = [ks[start], ks[(start + 1) % 3], ks[(start + 2) % 3]];
+        if seen.insert(canon) {
+            indices.extend_from_slice(tri);
+            if tagged {
+                kinds.push(mesh.face_kinds[t]);
+            }
+        }
+    }
+    mesh.indices = indices;
+    if tagged {
+        mesh.face_kinds = kinds;
+    }
+}
+
+/// Collapse micro-scale defective edges by merging their endpoints.
+///
+/// Partial sliver overlaps at rim seams leave clusters of near-degenerate
+/// triangles whose edges are overused or direction-imbalanced; the
+/// cluster is smaller than the weld lattice is allowed to reach, so no
+/// exact pass can repair it. Merging the endpoints of each short
+/// defective edge degenerates the slivers (dropped) while moving real
+/// surface vertices by at most [`MICRO_DEFECT_EDGE`].
+fn collapse_short_defective_edges(mesh: &mut TriangleMesh) {
+    let pos = |m: &TriangleMesh, i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            m.vertices[k] as f64,
+            m.vertices[k + 1] as f64,
+            m.vertices[k + 2] as f64,
+        ]
+    };
+    // Thin-ness of each triangle at its edges: 2·area / edge length. A
+    // flap standing on an overused edge is sliver-thin; a legitimate
+    // seam (a knife-edge contact, a sphere-bore junction) carries
+    // full-size triangles and must not be collapsed at flap scale.
+    let tri_width = |m: &TriangleMesh, t: &[u32]| -> f64 {
+        let (a, b, c) = (pos(m, t[0]), pos(m, t[1]), pos(m, t[2]));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let area2 = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        let mut lmax = 0.0_f64;
+        for (x, y) in [(a, b), (b, c), (c, a)] {
+            lmax = lmax.max(
+                ((y[0] - x[0]).powi(2) + (y[1] - x[1]).powi(2) + (y[2] - x[2]).powi(2)).sqrt(),
+            );
+        }
+        if lmax > 0.0 {
+            area2 / lmax
+        } else {
+            0.0
+        }
+    };
+    for _ in 0..4 {
+        let mut counts: std::collections::HashMap<(u32, u32), (u32, i32)> =
+            std::collections::HashMap::new();
+        for t in mesh.indices.chunks(3) {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                if a == b {
+                    continue;
+                }
+                let e = counts.entry((a.min(b), a.max(b))).or_default();
+                e.0 += 1;
+                e.1 += if a < b { 1 } else { -1 };
+            }
+        }
+        let mut thin_at: std::collections::HashMap<(u32, u32), usize> =
+            std::collections::HashMap::new();
+        for t in mesh.indices.chunks(3) {
+            if tri_width(mesh, t) < 0.1 {
+                for k in 0..3 {
+                    let (a, b) = (t[k], t[(k + 1) % 3]);
+                    if a != b {
+                        *thin_at.entry((a.min(b), a.max(b))).or_default() += 1;
+                    }
+                }
+            }
+        }
+        let mut remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for (&(a, b), &(n, net)) in &counts {
+            if n == 2 && net == 0 {
+                continue;
+            }
+            let flap_rim =
+                n > 2 && net == 0 && thin_at.get(&(a.min(b), a.max(b))).copied().unwrap_or(0) >= 2;
+            let bound = if flap_rim {
+                PINCH_COLLAPSE_EDGE
+            } else {
+                MICRO_DEFECT_EDGE
+            };
+            let (pa, pb) = (pos(mesh, a), pos(mesh, b));
+            let len2 = (pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2) + (pa[2] - pb[2]).powi(2);
+            if len2 > bound * bound {
+                continue;
+            }
+            let (keep, drop) = (a.min(b), a.max(b));
+            let entry = remap.entry(drop).or_insert(keep);
+            *entry = (*entry).min(keep);
+        }
+        if remap.is_empty() {
+            return;
+        }
+        let resolve = |mut i: u32| {
+            while let Some(&j) = remap.get(&i) {
+                if j >= i {
+                    break;
+                }
+                i = j;
+            }
+            i
+        };
+        let ntri = mesh.indices.len() / 3;
+        let tagged = mesh.face_kinds.len() == ntri;
+        let mut indices = Vec::with_capacity(mesh.indices.len());
+        let mut kinds = Vec::new();
+        for (t, tri) in mesh.indices.chunks(3).enumerate() {
+            let (a, b, c) = (resolve(tri[0]), resolve(tri[1]), resolve(tri[2]));
+            if a != b && b != c && a != c {
+                indices.extend_from_slice(&[a, b, c]);
+                if tagged {
+                    kinds.push(mesh.face_kinds[t]);
+                }
+            }
+        }
+        mesh.indices = indices;
+        if tagged {
+            mesh.face_kinds = kinds;
+        }
+    }
+}
+
+/// Collapse exactly-degenerate triangles by merging their two closest
+/// corners. A DP fill or zip can emit a collinear triple; its plane
+/// normal normalizes to NaN, which the STEP writer emits verbatim as
+/// `DIRECTION('', (NaN, NaN, NaN))` — a file that cannot be re-imported.
+/// Merging (rather than dropping) keeps the neighbourhood paired; the
+/// vertex shift is bounded by the sliver's own size.
+fn collapse_zero_area_triangles(mesh: &mut TriangleMesh) {
+    for _ in 0..4 {
+        let v = |i: u32| {
+            let k = i as usize * 3;
+            [
+                mesh.vertices[k] as f64,
+                mesh.vertices[k + 1] as f64,
+                mesh.vertices[k + 2] as f64,
+            ]
+        };
+        let mut remap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for tri in mesh.indices.chunks(3) {
+            let (a, b, c) = (tri[0], tri[1], tri[2]);
+            let (pa, pb, pc) = (v(a), v(b), v(c));
+            let u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            let w = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+            let n = [
+                u[1] * w[2] - u[2] * w[1],
+                u[2] * w[0] - u[0] * w[2],
+                u[0] * w[1] - u[1] * w[0],
+            ];
+            if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-24 {
+                continue;
+            }
+            let d2 = |x: [f64; 3], y: [f64; 3]| {
+                (x[0] - y[0]).powi(2) + (x[1] - y[1]).powi(2) + (x[2] - y[2]).powi(2)
+            };
+            let pairs = [(a, b, d2(pa, pb)), (b, c, d2(pb, pc)), (c, a, d2(pc, pa))];
+            if let Some(&(x, y, _)) = pairs.iter().min_by(|p, q| p.2.total_cmp(&q.2)) {
+                let (keep, drop) = (x.min(y), x.max(y));
+                let entry = remap.entry(drop).or_insert(keep);
+                *entry = (*entry).min(keep);
+            }
+        }
+        if remap.is_empty() {
+            return;
+        }
+        let resolve = |mut i: u32| {
+            while let Some(&j) = remap.get(&i) {
+                if j >= i {
+                    break;
+                }
+                i = j;
+            }
+            i
+        };
+        let ntri = mesh.indices.len() / 3;
+        let tagged = mesh.face_kinds.len() == ntri;
+        let mut indices = Vec::with_capacity(mesh.indices.len());
+        let mut kinds = Vec::new();
+        for (t, tri) in mesh.indices.chunks(3).enumerate() {
+            let (a, b, c) = (resolve(tri[0]), resolve(tri[1]), resolve(tri[2]));
+            if a != b && b != c && a != c {
+                indices.extend_from_slice(&[a, b, c]);
+                if tagged {
+                    kinds.push(mesh.face_kinds[t]);
+                }
+            }
+        }
+        mesh.indices = indices;
+        if tagged {
+            mesh.face_kinds = kinds;
+        }
+    }
+}
+
+/// Best-effort watertightness repair: peel redundant patches, snap and
+/// stitch slit rails, bridge narrow boundary loops, and carve-and-refill
+/// what remains. Every constituent pass is individually reverted when it
+/// fails to strictly reduce the defective-edge count, so the result is
+/// never worse than the input.
+pub fn repair_watertightness(mesh: &mut TriangleMesh) {
+    if !worth_repairing(mesh) {
+        return;
+    }
+    let original = mesh.clone();
+    let original_boundary = mesh.boundary_edges().len();
+    // Each pass exposes work for the others — a snap closes a slit whose
+    // corner then chains, a carve isolates a doubled remnant the peeler
+    // can take next round — so iterate the whole set until it stops
+    // paying.
+    // The non-moving passes run first, unguarded: peeling a doubled sheet
+    // or a membrane only removes surface that should not exist, and a
+    // doubled sheet double-counts whatever it encloses — so the volume
+    // reference is only meaningful AFTER they have run.
+    drop_exact_duplicate_triangles(mesh);
+    mesh_ray::strip_membranes_once(mesh);
+    let vol0 = mesh_signed_volume_f64(mesh).abs();
+    // Every remaining pass is bounded to defect-local surgery, so the
+    // enclosed volume must come through (nearly) unchanged. A candidate
+    // that moved it means parity or patch isolation lied — a mid-pipeline
+    // fragment, an open import — and it must not be kept no matter how
+    // many defects it "fixed". (A gutted mesh scores zero defects;
+    // without this guard it would look perfect.)
+    let vol_ok = |m: &TriangleMesh| {
+        vol0 <= 1e-9 || (mesh_signed_volume_f64(m).abs() - vol0).abs() <= 0.01 * vol0
+    };
+    let mut best = (defective_edge_count(mesh), mesh.clone());
+    if best.0 == 0 {
+        return;
+    }
+    for _ in 0..8 {
+        let before = defective_edge_count(mesh);
+        collapse_short_defective_edges(mesh);
+        mesh_ray::strip_membranes_once(mesh);
+        prune_redundant_patches(mesh);
+        snap_boundary_rails(mesh);
+        bridge_boundary_slits(mesh);
+        refill_defective_neighborhoods(mesh);
+        let after = defective_edge_count(mesh);
+        if vol_ok(mesh) && after < best.0 {
+            best = (after, mesh.clone());
+        }
+        if after == 0 || after >= before {
+            break;
+        }
+    }
+    // Hand back the best state seen — a pass pursuing one defect class
+    // must not ship a net regression in the other, and a volume-breaking
+    // "fix" must not ship at all.
+    *mesh = best.1;
+    // The DP fills and zips reuse existing vertices, but carving and
+    // snapping can leave position-duplicate vertices and micro-sliver
+    // triangles behind; a final weld collapses both so downstream
+    // position-keyed watertightness checks see the pairing that is
+    // actually there.
+    weld_coincident_vertices(mesh);
+    heal_t_junctions(mesh);
+    collapse_zero_area_triangles(mesh);
+    // Hard exit invariant: the repair optimizes a position-quantized
+    // defect measure, but plenty of consumers (the torture track's
+    // validity oracle among them) count INDEX-level boundary edges. A
+    // "repair" that closes doubled sheets while leaving more raw boundary
+    // edges than it started with is a regression to them — hand back the
+    // input instead.
+    if mesh.boundary_edges().len() > original_boundary {
+        *mesh = original;
+    }
 }
 
 #[cfg(test)]

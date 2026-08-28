@@ -7212,6 +7212,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-adjoint",
+ "vcad-kernel-booleans",
  "vcad-kernel-diff",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
