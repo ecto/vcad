@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-28-manifold-nested-ring-unions",
+  "version": "0.9.4",
+  "date": "2026-08-28",
+  "category": "fix",
+  "title": "Manifold STLs for unions of stacked rings",
+  "summary": "A union whose operands are differences (stacked annular rings) no longer exports doubled surface a slicer reports as non-manifold and auto-repairs by filling the bore.",
+  "features": ["booleans", "export", "stl", "printing"],
+  "mcpTools": []
+}

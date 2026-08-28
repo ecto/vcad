@@ -79,6 +79,16 @@ pub struct MeshReport {
     pub open_edges: usize,
     /// Triangle count.
     pub triangles: usize,
+    /// Undirected edges shared by MORE than two triangles.
+    ///
+    /// `open_edges` is a *net directed* count, so it cancels to zero on a
+    /// doubled surface: two coincident patches with opposite winding are
+    /// invisible to it. That is exactly the defect a slicer reports as
+    /// "non-manifold edges", and auto-repair resolves it by filling —
+    /// which closed a rotor's shaft bore on a real print. Count it
+    /// separately: unlike an unpaired hairline seam, an over-used edge is
+    /// never legitimate geometry.
+    pub overused_edges: usize,
 }
 
 /// Measure a result mesh: signed volume, unpaired directed edges, triangles.
@@ -113,10 +123,25 @@ pub fn mesh_report(mesh: &TriangleMesh) -> MeshReport {
             }
         }
     }
+    let mut uses: std::collections::HashMap<([i64; 3], [i64; 3]), usize> =
+        std::collections::HashMap::new();
+    for t in 0..mesh.indices.len() / 3 {
+        for k in 0..3 {
+            let x = vkey(mesh.indices[t * 3 + k] as usize);
+            let y = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+            if x == y {
+                continue;
+            }
+            let e = if x < y { (x, y) } else { (y, x) };
+            *uses.entry(e).or_default() += 1;
+        }
+    }
+
     MeshReport {
         signed_volume: mesh_signed_volume(mesh),
         open_edges: net.values().map(|n| n.unsigned_abs() as usize).sum(),
         triangles: mesh.indices.len() / 3,
+        overused_edges: uses.values().filter(|&&n| n > 2).count(),
     }
 }
 

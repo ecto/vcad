@@ -1164,17 +1164,7 @@ pub fn split_planar_face_by_circle(
                         if lp_verts.is_empty() {
                             continue;
                         }
-                        let test_pt = if lp_verts.len() == 1 {
-                            lp_verts[0]
-                        } else {
-                            let n = lp_verts.len() as f64;
-                            Point3::new(
-                                lp_verts.iter().map(|v| v.x).sum::<f64>() / n,
-                                lp_verts.iter().map(|v| v.y).sum::<f64>() / n,
-                                lp_verts.iter().map(|v| v.z).sum::<f64>() / n,
-                            )
-                        };
-                        if (test_pt - circle.center).norm() < circle.radius - tolerance {
+                        if loop_vs_circle(&lp_verts, circle, tolerance) == LoopVsCircle::Inside {
                             brep.topology.faces[face_id]
                                 .inner_loops
                                 .retain(|&l| l != lp);
@@ -1224,6 +1214,33 @@ pub fn split_planar_face_by_circle(
         return SplitResult {
             sub_faces: vec![face_id],
         };
+    }
+
+    // A circle that lies inside one of this face's HOLES is not inside the
+    // face at all: the face's material is the outer loop minus its inner
+    // loops. Splitting on it manufactures a disk sub-face covering the hole
+    // (a membrane the tessellator then draws over the bore) plus a
+    // redundant nested hole on the ring — measured as 691 non-manifold
+    // edges on a stacked-ring union, where B's smaller wall circle lands
+    // inside the ring that B's larger wall had already opened.
+    let inner_loops = brep.topology.faces[face_id].inner_loops.clone();
+    for lp in inner_loops {
+        let hole_verts: Vec<Point3> = brep
+            .topology
+            .loop_half_edges(lp)
+            .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+            .collect();
+        if hole_verts.len() < 3 {
+            continue;
+        }
+        // Coincident with the hole rim: that boundary already exists.
+        if loop_vs_circle(&hole_verts, circle, 1e-6) == LoopVsCircle::Coincident
+            || circle_fully_inside_polygon(&hole_verts, circle)
+        {
+            return SplitResult {
+                sub_faces: vec![face_id],
+            };
+        }
     }
 
     // Check if the FULL circle is inside the polygon
@@ -1394,23 +1411,17 @@ pub fn split_planar_face_by_circle(
         // Determine which face this inner loop belongs to by checking if its
         // representative vertex is inside the new circle
         let target_face = if !loop_verts_existing.is_empty() {
-            // Use the centroid of the inner loop vertices (or just the first vertex
-            // for degenerate single-vertex loops) as the test point
-            let test_pt = if loop_verts_existing.len() == 1 {
-                loop_verts_existing[0]
-            } else {
-                let n = loop_verts_existing.len() as f64;
-                let cx = loop_verts_existing.iter().map(|v| v.x).sum::<f64>() / n;
-                let cy = loop_verts_existing.iter().map(|v| v.y).sum::<f64>() / n;
-                let cz = loop_verts_existing.iter().map(|v| v.z).sum::<f64>() / n;
-                Point3::new(cx, cy, cz)
-            };
-            let d = test_pt - circle.center;
-            let dist = d.norm();
-            if dist < circle.radius - tolerance {
-                inner_face // Loop is inside the circle → belongs to inner (disk) face
-            } else {
-                outer_face // Loop is outside the circle → belongs to outer face
+            match loop_vs_circle(&loop_verts_existing, circle, tolerance) {
+                // Inside the circle → belongs to the disk sub-face.
+                LoopVsCircle::Inside => inner_face,
+                // The loop IS the splitting circle: the split has already
+                // created that boundary as `hole_loop` on the outer face
+                // and as the disk's own outer loop. Re-adding it would
+                // give the outer face two copies of one hole.
+                LoopVsCircle::Coincident => continue,
+                // Outside, or crossing the circle (which no valid hole
+                // does — keep it on the ring, where the parent had it).
+                _ => outer_face,
             }
         } else {
             outer_face // Empty loop, default to outer
@@ -1635,6 +1646,65 @@ fn circle_fully_inside_polygon(polygon: &[Point3], circle: &vcad_kernel_geom::Ci
     }
 
     true
+}
+
+/// Where an existing hole loop sits relative to a splitting circle.
+///
+/// Routing holes by their CENTROID is wrong for the commonest hole shape
+/// there is: a circle. Every concentric loop — whatever its radius —
+/// has its centroid at the shared center, so a hole *larger* than the
+/// splitting circle tested "inside" and was handed to the disk sub-face.
+/// The result is a face whose hole is bigger than its own outer loop
+/// (measured: an r24 disk carrying an r27.5 hole), which the tessellator
+/// draws as the full disk — a membrane over the hole, doubled surface,
+/// and non-manifold edges in the exported mesh. Nested annular caps are
+/// exactly what a union-of-differences produces, which is why the defect
+/// only showed up on stacked rings.
+///
+/// Classify by the loop's VERTICES instead, which is what containment
+/// actually means.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LoopVsCircle {
+    /// Every vertex strictly inside the circle.
+    Inside,
+    /// Every vertex strictly outside.
+    Outside,
+    /// The loop *is* the circle (within tolerance).
+    Coincident,
+    /// The loop crosses the circle — it belongs to neither sub-face
+    /// cleanly.
+    Straddles,
+}
+
+fn loop_vs_circle(
+    loop_verts: &[Point3],
+    circle: &vcad_kernel_geom::Circle3d,
+    tol: f64,
+) -> LoopVsCircle {
+    let mut inside = false;
+    let mut outside = false;
+    let mut on = false;
+    for p in loop_verts {
+        // Distance measured in the circle's own plane: a loop on a
+        // parallel plane (the far cap of a through-hole) must still
+        // classify by its radius, not by its 3D distance to the center.
+        let d = *p - circle.center;
+        let n = circle.normal.into_inner();
+        let radial = (d - d.dot(n) * n).norm();
+        if radial < circle.radius - tol {
+            inside = true;
+        } else if radial > circle.radius + tol {
+            outside = true;
+        } else {
+            on = true;
+        }
+    }
+    match (inside, outside) {
+        (true, false) => LoopVsCircle::Inside,
+        (false, true) => LoopVsCircle::Outside,
+        (false, false) if on => LoopVsCircle::Coincident,
+        _ => LoopVsCircle::Straddles,
+    }
 }
 
 /// Point-in-polygon test using ray casting (2D version).
