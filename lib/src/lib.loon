@@ -181,12 +181,29 @@
 [let wedge [fn [x y z] [Wedge x y z]]]
 [let prism [fn [sides radius height] [Prism sides radius height]]]
 
-; Same primitives with an explicit segment count. The plain forms leave
-; faceting to the kernel default (32); reach for these when the facets are
-; load-bearing — a bore that has to pass a real shaft, a pulley whose pitch
-; diameter is measured off the mesh, anything conforming to a mating part.
-; A 32-segment inscribed circle sits 0.24% inside its nominal radius, which
-; is a 0.05 mm interference on a 20 mm bore.
+; Faceted prisms, sized the way a print is dimensioned. `polygon-prism` is
+; `prism` under a name that says what it makes; `hex-prism` takes the
+; ACROSS-FLATS size (what a wrench or a hex key measures) rather than the
+; circumradius: af = 2 r cos(30°), so r = af / sqrt(3).
+[let polygon-prism [fn [sides radius height] [Prism sides radius height]]]
+[let hex-prism [fn [across-flats height]
+  [Prism 6.0 [/ across-flats 1.7320508075688772] height]]]
+
+; Same primitives with an explicit segment count. The count is a FIDELITY
+; HINT: it sets how finely booleans and seams approximate the circle (the
+; kernel takes the larger count of the two operands), and it is NOT a face
+; count — the surface stays a true analytic circle whatever you pass.
+;
+; So `[cylinder-n r h 6]` is a CYLINDER, not a hexagonal prism. For real
+; flats — hex sockets, square drives, keyed bores — use `prism` /
+; `polygon-prism` / `hex-prism` below; counts under 8 are refused by the
+; -n forms for exactly that reason.
+;
+; Reach for the -n forms when boolean fidelity is load-bearing — a bore
+; that has to pass a real shaft, a pulley whose pitch diameter is measured
+; off the mesh, anything conforming to a mating part. A 32-segment
+; inscribed circle sits 0.24% inside its nominal radius, which is a 0.05 mm
+; interference on a 20 mm bore.
 [let cylinder-n [fn [r h n] [CylinderN r h n]]]
 [let sphere-n [fn [r n] [SphereN r n]]]
 [let cone-n [fn [r-bottom r-top h n] [ConeN r-bottom r-top h n]]]

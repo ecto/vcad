@@ -231,6 +231,18 @@ pub struct BooleanReport {
     /// only: known-good results score 3 and 64, so no threshold separates
     /// good from bad (see [`crate::mesh_report`]).
     pub open_edges: usize,
+    /// Undirected edges in the result's tessellation shared by MORE than
+    /// two triangles — doubled or overlapping surface, which a slicer
+    /// reports as non-manifold and auto-repairs by filling (a printed
+    /// rotor came back with its shaft bore solid).
+    ///
+    /// Advisory in the same way `open_edges` is, and for the same reason:
+    /// measured over this crate's catalogue, known-good results score up
+    /// to 13. What it adds is VISIBILITY — `open_edges` is a net directed
+    /// count, so it cancels to zero on a doubled surface and cannot see
+    /// this class at all. A large count is worth investigating; a small
+    /// one is seam noise.
+    pub overused_edges: usize,
     /// Face count of the result B-rep. A four-digit count with
     /// `fidelity == TriangleSoup` is the signature of soup.
     pub faces: usize,
@@ -244,6 +256,7 @@ impl BooleanReport {
             reason: None,
             flagged_unrepresentable: false,
             open_edges: 0,
+            overused_edges: 0,
             faces: 0,
         }
     }
@@ -255,6 +268,7 @@ impl BooleanReport {
             reason: Some(reason),
             flagged_unrepresentable: false,
             open_edges: 0,
+            overused_edges: 0,
             faces: 0,
         }
     }
@@ -463,12 +477,15 @@ pub fn boolean_op_reported(
     // Cheap structural stat carried on every report so a caller can see a
     // cracked-but-analytic result without re-tessellating. One hashed pass
     // over a mesh the pipeline already built.
-    let result_open_edges = crate::mesh_report(&result_mesh).open_edges;
+    let result_structure = crate::mesh_report(&result_mesh);
+    let result_open_edges = result_structure.open_edges;
+    let result_overused_edges = result_structure.overused_edges;
     // Analytic outcome, shared by the four "keep the B-rep" returns below.
     let keep = |result: BooleanResult| {
         let report = BooleanReport {
             flagged_unrepresentable: flagged || sphere_unrepresentable,
             open_edges: result_open_edges,
+            overused_edges: result_overused_edges,
             ..BooleanReport::analytic(op)
         }
         .with_result(&result);
@@ -519,6 +536,18 @@ pub fn boolean_op_reported(
     // cylinder has a few hairline seams, the mesh fallback is watertight and
     // agrees on volume, so the analytic r45 wall was traded for coarse
     // triangle soup and the volume fell 529 mm³ short of analytic truth.
+    //
+    // Over-used edges do NOT open the swap, though they are now measured
+    // and reported (`BooleanReport::overused_edges`). Making them a
+    // trigger was tried and reverted: the populations overlap exactly the
+    // way they do for open edges. Measured over this crate's own catalogue,
+    // known-good results score up to 13 over-used edges — b1's blade cut
+    // scores 1 — while the doubled-surface defects that motivated the
+    // measurement scored 11 and 14. No count separates them, so a
+    // count-triggered swap traded b1's analytic r45 wall for coarse soup
+    // and lost 505 mm³. The measurement's job is to make doubled surface
+    // VISIBLE (`open_edges` is a net directed count and cancels on it);
+    // repairing it belongs at its root, in the splitters.
     if !(flagged || sphere_unrepresentable || inverted) {
         return Ok(keep(result));
     }
@@ -536,10 +565,18 @@ pub fn boolean_op_reported(
     let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
     let alt_vol = alt_report.signed_volume.abs();
     let agree = (alt_vol - brep_vol).abs() <= 0.10 * brep_vol.max(alt_vol);
-    if alt_report.open_edges == 0 && alt_report.triangles > 0 && agree {
+    // The fallback is taken only if it is watertight and agrees on volume.
+    // Note what is NOT required: that it be manifold. Adding that cost
+    // five torture cases (chain-00/08/10, rand-072, rand-220), which pass
+    // precisely BECAUSE they take this swap — a fallback that closes every
+    // crack while carrying a few over-used edges is still strictly better
+    // than the cracked B-rep it replaces.
+    let alt_usable = alt_report.triangles > 0 && agree;
+    if alt_usable && alt_report.open_edges == 0 {
         let mut report =
             BooleanReport::degraded(op, DegradeReason::WatertightnessSwap).with_result(&alt);
         report.flagged_unrepresentable = true;
+        report.overused_edges = alt_report.overused_edges;
         return Ok((alt, report));
     }
     Ok(keep(result))
