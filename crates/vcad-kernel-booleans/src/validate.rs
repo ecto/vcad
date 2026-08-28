@@ -86,8 +86,9 @@ pub struct MeshReport {
     /// invisible to it. That is exactly the defect a slicer reports as
     /// "non-manifold edges", and auto-repair resolves it by filling —
     /// which closed a rotor's shaft bore on a real print. Count it
-    /// separately: unlike an unpaired hairline seam, an over-used edge is
-    /// never legitimate geometry.
+    /// separately. Like `open_edges` it is advisory — known-good results
+    /// in this crate's catalogue score up to 13 — but it is the only
+    /// number that sees this class at all.
     pub overused_edges: usize,
 }
 

@@ -166,12 +166,6 @@ pub enum DegradeReason {
     /// was watertight and agreed on volume. Analytic surfaces were traded
     /// for watertightness.
     WatertightnessSwap,
-    /// The B-rep result carried edges shared by more than two triangles —
-    /// doubled or overlapping surface, which no consumer can interpret
-    /// (a slicer's auto-repair "fixes" it by filling, which has closed a
-    /// bore on a real print). The mesh fallback was manifold and agreed on
-    /// volume, so it was taken instead.
-    NonManifoldSwap,
 }
 
 impl DegradeReason {
@@ -185,7 +179,6 @@ impl DegradeReason {
             DegradeReason::DifferenceRemovedNothing => "difference-removed-nothing",
             DegradeReason::SphereArrangement => "sphere-arrangement",
             DegradeReason::WatertightnessSwap => "watertightness-swap",
-            DegradeReason::NonManifoldSwap => "non-manifold-swap",
         }
     }
 }
@@ -211,9 +204,6 @@ impl std::fmt::Display for DegradeReason {
             }
             DegradeReason::WatertightnessSwap => {
                 "the B-rep result was cracked and the watertight mesh result was taken instead"
-            }
-            DegradeReason::NonManifoldSwap => {
-                "the B-rep result had edges shared by more than two triangles;                  the manifold mesh result was taken instead"
             }
         };
         write!(f, "{msg}")
@@ -241,12 +231,17 @@ pub struct BooleanReport {
     /// only: known-good results score 3 and 64, so no threshold separates
     /// good from bad (see [`crate::mesh_report`]).
     pub open_edges: usize,
-    /// Undirected edges in the result's tessellation shared by more than
-    /// two triangles. Unlike `open_edges` this is NOT advisory: doubled
-    /// surface is never legitimate geometry, and a slicer's auto-repair
-    /// resolves it by filling (a printed rotor came back with its shaft
-    /// bore solid). A nonzero count here after the fallback has been
-    /// offered means the pipeline could not produce printable output.
+    /// Undirected edges in the result's tessellation shared by MORE than
+    /// two triangles — doubled or overlapping surface, which a slicer
+    /// reports as non-manifold and auto-repairs by filling (a printed
+    /// rotor came back with its shaft bore solid).
+    ///
+    /// Advisory in the same way `open_edges` is, and for the same reason:
+    /// measured over this crate's catalogue, known-good results score up
+    /// to 13. What it adds is VISIBILITY — `open_edges` is a net directed
+    /// count, so it cancels to zero on a doubled surface and cannot see
+    /// this class at all. A large count is worth investigating; a small
+    /// one is seam noise.
     pub overused_edges: usize,
     /// Face count of the result B-rep. A four-digit count with
     /// `fidelity == TriangleSoup` is the signature of soup.
@@ -411,16 +406,7 @@ pub fn boolean_op_reported(
     // two tessellations against a pipeline that has already run SSI,
     // splitting, classification and sewing — and the guard's expensive half
     // (the probe grid) still only runs when the cheap volume test trips.
-    // A non-manifold result can come out of ANY op (a union of two
-    // annular caps doubles its contact plane), and repairing it needs the
-    // operand meshes — so a Union pays for them too when its own result
-    // has over-used edges. Cheap to decide: the result mesh is in hand.
-    let result_overused_now = crate::mesh_report(&result_mesh).overused_edges > 0;
-    let operands = (flagged
-        || sphere_unrepresentable
-        || inverted
-        || result_overused_now
-        || op == BooleanOp::Difference)
+    let operands = (flagged || sphere_unrepresentable || inverted || op == BooleanOp::Difference)
         .then(|| {
             (
                 tessellate_brep(solid_a, segments),
@@ -551,22 +537,24 @@ pub fn boolean_op_reported(
     // agrees on volume, so the analytic r45 wall was traded for coarse
     // triangle soup and the volume fell 529 mm³ short of analytic truth.
     //
-    // Over-used edges are the one structural defect that is NOT advisory,
-    // so they open the swap on their own — no capability flag required.
-    // An edge shared by three or more triangles means the result carries
-    // doubled or overlapping surface; no consumer can interpret it, and a
-    // slicer's auto-repair resolves it by FILLING (a printed rotor came
-    // back with its shaft bore solid). Unlike a hairline seam there is no
-    // legitimate population to protect: the analytic surfaces of a result
-    // that doubles itself were not worth keeping.
-    let repair_non_manifold = result_overused_edges > 0;
-    if !(flagged || sphere_unrepresentable || inverted || repair_non_manifold) {
+    // Over-used edges do NOT open the swap, though they are now measured
+    // and reported (`BooleanReport::overused_edges`). Making them a
+    // trigger was tried and reverted: the populations overlap exactly the
+    // way they do for open edges. Measured over this crate's own catalogue,
+    // known-good results score up to 13 over-used edges — b1's blade cut
+    // scores 1 — while the doubled-surface defects that motivated the
+    // measurement scored 11 and 14. No count separates them, so a
+    // count-triggered swap traded b1's analytic r45 wall for coarse soup
+    // and lost 505 mm³. The measurement's job is to make doubled surface
+    // VISIBLE (`open_edges` is a net directed count and cancels on it);
+    // repairing it belongs at its root, in the splitters.
+    if !(flagged || sphere_unrepresentable || inverted) {
         return Ok(keep(result));
     }
     let Some((mesh_a, mesh_b)) = &operands else {
         return Ok(keep(result));
     };
-    if result_open_edges == 0 && !repair_non_manifold {
+    if result_open_edges == 0 {
         return Ok(keep(result));
     }
     let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics) else {
@@ -577,25 +565,13 @@ pub fn boolean_op_reported(
     let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
     let alt_vol = alt_report.signed_volume.abs();
     let agree = (alt_vol - brep_vol).abs() <= 0.10 * brep_vol.max(alt_vol);
-    // The fallback is only ever taken when it is structurally BETTER than
-    // what it replaces — never merely different. Swapping soup in for a
-    // defect it also has just loses the surfaces.
-    //
-    // "Better" is judged against the defect being repaired, and ONLY that
-    // one. Requiring a manifold fallback for the watertightness swap as
-    // well cost five torture cases (chain-00/08/10, rand-072, rand-220):
-    // they pass *because* they take that swap, and a fallback that closes
-    // every crack while carrying a few over-used edges was suddenly
-    // rejected, handing back the cracked B-rep instead.
+    // The fallback is taken only if it is watertight and agrees on volume.
+    // Note what is NOT required: that it be manifold. Adding that cost
+    // five torture cases (chain-00/08/10, rand-072, rand-220), which pass
+    // precisely BECAUSE they take this swap — a fallback that closes every
+    // crack while carrying a few over-used edges is still strictly better
+    // than the cracked B-rep it replaces.
     let alt_usable = alt_report.triangles > 0 && agree;
-    if alt_usable && repair_non_manifold && alt_report.overused_edges == 0 {
-        let mut report =
-            BooleanReport::degraded(op, DegradeReason::NonManifoldSwap).with_result(&alt);
-        report.flagged_unrepresentable = flagged || sphere_unrepresentable;
-        report.open_edges = alt_report.open_edges;
-        report.overused_edges = 0;
-        return Ok((alt, report));
-    }
     if alt_usable && alt_report.open_edges == 0 {
         let mut report =
             BooleanReport::degraded(op, DegradeReason::WatertightnessSwap).with_result(&alt);
