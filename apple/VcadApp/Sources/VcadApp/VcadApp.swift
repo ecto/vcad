@@ -49,12 +49,18 @@ struct VcadApp: App {
         }
     }
 
+    /// The document lives at app scope, not in the window: the WindowGroup's
+    /// window is hidden at launch (release-to-desktop is the only mode), and the
+    /// menu bar commands need the same model the floating overlay is editing.
+    @State private var model = EditorModel()
+    @State private var intent = IntentEngine()
+
     var body: some Scene {
         WindowGroup {
-            EditorView()
-                .frame(minWidth: 560, minHeight: 600)
+            EditorView(model: model, intent: intent)
         }
         .windowStyle(.automatic)
+        .commands { DocumentCommands(model: model) }
     }
 }
 

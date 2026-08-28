@@ -102,6 +102,15 @@ enum ToolTab: String, CaseIterable, Identifiable {
         case .combine: return "square.on.square.dashed"
         }
     }
+    /// The palette's resting hint — what this page of the palette is for, shown
+    /// when the pointer is not over a tool.
+    var paletteHint: String {
+        switch self {
+        case .create: return "Add geometry to the document"
+        case .modify: return "Edit the selected part"
+        case .combine: return "Boolean two selected parts"
+        }
+    }
 }
 
 /// A boolean combine operation (the Combine tab — acts on two selected parts).
@@ -253,6 +262,8 @@ final class EditorModel {
     var sizeMM: SIMD3<Float> = .zero
 
     // Picking.
+    /// Why the last evaluation produced nothing, when it produced nothing.
+    var loadError: String?
     var pickPoint: SIMD3<Float>?
     var pickInfo: String?
     var pickDirty = false
@@ -293,6 +304,21 @@ final class EditorModel {
     var multiSelectedParts: [Int] = []
     /// Part under the cursor (documents) — drives a subtle hover highlight.
     var hoveredPartIndex: Int?
+    /// Assembly instance under the cursor / selected, by render index.
+    ///
+    /// Assemblies draw one entity per INSTANCE, not per root part, so the
+    /// part-index selection path could never touch them: every link of a robot
+    /// was inert — no hover, no click, and an inspector that said "select a
+    /// feature in the tree" while you were pointing right at one.
+    var hoveredInstanceIndex: Int?
+    var selectedInstanceIndex: Int?
+    /// Instances currently lit. A viewport hover lights exactly one; hovering a
+    /// tree row lights every instance drawn from that row's part def, because
+    /// the row *is* the definition — one row, four elbows on a quadruped.
+    var hoveredInstances: Set<Int> = []
+    /// The tree row that is hot, whichever side the pointer is on. Hovering
+    /// geometry highlights its row; hovering a row highlights its geometry.
+    var hoveredFeatureID: String?
     var hoverDirty = false
     /// Zebra surface analysis: striped environment reflected off chromed parts,
     /// so stripe continuity reveals curvature/tangency defects.
@@ -300,8 +326,22 @@ final class EditorModel {
     var zebraDirty = false
     /// Release-to-desktop: the window goes transparent + chromeless and the
     /// parts float over the desktop (environment kept for lighting only).
-    var releaseMode = false { didSet { if releaseMode != oldValue { releaseDirty = true } } }
-    var releaseDirty = false
+    /// Release-to-desktop is the app's only mode — the parts always float over
+    /// the desktop in the borderless overlay. Kept as a constant so the scene
+    /// code that dresses the studio (floor, grid, ambient blob) keeps reading a
+    /// single source of truth instead of hard-coding the answer at each site.
+    let releaseMode = true
+    /// Panels the released overlay can close (BCB-style) and re-open from View.
+    var showsPalette = true
+    var showsTree = true
+    var showsInspector = true
+
+    /// Show or hide every floating panel at once.
+    func setPanels(shown: Bool) {
+        showsPalette = shown
+        showsTree = shown
+        showsInspector = shown
+    }
     /// Per-part kernel-space triangle meshes (+ AABB), index-aligned with the
     /// rendered parts — the basis for precise ray-triangle hover/pick. The AABB
     /// is a broadphase cull before the triangle test.
@@ -693,16 +733,131 @@ final class EditorModel {
     /// Single-select a row (clears any multi-selection).
     func selectFeature(_ id: String) {
         if !multiSelectedParts.isEmpty { multiSelectedParts = [] }
+        // A row click supersedes a click on geometry: leaving the old instance
+        // set would keep an unrelated body lit.
+        selectedInstanceIndex = nil
         selectedFeatureID = id
     }
     /// Whether anything is selected (drives Escape/empty-click deselect).
-    var hasSelection: Bool { selectedFeatureID != nil || !multiSelectedParts.isEmpty }
+    var hasSelection: Bool {
+        selectedFeatureID != nil || !multiSelectedParts.isEmpty || selectedInstanceIndex != nil
+    }
     /// Clear all selection — empty-space click or Escape (documents only).
     func deselectAll() {
         multiSelectedParts = []
+        selectedInstanceIndex = nil
         selectedFeatureID = nil
         selectionDirty = true
     }
+    // MARK: assembly instances
+
+    /// The document's instance list, as authored (index-aligned with the
+    /// rendered instances — the evaluator preserves order).
+    private var instanceDicts: [[String: Any]] {
+        (documentJSON?["instances"] as? [[String: Any]]) ?? []
+    }
+
+    /// An instance's display name, falling back to its id.
+    func instanceName(_ i: Int) -> String? {
+        guard i < instanceDicts.count else { return nil }
+        let d = instanceDicts[i]
+        return (d["name"] as? String) ?? (d["id"] as? String)
+    }
+
+    /// The part definition an instance is an instance OF.
+    func instancePartDefName(_ i: Int) -> String? {
+        guard i < instanceDicts.count,
+              let key = instanceDicts[i]["partDefId"] as? String else { return nil }
+        let defs = documentJSON?["partDefs"] as? [String: Any]
+        let def = defs?[key] as? [String: Any]
+        return (def?["name"] as? String) ?? key
+    }
+
+    /// The feature-tree row for the geometry an instance draws: its part def's
+    /// root node. Selecting an instance therefore lands you on the DAG that
+    /// produced it — edit the link's cube there and every instance follows.
+    func instanceFeatureNode(_ i: Int) -> FeatureNode? {
+        guard i < instanceDicts.count,
+              let key = instanceDicts[i]["partDefId"] as? String,
+              let defs = documentJSON?["partDefs"] as? [String: Any],
+              let def = defs[key] as? [String: Any],
+              let root = (def["root"] as? NSNumber)?.intValue else { return nil }
+        return Self.findNode(featureNodes, nodeId: root)
+    }
+
+    private static func findNode(_ nodes: [FeatureNode], nodeId: Int) -> FeatureNode? {
+        for n in nodes {
+            if n.nodeId == nodeId { return n }
+            if let f = findNode(n.children, nodeId: nodeId) { return f }
+        }
+        return nil
+    }
+
+    /// Every instance drawn from a given DAG node (a part def's root).
+    func instanceIndices(forNodeId nodeId: Int) -> [Int] {
+        guard let defs = documentJSON?["partDefs"] as? [String: Any] else { return [] }
+        let keys = defs.compactMap { key, value -> String? in
+            guard let def = value as? [String: Any],
+                  (def["root"] as? NSNumber)?.intValue == nodeId else { return nil }
+            return key
+        }
+        guard !keys.isEmpty else { return [] }
+        return instanceDicts.enumerated().compactMap { i, d in
+            (d["partDefId"] as? String).map { keys.contains($0) ? i : nil } ?? nil
+        }
+    }
+
+    /// The instances the viewport should show as selected.
+    ///
+    /// Clicking geometry selects one instance. Clicking a TREE ROW selects a
+    /// part definition, which may have been instanced many times — so the
+    /// selection is a set, derived from whichever side did the selecting.
+    /// Without this an assembly row click changed `selectedFeatureID` and
+    /// nothing else: the tree highlighted, the viewport sat there.
+    var selectedInstances: Set<Int> {
+        if let i = selectedInstanceIndex { return [i] }
+        guard assemblyInstanceCount > 0, let node = selectedFeatureNode else { return [] }
+        return Set(instanceIndices(forNodeId: node.nodeId))
+    }
+
+    /// Hover driven from the feature tree: light the row and everything it drew.
+    func hoverFeature(_ node: FeatureNode?) {
+        hoveredFeatureID = node?.id
+        hoveredPartIndex = node?.partIndex
+        hoveredInstances = node.map { Set(instanceIndices(forNodeId: $0.nodeId)) } ?? []
+    }
+
+    /// Hover driven from the viewport: light the body and its row.
+    func hoverBody(part: Int?, instance: Int?) {
+        hoveredPartIndex = part
+        hoveredInstanceIndex = instance
+        hoveredInstances = instance.map { [$0] } ?? []
+        if let part {
+            hoveredFeatureID = Self.findNode(featureNodes, partIndex: part)?.id
+        } else if let instance {
+            hoveredFeatureID = instanceFeatureNode(instance)?.id
+        } else {
+            hoveredFeatureID = nil
+        }
+    }
+
+    private static func findNode(_ nodes: [FeatureNode], partIndex: Int) -> FeatureNode? {
+        for n in nodes {
+            if n.partIndex == partIndex { return n }
+            if let f = findNode(n.children, partIndex: partIndex) { return f }
+        }
+        return nil
+    }
+
+    /// Click an instance: it becomes the selection, and the tree follows to the
+    /// part def it draws.
+    func selectInstance(_ i: Int) {
+        multiSelectedParts = []
+        selectedInstanceIndex = i
+        selectedFeatureID = instanceFeatureNode(i)?.id
+        selectionDirty = true
+    }
+
     /// ⌘-click: toggle a part in the multi-selection; the last click stays primary.
     func toggleMultiSelect(part pi: Int, featureID id: String) {
         if let idx = multiSelectedParts.firstIndex(of: pi) { multiSelectedParts.remove(at: idx) }
@@ -791,6 +946,37 @@ final class EditorModel {
         guard documentJSON != nil else { return }
         applyEdit(snapshot: true, reeval: .rebuild) { DocEdit.addPrimitiveRoot(&$0, shape: shape) }
         selectedFeatureID = featureNodes.last?.id        // focus the new part
+    }
+
+    /// Add a primitive and move it to a point in kernel space (mm) — the
+    /// palette's click-to-place. Two edits, one undo step apart: the add is the
+    /// creation, the move is where you put it.
+    func addPrimitive(_ shape: BaseShape, at p: SIMD3<Float>) {
+        addPrimitive(shape)
+        guard let pi = selectedPartIndex else { return }
+        applyEdit(snapshot: false, reeval: .rebuild) {
+            DocEdit.setRootTranslate(&$0, partIndex: pi,
+                                     Double(p.x), Double(p.y), Double(p.z))
+        }
+    }
+
+    // MARK: armed tool (the Borland palette idiom: pick a component, then place it)
+
+    /// The primitive the palette has armed, waiting for a click in the scene.
+    /// Nil means the pointer is a pointer.
+    var armedShape: BaseShape?
+
+    func arm(_ shape: BaseShape) {
+        armedShape = (armedShape == shape) ? nil : shape
+    }
+    func disarm() { armedShape = nil }
+
+    /// Replace the selection with everything a marquee caught.
+    func selectParts(_ parts: [Int]) {
+        guard !parts.isEmpty else { deselectAll(); return }
+        multiSelectedParts = parts.count == 1 ? [] : parts
+        selectedFeatureID = featureNodes.first(where: { $0.partIndex == parts[0] })?.id
+        selectionDirty = true
     }
 
     /// Combine the two ⌘-selected parts with a boolean op (first = base).
@@ -1273,7 +1459,15 @@ final class EditorModel {
         let scene: OpaquePointer? = data.withUnsafeBytes {
             vcad_scene_from_json($0.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
-        guard let scene else { return nil }
+        guard let scene else {
+            // The kernel refused the document. This used to return nil and
+            // leave the app showing an empty viewport with a fully populated
+            // feature tree — the Swift-side DAG parser is lenient, the kernel is
+            // not, so a schema-stale file looked like a renderer bug. Say so.
+            loadError = SimError.pending() ?? "The kernel could not evaluate this document"
+            return nil
+        }
+        loadError = nil
         defer { vcad_scene_free(scene) }
         let count = vcad_scene_part_count(scene)
         var meshes: [MeshResource] = []
@@ -1827,11 +2021,15 @@ final class EditorModel {
         switch tab {
         case .create:
             var out = BaseShape.allCases.map { shape in
-                // Sandbox: pick the primitive. Document: add a new part.
+                // Sandbox: pick the primitive. Document: ARM the tool — the
+                // palette hands the click to the scene, where it lands where you
+                // point (Borland's pick-then-place, which is also how every CAD
+                // app places geometry).
                 Tool(id: "shape.\(shape.rawValue)",
                      label: docMode ? "Add \(shape.label)" : shape.label, symbol: shape.symbol,
-                     isActive: !docMode && baseShape == shape) { [weak self] in
-                    if docMode { self?.addPrimitive(shape) } else { self?.baseShape = shape }
+                     isActive: docMode ? armedShape == shape : baseShape == shape,
+                     hint: docMode ? "Click in the scene to place it" : "") { [weak self] in
+                    if docMode { self?.arm(shape) } else { self?.baseShape = shape }
                 }
             }
             if docMode {
@@ -2124,7 +2322,15 @@ final class EditorModel {
                                         d.baseAddress, d.count)
             }
         }
-        guard let scene else { return .empty }
+        guard let scene else {
+            // The kernel refused the document. Returning `.empty` here left the
+            // app showing a fully populated feature tree over an empty viewport:
+            // the Swift-side DAG parser is lenient, the kernel is not, so a
+            // schema-stale file read as a renderer bug. Say what happened.
+            loadError = SimError.pending() ?? "The kernel could not evaluate this document"
+            return .empty
+        }
+        loadError = nil
         if vcad_scene_instance_count(scene) > 0 {
             return assemblyScene(adopting: scene, start: start)
         }
