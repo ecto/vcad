@@ -580,8 +580,15 @@ pub fn boolean_op_reported(
     // The fallback is only ever taken when it is structurally BETTER than
     // what it replaces — never merely different. Swapping soup in for a
     // defect it also has just loses the surfaces.
-    let alt_sound = alt_report.triangles > 0 && agree && alt_report.overused_edges == 0;
-    if alt_sound && repair_non_manifold {
+    //
+    // "Better" is judged against the defect being repaired, and ONLY that
+    // one. Requiring a manifold fallback for the watertightness swap as
+    // well cost five torture cases (chain-00/08/10, rand-072, rand-220):
+    // they pass *because* they take that swap, and a fallback that closes
+    // every crack while carrying a few over-used edges was suddenly
+    // rejected, handing back the cracked B-rep instead.
+    let alt_usable = alt_report.triangles > 0 && agree;
+    if alt_usable && repair_non_manifold && alt_report.overused_edges == 0 {
         let mut report =
             BooleanReport::degraded(op, DegradeReason::NonManifoldSwap).with_result(&alt);
         report.flagged_unrepresentable = flagged || sphere_unrepresentable;
@@ -589,10 +596,11 @@ pub fn boolean_op_reported(
         report.overused_edges = 0;
         return Ok((alt, report));
     }
-    if alt_sound && alt_report.open_edges == 0 {
+    if alt_usable && alt_report.open_edges == 0 {
         let mut report =
             BooleanReport::degraded(op, DegradeReason::WatertightnessSwap).with_result(&alt);
         report.flagged_unrepresentable = true;
+        report.overused_edges = alt_report.overused_edges;
         return Ok((alt, report));
     }
     Ok(keep(result))
