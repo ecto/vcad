@@ -729,7 +729,17 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
     }
     // `polygons_to_mesh` already heals t-junctions, snaps near-coincident
     // boundary vertices, caps residual pinholes and collapses degenerate
-    // triangles; all that remains is to pin the global orientation.
+    // triangles. What it cannot reach are *redundant patches*: whole
+    // sliver strips that double-cover the surface along seam circles
+    // (classification keeps both operands' fragments of the chord-vs-arc
+    // lune where one operand's cap crosses the other's chordal wall).
+    // Peel those, then pin the global orientation.
+    // No repair passes run here — deliberately. The caller's quadric
+    // projection decides per-vertex constraints from incident triangle
+    // normals, so even a pure deletion (peeling a zero-area flap) before
+    // it flips pinning decisions and strands seam vertices off their
+    // carriers (measured 0.36 mm off a R25 sphere). `mesh_fallback` runs
+    // the repair pipeline between two projection passes instead.
     orient_outward(polygons_to_mesh(&out))
 }
 

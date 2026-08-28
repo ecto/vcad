@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-28-multitool-difference-manifold",
+  "version": "0.9.4",
+  "date": "2026-08-28",
+  "category": "fix",
+  "title": "Manifold exports for multi-tool differences",
+  "summary": "Subtracting a multi-stage union tool (bore + groove + patterned slots) no longer exports slit or doubled surface; broken analytic results now swap to a repaired mesh boolean.",
+  "features": ["booleans", "export", "stl", "printing"],
+  "mcpTools": []
+}
