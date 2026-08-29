@@ -31,125 +31,34 @@ extension View {
 }
 
 #if os(macOS)  // mac window root + document menu
+/// The app's only mode is release-to-desktop: the parts float over the desktop
+/// in a borderless transparent overlay (see ReleasedDesktop.swift). This view is
+/// the WindowGroup's root only because SwiftUI needs one — it owns the model and
+/// the intent engine, hides its own window before it can ever paint, and hands
+/// both to the overlay controller.
 struct EditorView: View {
-    @State private var model = EditorModel()
-    @State private var intent = IntentEngine()
+    let model: EditorModel
+    let intent: IntentEngine
 
     var body: some View {
-        GeometryReader { geo in
-            let compact = geo.size.width < 760
-            ViewportView(model: model)
-                .ignoresSafeArea()
-                .background(ReleaseWindowConfigurator(release: model.releaseMode))
-                .containerBackground(
-                    model.releaseMode ? AnyShapeStyle(.clear) : AnyShapeStyle(.background),
-                    for: .window)
-                .overlay(alignment: .topLeading) {
-                    if !compact && !model.releaseMode {
-                        FeatureTreeView(model: model)
-                            .frame(width: 206)
-                            .padding(14)
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                    }
-                }
-                .overlay(alignment: .top) {
-                    if showsTools && !model.releaseMode && model.toolPlacement == .header {
-                        toolStrip(header: true)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-                .overlay(alignment: .top) {
-                    if model.source.isGripper && !model.releaseMode {
-                        GripperReceiptPill(model: model).padding(.top, 14)
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if model.releaseMode {
-                        ReleaseReturnPill(model: model).padding(14)
-                    } else if model.source.isGripper {
-                        // The cross-domain Receipt takes the inspector slot — the
-                        // adaptive inspector adapting to a multi-domain part.
-                        ReceiptLedger(model: model)
-                            .frame(width: compact ? 248 : 300)
-                            .padding(14)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    } else {
-                        InspectorView(model: model)
-                            .frame(width: compact ? 224 : 280)
-                            .padding(14)
-                    }
-                }
-                .overlay(alignment: .bottom) {
-                  if !model.releaseMode {
-                    VStack(spacing: 10) {
-                        if model.sketching {
-                            SketchHintBar(model: model)
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        } else if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
-                            ExampleChips(intent: intent)
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        }
-                        // Transports live here, in the SAME bottom overlay as the
-                        // composer — not in ViewportView's own bottom overlay.
-                        // Two bottom-aligned overlays on one view do not stack,
-                        // they coincide, and this one is applied outermost, so
-                        // anything the viewport draws at the bottom ends up
-                        // underneath the composer and the tool palette. (That is
-                        // where PlaybackBar used to be, and why it was invisible
-                        // whenever the footer palette was showing.)
-                        //
-                        // Kinematic playback above physics: both write the same
-                        // instance transforms, so only one drives at a time —
-                        // starting the simulation pauses playback.
-                        if model.hasPlayback {
-                            PlaybackBar(model: model)
-                        }
-                        if model.canSimulate {
-                            SimBar(model: model)
-                        }
-                        ComposerBar(engine: intent, model: model)
-                        if showsTools && model.toolPlacement == .footer {
-                            toolStrip(header: false)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                    }
-                    .padding(.bottom, 14)
-                    .animation(Motion.smooth, value: model.source.isSandbox)
-                    .animation(Motion.smooth, value: intent.draft.isEmpty)
-                    .animation(Motion.panel, value: model.sketching)
-                    .animation(Motion.panel, value: model.toolPlacement)
-                  }
-                }
-                .toolbar {
-                    ToolbarItem(placement: .navigation) { BrandMark() }
-                    ToolbarItem(placement: .principal) { IdentityStatusBar(model: model) }
-                    ToolbarItem(placement: .primaryAction) { CollabAvatars() }
-                }
-                .navigationTitle(model.documentName)
-                .onChange(of: model.releaseMode) { _, released in
-                    if released {
-                        ReleaseWindowController.shared.show(model: model, intent: intent)
-                    } else {
-                        ReleaseWindowController.shared.hide()
-                    }
-                }
-                .animation(.smooth(duration: 0.3), value: compact)
-                .task {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .background(HostWindowHider {
+                ReleaseWindowController.shared.show(model: model, intent: intent)
+            })
+            .task {
                     // Dev hook: VCAD_GRIPPER=1 [VCAD_CONNECTOR_X=n] launches into
                     // the cross-domain gripper (used to verify without driving the UI).
                     let env = ProcessInfo.processInfo.environment
-                    // Dev hook: VCAD_OPEN=<path> opens a .vcad on launch (handy
-                    // for verifying the feature tree against a real document).
-                    if let path = env["VCAD_OPEN"], !path.isEmpty {
-                        model.openDocument(URL(fileURLWithPath: path))
-                    }
-                    // Release-to-desktop is the default launch mode; VCAD_RELEASE=0
-                    // opts out (studio window on launch, handy for dev/debugging).
-                    // The 1s delay lets the window exist before the release
-                    // controller reparents it.
-                    if env["VCAD_RELEASE"] != "0" {
-                        try? await Task.sleep(for: .seconds(1))
-                        model.releaseMode = true
+                    AppInstance.currentModel = model
+                    // Pick up documents other instances opened while this one
+                    // was already running.
+                    model.refreshRecents()
+                    // The document this instance was launched for: the argument
+                    // a spawning instance passed, the VCAD_OPEN dev hook, or a
+                    // path on the command line.
+                    if let url = AppInstance.launchDocument() {
+                        model.openDocument(url)
                     }
                     // Dev hook: VCAD_SIM=1 builds the physics simulation for the
                     // opened document and starts it running, so the whole path
@@ -195,124 +104,184 @@ struct EditorView: View {
                             + "segments=\(segs.count) unrouted=\(model.copperUnrouted)\n"
                         FileHandle.standardError.write(Data(line.utf8))
                     }
-                }
+            }
+    }
+}
+
+/// Hides the WindowGroup's window and opens the released overlay in its place.
+/// Done from an NSViewRepresentable rather than a `.task` because the overlay
+/// controller needs the host window to exist (it hides it), and a view's window
+/// is nil until AppKit has attached it — the old code waited out that race with
+/// a 1s sleep, which is exactly the studio flash this removes.
+struct HostWindowHider: NSViewRepresentable {
+    /// Called once, on the main actor, as soon as the host window exists.
+    let onAttach: () -> Void
+
+    func makeNSView(context: Context) -> NSView { HiderView(onAttach: onAttach) }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class HiderView: NSView {
+        private let onAttach: () -> Void
+        private var fired = false
+        init(onAttach: @escaping () -> Void) {
+            self.onAttach = onAttach
+            super.init(frame: .zero)
         }
-    }
+        required init?(coder: NSCoder) { fatalError("unused") }
 
-    private var showsTools: Bool {
-        model.sketching || model.source.isSandbox || model.usesDocumentTree
-    }
-
-    /// The active tool strip — the sketch palette while drawing, otherwise the
-    /// tool palette, rendered as a docked header bar or a floating footer card.
-    @ViewBuilder private func toolStrip(header: Bool) -> some View {
-        if model.sketching {
-            SketchPaletteView(model: model)
-                .padding(.top, header ? 8 : 0)
-        } else if header {
-            ToolPaletteView(model: model, axis: .horizontal, docked: true)
-        } else {
-            ToolPaletteView(model: model, axis: .horizontal)
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let w = window, !fired else { return }
+            fired = true
+            // Zero alpha first: orderOut alone can still flash a frame if the
+            // window was ordered in earlier in this pass.
+            w.alphaValue = 0
+            w.orderOut(nil)
+            onAttach()
         }
     }
 }
 
-struct DocumentMenu: View {
+/// The app's real menu bar. Release-to-desktop has no window chrome to hang a
+/// document menu off, so every document action lives here — where a Mac user
+/// looks for it anyway, and where the key equivalents work no matter which
+/// floating panel has focus.
+struct DocumentCommands: Commands {
     @Bindable var model: EditorModel
-    var body: some View {
-        Menu {
-            Button("New Sandbox") { model.newDocument() }.keyboardShortcut("n")
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            // ⌘N opens another COPY OF THE APP, so the new document gets its own
+            // Dock tile and its own ⌘-Tab entry (see AppInstance for why that
+            // cannot be a second window).
+            Button("New Document") { AppInstance.open() }.keyboardShortcut("n")
+            Button("Reset This Document") { model.newDocument() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Cross-domain Gripper") { model.openGripper() }
             Divider()
-            Button("Open…") { openPanel() }.keyboardShortcut("o")
-            if !model.recents.isEmpty {
-                Menu("Open Recent") {
-                    ForEach(model.recents, id: \.self) { url in
-                        Button(url.deletingPathExtension().lastPathComponent) { model.openDocument(url) }
+            Button("Open…") { openPanel(model) }.keyboardShortcut("o")
+            Menu("Open Recent") {
+                ForEach(model.recents, id: \.self) { url in
+                    Button(url.deletingPathExtension().lastPathComponent) {
+                        AppInstance.opening(url, from: model)
                     }
                 }
             }
+            .disabled(model.recents.isEmpty)
             Menu("Examples") {
                 ForEach(model.examples, id: \.path) { ex in
-                    Button(ex.name) { model.openDocument(URL(fileURLWithPath: ex.path)) }
+                    Button(ex.name) {
+                        AppInstance.opening(URL(fileURLWithPath: ex.path), from: model)
+                    }
                 }
             }
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button("Save") { model.saveDocument() }
+                .keyboardShortcut("s").disabled(!model.usesDocumentTree || !model.documentDirty)
+            Button("Save As…") { saveAsPanel(model) }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!model.usesDocumentTree)
+            Button("Revert Changes") { model.revertDocument() }
+                .disabled(!model.usesDocumentTree || !model.documentDirty)
             Divider()
+            Button("Export STL…") { exportSTLPanel(model) }
+                .keyboardShortcut("e").disabled(!model.canExport)
+            Button("Export USDZ…") { exportUSDZPanel(model) }
+                .keyboardShortcut("e", modifiers: [.command, .shift]).disabled(!model.canExport)
+        }
+        CommandGroup(replacing: .undoRedo) {
             Button("Undo") { model.undo() }.keyboardShortcut("z").disabled(!model.canUndo)
             Button("Redo") { model.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!model.canRedo)
-            Divider()
-            if model.usesDocumentTree {
-                Button("Save") { model.saveDocument() }
-                    .keyboardShortcut("s").disabled(!model.documentDirty)
-                Button("Save As…") { saveAsPanel() }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                if model.documentDirty {
-                    Button("Revert Changes") { model.revertDocument() }
-                }
+        }
+        CommandMenu("View") {
+            Button(model.showsPalette ? "Hide Components" : "Show Components") {
+                model.showsPalette.toggle()
             }
-            Button("Export STL…") { exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
-            Button("Export USDZ…") { exportUSDZPanel() }
-                .keyboardShortcut("e", modifiers: [.command, .shift]).disabled(!model.canExport)
-            Divider()
-            Picker("Tool Palette", selection: $model.toolPlacement) {
-                ForEach(ToolPlacement.allCases) { p in Text(p.label).tag(p) }
+            .keyboardShortcut("1", modifiers: .command)
+            Button(model.showsTree ? "Hide Feature Tree" : "Show Feature Tree") {
+                model.showsTree.toggle()
             }
-            Button("Toggle Tool Palette") { model.cycleToolPlacement() }.keyboardShortcut("t")
-            Button(model.zebraMode ? "Zebra Analysis ✓" : "Zebra Analysis") { model.zebraMode.toggle() }
-                .keyboardShortcut("z", modifiers: [])
-            Button(model.releaseMode ? "Return to Studio" : "Release to Desktop") {
-                withAnimation(Motion.panel) { model.releaseMode.toggle() }
+            .keyboardShortcut("2", modifiers: .command)
+            Button(model.showsInspector ? "Hide Object Inspector" : "Show Object Inspector") {
+                model.showsInspector.toggle()
+            }
+            .keyboardShortcut("3", modifiers: .command)
+            Button(anyPanel ? "Hide Panels" : "Show Panels") {
+                model.setPanels(shown: !anyPanel)
             }
             .keyboardShortcut(.space, modifiers: [.command, .shift])
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: model.source.isSandbox ? "cube" : "doc").font(.system(size: 12))
-                Text(model.documentName).font(.system(size: 13, weight: .medium))
-                if model.documentDirty {
-                    Circle().fill(Color.accentColor).frame(width: 5, height: 5)
-                }
-                Image(systemName: "chevron.down").font(.system(size: 9)).opacity(0.55)
+            Divider()
+            Button(model.zebraMode ? "Zebra Analysis ✓" : "Zebra Analysis") {
+                model.zebraMode.toggle()
             }
+            .keyboardShortcut("z", modifiers: [])
+            Divider()
+            // ⌃-digit, not bare digits: the palette already claims 1/2/3 for
+            // its tabs, and a bare key equivalent fires from the composer too.
+            Button("Isometric") { camera(az: .pi / 5, el: .pi / 7) }
+                .keyboardShortcut("0", modifiers: .control)
+            Button("Front") { camera(az: 0, el: 0) }.keyboardShortcut("1", modifiers: .control)
+            Button("Right") { camera(az: .pi / 2, el: 0) }.keyboardShortcut("2", modifiers: .control)
+            Button("Top") { camera(az: 0, el: 1.45) }.keyboardShortcut("3", modifiers: .control)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
-    private func exportPanel() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "stl") ?? .data]
-        panel.nameFieldStringValue = "\(model.documentName).stl"
-        panel.prompt = "Export"
-        if panel.runModal() == .OK, let url = panel.url { _ = model.exportSTL(to: url) }
-    }
+    private var anyPanel: Bool { model.showsPalette || model.showsTree || model.showsInspector }
 
-    private func exportUSDZPanel() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.usdz]
-        panel.nameFieldStringValue = "\(model.documentName).usdz"
-        panel.prompt = "Export"
-        if panel.runModal() == .OK, let url = panel.url { _ = model.exportUSDZ(to: url) }
+    private func camera(az: Float, el: Float) {
+        model.stopSpin()
+        withAnimation(.smooth(duration: 0.25)) {
+            model.azimuth = az
+            model.elevation = el
+        }
     }
+}
 
-    private func saveAsPanel() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
-        panel.nameFieldStringValue = "\(model.documentName).vcad"
-        panel.prompt = "Save"
-        if panel.runModal() == .OK, let url = panel.url { model.saveDocumentAs(url) }
-    }
+// MARK: document panels (shared by the menu bar and the Components palette)
 
-    private func openPanel() {
-        #if os(macOS)
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.prompt = "Open"
-        if panel.runModal() == .OK, let url = panel.url { model.openDocument(url) }
-        #endif
+@MainActor func exportSTLPanel(_ model: EditorModel) {
+    savePanel(name: "\(model.documentName).stl", ext: "stl", prompt: "Export") {
+        _ = model.exportSTL(to: $0)
     }
+}
+
+@MainActor func exportUSDZPanel(_ model: EditorModel) {
+    savePanel(name: "\(model.documentName).usdz", ext: "usdz", prompt: "Export") {
+        _ = model.exportUSDZ(to: $0)
+    }
+}
+
+@MainActor func saveAsPanel(_ model: EditorModel) {
+    savePanel(name: "\(model.documentName).vcad", ext: "vcad", prompt: "Save") {
+        model.saveDocumentAs($0)
+    }
+}
+
+@MainActor func openPanel(_ model: EditorModel) {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
+    // Several documents at once are several instances, so a multiple selection
+    // is a perfectly good thing to ask for.
+    panel.allowsMultipleSelection = true
+    panel.canChooseDirectories = false
+    panel.prompt = "Open"
+    guard panel.runModal() == .OK else { return }
+    for (i, url) in panel.urls.enumerated() {
+        // The first one may claim this instance if it is a scratch; the rest
+        // always get their own.
+        if i == 0 { AppInstance.opening(url, from: model) } else { AppInstance.open(document: url) }
+    }
+}
+
+@MainActor private func savePanel(name: String, ext: String, prompt: String,
+                                  _ done: @escaping (URL) -> Void) {
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]
+    panel.nameFieldStringValue = name
+    panel.prompt = prompt
+    if panel.runModal() == .OK, let url = panel.url { done(url) }
 }
 
 // MARK: top chrome — brand · centered identity + status · presence
@@ -329,15 +298,37 @@ struct BrandMark: View {
 }
 
 #if os(macOS)
-/// Centered identity (the document menu) + a compact live status readout.
+/// Document identity + a compact live status readout. In release-to-desktop
+/// there is no title bar to carry the document name, so this floats with the
+/// rest of the chrome; the actions it used to front now live in the menu bar.
 struct IdentityStatusBar: View {
     @Bindable var model: EditorModel
     var body: some View {
         HStack(spacing: 10) {
-            DocumentMenu(model: model)
+            HStack(spacing: 6) {
+                Image(systemName: model.source.isSandbox ? "cube" : "doc")
+                    .font(.system(size: 11))
+                Text(model.documentName).font(.system(size: 12, weight: .medium))
+                if model.documentDirty {
+                    Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                        .help("Unsaved changes")
+                }
+            }
             Divider().frame(height: 13)
-            StatusStrip(model: model)
+            if let err = model.loadError {
+                Label(err, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .frame(maxWidth: 420, alignment: .leading)
+                    .help(err)
+            } else {
+                StatusStrip(model: model)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 }
 
@@ -598,6 +589,8 @@ struct SketchPaletteView: View {
                     .padding(6)
             }
             .buttonStyle(.plain)
+            // The help text promised Esc; nothing was listening for it.
+            .keyboardShortcut(.cancelAction)
             .help("Cancel sketch (Esc)")
         }
         .padding(8)
@@ -738,8 +731,12 @@ struct FeatureRowView: View {
         return !model.isPartVisible(pi)
     }
     /// Hovered via the tree row itself OR via the viewport (bidirectional).
+    /// `hoveredFeatureID` covers assembly instances, whose rows are part defs
+    /// and therefore have no part index of their own.
     private var hovered: Bool {
-        hovering || (node.partIndex != nil && node.partIndex == model.hoveredPartIndex)
+        hovering
+            || model.hoveredFeatureID == node.id
+            || (node.partIndex != nil && node.partIndex == model.hoveredPartIndex)
     }
     private var rowBackground: Color {
         if selected { return Color.accentColor.opacity(0.20) }
@@ -749,6 +746,9 @@ struct FeatureRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             row
+                // Addressable by the ScrollViewReader that keeps the selected
+                // row in view when the selection comes from the viewport.
+                .id(node.id)
             if expanded {
                 ForEach(node.children) { child in
                     FeatureRowView(model: model, node: child, depth: depth + 1)
@@ -796,7 +796,12 @@ struct FeatureRowView: View {
         .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .opacity(dimmed ? 0.45 : 1)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            // Row → viewport: light the geometry this row drew.
+            if inside { model.hoverFeature(node) }
+            else if model.hoveredFeatureID == node.id { model.hoverFeature(nil) }
+        }
         .onTapGesture {
             guard model.renamingFeatureID != node.id else { return }
             // ⌘-click a part row → toggle it in the multi-selection (for booleans).
@@ -879,7 +884,7 @@ struct InspectorView: View {
                         }
                     }
                     if Self.editableOps.contains(node.opType) {
-                        section("Parameters") { paramEditors(node) }
+                        section("Parameters") { FeatureParamEditors(model: model, node: node) }
                     } else if let d = node.detail {
                         section("Parameters") { row("Value", d) }
                     }
@@ -1025,82 +1030,102 @@ struct InspectorView: View {
         "Translate", "Rotate", "Scale", "Revolve", "LinearPattern", "CircularPattern",
     ]
 
+}
+
+/// Scrub/stepper editors for a feature node's parameters — each writes back
+/// into the live document and re-evaluates (parity with the web app's scrub
+/// inputs). Shared by the studio inspector and the released Object Inspector so
+/// the two cannot drift: a new editable op appears in both at once.
+struct FeatureParamEditors: View {
+    @Bindable var model: EditorModel
+    let node: FeatureNode
+    /// Called after every edit, so the released overlay can mesh-swap in place.
+    /// `snapshot` is true on a typed commit or the first tick of a scrub.
+    var onEdit: (Bool) -> Void = { _ in }
+
+    var body: some View { editors }
+
     /// Scrub/stepper editors for the selected feature — each writes back into the
     /// live document and re-evaluates (parity with the web app's scrub inputs).
-    @ViewBuilder private func paramEditors(_ node: FeatureNode) -> some View {
-        let op = model.opDict(nodeId: node.nodeId) ?? [:]
-        let id = node.nodeId
-        switch node.opType {
-        case "Cube":
-            axisField(op, id, "Width", "size", "x", minV: 0.1)
-            axisField(op, id, "Depth", "size", "y", minV: 0.1)
-            axisField(op, id, "Height", "size", "z", minV: 0.1)
-        case "Cylinder":
-            scalarField(op, id, "Radius", "radius"); scalarField(op, id, "Height", "height")
-        case "Sphere":
-            scalarField(op, id, "Radius", "radius")
-        case "Cone":
-            scalarField(op, id, "Radius 1", "radius1", minV: 0)
-            scalarField(op, id, "Radius 2", "radius2", minV: 0)
-            scalarField(op, id, "Height", "height")
-        case "Fillet":
-            scalarField(op, id, "Radius", "radius", sens: 0.05, minV: 0)
-        case "Chamfer":
-            scalarField(op, id, "Distance", "distance", sens: 0.05, minV: 0)
-        case "Shell":
-            scalarField(op, id, "Thickness", "thickness", sens: 0.05, minV: 0.1)
-        case "Translate":
-            axisField(op, id, "X", "offset", "x"); axisField(op, id, "Y", "offset", "y")
-            axisField(op, id, "Z", "offset", "z")
-        case "Rotate":
-            axisField(op, id, "X", "angles", "x", unit: "°", sens: 0.5)
-            axisField(op, id, "Y", "angles", "y", unit: "°", sens: 0.5)
-            axisField(op, id, "Z", "angles", "z", unit: "°", sens: 0.5)
-        case "Scale":
-            axisField(op, id, "X", "factor", "x", unit: "", sens: 0.01, minV: 0.01)
-            axisField(op, id, "Y", "factor", "y", unit: "", sens: 0.01, minV: 0.01)
-            axisField(op, id, "Z", "factor", "z", unit: "", sens: 0.01, minV: 0.01)
-        case "Revolve":
-            scalarField(op, id, "Angle", "angle_deg", unit: "°", sens: 0.5, minV: 0)
-        case "LinearPattern":
-            countStepper(id, (op["count"] as? NSNumber)?.intValue ?? 0)
-        case "CircularPattern":
-            countStepper(id, (op["count"] as? NSNumber)?.intValue ?? 0)
-            scalarField(op, id, "Span", "angle_deg", unit: "°", sens: 0.5, minV: 0)
-        default:
-            EmptyView()
-        }
+    @ViewBuilder private var editors: some View {
+    let op = model.opDict(nodeId: node.nodeId) ?? [:]
+    let id = node.nodeId
+    switch node.opType {
+    case "Cube":
+        axisField(op, id, "Width", "size", "x", minV: 0.1)
+        axisField(op, id, "Depth", "size", "y", minV: 0.1)
+        axisField(op, id, "Height", "size", "z", minV: 0.1)
+    case "Cylinder":
+        scalarField(op, id, "Radius", "radius"); scalarField(op, id, "Height", "height")
+    case "Sphere":
+        scalarField(op, id, "Radius", "radius")
+    case "Cone":
+        scalarField(op, id, "Radius 1", "radius1", minV: 0)
+        scalarField(op, id, "Radius 2", "radius2", minV: 0)
+        scalarField(op, id, "Height", "height")
+    case "Fillet":
+        scalarField(op, id, "Radius", "radius", sens: 0.05, minV: 0)
+    case "Chamfer":
+        scalarField(op, id, "Distance", "distance", sens: 0.05, minV: 0)
+    case "Shell":
+        scalarField(op, id, "Thickness", "thickness", sens: 0.05, minV: 0.1)
+    case "Translate":
+        axisField(op, id, "X", "offset", "x"); axisField(op, id, "Y", "offset", "y")
+        axisField(op, id, "Z", "offset", "z")
+    case "Rotate":
+        axisField(op, id, "X", "angles", "x", unit: "°", sens: 0.5)
+        axisField(op, id, "Y", "angles", "y", unit: "°", sens: 0.5)
+        axisField(op, id, "Z", "angles", "z", unit: "°", sens: 0.5)
+    case "Scale":
+        axisField(op, id, "X", "factor", "x", unit: "", sens: 0.01, minV: 0.01)
+        axisField(op, id, "Y", "factor", "y", unit: "", sens: 0.01, minV: 0.01)
+        axisField(op, id, "Z", "factor", "z", unit: "", sens: 0.01, minV: 0.01)
+    case "Revolve":
+        scalarField(op, id, "Angle", "angle_deg", unit: "°", sens: 0.5, minV: 0)
+    case "LinearPattern":
+        countStepper(id, (op["count"] as? NSNumber)?.intValue ?? 0)
+    case "CircularPattern":
+        countStepper(id, (op["count"] as? NSNumber)?.intValue ?? 0)
+        scalarField(op, id, "Span", "angle_deg", unit: "°", sens: 0.5, minV: 0)
+    default:
+        EmptyView()
     }
+}
 
     private func scalarField(_ op: [String: Any], _ id: Int, _ label: String, _ key: String,
-                             unit: String = "mm", sens: Double = 0.1, minV: Double = 0.1) -> some View {
-        let value = (op[key] as? NSNumber)?.doubleValue ?? 0
-        return ScrubField(label: label, value: value, unit: unit, sensitivity: sens, minValue: minV) { v, s in
-            model.editScalar(nodeId: id, key: key, value: v, snapshot: s)
-        }
+                         unit: String = "mm", sens: Double = 0.1, minV: Double = 0.1) -> some View {
+    let value = (op[key] as? NSNumber)?.doubleValue ?? 0
+    return ScrubField(label: label, value: value, unit: unit, sensitivity: sens, minValue: minV) { v, s in
+        model.editScalar(nodeId: id, key: key, value: v, snapshot: s)
+        onEdit(s)
     }
+}
 
     private func axisField(_ op: [String: Any], _ id: Int, _ label: String, _ key: String, _ a: String,
-                           unit: String = "mm", sens: Double = 0.1,
-                           minV: Double = -.greatestFiniteMagnitude) -> some View {
-        let value = ((op[key] as? [String: Any])?[a] as? NSNumber)?.doubleValue ?? 0
-        return ScrubField(label: label, value: value, unit: unit, sensitivity: sens, minValue: minV) { v, s in
-            model.editVec(nodeId: id, key: key, axis: a, value: v, snapshot: s)
-        }
+                       unit: String = "mm", sens: Double = 0.1,
+                       minV: Double = -.greatestFiniteMagnitude) -> some View {
+    let value = ((op[key] as? [String: Any])?[a] as? NSNumber)?.doubleValue ?? 0
+    return ScrubField(label: label, value: value, unit: unit, sensitivity: sens, minValue: minV) { v, s in
+        model.editVec(nodeId: id, key: key, axis: a, value: v, snapshot: s)
+        onEdit(s)
     }
+}
 
     private func countStepper(_ id: Int, _ count: Int) -> some View {
-        Stepper(value: Binding(
-            get: { count },
-            set: { model.editInt(nodeId: id, key: "count", value: max(1, $0), snapshot: true) }
-        ), in: 1...200) {
-            HStack {
-                Text("Count").font(.system(size: 12))
-                Spacer()
-                Text("\(count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-            }
+    Stepper(value: Binding(
+        get: { count },
+        set: {
+            model.editInt(nodeId: id, key: "count", value: max(1, $0), snapshot: true)
+            onEdit(true)
+        }
+    ), in: 1...200) {
+        HStack {
+            Text("Count").font(.system(size: 12))
+            Spacer()
+            Text("\(count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
         }
     }
+}
 }
 
 /// A numeric field — the native take on the web app's scrub inputs. Drag the
@@ -1342,75 +1367,10 @@ struct PlaybackBar: View {
     }
 }
 
-/// Applies/reverts the transparent-window styling for release-to-desktop mode.
-/// Lives as an invisible background NSView so it can reach the hosting NSWindow.
-#if os(macOS)  // release window plumbing + studio viewport
-struct ReleaseWindowConfigurator: NSViewRepresentable {
-    var release: Bool
-
-    func makeNSView(context: Context) -> NSView { NSView() }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        let release = release
-        DispatchQueue.main.async {
-            guard let w = view.window else { return }
-            w.isOpaque = !release
-            w.backgroundColor = release ? .clear : .windowBackgroundColor
-            w.hasShadow = !release
-            w.titlebarAppearsTransparent = release
-            w.titleVisibility = release ? .hidden : .visible
-            w.toolbar?.isVisible = !release
-            if release {
-                w.styleMask.insert(.fullSizeContentView)
-                w.level = .floating
-            } else {
-                w.styleMask.remove(.fullSizeContentView)
-                w.level = .normal
-            }
-            // RealityKit's drawable clears opaque — punch through every metal
-            // layer in the hierarchy so the desktop shows behind the parts.
-            if let content = w.contentView { Self.setMetalLayersOpaque(!release, in: content) }
-        }
-    }
-
-    private static func setMetalLayersOpaque(_ opaque: Bool, in view: NSView) {
-        if let layer = view.layer { walkLayers(layer, opaque: opaque) }
-        for sub in view.subviews { setMetalLayersOpaque(opaque, in: sub) }
-    }
-
-    private static func walkLayers(_ layer: CALayer, opaque: Bool) {
-        if layer is CAMetalLayer {
-            layer.isOpaque = opaque
-            layer.backgroundColor = opaque ? nil : NSColor.clear.cgColor
-        }
-        for sub in layer.sublayers ?? [] { walkLayers(sub, opaque: opaque) }
-    }
-}
-
-/// The only chrome left in release mode: a small pill to come back inside.
-struct ReleaseReturnPill: View {
-    @Bindable var model: EditorModel
-
-    var body: some View {
-        Button {
-            withAnimation(Motion.panel) { model.releaseMode = false }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.forward.and.arrow.up.backward")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Return to Studio").font(.system(size: 12, weight: .medium))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(.ultraThinMaterial, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .help("Bring vcad back into its window (⌘⇧Space)")
-    }
-}
-
-#endif  // os(macOS) — release window plumbing
-#if os(macOS)  // studio viewport (camera RealityView + extensions to EOF)
+#if os(macOS)  // shared RealityKit scene code (extensions to EOF)
+// The studio viewport: no longer presented (release-to-desktop is the only
+// mode), but still the home of the shared RealityKit scene code the released
+// ARView builds on — environments, materials, gizmo and mesh construction.
 struct ViewportView: View {
     let model: EditorModel
 
@@ -1420,7 +1380,7 @@ struct ViewportView: View {
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
              model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty,
-             model.playbackTime, model.playbackDirty, model.zebraDirty, model.releaseDirty)
+             model.playbackTime, model.playbackDirty, model.zebraDirty)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -1447,11 +1407,6 @@ struct ViewportView: View {
                 var mutableContent = content
                 applyZebra(&mutableContent, on: model.zebraMode)
                 model.zebraDirty = false
-            }
-            if model.releaseDirty {
-                var mutableContent = content
-                applyRelease(&mutableContent, on: model.releaseMode)
-                model.releaseDirty = false
             }
             if model.geometryDirty {
                 rebuildGeometry(content)
@@ -2203,7 +2158,7 @@ struct ViewportView: View {
         UnlitMaterial(color: NSColor(white: 0.09, alpha: 1.0))
     }()
 }
-#endif  // os(macOS) — studio viewport
+#endif  // os(macOS) — shared RealityKit scene code
 
 // MARK: sketch preview overlay (shared: studio viewport + released desktop)
 

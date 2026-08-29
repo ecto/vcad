@@ -2194,6 +2194,7 @@ impl Solid {
                 indices: all_indices,
                 normals: all_normals,
                 face_kinds: Vec::new(),
+                face_ids: Vec::new(),
             };
             Some(vcad_kernel::Solid::from_mesh(merged_mesh))
         } else {
@@ -2485,6 +2486,7 @@ pub fn section_mesh_wasm(
         indices: mesh_data.indices,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
 
     // Parse plane
@@ -2527,6 +2529,7 @@ pub fn project_mesh_wasm(mesh_js: JsValue, view_direction: &str) -> JsValue {
         indices: mesh_data.indices,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
 
     let view_dir = match view_direction.to_lowercase().as_str() {
@@ -2752,6 +2755,7 @@ pub fn offset_section_mesh_wasm(
         indices: mesh_data.indices,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
 
     let plane: OffsetSectionPlane = match serde_json::from_str(plane_json) {
@@ -5388,6 +5392,7 @@ mod slicer_wasm {
             indices: indices.to_vec(),
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         let slice_settings: SliceSettings = settings.clone().into();
@@ -5416,6 +5421,7 @@ mod slicer_wasm {
             indices: indices.to_vec(),
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         let slice_settings: SliceSettings = settings.clone().into();
@@ -7598,6 +7604,7 @@ pub fn render_bake_mesh_wasm(input_json: &str) -> Result<String, JsError> {
         indices: input.indices,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
     let opts = vcad_kernel_tessellate::RenderBakeOptions {
         crease_angle_rad: input

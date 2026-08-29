@@ -307,22 +307,36 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
     if json.is_null() {
         return ptr::null_mut();
     }
+    err::clear_error();
     catch_unwind(AssertUnwindSafe(|| {
         let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
         let text = match std::str::from_utf8(bytes) {
             Ok(t) => t,
-            Err(_) => return ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("document is not UTF-8: {e}"));
+                return ptr::null_mut();
+            }
         };
+        // Why the diagnosis matters here: serde names the offending field and
+        // line ("missing field `partDefId` at line 107"), and dropping it left
+        // callers to render an empty scene with no way to say why. A schema
+        // mismatch then presents as a renderer bug.
         let doc = match Document::from_json(text) {
             Ok(d) => d,
-            Err(_) => return ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("parse: {e}"));
+                return ptr::null_mut();
+            }
         };
         match evaluate_document(&doc, &EvalOptions::default()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
             })),
-            Err(_) => ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("evaluate: {e}"));
+                ptr::null_mut()
+            }
         }
     }))
     .unwrap_or(ptr::null_mut())
@@ -345,13 +359,19 @@ pub extern "C" fn vcad_scene_from_json_in(
     if json.is_null() {
         return ptr::null_mut();
     }
+    err::clear_error();
     catch_unwind(AssertUnwindSafe(|| {
         let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
         let Ok(text) = std::str::from_utf8(bytes) else {
+            err::set_error("document is not UTF-8");
             return ptr::null_mut();
         };
-        let Ok(mut doc) = Document::from_json(text) else {
-            return ptr::null_mut();
+        let mut doc = match Document::from_json(text) {
+            Ok(d) => d,
+            Err(e) => {
+                err::set_error(format!("parse: {e}"));
+                return ptr::null_mut();
+            }
         };
         if !base_dir.is_null() && base_dir_len > 0 {
             let db = unsafe { std::slice::from_raw_parts(base_dir, base_dir_len) };
@@ -364,7 +384,10 @@ pub extern "C" fn vcad_scene_from_json_in(
                 inner: scene,
                 doc: Some(doc),
             })),
-            Err(_) => ptr::null_mut(),
+            Err(e) => {
+                err::set_error(format!("evaluate: {e}"));
+                ptr::null_mut()
+            }
         }
     }))
     .unwrap_or(ptr::null_mut())
@@ -427,6 +450,52 @@ pub extern "C" fn vcad_scene_part_mesh(scene: *const VcadScene, index: usize) ->
         return VcadMeshView::empty();
     };
     eval_mesh_view(&part.mesh)
+}
+
+/// Borrow the `index`-th part's per-triangle FACE ids: one `u32` per triangle
+/// of [`vcad_scene_part_mesh`], naming which face of the solid produced it.
+///
+/// This is what turns "you clicked part 3" into "you clicked the top face of
+/// part 3": a ray test gives a triangle, and this gives that triangle's face.
+/// `u32::MAX` marks a triangle with no face (bridging fill). Writes the element
+/// count to `out_len` and returns null when the part carries no tags (a frozen
+/// or imported mesh has no B-rep to name faces in), so callers must treat
+/// face picking as an optional capability rather than assuming it.
+///
+/// The pointer borrows the scene and is valid until the scene is freed.
+///
+/// The ids are ordinals within the solid's shell — stable across
+/// re-tessellation of the same solid, renumbered by any edit that changes the
+/// B-rep. They are a handle for this session's hover/selection, NOT a durable
+/// reference to persist in a document.
+#[no_mangle]
+pub extern "C" fn vcad_scene_part_face_ids(
+    scene: *const VcadScene,
+    index: usize,
+    out_len: *mut usize,
+) -> *const u32 {
+    if !out_len.is_null() {
+        unsafe { *out_len = 0 };
+    }
+    if scene.is_null() {
+        return ptr::null();
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    let Some(part) = s.inner.parts.get(index) else {
+        return ptr::null();
+    };
+    let Some(ids) = part.mesh.face_ids.as_ref() else {
+        return ptr::null();
+    };
+    // Only hand back a tag array that matches the mesh the caller is drawing;
+    // a stale or partial array would point hover at the wrong face.
+    if ids.len() != part.mesh.indices.len() / 3 {
+        return ptr::null();
+    }
+    if !out_len.is_null() {
+        unsafe { *out_len = ids.len() };
+    }
+    ids.as_ptr()
 }
 
 /// Extract the `index`-th part's feature edges (boundary + creases sharper
@@ -2188,6 +2257,37 @@ mod tests {
         assert!(view.indices_len % 3 == 0, "indices form whole triangles");
         vcad_mesh_free(mesh);
         vcad_solid_free(solid);
+    }
+
+    /// The contract the viewport's face picking rests on: one id per triangle
+    /// of the very mesh the caller draws, and more than one face in a real
+    /// part. (The exact face count of a primitive is pinned in the tessellator's
+    /// own tests; here what matters is the array lines up with the mesh.)
+    #[test]
+    fn part_face_ids_cover_every_triangle() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/plate.vcad");
+        let json = std::fs::read(path).expect("read example .vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null(), "example document should evaluate");
+        let view = vcad_scene_part_mesh(scene, 0);
+        let tris = view.indices_len / 3;
+        assert!(tris > 0);
+
+        let mut len = 0usize;
+        let ids = vcad_scene_part_face_ids(scene, 0, &mut len);
+        assert!(!ids.is_null(), "a B-rep part should carry face tags");
+        assert_eq!(len, tris, "one id per triangle of the mesh being drawn");
+
+        let slice = unsafe { std::slice::from_raw_parts(ids, len) };
+        let unique: std::collections::HashSet<u32> =
+            slice.iter().copied().filter(|&f| f != u32::MAX).collect();
+        assert!(unique.len() > 1, "expected several faces, got {unique:?}");
+
+        // Out of range is a null, not a crash or a stale borrow.
+        let mut oob = 7usize;
+        assert!(vcad_scene_part_face_ids(scene, 99, &mut oob).is_null());
+        assert_eq!(oob, 0, "out_len is cleared on the null path");
+        vcad_scene_free(scene);
     }
 
     #[test]

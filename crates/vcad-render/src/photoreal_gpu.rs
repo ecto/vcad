@@ -201,6 +201,7 @@ fn ground_mesh(center: Point3, z: f64, half: f64) -> TriangleMesh {
         indices: vec![0, 1, 2, 0, 2, 3],
         normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     }
 }
 

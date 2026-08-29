@@ -183,7 +183,10 @@ fn kernel_knobs() -> Vec<(String, String)> {
 // without serde and a truncated or foreign file decodes to `None`.
 
 const MESH_MAGIC: &[u8; 4] = b"VCRM";
-const MESH_FORMAT: u32 = 1;
+// Bumped to 2 when per-triangle face ids joined the record. Old entries are
+// rejected rather than misread: a v1 record has no id block, and silently
+// treating its trailing bytes as one would hand the viewport garbage faces.
+const MESH_FORMAT: u32 = 2;
 
 /// Serialize a mesh to the cache's on-disk record format.
 pub fn encode_mesh(mesh: &EvaluatedMesh) -> Vec<u8> {
@@ -191,7 +194,8 @@ pub fn encode_mesh(mesh: &EvaluatedMesh) -> Vec<u8> {
         16 + mesh.positions.len() * 4
             + mesh.indices.len() * 4
             + mesh.normals.as_ref().map_or(0, |n| n.len() * 4)
-            + mesh.face_kinds.as_ref().map_or(0, |k| k.len()),
+            + mesh.face_kinds.as_ref().map_or(0, |k| k.len())
+            + mesh.face_ids.as_ref().map_or(0, |f| f.len() * 4),
     );
     out.extend_from_slice(MESH_MAGIC);
     out.extend_from_slice(&MESH_FORMAT.to_le_bytes());
@@ -209,6 +213,13 @@ pub fn encode_mesh(mesh: &EvaluatedMesh) -> Vec<u8> {
             out.push(1);
             out.extend_from_slice(&(k.len() as u64).to_le_bytes());
             out.extend_from_slice(k);
+        }
+        None => out.push(0),
+    }
+    match &mesh.face_ids {
+        Some(f) => {
+            out.push(1);
+            put_u32s(&mut out, f);
         }
         None => out.push(0),
     }
@@ -240,6 +251,11 @@ pub fn decode_mesh(bytes: &[u8]) -> Option<EvaluatedMesh> {
         }
         _ => return None,
     };
+    let face_ids = match r.u8()? {
+        0 => None,
+        1 => Some(r.f32s_as_u32s()?),
+        _ => return None,
+    };
     if r.at != bytes.len() {
         return None;
     }
@@ -253,6 +269,7 @@ pub fn decode_mesh(bytes: &[u8]) -> Option<EvaluatedMesh> {
         indices,
         normals,
         face_kinds,
+        face_ids,
     })
 }
 
@@ -628,6 +645,7 @@ mod tests {
             indices: vec![0, 1, 0],
             normals: Some(vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0]),
             face_kinds: Some(vec![1]),
+            face_ids: Some(vec![7]),
         };
         let bytes = encode_mesh(&mesh);
         let back = decode_mesh(&bytes).unwrap();
@@ -641,6 +659,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: None,
             face_kinds: None,
+            face_ids: None,
         };
         let back = decode_mesh(&encode_mesh(&bare)).unwrap();
         assert_eq!(back.normals, None);
@@ -657,6 +676,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: None,
             face_kinds: None,
+            face_ids: None,
         };
         let bytes = encode_mesh(&mesh);
         assert!(decode_mesh(&bytes[..bytes.len() - 1]).is_none());
@@ -669,6 +689,7 @@ mod tests {
             indices: vec![0, 1, 7],
             normals: None,
             face_kinds: None,
+            face_ids: None,
         };
         assert!(decode_mesh(&encode_mesh(&bad)).is_none());
     }
@@ -685,6 +706,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: None,
             face_kinds: None,
+            face_ids: None,
         };
         cache.put(&key, &mesh);
         assert_eq!(cache.get(&key).unwrap().indices, vec![0, 1, 2]);

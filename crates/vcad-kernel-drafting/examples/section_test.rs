@@ -40,6 +40,7 @@ fn make_cube(size: f64) -> TriangleMesh {
         indices,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     }
 }
 

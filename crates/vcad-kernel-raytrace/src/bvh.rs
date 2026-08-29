@@ -1055,6 +1055,7 @@ mod tests {
             // the same direction — the test isolates "vertex or geometric?".
             normals: vec![0.0, 0.6, 0.8, 0.0, 0.6, 0.8, 0.0, 0.6, 0.8],
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let bvh = Bvh::build_mesh(&mesh);
 
@@ -1080,6 +1081,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let bvh = Bvh::build_mesh(&mesh);
 
@@ -1098,6 +1100,7 @@ mod tests {
             indices: vec![0, 1, 2, 0, 0, 1, 0, 1, 99],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let bvh = Bvh::build_mesh(&mesh);
 

@@ -49,12 +49,18 @@ struct VcadApp: App {
         }
     }
 
+    /// The document lives at app scope, not in the window: the WindowGroup's
+    /// window is hidden at launch (release-to-desktop is the only mode), and the
+    /// menu bar commands need the same model the floating overlay is editing.
+    @State private var model = EditorModel()
+    @State private var intent = IntentEngine()
+
     var body: some Scene {
         WindowGroup {
-            EditorView()
-                .frame(minWidth: 560, minHeight: 600)
+            EditorView(model: model, intent: intent)
         }
         .windowStyle(.automatic)
+        .commands { DocumentCommands(model: model) }
     }
 }
 
@@ -305,4 +311,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+
+    /// Implementing `application(_:open:)` below tells AppKit this app opens
+    /// documents, which by default suppresses the untitled window at launch —
+    /// and this app's whole UI hangs off that window. Say yes explicitly.
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool { true }
+
+    /// Finder double-click, drag onto the icon, `open file.vcad`. macOS hands
+    /// these to a RUNNING instance rather than launching one, so this is the
+    /// path that would otherwise replace the document you are looking at.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated {
+            guard let model = AppInstance.currentModel else {
+                // Nothing to reuse (the view has not come up yet): let each URL
+                // have its own instance rather than dropping it.
+                urls.forEach { AppInstance.open(document: $0) }
+                return
+            }
+            for (i, url) in urls.enumerated() {
+                if i == 0 { AppInstance.opening(url, from: model) }
+                else { AppInstance.open(document: url) }
+            }
+        }
+    }
 }

@@ -847,6 +847,7 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
                         indices: p.mesh.indices.clone(),
                         normals: p.mesh.normals.clone().unwrap_or_default(),
                         face_kinds: p.mesh.face_kinds.clone().unwrap_or_default(),
+                        face_ids: p.mesh.face_ids.clone().unwrap_or_default(),
                     })
                 })
             });
@@ -935,6 +936,7 @@ fn evaluate_assembly_instances(
                                 indices: pd.mesh.indices.clone(),
                                 normals: pd.mesh.normals.clone().unwrap_or_default(),
                                 face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                                face_ids: pd.mesh.face_ids.clone().unwrap_or_default(),
                             })
                         })
                 })
