@@ -84,7 +84,24 @@ pub struct TriangleMesh {
     /// for debugging / inspection. Empty when the mesh was built
     /// without tagging (legacy paths).
     pub face_kinds: Vec<u8>,
+    /// One id per triangle (same length as `indices / 3`) naming WHICH face of
+    /// the solid contributed it — the ordinal of the face within its shell.
+    /// `face_kinds` says a triangle came from *a plane*; this says it came from
+    /// *that* plane, which is what a viewport needs to hover, select, or
+    /// measure one face rather than a whole part.
+    ///
+    /// NOT a durable name. The ordinal is stable for a given topology, so it
+    /// survives re-tessellation of the same solid, but any edit that changes
+    /// the B-rep renumbers it. Persisting a face reference across edits is the
+    /// topological-naming problem and needs its own scheme.
+    ///
+    /// `u32::MAX` marks a triangle whose provenance was lost (padding, legacy
+    /// paths); empty means the mesh was never tagged.
+    pub face_ids: Vec<u32>,
 }
+
+/// Marks a triangle whose originating face is unknown.
+pub const FACE_ID_UNKNOWN: u32 = u32::MAX;
 
 impl TriangleMesh {
     /// Create an empty mesh.
@@ -94,6 +111,7 @@ impl TriangleMesh {
             indices: Vec::new(),
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         }
     }
 
@@ -168,6 +186,17 @@ impl TriangleMesh {
         } else if !self.face_kinds.is_empty() {
             for _ in 0..other_tri {
                 self.face_kinds.push(FaceKindTag::Unknown as u8);
+            }
+        }
+        // Same lockstep rule for face ids.
+        if !other.face_ids.is_empty() {
+            while self.face_ids.len() < self_tri_before {
+                self.face_ids.push(FACE_ID_UNKNOWN);
+            }
+            self.face_ids.extend_from_slice(&other.face_ids);
+        } else if !self.face_ids.is_empty() {
+            for _ in 0..other_tri {
+                self.face_ids.push(FACE_ID_UNKNOWN);
             }
         }
     }
@@ -860,8 +889,10 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
 
     let has_normals = mesh.normals.len() == mesh.vertices.len();
     let has_kinds = mesh.face_kinds.len() == mesh.indices.len() / 3;
+    let has_ids = mesh.face_ids.len() == mesh.indices.len() / 3;
     let mut new_indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
     let mut new_kinds: Vec<u8> = Vec::new();
+    let mut new_ids: Vec<u32> = Vec::new();
     let mut added_verts: Vec<f32> = Vec::new();
     let mut added_normals: Vec<f32> = Vec::new();
     let base_vert_count = mesh.num_vertices() as u32;
@@ -874,6 +905,11 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
             mesh.indices[t * 3 + 2],
         ];
         let kind = if has_kinds { mesh.face_kinds[t] } else { 0 };
+        let face_id = if has_ids {
+            mesh.face_ids[t]
+        } else {
+            FACE_ID_UNKNOWN
+        };
         let mut loop_idx: Vec<u32> = Vec::with_capacity(3);
         let mut inserted = false;
 
@@ -896,6 +932,9 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
             new_indices.extend_from_slice(&corners);
             if has_kinds {
                 new_kinds.push(kind);
+            }
+            if has_ids {
+                new_ids.push(face_id);
             }
             continue;
         }
@@ -930,6 +969,12 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
             if has_kinds {
                 new_kinds.push(kind);
             }
+            // The healed fan inherits the face of the triangle it replaced —
+            // a T-junction split does not create new geometry, it re-triangulates
+            // the same face.
+            if has_ids {
+                new_ids.push(face_id);
+            }
         }
     }
 
@@ -943,6 +988,9 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
     mesh.indices = new_indices;
     if has_kinds {
         mesh.face_kinds = new_kinds;
+    }
+    if has_ids {
+        mesh.face_ids = new_ids;
     }
     true
 }
@@ -1004,6 +1052,12 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
     } else {
         Vec::new()
     };
+    let had_face_ids = mesh.face_ids.len() == mesh.indices.len() / 3;
+    let mut new_face_ids: Vec<u32> = if had_face_ids {
+        Vec::with_capacity(mesh.face_ids.len())
+    } else {
+        Vec::new()
+    };
     let tri_count = mesh.indices.len() / 3;
     for t in 0..tri_count {
         let a = remap[mesh.indices[3 * t] as usize];
@@ -1016,12 +1070,18 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
         if had_face_kinds {
             new_face_kinds.push(mesh.face_kinds[t]);
         }
+        if had_face_ids {
+            new_face_ids.push(mesh.face_ids[t]);
+        }
     }
     mesh.vertices = new_vertices;
     mesh.normals = new_normals;
     mesh.indices = new_indices;
     if had_face_kinds {
         mesh.face_kinds = new_face_kinds;
+    }
+    if had_face_ids {
+        mesh.face_ids = new_face_ids;
     }
 
     // Invariant restated for release builds: the welded mesh carries either no
@@ -1341,6 +1401,10 @@ fn fill_tiny_boundary_loops(
             }
             if !mesh.face_kinds.is_empty() {
                 mesh.face_kinds.push(FaceKindTag::FanFill as u8);
+            }
+            // Fill triangles belong to no face: they bridge between them.
+            if !mesh.face_ids.is_empty() {
+                mesh.face_ids.push(FACE_ID_UNKNOWN);
             }
         }
     }
@@ -5837,7 +5901,9 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
 
     let mut mesh = TriangleMesh::new();
 
-    for &face_id in &shell.faces {
+    for (face_ordinal, &face_id) in shell.faces.iter().enumerate() {
+        let face_ordinal = face_ordinal as u32;
+        let pre_face_tris = mesh.indices.len() / 3;
         let face = &brep.topology.faces[face_id];
         let surface = &brep.geometry.surfaces[face.surface_index];
         let reversed = face.orientation == Orientation::Reversed;
@@ -5909,6 +5975,14 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                 mesh.merge(&face_mesh);
             }
         }
+
+        // Which face each triangle came from — the same tagging
+        // `tessellate_brep` does, so both entry points produce pickable meshes.
+        let post_face_tris = mesh.indices.len() / 3;
+        while mesh.face_ids.len() < post_face_tris {
+            mesh.face_ids.push(FACE_ID_UNKNOWN);
+        }
+        mesh.face_ids[pre_face_tris..post_face_tris].fill(face_ordinal);
     }
 
     mesh
@@ -5932,7 +6006,8 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
     let mut sphere_vert_keys: std::collections::HashSet<[i64; 3]> =
         std::collections::HashSet::new();
 
-    for &face_id in &shell.faces {
+    for (face_ordinal, &face_id) in shell.faces.iter().enumerate() {
+        let face_ordinal = face_ordinal as u32;
         let face = &brep.topology.faces[face_id];
         let surface = &brep.geometry.surfaces[face.surface_index];
         let reversed = face.orientation == Orientation::Reversed;
@@ -6040,6 +6115,12 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
             mesh.face_kinds.push(FaceKindTag::Unknown as u8);
         }
         mesh.face_kinds[pre_face_tris..post_face_tris].fill(face_kind_tag);
+        // …and with WHICH face, by shell ordinal. Same overwrite-not-extend
+        // reasoning as the kind tag above.
+        while mesh.face_ids.len() < post_face_tris {
+            mesh.face_ids.push(FACE_ID_UNKNOWN);
+        }
+        mesh.face_ids[pre_face_tris..post_face_tris].fill(face_ordinal);
     }
 
     weld_coincident_vertices(&mut mesh);
@@ -6076,6 +6157,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         // A second mesh with vertices but NO normals (the bug trigger). Placed
         // at z=1 so weld won't collapse it into `a`.
@@ -6084,6 +6166,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         a.merge(&b);
@@ -6164,6 +6247,7 @@ mod tests {
             indices: vec![0, 1, 2, 3, 4, 5],
             normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0], // 3 of 6
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         weld_coincident_vertices(&mut mesh);
@@ -6180,6 +6264,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let mut acc = TriangleMesh::new();
         acc.merge(&face);
@@ -6750,6 +6835,56 @@ mod tests {
                 err * 100.0
             );
             assert!(vol > 0.0, "torus volume must be positive, got {vol:.3}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod face_id_tests {
+    use super::*;
+    use vcad_kernel_primitives::{make_cube, make_cylinder};
+
+    /// Every triangle knows which face made it, and a cube's six planes are
+    /// six distinct ids covering every triangle.
+    #[test]
+    fn cube_triangles_carry_six_face_ids() {
+        let mesh = tessellate_brep(&make_cube(10.0, 10.0, 10.0), 16);
+        let tris = mesh.indices.len() / 3;
+        assert_eq!(mesh.face_ids.len(), tris, "one id per triangle");
+        assert!(
+            !mesh.face_ids.contains(&FACE_ID_UNKNOWN),
+            "a cube has no bridging fill, so nothing should be untagged"
+        );
+        let unique: std::collections::HashSet<u32> = mesh.face_ids.iter().copied().collect();
+        assert_eq!(unique.len(), 6, "six planes, got {unique:?}");
+    }
+
+    /// The ids survive the weld/heal passes that rewrite the triangle list,
+    /// and stay in lockstep with `face_kinds` — the failure mode this guards
+    /// is an id array that silently drifts one triangle out of step and points
+    /// hover at the neighbouring face.
+    #[test]
+    fn cylinder_face_ids_stay_in_lockstep() {
+        let mesh = tessellate_brep(&make_cylinder(5.0, 20.0, 32), 32);
+        let tris = mesh.indices.len() / 3;
+        assert_eq!(mesh.face_ids.len(), tris);
+        assert_eq!(mesh.face_kinds.len(), tris);
+        // Cylinder: two planar caps + one lateral surface.
+        let unique: std::collections::HashSet<u32> = mesh
+            .face_ids
+            .iter()
+            .copied()
+            .filter(|&f| f != FACE_ID_UNKNOWN)
+            .collect();
+        assert_eq!(unique.len(), 3, "two caps + side, got {unique:?}");
+        // Every triangle of a given id shares one surface kind: an id that
+        // spans two kinds means the ordinals slipped against the tags.
+        for id in unique {
+            let kinds: std::collections::HashSet<u8> = (0..tris)
+                .filter(|&t| mesh.face_ids[t] == id)
+                .map(|t| mesh.face_kinds[t])
+                .collect();
+            assert_eq!(kinds.len(), 1, "face {id} spans kinds {kinds:?}");
         }
     }
 }

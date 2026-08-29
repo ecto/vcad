@@ -2661,6 +2661,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: vec![0.0; 9],
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let com = compute_center_of_mass(&mesh);
         let (min, max) = compute_bounding_box(&mesh);

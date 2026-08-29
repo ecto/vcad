@@ -464,6 +464,7 @@ pub fn shell_mesh(mesh: &TriangleMesh, thickness: f64) -> TriangleMesh {
         indices: combined_indices,
         normals: Vec::new(), // Let renderer compute normals
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     }
 }
 

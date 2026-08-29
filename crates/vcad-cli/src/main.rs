@@ -1746,6 +1746,7 @@ fn slice_file(
         indices: combined_idxs,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
 
     // Resolve printer profile

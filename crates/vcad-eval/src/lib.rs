@@ -252,6 +252,14 @@ pub struct EvaluatedMesh {
     /// 4=Cone, 5=Bilinear, 6=Torus, 7=BSpline, 8=FanFill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub face_kinds: Option<Vec<u8>>,
+    /// Optional per-triangle FACE id (one u32 per `indices / 3`): which face of
+    /// the solid contributed each triangle, by shell ordinal. `face_kinds` says
+    /// a triangle came from a plane; this says which plane — what a viewport
+    /// needs to hover, select, or measure a single face. `u32::MAX` marks a
+    /// triangle with no face (bridging fill). Not durable across edits: any
+    /// change to the B-rep renumbers the ordinals.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub face_ids: Option<Vec<u32>>,
 }
 
 impl EvaluatedMesh {
@@ -262,6 +270,7 @@ impl EvaluatedMesh {
             indices: Vec::new(),
             normals: None,
             face_kinds: None,
+            face_ids: None,
         }
     }
 }
