@@ -2006,12 +2006,42 @@ final class EditorModel {
 
     func newDocument() { source = .sandbox }
 
+    /// True when this instance holds nothing worth keeping on screen: a fresh
+    /// sandbox nobody has touched. Opening a document into one of these reuses
+    /// the instance, the way a Mac app reuses its empty Untitled window; opening
+    /// into anything else would throw away work, so that gets a new instance.
+    var isDisposableScratch: Bool {
+        source.isSandbox && !canUndo && !documentDirty
+    }
+
     func openDocument(_ url: URL) {
         source = .document(path: url.path, label: url.deletingPathExtension().lastPathComponent)
-        recents.removeAll { $0 == url }
-        recents.insert(url, at: 0)
-        if recents.count > 8 { recents = Array(recents.prefix(8)) }
-        UserDefaults.standard.set(recents.map { $0.path }, forKey: "vcad.recents")
+        rememberRecent(url)
+    }
+
+    /// Add `url` to the recents list.
+    ///
+    /// Re-reads the stored list first rather than editing this instance's copy:
+    /// several instances run at once now, and each one holds the list as it
+    /// looked when IT launched. Writing that stale copy back would drop every
+    /// document the other instances opened in the meantime. Concurrent writes
+    /// are still last-writer-wins — this narrows the window to the write itself
+    /// instead of the whole lifetime of the process.
+    private func rememberRecent(_ url: URL) {
+        let stored = (UserDefaults.standard.array(forKey: "vcad.recents") as? [String] ?? [])
+            .map { URL(fileURLWithPath: $0) }
+        var merged = stored
+        merged.removeAll { $0 == url }
+        merged.insert(url, at: 0)
+        if merged.count > 8 { merged = Array(merged.prefix(8)) }
+        recents = merged
+        UserDefaults.standard.set(merged.map { $0.path }, forKey: "vcad.recents")
+    }
+
+    /// Pick up recents opened by other instances since this one launched.
+    func refreshRecents() {
+        recents = (UserDefaults.standard.array(forKey: "vcad.recents") as? [String] ?? [])
+            .map { URL(fileURLWithPath: $0) }
     }
 
     // MARK: tool palette

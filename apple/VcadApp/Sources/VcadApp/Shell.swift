@@ -50,10 +50,15 @@ struct EditorView: View {
                     // Dev hook: VCAD_GRIPPER=1 [VCAD_CONNECTOR_X=n] launches into
                     // the cross-domain gripper (used to verify without driving the UI).
                     let env = ProcessInfo.processInfo.environment
-                    // Dev hook: VCAD_OPEN=<path> opens a .vcad on launch (handy
-                    // for verifying the feature tree against a real document).
-                    if let path = env["VCAD_OPEN"], !path.isEmpty {
-                        model.openDocument(URL(fileURLWithPath: path))
+                    AppInstance.currentModel = model
+                    // Pick up documents other instances opened while this one
+                    // was already running.
+                    model.refreshRecents()
+                    // The document this instance was launched for: the argument
+                    // a spawning instance passed, the VCAD_OPEN dev hook, or a
+                    // path on the command line.
+                    if let url = AppInstance.launchDocument() {
+                        model.openDocument(url)
                     }
                     // Dev hook: VCAD_SIM=1 builds the physics simulation for the
                     // opened document and starts it running, so the whole path
@@ -146,19 +151,28 @@ struct DocumentCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Sandbox") { model.newDocument() }.keyboardShortcut("n")
+            // ⌘N opens another COPY OF THE APP, so the new document gets its own
+            // Dock tile and its own ⌘-Tab entry (see AppInstance for why that
+            // cannot be a second window).
+            Button("New Document") { AppInstance.open() }.keyboardShortcut("n")
+            Button("Reset This Document") { model.newDocument() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Cross-domain Gripper") { model.openGripper() }
             Divider()
             Button("Open…") { openPanel(model) }.keyboardShortcut("o")
             Menu("Open Recent") {
                 ForEach(model.recents, id: \.self) { url in
-                    Button(url.deletingPathExtension().lastPathComponent) { model.openDocument(url) }
+                    Button(url.deletingPathExtension().lastPathComponent) {
+                        AppInstance.opening(url, from: model)
+                    }
                 }
             }
             .disabled(model.recents.isEmpty)
             Menu("Examples") {
                 ForEach(model.examples, id: \.path) { ex in
-                    Button(ex.name) { model.openDocument(URL(fileURLWithPath: ex.path)) }
+                    Button(ex.name) {
+                        AppInstance.opening(URL(fileURLWithPath: ex.path), from: model)
+                    }
                 }
             }
         }
@@ -248,10 +262,17 @@ struct DocumentCommands: Commands {
 @MainActor func openPanel(_ model: EditorModel) {
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
-    panel.allowsMultipleSelection = false
+    // Several documents at once are several instances, so a multiple selection
+    // is a perfectly good thing to ask for.
+    panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
     panel.prompt = "Open"
-    if panel.runModal() == .OK, let url = panel.url { model.openDocument(url) }
+    guard panel.runModal() == .OK else { return }
+    for (i, url) in panel.urls.enumerated() {
+        // The first one may claim this instance if it is a scratch; the rest
+        // always get their own.
+        if i == 0 { AppInstance.opening(url, from: model) } else { AppInstance.open(document: url) }
+    }
 }
 
 @MainActor private func savePanel(name: String, ext: String, prompt: String,
