@@ -6075,8 +6075,13 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         while mesh.face_kinds.len() < post_face_tris {
             mesh.face_kinds.push(FaceKindTag::Unknown as u8);
         }
-        for t in pre_face_tris..post_face_tris {
-            mesh.face_kinds[t] = face_kind_tag;
+        for kind in mesh
+            .face_kinds
+            .iter_mut()
+            .take(post_face_tris)
+            .skip(pre_face_tris)
+        {
+            *kind = face_kind_tag;
         }
     }
 

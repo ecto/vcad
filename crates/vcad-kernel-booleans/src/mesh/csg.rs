@@ -490,11 +490,33 @@ fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
     mesh
 }
 
-/// Cap residual sub-mm boundary loops. Used after vertex projection, which
-/// can reopen a pinhole that `polygons_to_mesh` had already closed, and
-/// after welding so slicer-visible T-junctions become real holes we can
-/// fill.
+/// Cap residual sub-mm boundary loops. Used after sliver collapse and
+/// after vertex projection, both of which can leave (or reopen) a pinhole.
+///
+/// Weld is gated: it only runs when the leftover crack is small (at most
+/// 8 open edges, or an index-closed mesh with a handful of slicer-visible
+/// T-junctions). Unconditional weld plus a second sliver-drop pass punched
+/// holes in chained booleans that the torture track previously passed.
+/// If weld makes the index-boundary worse, it is reverted.
 pub(crate) fn close_hairline_holes(mesh: &mut TriangleMesh) {
+    let open = mesh.boundary_edges();
+    if !open.is_empty() {
+        let reps = mesh_vertex_reps(mesh);
+        fill_small_holes(mesh, &reps, &open);
+        collapse_degenerate_triangles(mesh);
+    }
+    let before_open = mesh.boundary_edges().len();
+    let defects = if before_open == 0 {
+        mesh.welded_defective_edge_count()
+    } else {
+        0
+    };
+    let worth_weld =
+        (1..=8).contains(&before_open) || (before_open == 0 && (1..=8).contains(&defects));
+    if !worth_weld {
+        return;
+    }
+    let backup = mesh.clone();
     weld_coincident(mesh);
     collapse_degenerate_triangles(mesh);
     let open = mesh.boundary_edges();
@@ -503,8 +525,23 @@ pub(crate) fn close_hairline_holes(mesh: &mut TriangleMesh) {
         fill_small_holes(mesh, &reps, &open);
         collapse_degenerate_triangles(mesh);
     }
-    drop_four_use_slivers(mesh);
-    collapse_sliver_triangles(mesh);
+    // Quadric projection can leave two coincident triangles on one
+    // slicer-lattice edge (usage 4). Drop those slivers only while the
+    // leftover is still a pinhole; a second sliver pass on a wrecked
+    // chain is how the torture regressions opened.
+    if (1..=8).contains(&mesh.welded_defective_edge_count()) {
+        drop_four_use_slivers(mesh);
+        collapse_sliver_triangles(mesh);
+        let open = mesh.boundary_edges();
+        if !open.is_empty() {
+            let reps = mesh_vertex_reps(mesh);
+            fill_small_holes(mesh, &reps, &open);
+            collapse_degenerate_triangles(mesh);
+        }
+    }
+    if mesh.boundary_edges().len() > before_open {
+        *mesh = backup;
+    }
 }
 
 /// Merge vertices that share a 0.001 mm lattice cell: the same criterion
