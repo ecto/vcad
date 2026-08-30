@@ -207,9 +207,9 @@ impl GaugeGroup for Su3 {
 
     fn scale(&self, s: f64) -> Self {
         let mut r = *self;
-        for i in 0..3 {
-            for j in 0..3 {
-                r.m[i][j] = r.m[i][j].scale(s);
+        for row in &mut r.m {
+            for cell in row {
+                *cell = cell.scale(s);
             }
         }
         r
@@ -232,8 +232,8 @@ impl GaugeGroup for Su3 {
         if n0 <= 0.0 {
             return Su3::identity_();
         }
-        for j in 0..3 {
-            r.m[0][j] = r.m[0][j].scale(1.0 / n0);
+        for cell in &mut r.m[0] {
+            *cell = cell.scale(1.0 / n0);
         }
         // Orthogonalize row 1 against row 0, then normalize.
         let mut dot = C::ZERO; // <row0, row1> = Σ conj(r0)·r1
@@ -247,8 +247,8 @@ impl GaugeGroup for Su3 {
         if n1 <= 0.0 {
             return Su3::identity_();
         }
-        for j in 0..3 {
-            r.m[1][j] = r.m[1][j].scale(1.0 / n1);
+        for cell in &mut r.m[1] {
+            *cell = cell.scale(1.0 / n1);
         }
         // Row 2 = conj(row0 × row1).
         for j in 0..3 {
