@@ -1,0 +1,23 @@
+{
+  "name": "vcad",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web-app",
+      "command": "npm run dev -w @vcad/app",
+      "description": "vcad web app dev server (Vite + React + Three.js) on https://localhost:5173"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web-app",
+      "port": 5173
+    }
+  ],
+  "repositoryDependencies": [
+    "github.com/ecto/tang",
+    "github.com/ecto/phyz",
+    "github.com/ecto/loon"
+  ]
+}

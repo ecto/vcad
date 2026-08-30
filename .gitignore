@@ -27,7 +27,9 @@ mecheval/private/
 .claude/*.lock
 .claude/launch.json
 .claude/settings.local.json
-.cursor/
+.cursor/*
+!.cursor/environment.json
+!.cursor/install.sh
 # wasm-pack output dumped into the crate directory
 # (canonical location is packages/kernel-wasm/)
 crates/vcad-kernel-wasm/vcad_kernel_wasm.js
