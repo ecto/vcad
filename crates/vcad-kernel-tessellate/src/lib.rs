@@ -369,6 +369,42 @@ impl TriangleMesh {
             .collect()
     }
 
+    /// Count undirected edges whose welded-position usage is not exactly 2.
+    ///
+    /// This is the slicer-visible criterion: coincident-but-distinct vertex
+    /// indices are welded on a 0.001 mm lattice, then every undirected edge
+    /// must be used by exactly two triangles. A closed manifold shell
+    /// returns 0. Boundary edges (usage 1) and non-manifold edges (usage
+    /// >= 3) both count as defects.
+    pub fn welded_defective_edge_count(&self) -> usize {
+        let key = |i: u32| -> [i64; 3] {
+            let k = i as usize * 3;
+            [
+                (self.vertices[k] as f64 * 1000.0).round() as i64,
+                (self.vertices[k + 1] as f64 * 1000.0).round() as i64,
+                (self.vertices[k + 2] as f64 * 1000.0).round() as i64,
+            ]
+        };
+        let mut counts: std::collections::HashMap<([i64; 3], [i64; 3]), u32> =
+            std::collections::HashMap::new();
+        for t in 0..self.indices.len() / 3 {
+            let tri = [
+                self.indices[3 * t],
+                self.indices[3 * t + 1],
+                self.indices[3 * t + 2],
+            ];
+            for i in 0..3 {
+                let (a, b) = (key(tri[i]), key(tri[(i + 1) % 3]));
+                if a == b {
+                    continue;
+                }
+                let e = if a < b { (a, b) } else { (b, a) };
+                *counts.entry(e).or_insert(0) += 1;
+            }
+        }
+        counts.values().filter(|&&n| n != 2).count()
+    }
+
     /// Group boundary edges into connected loops (chains of vertex
     /// indices). Each loop should close on itself in a well-formed
     /// hole; if it doesn't, the returned chain ends at the first
@@ -6039,8 +6075,13 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         while mesh.face_kinds.len() < post_face_tris {
             mesh.face_kinds.push(FaceKindTag::Unknown as u8);
         }
-        for t in pre_face_tris..post_face_tris {
-            mesh.face_kinds[t] = face_kind_tag;
+        for kind in mesh
+            .face_kinds
+            .iter_mut()
+            .take(post_face_tris)
+            .skip(pre_face_tris)
+        {
+            *kind = face_kind_tag;
         }
     }
 

@@ -54,7 +54,19 @@ The vcad kernel is a purpose-built BRep (boundary representation) modeling kerne
 
 ![Boolean union and difference: a plate with a bossed bore and a notched corner](/assets/kernel/booleans.jpg)
 
-Every result is held to a post-boolean validity oracle: probe points are classified against both operands, the operation's set semantics predict which probes must land inside the result, and a result that disagrees (or has inverted orientation) is rerouted to a mesh-CSG fallback — plane-split fragments classified by exact-predicate ray parity — instead of being returned as a plausible-looking wrong solid. Arrangements the analytic splitters cannot yet represent (intersecting circle arrangements on a sphere, sphere×cylinder crossings, unequal perpendicular cylinders) take the same fallback, trading semantic surfaces for a correct-volume triangle-soup B-rep. If even the fallback fails validation, the boolean returns an error rather than wrong geometry.
+Every result is held to a post-boolean validity oracle: probe points are classified against both operands, the operation's set semantics predict which probes must land inside the result, and a result that disagrees (or has inverted orientation) is rerouted to a mesh-CSG fallback — plane-split fragments classified by exact-predicate ray parity — instead of being returned as a plausible-looking wrong solid. Arrangements the analytic splitters cannot yet represent (intersecting circle arrangements on a sphere, sphere×cylinder crossings, unequal perpendicular cylinders, helical/twisted sweep patches) take the same fallback, trading semantic surfaces for a correct-volume triangle-soup B-rep. If even the fallback fails validation, the boolean returns an error rather than wrong geometry.
+
+Swept and revolved solids participate in the same CSG: a helical through-wall channel cut from a tube (undercut cam floors, the geometry class that used to force hand-rolled meshes with 0.05 mm overlaps) evaluates to a **single manifold shell** (0 defective edges, no internal faces). STL export sorts triangles into a canonical order so regenerations are byte-identical. The six-slot example lives at `hardware/helical-slot-tube/shell.loon`:
+
+```lisp
+[let tube [difference [translate 0 0 -1 [cylinder 33.3 29.6]] [cylinder 35.7 27.6]]]
+[let slot-sk [sketch 0 0 0 1 0 0 0 1 0 #[
+  [line -4 -2.2 6 -2.2] [line 6 -2.2 6 2.2]
+  [line 6 2.2 -4 2.2] [line -4 2.2 -4 -2.2]]]]
+[let cam [translate 0 0 12 [sweep-helix 34.5 28.8 4.0 0.139 slot-sk]]]
+[let slots [circular-pattern 0 0 0 0 0 1 6 360 cam]]
+[root [difference slots tube] "petg"]
+```
 
 ### Fillets and Chamfers
 

@@ -166,6 +166,13 @@ pub enum DegradeReason {
     /// was watertight and agreed on volume. Analytic surfaces were traded
     /// for watertightness.
     WatertightnessSwap,
+    /// A swept operand (helical / twisted bilinear patches) crossed the
+    /// other solid. Plane-approximated SSI is unsound for those patches, so
+    /// the mesh boolean runs instead of the B-rep pipeline.
+    SweptSurfaces,
+    /// An operand was mesh-only (`SolidRepr::Mesh`). The boolean ran at
+    /// triangle level rather than concatenating the two tessellations.
+    MeshOperand,
 }
 
 impl DegradeReason {
@@ -179,6 +186,8 @@ impl DegradeReason {
             DegradeReason::DifferenceRemovedNothing => "difference-removed-nothing",
             DegradeReason::SphereArrangement => "sphere-arrangement",
             DegradeReason::WatertightnessSwap => "watertightness-swap",
+            DegradeReason::SweptSurfaces => "swept-surfaces",
+            DegradeReason::MeshOperand => "mesh-operand",
         }
     }
 }
@@ -204,6 +213,12 @@ impl std::fmt::Display for DegradeReason {
             }
             DegradeReason::WatertightnessSwap => {
                 "the B-rep result was cracked and the watertight mesh result was taken instead"
+            }
+            DegradeReason::SweptSurfaces => {
+                "a swept (non-planar bilinear) operand crossed the other solid"
+            }
+            DegradeReason::MeshOperand => {
+                "an operand was mesh-only, so the boolean ran at triangle level"
             }
         };
         write!(f, "{msg}")
@@ -308,7 +323,7 @@ pub fn boolean_op(
 ///
 /// A successful return is *not* a promise that the result is still a real
 /// B-rep: check [`BooleanReport::fidelity`]. See [`DegradeReason`] for the
-/// seven ways a result can come back as triangle soup.
+/// ways a result can come back as triangle soup.
 ///
 /// # Errors
 ///
@@ -360,6 +375,23 @@ pub fn boolean_op_reported(
         let mesh_b = tessellate_brep(solid_b, segments);
         let result = mesh_fallback(&mesh_a, &mesh_b, op, &quadrics)?;
         let report = BooleanReport::degraded(op, DegradeReason::SoupOperand).with_result(&result);
+        return Ok((result, report));
+    }
+
+    // Swept solids (helical / twisted bilinear patches) have no analytic
+    // SSI the splitters can consume. Approximating a twisted patch as a
+    // plane produces a plausible-looking wrong solid — the same silent
+    // failure class as the 2026-08-11 spherical-socket handoff. The
+    // patches are already a discretization, so there is no analytic
+    // surface worth keeping: cut at the triangle level whenever a
+    // non-planar bilinear operand is involved and the AABBs overlap.
+    if crate::unrepresentable::has_nonplanar_bilinear(solid_a)
+        || crate::unrepresentable::has_nonplanar_bilinear(solid_b)
+    {
+        let mesh_a = tessellate_brep(solid_a, segments);
+        let mesh_b = tessellate_brep(solid_b, segments);
+        let result = mesh_fallback(&mesh_a, &mesh_b, op, &quadrics)?;
+        let report = BooleanReport::degraded(op, DegradeReason::SweptSurfaces).with_result(&result);
         return Ok((result, report));
     }
 
@@ -558,6 +590,7 @@ fn mesh_fallback(
 ) -> Result<BooleanResult, BooleanError> {
     let mut out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
     quadrics.project_mesh(&mut out);
+    crate::mesh::csg::close_hairline_holes(&mut out);
     validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;
     let mut brep = crate::mesh::mesh_to_brep(&out);
     // Carry the operands' quadric carriers forward in the result's geometry

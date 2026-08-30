@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-30-undercut-manifold-csg",
+  "version": "0.9.4",
+  "date": "2026-08-30",
+  "category": "feat",
+  "title": "Swept CSG exports a single manifold STL",
+  "summary": "Boolean difference, union, and intersection of swept and revolved solids (helical through-wall slots, undercuts) now mesh to one closed manifold shell with deterministic STL bytes.",
+  "features": ["booleans", "kernel", "export", "sweep"],
+  "details": "Helical and twisted sweep patches skip plane-approximated B-rep SSI and cut at triangle level. Mesh-only operands run the same CSG instead of concatenating tessellations. Coincident internal faces are dropped. STL triangles are sorted into a canonical order so regenerations diff clean."
+}
