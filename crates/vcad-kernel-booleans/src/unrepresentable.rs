@@ -25,7 +25,7 @@
 //! sample points of one face strictly inside the other solid, some strictly
 //! outside — forces the fallback.
 
-use vcad_kernel_geom::{CylinderSurface, Surface, SurfaceKind};
+use vcad_kernel_geom::{BilinearSurface, CylinderSurface, Surface, SurfaceKind};
 use vcad_kernel_math::Point3;
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::tessellate_brep;
@@ -215,4 +215,20 @@ pub(crate) fn arrangement_is_unrepresentable(
         }
     }
     false
+}
+
+/// Does this solid carry a non-planar bilinear face?
+///
+/// Helical and twisted sweeps emit bilinear patches that are *not* planes.
+/// The SSI path approximates those as planes, which is the wrong
+/// intersection on undercut / re-entrant geometry and is how a
+/// `difference(tube, helical_channel)` used to return a plausible-looking
+/// cracked solid. Planar bilinear (a straight sweep of a linear profile)
+/// is fine: the plane approximation is exact.
+pub(crate) fn has_nonplanar_bilinear(solid: &BRepSolid) -> bool {
+    solid.geometry.surfaces.iter().any(|s| {
+        s.as_any()
+            .downcast_ref::<BilinearSurface>()
+            .is_some_and(|b| !b.is_planar())
+    })
 }

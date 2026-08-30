@@ -636,22 +636,16 @@ pub fn build_glb(
 /// per triangle (normal + 3 vertices + attribute count). All meshes are
 /// merged into one triangle soup; facet normals are recomputed from vertex
 /// winding.
+///
+/// Triangles are canonicalized (rotated so the lexicographically smallest
+/// vertex is first, winding preserved) and sorted before writing, so the
+/// same solid always produces byte-identical STL across regenerations.
 pub fn build_stl(
     spec: &StlSpec,
     f32_data: &[f32],
     u32_data: &[u32],
 ) -> Result<Vec<u8>, ExportError> {
-    let mut total_triangles = 0usize;
-    for m in &spec.meshes {
-        total_triangles += m.indices[1] / 3;
-    }
-
-    let mut buf = Vec::with_capacity(84 + total_triangles * 50);
-    let mut header: Vec<u8> = spec.name.bytes().take(80).collect();
-    header.resize(80, b' ');
-    buf.extend_from_slice(&header);
-    buf.extend_from_slice(&(total_triangles as u32).to_le_bytes());
-
+    let mut triangles: Vec<[[f32; 3]; 3]> = Vec::new();
     for m in &spec.meshes {
         let positions = slice_f32(f32_data, &m.positions, "positions")?;
         let indices = slice_u32(u32_data, &m.indices, "indices")?;
@@ -667,29 +661,67 @@ pub fn build_stl(
                 })?;
                 v[k] = [p[0], p[1], p[2]];
             }
-            let e1 = [v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]];
-            let e2 = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
-            let mut n = [
-                e1[1] * e2[2] - e1[2] * e2[1],
-                e1[2] * e2[0] - e1[0] * e2[2],
-                e1[0] * e2[1] - e1[1] * e2[0],
-            ];
-            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-            if len > 1e-10 {
-                n = [n[0] / len, n[1] / len, n[2] / len];
-            }
-            for &c in &n {
-                buf.extend_from_slice(&c.to_le_bytes());
-            }
-            for vert in &v {
-                for &c in vert {
-                    buf.extend_from_slice(&c.to_le_bytes());
-                }
-            }
-            buf.extend_from_slice(&0u16.to_le_bytes());
+            triangles.push(canonicalize_stl_triangle(v));
         }
     }
+
+    triangles.sort_by(|a, b| {
+        let ka = stl_tri_key(a);
+        let kb = stl_tri_key(b);
+        ka.cmp(&kb)
+    });
+
+    let mut buf = Vec::with_capacity(84 + triangles.len() * 50);
+    let mut header: Vec<u8> = spec.name.bytes().take(80).collect();
+    header.resize(80, b' ');
+    buf.extend_from_slice(&header);
+    buf.extend_from_slice(&(triangles.len() as u32).to_le_bytes());
+
+    for v in &triangles {
+        let e1 = [v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]];
+        let e2 = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
+        let mut n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if len > 1e-10 {
+            n = [n[0] / len, n[1] / len, n[2] / len];
+        }
+        for &c in &n {
+            buf.extend_from_slice(&c.to_le_bytes());
+        }
+        for vert in v {
+            for &c in vert {
+                buf.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        buf.extend_from_slice(&0u16.to_le_bytes());
+    }
     Ok(buf)
+}
+
+/// Rotate a triangle so its lexicographically smallest vertex is first,
+/// preserving winding. Makes STL output independent of index origin.
+fn canonicalize_stl_triangle(v: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let key = |p: [f32; 3]| (p[0].to_bits(), p[1].to_bits(), p[2].to_bits());
+    let i0 = (0..3)
+        .min_by_key(|&i| key(v[i]))
+        .expect("triangle has 3 vertices");
+    if i0 == 0 {
+        v
+    } else {
+        [v[i0], v[(i0 + 1) % 3], v[(i0 + 2) % 3]]
+    }
+}
+
+fn stl_tri_key(v: &[[f32; 3]; 3]) -> [(u32, u32, u32); 3] {
+    [
+        (v[0][0].to_bits(), v[0][1].to_bits(), v[0][2].to_bits()),
+        (v[1][0].to_bits(), v[1][1].to_bits(), v[1][2].to_bits()),
+        (v[2][0].to_bits(), v[2][1].to_bits(), v[2][2].to_bits()),
+    ]
 }
 
 /// Parse a JSON [`GlbSpec`] and build GLB bytes — the WASM-boundary entry.
@@ -945,6 +977,28 @@ mod tests {
         // Normal of CCW triangle in XY plane is +Z.
         let nz = f32::from_le_bytes(stl[92..96].try_into().unwrap());
         assert!((nz - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stl_triangle_order_is_canonical() {
+        // Two triangles; reversing their order in the index buffer must not
+        // change the STL bytes. The rana workflow diffs STLs across
+        // regenerations.
+        let f32d = vec![
+            0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+            1.0,
+        ];
+        let spec = |idx: Vec<u32>| StlSpec {
+            name: "part".into(),
+            meshes: vec![StlMeshSpec {
+                positions: [0, 18],
+                indices: [0, idx.len()],
+            }],
+        };
+        let a = build_stl(&spec(vec![0, 1, 2, 3, 4, 5]), &f32d, &[0, 1, 2, 3, 4, 5]).unwrap();
+        let b = build_stl(&spec(vec![3, 4, 5, 0, 1, 2]), &f32d, &[3, 4, 5, 0, 1, 2]).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 84 + 100);
     }
 
     #[test]

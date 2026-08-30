@@ -95,9 +95,9 @@ pub enum LossKind {
     /// geometry is wrong, not merely coarse.
     BooleanFailedNoOp(String),
     /// An operand was already mesh-only, so the two meshes were
-    /// concatenated. For `Union` that is crude; for `Difference` and
-    /// `Intersection` the result is *geometrically wrong* — the operation
-    /// was not performed at all.
+    /// concatenated. No longer emitted: mesh operands now run triangle-level
+    /// CSG (see [`DegradeReason::MeshOperand`]). Kept so older provenance
+    /// ledgers still decode.
     MeshOperandConcat,
     /// The solid was constructed from a triangle mesh and never had a
     /// B-rep (mesh import, topology optimization).

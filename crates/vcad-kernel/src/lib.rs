@@ -684,24 +684,32 @@ impl Solid {
                     segments,
                 })
             }
-            // For mesh-only solids, tessellate BRep first then combine meshes
+            // For mesh-only solids, tessellate any BRep operand then run
+            // the triangle-level CSG. Concatenating the two meshes (the
+            // previous behaviour) retained every internal face and is
+            // exactly the seam-defect class that undercut parts hit when
+            // they bypass CSG.
             _ => {
                 let segments = resolve_segments(self.segments.max(other.segments));
                 let mesh_a = self.to_mesh(segments);
                 let mesh_b = other.to_mesh(segments);
-                // For mesh-only cases, just concatenate meshes.
-                // This is a Phase 1 limitation — proper mesh CSG comes in Phase 2.
-                let mut combined = mesh_a;
-                combined.merge(&mesh_b);
+                let out = vcad_kernel_booleans::mesh::csg::mesh_csg(&mesh_a, &mesh_b, op);
+                let vol = vcad_kernel_booleans::mesh_signed_volume(&out);
+                if !out.indices.is_empty() && (!vol.is_finite() || vol < -1e-6) {
+                    return Err(BooleanError::InvalidResult(
+                        vcad_kernel_booleans::ValidityError::BadVolume,
+                    ));
+                }
+                let brep = vcad_kernel_booleans::mesh::mesh_to_brep(&out);
                 let mut provenance = inherited();
                 provenance.push(DegradeEvent::new(
                     Self::op_name(op),
-                    LossKind::MeshOperandConcat,
+                    LossKind::BooleanFallback(DegradeReason::MeshOperand),
                 ));
                 Ok(Solid {
                     names: None,
                     provenance,
-                    repr: SolidRepr::Mesh(combined),
+                    repr: SolidRepr::BRep(Box::new(brep)),
                     segments,
                 })
             }
@@ -1922,8 +1930,7 @@ impl Solid {
     ///
     /// A mesh fallback still computes the right geometry. A skipped cut
     /// (`difference` returning its target unchanged after a kernel error)
-    /// does not, and neither does the mesh-concatenation path — those are
-    /// the ones a caller must not ship.
+    /// does not — those are the ones a caller must not ship.
     pub fn wrong_geometry_events(&self) -> impl Iterator<Item = &DegradeEvent> {
         self.provenance
             .iter()

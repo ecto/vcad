@@ -473,7 +473,196 @@ fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
         }
     }
     collapse_degenerate_triangles(&mut mesh);
+    collapse_sliver_triangles(&mut mesh);
+    drop_coincident_internal_faces(&mut mesh);
+    for _ in 0..3 {
+        let before = mesh.indices.len();
+        drop_four_use_slivers(&mut mesh);
+        collapse_sliver_triangles(&mut mesh);
+        if mesh.indices.len() == before {
+            break;
+        }
+    }
+    // Sliver collapse can reopen a sub-mm hole the first fill missed
+    // (measured: a 0.78 mm pentagon on a 64-segment helical slot). Cap
+    // whatever boundary remains, using the post-collapse vertex buffer.
+    close_hairline_holes(&mut mesh);
     mesh
+}
+
+/// Cap residual sub-mm boundary loops. Used after vertex projection, which
+/// can reopen a pinhole that `polygons_to_mesh` had already closed, and
+/// after welding so slicer-visible T-junctions become real holes we can
+/// fill.
+pub(crate) fn close_hairline_holes(mesh: &mut TriangleMesh) {
+    weld_coincident(mesh);
+    collapse_degenerate_triangles(mesh);
+    let open = mesh.boundary_edges();
+    if !open.is_empty() {
+        let reps = mesh_vertex_reps(mesh);
+        fill_small_holes(mesh, &reps, &open);
+        collapse_degenerate_triangles(mesh);
+    }
+    drop_four_use_slivers(mesh);
+    collapse_sliver_triangles(mesh);
+}
+
+/// Merge vertices that share a 0.001 mm lattice cell: the same criterion
+/// [`TriangleMesh::welded_defective_edge_count`] uses. Near-coincident
+/// corners from plane splits otherwise look closed by index and open to a
+/// slicer.
+fn weld_coincident(mesh: &mut TriangleMesh) {
+    let n = mesh.vertices.len() / 3;
+    if n == 0 {
+        return;
+    }
+    let key = |i: usize| -> [i64; 3] {
+        [
+            (mesh.vertices[3 * i] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[3 * i + 1] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[3 * i + 2] as f64 * 1000.0).round() as i64,
+        ]
+    };
+    let copy_normals = !mesh.normals.is_empty() && mesh.normals.len() == mesh.vertices.len();
+    let mut remap = vec![0u32; n];
+    let mut dedup: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
+    let mut new_vertices: Vec<f32> = Vec::with_capacity(mesh.vertices.len());
+    let mut new_normals: Vec<f32> =
+        Vec::with_capacity(if copy_normals { mesh.normals.len() } else { 0 });
+    for (i, slot) in remap.iter_mut().enumerate() {
+        let idx = *dedup.entry(key(i)).or_insert_with(|| {
+            let ni = (new_vertices.len() / 3) as u32;
+            new_vertices.extend_from_slice(&mesh.vertices[3 * i..3 * i + 3]);
+            if copy_normals {
+                new_normals.extend_from_slice(&mesh.normals[3 * i..3 * i + 3]);
+            }
+            ni
+        });
+        *slot = idx;
+    }
+    if new_vertices.len() == mesh.vertices.len() {
+        return;
+    }
+    let mut new_indices = Vec::with_capacity(mesh.indices.len());
+    for tri in mesh.indices.chunks(3) {
+        let a = remap[tri[0] as usize];
+        let b = remap[tri[1] as usize];
+        let c = remap[tri[2] as usize];
+        if a != b && b != c && a != c {
+            new_indices.extend_from_slice(&[a, b, c]);
+        }
+    }
+    mesh.vertices = new_vertices;
+    mesh.indices = new_indices;
+    if copy_normals {
+        mesh.normals = new_normals;
+    } else {
+        mesh.normals.clear();
+    }
+}
+
+fn mesh_vertex_reps(mesh: &TriangleMesh) -> Vec<Point3> {
+    (0..mesh.vertices.len() / 3)
+        .map(|i| {
+            Point3::new(
+                mesh.vertices[3 * i] as f64,
+                mesh.vertices[3 * i + 1] as f64,
+                mesh.vertices[3 * i + 2] as f64,
+            )
+        })
+        .collect()
+}
+
+/// Drop pairs of coincident triangles with opposite winding.
+///
+/// Mesh CSG can keep both sides of a coplanar overlap as an internal
+/// face: two triangles occupy the same three vertices and cancel in
+/// signed volume, but a slicer sees a non-manifold edge (4 uses) or a
+/// zero-thickness internal sheet. Hand-rolled meshes hit this constantly
+/// at construction-body seams; a real CSG result must not.
+fn drop_coincident_internal_faces(mesh: &mut TriangleMesh) {
+    if mesh.indices.len() < 6 {
+        return;
+    }
+    let vkey = |i: u32| -> [i64; 3] {
+        let k = i as usize * 3;
+        [
+            (mesh.vertices[k] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[k + 1] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[k + 2] as f64 * 1000.0).round() as i64,
+        ]
+    };
+    let sort_key = |a: [i64; 3], b: [i64; 3], c: [i64; 3]| -> ([[i64; 3]; 3], i8) {
+        let mut pts = [a, b, c];
+        let mut sign: i8 = 1;
+        if pts[0] > pts[1] {
+            pts.swap(0, 1);
+            sign = -sign;
+        }
+        if pts[1] > pts[2] {
+            pts.swap(1, 2);
+            sign = -sign;
+        }
+        if pts[0] > pts[1] {
+            pts.swap(0, 1);
+            sign = -sign;
+        }
+        if pts[0] == pts[1] || pts[1] == pts[2] || pts[0] == pts[2] {
+            (pts, 0)
+        } else {
+            (pts, sign)
+        }
+    };
+
+    let n = mesh.indices.len() / 3;
+    let mut keys: Vec<([[i64; 3]; 3], i8)> = Vec::with_capacity(n);
+    let mut counts: std::collections::HashMap<[[i64; 3]; 3], (u32, u32)> =
+        std::collections::HashMap::new();
+    for t in 0..n {
+        let a = vkey(mesh.indices[3 * t]);
+        let b = vkey(mesh.indices[3 * t + 1]);
+        let c = vkey(mesh.indices[3 * t + 2]);
+        let (key, sign) = sort_key(a, b, c);
+        keys.push((key, sign));
+        let entry = counts.entry(key).or_insert((0, 0));
+        if sign > 0 {
+            entry.0 += 1;
+        } else if sign < 0 {
+            entry.1 += 1;
+        }
+    }
+
+    let mut keep_budget: std::collections::HashMap<[[i64; 3]; 3], (u32, u32)> =
+        std::collections::HashMap::new();
+    for (key, (plus, minus)) in counts {
+        // Opposite coincident pair: drop both. Same-winding duplicates:
+        // keep one.
+        let (kp, km) = {
+            let paired = plus.min(minus);
+            ((plus - paired).min(1), (minus - paired).min(1))
+        };
+        keep_budget.insert(key, (kp, km));
+    }
+
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    for (t, &(key, sign)) in keys.iter().enumerate() {
+        let budget = keep_budget.get_mut(&key);
+        let keep = match (budget, sign) {
+            (Some(b), s) if s > 0 && b.0 > 0 => {
+                b.0 -= 1;
+                true
+            }
+            (Some(b), s) if s < 0 && b.1 > 0 => {
+                b.1 -= 1;
+                true
+            }
+            _ => false,
+        };
+        if keep {
+            indices.extend_from_slice(&mesh.indices[3 * t..3 * t + 3]);
+        }
+    }
+    mesh.indices = indices;
 }
 
 /// Weld away triangles whose f32-stored vertices are (near-)collinear.
@@ -484,6 +673,23 @@ fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
 /// edge removes it while keeping the neighborhood watertight; the shift is
 /// bounded by the sliver's own size.
 fn collapse_degenerate_triangles(mesh: &mut TriangleMesh) {
+    collapse_small_triangles(mesh, 1e-24);
+}
+
+/// Collapse triangles whose area is below a feature-scale sliver threshold.
+///
+/// `collapse_degenerate_triangles` only catches numerically zero-area
+/// faces (NaN normals). Mesh CSG of helical cuts routinely leaves
+/// 1e-4 mm² slivers that sit on an edge with four uses: closed, but not
+/// a manifold. Collapsing the shortest edge of those slivers drops them
+/// while the neighbourhood stays watertight.
+fn collapse_sliver_triangles(mesh: &mut TriangleMesh) {
+    // area = 0.5 |cross|; 1e-3 mm² → |cross|² = 4e-6. A 1 mm × 0.002 mm
+    // sliver is still far below feature scale on printed parts.
+    collapse_small_triangles(mesh, 4e-6);
+}
+
+fn collapse_small_triangles(mesh: &mut TriangleMesh, min_cross2: f64) {
     for _ in 0..4 {
         let v = |i: u32| {
             let k = i as usize * 3;
@@ -498,7 +704,7 @@ fn collapse_degenerate_triangles(mesh: &mut TriangleMesh) {
             let (a, b, c) = (tri[0], tri[1], tri[2]);
             let (pa, pb, pc) = (v(a), v(b), v(c));
             let cross = (pb - pa).cross(pc - pa);
-            if cross.dot(cross) > 1e-24 {
+            if cross.dot(cross) > min_cross2 {
                 continue;
             }
             // Merge the two closest corners, always dropping the higher
@@ -536,6 +742,94 @@ fn collapse_degenerate_triangles(mesh: &mut TriangleMesh) {
         }
         mesh.indices = indices;
     }
+}
+
+/// Drop the two smallest triangles on any 4-use edge when those two are
+/// slivers. Four triangles on one edge is the leftover of a collapsed
+/// internal face; the two larger triangles are the surface.
+fn drop_four_use_slivers(mesh: &mut TriangleMesh) {
+    let n = mesh.indices.len() / 3;
+    if n < 4 {
+        return;
+    }
+    let vkey = |i: u32| -> [i64; 3] {
+        let k = i as usize * 3;
+        [
+            (mesh.vertices[k] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[k + 1] as f64 * 1000.0).round() as i64,
+            (mesh.vertices[k + 2] as f64 * 1000.0).round() as i64,
+        ]
+    };
+    let area = |t: usize| -> f64 {
+        let i0 = mesh.indices[3 * t] as usize * 3;
+        let i1 = mesh.indices[3 * t + 1] as usize * 3;
+        let i2 = mesh.indices[3 * t + 2] as usize * 3;
+        let ax = mesh.vertices[i0] as f64;
+        let ay = mesh.vertices[i0 + 1] as f64;
+        let az = mesh.vertices[i0 + 2] as f64;
+        let bx = mesh.vertices[i1] as f64 - ax;
+        let by = mesh.vertices[i1 + 1] as f64 - ay;
+        let bz = mesh.vertices[i1 + 2] as f64 - az;
+        let cx = mesh.vertices[i2] as f64 - ax;
+        let cy = mesh.vertices[i2 + 1] as f64 - ay;
+        let cz = mesh.vertices[i2 + 2] as f64 - az;
+        let nx = by * cz - bz * cy;
+        let ny = bz * cx - bx * cz;
+        let nz = bx * cy - by * cx;
+        0.5 * (nx * nx + ny * ny + nz * nz).sqrt()
+    };
+    let mut adj: std::collections::HashMap<([i64; 3], [i64; 3]), Vec<usize>> =
+        std::collections::HashMap::new();
+    for t in 0..n {
+        let tri = [
+            mesh.indices[3 * t],
+            mesh.indices[3 * t + 1],
+            mesh.indices[3 * t + 2],
+        ];
+        for i in 0..3 {
+            let a = vkey(tri[i]);
+            let b = vkey(tri[(i + 1) % 3]);
+            if a == b {
+                continue;
+            }
+            let key = if a < b { (a, b) } else { (b, a) };
+            adj.entry(key).or_default().push(t);
+        }
+    }
+    let mut drop: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for tris in adj.values() {
+        let mut ranked: Vec<(f64, usize)> = tris
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .map(|t| (area(t), t))
+            .collect();
+        ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+        match ranked.len() {
+            3 if ranked[0].0 < 0.01 => {
+                drop.insert(ranked[0].1);
+            }
+            4 if ranked[1].0 < 0.01 || (ranked[2].0 > 0.0 && ranked[1].0 < ranked[2].0 * 0.1) => {
+                drop.insert(ranked[0].1);
+                drop.insert(ranked[1].1);
+            }
+            n if n > 4 && ranked[0].0 < 0.01 => {
+                drop.insert(ranked[0].1);
+            }
+            _ => {}
+        }
+    }
+    if drop.is_empty() {
+        return;
+    }
+    let mut indices = Vec::with_capacity(mesh.indices.len());
+    for t in 0..n {
+        if !drop.contains(&t) {
+            indices.extend_from_slice(&mesh.indices[3 * t..3 * t + 3]);
+        }
+    }
+    mesh.indices = indices;
 }
 
 /// Last-resort closure for cracks stitching can't reach: near-coincident
@@ -582,59 +876,99 @@ fn snap_boundary_vertices(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32
 /// Hairline hole perimeter (mm) below which a boundary loop is capped
 /// outright. Holes this small come from sliver fragments dropped during
 /// splitting (degenerate `Polygon::new` rejections), never from real
-/// geometry at torture-track feature scales.
-const HOLE_PERIMETER_EPS: f64 = 0.5;
+/// geometry at torture-track feature scales. A 2 mm perimeter is a
+/// ~0.6 mm equivalent diameter: below a typical FDM nozzle, far below
+/// the 4 mm helical-slot width.
+const HOLE_PERIMETER_EPS: f64 = 2.0;
 
-/// Cap tiny boundary loops with a triangle fan. Boundary edges are chained
-/// into directed loops (a hole traverses each missing directed edge), and
-/// any loop short enough to be a dropped-sliver artifact is filled.
+/// Cap tiny boundary loops with a triangle fan. Uses *undirected* loops so
+/// a hole whose triangles disagree on winding (indegree-2 at one vertex)
+/// still fills. The fan is wound opposite any adjacent surface triangle.
 fn fill_small_holes(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32, u32)]) {
-    let openset: std::collections::HashSet<(u32, u32)> = open.iter().copied().collect();
-    // The surface contains directed edge (a, b) exactly once; the cap must
-    // supply (b, a). Chain successor b → a; a duplicate key means a
-    // non-manifold boundary vertex — leave those loops alone.
-    let mut succ: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-    let mut bad: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    for tri in mesh.indices.chunks(3) {
-        for k in 0..3 {
-            let a = tri[k];
-            let b = tri[(k + 1) % 3];
-            if openset.contains(&(a.min(b), a.max(b))) && succ.insert(b, a).is_some() {
-                bad.insert(b);
+    if open.len() < 3 {
+        return;
+    }
+    let mut open: Vec<(u32, u32)> = open.to_vec();
+    open.sort_unstable();
+    let mut adj: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for &(a, b) in &open {
+        adj.entry(a).or_default().push(b);
+        adj.entry(b).or_default().push(a);
+    }
+    for nbrs in adj.values_mut() {
+        nbrs.sort_unstable();
+        nbrs.dedup();
+    }
+    let ek = |a: u32, b: u32| if a < b { (a, b) } else { (b, a) };
+    let mut visited: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+    let mut caps: Vec<[u32; 3]> = Vec::new();
+    for &(start_a, start_b) in &open {
+        if visited.contains(&ek(start_a, start_b)) {
+            continue;
+        }
+        visited.insert(ek(start_a, start_b));
+        let mut chain = vec![start_a, start_b];
+        let mut closed = false;
+        loop {
+            let cur = *chain.last().unwrap();
+            let prev = chain[chain.len() - 2];
+            let next = adj.get(&cur).and_then(|nbrs| {
+                nbrs.iter()
+                    .copied()
+                    .find(|&n| n != prev && !visited.contains(&ek(cur, n)))
+            });
+            match next {
+                Some(n) => {
+                    visited.insert(ek(cur, n));
+                    if n == start_a {
+                        closed = true;
+                        break;
+                    }
+                    chain.push(n);
+                    if chain.len() > 16 {
+                        break;
+                    }
+                }
+                None => break,
             }
+        }
+        if !closed || chain.len() < 3 {
+            continue;
+        }
+        let mut perimeter = 0.0;
+        for i in 0..chain.len() {
+            let a = chain[i];
+            let b = chain[(i + 1) % chain.len()];
+            perimeter += (reps[b as usize] - reps[a as usize]).norm();
+        }
+        if perimeter > HOLE_PERIMETER_EPS {
+            continue;
+        }
+        // Existing surface triangle using a chain edge a→b means the cap
+        // must use b→a (opposite winding). Reverse the chain if needed.
+        let mut reverse = false;
+        'orient: for i in 0..chain.len() {
+            let a = chain[i];
+            let b = chain[(i + 1) % chain.len()];
+            for tri in mesh.indices.chunks(3) {
+                for k in 0..3 {
+                    if tri[k] == a && tri[(k + 1) % 3] == b {
+                        reverse = true;
+                        break 'orient;
+                    }
+                }
+            }
+        }
+        if reverse {
+            chain.reverse();
+        }
+        for i in 1..chain.len() - 1 {
+            caps.push([chain[0], chain[i], chain[i + 1]]);
         }
     }
-    let mut done: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    let starts: Vec<u32> = succ.keys().copied().collect();
-    for start in starts {
-        if done.contains(&start) {
-            continue;
-        }
-        let mut loop_verts = vec![start];
-        let mut perimeter = 0.0;
-        let mut ok = false;
-        let mut cur = start;
-        while let Some(&next) = succ.get(&cur) {
-            if bad.contains(&cur) || loop_verts.len() > 16 {
-                break;
-            }
-            perimeter += (reps[next as usize] - reps[cur as usize]).norm();
-            if next == start {
-                ok = true;
-                break;
-            }
-            loop_verts.push(next);
-            cur = next;
-        }
-        for &v in &loop_verts {
-            done.insert(v);
-        }
-        if !ok || loop_verts.len() < 3 || perimeter > HOLE_PERIMETER_EPS {
-            continue;
-        }
-        for i in 1..loop_verts.len() - 1 {
-            mesh.indices
-                .extend_from_slice(&[loop_verts[0], loop_verts[i], loop_verts[i + 1]]);
+    for cap in caps {
+        if cap[0] != cap[1] && cap[1] != cap[2] && cap[0] != cap[2] {
+            mesh.indices.extend_from_slice(&cap);
         }
     }
 }
@@ -797,7 +1131,13 @@ mod tests {
             &tessellate_brep(&make_cube(80.0, 18.0, 29.5), 16),
             [0.0, 42.0, 0.0],
         );
-        let vol = volume(&mesh_csg(&a, &b, BooleanOp::Difference));
+        let out = mesh_csg(&a, &b, BooleanOp::Difference);
+        let vol = volume(&out);
         assert!((vol - 99120.0).abs() < 5.0, "expected 99120, got {vol}");
+        assert_eq!(
+            out.welded_defective_edge_count(),
+            0,
+            "slot difference must be a closed manifold"
+        );
     }
 }

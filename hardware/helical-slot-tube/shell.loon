@@ -1,0 +1,16 @@
+; Tube with six helical through-wall slots (issue #840).
+; Undercut cam floors are helical inclines: a real CSG difference cannot
+; emit the coincident-face cracks that hand-rolled meshes keep hitting.
+[let tube [difference [translate 0 0 -1 [cylinder 33.3 29.6]] [cylinder 35.7 27.6]]]
+[let slot-sk [sketch 0 0 0 1 0 0 0 1 0 #[
+  [line -4 -2.2 6 -2.2]
+  [line 6 -2.2 6 2.2]
+  [line 6 2.2 -4 2.2]
+  [line -4 2.2 -4 -2.2]]]]
+[let cam [translate 0 0 12 [sweep-helix 34.5 28.8 4.0 0.139 slot-sk]]]
+[let entry [translate 31.5 -2.2 16 [cube 8.5 4.4 12]]]
+[let slot [union entry cam]]
+[let slots [circular-pattern 0 0 0 0 0 1 6 360 slot]]
+[let win [translate -8 28 8 [cube 16 12 16]]]
+[let windows [circular-pattern 0 0 0 0 0 1 3 360 win]]
+[root [pipe tube [difference slots] [difference windows]] "petg"]
