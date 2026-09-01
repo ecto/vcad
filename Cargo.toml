@@ -68,6 +68,7 @@ members = [
     "crates/vcad-app",
     "crates/vcad-chat",
     "crates/vcad-eval",
+    "crates/vcad-kernel-assembly",
     "crates/vcad-loon",
     "crates/vcad-sim",
     "crates/vcad-ecad-package",
@@ -168,6 +169,7 @@ default-members = [
     "crates/vcad-app",
     "crates/vcad-chat",
     "crates/vcad-eval",
+    "crates/vcad-kernel-assembly",
     "crates/vcad-loon",
     "crates/vcad-sim",
     "crates/vcad-ecad-package",
@@ -252,6 +254,7 @@ vcad-kernel-geom = { path = "crates/vcad-kernel-geom", version = "0.9.4" }
 vcad-kernel-primitives = { path = "crates/vcad-kernel-primitives", version = "0.9.4" }
 vcad-kernel-naming = { path = "crates/vcad-kernel-naming", version = "0.9.4" }
 vcad-kernel-tessellate = { path = "crates/vcad-kernel-tessellate", version = "0.9.4" }
+vcad-kernel-assembly = { path = "crates/vcad-kernel-assembly", version = "0.9.4" }
 vcad-kernel-booleans = { path = "crates/vcad-kernel-booleans", version = "0.9.4" }
 vcad-kernel-nurbs = { path = "crates/vcad-kernel-nurbs", version = "0.9.4" }
 vcad-kernel-fillet = { path = "crates/vcad-kernel-fillet", version = "0.9.4" }

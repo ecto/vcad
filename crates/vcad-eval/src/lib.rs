@@ -855,6 +855,7 @@ mod tests {
             tags: Vec::new(),
             transform: None,
             material: None,
+            explode: None,
         }]);
         doc.ground_instance_id = Some("inst1".to_string());
 

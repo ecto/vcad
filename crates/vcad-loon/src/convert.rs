@@ -72,6 +72,10 @@ pub fn value_to_document_in(
         Value::Adt(tag, fields) if tag == "Assembly" && fields.len() == 4 => {
             convert_assembly(&mut ctx, fields)?;
         }
+        // A lone mate at top level (an assembly with a single assertion).
+        Value::Adt(tag, _) if is_mate_tag(tag) => {
+            convert_mate(&mut ctx, value)?;
+        }
         // Vec of entries
         Value::Vec(items) => {
             for item in items {
@@ -80,7 +84,7 @@ pub fn value_to_document_in(
         }
         _ => {
             return Err(format!(
-                "expected Solid, SceneEntry, Assembly, or Vec, got {value}"
+                "expected Solid, SceneEntry, Assembly, Mate, or Vec, got {value}"
             ))
         }
     }
@@ -184,6 +188,9 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
         Value::Adt(tag, fields) if tag == "Assembly" && fields.len() == 4 => {
             convert_assembly(ctx, fields)?;
         }
+        Value::Adt(tag, _) if is_mate_tag(tag) => {
+            convert_mate(ctx, value)?;
+        }
         Value::Adt(tag, _) if is_solid_tag(tag) => {
             let root_id = ctx.convert_solid(value)?;
             ctx.doc.roots.push(SceneEntry {
@@ -197,10 +204,95 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
         }
         _ => {
             return Err(format!(
-                "expected SceneEntry, Material, Assembly, ECAD, or Solid in Vec, got {value}"
+                "expected SceneEntry, Material, Assembly, Mate, ECAD, or Solid in Vec, got {value}"
             ))
         }
     }
+    Ok(())
+}
+
+/// Is this tag one of the mate ADTs (`mate-coaxial`, `mate-planar-offset`,
+/// `mate-pattern-phase`)?
+fn is_mate_tag(tag: &str) -> bool {
+    matches!(tag, "CoaxialMate" | "PlanarOffsetMate" | "PatternPhaseMate")
+}
+
+/// Convert a mate ADT into a [`Mate`] on the document.
+///
+/// Mates are top-level forms, so they compose with mirrored and joined
+/// assemblies instead of being trapped inside one `Assembly` value.
+fn convert_mate(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String> {
+    let Value::Adt(tag, f) = value else {
+        return Err(format!("expected a mate ADT, got {value}"));
+    };
+    let expect = |n: usize| -> Result<(), String> {
+        if f.len() == n {
+            Ok(())
+        } else {
+            Err(format!("{tag}: expected {n} fields, got {}", f.len()))
+        }
+    };
+    let id = ctx.str_val(&f[0])?;
+    let instance_a = ctx.str_val(&f[1])?;
+    let instance_b = ctx.str_val(&f[2])?;
+
+    let kind = match tag.as_str() {
+        "CoaxialMate" => {
+            expect(7)?;
+            let tol = ctx.f64_val(&f[6])?;
+            MateKind::Coaxial {
+                axis: Vec3::new(
+                    ctx.f64_val(&f[3])?,
+                    ctx.f64_val(&f[4])?,
+                    ctx.f64_val(&f[5])?,
+                ),
+                tolerance_mm: tol,
+                tolerance_deg: vcad_ir::mates::DEFAULT_ANGULAR_TOLERANCE_DEG,
+            }
+        }
+        "PlanarOffsetMate" => {
+            expect(8)?;
+            MateKind::PlanarOffset {
+                axis: Vec3::new(
+                    ctx.f64_val(&f[3])?,
+                    ctx.f64_val(&f[4])?,
+                    ctx.f64_val(&f[5])?,
+                ),
+                offset: ctx.f64_val(&f[6])?,
+                tolerance_mm: ctx.f64_val(&f[7])?,
+            }
+        }
+        "PatternPhaseMate" => {
+            expect(10)?;
+            let n = ctx.f64_val(&f[3])?;
+            if n < 1.0 || n.fract() != 0.0 {
+                return Err(format!(
+                    "PatternPhaseMate {id:?}: n-fold must be a whole number ≥ 1, got {n}"
+                ));
+            }
+            MateKind::PatternPhase {
+                n_fold: n as u32,
+                axis: Vec3::new(
+                    ctx.f64_val(&f[4])?,
+                    ctx.f64_val(&f[5])?,
+                    ctx.f64_val(&f[6])?,
+                ),
+                phase_a_deg: ctx.f64_val(&f[7])?,
+                phase_b_deg: ctx.f64_val(&f[8])?,
+                expected_clock_deg: None,
+                tolerance_deg: ctx.f64_val(&f[9])?,
+            }
+        }
+        _ => return Err(format!("unknown mate tag {tag}")),
+    };
+
+    ctx.doc.mates.push(Mate {
+        id,
+        name: None,
+        instance_a,
+        instance_b,
+        kind,
+    });
     Ok(())
 }
 
@@ -265,26 +357,52 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
             Value::Adt(t, f) => (t.as_str(), f.as_slice()),
             _ => return Err(format!("expected InstanceEntry ADT, got {inst_val}")),
         };
-        if tag != "InstanceEntry" || inf.len() != 5 {
-            return Err(format!(
-                "expected InstanceEntry with 5 fields, got {tag}/{}",
-                inf.len()
-            ));
-        }
+        let posed = match (tag, inf.len()) {
+            ("InstanceEntry", 5) => false,
+            ("PosedInstanceEntry", 11) => true,
+            _ => {
+                return Err(format!(
+                    "expected InstanceEntry with 5 fields or PosedInstanceEntry \
+                     with 11, got {tag}/{}",
+                    inf.len()
+                ))
+            }
+        };
         let id = ctx.str_val(&inf[0])?;
         let part_def_id = ctx.str_val(&inf[1])?;
         let tx = ctx.f64_val(&inf[2])?;
         let ty = ctx.f64_val(&inf[3])?;
         let tz = ctx.f64_val(&inf[4])?;
-
-        let transform = if tx != 0.0 || ty != 0.0 || tz != 0.0 {
-            Some(Transform3D {
-                translation: Vec3::new(tx, ty, tz),
-                ..Transform3D::default()
-            })
+        let (rx, ry, rz) = if posed {
+            (
+                ctx.f64_val(&inf[5])?,
+                ctx.f64_val(&inf[6])?,
+                ctx.f64_val(&inf[7])?,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+        let explode = if posed {
+            let e = Vec3::new(
+                ctx.f64_val(&inf[8])?,
+                ctx.f64_val(&inf[9])?,
+                ctx.f64_val(&inf[10])?,
+            );
+            (e.x != 0.0 || e.y != 0.0 || e.z != 0.0).then_some(e)
         } else {
             None
         };
+
+        let transform =
+            if tx != 0.0 || ty != 0.0 || tz != 0.0 || rx != 0.0 || ry != 0.0 || rz != 0.0 {
+                Some(Transform3D {
+                    translation: Vec3::new(tx, ty, tz),
+                    rotation: Vec3::new(rx, ry, rz),
+                    ..Transform3D::default()
+                })
+            } else {
+                None
+            };
 
         inst_list.push(Instance {
             id: id.clone(),
@@ -293,6 +411,7 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
             tags: Vec::new(),
             transform,
             material: None,
+            explode,
         });
     }
     ctx.doc.instances = Some(inst_list);

@@ -498,7 +498,29 @@
   [BallJoint Str Str f64 f64 f64 Str f64 f64 f64]]
 
 [type PartEntry [PartEntry Str Solid Str]]
-[type InstanceEntry [InstanceEntry Str Str f64 f64 f64]]
+
+; An instance is a named part reference plus a transform. `InstanceEntry` is
+; translation-only; `PosedInstanceEntry` carries the full pose — translation,
+; Euler rotation in degrees (applied Rz·Ry·Rx, so "flip and clock" reads as
+; rx=180 with the clocking in rz), and an exploded-view offset.
+;
+; NOTE: `mirror-group-*` below mirrors `InstanceEntry` only; a
+; `PosedInstanceEntry` passes through a mirrored group unchanged, so pose
+; rotations and mirroring should not be mixed in one group yet.
+[type InstanceEntry
+  [InstanceEntry Str Str f64 f64 f64]
+  [PosedInstanceEntry Str Str f64 f64 f64 f64 f64 f64 f64 f64 f64]]
+
+; Mates — declarative assertions about what the instance transforms achieve.
+; Checked against the posed assembly, never solved: the transforms stay the
+; source of truth and a mate says what they are supposed to add up to.
+[type MateDef
+  ; [CoaxialMate id a b ax ay az tol-mm]
+  [CoaxialMate Str Str Str f64 f64 f64 f64]
+  ; [PlanarOffsetMate id a b ax ay az offset tol-mm]
+  [PlanarOffsetMate Str Str Str f64 f64 f64 f64 f64]
+  ; [PatternPhaseMate id a b n-fold ax ay az phase-a phase-b tol-deg]
+  [PatternPhaseMate Str Str Str f64 f64 f64 f64 f64 f64 f64]]
 
 [type Assembly
   [Assembly (Vec PartEntry) (Vec InstanceEntry) (Vec JointDef) Str]]
@@ -506,6 +528,37 @@
 ; Assembly constructors
 [let part [fn [name solid material-name] [PartEntry name solid material-name]]]
 [let instance [fn [name part-name x y z] [InstanceEntry name part-name x y z]]]
+
+; Fully posed instance: translation + Euler rotation in degrees.
+[let instance-at [fn [name part-name x y z rx ry rz]
+  [PosedInstanceEntry name part-name x y z rx ry rz 0.0 0.0 0.0]]]
+
+; As `instance-at`, plus this part's exploded-view offset. The offset is data
+; on the assembly, so a viewer, a render and a build sheet stop each
+; hard-coding their own and drifting apart.
+[let instance-exploded [fn [name part-name x y z rx ry rz ex ey ez]
+  [PosedInstanceEntry name part-name x y z rx ry rz ex ey ez]]]
+
+; Mate constructors. Each is a TOP-LEVEL form, sitting alongside `root` and
+; `material` rather than inside the assembly, so mates compose with mirrored
+; and joined groups.
+;
+; Two parts' reference axes lie on one line (antiparallel counts — a flipped
+; part is still coaxial).
+[let mate-coaxial [fn [id a b ax ay az tol-mm]
+  [CoaxialMate id a b ax ay az tol-mm]]]
+
+; Instance b's origin sits `offset` mm from a's along the world axis: the
+; z-stack of a layered machine, written down once.
+[let mate-planar-offset [fn [id a b ax ay az offset tol-mm]
+  [PlanarOffsetMate id a b ax ay az offset tol-mm]]]
+
+; Two parts carrying n-fold circular patterns about the axis are phase-aligned
+; once posed. Pattern features sit every 360/n degrees, so the check reduces
+; the relative clocking modulo that pitch: a 10-pole pair clocked 60° lands at
+; 24 mod 36 — a 12° pole misalignment — while clocking 180° is exact.
+[let mate-pattern-phase [fn [id a b n-fold ax ay az phase-a phase-b tol-deg]
+  [PatternPhaseMate id a b n-fold ax ay az phase-a phase-b tol-deg]]]
 
 ; Joint constructors
 [let revolute-joint [fn [name ax ay az lo hi parent px py pz child cx cy cz]

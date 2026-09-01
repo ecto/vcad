@@ -1160,6 +1160,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "link1_inst".to_string(),
@@ -1168,6 +1169,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "link2_inst".to_string(),
@@ -1176,6 +1178,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
 
@@ -1263,6 +1266,7 @@ mod tests {
                     tags: Vec::new(),
                     transform: None,
                     material: None,
+                    explode: None,
                 })
                 .collect(),
         );
@@ -1381,6 +1385,7 @@ mod tests {
                     tags: Vec::new(),
                     transform: None,
                     material: None,
+                    explode: None,
                 })
                 .collect(),
         );
@@ -1523,6 +1528,7 @@ mod tests {
                     tags: std::vec::Vec::new(),
                     transform: None,
                     material: None,
+                    explode: None,
                 })
                 .collect(),
         );
@@ -1647,6 +1653,7 @@ mod tests {
                     ..Default::default()
                 }),
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "crate_inst".to_string(),
@@ -1659,6 +1666,7 @@ mod tests {
                     ..Default::default()
                 }),
                 material: None,
+                explode: None,
             },
         ]);
         doc.joints = Some(std::vec::Vec::new());
@@ -1784,6 +1792,7 @@ mod tests {
                     ..Default::default()
                 }),
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "arm_inst".to_string(),
@@ -1792,6 +1801,7 @@ mod tests {
                 tags: std::vec::Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
         // Pivot at the post top; the arm's own frame spans z ∈ [0, 300] mm

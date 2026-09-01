@@ -634,6 +634,7 @@ mod tests {
             tags: Vec::new(),
             transform: None,
             material: None,
+            explode: None,
         }]);
         doc.parameters
             .insert("femur_inner".into(), Parameter::literal(131.0));

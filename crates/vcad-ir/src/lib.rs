@@ -15,6 +15,7 @@ pub mod datum;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
+pub mod mates;
 pub mod molecule;
 pub mod parameters;
 pub mod resolve;
@@ -23,6 +24,7 @@ pub mod to_loon;
 pub mod vcode;
 
 pub use datum::{resolve_datums, Datum, PrincipalAxis, ResolvedDatum};
+pub use mates::{Mate, MateKind};
 pub use parameters::{
     resolve_binding, resolve_parameters, validate_bindings, BindingKey, Bindings, Expr, Parameter,
     ResolveError,
@@ -213,6 +215,17 @@ pub struct Instance {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub material: Option<String>,
+    /// Exploded-view offset for this instance, in mm, applied **after** the
+    /// instance transform and scaled by an explode factor (0 = assembled,
+    /// 1 = fully exploded).
+    ///
+    /// Exploded views used to be hand-coded once per viewer and once per build
+    /// sheet, so they drifted apart from each other and from the assembly.
+    /// Carrying the offset on the instance makes the assembly document the one
+    /// place it is written down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub explode: Option<Vec3>,
 }
 
 /// Alias for [`Instance`] (used in some components).
@@ -2076,6 +2089,11 @@ pub struct Document {
     #[serde(rename = "groundInstanceId", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(rename = "groundInstanceId", optional))]
     pub ground_instance_id: Option<String>,
+    /// Declarative mates asserted over the posed assembly. Checked, never
+    /// solved: the instance transforms stay the source of truth and a mate
+    /// says what they are supposed to achieve. See [`mates`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mates: Vec<Mate>,
 
     // ECAD fields (optional, for PCB design)
     /// Schematic sheet for electronics design.
@@ -2457,6 +2475,7 @@ impl Default for Document {
             instances: None,
             joints: None,
             ground_instance_id: None,
+            mates: Vec::new(),
             schematic: None,
             pcb: None,
             molecule: None,
@@ -2799,6 +2818,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "arm_inst".to_string(),
@@ -2811,6 +2831,7 @@ mod tests {
                     scale: Vec3::new(1.0, 1.0, 1.0),
                 }),
                 material: Some("steel".to_string()),
+                explode: None,
             },
         ]);
 
