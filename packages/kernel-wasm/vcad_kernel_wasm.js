@@ -10748,12 +10748,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3150, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3151, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3176, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3177, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_22639e9cee8fd77e___closure__destroy___dyn_core_f0fd674eaa06beef___ops__function__FnMut__wgpu_56e928f2b7a75f7a___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wgpu_56e928f2b7a75f7a___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3924, function: Function { arguments: [Externref], shim_idx: 3925, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3950, function: Function { arguments: [Externref], shim_idx: 3951, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_22639e9cee8fd77e___closure__destroy___dyn_core_f0fd674eaa06beef___ops__function__FnMut__wasm_bindgen_22639e9cee8fd77e___JsValue____Output_______, wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue_____);
             return ret;
         },
