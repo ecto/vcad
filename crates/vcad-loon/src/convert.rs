@@ -591,6 +591,7 @@ fn is_solid_tag(tag: &str) -> bool {
             | "CircularPattern"
             | "SweepLine"
             | "SweepHelix"
+            | "Sweep"
             | "Loft"
             | "LoftClosed"
             | "Fastener"
@@ -1660,6 +1661,23 @@ impl ConvertCtx {
                     arc_segments: None,
                 }
             }
+            // Sweep a profile along a first-class Path value.
+            // [Sweep sketch path]
+            "Sweep" => {
+                assert_fields(tag, fields, 2)?;
+                let sketch = self.convert_sketch(&fields[0])?;
+                let path = self.convert_path(&fields[1])?;
+                CsgOp::Sweep {
+                    sketch,
+                    path,
+                    twist_angle: None,
+                    scale_start: None,
+                    scale_end: None,
+                    orientation: None,
+                    path_segments: None,
+                    arc_segments: None,
+                }
+            }
             // Loft between sketches (open)
             "Loft" => {
                 assert_fields(tag, fields, 1)?;
@@ -1716,7 +1734,105 @@ impl ConvertCtx {
                     holes: None,
                 }))
             }
+            // [SketchPoly #[x0 y0 x1 y1 ...]] — a closed polyline profile.
+            // The plane is nominal: a swept profile is read as 2D numbers, so
+            // only the point list carries meaning.
+            "SketchPoly" => {
+                assert_fields(tag, fields, 1)?;
+                let flat = self.f64_list(&fields[0], "profile point")?;
+                if flat.len() < 6 || flat.len() % 2 != 0 {
+                    return Err(format!(
+                        "{tag}: expected a flat #[x y ...] list of at least three points, \
+                         got {} numbers",
+                        flat.len()
+                    ));
+                }
+                let pts: Vec<Vec2> = flat
+                    .chunks_exact(2)
+                    .map(|c| Vec2::new(c[0], c[1]))
+                    .collect();
+                let n = pts.len();
+                let segments: Vec<SketchSegment2D> = (0..n)
+                    .map(|i| SketchSegment2D::Line {
+                        start: pts[i],
+                        end: pts[(i + 1) % n],
+                    })
+                    .collect();
+                Ok(self.insert_node(CsgOp::Sketch2D {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    x_dir: Vec3::new(1.0, 0.0, 0.0),
+                    y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    segments,
+                    holes: None,
+                }))
+            }
             _ => Err(format!("expected Sketch, got {tag}")),
+        }
+    }
+
+    /// A `Path` ADT — the first-class path value `sweep` takes.
+    fn convert_path(&mut self, value: &Value) -> Result<PathCurve, String> {
+        let (tag, fields) = match value {
+            Value::Adt(tag, fields) => (tag.as_str(), fields.as_slice()),
+            _ => return Err(format!("expected Path ADT, got {value}")),
+        };
+
+        match tag {
+            // [PathLine sx sy sz ex ey ez]
+            "PathLine" => {
+                assert_fields(tag, fields, 6)?;
+                Ok(PathCurve::Line {
+                    start: self.vec3(fields, 0)?,
+                    end: self.vec3(fields, 3)?,
+                })
+            }
+            // [PathCyl radius seg-deg #[deg0 z0 deg1 z1 ...]]
+            "PathCyl" => {
+                assert_fields(tag, fields, 3)?;
+                let radius = self.f64_val(&fields[0])?;
+                let seg_deg = self.f64_val(&fields[1])?;
+                let flat = self.f64_list(&fields[2], "cylindrical path knot")?;
+                if flat.len() < 4 || flat.len() % 2 != 0 {
+                    return Err(format!(
+                        "{tag}: knots are a flat #[deg z ...] list of at least two \
+                         pairs, got {} numbers",
+                        flat.len()
+                    ));
+                }
+                let knots: Vec<Vec2> = flat
+                    .chunks_exact(2)
+                    .map(|c| Vec2::new(c[0], c[1]))
+                    .collect();
+                // A non-monotonic angle list would double back on itself and
+                // self-intersect the sweep; catch it here rather than shipping
+                // a solid whose caps face each other.
+                let rising = knots[knots.len() - 1].x > knots[0].x;
+                for w in knots.windows(2) {
+                    let d = w[1].x - w[0].x;
+                    if d == 0.0 || (d > 0.0) != rising {
+                        return Err(format!(
+                            "{tag}: knot angles must be strictly monotonic; {} then {} is not",
+                            w[0].x, w[1].x
+                        ));
+                    }
+                }
+                if seg_deg <= 0.0 {
+                    return Err(format!("{tag}: seg-deg must be positive, got {seg_deg}"));
+                }
+                Ok(PathCurve::Cylindrical {
+                    radius,
+                    knots,
+                    seg_deg: Some(seg_deg),
+                })
+            }
+            _ => Err(format!("unknown Path variant: {tag}")),
+        }
+    }
+
+    fn f64_list(&self, value: &Value, what: &str) -> Result<Vec<f64>, String> {
+        match value {
+            Value::Vec(items) => items.iter().map(|i| self.f64_val(i)).collect(),
+            other => Err(format!("expected a flat {what} list, got {other}")),
         }
     }
 

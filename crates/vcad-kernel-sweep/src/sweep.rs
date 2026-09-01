@@ -9,7 +9,7 @@ use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_sketch::SketchProfile;
 use vcad_kernel_topo::{HalfEdgeId, Orientation, ShellType, Topology, VertexId};
 
-use crate::frenet::rotation_minimizing_frames;
+use crate::frenet::{rotation_minimizing_frames, FrenetFrame};
 use crate::SweepError;
 
 /// Options for the sweep operation.
@@ -87,7 +87,6 @@ pub fn sweep(
     // Tessellate arcs in the profile for smooth curves
     let arc_segments = options.arc_segments.max(1) as usize;
     let tessellated_profile = profile.tessellate(arc_segments);
-    let n_profile_verts = tessellated_profile.segments.len();
     let n_path_samples = n_path_segments + 1; // number of profile copies
 
     // Compute rotation-minimizing frames along the path
@@ -103,8 +102,63 @@ pub fn sweep(
         }
     }
 
+    build_swept_solid(&tessellated_profile, &frames, options, false)
+}
+
+/// Stitch a tessellated profile into a closed solid along a prepared frame
+/// sequence.
+///
+/// Split out of [`sweep`] so alternative framings — see
+/// [`sweep_cylindrical`] — reuse the identical topology construction and
+/// therefore inherit its capping and twin-pairing behaviour verbatim.
+///
+/// `normalize_winding` re-orders the profile ring so the lateral quads face
+/// outward regardless of how the caller wound the profile and of whether the
+/// frame basis is right- or left-handed with respect to the direction of
+/// travel. [`sweep`] leaves it off (its rotation-minimizing frames are always
+/// right-handed, and its callers already wind CCW); the cylindrical framing
+/// below needs it, because a radial/axial basis is left-handed against
+/// increasing angle.
+pub(crate) fn build_swept_solid(
+    tessellated_profile: &SketchProfile,
+    frames: &[FrenetFrame],
+    options: SweepOptions,
+    normalize_winding: bool,
+) -> Result<BRepSolid, SweepError> {
+    let n_path_samples = frames.len();
+    if n_path_samples < 2 {
+        return Err(SweepError::ZeroLengthPath);
+    }
+    let n_path_segments = n_path_samples - 1;
+    let n_profile_verts = tessellated_profile.segments.len();
+    if n_profile_verts < 3 {
+        return Err(SweepError::InvalidProfile(
+            "a swept profile needs at least 3 vertices".into(),
+        ));
+    }
+
     // Get profile vertices in 2D (from tessellated profile)
-    let profile_verts_2d = tessellated_profile.vertices_2d();
+    let mut profile_verts_2d = tessellated_profile.vertices_2d();
+
+    if normalize_winding {
+        // Signed area of the profile in frame (normal, binormal) coordinates.
+        let mut area2 = 0.0;
+        for i in 0..n_profile_verts {
+            let a = profile_verts_2d[i];
+            let b = profile_verts_2d[(i + 1) % n_profile_verts];
+            area2 += a.x * b.y - b.x * a.y;
+        }
+        // Handedness of the frame basis against the direction of travel: the
+        // lateral-quad winding below assumes (normal × binormal) points the
+        // way the sweep is going.
+        let f = &frames[0];
+        let travel = &(frames[n_path_samples - 1].position - f.position);
+        let across = f.normal.as_ref().cross(f.binormal.as_ref());
+        let handedness = across.dot(travel).signum();
+        if area2 * handedness < 0.0 {
+            profile_verts_2d.reverse();
+        }
+    }
 
     let quantize_pt = |p: Point3| -> [i64; 3] {
         [
@@ -485,6 +539,295 @@ impl Curve3d for Helix {
     }
 }
 
+// =============================================================================
+// Cylindrical path — a z(θ) polyline wrapped on a cylinder
+// =============================================================================
+
+/// The default angular step, in degrees, between path samples.
+pub const DEFAULT_SEG_DEG: f64 = 0.5;
+
+/// A path that lives on the surface of a cylinder: constant radius, angle
+/// sweeping from the first knot to the last, and height given by a
+/// piecewise-linear function of the angle.
+///
+/// A plain helix is the two-knot case, which is what
+/// [`CylindricalPath::helix`] builds. Extra knots express the features a cam
+/// track actually has — a lead-in ramp, a rise–plateau–drop detent, a flat
+/// pocket — without leaving the primitive, because the deviation from a
+/// constant rate *is* the feature.
+///
+/// Knots are `(angle in degrees, height in mm)` and must be monotonic in
+/// angle. Height is relative to the path's `center`, so `helix` starts at
+/// `center.z` whatever `start_deg` is; place the result with a translate
+/// rather than by arithmetic on the start angle.
+#[derive(Debug, Clone)]
+pub struct CylindricalPath {
+    /// Point on the cylinder axis that heights are measured from.
+    pub center: Point3,
+    /// Cylinder radius.
+    pub radius: f64,
+    /// `(angle_deg, z)` knots, monotonic in angle, at least two.
+    pub knots: Vec<(f64, f64)>,
+    /// Angular step between path samples, in degrees.
+    pub seg_deg: f64,
+}
+
+impl CylindricalPath {
+    /// A constant-rate helical arc.
+    ///
+    /// `rate_mm_per_deg` is the rise per degree of arc — the way a cam or a
+    /// bayonet track is actually dimensioned, and the number a 4th-axis
+    /// toolpath is programmed from. `arc_deg` may be negative for a
+    /// left-hand track.
+    pub fn helix(radius: f64, rate_mm_per_deg: f64, start_deg: f64, arc_deg: f64) -> Self {
+        Self {
+            center: Point3::origin(),
+            radius,
+            knots: vec![
+                (start_deg, 0.0),
+                (start_deg + arc_deg, rate_mm_per_deg * arc_deg),
+            ],
+            seg_deg: DEFAULT_SEG_DEG,
+        }
+    }
+
+    /// A path through arbitrary `(angle_deg, z)` knots.
+    pub fn from_knots(radius: f64, knots: Vec<(f64, f64)>) -> Self {
+        Self {
+            center: Point3::origin(),
+            radius,
+            knots,
+            seg_deg: DEFAULT_SEG_DEG,
+        }
+    }
+
+    /// Override the angular sample step (degrees).
+    pub fn with_seg_deg(mut self, seg_deg: f64) -> Self {
+        if seg_deg > 0.0 {
+            self.seg_deg = seg_deg;
+        }
+        self
+    }
+
+    /// Move the path's axis reference point.
+    pub fn with_center(mut self, center: Point3) -> Self {
+        self.center = center;
+        self
+    }
+
+    /// First knot angle, in degrees.
+    pub fn start_deg(&self) -> f64 {
+        self.knots.first().map(|k| k.0).unwrap_or(0.0)
+    }
+
+    /// Last knot angle, in degrees.
+    pub fn end_deg(&self) -> f64 {
+        self.knots.last().map(|k| k.0).unwrap_or(0.0)
+    }
+
+    /// Total signed arc, in degrees.
+    pub fn arc_deg(&self) -> f64 {
+        self.end_deg() - self.start_deg()
+    }
+
+    /// Height of the path at `angle_deg`, by linear interpolation between
+    /// the bracketing knots (clamped outside the knot range).
+    ///
+    /// This is the analytic surface the swept solid is built on, so a test
+    /// can compare a probed floor against it directly.
+    pub fn height_at_deg(&self, angle_deg: f64) -> f64 {
+        let k = &self.knots;
+        if k.is_empty() {
+            return 0.0;
+        }
+        let ascending = self.arc_deg() >= 0.0;
+        let inside = |a: f64, b: f64| {
+            if ascending {
+                angle_deg >= a && angle_deg <= b
+            } else {
+                angle_deg <= a && angle_deg >= b
+            }
+        };
+        for w in k.windows(2) {
+            let ((a0, z0), (a1, z1)) = (w[0], w[1]);
+            if inside(a0, a1) {
+                let span = a1 - a0;
+                if span.abs() < 1e-12 {
+                    return z1;
+                }
+                return z0 + (z1 - z0) * (angle_deg - a0) / span;
+            }
+        }
+        if ascending == (angle_deg < self.start_deg()) {
+            k[0].1
+        } else {
+            k[k.len() - 1].1
+        }
+    }
+
+    /// The angles the path is sampled at: every knot, plus a `seg_deg` grid
+    /// between them. Knots land exactly on samples, so a plateau's corners
+    /// are never rounded off by the sampling.
+    pub fn sample_angles(&self) -> Vec<f64> {
+        let mut out = Vec::new();
+        let step = if self.seg_deg > 0.0 {
+            self.seg_deg
+        } else {
+            DEFAULT_SEG_DEG
+        };
+        for w in self.knots.windows(2) {
+            let (a0, a1) = (w[0].0, w[1].0);
+            let span = a1 - a0;
+            let n = ((span.abs() / step).ceil() as usize).max(1);
+            for i in 0..n {
+                out.push(a0 + span * i as f64 / n as f64);
+            }
+        }
+        out.push(self.end_deg());
+        out
+    }
+
+    /// Frames for a cylindrical sweep: the cross-section plane contains the
+    /// cylinder axis and the point on the path.
+    ///
+    /// Profile x is the **radial** offset from `radius` (outward positive)
+    /// and profile y is the **axial** offset (up positive). The plane is
+    /// deliberately *not* perpendicular to the tangent: a cam track's
+    /// cross-section is what a radial section of the part shows, and holding
+    /// the section vertical is what makes the swept floor land on
+    /// [`height_at_deg`] exactly rather than to within a cosine. It also
+    /// keeps the frame well-defined across a knot, where the tangent jumps.
+    pub fn frames(&self) -> Vec<FrenetFrame> {
+        self.sample_angles()
+            .into_iter()
+            .map(|deg| {
+                let rad = deg.to_radians();
+                let (s, c) = rad.sin_cos();
+                let position = Point3::new(
+                    self.center.x + self.radius * c,
+                    self.center.y + self.radius * s,
+                    self.center.z + self.height_at_deg(deg),
+                );
+                let normal = Dir3::new_normalize(Vec3::new(c, s, 0.0));
+                let binormal = Dir3::new_normalize(Vec3::z());
+                let arc = self.arc_deg();
+                let eps = (arc.abs() * 1e-4).max(1e-6);
+                let dz_ddeg =
+                    (self.height_at_deg(deg + eps) - self.height_at_deg(deg - eps)) / (2.0 * eps);
+                let tangent = Dir3::new_normalize(Vec3::new(
+                    -self.radius * s * arc.to_radians(),
+                    self.radius * c * arc.to_radians(),
+                    dz_ddeg * arc,
+                ));
+                FrenetFrame {
+                    position,
+                    tangent,
+                    normal,
+                    binormal,
+                }
+            })
+            .collect()
+    }
+
+    fn angle_at(&self, t: f64) -> f64 {
+        self.start_deg() + self.arc_deg() * t
+    }
+}
+
+impl Curve3d for CylindricalPath {
+    fn evaluate(&self, t: f64) -> Point3 {
+        let deg = self.angle_at(t);
+        let rad = deg.to_radians();
+        let (s, c) = rad.sin_cos();
+        Point3::new(
+            self.center.x + self.radius * c,
+            self.center.y + self.radius * s,
+            self.center.z + self.height_at_deg(deg),
+        )
+    }
+
+    fn tangent(&self, t: f64) -> Vec3 {
+        let deg = self.angle_at(t);
+        let rad = deg.to_radians();
+        let (s, c) = rad.sin_cos();
+        // d/dt, with the height slope taken from the bracketing knots. A
+        // one-sided step keeps the tangent finite at a knot instead of
+        // averaging across the corner.
+        let arc = self.arc_deg();
+        let eps = (arc.abs() * 1e-4).max(1e-6);
+        let dz_ddeg = (self.height_at_deg(deg + eps) - self.height_at_deg(deg - eps)) / (2.0 * eps);
+        let darc_dt = arc.to_radians();
+        Vec3::new(
+            -self.radius * s * darc_dt,
+            self.radius * c * darc_dt,
+            dz_ddeg * arc,
+        )
+    }
+
+    fn domain(&self) -> (f64, f64) {
+        (0.0, 1.0)
+    }
+
+    fn curve_type(&self) -> CurveKind {
+        CurveKind::Circle
+    }
+
+    fn clone_box(&self) -> Box<dyn Curve3d> {
+        Box::new(self.clone())
+    }
+
+    fn suggested_segments(&self) -> usize {
+        self.sample_angles().len().saturating_sub(1).max(2)
+    }
+}
+
+/// Sweep a closed profile along a [`CylindricalPath`], holding the
+/// cross-section in the radial/axial plane.
+///
+/// This is the primitive behind cam tracks, bayonet slots, J-slots and
+/// lead-in ramps. Unlike [`sweep`], the profile is not rotated to stay
+/// perpendicular to the tangent; see [`CylindricalPath::frames`] for why.
+///
+/// The result is a closed solid — lateral faces plus a cap at each end — so
+/// it is watertight standing alone, which is what lets it be subtracted from
+/// a body whose wall it passes clean through.
+///
+/// Profile coordinates are `(radial offset, axial offset)`, both relative to
+/// the path, and the profile may be wound either way.
+pub fn sweep_cylindrical(
+    profile: &SketchProfile,
+    path: &CylindricalPath,
+    options: SweepOptions,
+) -> Result<BRepSolid, SweepError> {
+    if path.knots.len() < 2 {
+        return Err(SweepError::ZeroLengthPath);
+    }
+    if path.arc_deg().abs() < 1e-9 {
+        return Err(SweepError::ZeroLengthPath);
+    }
+    if profile.segments.is_empty() {
+        return Err(SweepError::InvalidProfile("empty profile".into()));
+    }
+
+    let arc_segments = options.arc_segments.max(1) as usize;
+    let tessellated = profile.tessellate(arc_segments);
+
+    let frames = if options.path_segments > 0 {
+        // An explicit segment count overrides the path's own angular step.
+        let stepped = path
+            .clone()
+            .with_seg_deg(path.arc_deg().abs() / options.path_segments as f64);
+        stepped.frames()
+    } else {
+        path.frames()
+    };
+    if frames.len() < 2 {
+        return Err(SweepError::TooFewSegments);
+    }
+
+    build_swept_solid(&tessellated, &frames, options, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,5 +1035,107 @@ mod tests {
                 + v2[0] * (v0[1] * v1[2] - v1[1] * v0[2]);
         }
         (vol / 6.0).abs()
+    }
+
+    // ---------------------------------------------------------------------
+    // CylindricalPath
+    // ---------------------------------------------------------------------
+
+    /// The height function is what everything else is checked against, so it
+    /// is checked against the drawing first.
+    #[test]
+    fn helix_height_is_rate_times_arc() {
+        let h = CylindricalPath::helix(34.5, 0.0667, 0.0, 15.0);
+        assert_eq!(h.height_at_deg(0.0), 0.0);
+        assert!((h.height_at_deg(15.0) - 0.0667 * 15.0).abs() < 1e-12);
+        assert!((h.height_at_deg(7.5) - 0.0667 * 7.5).abs() < 1e-12);
+        // Clamped outside the knot range rather than extrapolated.
+        assert_eq!(h.height_at_deg(-5.0), 0.0);
+        assert!((h.height_at_deg(30.0) - 0.0667 * 15.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_negative_arc_reads_the_same_way() {
+        let h = CylindricalPath::helix(34.5, 0.0667, 20.0, -15.0);
+        assert_eq!(h.height_at_deg(20.0), 0.0);
+        assert!((h.height_at_deg(5.0) - 0.0667 * -15.0).abs() < 1e-12);
+        assert!((h.height_at_deg(12.5) - 0.0667 * -7.5).abs() < 1e-12);
+    }
+
+    /// Knots must land exactly on samples: a plateau whose corners fall
+    /// between samples is rounded off, which is the whole failure mode a
+    /// detent has.
+    #[test]
+    fn knots_are_always_sampled_exactly() {
+        let p = CylindricalPath::from_knots(
+            34.5,
+            vec![
+                (3.6, -0.25),
+                (9.6, 0.15),
+                (10.3, 0.25),
+                (11.3, 0.25),
+                (11.6, 0.15),
+            ],
+        );
+        let angles = p.sample_angles();
+        for (knot, _) in &p.knots {
+            assert!(
+                angles.iter().any(|a| (a - knot).abs() < 1e-9),
+                "knot at {knot}° is not a sample"
+            );
+        }
+        // ...and the default step is honoured between them.
+        for w in angles.windows(2) {
+            assert!(w[1] - w[0] <= DEFAULT_SEG_DEG + 1e-9);
+        }
+    }
+
+    #[test]
+    fn seg_deg_sets_the_facet_count() {
+        let coarse = CylindricalPath::helix(34.5, 0.0667, 0.0, 15.0).with_seg_deg(5.0);
+        let fine = CylindricalPath::helix(34.5, 0.0667, 0.0, 15.0).with_seg_deg(0.1);
+        assert_eq!(coarse.sample_angles().len(), 4); // 3 segments + endpoint
+        assert_eq!(fine.sample_angles().len(), 151);
+    }
+
+    fn cyl_solid(path: &CylindricalPath, radial: f64, axial: f64) -> BRepSolid {
+        let profile =
+            SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), radial, axial);
+        sweep_cylindrical(&profile, path, SweepOptions::default()).unwrap()
+    }
+
+    /// A closed solid has zero net signed area over its faces; the cheaper
+    /// proxy here is a non-zero volume plus a full complement of faces.
+    #[test]
+    fn a_cylindrical_sweep_is_capped_at_both_ends() {
+        let path = CylindricalPath::helix(34.5, 0.0667, 0.0, 15.0);
+        let solid = cyl_solid(&path, 3.0, 2.0);
+        // 30 path segments x 4 profile edges, plus the two caps.
+        assert_eq!(solid.topology.faces.len(), 30 * 4 + 2);
+        assert!(signed_volume(&solid) > 0.0);
+    }
+
+    /// Winding is the caller's business, not the primitive's: a CW profile
+    /// and a CCW one must give the same solid, not one inside out.
+    #[test]
+    fn profile_winding_does_not_flip_the_solid() {
+        let path = CylindricalPath::helix(34.5, 0.0667, 0.0, 15.0);
+        let ccw = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 3.0, 2.0);
+        let cw = ccw.reversed();
+        let a = sweep_cylindrical(&ccw, &path, SweepOptions::default()).unwrap();
+        let b = sweep_cylindrical(&cw, &path, SweepOptions::default()).unwrap();
+        let (va, vb) = (signed_volume(&a), signed_volume(&b));
+        assert!(
+            va > 0.0 && vb > 0.0,
+            "one winding came out inside out: {va} vs {vb}"
+        );
+        assert!((va - vb).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_zero_arc_is_refused_rather_than_degenerate() {
+        let path = CylindricalPath::helix(34.5, 0.0667, 10.0, 0.0);
+        let profile = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 3.0, 2.0);
+        assert!(sweep_cylindrical(&profile, &path, SweepOptions::default()).is_err());
     }
 }
