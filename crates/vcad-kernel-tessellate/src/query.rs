@@ -348,6 +348,7 @@ pub(crate) mod tests {
             vertices,
             indices,
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         }
     }
 

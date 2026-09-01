@@ -83,6 +83,7 @@ fn cylinder(center_xy: [f64; 2], radius: f64, z0: f64, z1: f64, segments: usize)
         vertices,
         indices,
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     }
 }
 

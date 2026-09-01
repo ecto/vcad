@@ -330,6 +330,7 @@ pub fn parse_binary_stl(bytes: &[u8]) -> Result<TriangleMesh, String> {
         indices,
         normals,
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     })
 }
 
