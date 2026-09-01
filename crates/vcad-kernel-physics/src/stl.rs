@@ -70,5 +70,6 @@ pub fn load_stl(path: &Path, scale: Option<Vec3>) -> Result<TriangleMesh, Physic
         indices,
         normals,
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     })
 }

@@ -77,6 +77,7 @@ pub fn to_glb_bytes(part: &Part, material: &Material) -> Result<Vec<u8>, CadErro
             &indices,
         )],
         animation: None,
+        scene_extras: None,
     };
     build_glb(&spec, &f32_data, &u32_data)
         .map_err(|e| CadError::ExportError(format!("GLB build failed: {e}")))
@@ -128,6 +129,7 @@ pub fn scene_to_glb_bytes(scene: &Scene, materials_db: &Materials) -> Result<Vec
         name: scene.name.clone(),
         meshes,
         animation: None,
+        scene_extras: None,
     };
     build_glb(&spec, &f32_data, &u32_data)
         .map_err(|e| CadError::ExportError(format!("GLB build failed: {e}")))

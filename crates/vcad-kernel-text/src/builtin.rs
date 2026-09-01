@@ -1,20 +1,19 @@
 //! Built-in font data.
 //!
-//! Contains an embedded subset of Open Sans Regular for basic text rendering.
-//! The font is embedded at compile time for standalone operation.
+//! Contains an embedded copy of Noto Sans Regular for basic text rendering.
+//! The font is vendored in `assets/` and embedded at compile time, so the crate
+//! builds standalone (no `node_modules`, no network, no build script).
 
-/// Open Sans Regular font data (embedded at compile time).
+/// Noto Sans Regular font data (embedded at compile time).
 ///
-/// This is the Noto Sans font from the Vercel OG package, which is similar to Open Sans
-/// and freely licensed. For production use, you may want to replace this with a custom
-/// font or download Open Sans directly.
+/// Vendored at `assets/NotoSans-Regular.ttf` (Noto Sans Regular v2.007,
+/// Copyright 2015-2021 Google LLC), licensed under the SIL Open Font License
+/// 1.1 — see `assets/LICENSE-NotoSans.txt`, which redistribution requires be
+/// kept alongside the font.
 ///
-/// Note: The actual font bytes are included via include_bytes!() at compile time.
-/// The path is relative to this source file.
+/// Disable with the `no-builtin-font` feature to drop the ~27 KB from the binary.
 #[cfg(not(feature = "no-builtin-font"))]
-pub static OPEN_SANS_REGULAR: &[u8] = include_bytes!(
-    "../../../node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf"
-);
+pub static OPEN_SANS_REGULAR: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
 
 /// Fallback for when no builtin font is available.
 #[cfg(feature = "no-builtin-font")]

@@ -44,7 +44,7 @@ pub mod trim;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 
-pub use bvh::Bvh;
+pub use bvh::{Bvh, FlatPrims, FlatTriangle};
 pub use cpu::{render_scene, render_scene_samples, CpuRenderer};
 pub use pathtrace::{
     studio_rig, AreaLight, Camera, Environment, Film, Ground, Object, PathTraceOptions, Pbr, Scene,

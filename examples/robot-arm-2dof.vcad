@@ -6,7 +6,11 @@
       "name": "Base Block",
       "op": {
         "type": "Cube",
-        "size": { "x": 100.0, "y": 100.0, "z": 50.0 }
+        "size": {
+          "x": 100.0,
+          "y": 100.0,
+          "z": 50.0
+        }
       }
     },
     "2": {
@@ -14,7 +18,11 @@
       "name": "Link 1",
       "op": {
         "type": "Cube",
-        "size": { "x": 30.0, "y": 30.0, "z": 150.0 }
+        "size": {
+          "x": 30.0,
+          "y": 30.0,
+          "z": 150.0
+        }
       }
     },
     "3": {
@@ -22,7 +30,11 @@
       "name": "Link 2",
       "op": {
         "type": "Cube",
-        "size": { "x": 25.0, "y": 25.0, "z": 120.0 }
+        "size": {
+          "x": 25.0,
+          "y": 25.0,
+          "z": 120.0
+        }
       }
     },
     "4": {
@@ -38,7 +50,11 @@
   "materials": {
     "steel": {
       "name": "Steel",
-      "color": [0.5, 0.5, 0.55],
+      "color": [
+        0.5,
+        0.5,
+        0.55
+      ],
       "metallic": 1.0,
       "roughness": 0.3,
       "density": 7850.0,
@@ -46,7 +62,11 @@
     },
     "aluminum": {
       "name": "Aluminum",
-      "color": [0.91, 0.92, 0.93],
+      "color": [
+        0.91,
+        0.92,
+        0.93
+      ],
       "metallic": 1.0,
       "roughness": 0.4,
       "density": 2700.0,
@@ -54,7 +74,11 @@
     },
     "plastic": {
       "name": "Plastic",
-      "color": [0.2, 0.6, 0.9],
+      "color": [
+        0.2,
+        0.6,
+        0.9
+      ],
       "metallic": 0.0,
       "roughness": 0.6,
       "density": 1200.0,
@@ -67,125 +91,223 @@
     "link2": "aluminum",
     "end_effector": "plastic"
   },
-  "part_defs": {
-    "base": {
-      "id": "base",
-      "name": "Base",
-      "root": 1,
-      "default_material": "steel"
-    },
-    "link1": {
-      "id": "link1",
-      "name": "Link 1",
-      "root": 2,
-      "default_material": "aluminum"
-    },
-    "link2": {
-      "id": "link2",
-      "name": "Link 2",
-      "root": 3,
-      "default_material": "aluminum"
-    },
-    "end_effector": {
-      "id": "end_effector",
-      "name": "End Effector",
-      "root": 4,
-      "default_material": "plastic"
-    }
-  },
   "instances": [
     {
       "id": "base_inst",
-      "part_def_id": "base",
       "name": "Base",
       "transform": {
-        "translation": { "x": 0.0, "y": 0.0, "z": 0.0 },
-        "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 },
-        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+        "translation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "rotation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
       },
-      "material": null
+      "material": null,
+      "partDefId": "base"
     },
     {
       "id": "link1_inst",
-      "part_def_id": "link1",
       "name": "Link 1",
       "transform": {
-        "translation": { "x": 35.0, "y": 50.0, "z": 50.0 },
-        "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 },
-        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+        "translation": {
+          "x": 35.0,
+          "y": 50.0,
+          "z": 50.0
+        },
+        "rotation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
       },
-      "material": null
+      "material": null,
+      "partDefId": "link1"
     },
     {
       "id": "link2_inst",
-      "part_def_id": "link2",
       "name": "Link 2",
       "transform": {
-        "translation": { "x": 37.5, "y": 50.0, "z": 200.0 },
-        "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 },
-        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+        "translation": {
+          "x": 37.5,
+          "y": 50.0,
+          "z": 200.0
+        },
+        "rotation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
       },
-      "material": null
+      "material": null,
+      "partDefId": "link2"
     },
     {
       "id": "ee_inst",
-      "part_def_id": "end_effector",
       "name": "End Effector",
       "transform": {
-        "translation": { "x": 50.0, "y": 50.0, "z": 320.0 },
-        "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 },
-        "scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+        "translation": {
+          "x": 50.0,
+          "y": 50.0,
+          "z": 320.0
+        },
+        "rotation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
       },
-      "material": null
+      "material": null,
+      "partDefId": "end_effector"
     }
   ],
   "joints": [
     {
       "id": "shoulder",
       "name": "Shoulder Joint",
-      "parent_instance_id": "base_inst",
-      "child_instance_id": "link1_inst",
-      "parent_anchor": { "x": 50.0, "y": 50.0, "z": 50.0 },
-      "child_anchor": { "x": 15.0, "y": 15.0, "z": 0.0 },
       "kind": {
         "type": "Revolute",
-        "axis": { "x": 0.0, "y": 1.0, "z": 0.0 },
-        "limits": [-90.0, 90.0]
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -90.0,
+          90.0
+        ]
       },
-      "state": 0.0
+      "state": 0.0,
+      "parentInstanceId": "base_inst",
+      "childInstanceId": "link1_inst",
+      "parentAnchor": {
+        "x": 50.0,
+        "y": 50.0,
+        "z": 50.0
+      },
+      "childAnchor": {
+        "x": 15.0,
+        "y": 15.0,
+        "z": 0.0
+      }
     },
     {
       "id": "elbow",
       "name": "Elbow Joint",
-      "parent_instance_id": "link1_inst",
-      "child_instance_id": "link2_inst",
-      "parent_anchor": { "x": 15.0, "y": 15.0, "z": 150.0 },
-      "child_anchor": { "x": 12.5, "y": 12.5, "z": 0.0 },
       "kind": {
         "type": "Revolute",
-        "axis": { "x": 0.0, "y": 1.0, "z": 0.0 },
-        "limits": [-135.0, 135.0]
+        "axis": {
+          "x": 0.0,
+          "y": 1.0,
+          "z": 0.0
+        },
+        "limits": [
+          -135.0,
+          135.0
+        ]
       },
-      "state": 0.0
+      "state": 0.0,
+      "parentInstanceId": "link1_inst",
+      "childInstanceId": "link2_inst",
+      "parentAnchor": {
+        "x": 15.0,
+        "y": 15.0,
+        "z": 150.0
+      },
+      "childAnchor": {
+        "x": 12.5,
+        "y": 12.5,
+        "z": 0.0
+      }
     },
     {
       "id": "wrist",
       "name": "Wrist Joint",
-      "parent_instance_id": "link2_inst",
-      "child_instance_id": "ee_inst",
-      "parent_anchor": { "x": 12.5, "y": 12.5, "z": 120.0 },
-      "child_anchor": { "x": 0.0, "y": 0.0, "z": 0.0 },
       "kind": {
         "type": "Fixed"
       },
-      "state": 0.0
+      "state": 0.0,
+      "parentInstanceId": "link2_inst",
+      "childInstanceId": "ee_inst",
+      "parentAnchor": {
+        "x": 12.5,
+        "y": 12.5,
+        "z": 120.0
+      },
+      "childAnchor": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
     }
   ],
-  "ground_instance_id": "base_inst",
   "roots": [
-    { "root": 1, "material": "steel" },
-    { "root": 2, "material": "aluminum" },
-    { "root": 3, "material": "aluminum" },
-    { "root": 4, "material": "plastic" }
-  ]
+    {
+      "root": 1,
+      "material": "steel"
+    },
+    {
+      "root": 2,
+      "material": "aluminum"
+    },
+    {
+      "root": 3,
+      "material": "aluminum"
+    },
+    {
+      "root": 4,
+      "material": "plastic"
+    }
+  ],
+  "partDefs": {
+    "base": {
+      "id": "base",
+      "name": "Base",
+      "root": 1,
+      "defaultMaterial": "steel"
+    },
+    "link1": {
+      "id": "link1",
+      "name": "Link 1",
+      "root": 2,
+      "defaultMaterial": "aluminum"
+    },
+    "link2": {
+      "id": "link2",
+      "name": "Link 2",
+      "root": 3,
+      "defaultMaterial": "aluminum"
+    },
+    "end_effector": {
+      "id": "end_effector",
+      "name": "End Effector",
+      "root": 4,
+      "defaultMaterial": "plastic"
+    }
+  },
+  "groundInstanceId": "base_inst"
 }

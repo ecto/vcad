@@ -37,10 +37,15 @@ struct Camera {
     position: vec4<f32>,
     look_at: vec4<f32>,
     up: vec4<f32>,
+    // Screen +x. Only read when basis_mode == 1.
+    right: vec4<f32>,
     fov: f32,
     width: u32,
     height: u32,
-    _pad: u32,
+    // 0 = derive the basis right-handedly from `up` (viewport default),
+    // 1 = use `right`/`up` verbatim, so a MIRRORED CAD view survives the
+    //     trip and `vcad-render --photoreal --gpu` does not flip isometrics.
+    basis_mode: u32,
 }
 
 struct RenderState {
@@ -84,8 +89,13 @@ struct RenderState {
     env_height: u32,
     env_rotation: f32,
     env_marg_int: f32,
-    _pad3: u32,
-    _pad4: u32,
+    // Extra RNG decorrelation term; 0 reproduces the pre-seed noise exactly.
+    seed: u32,
+    // What a camera ray that hits nothing returns.
+    //   0 = `sky_color`, the themed viewport backdrop (default).
+    //   1 = `env_radiance`, the same sky the integrator lights with — which
+    //       is what the CPU renderer shows behind the subject.
+    background_mode: u32,
     _pad5: u32,
 }
 
@@ -147,6 +157,26 @@ fn pixel_index_i32(coord: vec2<i32>) -> u32 {
 
 // Utility functions
 
+// The camera's screen basis, as columns (right, up, forward).
+//
+// In derived mode (basis_mode == 0) `right` is reconstructed right-handedly
+// from the up hint, which is what the viewport wants. In explicit mode the
+// supplied axes are used as given: a CAD projection basis can be MIRRORED,
+// and re-deriving it would flip the render left-for-right against every
+// other output style.
+fn camera_basis() -> mat3x3<f32> {
+    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
+    if camera.basis_mode == 1u {
+        return mat3x3<f32>(
+            normalize(camera.right.xyz),
+            normalize(camera.up.xyz),
+            forward,
+        );
+    }
+    let r = normalize(cross(forward, camera.up.xyz));
+    return mat3x3<f32>(r, cross(r, forward), forward);
+}
+
 // Core ray generation with an explicit sub-pixel offset.
 // offset is in pixels, typically in [-0.5, 0.5].
 fn ray_origin_and_direction_offset(pixel: vec2<u32>, offset: vec2<f32>) -> mat2x3<f32> {
@@ -160,9 +190,10 @@ fn ray_origin_and_direction_offset(pixel: vec2<u32>, offset: vec2<f32>) -> mat2x
     );
 
     // Build camera coordinate system
-    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
-    let right = normalize(cross(forward, camera.up.xyz));
-    let up = cross(right, forward);
+    let basis = camera_basis();
+    let right = basis[0];
+    let up = basis[1];
+    let forward = basis[2];
 
     // Compute ray direction
     let dir = normalize(
@@ -613,10 +644,74 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     return hit;
 }
 
+// Möller-Trumbore ray/triangle test.
+//
+// Ports `intersect::intersect_triangle`, the CPU tracer's intersector, with
+// two deliberate differences forced by f32:
+//
+//   * the degeneracy guard is 1e-8 relative rather than 1e-12 — at f32
+//     precision 1e-12 is below the noise floor of the determinant itself, so
+//     it would admit near-parallel rays whose barycentrics are pure rounding
+//     error;
+//   * the barycentric slack is 1e-6 rather than 1e-12, for the same reason.
+//     Slack matters here: a shared edge must be inclusive from both sides, or
+//     a mesh grows a lace of single-pixel holes along every triangle border.
+//
+// Returns barycentrics in `uv`, which `compute_normal` then interpolates the
+// vertex normals with. `hit.uv` is (u, v); the third weight is 1 - u - v.
+fn intersect_triangle(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -> RayHit {
+    var hit: RayHit;
+    hit.t = MAX_T;
+    hit.face_idx = 0xFFFFFFFFu;
+
+    let v0 = vec3<f32>(params[0], params[1], params[2]);
+    let v1 = vec3<f32>(params[3], params[4], params[5]);
+    let v2 = vec3<f32>(params[6], params[7], params[8]);
+
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+
+    let pvec = cross(dir, e2);
+    let det = dot(e1, pvec);
+
+    // Size-relative: an absolute epsilon is meaningless when the model might
+    // be dimensioned in millimetres or in metres.
+    let scale = length(e1) * length(e2);
+    if abs(det) <= 1e-8 * max(scale, 1.0) {
+        return hit;
+    }
+
+    let inv_det = 1.0 / det;
+    let tvec = origin - v0;
+
+    let u = dot(tvec, pvec) * inv_det;
+    if u < -1e-6 || u > 1.0 + 1e-6 {
+        return hit;
+    }
+
+    let qvec = cross(tvec, e1);
+    let v = dot(dir, qvec) * inv_det;
+    if v < -1e-6 || u + v > 1.0 + 1e-6 {
+        return hit;
+    }
+
+    let t = dot(e2, qvec) * inv_det;
+    if t <= 0.0 {
+        return hit;
+    }
+
+    hit.t = t;
+    hit.uv = vec2<f32>(u, v);
+    return hit;
+}
+
 fn intersect_surface(origin: vec3<f32>, dir: vec3<f32>, surface_idx: u32) -> RayHit {
     let surface = surfaces[surface_idx];
 
     switch surface.surface_type {
+        case SURFACE_TRIANGLE: {
+            return intersect_triangle(origin, dir, surface.params);
+        }
         case SURFACE_PLANE: {
             return intersect_plane(origin, dir, surface.params);
         }
@@ -715,6 +810,14 @@ fn uv_in_trim_bounds(uv: vec2<f32>, start: u32, count: u32) -> bool {
 fn point_in_face(uv: vec2<f32>, face_idx: u32) -> bool {
     let face = faces[face_idx];
 
+    // A triangle carries no trim loops: `intersect_triangle` already answered
+    // the containment question that trimming answers for an analytic surface,
+    // and `uv` here holds barycentrics, not surface parameters. Falling into
+    // the winding test below would reject every mesh hit (trim_count is 0).
+    if surfaces[face.surface_idx].surface_type == SURFACE_TRIANGLE {
+        return true;
+    }
+
     // Check outer loop - point must be inside
     if face.trim_count < 3u {
         // For faces with < 3 trim vertices (e.g., full cylinder walls),
@@ -798,8 +901,14 @@ fn trace_bvh(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
 
     let inv_dir = 1.0 / dir;
 
-    // Stack-based traversal
-    var stack: array<u32, 32>;
+    // Stack-based traversal.
+    //
+    // 64 entries, not 32: a merged offline scene (`vcad-render --photoreal
+    // --gpu` folds one BLAS per solid into a single tree) is deeper than any
+    // viewport scene, and overflowing here DROPS geometry silently. The host
+    // validates the packed tree's depth against `MAX_TRAVERSAL_DEPTH` before
+    // upload, so this bound is checked rather than hoped for.
+    var stack: array<u32, 64>;
     var stack_ptr = 0;
     stack[0] = 0u; // Root node
     stack_ptr = 1;
@@ -832,11 +941,11 @@ fn trace_bvh(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
             }
         } else {
             // Internal node: push children
-            if stack_ptr < 31 {
+            if stack_ptr < 63 {
                 stack[stack_ptr] = node.left_or_first;
                 stack_ptr++;
             }
-            if stack_ptr < 31 {
+            if stack_ptr < 63 {
                 stack[stack_ptr] = node.right_or_count;
                 stack_ptr++;
             }
@@ -988,8 +1097,13 @@ fn in_shadow(p: vec3<f32>, light_dir: vec3<f32>, max_t: f32) -> bool {
 // PCG hash → uniform [0, 1) noise. Per-pixel + per-frame seed so the noise
 // decorrelates across pixels (prevents banding) and animates per frame
 // (so progressive accumulation averages out).
+//
+// `render_state.seed` decorrelates whole renders from one another. The
+// viewport leaves it at 0, which reproduces the original hash exactly; an
+// offline render sets it so a re-run under a different seed is an
+// independent — but still reproducible — estimate of the same image.
 fn rand_uniform(pixel: vec2<u32>, sample_idx: u32) -> f32 {
-    var state = pixel.x * 1973u + pixel.y * 9277u + sample_idx * 26699u + render_state.frame_index * 12345u + 1u;
+    var state = pixel.x * 1973u + pixel.y * 9277u + sample_idx * 26699u + render_state.frame_index * 12345u + render_state.seed * 2654435761u + 1u;
     state = state * 747796405u + 2891336453u;
     let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     let r = (word >> 22u) ^ word;
@@ -1054,9 +1168,10 @@ fn world_pos_from_depth(pixel: vec2<u32>, t: f32) -> vec3<f32> {
         (f32(pixel.x) + 0.5) / f32(camera.width)  * 2.0 - 1.0,
         1.0 - (f32(pixel.y) + 0.5) / f32(camera.height) * 2.0
     );
-    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
-    let right   = normalize(cross(forward, camera.up.xyz));
-    let up_cam  = cross(right, forward);
+    let basis   = camera_basis();
+    let right   = basis[0];
+    let up_cam  = basis[1];
+    let forward = basis[2];
     let dir = normalize(forward + right * ndc.x * fov_tan * aspect + up_cam * ndc.y * fov_tan);
     return camera.position.xyz + dir * t;
 }
@@ -1064,9 +1179,10 @@ fn world_pos_from_depth(pixel: vec2<u32>, t: f32) -> vec3<f32> {
 // Project a world-space point onto the screen. Returns pixel coords, or
 // (-1, -1) when the point is behind the camera or outside the viewport.
 fn world_to_screen_coords(world_pos: vec3<f32>) -> vec2<i32> {
-    let forward = normalize(camera.look_at.xyz - camera.position.xyz);
-    let right   = normalize(cross(forward, camera.up.xyz));
-    let up_cam  = cross(right, forward);
+    let basis   = camera_basis();
+    let right   = basis[0];
+    let up_cam  = basis[1];
+    let forward = basis[2];
     let fov_tan = tan(camera.fov * 0.5);
     let aspect  = f32(camera.width) / f32(camera.height);
     let p       = world_pos - camera.position.xyz;
@@ -1087,6 +1203,33 @@ fn compute_normal(hit: RayHit) -> vec3<f32> {
     var normal: vec3<f32>;
 
     switch surface.surface_type {
+        case SURFACE_TRIANGLE: {
+            let v0 = vec3<f32>(surface.params[0], surface.params[1], surface.params[2]);
+            let v1 = vec3<f32>(surface.params[3], surface.params[4], surface.params[5]);
+            let v2 = vec3<f32>(surface.params[6], surface.params[7], surface.params[8]);
+
+            // Geometric normal. Non-zero by construction: `Bvh::build_mesh`
+            // drops zero-area triangles, so this is always a usable fallback.
+            let geometric = cross(v1 - v0, v2 - v0);
+
+            // Smooth shading: barycentric blend of the vertex normals, so a
+            // mesh part doesn't read as faceted next to an analytic one.
+            // Mirrors `MeshGeom::test` on the CPU, including both of its
+            // fallbacks — no normal array (params[18] == 0), and a blend that
+            // cancels (opposed vertex normals across a degenerate crease).
+            normal = geometric;
+            if surface.params[18] > 0.5 {
+                let n0 = vec3<f32>(surface.params[9], surface.params[10], surface.params[11]);
+                let n1 = vec3<f32>(surface.params[12], surface.params[13], surface.params[14]);
+                let n2 = vec3<f32>(surface.params[15], surface.params[16], surface.params[17]);
+                let u = hit.uv.x;
+                let v = hit.uv.y;
+                let blended = n0 * (1.0 - u - v) + n1 * u + n2 * v;
+                if length(blended) > 1e-6 {
+                    normal = blended;
+                }
+            }
+        }
         case SURFACE_PLANE: {
             normal = vec3<f32>(surface.params[9], surface.params[10], surface.params[11]);
         }
@@ -1601,6 +1744,20 @@ fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> ve
         // than the lighting environment — the backdrop is a viewport choice,
         // and `vcad-render` composites its own. The area lights are skipped
         // here for the same reason `path_trace` skips them at depth 0.
+        //
+        // An offline render asks for `env_radiance` instead: `vcad-render
+        // --photoreal` shows the lighting environment behind the subject, and
+        // compositing a different backdrop in afterwards is impossible once
+        // the two have been averaged together inside a partially-covered
+        // edge pixel.
+        if render_state.background_mode == 1u {
+            return vec4<f32>(env_radiance(dir), 0.0);
+        }
+        // Mode 2 is the CPU's `show_background == false`: leave the backdrop
+        // black so an RGBA render composites onto any page.
+        if render_state.background_mode == 2u {
+            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        }
         return vec4<f32>(sky_color(dir), 0.0);
     }
 
@@ -1892,11 +2049,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Trace ray using BVH acceleration, then test the implicit ground
     // plane and pick whichever is closer.
     var hit = trace_bvh(origin, dir);
-    let ground = intersect_ground(origin, dir);
-    if ground.t < hit.t {
-        hit.t = ground.t;
-        hit.face_idx = FACE_IDX_GROUND;
-        hit.uv = vec2<f32>(ground.fade, 0.0);
+    // Gated, like every other `intersect_ground` call. It used not to be,
+    // which meant `ground_enabled = 0` still drew the implicit floor to
+    // camera rays — invisible in the viewport, which always enables it, and
+    // very visible to an offline render that supplies its own floor geometry
+    // and got a second one underneath it.
+    if render_state.ground_enabled != 0u {
+        let ground = intersect_ground(origin, dir);
+        if ground.t < hit.t {
+            hit.t = ground.t;
+            hit.face_idx = FACE_IDX_GROUND;
+            hit.uv = vec2<f32>(ground.fade, 0.0);
+        }
     }
     let new_color = shade(hit, origin, dir, pixel);
 
@@ -2021,9 +2185,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         final_color = vec4<f32>(heat_color(0.0), 1.0);
     }
 
-    // Store accumulated color with sample count in alpha (1.0 from main pass).
-    // The refine pass may update this for edge pixels.
-    accumulated.a = 1.0;
+    // Alpha carries the refine pass's sample count: 1.0 from the main pass,
+    // overwritten per edge pixel by `refine` with the number of rays it
+    // actually fired. Written ONLY when refinement is enabled — with it off
+    // nothing ever reads the marker, and clobbering alpha throws away the
+    // integrator's coverage estimate, which is what an offline RGBA render
+    // turns into its transparency. (`--backdrop none` was coming back fully
+    // opaque for exactly this reason.)
+    if render_state.refine_sample_count > 0u {
+        accumulated.a = 1.0;
+    }
 
     // Store to accumulation buffer and output
     accum_buffer[pixel_index_i32(pixel_coord)] = accumulated;
@@ -2075,11 +2246,13 @@ fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let dir = ray[1];
 
             var hit = trace_bvh(origin, dir);
-            let ground = intersect_ground(origin, dir);
-            if ground.t < hit.t {
-                hit.t = ground.t;
-                hit.face_idx = FACE_IDX_GROUND;
-                hit.uv = vec2<f32>(ground.fade, 0.0);
+            if render_state.ground_enabled != 0u {
+                let ground = intersect_ground(origin, dir);
+                if ground.t < hit.t {
+                    hit.t = ground.t;
+                    hit.face_idx = FACE_IDX_GROUND;
+                    hit.uv = vec2<f32>(ground.fade, 0.0);
+                }
             }
 
             color_sum += shade(hit, origin, dir, pixel).rgb;

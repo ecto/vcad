@@ -325,9 +325,23 @@ fn segment_count_is_authorable() {
         assert!(seg >= 48, "{src} lost its segment count");
     }
 
-    // Below 3 a circle cannot close a face loop; say so instead of silently
-    // clamping, since the author clearly meant something else.
-    assert!(err("[cylinder-n 10.0 20.0 2]").contains("at least 3"));
+    // A low count reads as "give me this many flats", which the -n forms
+    // cannot deliver: the surface stays an analytic circle. Refuse it and
+    // name the primitive that does make facets, instead of accepting
+    // source that says hexagon and builds a cylinder.
+    for src in ["[cylinder-n 10.0 20.0 2]", "[cylinder-n 7.5 24.0 6]"] {
+        let e = err(src);
+        assert!(e.contains("at least 8"), "{src}: {e}");
+        assert!(e.contains("prism"), "{src}: {e}");
+    }
+    // 8 and up is still a legitimate fidelity hint.
+    assert_eq!(
+        match ops(&doc("[cylinder-n 10.0 20.0 8]"))[0] {
+            CsgOp::Cylinder { segments, .. } => *segments,
+            ref other => panic!("unexpected op: {other:?}"),
+        },
+        8
+    );
 }
 
 // --- vendor imports -------------------------------------------------------

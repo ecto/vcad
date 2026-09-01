@@ -48,9 +48,9 @@ ts-rs = { version = "10", optional = true }
 # intentionally shipping a slimmer build, and update the wasm-pack
 # invocation alongside.
 default = ["console_error_panic_hook", "physics", "atoms", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace", "ecad", "embroidery"]
-# Skip the include_bytes!() compile-time font embed in vcad-kernel-text.
-# The font file lives under node_modules/next/..., so CI jobs that run
-# wasm-pack before `npm ci` can't see it. Shipping wasm keeps the font.
+# Skip the include_bytes!() compile-time font embed in vcad-kernel-text
+# (the font is vendored in that crate's assets/). Off by default — shipping
+# wasm keeps the font; opt in only for a deliberately slimmer bundle.
 no-builtin-font = ["vcad-kernel/no-builtin-font"]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
 gpu = ["dep:vcad-kernel-gpu"]

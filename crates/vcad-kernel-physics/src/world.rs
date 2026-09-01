@@ -1929,6 +1929,7 @@ impl PhysicsWorld {
                     indices: indices.clone(),
                     normals: normals_f32,
                     face_kinds: Vec::new(),
+                    face_ids: Vec::new(),
                 }))
             }
             _ => Ok(None),

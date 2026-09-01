@@ -15,18 +15,35 @@ raster = ["dep:image"]
 cli = ["dep:clap", "dep:vcad-loon"]
 # Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output via
 # vcad-kernel-raytrace. Off for the WASM build so it doesn't grow.
-raytrace = ["raster", "dep:vcad-kernel-raytrace"]
+# vcad-kernel-raytrace already pulls rayon in for the tracer itself; the
+# photoreal scene build uses it directly to fan out per-solid BVH construction.
+raytrace = ["raster", "dep:vcad-kernel-raytrace", "dep:rayon"]
+# `--photoreal --gpu`: path-trace the same scene on a wgpu compute pipeline
+# instead of on rayon. Off by default — it drags in wgpu and its whole backend
+# stack, which is heavy for a CLI most people run on the CPU. A build without
+# it still *has* the flag, and answers with "not compiled in" rather than
+# "unrecognised argument", so the diagnostic points at the build.
+photoreal-gpu = [
+    "raytrace",
+    "vcad-kernel-raytrace/gpu",
+    "dep:vcad-kernel-gpu",
+    "dep:pollster",
+]
 
 [dependencies]
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
+vcad-kernel-export = { workspace = true }
 vcad-ecad-pcb = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr"], optional = true }
 vcad-kernel-raytrace = { workspace = true, optional = true }
 vcad-loon = { workspace = true, optional = true }
+rayon = { version = "1", optional = true }
+vcad-kernel-gpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 
 [lib]
 name = "vcad_render"
@@ -42,3 +59,7 @@ required-features = ["cli"]
 # need it unconditionally.
 vcad-loon = { workspace = true }
 vcad-ecad-symbols = { workspace = true }
+# Integration tests decode the PNGs the renderer emits. `image` is an
+# *optional* normal dependency (behind `raster`), which an integration test
+# cannot reach through the library, so it is named again here.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

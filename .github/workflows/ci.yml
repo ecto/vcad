@@ -67,15 +67,15 @@ jobs:
           cargo metadata --no-deps --format-version 1 \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(p['name'] for p in d['packages']))" \
             | xargs -n 1 -I{} cargo fmt -p {} --check
-      - run: cargo clippy --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font -- -D warnings
+      - run: cargo clippy --workspace --exclude vcad-desktop -- -D warnings
       # --no-fail-fast: `cargo test` otherwise stops at the FIRST failing test
       # binary, so a single red crate hides every failure behind it. That is how
       # 5 broken tests sat undetected on main behind the torr catalogue — CI
       # only ever reached 38 of ~200 binaries, and each fix revealed one more
       # failure instead of turning the job green. Run everything, report everything.
-      - run: cargo test --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font --no-fail-fast
-      - run: cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
-      - run: cargo doc --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
+      - run: cargo test --workspace --exclude vcad-desktop --no-fail-fast
+      - run: cargo build --workspace --exclude vcad-desktop --examples
+      - run: cargo doc --workspace --exclude vcad-desktop --no-deps
       # packages/ir/src/generated.ts is generated from the Rust `vcad-ir` types
       # via ts-rs (`npm run ir:gen`). Fail if the committed file has drifted —
       # i.e. an IR type changed without regenerating. Unlike the wasm-bindgen
@@ -178,15 +178,13 @@ jobs:
       # plugin in @vcad/app caps precachable assets at 10 MB and
       # dev-profile wasm is ~29 MB.
       #
-      # `no-builtin-font` drops the include_bytes!() of
-      # node_modules/next/.../noto-sans.ttf, which doesn't exist here
-      # (this job doesn't run `npm ci`). Matches the Rust CI job.
+      # The builtin font is vendored in crates/vcad-kernel-text/assets, so
+      # this build embeds it exactly like the shipping bundle does.
       - name: Build wasm (profiling)
         if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: |
           wasm-pack build crates/vcad-kernel-wasm --profiling --target web \
-            --out-dir ../../packages/kernel-wasm/pkg \
-            --features no-builtin-font
+            --out-dir ../../packages/kernel-wasm/pkg
           cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
       # Same glue post-processing scripts/build.mjs applies after its own
       # wasm-pack run: append the __vcad_reset_wasm trap-recovery hook and
@@ -216,7 +214,7 @@ jobs:
       # merge):
       #   cargo install wasm-pack --locked --version 0.13.1
       #   wasm-pack build crates/vcad-kernel-wasm --profiling --target web \
-      #     --out-dir ../../packages/kernel-wasm/pkg --features no-builtin-font
+      #     --out-dir ../../packages/kernel-wasm/pkg
       #   cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
       #   node packages/kernel-wasm/scripts/build.mjs --postprocess-only
       #   git add packages/kernel-wasm/vcad_kernel_wasm* && git commit

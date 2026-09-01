@@ -7212,6 +7212,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-adjoint",
+ "vcad-kernel-booleans",
  "vcad-kernel-diff",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
@@ -7685,6 +7686,7 @@ dependencies = [
  "js-sys",
  "pollster",
  "rayon",
+ "smallvec",
  "tang",
  "thiserror 2.0.18",
  "vcad-ir",
@@ -7912,6 +7914,7 @@ name = "vcad-loon"
 version = "0.9.4"
 dependencies = [
  "loon-lang",
+ "serde",
  "serde_json",
  "vcad-ir",
  "vcad-parts",
@@ -7953,12 +7956,16 @@ version = "0.9.3"
 dependencies = [
  "clap",
  "image",
+ "pollster",
+ "rayon",
  "serde_json",
  "vcad-ecad-pcb",
  "vcad-ecad-symbols",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-export",
+ "vcad-kernel-gpu",
  "vcad-kernel-raytrace",
  "vcad-loon",
 ]

@@ -195,6 +195,7 @@ mod tests {
             indices: vec![0, 1, 2, 3, 4, 5],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         apply_creased_normals(&mut mesh, DEFAULT_CREASE_ANGLE_RAD);
@@ -240,6 +241,7 @@ mod tests {
             indices: vec![0, 1, 2, 3, 4, 5],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         apply_creased_normals(&mut mesh, DEFAULT_CREASE_ANGLE_RAD);
@@ -275,6 +277,7 @@ mod tests {
             indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
 
         apply_creased_normals(&mut mesh, DEFAULT_CREASE_ANGLE_RAD);

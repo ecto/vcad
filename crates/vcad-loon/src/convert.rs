@@ -43,6 +43,10 @@ pub fn value_to_document_in(
                 visible: None,
             });
         }
+        // Named SceneEntry — `[root <symbol> "mat"]`
+        Value::Adt(tag, fields) if tag == "NamedSceneEntry" && fields.len() == 3 => {
+            push_named_entry(&mut ctx, fields)?;
+        }
         // Material definition (standalone)
         Value::Adt(tag, fields) if tag == "Material" && fields.len() == 6 => {
             let name = ctx.str_val(&fields[0])?;
@@ -100,6 +104,29 @@ pub fn value_to_document_in(
     Ok(ctx.doc)
 }
 
+/// Push a `NamedSceneEntry` — solid, material name, root-node name — stamping
+/// the name onto the root IR node so it survives into exports.
+fn push_named_entry(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String> {
+    let root_id = ctx.convert_solid(&fields[0])?;
+    let mat_name = match &fields[1] {
+        Value::Str(s) => s.to_string(),
+        _ => "default".into(),
+    };
+    if let Value::Str(name) = &fields[2] {
+        if !name.is_empty() {
+            if let Some(node) = ctx.doc.nodes.get_mut(&root_id) {
+                node.name = Some(name.to_string());
+            }
+        }
+    }
+    ctx.doc.roots.push(SceneEntry {
+        root: root_id,
+        material: mat_name,
+        visible: None,
+    });
+    Ok(())
+}
+
 /// Process a single item from a Vec (can be SceneEntry, Material, or bare Solid).
 fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String> {
     match value {
@@ -130,6 +157,9 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
                 material: mat_name,
                 visible: None,
             });
+        }
+        Value::Adt(tag, fields) if tag == "NamedSceneEntry" && fields.len() == 3 => {
+            push_named_entry(ctx, fields)?;
         }
         Value::Adt(tag, fields) if tag == "Material" && fields.len() == 6 => {
             let name = ctx.str_val(&fields[0])?;
@@ -582,6 +612,13 @@ fn is_solid_tag(tag: &str) -> bool {
     )
 }
 
+/// Smallest segment count the `-n` primitive forms accept.
+///
+/// Below this a count is far likelier to mean "give me this many flats"
+/// than "approximate this circle coarsely", and the `-n` forms cannot
+/// deliver flats — see `segments_val`.
+const MIN_SEGMENT_HINT: u32 = 8;
+
 /// What a converted sheet-metal node is, from the point of view of the ops
 /// that reference it. Only the rectangular base flange has named edges, and
 /// only on its own panel — everywhere else an edge is an index, because the
@@ -690,10 +727,22 @@ impl ConvertCtx {
     /// mistake; so is anything under 3, which cannot close a face loop.
     fn segments_val(&self, tag: &str, v: &Value) -> Result<u32, String> {
         let n = self.u32_val(v)?;
-        if n < 3 {
+        if n < MIN_SEGMENT_HINT {
+            // A count this low reads as a request for a FACETED PRISM —
+            // `[cylinder-n 7.5 24.0 6]` looks like a hex boss in review.
+            // It is not one: the segment count is a fidelity hint for the
+            // boolean/seam machinery, the surface stays an analytic
+            // cylinder, and the tessellator draws a circle. That lie
+            // shipped a round bore where a hex drive was specified, so
+            // refuse it rather than let the source say one thing and the
+            // solid be another.
             return Err(format!(
-                "{tag}: segments must be at least 3, got {n} \
-                 (drop the -n form to let the kernel choose)"
+                "{tag}: segments must be at least {MIN_SEGMENT_HINT}, got {n}. \
+                 The count is a fidelity hint for booleans and seams — the \
+                 surface stays a true circle, so a low count does NOT make a \
+                 faceted prism. For real facets use [prism sides radius height] \
+                 (or [hex-prism across-flats height]); to let the kernel \
+                 choose the fidelity, drop the -n form."
             ));
         }
         Ok(n)

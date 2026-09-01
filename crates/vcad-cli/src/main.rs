@@ -234,6 +234,20 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Resolve and compare variant parameter tables
+    ///
+    /// A design family — a full-size part and its scaled print mules — is one
+    /// base table plus per-variant overlays, declared in a `.params.loon`
+    /// file with `[deftable ...]` and `[defvariant ... :from ... :scale ...]`.
+    /// `resolve` flattens one variant to concrete values, each carrying the
+    /// source it came from; `diff` shows what two variants disagree on and
+    /// whether the disagreement is an own override, an inherited value, or
+    /// the envelope scale.
+    Params {
+        #[command(subcommand)]
+        command: ParamsCommands,
+    },
+
     /// Take a routed .pcb.json to a complete fab package plus a DRC-delta receipt
     ///
     /// Runs the whole fab-prep pipeline in one command: (optionally) calibrate
@@ -394,6 +408,48 @@ enum Commands {
     Logout,
 }
 
+#[derive(Subcommand)]
+enum ParamsCommands {
+    /// Flatten one variant to a resolved table (JSON on stdout)
+    Resolve {
+        /// Variant (or base table) name
+        variant: String,
+        /// Parameter-table file (default: `params.loon` in the working
+        /// directory, or $VCAD_PARAMS)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Print an aligned table instead of JSON
+        #[arg(long)]
+        table: bool,
+    },
+
+    /// Show what differs between two variants, and why
+    Diff {
+        /// Left variant
+        a: String,
+        /// Right variant
+        b: String,
+        /// Parameter-table file (default: `params.loon` in the working
+        /// directory, or $VCAD_PARAMS)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Emit JSON instead of the human-readable rendering
+        #[arg(long)]
+        json: bool,
+        /// Exit 1 when the variants differ (for CI gates)
+        #[arg(long)]
+        exit_code: bool,
+    },
+
+    /// List the tables and variants a parameter-table file declares
+    List {
+        /// Parameter-table file (default: `params.loon` in the working
+        /// directory, or $VCAD_PARAMS)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum BooleanOp {
     Union,
@@ -536,6 +592,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::Params { command }) => {
+            run_params(command)?;
         }
         Some(Commands::FabPrep {
             input,
@@ -1147,6 +1206,7 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
             name: scene_name,
             meshes,
             animation: None,
+            scene_extras: None,
         },
         &f32_data,
         &u32_data,
@@ -1432,6 +1492,120 @@ fn load_vcad_document_raw(file: &PathBuf) -> Result<vcad_ir::Document> {
                 .map_err(|e| anyhow::anyhow!("unrecognized .vcad file format (VCode parse: {e})"))
         }
     }
+}
+
+/// Locate the parameter-table file: the `--file` argument, else `$VCAD_PARAMS`,
+/// else `params.loon` in the working directory.
+fn params_file(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(p) = explicit {
+        return Ok(p);
+    }
+    if let Ok(p) = std::env::var("VCAD_PARAMS") {
+        return Ok(PathBuf::from(p));
+    }
+    let default = PathBuf::from("params.loon");
+    if default.exists() {
+        return Ok(default);
+    }
+    anyhow::bail!(
+        "no parameter-table file — pass --file <path>, set VCAD_PARAMS, or put a \
+         params.loon in the working directory"
+    )
+}
+
+fn load_variant_set(file: Option<PathBuf>) -> Result<(PathBuf, vcad_loon::variants::VariantSet)> {
+    let path = params_file(file)?;
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let set = vcad_loon::variants::parse(&source)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    Ok((path, set))
+}
+
+fn run_params(command: ParamsCommands) -> Result<()> {
+    match command {
+        ParamsCommands::Resolve {
+            variant,
+            file,
+            table,
+        } => {
+            let (path, set) = load_variant_set(file)?;
+            let resolved = set
+                .resolve(&variant)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+            if table {
+                println!(
+                    "{} ({}), effective scale {}",
+                    resolved.name,
+                    resolved.chain.join(" → "),
+                    resolved.effective_scale
+                );
+                let w = resolved
+                    .params
+                    .iter()
+                    .map(|p| p.name.len())
+                    .max()
+                    .unwrap_or(0);
+                for p in &resolved.params {
+                    let value = format!("{}{}", p.value, p.unit.as_deref().unwrap_or(""));
+                    println!(
+                        "  {:<w$}  {:>10}  {}",
+                        p.name,
+                        value,
+                        p.source.explain(),
+                        w = w
+                    );
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&resolved)?);
+            }
+        }
+        ParamsCommands::Diff {
+            a,
+            b,
+            file,
+            json,
+            exit_code,
+        } => {
+            let (path, set) = load_variant_set(file)?;
+            let diff = set
+                .diff(&a, &b)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&diff)?);
+            } else {
+                print!("{}", diff.render());
+            }
+            if exit_code && !diff.entries.is_empty() {
+                std::process::exit(1);
+            }
+        }
+        ParamsCommands::List { file } => {
+            let (path, set) = load_variant_set(file)?;
+            println!("{}", path.display());
+            let mut tables: Vec<_> = set.tables.values().collect();
+            tables.sort_by(|a, b| a.name.cmp(&b.name));
+            for t in tables {
+                println!("  table {} ({} parameters)", t.name, t.order.len());
+            }
+            let mut variants: Vec<_> = set.variants.values().collect();
+            variants.sort_by(|a, b| a.name.cmp(&b.name));
+            for v in variants {
+                let scale = match v.scale {
+                    Some(s) => format!(", scale {s}"),
+                    None => String::new(),
+                };
+                println!(
+                    "  variant {} (from {}{}, {} overlays)",
+                    v.name,
+                    v.parent,
+                    scale,
+                    v.overlays.len()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn show_info(file: &PathBuf) -> Result<()> {
@@ -1793,6 +1967,7 @@ fn slice_file(
         indices: combined_idxs,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
 
     // Resolve printer profile

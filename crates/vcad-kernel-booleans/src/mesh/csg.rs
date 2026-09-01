@@ -473,7 +473,62 @@ fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
         }
     }
     collapse_degenerate_triangles(&mut mesh);
+    cancel_duplicate_triangles(&mut mesh);
     mesh
+}
+
+/// Cancel coincident triangles left by the split/classify pass.
+///
+/// A coplanar contact between the operands can survive classification
+/// twice — once from each operand's fragment — and an opposed pair is a
+/// ZERO-THICKNESS FLAP: it adds nothing to the volume (which is why the
+/// volume oracle waves it through) but every edge it touches ends up
+/// shared by four triangles. Slicers call that a non-manifold edge, and
+/// auto-repair resolves it by filling: a printed rotor came back with its
+/// shaft bore solid.
+///
+/// Same-orientation duplicates are simply redundant copies of one facet.
+/// Both are removed by keeping, for each vertex triple, |forward −
+/// backward| copies of whichever orientation dominates.
+fn cancel_duplicate_triangles(mesh: &mut TriangleMesh) {
+    let mut seen: std::collections::HashMap<[u32; 3], (i32, usize)> =
+        std::collections::HashMap::new();
+    for (t, tri) in mesh.indices.chunks(3).enumerate() {
+        let mut key = [tri[0], tri[1], tri[2]];
+        key.sort_unstable();
+        // Orientation relative to the sorted key: even permutation = +1.
+        let sign =
+            if (tri[0] < tri[1]) as u8 + (tri[1] < tri[2]) as u8 + (tri[0] < tri[2]) as u8 == 2 {
+                1
+            } else {
+                -1
+            };
+        let e = seen.entry(key).or_insert((0, t));
+        e.0 += sign;
+    }
+    if seen.values().all(|&(net, _)| net.abs() == 1) {
+        return;
+    }
+    let mut out = Vec::with_capacity(mesh.indices.len());
+    for tri in mesh.indices.chunks(3) {
+        let mut key = [tri[0], tri[1], tri[2]];
+        key.sort_unstable();
+        let sign =
+            if (tri[0] < tri[1]) as u8 + (tri[1] < tri[2]) as u8 + (tri[0] < tri[2]) as u8 == 2 {
+                1
+            } else {
+                -1
+            };
+        let Some(slot) = seen.get_mut(&key) else {
+            continue;
+        };
+        // Emit while this orientation still has an uncancelled surplus.
+        if slot.0 * sign > 0 {
+            slot.0 -= sign;
+            out.extend_from_slice(tri);
+        }
+    }
+    mesh.indices = out;
 }
 
 /// Weld away triangles whose f32-stored vertices are (near-)collinear.
@@ -674,7 +729,17 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
     }
     // `polygons_to_mesh` already heals t-junctions, snaps near-coincident
     // boundary vertices, caps residual pinholes and collapses degenerate
-    // triangles; all that remains is to pin the global orientation.
+    // triangles. What it cannot reach are *redundant patches*: whole
+    // sliver strips that double-cover the surface along seam circles
+    // (classification keeps both operands' fragments of the chord-vs-arc
+    // lune where one operand's cap crosses the other's chordal wall).
+    // Peel those, then pin the global orientation.
+    // No repair passes run here — deliberately. The caller's quadric
+    // projection decides per-vertex constraints from incident triangle
+    // normals, so even a pure deletion (peeling a zero-area flap) before
+    // it flips pinning decisions and strands seam vertices off their
+    // carriers (measured 0.36 mm off a R25 sphere). `mesh_fallback` runs
+    // the repair pipeline between two projection passes instead.
     orient_outward(polygons_to_mesh(&out))
 }
 

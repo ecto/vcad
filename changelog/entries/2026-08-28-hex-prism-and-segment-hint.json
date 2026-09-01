@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-28-hex-prism-and-segment-hint",
+  "version": "0.9.4",
+  "date": "2026-08-28",
+  "category": "fix",
+  "title": "loon: hex-prism, and cylinder-n stops lying",
+  "summary": "The -n primitive forms refuse segment counts under 8 (they are a fidelity hint, not a face count) and point at prism / polygon-prism / hex-prism for real facets.",
+  "features": ["loon", "primitives"],
+  "mcpTools": []
+}

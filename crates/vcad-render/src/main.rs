@@ -13,7 +13,8 @@
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <N|WxH>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--auto-aspect] [--trim [--trim-margin <px>]]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
-//!   vcad-render <path.vcad> --photoreal --animate [keys.json] -o <dir> [--frames N] [--fps F] [--mp4 out.mp4]
+//!   vcad-render <path.vcad> --animate [keys.json] -o <dir> [--frames N] [--fps F] [--mp4 out.mp4]
+//!                              [--raytrace | --photoreal]   # drafting line art by default
 //!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
@@ -43,13 +44,18 @@
 //! `--animate` renders a jointed assembly over time instead of a single
 //! image: one `frame_NNNN.png` per timeline sample into the directory named
 //! by `-o`, then an H.264 mp4 if ffmpeg is on PATH. The document is
-//! evaluated — and its per-part BVHs built — exactly *once* for the whole
-//! sequence; each frame only re-solves forward kinematics, re-places the
-//! parts, and re-traces. Poses come from the document's own timeline, or
+//! evaluated — and its per-part geometry prepared — exactly *once* for the
+//! whole sequence; each frame only re-solves forward kinematics, re-places
+//! the parts, and re-draws. Poses come from the document's own timeline, or
 //! from the keyframe file given as `--animate <keys.json>`. The camera is
 //! framed on the union of every pose, so the subject neither swims nor
-//! clips. Photoreal only — the tessellated paths are already cheap enough
-//! that per-frame evaluation is not the bottleneck.
+//! clips, and every frame comes out the same size.
+//!
+//! Any style animates: bare `--animate` draws the default drafting line art
+//! (tens of milliseconds a frame), `--raytrace --animate` traces analytic
+//! BRep surfaces, and `--photoreal --animate` path-traces. `--trim` is
+//! refused with `--animate` — a per-frame crop is per-frame sizing, which
+//! is the drift the shared camera exists to prevent.
 //!
 //! Raster framing: `--size` takes `N` (square) or `WxH`, `--auto-aspect`
 //! fits the canvas to the subject's projected aspect ratio, and `--trim`
@@ -291,11 +297,31 @@ struct Cli {
     /// `~/.cache/vcad`; `VCAD_CACHE=0` has the same effect). The cache is
     /// keyed on each root's resolved expression plus the kernel build, so
     /// it never serves geometry from a different kernel or an edited root;
-    /// this flag is for timing the kernel itself. `--raytrace`,
-    /// `--photoreal` and `--section` need BRep surfaces and bypass the
-    /// cache regardless.
+    /// this flag is for timing the kernel itself. `--raytrace`, `--section`
+    /// and `--photoreal --exact` need analytic BRep surfaces, which a cached
+    /// mesh cannot supply, and bypass the cache regardless.
     #[arg(long)]
     no_cache: bool,
+
+    /// Export a web-oriented GLB to this path instead of rendering: one
+    /// NAMED glTF node per visible root (name = the loon `[root sym ...]`
+    /// symbol) and per assembly instance, each with its own PBR material
+    /// resolved from the document, converted from the kernel's Z-up to
+    /// glTF's Y-up. Addressable by name from Three.js.
+    #[arg(long, value_name = "PATH.glb")]
+    export_web: Option<PathBuf>,
+
+    /// Export a small JSON scene graph to this path: per root, the primitive
+    /// tree (cube/cylinder/sphere/cone/torus, transforms, union, patterns)
+    /// for consumers that re-render primitives themselves. Subtrees using
+    /// ops outside that set (booleans, fillets, sweeps, …) become a `mesh`
+    /// placeholder rather than an error. Combines with `--export-web`.
+    #[arg(long, value_name = "PATH.json")]
+    export_web_js: Option<PathBuf>,
+
+    /// Curved-face segment count for `--export-web` tessellation.
+    #[arg(long, default_value_t = 64)]
+    web_segments: u32,
 
     /// Photorealistic path tracing: physically-based materials, a studio
     /// softbox rig, global illumination, and a real camera lens. Needs a
@@ -303,6 +329,51 @@ struct Cli {
     /// with `--spp`.
     #[arg(long, conflicts_with = "raytrace")]
     photoreal: bool,
+
+    /// Trace analytic BRep surface intersection (`--photoreal`): slower,
+    /// sharper curved silhouettes.
+    ///
+    /// By default the path tracer runs against a 128-segment tessellation,
+    /// which the on-disk root-mesh cache can serve — so a re-render skips
+    /// re-evaluating the whole document and pays only for the tracing. A
+    /// BRep cannot be cached (it has no serialized form), so `--exact`
+    /// re-evaluates the kernel on every run — and, on a document of any size,
+    /// takes far longer than the tracing does. Reach for it on hero renders
+    /// containing small-radius cylinders or fillets, where the tessellation's
+    /// facets show along the silhouette. Note it also reframes very slightly
+    /// (the camera fits bounds that a tessellation inscribes), so `--exact`
+    /// and default output never overlay pixel-for-pixel.
+    #[arg(long, requires = "photoreal")]
+    exact: bool,
+
+    /// Path-trace on the GPU instead of the CPU (`--photoreal`).
+    ///
+    /// Same scene, same studio rig, same exposure and tonemap — a wgpu
+    /// compute pipeline integrates it instead of rayon.
+    ///
+    /// HONOURED: --spp, --max-depth, --exposure, --fov, --seed, --size,
+    /// --fill, --auto-aspect, --view/--azimuth/--elevation, --env,
+    /// --env-rotation, per-part materials, and --backdrop studio|none.
+    ///
+    /// REFUSED, with a message rather than a wrong image: --exact,
+    /// --aperture, --ortho, --backdrop shadow-catcher, --animate.
+    ///
+    /// IGNORED: --no-adaptive (the GPU has no adaptive sampler, so --spp is
+    /// an exact count rather than a ceiling), and denoising — it needs
+    /// normal/depth/albedo guide buffers the GPU tracer does not read back,
+    /// so --gpu turns it off and says so on stderr.
+    ///
+    /// Two knowing differences from the CPU image: the studio floor is a
+    /// large quad rather than an infinite plane, and the integrator runs in
+    /// f32 rather than f64. The GPU render converges, but to a slightly
+    /// different picture — around 30 dB PSNR from the CPU render on rose-pro,
+    /// and no closer at 1024 spp than at 256. Use it for fast looks and
+    /// sweeps; render the final hero on the CPU.
+    ///
+    /// An explicit --gpu with no usable adapter is an error, never a silent
+    /// fall back to the CPU.
+    #[arg(long, requires = "photoreal")]
+    gpu: bool,
 
     /// Samples per pixel for `--photoreal`. 32 for a quick look, 512+ for a
     /// clean hero render.
@@ -359,16 +430,28 @@ struct Cli {
     #[arg(long, requires = "photoreal")]
     no_denoise: bool,
 
-    /// Render a jointed assembly over time (`--photoreal`): one PNG per
-    /// timeline sample into the directory given by `-o`, evaluating the
-    /// document's geometry exactly once for the whole sequence.
+    /// Sample every pixel to the full `--spp` count (`--photoreal`), instead
+    /// of stopping pixels whose own variance estimate says the remaining
+    /// samples cannot move them visibly.
+    ///
+    /// Adaptive sampling is on by default and typically cuts render time
+    /// substantially at unchanged quality; `--spp` is a ceiling under it.
+    /// Turn it off for reference renders, or to compare two images at a
+    /// genuinely equal sample count.
+    #[arg(long, requires = "photoreal")]
+    no_adaptive: bool,
+
+    /// Render a jointed assembly over time: one PNG per timeline sample
+    /// into the directory given by `-o`, evaluating the document's geometry
+    /// exactly once for the whole sequence. Drawn in the default drafting
+    /// style unless `--raytrace` or `--photoreal` picks another tier.
     ///
     /// Takes an optional keyframe file; bare `--animate` uses the timeline
     /// stored on the document. The file is a timeline — `durationS`, `fps`,
     /// `tracks` — with a shorthand for joint tracks:
     /// `{"joint":"A","keys":[{"t":0,"value":0},{"t":6,"value":1440}]}`.
     /// A joint may be named by id (`joint_0`) or by its authored name.
-    #[arg(long, value_name = "KEYFRAMES.json", num_args = 0..=1, requires = "photoreal")]
+    #[arg(long, value_name = "KEYFRAMES.json", num_args = 0..=1)]
     animate: Option<Option<PathBuf>>,
 
     /// Render only the first N frames of the animation (`--animate`).
@@ -507,7 +590,63 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
         },
         seed: cli.seed,
         denoise: !cli.no_denoise,
+        adaptive: !cli.no_adaptive,
+        exact: cli.exact,
     }
+}
+
+/// `--photoreal --gpu`: the same scene, path-traced on a wgpu compute
+/// pipeline.
+///
+/// Denoising is turned off here rather than in `photoreal_options`, so the
+/// note fires exactly once and only when the user actually asked for both
+/// `--gpu` and a denoised render. The denoiser is guided by the per-pixel
+/// normal/depth/albedo buffers the CPU integrator records, and the GPU reads
+/// back only radiance; run against the zeroed guides it would not produce a
+/// worse image, it would silently produce *no* filtering at all, which is the
+/// version of this the user must not be left guessing about.
+#[cfg(all(feature = "raytrace", feature = "photoreal-gpu"))]
+fn render_photoreal_gpu(
+    raw: &str,
+    opts: &vcad_render::RasterOptions,
+    pr: &vcad_render::photoreal::PhotorealOptions,
+    png: bool,
+) -> Result<Vec<u8>, String> {
+    use vcad_render::photoreal_gpu;
+
+    // Refusals first, so a run that is about to be rejected outright does not
+    // print a note about a denoiser it will never reach.
+    photoreal_gpu::check_supported(opts, pr)?;
+
+    let mut pr = pr.clone();
+    if pr.denoise {
+        eprintln!("{}", photoreal_gpu::denoise_is_unavailable());
+        pr.denoise = false;
+    }
+    if png {
+        photoreal_gpu::render_photoreal_gpu_png_str(raw, opts, &pr)
+    } else {
+        photoreal_gpu::render_photoreal_gpu_jpeg_str(raw, opts, &pr)
+    }
+}
+
+/// `--gpu` in a build compiled without the `photoreal-gpu` feature.
+///
+/// Deliberately an error naming the feature rather than a silent CPU render:
+/// a user who asked for the GPU and got the CPU would take every timing
+/// afterwards as a GPU number.
+#[cfg(all(feature = "raytrace", not(feature = "photoreal-gpu")))]
+fn render_photoreal_gpu(
+    _raw: &str,
+    _opts: &vcad_render::RasterOptions,
+    _pr: &vcad_render::photoreal::PhotorealOptions,
+    _png: bool,
+) -> Result<Vec<u8>, String> {
+    Err("--gpu: this build of vcad-render was compiled without the \
+         `photoreal-gpu` feature. Rebuild with \
+         `cargo build -p vcad-render --features photoreal-gpu`, or drop --gpu \
+         to path-trace on the CPU."
+        .to_string())
 }
 
 /// Render an animation: one PNG per timeline sample into the `-o` directory,
@@ -519,8 +658,34 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
 #[cfg(feature = "raytrace")]
 fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     use vcad_render::animate::{
-        assemble_mp4, parse_timeline_spec, render_photoreal_animation, AnimateOptions,
+        assemble_mp4, parse_timeline_spec, render_drafting_animation, render_photoreal_animation,
+        render_raytrace_animation, AnimateOptions,
     };
+
+    // `--gpu` bakes each part's transform into the uploaded vertices — the
+    // WGSL tracer has no instancing layer to put a per-object matrix in — so
+    // every frame of a sequence would mean repacking and re-uploading the
+    // whole scene. That is precisely the cost `--animate` exists to pay once,
+    // so the two do not compose and saying so beats quietly re-uploading.
+    if cli.gpu {
+        return Err(
+            "--animate does not compose with --gpu: the GPU scene bakes \
+                    each part's pose into its uploaded vertices, so every frame \
+                    would repack and re-upload the whole assembly — which is the \
+                    one cost --animate exists to avoid. Drop --gpu."
+                .to_string(),
+        );
+    }
+    // The overlays and the section cut are drawn by the projected 2D path,
+    // which the photoreal tier has no counterpart for — the same refusal the
+    // single-image path makes, made here before anything is evaluated.
+    if cli.photoreal && (cli.section.is_some() || cli.annotations().any()) {
+        return Err(
+            "--photoreal does not compose with --section/--axes/--labels/--dims; \
+             drop --photoreal to animate in the drafting style"
+                .to_string(),
+        );
+    }
 
     let spec = cli.animate.as_ref().expect("caller checked --animate");
     let Some(out_dir) = cli.output.clone() else {
@@ -545,7 +710,6 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
 
     let raw = read_document(input)?;
     let opts = raster_opts(cli, true);
-    let pr = photoreal_options(cli);
     let an = AnimateOptions {
         out_dir: out_dir.clone(),
         timeline,
@@ -553,9 +717,20 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
         fps: cli.fps,
     };
 
-    let report = render_photoreal_animation(&raw, &opts, &pr, &an, &mut |i, n, dt| {
-        eprintln!("frame {i}/{n}  {:.1}s", dt.as_secs_f64());
-    })?;
+    // Style tiers, cheapest first. Each one evaluates the document once and
+    // pins one camera across the sequence; they differ only in how a pose
+    // becomes pixels.
+    let progress = &mut |i: usize, n: usize, dt: std::time::Duration| {
+        eprintln!("frame {i}/{n}  {:.2}s", dt.as_secs_f64());
+    };
+    let report = if cli.photoreal {
+        let pr = photoreal_options(cli);
+        render_photoreal_animation(&raw, &opts, &pr, &an, progress)?
+    } else if cli.raytrace {
+        render_raytrace_animation(&raw, &opts, &an, progress)?
+    } else {
+        render_drafting_animation(&raw, &opts, &an, progress)?
+    };
 
     eprintln!(
         "evaluated {} part(s) once in {:.1}s ({} articulated), setup {:.1}s",
@@ -566,7 +741,7 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     );
     if let (Some(first), median) = (report.per_frame.first(), report.median_frame()) {
         eprintln!(
-            "frame 1 {:.1}s, steady state {:.1}s, {} frames in {:.1}s total",
+            "frame 1 {:.2}s, steady state {:.2}s, {} frames in {:.1}s total",
             first.as_secs_f64(),
             median.as_secs_f64(),
             report.frames.len(),
@@ -601,8 +776,9 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
     let png = format == Format::Png;
     let opts = raster_opts(cli, png);
     if cli.photoreal {
-        // Same constraint as --raytrace: the path tracer needs analytic BRep
-        // surfaces, and the overlays are drawn by the projected 2D path.
+        // The overlays are drawn by the projected 2D path, which has no
+        // counterpart here; --section additionally leaves mesh-backed solids
+        // that --exact could not trace analytically anyway.
         if cli.section.is_some() || cli.annotations().any() {
             return Err(
                 "--photoreal does not compose with --section/--axes/--labels/--dims; \
@@ -613,6 +789,9 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
         #[cfg(feature = "raytrace")]
         {
             let pr = photoreal_options(cli);
+            if cli.gpu {
+                return render_photoreal_gpu(raw, &opts, &pr, png);
+            }
             return if png {
                 vcad_render::photoreal::render_photoreal_png_str(raw, &opts, &pr)
             } else {
@@ -796,11 +975,33 @@ fn is_loon(path: &Path) -> bool {
 /// The root-mesh cache for this invocation, if any: off by flag or
 /// environment, and off for the paths that need analytic BRep surfaces
 /// (which a cached mesh can't supply).
+///
+/// Plain `--photoreal` is *not* one of those paths — it traces a
+/// tessellation, and re-evaluating every BRep to produce one on each run is
+/// the single largest fixed cost of a photoreal render. Only `--exact` opts
+/// back into analytic surfaces, and therefore out of the cache.
 fn root_cache(cli: &Cli) -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
-    if cli.no_cache || cli.raytrace || cli.photoreal || cli.section.is_some() {
+    if cli.no_cache || cli.raytrace || cli.section.is_some() {
+        return None;
+    }
+    if cli.photoreal && cli.exact {
         return None;
     }
     vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new)
+}
+
+/// The segment count the cached mesh must be tessellated at for this
+/// invocation to be able to use it — the facet count the render would
+/// otherwise produce itself.
+///
+/// The photoreal path fixes its own count regardless of canvas size (see
+/// `photoreal::MESH_SEGMENTS`); every other path scales with the output.
+fn cache_segments(cli: &Cli, format: Format) -> u32 {
+    #[cfg(feature = "raytrace")]
+    if cli.photoreal {
+        return vcad_render::photoreal::MESH_SEGMENTS;
+    }
+    vcad_render::tessellation_segments(raster_size_px(cli, format))
 }
 
 /// The raster canvas size this render will use, or `None` for SVG.
@@ -822,7 +1023,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
         Some(cache) => {
             // The cached mesh must carry the facet count this output would
             // tessellate at, or a hit renders coarser than a miss.
-            let segments = vcad_render::tessellation_segments(raster_size_px(cli, format));
+            let segments = cache_segments(cli, format);
             let r = vcad_render::with_root_cache(cache.clone(), segments, || {
                 render_one_uncached(input, dest, format, cli)
             });
@@ -928,8 +1129,64 @@ fn batch_dest(input: &Path, out_dir: Option<&Path>, format: Format) -> Result<Pa
     }
 }
 
+/// `--export-web` / `--export-web-js`: hand the document to a web consumer
+/// rather than rendering it. Short-circuits the render dispatch entirely.
+fn run_web_export(input: &Path, cli: &Cli) -> Result<(), String> {
+    let raw = read_document(input)?;
+
+    if let Some(dest) = &cli.export_web {
+        let (bytes, summary) = match root_cache_for_web(cli) {
+            Some(cache) => vcad_render::with_root_cache(cache, cli.web_segments, || {
+                vcad_render::web::export_web_glb(&raw, cli.web_segments)
+            }),
+            None => vcad_render::web::export_web_glb(&raw, cli.web_segments),
+        }?;
+        std::fs::write(dest, &bytes).map_err(|e| format!("write {}: {}", dest.display(), e))?;
+        eprintln!(
+            "{} -> {} ({} named nodes, {} bytes, {} segments, Y-up)",
+            input.display(),
+            dest.display(),
+            summary.nodes,
+            bytes.len(),
+            cli.web_segments,
+        );
+    }
+
+    if let Some(dest) = &cli.export_web_js {
+        let (json, summary) = vcad_render::web::export_web_json(&raw)?;
+        std::fs::write(dest, &json).map_err(|e| format!("write {}: {}", dest.display(), e))?;
+        eprintln!(
+            "{} -> {} ({} roots: {} fully primitive, {} with mesh fallback)",
+            input.display(),
+            dest.display(),
+            summary.nodes,
+            summary.roots_primitive,
+            summary.roots_mesh_fallback,
+        );
+    }
+    Ok(())
+}
+
+/// The root-mesh cache for a web export: the same disk cache the renderers
+/// use, opened at `--web-segments` so a hit carries the facet count this
+/// export asked for.
+fn root_cache_for_web(cli: &Cli) -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
+    if cli.no_cache {
+        return None;
+    }
+    vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new)
+}
+
 fn run(cli: &Cli) -> Result<(), String> {
     let inputs = expand_inputs(&cli.inputs)?;
+
+    if cli.export_web.is_some() || cli.export_web_js.is_some() {
+        if inputs.len() > 1 {
+            return Err("--export-web/--export-web-js take a single input".into());
+        }
+        return run_web_export(&inputs[0], cli);
+    }
+
     let batch = inputs.len() > 1 || cli.out_dir.is_some();
 
     if batch {
