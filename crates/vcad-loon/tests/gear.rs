@@ -49,14 +49,19 @@ fn external_gear_lowers_to_an_extruded_involute_profile() {
     let d = doc("[gear 0.5 10.0 6.0]");
     let (rmin, rmax) = extents(&d);
     assert!((rmax - 3.0).abs() < 1e-9, "tip radius {rmax}, want 3.0");
-    assert!((rmin - 1.875).abs() < 1e-9, "root radius {rmin}, want 1.875");
+    assert!(
+        (rmin - 1.875).abs() < 1e-9,
+        "root radius {rmin}, want 1.875"
+    );
 
     // Extruded the full face width from z = 0 up, matching `cylinder`.
     let ex = d
         .nodes
         .values()
         .find_map(|n| match &n.op {
-            CsgOp::Extrude { direction, sketch, .. } => Some((*direction, *sketch)),
+            CsgOp::Extrude {
+                direction, sketch, ..
+            } => Some((*direction, *sketch)),
             _ => None,
         })
         .expect("extrude");
@@ -119,22 +124,27 @@ fn backlash_thins_teeth_without_moving_tip_or_root() {
             })
             .unwrap();
         match &d.nodes[&sketch_id].op {
-            CsgOp::Sketch2D { segments, .. } => segments
-                .iter()
-                .map(|s| match s {
-                    vcad_ir::SketchSegment2D::Line { start, end } => {
-                        start.x * end.y - end.x * start.y
-                    }
-                    _ => 0.0,
-                })
-                .sum::<f64>()
-                / 2.0,
+            CsgOp::Sketch2D { segments, .. } => {
+                segments
+                    .iter()
+                    .map(|s| match s {
+                        vcad_ir::SketchSegment2D::Line { start, end } => {
+                            start.x * end.y - end.x * start.y
+                        }
+                        _ => 0.0,
+                    })
+                    .sum::<f64>()
+                    / 2.0
+            }
             _ => unreachable!(),
         }
     };
     let a_plain = area("[gear 0.5 20.0 6.0]");
     let a_thin = area("[gear-backlash 0.5 20.0 6.0 0.02]");
-    assert!(a_thin < a_plain, "backlash did not thin the teeth: {a_thin} vs {a_plain}");
+    assert!(
+        a_thin < a_plain,
+        "backlash did not thin the teeth: {a_thin} vs {a_plain}"
+    );
     // 20 teeth x 0.02 thinning x ~1.125 mm of tooth height, within a factor
     // of two — enough to catch a backlash that is ignored or double-applied.
     let removed = a_plain - a_thin;

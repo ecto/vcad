@@ -8,4 +8,5 @@ publish = false
 loon-lang = { path = "../../../loon/crates/loon-lang" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-parts = { path = "../vcad-parts" }
+serde.workspace = true
 serde_json.workspace = true

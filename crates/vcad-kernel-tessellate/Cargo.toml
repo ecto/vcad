@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 earcutr = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
 tang = { workspace = true }
 vcad-kernel-math = { workspace = true }
 vcad-kernel-topo = { workspace = true }

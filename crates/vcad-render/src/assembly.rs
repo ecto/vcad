@@ -114,8 +114,7 @@ impl Instance {
 /// the binary's own input handling so a part renders the same whether it is
 /// named on the command line or referenced from an assembly.
 fn read_source(path: &Path) -> Result<String, String> {
-    let raw =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     if path.extension().and_then(|e| e.to_str()) != Some("loon") {
         return Ok(raw);
     }
@@ -132,8 +131,8 @@ fn read_source(path: &Path) -> Result<String, String> {
 pub fn load(spec_path: &Path, factor: f64) -> Result<Vec<PosedPart>, String> {
     let text = std::fs::read_to_string(spec_path)
         .map_err(|e| format!("read {}: {e}", spec_path.display()))?;
-    let spec: AssemblySpec = serde_json::from_str(&text)
-        .map_err(|e| format!("{}: {e}", spec_path.display()))?;
+    let spec: AssemblySpec =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", spec_path.display()))?;
 
     if spec.instances.is_empty() {
         return Err(format!("{}: no instances", spec_path.display()));
@@ -169,7 +168,11 @@ pub fn load(spec_path: &Path, factor: f64) -> Result<Vec<PosedPart>, String> {
             let raw = read_source(&path)?;
             let scene = crate::evaluate_vcad(&raw)?;
             if scene.is_empty() {
-                return Err(format!("part '{}' ({}) is empty", inst.part, path.display()));
+                return Err(format!(
+                    "part '{}' ({}) is empty",
+                    inst.part,
+                    path.display()
+                ));
             }
             geometry.insert(
                 inst.part.clone(),

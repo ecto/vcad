@@ -1,5 +1,7 @@
 /target
 *.stl
+# ...except probe-suite fixtures, which are test INPUTS, not build output.
+!crates/vcad-kernel-tessellate/tests/fixtures/**/*.stl
 *.dxf
 node_modules/
 packages/*/dist/

@@ -202,6 +202,8 @@ vcad/
 │   ├── vcad-kernel-raytrace/      # Direct BRep ray tracing
 │   ├── vcad-kernel-physics/       # phyz physics simulation
 │   ├── vcad-kernel-urdf/          # URDF robot description import
+│   ├── vcad-kernel-assembly/      # Posed assemblies: mates (coaxial, planar-offset,
+│   │                              # pattern-phase), interference, exploded views
 │   ├── vcad-kernel-cam/           # 2.5D CAM toolpath generation + G-code post
 │   ├── vcad-kernel-stocksim/      # CAM stock sim (octree SDF) + toolpath verification oracle
 │   ├── vcad-kernel-topopt/        # SIMP topology optimization (voxel FEA + surface nets)

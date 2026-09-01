@@ -86,12 +86,18 @@ fn section_of_a_tube_hatches_the_annulus() {
     // disc reaching r = 0, and one that lost the outer wall would stop short.
     let mut xs: Vec<(f64, f64)> = Vec::new();
     for chunk in svg.split("<polygon").skip(1) {
-        let Some(tag_end) = chunk.find('>') else { continue };
+        let Some(tag_end) = chunk.find('>') else {
+            continue;
+        };
         let tag = &chunk[..tag_end];
         if !tag.contains("url(#section-hatch)") {
             continue;
         }
-        let Some(pts) = tag.split("points=\"").nth(1).and_then(|s| s.split('"').next()) else {
+        let Some(pts) = tag
+            .split("points=\"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+        else {
             continue;
         };
         for pair in pts.split_whitespace() {
@@ -133,19 +139,13 @@ fn section_of_a_tube_hatches_the_annulus() {
 fn section_outside_the_model_explains_itself() {
     let dir = TempDir::new("miss");
     let input = dir.write("cyl.loon", "[cylinder 10.0 40.0]");
-    let out = render(&[
-        input.to_str().unwrap(),
-        "--view",
-        "top",
-        "--section",
-        "z=0",
-    ]);
-    assert!(!out.status.success(), "a section that removes everything should fail");
-    let err = String::from_utf8_lossy(&out.stderr);
+    let out = render(&[input.to_str().unwrap(), "--view", "top", "--section", "z=0"]);
     assert!(
-        err.contains("removed every part"),
-        "unhelpful error: {err}"
+        !out.status.success(),
+        "a section that removes everything should fail"
     );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("removed every part"), "unhelpful error: {err}");
 }
 
 fn two_part_assembly(dir: &TempDir) -> PathBuf {

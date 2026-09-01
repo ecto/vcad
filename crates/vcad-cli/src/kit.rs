@@ -163,8 +163,8 @@ fn load_part(path: &Path) -> Result<(Vec<[f64; 3]>, Vec<[usize; 3]>, f64, f64)> 
     let file = std::fs::File::open(path)
         .with_context(|| format!("opening part mesh {}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
-    let stl = stl_io::read_stl(&mut reader)
-        .with_context(|| format!("reading STL {}", path.display()))?;
+    let stl =
+        stl_io::read_stl(&mut reader).with_context(|| format!("reading STL {}", path.display()))?;
 
     if stl.faces.is_empty() {
         bail!("{} contains no triangles", path.display());
@@ -377,16 +377,13 @@ fn build_3mf(parts: &[Placed], spec: &KitSpec) -> Result<Vec<u8>> {
              \x20   </part>\n  </object>",
             p.name, p.name
         ));
-        plate_instances
-            .entry(p.plate)
-            .or_default()
-            .push(format!(
-                "    <model_instance>\n\
+        plate_instances.entry(p.plate).or_default().push(format!(
+            "    <model_instance>\n\
                  \x20     <metadata key=\"object_id\" value=\"{comp_id}\"/>\n\
                  \x20     <metadata key=\"instance_id\" value=\"0\"/>\n\
                  \x20     <metadata key=\"identify_id\" value=\"{}\"/>\n    </model_instance>",
-                100 + i
-            ));
+            100 + i
+        ));
         assemble.push(format!(
             "   <assemble_item object_id=\"{comp_id}\" instance_id=\"0\" \
              transform=\"{xform}\" offset=\"0 0 0\" />"
@@ -562,13 +559,16 @@ pub fn run(args: &KitArgs) -> Result<PathBuf> {
             std::fs::create_dir_all(dir).ok();
         }
     }
-    std::fs::write(&out, &bytes)
-        .with_context(|| format!("writing kit {}", out.display()))?;
+    std::fs::write(&out, &bytes).with_context(|| format!("writing kit {}", out.display()))?;
     println!(
         "kit: {} part{} on {} plate{} -> {} ({:.2} MB)",
         parts.len(),
         if parts.len() == 1 { "" } else { "s" },
-        parts.iter().map(|p| p.plate).collect::<std::collections::BTreeSet<_>>().len(),
+        parts
+            .iter()
+            .map(|p| p.plate)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
         if parts.len() == 1 { "" } else { "s" },
         out.display(),
         bytes.len() as f64 / 1e6
@@ -708,7 +708,11 @@ mod tests {
             .iter()
             .filter(|n| n.starts_with("3D/Objects/"))
             .collect();
-        assert_eq!(objects.len(), 3, "expected 3 object models, got {objects:?}");
+        assert_eq!(
+            objects.len(),
+            3,
+            "expected 3 object models, got {objects:?}"
+        );
 
         let main = read_entry(&bytes, "3D/3dmodel.model");
         assert_eq!(main.matches("<item ").count(), 3, "expected 3 build items");

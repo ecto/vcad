@@ -1,0 +1,17 @@
+[package]
+name = "vcad-kernel-assembly"
+description = "Posed assemblies: instance transforms as the single source of truth, declarative mates (coaxial, planar-offset, pattern-phase), interference checking, and exploded views."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-eval = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+vcad-loon = { path = "../vcad-loon" }

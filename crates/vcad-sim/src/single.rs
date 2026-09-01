@@ -173,6 +173,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "arm_inst".into(),
@@ -181,6 +182,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
 

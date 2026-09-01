@@ -11,7 +11,7 @@ use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
-use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
+use vcad_kernel_sweep::{CylindricalPath, Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
 
@@ -863,6 +863,20 @@ fn evaluate_op_timed(
                 } => {
                     let helix = Helix::new(*radius, *pitch, *height, *turns);
                     Solid::sweep(profile, &helix, options).map_err(EvalError::Sweep)?
+                }
+                PathCurve::Cylindrical {
+                    radius,
+                    knots,
+                    seg_deg,
+                } => {
+                    let mut cyl = CylindricalPath::from_knots(
+                        *radius,
+                        knots.iter().map(|k| (k.x, k.y)).collect(),
+                    );
+                    if let Some(step) = seg_deg {
+                        cyl = cyl.with_seg_deg(*step);
+                    }
+                    Solid::sweep_cylindrical(profile, &cyl, options).map_err(EvalError::Sweep)?
                 }
             };
 

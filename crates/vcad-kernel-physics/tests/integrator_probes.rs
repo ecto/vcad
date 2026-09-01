@@ -84,6 +84,7 @@ fn base_doc() -> Document {
         tags: Vec::new(),
         transform: None,
         material: None,
+        explode: None,
     }]);
     doc.joints = Some(Vec::new());
     doc.ground_instance_id = Some("frame".into());
@@ -102,6 +103,7 @@ fn add_instance(doc: &mut Document, id: &str, part: &str, at_mm: [f64; 3]) {
             scale: V::new(1.0, 1.0, 1.0),
         }),
         material: None,
+        explode: None,
     });
 }
 
