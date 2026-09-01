@@ -784,6 +784,7 @@ impl<'a> UrdfReader<'a> {
                 tags: Vec::new(),
                 transform: None, // Transforms come from joints
                 material: None,
+                explode: None,
             });
         }
         doc.instances = Some(instances);

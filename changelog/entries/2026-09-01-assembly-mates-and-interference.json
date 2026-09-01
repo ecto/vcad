@@ -1,0 +1,10 @@
+{
+  "id": "2026-09-01-assembly-mates-and-interference",
+  "version": "0.9.4",
+  "date": "2026-09-01",
+  "category": "feat",
+  "title": "Assembly mates, posed transforms, interference",
+  "summary": "Instances carry full poses and exploded offsets, and coaxial / planar-offset / pattern-phase mates plus a mesh interference check verify the assembly at model time.",
+  "features": ["assembly", "loon", "mates", "interference"],
+  "mcpTools": []
+}

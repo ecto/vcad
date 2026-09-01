@@ -1,0 +1,11 @@
+{
+  "id": "2026-09-01-helix-path-and-sweep",
+  "version": "0.9.4",
+  "date": "2026-09-01",
+  "category": "feat",
+  "title": "loon: helix / cam-path paths and a sweep that takes them",
+  "summary": "Cam tracks, bayonet and J-slots, lead-in ramps and threads are now a primitive: a path dimensioned as rise-per-degree, swept as a closed polyline profile.",
+  "details": "[helix r rate-mm-per-deg start-deg arc-deg] is a first-class Path, and [cam-path r #[deg z ...]] is the general form whose extra knots express a rise-plateau-drop detent or a flat pocket directly. [sweep path profile] carries a closed polyline section along it, holding the cross-section in the radial/axial plane so floor(theta) = path z(theta) + min(profile y) exactly. Knots always land on path samples, the facet step is 0.5 deg by default and settable per path, and the solid is capped at both ends so it is watertight standing alone and can be subtracted through a wall.",
+  "features": ["loon", "primitives", "sweep"],
+  "mcpTools": []
+}

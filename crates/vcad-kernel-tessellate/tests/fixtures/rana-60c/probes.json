@@ -1,0 +1,85 @@
+{
+  "name": "rana-60c assembled stack (excerpt of tools/probe-60c.py)",
+  "parts": [
+    { "name": "stator", "mesh": "rana-60c-stator.stl" },
+    { "name": "sun", "mesh": "rana-60c-sun-solid.stl" },
+    {
+      "name": "spider",
+      "mesh": "rana-60c-spider.stl",
+      "pose": [{ "op": "translate", "xyz": [0, 0, 3.5] }]
+    },
+    {
+      "name": "rotor-rear",
+      "mesh": "rana-60c-rotor.stl",
+      "pose": [{ "op": "translate", "xyz": [0, 0, 5.1] }]
+    },
+    {
+      "name": "rotor-front",
+      "mesh": "rana-60c-rotor.stl",
+      "pose": [
+        { "op": "flip_x" },
+        { "op": "rotate_z", "deg": 180 },
+        { "op": "translate", "xyz": [0, 0, 23.5] }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "name": "AIRGAP 1 band mean",
+      "point": [22.1, 0.5, 10.8],
+      "want_material": false,
+      "parts": ["rotor-rear", "stator", "spider"]
+    },
+    {
+      "name": "rear axial A void",
+      "point": [22.1, -1.8, 7.5],
+      "want_material": false,
+      "parts": ["rotor-rear"]
+    },
+    {
+      "name": "rear axial A shim",
+      "point": [22.1, -1.8, 7.0],
+      "want_material": true,
+      "parts": ["rotor-rear"]
+    },
+    {
+      "name": "rear finger @0",
+      "point": [16.399775, 0.08587, 14.3],
+      "want_material": true,
+      "parts": ["rotor-rear"]
+    },
+    {
+      "name": "no clash @0",
+      "point": [16.399775, 0.08587, 14.3],
+      "want_material": false,
+      "parts": ["rotor-front"]
+    },
+    {
+      "name": "front finger @60",
+      "point": [8.125522, 14.245557, 14.3],
+      "want_material": true,
+      "parts": ["rotor-front"]
+    },
+    {
+      "name": "spider bore clears square",
+      "point": [3.02, 0.3, 4.3],
+      "want_material": false,
+      "parts": ["spider"]
+    },
+    {
+      "name": "sun square in spider bore",
+      "point": [2.9, 0.3, 4.3],
+      "want_material": true,
+      "parts": ["sun"]
+    }
+  ],
+  "clearances": [
+    {
+      "name": "rear rotor to stator running clearance",
+      "a": "rotor-rear",
+      "b": "stator",
+      "min": 0.9,
+      "max": 1.0
+    }
+  ]
+}

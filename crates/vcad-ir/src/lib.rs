@@ -15,6 +15,7 @@ pub mod datum;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
+pub mod mates;
 pub mod molecule;
 pub mod parameters;
 pub mod resolve;
@@ -23,6 +24,7 @@ pub mod to_loon;
 pub mod vcode;
 
 pub use datum::{resolve_datums, Datum, PrincipalAxis, ResolvedDatum};
+pub use mates::{Mate, MateKind};
 pub use parameters::{
     resolve_binding, resolve_parameters, validate_bindings, BindingKey, Bindings, Expr, Parameter,
     ResolveError,
@@ -213,6 +215,17 @@ pub struct Instance {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub material: Option<String>,
+    /// Exploded-view offset for this instance, in mm, applied **after** the
+    /// instance transform and scaled by an explode factor (0 = assembled,
+    /// 1 = fully exploded).
+    ///
+    /// Exploded views used to be hand-coded once per viewer and once per build
+    /// sheet, so they drifted apart from each other and from the assembly.
+    /// Carrying the offset on the instance makes the assembly document the one
+    /// place it is written down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub explode: Option<Vec3>,
 }
 
 /// Alias for [`Instance`] (used in some components).
@@ -533,6 +546,24 @@ pub enum PathCurve {
         /// Number of turns.
         turns: f64,
     },
+    /// A path on the surface of a cylinder: constant radius, with height a
+    /// piecewise-linear function of the angle.
+    ///
+    /// This is how a cam track, a bayonet slot or a J-slot is dimensioned —
+    /// rise per degree of arc, with named angles for the lead-in, the detent
+    /// and the pocket. A constant-rate helical arc is the two-knot case.
+    Cylindrical {
+        /// Cylinder radius (mm).
+        radius: f64,
+        /// `(angle in degrees, height in mm)` knots as `Vec2 { x: deg, y: z }`,
+        /// monotonic in angle, at least two. Height is relative to the
+        /// path's own origin, so the first knot's height is usually 0.
+        knots: Vec<Vec2>,
+        /// Angular step between path samples, in degrees. `None` = 0.5°.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        seg_deg: Option<f64>,
+    },
 }
 
 impl SubToolSchema for PathCurve {
@@ -576,6 +607,26 @@ impl SubToolSchema for PathCurve {
                         "turns":  { "type": "number", "description": "Total turn count. Normally ≈ height / pitch." }
                     },
                     "required": ["type", "radius", "pitch", "height", "turns"]
+                },
+                {
+                    "type": "object",
+                    "description": "Path on a cylinder: constant radius, height piecewise-linear in the angle. Use for cam tracks, bayonet/J-slots, lead-in ramps and threads that are dimensioned as rise-per-degree. Two knots = a plain helical arc; extra knots express a detent (rise-plateau-drop) or a flat pocket directly.",
+                    "properties": {
+                        "type": { "const": "Cylindrical" },
+                        "radius": { "type": "number", "description": "Cylinder radius in mm." },
+                        "knots": {
+                            "type": "array",
+                            "minItems": 2,
+                            "description": "Monotonic-in-angle knots; x = angle in degrees, y = height in mm relative to the path origin.",
+                            "items": {
+                                "type": "object",
+                                "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+                                "required": ["x", "y"]
+                            }
+                        },
+                        "seg_deg": { "type": "number", "description": "Angular step between path samples in degrees (default 0.5)." }
+                    },
+                    "required": ["type", "radius", "knots"]
                 }
             ]
         })
@@ -2076,6 +2127,11 @@ pub struct Document {
     #[serde(rename = "groundInstanceId", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(rename = "groundInstanceId", optional))]
     pub ground_instance_id: Option<String>,
+    /// Declarative mates asserted over the posed assembly. Checked, never
+    /// solved: the instance transforms stay the source of truth and a mate
+    /// says what they are supposed to achieve. See [`mates`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mates: Vec<Mate>,
 
     // ECAD fields (optional, for PCB design)
     /// Schematic sheet for electronics design.
@@ -2457,6 +2513,7 @@ impl Default for Document {
             instances: None,
             joints: None,
             ground_instance_id: None,
+            mates: Vec::new(),
             schematic: None,
             pcb: None,
             molecule: None,
@@ -2799,6 +2856,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "arm_inst".to_string(),
@@ -2811,6 +2869,7 @@ mod tests {
                     scale: Vec3::new(1.0, 1.0, 1.0),
                 }),
                 material: Some("steel".to_string()),
+                explode: None,
             },
         ]);
 

@@ -22,6 +22,8 @@ pub mod mesh_props;
 pub mod mesh_ray;
 pub use mesh_props::{compute_mesh_properties, MeshBBox, MeshProperties};
 pub mod placement;
+pub mod probe;
+pub mod query;
 mod render_bake;
 
 pub use clearance::{mesh_clearance, ClearanceResult};
@@ -29,6 +31,8 @@ pub use manifold::{check_manifold, make_manifold, ManifoldReport, DEFAULT_WELD_E
 pub use creased_normals::{
     apply_creased_normals, apply_default_creased_normals, DEFAULT_CREASE_ANGLE_RAD,
 };
+pub use probe::{run_probe_file, run_suite, ProbeReport, ProbeSuite};
+pub use query::{clearance, is_inside, Assembly, Pose, QueryError, SolidQuery};
 pub use render_bake::{render_bake, render_bake_default, RenderBakeOptions};
 
 /// Per-triangle tag identifying which face kind the triangle came from.

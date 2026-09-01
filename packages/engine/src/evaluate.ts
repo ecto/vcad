@@ -942,7 +942,7 @@ function evaluateOp(
           op.scale_end,
           op.orientation,
         );
-      } else {
+      } else if (op.path.type === "Helix") {
         return Solid.sweepHelix(
           profileJson,
           op.path.radius,
@@ -955,6 +955,10 @@ function evaluateOp(
           op.path_segments,
           op.arc_segments,
           op.orientation,
+        );
+      } else {
+        throw new Error(
+          "Cylindrical sweep paths are not yet supported in the web engine (use the native pipeline)",
         );
       }
     }

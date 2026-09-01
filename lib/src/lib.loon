@@ -56,6 +56,8 @@
   [Torus f64 f64]
   [Wedge f64 f64 f64]
   [Prism f64 f64 f64]
+  ; [Gear module teeth face-width backlash internal?]
+  [Gear f64 f64 f64 f64 Bool]
   ; Empty (identity for union)
   Empty
   ; Booleans
@@ -76,6 +78,9 @@
   ; Sweep/Loft
   [SweepLine Sketch f64 f64 f64 f64 f64 f64]
   [SweepHelix Sketch f64 f64 f64 f64]
+  ; [Sweep profile path] — sweep a closed 2D profile along a first-class
+  ; Path value (see the Path type below).
+  [Sweep Sketch Path]
   [Loft (Vec Sketch)]
   [LoftClosed (Vec Sketch)]
   ; Patterns
@@ -146,7 +151,29 @@
   [SArc f64 f64 f64 f64 f64 f64 Bool]]
 
 [type Sketch
-  [Sketch f64 f64 f64 f64 f64 f64 f64 f64 f64 (Vec SketchSeg)]]
+  [Sketch f64 f64 f64 f64 f64 f64 f64 f64 f64 (Vec SketchSeg)]
+  ; A closed polyline profile, flat #[x0 y0 x1 y1 ...]. Winding is free —
+  ; the sweep normalises it. Swept profiles are read as plain 2D numbers,
+  ; so this form carries no plane.
+  [SketchPoly (Vec f64)]]
+
+; ---------------------------------------------------------------------------
+; Path — a first-class curve for `sweep`
+;
+; A cam track, a bayonet slot, a J-slot and a thread are all the same thing:
+; a cross-section carried around a cylinder while its height follows a
+; function of the angle. `PathCyl` is that function as a piecewise-linear
+; (angle, height) polyline, which is how such a track is dimensioned on a
+; drawing and how a 4th-axis toolpath is programmed. Two knots make a
+; constant-rate helix; extra knots make a lead-in ramp, a rise-plateau-drop
+; detent, or a flat pocket, with no separate mechanism.
+; ---------------------------------------------------------------------------
+
+[type Path
+  ; [PathLine sx sy sz ex ey ez]
+  [PathLine f64 f64 f64 f64 f64 f64]
+  ; [PathCyl radius seg-deg #[deg0 z0 deg1 z1 ...]]
+  [PathCyl f64 f64 (Vec f64)]]
 
 ; ---------------------------------------------------------------------------
 ; Material — PBR surface properties
@@ -180,6 +207,33 @@
 [let torus [fn [major-r minor-r] [Torus major-r minor-r]]]
 [let wedge [fn [x y z] [Wedge x y z]]]
 [let prism [fn [sides radius height] [Prism sides radius height]]]
+
+; Involute spur gears — ISO full-depth, 20° pressure angle, no profile
+; shift. Axis along Z, base on z = 0 and extruding up the face width --
+; the same convention `cylinder` and `prism` actually use. The profile is
+; an exact involute, not the tangential-boxes
+; approximation: pitch ⌀ = m z, tip ⌀ = m (z + 2), root ⌀ = m (z - 2.5).
+;
+; `backlash` is CIRCUMFERENTIAL TOOTH THINNING AT THE PITCH CIRCLE, in mm,
+; applied to this gear alone. Two gears each thinned 0.02 run about 0.04 of
+; backlash per mesh — thin both members, not one member twice.
+;
+; `ring-gear` returns the BORE, not the ring: the material an internal gear
+; removes. Subtract it from a tower or a cover and what is left has
+; internal teeth. Its tip circle is the small one (m (z - 2)) and its root
+; the large one (m (z + 2.5)), which is what makes the standard 0.25 m
+; bottom clearance fall out instead of being eyeballed. Modelling a ring as
+; its own positive solid is how a brief once specified ring teeth tangent
+; to the planet root circle — 0.0 clearance.
+;
+; Centre distance for an external pair is m (z1 + z2) / 2; for a planet
+; inside a ring it is m (z-ring - z-planet) / 2.
+[let gear [fn [module teeth face-width] [Gear module teeth face-width 0.0 false]]]
+[let gear-backlash [fn [module teeth face-width backlash]
+  [Gear module teeth face-width backlash false]]]
+[let ring-gear [fn [module teeth face-width] [Gear module teeth face-width 0.0 true]]]
+[let ring-gear-backlash [fn [module teeth face-width backlash]
+  [Gear module teeth face-width backlash true]]]
 
 ; Faceted prisms, sized the way a print is dimensioned. `polygon-prism` is
 ; `prism` under a name that says what it makes; `hex-prism` takes the
@@ -280,6 +334,48 @@
 ;   radius, pitch, height, turns
 [let sweep-helix [fn [radius pitch height turns sk]
   [SweepHelix sk radius pitch height turns]]]
+
+; ---------------------------------------------------------------------------
+; Paths and `sweep` — subject-last, so the profile is the subject:
+;   [pipe [profile-polyline #[...]] [sweep [helix 34.5 0.0667 0.0 15.0]]]
+;
+; The profile's 2D coordinates for a cylindrical path are
+;   x = RADIAL offset from the path radius (outward positive)
+;   y = AXIAL offset (up positive)
+; and the cross-section is held in that radial/axial plane rather than
+; square to the tangent. That is what a radial section of the finished part
+; shows, and it makes the swept floor land on the path's own height function
+; exactly: floor(theta) = path_z(theta) + min(profile y).
+;
+; The solid is capped at both ends, so it is watertight standing alone and
+; can be subtracted from a body whose wall it passes clean through.
+
+; A closed polyline profile from a flat #[x0 y0 x1 y1 ...] list. A detent's
+; rise-plateau-drop, a dovetail, a trapezoid cam land — all just points.
+[let profile-polyline [fn [pts] [SketchPoly pts]]]
+; The common rectangular channel section, centred on the path.
+[let profile-rect [fn [radial axial]
+  [let hr [/ radial 2.0] [let ha [/ axial 2.0]
+    [SketchPoly #[[- 0.0 hr] [- 0.0 ha]  hr [- 0.0 ha]  hr ha  [- 0.0 hr] ha]]]]]]
+
+; A constant-rate helical arc at `r`, rising `rate` mm per degree of arc,
+; starting at `start-deg` and covering `arc-deg` (which may be negative for
+; a left-hand track). Height starts at 0 whatever the start angle, so place
+; the result with [translate ...] rather than by arithmetic on the angle.
+[let helix [fn [r rate start-deg arc-deg]
+  [PathCyl r 0.5 #[start-deg 0.0 [+ start-deg arc-deg] [* rate arc-deg]]]]]
+; The same with an explicit angular facet step (degrees per path sample).
+[let helix-res [fn [seg-deg r rate start-deg arc-deg]
+  [PathCyl r seg-deg #[start-deg 0.0 [+ start-deg arc-deg] [* rate arc-deg]]]]]
+; The general track: flat #[deg0 z0 deg1 z1 ...] knots, monotonic in angle.
+[let cam-path [fn [r knots] [PathCyl r 0.5 knots]]]
+[let cam-path-res [fn [seg-deg r knots] [PathCyl r seg-deg knots]]]
+; A straight path, for completeness.
+[let path-line [fn [sx sy sz ex ey ez] [PathLine sx sy sz ex ey ez]]]
+
+; [sweep path profile] — subject-last.
+[let sweep [fn [path profile] [Sweep profile path]]]
+
 ; Loft (takes a Vec of sketches)
 [let loft [fn [sketches] [Loft sketches]]]
 [let loft-closed [fn [sketches] [LoftClosed sketches]]]
@@ -498,7 +594,29 @@
   [BallJoint Str Str f64 f64 f64 Str f64 f64 f64]]
 
 [type PartEntry [PartEntry Str Solid Str]]
-[type InstanceEntry [InstanceEntry Str Str f64 f64 f64]]
+
+; An instance is a named part reference plus a transform. `InstanceEntry` is
+; translation-only; `PosedInstanceEntry` carries the full pose — translation,
+; Euler rotation in degrees (applied Rz·Ry·Rx, so "flip and clock" reads as
+; rx=180 with the clocking in rz), and an exploded-view offset.
+;
+; NOTE: `mirror-group-*` below mirrors `InstanceEntry` only; a
+; `PosedInstanceEntry` passes through a mirrored group unchanged, so pose
+; rotations and mirroring should not be mixed in one group yet.
+[type InstanceEntry
+  [InstanceEntry Str Str f64 f64 f64]
+  [PosedInstanceEntry Str Str f64 f64 f64 f64 f64 f64 f64 f64 f64]]
+
+; Mates — declarative assertions about what the instance transforms achieve.
+; Checked against the posed assembly, never solved: the transforms stay the
+; source of truth and a mate says what they are supposed to add up to.
+[type MateDef
+  ; [CoaxialMate id a b ax ay az tol-mm]
+  [CoaxialMate Str Str Str f64 f64 f64 f64]
+  ; [PlanarOffsetMate id a b ax ay az offset tol-mm]
+  [PlanarOffsetMate Str Str Str f64 f64 f64 f64 f64]
+  ; [PatternPhaseMate id a b n-fold ax ay az phase-a phase-b tol-deg]
+  [PatternPhaseMate Str Str Str f64 f64 f64 f64 f64 f64 f64]]
 
 [type Assembly
   [Assembly (Vec PartEntry) (Vec InstanceEntry) (Vec JointDef) Str]]
@@ -506,6 +624,37 @@
 ; Assembly constructors
 [let part [fn [name solid material-name] [PartEntry name solid material-name]]]
 [let instance [fn [name part-name x y z] [InstanceEntry name part-name x y z]]]
+
+; Fully posed instance: translation + Euler rotation in degrees.
+[let instance-at [fn [name part-name x y z rx ry rz]
+  [PosedInstanceEntry name part-name x y z rx ry rz 0.0 0.0 0.0]]]
+
+; As `instance-at`, plus this part's exploded-view offset. The offset is data
+; on the assembly, so a viewer, a render and a build sheet stop each
+; hard-coding their own and drifting apart.
+[let instance-exploded [fn [name part-name x y z rx ry rz ex ey ez]
+  [PosedInstanceEntry name part-name x y z rx ry rz ex ey ez]]]
+
+; Mate constructors. Each is a TOP-LEVEL form, sitting alongside `root` and
+; `material` rather than inside the assembly, so mates compose with mirrored
+; and joined groups.
+;
+; Two parts' reference axes lie on one line (antiparallel counts — a flipped
+; part is still coaxial).
+[let mate-coaxial [fn [id a b ax ay az tol-mm]
+  [CoaxialMate id a b ax ay az tol-mm]]]
+
+; Instance b's origin sits `offset` mm from a's along the world axis: the
+; z-stack of a layered machine, written down once.
+[let mate-planar-offset [fn [id a b ax ay az offset tol-mm]
+  [PlanarOffsetMate id a b ax ay az offset tol-mm]]]
+
+; Two parts carrying n-fold circular patterns about the axis are phase-aligned
+; once posed. Pattern features sit every 360/n degrees, so the check reduces
+; the relative clocking modulo that pitch: a 10-pole pair clocked 60° lands at
+; 24 mod 36 — a 12° pole misalignment — while clocking 180° is exact.
+[let mate-pattern-phase [fn [id a b n-fold ax ay az phase-a phase-b tol-deg]
+  [PatternPhaseMate id a b n-fold ax ay az phase-a phase-b tol-deg]]]
 
 ; Joint constructors
 [let revolute-joint [fn [name ax ay az lo hi parent px py pz child cx cy cz]

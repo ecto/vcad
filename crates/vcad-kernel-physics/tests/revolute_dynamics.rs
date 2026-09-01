@@ -106,6 +106,7 @@ fn doc_with(n_pendula: usize, axis: V, first_state: f64) -> Document {
         tags: Vec::new(),
         transform: None,
         material: None,
+        explode: None,
     }];
     let mut joints = Vec::new();
     for i in 0..n_pendula {
@@ -117,6 +118,7 @@ fn doc_with(n_pendula: usize, axis: V, first_state: f64) -> Document {
             tags: Vec::new(),
             transform: None,
             material: None,
+            explode: None,
         });
         joints.push(Joint {
             id: format!("j{i}"),
