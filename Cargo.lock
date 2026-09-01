@@ -7781,6 +7781,8 @@ name = "vcad-kernel-tessellate"
 version = "0.9.4"
 dependencies = [
  "earcutr",
+ "serde",
+ "serde_json",
  "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",

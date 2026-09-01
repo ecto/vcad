@@ -366,6 +366,21 @@ enum Commands {
         port: u16,
     },
 
+    /// Run a probe suite: material/void and clearance assertions against a
+    /// posed assembly, with a nonzero exit code on any failure.
+    ///
+    /// The suite is a JSON file listing named parts (mesh + pose) and the
+    /// assertions made against them; mesh paths resolve relative to it. See
+    /// `vcad_kernel_tessellate::probe` for the schema.
+    Probe {
+        /// Path to the probe suite JSON.
+        file: PathBuf,
+
+        /// Print only the failures and the tally.
+        #[arg(long)]
+        quiet: bool,
+    },
+
     /// Sign in so the chat panel uses your account's quota instead of
     /// the anonymous limit. Without `--token` this opens a browser
     /// and polls for the device-code flow to complete.
@@ -610,6 +625,9 @@ fn main() -> Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(print_server::start_server(port))?;
         }
+        Some(Commands::Probe { file, quiet }) => {
+            run_probe(&file, quiet)?;
+        }
         Some(Commands::Login { token }) => {
             run_login(token)?;
         }
@@ -622,6 +640,36 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// `vcad probe` — run a probe suite and gate CI on the result.
+///
+/// Exits with status 1 when any assertion fails, so a suite can sit in a
+/// build pipeline the way rana ran `probe-60c.py` by hand.
+fn run_probe(file: &std::path::Path, quiet: bool) -> Result<()> {
+    let report =
+        vcad_kernel_tessellate::run_probe_file(file).map_err(|e| anyhow::anyhow!("{e}"))?;
+    for outcome in &report.outcomes {
+        if quiet && outcome.passed {
+            continue;
+        }
+        println!(
+            "  {} {}: {}",
+            if outcome.passed { "PASS" } else { "FAIL" },
+            outcome.name,
+            outcome.detail
+        );
+    }
+    println!(
+        "{} passed, {} failed, {} total",
+        report.passed(),
+        report.failed(),
+        report.outcomes.len()
+    );
+    if !report.ok() {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
