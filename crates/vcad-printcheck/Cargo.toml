@@ -1,0 +1,14 @@
+[package]
+name = "vcad-printcheck"
+description = "Printability lint for exported meshes: floating regions, interior cracks, overhangs, bridges, min-wall"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+stl_io = "0.8"

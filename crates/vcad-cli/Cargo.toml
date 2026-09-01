@@ -39,6 +39,7 @@ vcad-render = { path = "../vcad-render", default-features = false }
 vcad-slicer = { path = "../vcad-slicer" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
 vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
+vcad-printcheck = { path = "../vcad-printcheck" }
 
 # Print server (optional feature)
 axum = { version = "0.8", optional = true }

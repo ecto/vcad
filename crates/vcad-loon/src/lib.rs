@@ -17,6 +17,7 @@ pub mod modules;
 pub mod params;
 pub mod recover;
 mod rootnames;
+pub mod variants;
 pub use convert::{value_to_document, value_to_document_in};
 pub use modules::{lib_dirs, LibPathProvider, LIB_PATH_VAR};
 

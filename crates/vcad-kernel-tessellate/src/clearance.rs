@@ -130,14 +130,14 @@ impl BvhNode {
     }
 }
 
-struct TriBvh {
+pub(crate) struct TriBvh {
     tris: Vec<Tri>,
     nodes: Vec<BvhNode>,
 }
 
 impl TriBvh {
     /// Build a BVH over the mesh triangles. Returns `None` for empty meshes.
-    fn build(mesh: &TriangleMesh) -> Option<TriBvh> {
+    pub(crate) fn build(mesh: &TriangleMesh) -> Option<TriBvh> {
         let num_tris = mesh.indices.len() / 3;
         if num_tris == 0 {
             return None;
@@ -610,7 +610,7 @@ const PARITY_DIRS: [[f64; 3]; 6] = [
 /// that graze a triangle edge (where adjacent triangles double-count or
 /// both miss), and the verdict is a majority vote across skew directions
 /// so one unlucky ray through a seam cannot flip the classification.
-fn point_in_mesh(p: [f64; 3], bvh: &TriBvh) -> bool {
+pub(crate) fn point_in_mesh(p: [f64; 3], bvh: &TriBvh) -> bool {
     let mut inside_votes = 0usize;
     let mut outside_votes = 0usize;
     let mut grazing_fallback: Option<bool> = None;
@@ -653,7 +653,7 @@ fn parity_ray(p: [f64; 3], dir: [f64; 3], bvh: &TriBvh) -> (bool, bool) {
         if n.is_leaf() {
             for tri in &bvh.tris[n.start as usize..(n.start + n.count) as usize] {
                 match ray_triangle_crossing(p, dir, tri) {
-                    RayHit::Cross(t) => hits.push(t),
+                    RayHit::Cross(t, _) => hits.push(t),
                     RayHit::Graze => suspect = true,
                     RayHit::Miss => {}
                 }
@@ -668,9 +668,84 @@ fn parity_ray(p: [f64; 3], dir: [f64; 3], bvh: &TriBvh) -> (bool, bool) {
     (hits.len() % 2 == 1, suspect)
 }
 
+/// Is `p` inside the mesh by **winding count** — the union-tolerant verdict.
+///
+/// Each crossing ahead of the point contributes `+1` when the ray enters
+/// through a triangle's outward face and `-1` when it leaves; `p` is inside
+/// when the sum is non-zero. Unlike parity this survives *overlapping
+/// construction bodies* welded into one mesh — two shells that share a slab
+/// give a point in the overlap a count of 2, still inside, where parity would
+/// see two crossings and call it void — and it survives coincident duplicate
+/// faces, whose contributions cancel instead of flipping the answer.
+///
+/// The sign convention is load-bearing and is pinned by tests: an inverted
+/// sum reports *nothing* as inside, and a probe suite of void assertions then
+/// passes vacuously. That is not hypothetical — it is the bug rana's first
+/// shell check shipped with (`tools/support-check.py`, finding #11).
+///
+/// Like the parity cast, the verdict is a majority vote over skew directions
+/// with edge-grazing rays discarded.
+pub(crate) fn point_in_mesh_winding(p: [f64; 3], bvh: &TriBvh) -> bool {
+    let mut inside_votes = 0usize;
+    let mut outside_votes = 0usize;
+    let mut grazing_fallback: Option<bool> = None;
+    for dir in PARITY_DIRS {
+        let (inside, suspect) = winding_ray(p, dir, bvh);
+        if suspect {
+            grazing_fallback.get_or_insert(inside);
+            continue;
+        }
+        if inside {
+            inside_votes += 1;
+        } else {
+            outside_votes += 1;
+        }
+        if inside_votes >= 2 {
+            return true;
+        }
+        if outside_votes >= 2 {
+            return false;
+        }
+    }
+    match inside_votes.cmp(&outside_votes) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => grazing_fallback.unwrap_or(false),
+    }
+}
+
+/// One winding cast: `(nonzero_winding, saw_a_grazing_hit)`.
+fn winding_ray(p: [f64; 3], dir: [f64; 3], bvh: &TriBvh) -> (bool, bool) {
+    let mut winding = 0i32;
+    let mut suspect = false;
+    let mut stack = vec![0u32];
+    while let Some(idx) = stack.pop() {
+        let n = &bvh.nodes[idx as usize];
+        if !ray_hits_aabb(p, dir, n.min, n.max) {
+            continue;
+        }
+        if n.is_leaf() {
+            for tri in &bvh.tris[n.start as usize..(n.start + n.count) as usize] {
+                match ray_triangle_crossing(p, dir, tri) {
+                    RayHit::Cross(_, det) => winding += if det > 0.0 { 1 } else { -1 },
+                    RayHit::Graze => suspect = true,
+                    RayHit::Miss => {}
+                }
+            }
+        } else {
+            stack.push(n.left);
+            stack.push(n.right);
+        }
+    }
+    (winding != 0, suspect)
+}
+
 enum RayHit {
     Miss,
-    Cross(f64),
+    /// Ray parameter of the hit, and the Möller–Trumbore determinant, whose
+    /// sign says which face of the triangle was struck: positive when the ray
+    /// enters through the front (outward-normal) side, negative on exit.
+    Cross(f64, f64),
     Graze,
 }
 
@@ -706,7 +781,7 @@ fn ray_triangle_crossing(orig: [f64; 3], dir: [f64; 3], tri: &Tri) -> RayHit {
     if u < EDGE_EPS || v < EDGE_EPS || u + v > 1.0 - EDGE_EPS {
         return RayHit::Graze;
     }
-    RayHit::Cross(t)
+    RayHit::Cross(t, det)
 }
 
 /// Slab test for a ray with `t ∈ (0, ∞)`.

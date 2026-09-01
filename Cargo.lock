@@ -6970,6 +6970,7 @@ dependencies = [
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
  "vcad-loon",
+ "vcad-printcheck",
  "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
@@ -7783,6 +7784,8 @@ name = "vcad-kernel-tessellate"
 version = "0.9.4"
 dependencies = [
  "earcutr",
+ "serde",
+ "serde_json",
  "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -7912,6 +7915,7 @@ name = "vcad-loon"
 version = "0.9.4"
 dependencies = [
  "loon-lang",
+ "serde",
  "serde_json",
  "vcad-ir",
  "vcad-parts",
@@ -7924,6 +7928,16 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-ir",
+]
+
+[[package]]
+name = "vcad-printcheck"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stl_io",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
