@@ -394,6 +394,7 @@ export function doc(
 
   const document: Document = {
     version: "0.1",
+      mates: [],
     nodes,
     materials: { [matKey]: mat },
     part_materials: {},
@@ -430,6 +431,7 @@ export function multiDoc(
 
   const document: Document = {
     version: "0.1",
+      mates: [],
     nodes,
     materials: allMats,
     part_materials: {},

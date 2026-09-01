@@ -30,6 +30,7 @@ let part = plate - holes;
 part.write_stl("plate.stl")?;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -119,6 +120,7 @@ let mount_holes = hole
 let result = bracket - mount_holes;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -199,6 +201,7 @@ let sphere = Part::sphere("ball", 25.0, 32);
 sphere.write_stl("sphere.stl")?;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -227,6 +230,7 @@ let cube = Part::cube("box", 30.0, 30.0, 30.0);
 cube.write_stl("cube.stl")?;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -261,6 +265,7 @@ let rotated = cube.rotate(0.0, 0.0, 45.0);
 let moved = rotated.translate(30.0, 0.0, 0.0);`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -305,6 +310,7 @@ let hole = centered_cylinder("hole", 10.0, 10.0, 32);
 let result = plate - hole;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -355,6 +361,7 @@ let vents = slot.circular_pattern(20.0, 8);
 let result = disc - vents;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -420,6 +427,7 @@ let bolts = bolt_pattern(6, 50.0, 4.0, 10.0, 24)
 let result = hub + flange - bore - bolts;`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
@@ -517,6 +525,7 @@ let vent = centered_cube("vent", 2.0, 15.0, 10.0);
 let vents = vent.linear_pattern(5.0, 0.0, 0.0, 6);`,
     document: {
       version: "0.1",
+      mates: [],
       nodes: {
         "1": {
           id: 1,
