@@ -13,6 +13,7 @@ use vcad_ir::Document;
 
 mod convert;
 pub mod fastener;
+pub mod gear;
 pub mod modules;
 pub mod params;
 pub mod recover;

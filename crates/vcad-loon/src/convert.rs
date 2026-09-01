@@ -574,6 +574,7 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Torus"
             | "Wedge"
             | "Prism"
+            | "Gear"
             | "Empty"
             | "Union"
             | "Difference"
@@ -1416,6 +1417,51 @@ impl ConvertCtx {
                     major_radius: self.f64_val(&fields[0])?,
                     minor_radius: self.f64_val(&fields[1])?,
                     segments: 0,
+                }
+            }
+            // Involute spur gear. Unlike the other primitives this is not its
+            // own `CsgOp` — it lowers to a `Sketch2D` of the exact involute
+            // profile plus an `Extrude`. That is not a shortcut: the profile
+            // *is* the gear, and extruding a closed 2D loop builds the walls
+            // directly with no boolean pass, where a per-tooth union of boxes
+            // (the recipe this replaces) pays N booleans and is where the
+            // cracks came from. See `crate::gear` for the profile math and the
+            // two documented approximations.
+            //
+            // [Gear module teeth face-width backlash internal]
+            "Gear" => {
+                assert_fields(tag, fields, 5)?;
+                let teeth = self.f64_val(&fields[1])?;
+                if teeth.fract() != 0.0 || teeth < 0.0 || teeth > u32::MAX as f64 {
+                    return Err(format!(
+                        "gear tooth count must be a whole number, got {teeth}"
+                    ));
+                }
+                let spec = crate::gear::GearSpec {
+                    module: self.f64_val(&fields[0])?,
+                    teeth: teeth as u32,
+                    face_width: self.f64_val(&fields[2])?,
+                    backlash: self.f64_val(&fields[3])?,
+                    internal: self.bool_val(&fields[4])?,
+                };
+                let segments = spec.sketch_segments()?;
+                // Base on z = 0, extruding up the face width. This matches
+                // what `cylinder` and `prism` actually do (their doc comments
+                // say "centered at origin", but the kernel builds them from
+                // z = 0), so a gear stacks onto a shaft the way an author
+                // expects rather than sinking half its face into it.
+                let sketch = self.insert_node(CsgOp::Sketch2D {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    x_dir: Vec3::new(1.0, 0.0, 0.0),
+                    y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    segments,
+                    holes: None,
+                });
+                CsgOp::Extrude {
+                    sketch,
+                    direction: Vec3::new(0.0, 0.0, spec.face_width),
+                    twist_angle: None,
+                    scale_end: None,
                 }
             }
             // Same primitives with the segment count pinned by the author.
