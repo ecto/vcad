@@ -6970,6 +6970,7 @@ dependencies = [
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
  "vcad-loon",
+ "vcad-printcheck",
  "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
@@ -7927,6 +7928,16 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-ir",
+]
+
+[[package]]
+name = "vcad-printcheck"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stl_io",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

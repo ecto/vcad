@@ -372,6 +372,53 @@ enum Commands {
         explain: bool,
     },
 
+    /// Lint an EXPORTED mesh for FDM printability, in a chosen orientation
+    ///
+    /// Printability is a property of the shipped file, not of the model that
+    /// produced it: a shell can pass its author's analytic profile check while
+    /// the discretised STL carries 0.05 mm cracks. So this reads triangles and
+    /// casts rays at them, reporting floating regions and mid-air islands,
+    /// interior cracks, the overhang census, bridge spans with lengths, min
+    /// wall against the nozzle, and a manifold + closed-sections summary.
+    ///
+    /// Exit code is 0 when clean and 1 when anything failed, so it gates CI.
+    Check {
+        /// Mesh to check (.stl, binary or ASCII)
+        input: PathBuf,
+        /// Which model axis points up on the plate: z, -z, x, -x, y, -y
+        #[arg(long, default_value = "z")]
+        orientation: String,
+        /// Nozzle width in mm — nothing thinner can be extruded
+        #[arg(long, default_value = "0.4")]
+        nozzle: f64,
+        /// Longest unsupported span accepted without support material, mm
+        #[arg(long, default_value = "4")]
+        max_bridge: f64,
+        /// Material gaps below this are cracks, not channels. Never waived.
+        #[arg(long, default_value = "0.15")]
+        crack_threshold: f64,
+        /// Self-support limit in degrees from vertical
+        #[arg(long, default_value = "45")]
+        max_overhang: f64,
+        /// Fail on the overhang census instead of warning
+        #[arg(long)]
+        strict_overhangs: bool,
+        /// Distance between raycast columns, mm (default: the nozzle width)
+        #[arg(long)]
+        pitch: Option<f64>,
+        /// Section sampling pitch in mm
+        #[arg(long, default_value = "0.4")]
+        section_step: f64,
+        /// Accept unsupported spans in a height range, e.g. `--allow-bridge
+        /// 1.75:2.65`. Repeatable. Documented bridges only — a crack is never
+        /// waived by this.
+        #[arg(long = "allow-bridge", value_name = "Z0:Z1")]
+        allow_bridge: Vec<String>,
+        /// Emit the report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Start the print relay server for web app → printer communication
     #[cfg(feature = "print-server")]
     PrintServer {
@@ -677,6 +724,33 @@ fn main() -> Result<()> {
                 bed_temp,
                 smart,
                 explain,
+            )?;
+        }
+        Some(Commands::Check {
+            input,
+            orientation,
+            nozzle,
+            max_bridge,
+            crack_threshold,
+            max_overhang,
+            strict_overhangs,
+            pitch,
+            section_step,
+            allow_bridge,
+            json,
+        }) => {
+            run_check(
+                &input,
+                &orientation,
+                nozzle,
+                max_bridge,
+                crack_threshold,
+                max_overhang,
+                strict_overhangs,
+                pitch,
+                section_step,
+                &allow_bridge,
+                json,
             )?;
         }
         #[cfg(feature = "print-server")]
@@ -1928,6 +2002,73 @@ pub fn export_file_from_doc(doc: &vcad_ir::Document, output: &PathBuf) -> Result
 }
 
 #[allow(clippy::too_many_arguments)]
+/// `vcad check` — printability lint on an exported mesh.
+///
+/// Exits the process with 1 on a dirty verdict rather than returning an error,
+/// so CI sees a lint failure (findings already printed) and not a crash.
+#[allow(clippy::too_many_arguments)]
+fn run_check(
+    input: &std::path::Path,
+    orientation: &str,
+    nozzle: f64,
+    max_bridge: f64,
+    crack_threshold: f64,
+    max_overhang: f64,
+    strict_overhangs: bool,
+    pitch: Option<f64>,
+    section_step: f64,
+    allow_bridge: &[String],
+    json: bool,
+) -> Result<()> {
+    use vcad_printcheck::{check_file, render_text, Options, Orientation};
+
+    let orientation = Orientation::parse(orientation).ok_or_else(|| {
+        anyhow::anyhow!("unknown orientation `{orientation}` (expected one of z, -z, x, -x, y, -y)")
+    })?;
+    let mut allow_bridges = Vec::new();
+    for spec in allow_bridge {
+        let (a, b) = spec
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("--allow-bridge wants Z0:Z1, got `{spec}`"))?;
+        let lo: f64 = a
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--allow-bridge: `{a}` is not a number"))?;
+        let hi: f64 = b
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--allow-bridge: `{b}` is not a number"))?;
+        if hi < lo {
+            anyhow::bail!("--allow-bridge {spec}: the range runs backwards");
+        }
+        allow_bridges.push((lo, hi));
+    }
+
+    let opts = Options {
+        orientation,
+        nozzle,
+        max_bridge,
+        crack_threshold,
+        max_overhang,
+        strict_overhangs,
+        pitch: pitch.unwrap_or(nozzle),
+        section_step,
+        allow_bridges,
+        ..Default::default()
+    };
+    let report = check_file(input, &opts)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", render_text(&report));
+    }
+    if !report.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 fn slice_file(
     input: &PathBuf,
     output: &PathBuf,
