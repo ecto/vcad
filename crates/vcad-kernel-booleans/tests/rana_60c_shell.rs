@@ -274,12 +274,7 @@ fn tube() -> TriangleMesh {
         (R_IN, Z_TOP),
     ];
     let samples: Vec<(f64, Vec<(f64, f64)>)> = (0..TUBE_SEGMENTS)
-        .map(|i| {
-            (
-                360.0 * i as f64 / TUBE_SEGMENTS as f64,
-                profile.clone(),
-            )
-        })
+        .map(|i| (360.0 * i as f64 / TUBE_SEGMENTS as f64, profile.clone()))
         .collect();
     sweep(&samples, false)
 }
@@ -400,7 +395,10 @@ fn describe_defects(mesh: &TriangleMesh) -> String {
     }
     for tri in mesh.indices.chunks(3) {
         for k in 0..3 {
-            let (a, b) = (find(&mut parent, tri[k]), find(&mut parent, tri[(k + 1) % 3]));
+            let (a, b) = (
+                find(&mut parent, tri[k]),
+                find(&mut parent, tri[(k + 1) % 3]),
+            );
             if a != b {
                 parent[a as usize] = b;
             }
@@ -419,7 +417,9 @@ fn describe_defects(mesh: &TriangleMesh) -> String {
             ]
         };
         let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
-        let e = per.entry(root).or_insert((0, 0.0, [f64::MAX; 3], [f64::MIN; 3]));
+        let e = per
+            .entry(root)
+            .or_insert((0, 0.0, [f64::MAX; 3], [f64::MIN; 3]));
         e.0 += 1;
         e.1 += (a[0] * (b[1] * c[2] - c[1] * b[2]) - b[0] * (a[1] * c[2] - c[1] * a[2])
             + c[0] * (a[1] * b[2] - b[1] * a[2]))
@@ -483,11 +483,7 @@ fn to_stl(mesh: &TriangleMesh) -> Vec<u8> {
     for tri in mesh.indices.chunks(3) {
         let p = |i: u32| {
             let k = i as usize * 3;
-            [
-                mesh.vertices[k],
-                mesh.vertices[k + 1],
-                mesh.vertices[k + 2],
-            ]
+            [mesh.vertices[k], mesh.vertices[k + 1], mesh.vertices[k + 2]]
         };
         let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
         let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
@@ -597,19 +593,17 @@ impl Stl {
 fn documented_bridge(theta: f64, z: f64) -> bool {
     let entry_half = half_angle(4.4, 34.5);
     let behind = |a: f64| -(((theta - a + 180.0).rem_euclid(360.0)) - 180.0);
-    BOTTOM_ENTRIES.iter().any(|&a| {
-        (-entry_half - 0.2..=18.6).contains(&behind(a)) && (1.7..=2.7).contains(&z)
-    }) || TOP_ENTRIES.iter().any(|&a| {
-        (entry_half - 0.2..=18.6).contains(&behind(a)) && (25.55..=26.3).contains(&z)
-    })
+    BOTTOM_ENTRIES
+        .iter()
+        .any(|&a| (-entry_half - 0.2..=18.6).contains(&behind(a)) && (1.7..=2.7).contains(&z))
+        || TOP_ENTRIES
+            .iter()
+            .any(|&a| (entry_half - 0.2..=18.6).contains(&behind(a)) && (25.55..=26.3).contains(&z))
 }
 
 /// Every disallowed restart or crack found in one column.
 fn column_defects(stl: &Stl, theta: f64, r: f64) -> Vec<String> {
-    let (x, y) = (
-        r * theta.to_radians().cos(),
-        r * theta.to_radians().sin(),
-    );
+    let (x, y) = (r * theta.to_radians().cos(), r * theta.to_radians().sin());
     let iv = stl.intervals(x, y);
     let mut bad = Vec::new();
     if iv.is_empty() {
@@ -654,8 +648,10 @@ fn support_check(mesh: &TriangleMesh) -> (usize, Vec<String>) {
 
     // Fine pass at the angles where the helical floors and roofs are
     // steepest and where the entry, leg and window cuts all overlap.
-    for theta in [6.0, 45.0, 48.0, 52.0, 58.0, 60.0, 88.0, 90.0, 96.0, 100.0, 105.0, 200.0]
-        .map(|t: f64| t + PROBE_PHASE)
+    for theta in [
+        6.0, 45.0, 48.0, 52.0, 58.0, 60.0, 88.0, 90.0, 96.0, 100.0, 105.0, 200.0,
+    ]
+    .map(|t: f64| t + PROBE_PHASE)
     {
         for r in [33.5, 34.5, 35.5] {
             columns += 1;
@@ -762,7 +758,10 @@ fn full_shell_is_deterministic_across_runs() {
     let a = to_stl(&build(void_tools()));
     let b = to_stl(&build(void_tools()));
     assert_eq!(a.len(), b.len(), "triangle count differs between runs");
-    assert!(a == b, "STL bytes differ between two runs of the same build");
+    assert!(
+        a == b,
+        "STL bytes differ between two runs of the same build"
+    );
 }
 
 /// KNOWN GAP (ecto/vcad#840 follow-up). Two defects survive, both traced

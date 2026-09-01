@@ -233,11 +233,7 @@ pub fn check_manifold(mesh: &TriangleMesh) -> ManifoldReport {
 
     for tri in mesh.indices.chunks(3) {
         let t = [tri[0], tri[1], tri[2]];
-        let (a, b, c) = (
-            point(mesh, t[0]),
-            point(mesh, t[1]),
-            point(mesh, t[2]),
-        );
+        let (a, b, c) = (point(mesh, t[0]), point(mesh, t[1]), point(mesh, t[2]));
         if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] || tri_area(a, b, c) == 0.0 {
             degenerate += 1;
             continue;
@@ -298,7 +294,10 @@ fn count_components(mesh: &TriangleMesh, nvert: usize) -> usize {
     for tri in mesh.indices.chunks(3) {
         for k in 0..3 {
             used[tri[k] as usize] = true;
-            let (a, b) = (find(&mut parent, tri[k]), find(&mut parent, tri[(k + 1) % 3]));
+            let (a, b) = (
+                find(&mut parent, tri[k]),
+                find(&mut parent, tri[(k + 1) % 3]),
+            );
             if a != b {
                 parent[a as usize] = b;
             }
@@ -565,7 +564,12 @@ fn clean_pass(
         if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
             continue;
         }
-        if tri_area(reps[t[0] as usize], reps[t[1] as usize], reps[t[2] as usize]) <= area_eps {
+        if tri_area(
+            reps[t[0] as usize],
+            reps[t[1] as usize],
+            reps[t[2] as usize],
+        ) <= area_eps
+        {
             continue;
         }
         tris.push(t);
@@ -750,8 +754,7 @@ mod tests {
         let base = cube();
         let mut m = base.clone();
         let n = (base.vertices.len() / 3) as u32;
-        m.vertices
-            .extend(base.vertices.iter().map(|x| x + 1e-6));
+        m.vertices.extend(base.vertices.iter().map(|x| x + 1e-6));
         m.normals.extend_from_slice(&base.normals);
         for i in m.indices.iter_mut().skip(base.indices.len() / 2) {
             *i += n;
