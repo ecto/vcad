@@ -1072,6 +1072,7 @@ fn parse_instance(doc: &mut Document, parts: &[&str], line: usize) -> Result<(),
         tags: Vec::new(),
         transform: Some(transform),
         material,
+        explode: None,
     });
 
     Ok(())
@@ -3789,6 +3790,7 @@ CAM cam2 0 100 0 0 0 0"#;
                 tags: Vec::new(),
                 transform: Some(Transform3D::default()),
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "inst2".to_string(),
@@ -3801,6 +3803,7 @@ CAM cam2 0 100 0 0 0 0"#;
                     scale: Vec3::new(1.0, 1.0, 1.0),
                 }),
                 material: None,
+                explode: None,
             },
         ]);
 

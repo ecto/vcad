@@ -332,6 +332,7 @@ export function createDocument(): Document {
     materials: {},
     part_materials: {},
     roots: [],
+    mates: [],
   };
 }
 

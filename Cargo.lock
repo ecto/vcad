@@ -7341,6 +7341,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-assembly"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-eval",
+ "vcad-ir",
+ "vcad-kernel-tessellate",
+ "vcad-loon",
+]
+
+[[package]]
 name = "vcad-kernel-atoms"
 version = "0.9.4"
 dependencies = [

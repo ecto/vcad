@@ -1217,6 +1217,7 @@ fn materialize_instance(doc: &mut Document, ctx: &Context, fid: FeatureId, featu
         tags: Vec::new(),
         transform,
         material,
+        explode: None,
     });
 
     let _ = ctx;
