@@ -4,6 +4,7 @@ members = [
     "crates/vcad-ir",
     "crates/vcad-receipt",
     "crates/vcad-parts",
+    "crates/vcad-printcheck",
     "crates/vcad",
     "crates/vcad-kernel-math",
     "crates/vcad-kernel-topo",
@@ -105,6 +106,7 @@ default-members = [
     "crates/vcad-ir",
     "crates/vcad-receipt",
     "crates/vcad-parts",
+    "crates/vcad-printcheck",
     "crates/vcad",
     "crates/vcad-kernel-math",
     "crates/vcad-kernel-topo",
@@ -245,6 +247,7 @@ opencascade = { version = "0.2" }
 vcad-ir = { path = "crates/vcad-ir", version = "0.9.4" }
 vcad-receipt = { path = "crates/vcad-receipt", version = "0.9.4" }
 vcad-parts = { path = "crates/vcad-parts", version = "0.9.4" }
+vcad-printcheck = { path = "crates/vcad-printcheck", version = "0.9.4" }
 vcad-kernel = { path = "crates/vcad-kernel", version = "0.9.4" }
 vcad-kernel-math = { path = "crates/vcad-kernel-math", version = "0.9.4" }
 vcad-kernel-topo = { path = "crates/vcad-kernel-topo", version = "0.9.4" }
