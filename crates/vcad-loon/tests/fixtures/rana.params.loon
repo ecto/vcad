@@ -1,0 +1,36 @@
+; The rana actuator family as one parameter table plus overlays.
+;
+; rana-100 is the full-size design; the 60c is the print mule — 0.6× envelope,
+; printed small to learn fit before the finding is promoted upward. What the
+; mule may shrink and what it may not is a property of each parameter here,
+; not a paragraph in a design doc.
+
+[deftable rana
+  ; --- envelope-driven: these follow the scale -----------------------------
+  [defparam envelope_d 100.0 :unit "mm"
+    :description "outer diameter of the actuator can"]
+  [defparam shell_wall 2.4 :unit "mm"]
+  [defparam rotor_r "envelope_d / 2 - shell_wall"]
+  [defparam pocket_clearance 0.2 :unit "mm"
+    :description "magnet pocket fit clearance, per side"]
+  [defparam pocket_w "magnet_block_w + 2 * pocket_clearance"]
+  [defparam pocket_l "magnet_block_l + 2 * pocket_clearance"]
+
+  ; --- held constant: set by process or by a purchased part ----------------
+  [defparam gear_module 0.5 :unit "mm" :scale_with_envelope false
+    :description "m0.5 is the PLA tooth floor — smaller teeth do not print"]
+  [defparam min_wall 0.4 :unit "mm" :scale_with_envelope false
+    :description "one 0.4 mm nozzle line"]
+  [defparam bolt_d 3.0 :unit "mm" :scale_with_envelope false
+    :description "M3 — COTS hardware does not scale"]
+  [defparam magnet_block_w 10.0 :unit "mm" :scale_with_envelope false
+    :description "N52 block, COTS"]
+  [defparam magnet_block_l 20.0 :unit "mm" :scale_with_envelope false
+    :description "N52 block, COTS"]
+  [defparam magnet_block_h 3.0 :unit "mm" :scale_with_envelope false
+    :description "N52 block, COTS"]]
+
+[defvariant rana_60c :from rana :scale 0.6
+  :description "0.6x print mule"
+  [override pocket_clearance 0.4
+    :why "60c mule first print: 0.2 pocket was interference-tight, +0.2 fits"]]

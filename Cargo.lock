@@ -7912,6 +7912,7 @@ name = "vcad-loon"
 version = "0.9.4"
 dependencies = [
  "loon-lang",
+ "serde",
  "serde_json",
  "vcad-ir",
  "vcad-parts",
