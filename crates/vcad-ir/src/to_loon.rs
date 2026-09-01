@@ -516,6 +516,23 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
                     fmt_f64(*turns),
                     sk
                 )),
+                PathCurve::Cylindrical {
+                    radius,
+                    knots,
+                    seg_deg,
+                } => {
+                    let flat: Vec<String> = knots
+                        .iter()
+                        .flat_map(|k| [fmt_f64(k.x), fmt_f64(k.y)])
+                        .collect();
+                    OpResult::Ok(format!(
+                        "[sweep [cam-path-res {} {} #[{}]] {}]",
+                        fmt_f64(seg_deg.unwrap_or(0.5)),
+                        fmt_f64(*radius),
+                        flat.join(" "),
+                        sk
+                    ))
+                }
             }
         }
 

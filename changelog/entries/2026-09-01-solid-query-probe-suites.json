@@ -1,0 +1,9 @@
+{
+  "id": "2026-09-01-solid-query-probe-suites",
+  "version": "0.9.4",
+  "date": "2026-09-01",
+  "category": "feat",
+  "title": "Solid query API and probe suites",
+  "summary": "Classify points against posed assemblies, measure part-to-part clearance, and run JSON probe suites with `vcad probe` (nonzero exit on failure).",
+  "features": ["query", "probe", "clearance", "assembly", "cli"]
+}

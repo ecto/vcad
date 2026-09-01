@@ -3139,7 +3139,21 @@ height: number,
 /**
  * Number of turns.
  */
-turns: number, };
+turns: number, } | { "type": "Cylindrical", 
+/**
+ * Cylinder radius (mm).
+ */
+radius: number, 
+/**
+ * `(angle in degrees, height in mm)` knots as `Vec2 { x: deg, y: z }`,
+ * monotonic in angle, at least two. Height is relative to the
+ * path's own origin, so the first knot's height is usually 0.
+ */
+knots: Array<Vec2>, 
+/**
+ * Angular step between path samples, in degrees. `None` = 0.5°.
+ */
+seg_deg?: number, };
 
 /**
  * A complete PCB design.

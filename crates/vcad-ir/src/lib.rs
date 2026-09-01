@@ -546,6 +546,24 @@ pub enum PathCurve {
         /// Number of turns.
         turns: f64,
     },
+    /// A path on the surface of a cylinder: constant radius, with height a
+    /// piecewise-linear function of the angle.
+    ///
+    /// This is how a cam track, a bayonet slot or a J-slot is dimensioned —
+    /// rise per degree of arc, with named angles for the lead-in, the detent
+    /// and the pocket. A constant-rate helical arc is the two-knot case.
+    Cylindrical {
+        /// Cylinder radius (mm).
+        radius: f64,
+        /// `(angle in degrees, height in mm)` knots as `Vec2 { x: deg, y: z }`,
+        /// monotonic in angle, at least two. Height is relative to the
+        /// path's own origin, so the first knot's height is usually 0.
+        knots: Vec<Vec2>,
+        /// Angular step between path samples, in degrees. `None` = 0.5°.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        seg_deg: Option<f64>,
+    },
 }
 
 impl SubToolSchema for PathCurve {
@@ -589,6 +607,26 @@ impl SubToolSchema for PathCurve {
                         "turns":  { "type": "number", "description": "Total turn count. Normally ≈ height / pitch." }
                     },
                     "required": ["type", "radius", "pitch", "height", "turns"]
+                },
+                {
+                    "type": "object",
+                    "description": "Path on a cylinder: constant radius, height piecewise-linear in the angle. Use for cam tracks, bayonet/J-slots, lead-in ramps and threads that are dimensioned as rise-per-degree. Two knots = a plain helical arc; extra knots express a detent (rise-plateau-drop) or a flat pocket directly.",
+                    "properties": {
+                        "type": { "const": "Cylindrical" },
+                        "radius": { "type": "number", "description": "Cylinder radius in mm." },
+                        "knots": {
+                            "type": "array",
+                            "minItems": 2,
+                            "description": "Monotonic-in-angle knots; x = angle in degrees, y = height in mm relative to the path origin.",
+                            "items": {
+                                "type": "object",
+                                "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+                                "required": ["x", "y"]
+                            }
+                        },
+                        "seg_deg": { "type": "number", "description": "Angular step between path samples in degrees (default 0.5)." }
+                    },
+                    "required": ["type", "radius", "knots"]
                 }
             ]
         })
