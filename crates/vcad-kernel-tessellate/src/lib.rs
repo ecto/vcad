@@ -17,6 +17,7 @@ use vcad_kernel_topo::{FaceId, Orientation, Topology};
 pub mod clearance;
 mod creased_normals;
 pub mod frozen;
+pub mod manifold;
 pub mod mesh_props;
 pub mod mesh_ray;
 pub use mesh_props::{compute_mesh_properties, MeshBBox, MeshProperties};
@@ -24,6 +25,7 @@ pub mod placement;
 mod render_bake;
 
 pub use clearance::{mesh_clearance, ClearanceResult};
+pub use manifold::{check_manifold, make_manifold, ManifoldReport, DEFAULT_WELD_EPS};
 pub use creased_normals::{
     apply_creased_normals, apply_default_creased_normals, DEFAULT_CREASE_ANGLE_RAD,
 };
@@ -230,12 +232,22 @@ impl TriangleMesh {
     /// pork-chop fillet).
     ///
     /// Returned as `(vertex_index_a, vertex_index_b)` with `a < b`.
+    /// Sorted by vertex index. The sort is not cosmetic: the boolean
+    /// pipeline's t-junction healing stitches boundary vertices back in
+    /// *in the order this returns them*, so leaking the hash map's
+    /// iteration order here made the same boolean emit different meshes on
+    /// different runs (measured on the rana-60c shell: 11188 vs 11194
+    /// triangles from identical operands). Callers diff STLs across
+    /// regenerations, so this order is part of the contract.
     pub fn boundary_edges(&self) -> Vec<(u32, u32)> {
-        self.edge_use_counts()
+        let mut edges: Vec<(u32, u32)> = self
+            .edge_use_counts()
             .into_iter()
             .filter(|(_, n)| *n == 1)
             .map(|(e, _)| e)
-            .collect()
+            .collect();
+        edges.sort_unstable();
+        edges
     }
 
     /// Like `boundary_edges` but returns each edge as a pair of world-
@@ -391,12 +403,17 @@ impl TriangleMesh {
     /// Find non-manifold edges: edges adjacent to 3 or more triangles.
     /// A closed manifold mesh has none; any entry indicates a topology
     /// bug (overlapping faces, welded seams crossing themselves, etc.).
+    /// Sorted by vertex index, for the same reason as
+    /// [`boundary_edges`](Self::boundary_edges): reproducible output.
     pub fn non_manifold_edges(&self) -> Vec<(u32, u32, u32)> {
-        self.edge_use_counts()
+        let mut edges: Vec<(u32, u32, u32)> = self
+            .edge_use_counts()
             .into_iter()
             .filter(|(_, n)| *n >= 3)
             .map(|((a, b), n)| (a, b, n))
-            .collect()
+            .collect();
+        edges.sort_unstable();
+        edges
     }
 
     /// Group boundary edges into connected loops (chains of vertex

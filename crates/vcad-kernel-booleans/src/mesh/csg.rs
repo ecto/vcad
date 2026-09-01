@@ -42,6 +42,7 @@
 //! so deep tessellations cannot overflow the call stack.
 
 use vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_tessellate::manifold::{make_manifold, DEFAULT_WELD_EPS};
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::api::BooleanOp;
@@ -660,7 +661,13 @@ fn fill_small_holes(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32, u32)
         }
     }
     let mut done: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    let starts: Vec<u32> = succ.keys().copied().collect();
+    // Sorted, not hash order: which loop a chain is walked from decides
+    // which loops get capped when two share a vertex, so an unsorted
+    // `succ.keys()` made the output differ run to run. Callers diff STLs
+    // across regenerations, so the cap order has to be a function of the
+    // input alone.
+    let mut starts: Vec<u32> = succ.keys().copied().collect();
+    starts.sort_unstable();
     for start in starts {
         if done.contains(&start) {
             continue;
@@ -741,6 +748,38 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
     // carriers (measured 0.36 mm off a R25 sphere). `mesh_fallback` runs
     // the repair pipeline between two projection passes instead.
     orient_outward(polygons_to_mesh(&out))
+}
+
+/// Boolean of two closed triangle meshes, repaired into a manifold shell.
+///
+/// [`mesh_csg`] deliberately runs no repair passes, because callers that
+/// reproject vertices onto analytic carriers must see the raw fragment
+/// topology. Callers who just want a solid to export want the opposite,
+/// and got neither: the raw result is watertight but *branches* wherever
+/// two tool boundaries nearly coincide — classification correctly keeps a
+/// fragment from each operand covering the same surface, leaving edges
+/// with four incident triangles. A slicer's ray parity reads those as
+/// interior cracks, which is the failure mode ecto/vcad#840 was filed for.
+///
+/// This is the export-facing entry point: [`mesh_csg`] followed by
+/// [`make_manifold`], which welds the seam copies, drops slivers and
+/// cancels the double covers. It is deterministic and volume-preserving —
+/// a cancelling patch pair contributes nothing to the divergence integral,
+/// so repair cannot quietly change the part.
+///
+/// Chain it directly for multi-tool parts: differencing N tools one at a
+/// time keeps every intermediate a valid solid, so a failure is localised
+/// to the tool that caused it rather than surfacing at the end.
+pub fn manifold_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> TriangleMesh {
+    let mut out = mesh_csg(mesh_a, mesh_b, op);
+    // Strip double covers that `make_manifold` cannot see. Its cancellation
+    // matches triangles by vertex set, which catches a patch and its exact
+    // mirror but not two patches covering the same surface with *different*
+    // triangulations — the shape a difference leaves where a tool's face
+    // grazes an existing wall. This pass classifies by ray casting instead,
+    // so the triangulations need not agree.
+    super::remove_interior_membranes(&mut out);
+    make_manifold(&out, DEFAULT_WELD_EPS)
 }
 
 /// Pin the global orientation: a bounded solid — outer shells minus any
