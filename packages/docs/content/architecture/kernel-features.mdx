@@ -161,6 +161,39 @@ Helical sweep carries a circular profile along a helix — a compression spring 
 
 ![Helical sweep: a five-turn compression spring](/assets/kernel/sweep.jpg)
 
+A cam track, a bayonet slot, a J-slot or a lead-in ramp is dimensioned
+differently — not as turns and a pitch, but as **rise per degree of arc**,
+with named angles for the lead-in, the detent and the pocket. `helix` and
+`sweep` say it that way:
+
+```lisp
+[root [pipe [profile-rect 3.0 2.0]
+            [sweep [helix 34.5 0.0667 0.0 15.0]]] "aluminum"]
+```
+
+That is a 3 mm x 2 mm channel section carried 15 deg around r34.5, rising
+0.0667 mm per degree. The profile's x is the **radial** offset from the path
+radius and its y is the **axial** offset; the cross-section is held in that
+radial/axial plane rather than square to the tangent, which is what a radial
+section of the finished part shows and what makes the swept floor land on
+`path z(theta) + min(profile y)` exactly.
+
+When the height is not a constant rate, add knots. `cam-path` takes a flat
+`#[deg z ...]` list, so a rise-plateau-drop detent or a flat pocket is
+expressed directly rather than approximated by stacked z-bands:
+
+```lisp
+[root [pipe [profile-polyline #[-1.6 0.0  1.6 0.0  1.3 1.6  -1.3 1.6]]
+            [sweep [cam-path 34.5 #[3.6 -0.25  9.6 0.15  10.3 0.25
+                                    11.3 0.25  11.6 0.15  18.4 0.15]]]]
+      "aluminum"]
+```
+
+Knots always land exactly on path samples, so a plateau's corners survive the
+faceting. The step is 0.5 deg by default; `helix-res` and `cam-path-res` take
+it explicitly. The swept solid is capped at both ends, so it is watertight
+standing alone and can be subtracted through a wall.
+
 Loft interpolates a solid through a sequence of cross-sections:
 
 ```lisp

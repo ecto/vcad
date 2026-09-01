@@ -30,7 +30,7 @@ mod sweep;
 
 pub use frenet::FrenetFrame;
 pub use loft::{loft, LoftMode, LoftOptions};
-pub use sweep::{sweep, Helix, SweepOptions};
+pub use sweep::{sweep, sweep_cylindrical, CylindricalPath, Helix, SweepOptions, DEFAULT_SEG_DEG};
 
 use thiserror::Error;
 

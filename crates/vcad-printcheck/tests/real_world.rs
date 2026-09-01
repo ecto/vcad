@@ -63,12 +63,7 @@ fn rana_60c_shell_is_clean() {
 fn rana_60c_shell_slot_roofs_are_reported_as_bridges() {
     let Some(p) = shell() else { return };
     let r = check_file(&p, &opts()).unwrap();
-    let roofs: Vec<_> = r
-        .columns
-        .bridges
-        .iter()
-        .filter(|b| b.whitelisted)
-        .collect();
+    let roofs: Vec<_> = r.columns.bridges.iter().filter(|b| b.whitelisted).collect();
     assert!(
         !roofs.is_empty(),
         "the documented slot roofs should show up as bridge spans"

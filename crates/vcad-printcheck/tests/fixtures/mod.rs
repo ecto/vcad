@@ -127,16 +127,8 @@ pub fn write_stl(path: &std::path::Path, tris: &[[[f64; 3]; 3]]) {
     out.extend_from_slice(&[0u8; 80]);
     out.extend_from_slice(&(tris.len() as u32).to_le_bytes());
     for t in tris {
-        let u = [
-            t[1][0] - t[0][0],
-            t[1][1] - t[0][1],
-            t[1][2] - t[0][2],
-        ];
-        let v = [
-            t[2][0] - t[0][0],
-            t[2][1] - t[0][1],
-            t[2][2] - t[0][2],
-        ];
+        let u = [t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]];
+        let v = [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]];
         let mut n = [
             u[1] * v[2] - u[2] * v[1],
             u[2] * v[0] - u[0] * v[2],

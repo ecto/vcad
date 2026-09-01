@@ -236,7 +236,11 @@ pub fn render_text(r: &Report) -> String {
     if r.columns.bridges.is_empty() {
         let _ = writeln!(s, "  bridges    none");
     } else {
-        let _ = writeln!(s, "  bridges    {} span(s), longest first:", r.columns.bridges.len());
+        let _ = writeln!(
+            s,
+            "  bridges    {} span(s), longest first:",
+            r.columns.bridges.len()
+        );
         for b in &r.columns.bridges {
             let _ = writeln!(
                 s,

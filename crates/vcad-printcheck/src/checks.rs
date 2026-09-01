@@ -98,7 +98,9 @@ pub fn check_sections(mesh: &Mesh, opts: &Options) -> (SectionSummary, Vec<Findi
     let mut count = 0usize;
     let mut z = zlo + step / 2.0;
     while z < zhi {
-        if flat.binary_search_by(|p| p.partial_cmp(&z).unwrap()).is_ok()
+        if flat
+            .binary_search_by(|p| p.partial_cmp(&z).unwrap())
+            .is_ok()
             || flat.iter().any(|f| (f - z).abs() < 1e-4)
         {
             z += step * 0.137;
@@ -275,7 +277,9 @@ pub fn check_columns(mesh: &Mesh, opts: &Options) -> (ColumnSummary, Vec<Finding
 
     for j in 0..ny {
         for i in 0..nx {
-            let Some(col) = &cols[j * nx + i] else { continue };
+            let Some(col) = &cols[j * nx + i] else {
+                continue;
+            };
             for k in 0..col.iv.len() {
                 let z = col.iv[k].0;
                 if k == 0 {
@@ -376,10 +380,7 @@ pub fn check_columns(mesh: &Mesh, opts: &Options) -> (ColumnSummary, Vec<Finding
     let mut bridges = Vec::new();
     let mut floating = 0usize;
     for members in &groups {
-        let z = members
-            .iter()
-            .map(|m| m.2)
-            .fold(f64::INFINITY, f64::min);
+        let z = members.iter().map(|m| m.2).fold(f64::INFINITY, f64::min);
         let (mut x0, mut y0) = (f64::INFINITY, f64::INFINITY);
         for &(i, j, _) in members {
             x0 = x0.min(px(i));
@@ -618,8 +619,7 @@ pub fn check_walls(mesh: &Mesh, opts: &Options) -> (WallSummary, Vec<Finding>) {
                         // feathering to an edge) — neither is a wall thickness
                         continue;
                     }
-                    if sp.void_before < opts.crack_threshold
-                        || sp.void_after < opts.crack_threshold
+                    if sp.void_before < opts.crack_threshold || sp.void_after < opts.crack_threshold
                     {
                         // Hairline either side: a mesh seam sliced out of solid
                         // material, not a wall standing in air. Whether that
@@ -721,10 +721,9 @@ fn anchor_reach(
     // restart heights straddle a bucket boundary, and reports them as
     // floating when they are part of the roof next door.
     let passable = |i: usize, j: usize| -> bool {
-        cols[j * nx + i].as_ref().is_some_and(|c| {
-            c.iv.iter()
-                .any(|(a, b)| *a <= z + tol && *b >= z - tol)
-        })
+        cols[j * nx + i]
+            .as_ref()
+            .is_some_and(|c| c.iv.iter().any(|(a, b)| *a <= z + tol && *b >= z - tol))
     };
     let mut dist = vec![u32::MAX; nx * ny];
     let mut queue = std::collections::VecDeque::new();
