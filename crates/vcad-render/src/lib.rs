@@ -40,6 +40,9 @@
 
 #[cfg(feature = "raytrace")]
 pub mod animate;
+/// `--assembly` / `--explode`: several posed parts as one scene.
+#[cfg(feature = "cli")]
+pub mod assembly;
 #[cfg(feature = "raytrace")]
 pub mod envmap;
 mod exact;
@@ -2169,9 +2172,79 @@ pub fn render_svg_str_opts(
     scale: f64,
     opts: &SvgOptions,
 ) -> Result<String, String> {
-    let mut scene = evaluate_vcad(raw_vcad)?;
+    render_scene(evaluate_vcad(raw_vcad)?, scale, opts)
+}
+
+/// One part of an assembly, already posed into world space.
+///
+/// The assembly's transforms are the single source of truth (see #844): this
+/// type is what a caller hands the renderer *after* applying them, so nothing
+/// downstream re-derives a pose. `name` is what `--focus` and `--highlight`
+/// match against, and what `--labels` prints.
+pub struct PosedPart {
+    /// The part's geometry, already transformed into world space.
+    pub solid: Solid,
+    /// Instance name, for focus/highlight selection and labels.
+    pub name: Option<String>,
+}
+
+/// Render already-posed assembly parts as one scene.
+///
+/// [`render_svg_str_opts`] evaluates a single document; this takes parts that
+/// have already been placed, so an assembly — or an exploded view of one —
+/// goes through exactly the same projection, hidden-line and section
+/// machinery as a single part, rather than through a separate code path that
+/// can drift from it.
+pub fn render_svg_posed(
+    parts: Vec<PosedPart>,
+    scale: f64,
+    opts: &SvgOptions,
+) -> Result<String, String> {
+    if parts.is_empty() {
+        return Err("assembly has no parts".to_string());
+    }
+    let scene: Vec<SceneSolid> = parts
+        .into_iter()
+        .map(|p| SceneSolid {
+            solid: p.solid,
+            tint: None,
+            material: None,
+            id: p.name.clone().unwrap_or_default(),
+            labels: p.name.iter().cloned().collect(),
+            name: p.name,
+        })
+        .collect();
+    render_scene(scene, scale, opts)
+}
+
+/// Section, select and draw an already-evaluated scene. Shared by the
+/// document and posed-assembly entry points so both honour `--section`,
+/// `--focus` and `--highlight` identically.
+fn render_scene(
+    mut scene: Vec<SceneSolid>,
+    scale: f64,
+    opts: &SvgOptions,
+) -> Result<String, String> {
     if let Some(plane) = opts.section {
+        let before = scene.len();
         scene = apply_section(scene, plane, opts.view);
+        // A plane that misses the model entirely leaves nothing to draw. The
+        // generic "no solids produced" that used to surface here reads as a
+        // broken document rather than as a section plane placed outside it,
+        // which is the usual cause (vcad primitives sit base-on-z=0, so
+        // `z=0` is the underside, not the middle).
+        if scene.is_empty() && before > 0 {
+            return Err(format!(
+                "section {}={} removed every part — the plane is outside the model \
+                 or on the camera side of all of it",
+                match plane.axis {
+                    Axis::X => "x",
+                    Axis::Y => "y",
+                    Axis::Z => "z",
+                },
+                plane.coord
+            ));
+        }
     }
     let accents: Vec<bool> = scene
         .iter()

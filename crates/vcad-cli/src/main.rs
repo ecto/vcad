@@ -12,6 +12,7 @@ mod chat_session;
 mod fabprep;
 mod input;
 mod keybinding_adapter;
+mod kit;
 mod log_capture;
 #[cfg(feature = "print-server")]
 mod print_server;
@@ -46,6 +47,19 @@ enum Commands {
     Tui {
         /// Path to a .vcad file to open
         file: Option<PathBuf>,
+    },
+
+    /// Lay parts out on print plates and write a Bambu/Prusa 3MF kit
+    ///
+    /// The spec is JSON: a list of parts (mesh path, plate index, XY centre),
+    /// optional bed size and per-plate names. Parts are dropped to the plate
+    /// in Z; overlaps and off-bed placements are errors, not warnings.
+    Kit {
+        /// Path to the kit spec JSON
+        spec: PathBuf,
+        /// Output .3mf (defaults to the spec path with a .3mf extension)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Interactive REPL for building geometry
@@ -639,6 +653,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::Kit { spec, output }) => {
+            kit::run(&kit::KitArgs { spec, output })?;
         }
         Some(Commands::Params { command }) => {
             run_params(command)?;

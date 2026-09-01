@@ -9,6 +9,7 @@
 //! Usage:
 //!   vcad-render <path.vcad|path.loon> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
 //!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
+//!   vcad-render --assembly <asm.json> [--explode <factor>] [--view ...] [--section ...]
 //!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <N|WxH>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--auto-aspect] [--trim [--trim-margin <px>]]
@@ -158,9 +159,28 @@ impl Format {
 #[command(name = "vcad-render", version)]
 struct Cli {
     /// Input `.vcad` or `.loon` file(s); a directory expands to its
-    /// `*.vcad`/`*.loon` files.
-    #[arg(required = true)]
+    /// `*.vcad`/`*.loon` files. Not needed with `--assembly`, which names
+    /// its own parts.
+    #[arg(required_unless_present = "assembly")]
     inputs: Vec<PathBuf>,
+
+    /// Render a posed assembly instead of a single document.
+    ///
+    /// The file is JSON: `parts` (name + `.loon`/`.vcad` source) and
+    /// `instances` (name, part, x/y/z, rx/ry/rz, ex/ey/ez). The fields are
+    /// #844's `PosedInstanceEntry` verbatim, so this converges on the
+    /// assembly document when that lands.
+    #[arg(long, conflicts_with = "inputs")]
+    assembly: Option<PathBuf>,
+
+    /// Exploded-view factor for `--assembly`: each instance moves by
+    /// `factor * (ex, ey, ez)`. 0 is the assembled view.
+    ///
+    /// Not declared `requires = "assembly"`: clap treats a defaulted argument
+    /// as always present, which would make `--assembly` mandatory for every
+    /// render. The pairing is checked in `run` instead.
+    #[arg(long, default_value_t = 0.0)]
+    explode: f64,
 
     /// Camera view: iso|front|side|top|hero|orbit:AZ,EL. Overridden by
     /// `--azimuth`/`--elevation`.
@@ -1177,7 +1197,50 @@ fn root_cache_for_web(cli: &Cli) -> Option<std::rc::Rc<vcad_eval::cache::DiskMes
     vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new)
 }
 
+/// Render a posed assembly: load the spec, apply each instance's pose and
+/// exploded offset, then draw all the parts as one scene.
+///
+/// SVG only for now -- the raster and photoreal paths take a document rather
+/// than posed solids, and quietly rendering something other than what was
+/// asked for is worse than saying so.
+fn run_assembly(spec: &Path, cli: &Cli) -> Result<(), String> {
+    if cli.format != Format::Svg || cli.jpeg.is_some() {
+        return Err("--assembly currently renders SVG only".to_string());
+    }
+    if cli.photoreal || cli.raytrace {
+        return Err("--assembly does not compose with --photoreal/--raytrace".to_string());
+    }
+    let parts = vcad_render::assembly::load(spec, cli.explode)?;
+    let svg = vcad_render::render_svg_posed(
+        parts,
+        cli.scale,
+        &SvgOptions {
+            view: cli.effective_view(),
+            transparent: cli.transparent,
+            exact_edges: cli.exact_edges,
+            section: cli.section,
+            focus: cli.focus.clone(),
+            annotations: cli.annotations(),
+            ..Default::default()
+        },
+    )?;
+    match &cli.output {
+        None => {
+            println!("{svg}");
+            Ok(())
+        }
+        Some(dest) => std::fs::write(dest, svg.into_bytes())
+            .map_err(|e| format!("write {}: {}", dest.display(), e)),
+    }
+}
+
 fn run(cli: &Cli) -> Result<(), String> {
+    if let Some(spec) = &cli.assembly {
+        return run_assembly(spec, cli);
+    }
+    if cli.explode != 0.0 {
+        return Err("--explode needs --assembly: the offsets live on the assembly".to_string());
+    }
     let inputs = expand_inputs(&cli.inputs)?;
 
     if cli.export_web.is_some() || cli.export_web_js.is_some() {

@@ -56,6 +56,8 @@
   [Torus f64 f64]
   [Wedge f64 f64 f64]
   [Prism f64 f64 f64]
+  ; [Gear module teeth face-width backlash internal?]
+  [Gear f64 f64 f64 f64 Bool]
   ; Empty (identity for union)
   Empty
   ; Booleans
@@ -205,6 +207,33 @@
 [let torus [fn [major-r minor-r] [Torus major-r minor-r]]]
 [let wedge [fn [x y z] [Wedge x y z]]]
 [let prism [fn [sides radius height] [Prism sides radius height]]]
+
+; Involute spur gears — ISO full-depth, 20° pressure angle, no profile
+; shift. Axis along Z, base on z = 0 and extruding up the face width --
+; the same convention `cylinder` and `prism` actually use. The profile is
+; an exact involute, not the tangential-boxes
+; approximation: pitch ⌀ = m z, tip ⌀ = m (z + 2), root ⌀ = m (z - 2.5).
+;
+; `backlash` is CIRCUMFERENTIAL TOOTH THINNING AT THE PITCH CIRCLE, in mm,
+; applied to this gear alone. Two gears each thinned 0.02 run about 0.04 of
+; backlash per mesh — thin both members, not one member twice.
+;
+; `ring-gear` returns the BORE, not the ring: the material an internal gear
+; removes. Subtract it from a tower or a cover and what is left has
+; internal teeth. Its tip circle is the small one (m (z - 2)) and its root
+; the large one (m (z + 2.5)), which is what makes the standard 0.25 m
+; bottom clearance fall out instead of being eyeballed. Modelling a ring as
+; its own positive solid is how a brief once specified ring teeth tangent
+; to the planet root circle — 0.0 clearance.
+;
+; Centre distance for an external pair is m (z1 + z2) / 2; for a planet
+; inside a ring it is m (z-ring - z-planet) / 2.
+[let gear [fn [module teeth face-width] [Gear module teeth face-width 0.0 false]]]
+[let gear-backlash [fn [module teeth face-width backlash]
+  [Gear module teeth face-width backlash false]]]
+[let ring-gear [fn [module teeth face-width] [Gear module teeth face-width 0.0 true]]]
+[let ring-gear-backlash [fn [module teeth face-width backlash]
+  [Gear module teeth face-width backlash true]]]
 
 ; Faceted prisms, sized the way a print is dimensioned. `polygon-prism` is
 ; `prism` under a name that says what it makes; `hex-prism` takes the
