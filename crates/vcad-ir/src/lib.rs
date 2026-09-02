@@ -2134,6 +2134,7 @@ pub struct Document {
     /// solved: the instance transforms stay the source of truth and a mate
     /// says what they are supposed to achieve. See [`mates`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<Mate>>", optional))]
     pub mates: Vec<Mate>,
 
     // ECAD fields (optional, for PCB design)

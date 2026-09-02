@@ -1578,7 +1578,7 @@ groundInstanceId?: string,
  * solved: the instance transforms stay the source of truth and a mate
  * says what they are supposed to achieve. See [`mates`].
  */
-mates: Array<Mate>, 
+mates?: Array<Mate>, 
 /**
  * Schematic sheet for electronics design.
  */
