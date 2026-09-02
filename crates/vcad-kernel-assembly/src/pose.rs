@@ -277,12 +277,12 @@ pub fn pose_document(doc: &Document) -> Result<PosedAssembly, PoseError> {
 fn posed_mesh(mesh: &vcad_eval::EvaluatedMesh, transform: &Affine) -> TriangleMesh {
     let mut out = TriangleMesh::new();
     out.vertices.reserve(mesh.positions.len());
-    for p in mesh.positions.chunks_exact(3) {
+    for p in mesh.positions.as_chunks::<3>().0 {
         let w = transform.point([p[0] as f64, p[1] as f64, p[2] as f64]);
         out.vertices.extend([w[0] as f32, w[1] as f32, w[2] as f32]);
     }
     let flip = transform.determinant() < 0.0;
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         if flip {
             out.indices.extend([tri[0], tri[2], tri[1]]);
         } else {
@@ -293,7 +293,7 @@ fn posed_mesh(mesh: &vcad_eval::EvaluatedMesh, transform: &Affine) -> TriangleMe
 }
 
 fn translate_mesh(mesh: &mut TriangleMesh, d: [f64; 3]) {
-    for v in mesh.vertices.chunks_exact_mut(3) {
+    for v in mesh.vertices.as_chunks_mut::<3>().0 {
         v[0] += d[0] as f32;
         v[1] += d[1] as f32;
         v[2] += d[2] as f32;
@@ -307,7 +307,7 @@ pub fn mesh_bounds(mesh: &TriangleMesh) -> Option<([f64; 3], [f64; 3])> {
     }
     let mut min = [f64::INFINITY; 3];
     let mut max = [f64::NEG_INFINITY; 3];
-    for v in mesh.vertices.chunks_exact(3) {
+    for v in mesh.vertices.as_chunks::<3>().0 {
         for k in 0..3 {
             min[k] = min[k].min(v[k] as f64);
             max[k] = max[k].max(v[k] as f64);

@@ -2018,7 +2018,6 @@ pub fn export_file_from_doc(doc: &vcad_ir::Document, output: &PathBuf) -> Result
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 /// `vcad check` — printability lint on an exported mesh.
 ///
 /// Exits the process with 1 on a dirty verdict rather than returning an error,
@@ -2086,6 +2085,7 @@ fn run_check(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn slice_file(
     input: &PathBuf,
     output: &PathBuf,

@@ -157,9 +157,13 @@ struct Placed {
     triangles: Vec<[usize; 3]>,
 }
 
+/// A welded, recentred part mesh: vertices, triangles, XY bounding radius
+/// about the centre, and half-height in z.
+type LoadedPart = (Vec<[f64; 3]>, Vec<[usize; 3]>, f64, f64);
+
 /// Read an STL and recentre it: XY on its bounding-box centre, z likewise, so
 /// placement is "put the part's centre here" and the z-drop is a single add.
-fn load_part(path: &Path) -> Result<(Vec<[f64; 3]>, Vec<[usize; 3]>, f64, f64)> {
+fn load_part(path: &Path) -> Result<LoadedPart> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("opening part mesh {}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
@@ -519,7 +523,7 @@ pub fn run(args: &KitArgs) -> Result<PathBuf> {
 
     // Meshes are cached by path: a kit that prints three of the same planet
     // reads and welds it once.
-    let mut cache: BTreeMap<PathBuf, (Vec<[f64; 3]>, Vec<[usize; 3]>, f64, f64)> = BTreeMap::new();
+    let mut cache: BTreeMap<PathBuf, LoadedPart> = BTreeMap::new();
     let mut parts = Vec::with_capacity(spec.parts.len());
     for p in &spec.parts {
         let path = if p.mesh.is_absolute() {

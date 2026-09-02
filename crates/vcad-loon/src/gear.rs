@@ -137,13 +137,13 @@ impl GearSpec {
     /// silently-degenerate gear is exactly the failure this primitive exists
     /// to stop (a variant once shipped with blank pitch cylinders).
     pub fn validate(&self) -> Result<(), String> {
-        if !(self.module > 0.0) {
+        if self.module.is_nan() || self.module <= 0.0 {
             return Err(format!("gear module must be > 0, got {}", self.module));
         }
         if self.teeth < 4 {
             return Err(format!("gear needs at least 4 teeth, got {}", self.teeth));
         }
-        if !(self.face_width > 0.0) {
+        if self.face_width.is_nan() || self.face_width <= 0.0 {
             return Err(format!(
                 "gear face width must be > 0, got {}",
                 self.face_width

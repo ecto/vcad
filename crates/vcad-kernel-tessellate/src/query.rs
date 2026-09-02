@@ -129,7 +129,7 @@ impl Pose {
     /// The mesh transformed by this placement.
     pub fn apply_to_mesh(&self, mesh: &TriangleMesh) -> TriangleMesh {
         let mut out = mesh.clone();
-        for v in out.vertices.chunks_exact_mut(3) {
+        for v in out.vertices.as_chunks_mut::<3>().0 {
             let p = self.apply([v[0] as f64, v[1] as f64, v[2] as f64]);
             v[0] = p[0] as f32;
             v[1] = p[1] as f32;
@@ -138,7 +138,7 @@ impl Pose {
         // Normals rotate with the linear part (rigid: no rescale needed) and
         // are not used by any query here, but a mesh handed back to a caller
         // should still be self-consistent.
-        for n in out.normals.chunks_exact_mut(3) {
+        for n in out.normals.as_chunks_mut::<3>().0 {
             let d = [n[0] as f64, n[1] as f64, n[2] as f64];
             let mut r = [0.0f64; 3];
             for (i, ri) in r.iter_mut().enumerate() {

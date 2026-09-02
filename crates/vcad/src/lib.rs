@@ -913,6 +913,10 @@ mod tests {
             (lo[2]).abs() < 1e-9 && (hi[2] - 5.0).abs() < 1e-9,
             "cone base at z=0: {lo:?} {hi:?}"
         );
+        assert!(
+            (lo[0] + 2.0).abs() < 1e-6 && (hi[0] - 2.0).abs() < 1e-6,
+            "cone XY footprint follows the base radius: {lo:?} {hi:?}"
+        );
         assert_bbox(
             centered_cube("cc", 1.0, 2.0, 3.0).bounding_box(),
             [-0.5, -1.0, -1.5],
