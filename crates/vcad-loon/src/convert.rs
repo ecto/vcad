@@ -1913,7 +1913,9 @@ impl ConvertCtx {
                     ));
                 }
                 let pts: Vec<Vec2> = flat
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| Vec2::new(c[0], c[1]))
                     .collect();
                 let n = pts.len();
@@ -1965,7 +1967,9 @@ impl ConvertCtx {
                     ));
                 }
                 let knots: Vec<Vec2> = flat
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| Vec2::new(c[0], c[1]))
                     .collect();
                 // A non-monotonic angle list would double back on itself and

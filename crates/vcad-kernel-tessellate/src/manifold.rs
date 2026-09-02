@@ -210,9 +210,7 @@ fn tri_key(t: &[u32]) -> [u32; 3] {
 /// Is `t` a rotation (rather than a reflection) of its sorted key?
 fn tri_positive(t: &[u32; 3]) -> bool {
     let k = tri_key(t);
-    [[t[0], t[1], t[2]], [t[1], t[2], t[0]], [t[2], t[0], t[1]]]
-        .iter()
-        .any(|r| *r == k)
+    [[t[0], t[1], t[2]], [t[1], t[2], t[0]], [t[2], t[0], t[1]]].contains(&k)
 }
 
 /// Audit a triangle mesh's manifoldness.

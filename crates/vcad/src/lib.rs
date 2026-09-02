@@ -193,7 +193,9 @@ impl Part {
         Self::with_ir(name, vcad_kernel::Solid::empty(), id, nodes)
     }
 
-    /// Create a cube/box centered at origin.
+    /// Create a cube/box with its corner at the origin, extending to
+    /// `(x, y, z)` along the positive axes. Use [`centered_cube`] for a box
+    /// centered on the origin.
     pub fn cube(name: impl Into<String>, x: f64, y: f64, z: f64) -> Self {
         let name = name.into();
         let (id, nodes) = Self::make_leaf(
@@ -205,7 +207,9 @@ impl Part {
         Self::with_ir(name, vcad_kernel::Solid::cube(x, y, z), id, nodes)
     }
 
-    /// Create a cylinder along Z axis, centered at origin.
+    /// Create a cylinder along the Z axis with its base on the XY plane at
+    /// `z = 0`, extending to `z = height`. Use [`centered_cylinder`] for a
+    /// cylinder centered on the origin.
     pub fn cylinder(name: impl Into<String>, radius: f64, height: f64, segments: u32) -> Self {
         let name = name.into();
         let (id, nodes) = Self::make_leaf(
@@ -224,7 +228,8 @@ impl Part {
         )
     }
 
-    /// Create a cone/tapered cylinder.
+    /// Create a cone/tapered cylinder along the Z axis with its base on the
+    /// XY plane at `z = 0`, extending to `z = height`.
     pub fn cone(
         name: impl Into<String>,
         radius_bottom: f64,
@@ -250,7 +255,7 @@ impl Part {
         )
     }
 
-    /// Create a sphere centered at origin.
+    /// Create a sphere centered at the origin (the only primitive that is).
     pub fn sphere(name: impl Into<String>, radius: f64, segments: u32) -> Self {
         let name = name.into();
         let (id, nodes) = Self::make_leaf(&name, CsgOp::Sphere { radius, segments });
@@ -507,12 +512,12 @@ impl Part {
     }
 }
 
-/// Helper to create a centered cube (cubes are corner-aligned at origin by default)
+/// Helper to create a cube centered at the origin ([`Part::cube`] is corner-aligned).
 pub fn centered_cube(name: impl Into<String>, x: f64, y: f64, z: f64) -> Part {
     Part::cube(name, x, y, z).translate(-x / 2.0, -y / 2.0, -z / 2.0)
 }
 
-/// Helper to create a centered cylinder
+/// Helper to create a cylinder centered at the origin ([`Part::cylinder`] has its base at `z = 0`).
 pub fn centered_cylinder(name: impl Into<String>, radius: f64, height: f64, segments: u32) -> Part {
     Part::cylinder(name, radius, height, segments).translate(0.0, 0.0, -height / 2.0)
 }
@@ -869,6 +874,59 @@ mod tests {
     fn test_cylinder_creation() {
         let cyl = Part::cylinder("test", 5.0, 10.0, 32);
         assert!(!cyl.is_empty());
+    }
+
+    fn assert_bbox(actual: ([f64; 3], [f64; 3]), min: [f64; 3], max: [f64; 3]) {
+        for i in 0..3 {
+            assert!(
+                (actual.0[i] - min[i]).abs() < 1e-9,
+                "min {:?} != {:?}",
+                actual.0,
+                min
+            );
+            assert!(
+                (actual.1[i] - max[i]).abs() < 1e-9,
+                "max {:?} != {:?}",
+                actual.1,
+                max
+            );
+        }
+    }
+
+    /// Pins the placement conventions the doc comments describe: primitives
+    /// are corner/base-at-origin, not centered.
+    #[test]
+    fn primitive_placement_conventions() {
+        assert_bbox(
+            Part::cube("c", 1.0, 2.0, 3.0).bounding_box(),
+            [0.0, 0.0, 0.0],
+            [1.0, 2.0, 3.0],
+        );
+        let (lo, hi) = Part::cylinder("cyl", 2.0, 5.0, 64).bounding_box();
+        assert!(
+            (lo[2]).abs() < 1e-9 && (hi[2] - 5.0).abs() < 1e-9,
+            "cylinder base at z=0: {lo:?} {hi:?}"
+        );
+        assert!((lo[0] + 2.0).abs() < 1e-6 && (hi[0] - 2.0).abs() < 1e-6);
+        let (lo, hi) = Part::cone("cone", 2.0, 1.0, 5.0, 64).bounding_box();
+        assert!(
+            (lo[2]).abs() < 1e-9 && (hi[2] - 5.0).abs() < 1e-9,
+            "cone base at z=0: {lo:?} {hi:?}"
+        );
+        assert!(
+            (lo[0] + 2.0).abs() < 1e-6 && (hi[0] - 2.0).abs() < 1e-6,
+            "cone XY footprint follows the base radius: {lo:?} {hi:?}"
+        );
+        assert_bbox(
+            centered_cube("cc", 1.0, 2.0, 3.0).bounding_box(),
+            [-0.5, -1.0, -1.5],
+            [0.5, 1.0, 1.5],
+        );
+        let (lo, hi) = centered_cylinder("ccyl", 2.0, 5.0, 64).bounding_box();
+        assert!(
+            (lo[2] + 2.5).abs() < 1e-9 && (hi[2] - 2.5).abs() < 1e-9,
+            "{lo:?} {hi:?}"
+        );
     }
 
     #[test]
