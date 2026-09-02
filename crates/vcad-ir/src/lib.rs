@@ -761,7 +761,8 @@ pub enum CsgOp {
         category = "primitive",
         ai_hint = "Use for rectangular/box shapes. Size is width(x), depth(y), height(z)."
     )]
-    /// Axis-aligned box centered at origin.
+    /// Axis-aligned box with its corner at the origin, extending to `size`
+    /// along the positive axes.
     Cube {
         /// Size along each axis.
         size: Vec3,
@@ -770,7 +771,8 @@ pub enum CsgOp {
         category = "primitive",
         ai_hint = "Axis along Z. Use for round shapes, pins, holes."
     )]
-    /// Cylinder along the Z axis, centered at origin.
+    /// Cylinder along the Z axis, base on the XY plane at `z = 0`,
+    /// extending to `z = height`.
     Cylinder {
         /// Radius of the cylinder.
         radius: f64,
@@ -788,7 +790,8 @@ pub enum CsgOp {
         segments: u32,
     },
     #[tool(category = "primitive")]
-    /// Cone along the Z axis, centered at origin.
+    /// Cone along the Z axis, base on the XY plane at `z = 0`,
+    /// extending to `z = height`.
     Cone {
         /// Bottom radius.
         radius_bottom: f64,
