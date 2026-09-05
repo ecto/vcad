@@ -530,11 +530,11 @@ pub struct GpuRenderState {
     pub scissor_xy: u32,
     /// Scissor size, `w | (h << 16)` in pixels. Zero means the whole frame.
     pub scissor_wh: u32,
-    /// Reserved word, kept for layout. It now carries the raw-sample flag:
-    /// non-zero makes the shader write this pass's own sample instead of
-    /// folding it into the running average, and fill the guide planes of the
-    /// depth/normal buffer. Set it with [`GpuRenderState::set_raw_sample`]
-    /// rather than by hand — the name stays for source compatibility.
+    /// Reserved word, kept for layout. It now carries a bit-field of shader
+    /// flags — [`FLAG_RAW_SAMPLE`] and [`FLAG_CAMERA_VISIBLE_LIGHTS`]. Set
+    /// them with [`GpuRenderState::set_raw_sample`] and
+    /// [`GpuRenderState::set_camera_visible_lights`] rather than by hand; the
+    /// field name stays for source compatibility.
     pub _pad3: [u32; 1],
     /// Radiance straight up under the analytic gradient environment, in
     /// `.rgb`; `.w` is unused.
@@ -568,6 +568,14 @@ const DEFAULT_BOUNDARY_COLOR: [f32; 4] = [0.06, 0.06, 0.08, 1.0];
 
 /// All three edge types on: bits 0 (silhouette) | 1 (crease) | 2 (boundary).
 const EDGES_ALL: u32 = 7;
+
+/// `GpuRenderState`'s flag word, bit 0: write this pass's own raw sample
+/// rather than folding it into the running average.
+pub const FLAG_RAW_SAMPLE: u32 = 1 << 0;
+
+/// `GpuRenderState`'s flag word, bit 1: area lights are visible to camera
+/// rays, as they are to [`crate::pathtrace::render`]'s.
+pub const FLAG_CAMERA_VISIBLE_LIGHTS: u32 = 1 << 1;
 
 /// Full path depth, matching `PathTraceOptions::default().max_depth` so the
 /// converged viewport image matches `vcad-render --photoreal`.
@@ -639,12 +647,43 @@ impl GpuRenderState {
     /// image. Leave `refine_sample_count` at 0: the refinement pass blends
     /// into the same buffer with weights of its own.
     pub fn set_raw_sample(&mut self, on: bool) {
-        self._pad3[0] = u32::from(on);
+        if on {
+            self._pad3[0] |= FLAG_RAW_SAMPLE;
+        } else {
+            self._pad3[0] &= !FLAG_RAW_SAMPLE;
+        }
     }
 
     /// Whether [`GpuRenderState::set_raw_sample`] is on.
     pub fn raw_sample(&self) -> bool {
-        self._pad3[0] != 0
+        self._pad3[0] & FLAG_RAW_SAMPLE != 0
+    }
+
+    /// Let camera rays see the area lights.
+    ///
+    /// The shader has always dropped an emitter hit at depth 0, so a softbox
+    /// never appears in frame as a white slab. That is right for the viewport,
+    /// whose rig is sized to the scene bounds and swings through frame as the
+    /// camera orbits — and wrong for any scene whose lights are part of the
+    /// set: [`crate::pathtrace::render`] renders them, so the two tiers
+    /// disagree by the whole emission wherever a panel is visible. In Kosm's
+    /// closed court, with ten ceiling panels of radiance 18 in frame, the GPU
+    /// image came out at 56% of the CPU's — all of it those pixels, the walls
+    /// between them agreeing to a tenth of a percent.
+    ///
+    /// Off by default, so a caller that says nothing renders exactly what it
+    /// rendered before. Turn it on for parity with the CPU renderer.
+    pub fn set_camera_visible_lights(&mut self, on: bool) {
+        if on {
+            self._pad3[0] |= FLAG_CAMERA_VISIBLE_LIGHTS;
+        } else {
+            self._pad3[0] &= !FLAG_CAMERA_VISIBLE_LIGHTS;
+        }
+    }
+
+    /// Whether [`GpuRenderState::set_camera_visible_lights`] is on.
+    pub fn camera_visible_lights(&self) -> bool {
+        self._pad3[0] & FLAG_CAMERA_VISIBLE_LIGHTS != 0
     }
 
     /// Create a new render state for the given frame with default edge style.

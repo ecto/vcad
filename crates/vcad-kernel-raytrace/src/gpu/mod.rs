@@ -14,7 +14,7 @@ pub mod shaders;
 pub use buffers::{
     depth_for_frame, GpuAreaLight, GpuBvhNode, GpuCamera, GpuFace, GpuMaterial, GpuRenderState,
     GpuScene, GpuSceneError, GpuSurface, GpuVec2, DEFAULT_ENV_INTENSITY, DEFAULT_FIREFLY_CLAMP,
-    DEFAULT_MAX_DEPTH, DEFAULT_RR_START,
+    DEFAULT_MAX_DEPTH, DEFAULT_RR_START, FLAG_CAMERA_VISIBLE_LIGHTS, FLAG_RAW_SAMPLE,
 };
 #[cfg(feature = "gpu")]
 pub use history::{GpuDenoiseParams, History, HistoryBuffers, HistoryPipeline, MAX_DENOISE_ITERS};

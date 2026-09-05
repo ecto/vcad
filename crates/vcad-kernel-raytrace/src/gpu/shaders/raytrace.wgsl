@@ -90,9 +90,12 @@ struct RenderState {
     // pass costs in proportion to the rectangle.
     scissor_xy: u32,
     scissor_wh: u32,
-    // Non-zero: write the raw per-pass sample instead of folding it into the
-    // running average, and fill the guide half of `depth_normal_buffer`. What
-    // a host keeping its own per-pixel history wants out of a pass.
+    // Shader flags, a bit-field. Bit 0 (FLAG_RAW_SAMPLE): write the raw
+    // per-pass sample instead of folding it into the running average, and fill
+    // the guide half of `depth_normal_buffer` — what a host keeping its own
+    // per-pixel history wants out of a pass. Bit 1
+    // (FLAG_CAMERA_VISIBLE_LIGHTS): let camera rays see the area lights, as
+    // the CPU renderer's do. The field name is the Rust struct's.
     raw_sample: u32,
     // The analytic gradient's three radiances, mirroring
     // pathtrace::GradientEnv. These used to be constants in `env_radiance`,
@@ -160,6 +163,19 @@ struct GpuAreaLight {
 @group(0) @binding(12) var<storage, read_write> feature_id_buffer: array<u32>;
 
 // Helper functions for buffer indexing (2D coords to 1D index)
+// Bit 0 of the flag word: this pass writes its own raw sample.
+const FLAG_RAW_SAMPLE: u32 = 1u;
+// Bit 1: area lights are visible to camera rays.
+const FLAG_CAMERA_VISIBLE_LIGHTS: u32 = 2u;
+
+fn raw_sample_mode() -> bool {
+    return (render_state.raw_sample & FLAG_RAW_SAMPLE) != 0u;
+}
+
+fn camera_visible_lights() -> bool {
+    return (render_state.raw_sample & FLAG_CAMERA_VISIBLE_LIGHTS) != 0u;
+}
+
 fn pixel_index(coord: vec2<u32>) -> u32 {
     return coord.y * camera.width + coord.x;
 }
@@ -1520,14 +1536,16 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         // its emission, MIS-weighted against the NEE sample that could also
         // have found it.
         //
-        // They are NOT visible to camera rays, though. The rig is sized to the
-        // scene bounds and the viewport camera orbits and zooms freely, so
-        // otherwise the softboxes swing through frame as giant white slabs.
-        // Skipping them at depth 0 costs nothing physically — it only changes
-        // pixels that look straight down a light — and keeps every shaded
-        // surface identical to the CPU renderer.
+        // Whether they are visible to CAMERA rays is the caller's choice. The
+        // viewport's rig is sized to the scene bounds and the camera orbits
+        // and zooms freely, so by default the softboxes are dropped at depth 0
+        // rather than swinging through frame as giant white slabs. A scene
+        // whose lights are part of the set — a room with its own ceiling
+        // panels — wants the opposite, because `pathtrace::render` draws them
+        // and the two tiers otherwise disagree by the whole emission wherever
+        // a panel is in frame. `set_camera_visible_lights` picks.
         var lh = intersect_lights(ray_o, ray_d);
-        if depth == 0u {
+        if depth == 0u && !camera_visible_lights() {
             lh.hit = false;
         }
         let geom_t = select(MAX_T, hit.t, hit.face_idx != 0xFFFFFFFFu);
@@ -1655,10 +1673,18 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
 // coverage in .a; tonemapping happens once, after accumulation.
 fn shade(hit: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>) -> vec4<f32> {
     if hit.face_idx == 0xFFFFFFFFu {
-        // Nothing in front of the camera. Draw the themed backdrop rather
-        // than the lighting environment — the backdrop is a viewport choice,
-        // and `vcad-render` composites its own. The area lights are skipped
-        // here for the same reason `path_trace` skips them at depth 0.
+        // No geometry in front of the camera. A visible emitter is still in
+        // front of it: `path_trace` is never entered on this branch, so the
+        // camera-ray light test has to happen here too, or a panel against the
+        // open sky would read as sky.
+        if camera_visible_lights() {
+            let lh = intersect_lights(origin, dir);
+            if lh.hit {
+                return vec4<f32>(lights[lh.index].emission.rgb, 1.0);
+            }
+        }
+        // Draw the themed backdrop rather than the lighting environment — the
+        // backdrop is a viewport choice, and `vcad-render` composites its own.
         return vec4<f32>(sky_color(dir), 0.0);
     }
 
@@ -1998,7 +2024,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // coherent neighbours on frame 2+ (same condition as depth_normal_buffer).
     // A raw-sample pass rewrites it every time: it is one independent sample,
     // not a step of an average, so nothing about the previous pass carries.
-    if render_state.frame_index <= 1u || render_state.raw_sample != 0u {
+    if render_state.frame_index <= 1u || raw_sample_mode() {
         depth_normal_buffer[pixel_index_i32(pixel_coord)] = depth_normal;
         feature_id_buffer[pixel_index_i32(pixel_coord)] = hit.face_idx;
     }
@@ -2007,7 +2033,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // the normal is face-forwarded against the view ray (what the path tracer
     // actually shades with) and the background sentinel for depth is 0, not
     // MAX_T.
-    if render_state.raw_sample != 0u {
+    if raw_sample_mode() {
         let n_px = camera.width * camera.height;
         let gi = pixel_index_i32(pixel_coord);
         var g_normal = vec3<f32>(0.0, 0.0, 0.0);
@@ -2037,7 +2063,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Progressive accumulation
     var accumulated: vec4<f32>;
 
-    if render_state.frame_index <= 1u || render_state.raw_sample != 0u {
+    if render_state.frame_index <= 1u || raw_sample_mode() {
         // First frame, or a deliberate raw sample: start fresh.
         accumulated = new_color;
     } else {
@@ -2053,7 +2079,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Has to run before edge detection so edges are drawn on the
     // denoised image.
     var final_color = accumulated;
-    if render_state.frame_index >= 2u && render_state.raw_sample == 0u {
+    if render_state.frame_index >= 2u && !raw_sample_mode() {
         let stored_dn = depth_normal_buffer[pixel_index_i32(pixel_coord)];
         final_color = denoise(pixel_coord, accumulated, stored_dn);
     }
@@ -2139,7 +2165,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // The refine pass may update this for edge pixels. A raw-sample pass keeps
     // `shade`'s coverage instead: nothing is going to average it, and the host
     // reading the buffer back wants the same alpha the CPU `Film` carries.
-    if render_state.raw_sample == 0u {
+    if !raw_sample_mode() {
         accumulated.a = 1.0;
     }
 
