@@ -462,7 +462,9 @@ fn solve_cubic_normalized(p: f32, q: f32, r: f32) -> vec3<f32> {
     } else {
         // Three real roots (Vieta's trigonometric solution)
         let m = 2.0 * sqrt(-aa / 3.0);
-        let theta = acos(3.0 * bb / (aa * m)) / 3.0;
+        // Clamped: rounding can push the cosine a hair outside [-1, 1], and an
+        // acos of that is NaN, which propagates silently into every root.
+        let theta = acos(clamp(3.0 * bb / (aa * m), -1.0, 1.0)) / 3.0;
         return vec3<f32>(
             m * cos(theta) - shift,
             m * cos(theta - 2.0 * PI / 3.0) - shift,
@@ -518,11 +520,14 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     let q = c_norm - a_norm * b_norm / 2.0 + a3 / 8.0;
     let rr = d_norm - a_norm * c_norm / 4.0 + a2 * b_norm / 16.0 - 3.0 * a4 / 256.0;
 
-    // Solve resolvent cubic: u^3 + (p/2)*u^2 + ((p^2 - 4*rr)/16)*u - q^2/64 = 0
+    // Ferrari's resolvent cubic, 8u^3 + 8p*u^2 + (2p^2 - 8rr)*u - q^2 = 0,
+    // divided through by 8 for the monic solver. The reconstruction below
+    // reads `u` on this scale — a resolvent solved on any other scale hands
+    // back four numbers that satisfy nothing.
     let cubic_roots = solve_cubic_normalized(
-        p / 2.0,
-        (p * p - 4.0 * rr) / 16.0,
-        -q * q / 64.0
+        p,
+        (p * p - 4.0 * rr) / 4.0,
+        -q * q / 8.0
     );
 
     // Find positive root
@@ -538,27 +543,33 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     var best_uv = vec2<f32>(0.0, 0.0);
 
     if sqrt_2u > EPSILON {
+        // The quartic splits as (y^2 + p/2 + u)^2 - 2u*(y - q/(4u))^2, giving
+        // the two quadratics below. Their signs are *not* interchangeable: the
+        // `+ beta` constant belongs to the `- sqrt(2u)*y` factor and `- beta`
+        // to the `+ sqrt(2u)*y` one. Pairing them the other way still yields
+        // four plausible numbers that are not roots — and it stays invisible
+        // in an axis-aligned test, where q vanishes and the two pairings agree.
         let alpha = p + 2.0 * u;
         let beta = q / sqrt_2u;
 
-        // First quadratic: y^2 + sqrt_2u*y + (alpha + beta)/2 = 0
+        // First quadratic: y^2 - sqrt_2u*y + (alpha + beta)/2 = 0
         let disc1 = sqrt_2u * sqrt_2u - 2.0 * (alpha + beta);
         if disc1 >= 0.0 {
             let sqrt_disc1 = sqrt(disc1);
-            let y1 = (-sqrt_2u + sqrt_disc1) / 2.0;
-            let y2 = (-sqrt_2u - sqrt_disc1) / 2.0;
+            let y1 = (sqrt_2u + sqrt_disc1) / 2.0;
+            let y2 = (sqrt_2u - sqrt_disc1) / 2.0;
             let t1 = y1 - a_norm / 4.0;
             let t2 = y2 - a_norm / 4.0;
             if t1 >= 0.0 && t1 < best_t { best_t = t1; }
             if t2 >= 0.0 && t2 < best_t { best_t = t2; }
         }
 
-        // Second quadratic: y^2 - sqrt_2u*y + (alpha - beta)/2 = 0
+        // Second quadratic: y^2 + sqrt_2u*y + (alpha - beta)/2 = 0
         let disc2 = sqrt_2u * sqrt_2u - 2.0 * (alpha - beta);
         if disc2 >= 0.0 {
             let sqrt_disc2 = sqrt(disc2);
-            let y3 = (sqrt_2u + sqrt_disc2) / 2.0;
-            let y4 = (sqrt_2u - sqrt_disc2) / 2.0;
+            let y3 = (-sqrt_2u + sqrt_disc2) / 2.0;
+            let y4 = (-sqrt_2u - sqrt_disc2) / 2.0;
             let t3 = y3 - a_norm / 4.0;
             let t4 = y4 - a_norm / 4.0;
             if t3 >= 0.0 && t3 < best_t { best_t = t3; }
