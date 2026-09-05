@@ -1125,11 +1125,28 @@ fn concentric_disc(r1: f64, r2: f64) -> (f64, f64) {
 
 // ─── microfacet BRDF ──────────────────────────────────────────────────────
 
-/// GGX / Trowbridge-Reitz normal distribution.
+/// GGX / Trowbridge-Reitz normal distribution, taking the half-vector rather
+/// than its cosine.
+///
+/// The textbook denominator is `(n·h)²(α² - 1) + 1`, and evaluated in f32 that
+/// expression is worthless exactly where it matters most. At retro-reflection —
+/// `wo`, `wi` and the normal all within a degree or two, which is where a
+/// camera ray meets a wall head-on — `n·h` is 1 to within a few ulp, so the
+/// product is `-1 + ulp` and adding 1 back cancels every significant digit.
+/// What is supposed to survive is α², and for a smooth material α² is smaller
+/// than the error it is being asked to emerge from: at roughness 0.08 α² is
+/// 4.1e-5 against an f32 resolution near 1 of 6e-8.
+///
+/// `(n·h)²(α² - 1) + 1` is algebraically `α²·h_z² + (h_x² + h_y²)`, and that
+/// form is a sum of non-negative terms taken from the half-vector directly, so
+/// nothing cancels: at exact retro it is α², to full precision. It is the same
+/// rearrangement [`d_ggx_aniso`] already used, which is why the anisotropic
+/// path never had the problem.
 #[inline]
-fn d_ggx(n_dot_h: f32, alpha: f32) -> f32 {
+fn d_ggx(wh: Vec3, alpha: f32) -> f32 {
     let a2 = alpha * alpha;
-    let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    let (hx, hy, hz) = (wh.x as f32, wh.y as f32, wh.z as f32);
+    let d = a2 * hz * hz + (hx * hx + hy * hy);
     a2 / (std::f32::consts::PI * d * d).max(1e-9)
 }
 
@@ -1142,7 +1159,7 @@ fn d_ggx(n_dot_h: f32, alpha: f32) -> f32 {
 #[inline]
 fn d_ggx_aniso(wh: Vec3, at: f32, ab: f32) -> f32 {
     if at == ab {
-        return d_ggx(wh.z.max(0.0) as f32, at);
+        return d_ggx(wh, at);
     }
     let (hx, hy, hz) = (wh.x as f32, wh.y as f32, wh.z as f32);
     let d = (hx / at) * (hx / at) + (hy / ab) * (hy / ab) + hz * hz;
@@ -1263,7 +1280,6 @@ fn bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
     let n_dot_l = wi.z as f32;
     let n_dot_v = wo.z as f32;
     let wh = (wo + wi).normalize();
-    let n_dot_h = wh.z.max(0.0) as f32;
     let o_dot_h = wo.dot(wh).max(0.0) as f32;
 
     let (pd, ps, pc) = lobe_weights(m);
@@ -1286,7 +1302,7 @@ fn bsdf_eval(m: &Pbr, wo: Vec3, wi: Vec3) -> ([f32; 3], f32) {
     // not in the lacquer — so it never takes the anisotropy.
     let (coat, pdf_c, coat_atten) = if m.clearcoat > 0.0 {
         let ca = m.coat_alpha();
-        let cd = d_ggx(n_dot_h, ca);
+        let cd = d_ggx(wh, ca);
         let cv = v_smith(n_dot_v, n_dot_l, ca);
         let cf = fresnel([0.04, 0.04, 0.04], o_dot_h)[0] * m.clearcoat;
         let c = cd * cv * n_dot_l * cf;
@@ -3053,7 +3069,7 @@ mod tests {
         let wo = Vec3::new(0.3, 0.15, 0.94).normalize();
         let wi = Vec3::new(-0.2, 0.35, 0.91).normalize();
         let wh = (wo + wi).normalize();
-        assert_eq!(d_ggx_aniso(wh, at, ab), d_ggx(wh.z.max(0.0) as f32, at));
+        assert_eq!(d_ggx_aniso(wh, at, ab), d_ggx(wh, at));
         assert_eq!(
             v_smith_aniso(wo, wi, at, ab),
             v_smith(wo.z as f32, wi.z as f32, at)

@@ -1180,3 +1180,113 @@ fn render_shader_fits_the_browser_storage_buffer_budget() {
          test still passes. Move the new data into a texture instead.",
     );
 }
+
+/// Retro-reflection: `wo`, `wi` and the normal all within a couple of degrees.
+///
+/// This is the corner the rest of the grid never visits — its directions are
+/// drawn independently, so `wo ≈ wi` essentially never comes up — and it is
+/// the one where the specular lobe's algebra is most likely to fall over. The
+/// half-vector `normalize(wo + wi)` is being asked for the direction of a sum
+/// of two nearly identical unit vectors; `d_ggx` divides by
+/// `(n·h)²(a² - 1) + 1`, which is `a²` at `n·h = 1` and small for a smooth
+/// material; `v_smith`'s two square roots meet at `n·v = n·l = 1`; and
+/// `fresnel` is evaluated at `o·h = 1`, where the Schlick term's `(1 - cosθ)⁵`
+/// is a fifth power of a number the f32 subtraction has just cancelled most of
+/// the significant digits out of.
+///
+/// A ~6% dark ring was reported in a GPU render exactly where a camera ray
+/// meets a matte wall at normal incidence — the retro configuration — so this
+/// checks the shading model there directly, over a range of roughnesses and
+/// with the metals and the coat included. It holds to the same f32 tolerance
+/// the general grid does.
+#[test]
+#[ignore = "requires GPU"]
+fn gpu_bsdf_matches_cpu_reference_at_retro_angles() {
+    let Some(ctx) = ctx_or_skip("gpu_bsdf_matches_cpu_reference_at_retro_angles") else {
+        return;
+    };
+
+    let mut inputs = Vec::new();
+    for mut m in test_materials() {
+        // The reported material: matte, uncoated, roughness 0.85. The rest of
+        // `test_materials` covers the smooth and metallic ends, where the
+        // specular lobe at `n·h = 1` is at its narrowest.
+        for rough in [m.roughness, 0.85] {
+            m.roughness = rough;
+            for k in 0..14u32 {
+                // (a) The view ray on the normal, the light swept off it by up
+                //     to ~18 degrees: `n·h` runs from 1 down through the band
+                //     where the reported ring sits.
+                let a = k as f32 * 0.023;
+                let wo = [0.0, 0.0, 1.0];
+                let wi = unit([a.sin(), 0.0, a.cos()]);
+                inputs.push(ParityInput {
+                    material: m,
+                    wo: [wo[0], wo[1], wo[2], 0.0],
+                    wi: [wi[0], wi[1], wi[2], 0.0],
+                    rnd: [0.3, 0.4, 0.5, 0.0],
+                });
+                // (b) Exact retro, `wo == wi`, swept off the normal: the
+                //     half-vector is the direction itself and `o·h` is 1.
+                let b = k as f32 * 0.05;
+                let w = unit([b.sin(), 0.0, b.cos()]);
+                inputs.push(ParityInput {
+                    material: m,
+                    wo: [w[0], w[1], w[2], 0.0],
+                    wi: [w[0], w[1], w[2], 0.0],
+                    rnd: [0.3, 0.4, 0.5, 0.0],
+                });
+            }
+        }
+    }
+
+    let outputs = run_harness(ctx, &inputs);
+    let mut worst_value = 0.0f32;
+    let mut worst_pdf = 0.0f32;
+    for (i, (inp, out)) in inputs.iter().zip(&outputs).enumerate() {
+        let pbr: Pbr = inp.material.to_pbr();
+        let wo = Vec3::new(inp.wo[0] as f64, inp.wo[1] as f64, inp.wo[2] as f64);
+        let wi = Vec3::new(inp.wi[0] as f64, inp.wi[1] as f64, inp.wi[2] as f64);
+        let (ref_value, ref_pdf) = reference_bsdf_eval(&pbr, wo, wi);
+
+        for (c, &rv) in ref_value.iter().enumerate() {
+            let d = (out.eval[c] - rv).abs();
+            worst_value = worst_value.max(d);
+            assert!(
+                d <= 2e-4 * rv.abs().max(1.0),
+                "retro input {i} (wo {:?}, wi {:?}, roughness {}): BSDF value \
+                 channel {c} is {} on the GPU against {rv} on the CPU. A \
+                 degeneracy at n·h → 1 shows up here and nowhere else in the \
+                 grid.",
+                inp.wo,
+                inp.wi,
+                inp.material.roughness,
+                out.eval[c],
+            );
+        }
+        let dp = (out.eval[3] - ref_pdf).abs();
+        worst_pdf = worst_pdf.max(dp);
+        assert!(
+            dp <= 2e-4 * ref_pdf.abs().max(1.0),
+            "retro input {i}: PDF is {} on the GPU against {ref_pdf} on the \
+             CPU. MIS is computed from this, so a disagreement here is an \
+             energy error concentrated exactly at normal incidence.",
+            out.eval[3],
+        );
+        assert!(
+            out.eval[0].is_finite() && out.eval[3].is_finite(),
+            "retro input {i} produced a non-finite value or PDF: {:?}",
+            out.eval,
+        );
+    }
+    eprintln!("retro: worst value delta {worst_value:e}, worst pdf delta {worst_pdf:e}");
+
+    let non_zero = outputs.iter().filter(|o| o.eval[3] > 0.0).count();
+    assert_eq!(
+        non_zero,
+        inputs.len(),
+        "every retro input is inside the hemisphere and must have a positive \
+         PDF; {} did not",
+        inputs.len() - non_zero,
+    );
+}

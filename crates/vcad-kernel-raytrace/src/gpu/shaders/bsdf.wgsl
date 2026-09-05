@@ -91,18 +91,36 @@ fn mat_diffuse_albedo(m: GpuMaterial) -> vec3<f32> {
     return m.color.rgb * (1.0 - m.metallic);
 }
 
-// GGX / Trowbridge-Reitz normal distribution. Takes alpha directly (already
-// squared roughness) — NOT perceptual roughness.
-fn d_ggx(n_dot_h: f32, alpha: f32) -> f32 {
+// GGX / Trowbridge-Reitz normal distribution, taking the half-vector rather
+// than its cosine. Alpha is already squared roughness — NOT perceptual
+// roughness.
+//
+// The textbook denominator is `(n·h)²(α² - 1) + 1`, and in f32 that expression
+// is worthless where it matters most. At retro-reflection — `wo`, `wi` and the
+// normal all within a degree or two, which is where a camera ray meets a wall
+// head-on — `n·h` is 1 to within a few f32 ulp, so the product is `-1 + ulp`
+// and adding 1 back cancels every significant digit. What survives is supposed
+// to be α², and for a smooth material α² is smaller than the error: at
+// roughness 0.08, α² is 4.1e-5 against an f32 resolution near 1 of 6e-8, and
+// the measured disagreement with the f64 reference reached 0.53% in a thin
+// annulus around the normal-incidence point. Rougher materials hide it (0.0001%
+// at roughness 0.85) and smoother ones sit at a plateau of ~0.37%.
+//
+// Algebraically, `(n·h)²(α² - 1) + 1 = α²·h_z² + (h_x² + h_y²)`, and the
+// right-hand side is a sum of non-negative terms computed from the half-vector
+// directly, so nothing cancels: at exact retro it is α² and it is α² to full
+// precision. That is the same rearrangement `d_ggx_aniso` already uses, which
+// is why the anisotropic path never had the problem.
+fn d_ggx(wh: vec3<f32>, alpha: f32) -> f32 {
     let a2 = alpha * alpha;
-    let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    let d = a2 * wh.z * wh.z + (wh.x * wh.x + wh.y * wh.y);
     return a2 / max(PI * d * d, 1e-9);
 }
 
 // Anisotropic GGX normal distribution. Reduces exactly to `d_ggx` when at==ab.
 fn d_ggx_aniso(wh: vec3<f32>, at: f32, ab: f32) -> f32 {
     if at == ab {
-        return d_ggx(max(wh.z, 0.0), at);
+        return d_ggx(wh, at);
     }
     let d = (wh.x / at) * (wh.x / at) + (wh.y / ab) * (wh.y / ab) + wh.z * wh.z;
     return 1.0 / max(PI * at * ab * d * d, 1e-9);
@@ -225,7 +243,6 @@ fn bsdf_eval(m: GpuMaterial, wo: vec3<f32>, wi: vec3<f32>) -> BsdfEval {
     let n_dot_l = wi.z;
     let n_dot_v = wo.z;
     let wh = normalize(wo + wi);
-    let n_dot_h = max(wh.z, 0.0);
     let o_dot_h = max(dot(wo, wh), 0.0);
 
     let w = lobe_weights(m);
@@ -251,7 +268,7 @@ fn bsdf_eval(m: GpuMaterial, wo: vec3<f32>, wi: vec3<f32>) -> BsdfEval {
     var coat_atten = 1.0;
     if m.clearcoat > 0.0 {
         let ca = mat_coat_alpha(m);
-        let cd = d_ggx(n_dot_h, ca);
+        let cd = d_ggx(wh, ca);
         let cv = v_smith(n_dot_v, n_dot_l, ca);
         let cf = fresnel(vec3<f32>(0.04), o_dot_h).x * m.clearcoat;
         let c = cd * cv * n_dot_l * cf;
