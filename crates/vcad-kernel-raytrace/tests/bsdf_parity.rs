@@ -509,7 +509,7 @@ fn gpu_bsdf_eval_matches_cpu_reference() {
         let pbr: Pbr = inp.material.to_pbr();
         let wo = Vec3::new(inp.wo[0] as f64, inp.wo[1] as f64, inp.wo[2] as f64);
         let wi = Vec3::new(inp.wi[0] as f64, inp.wi[1] as f64, inp.wi[2] as f64);
-        let (ref_value, ref_pdf) = reference_bsdf_eval(&pbr, wo, wi);
+        let (ref_value, ref_pdf) = reference_bsdf_eval(&pbr, wo, wi, 1.0);
 
         for (c, &rv) in ref_value.iter().enumerate() {
             let d = (out.eval[c] - rv).abs();
@@ -1248,7 +1248,7 @@ fn gpu_bsdf_matches_cpu_reference_at_retro_angles() {
         let pbr: Pbr = inp.material.to_pbr();
         let wo = Vec3::new(inp.wo[0] as f64, inp.wo[1] as f64, inp.wo[2] as f64);
         let wi = Vec3::new(inp.wi[0] as f64, inp.wi[1] as f64, inp.wi[2] as f64);
-        let (ref_value, ref_pdf) = reference_bsdf_eval(&pbr, wo, wi);
+        let (ref_value, ref_pdf) = reference_bsdf_eval(&pbr, wo, wi, 1.0);
 
         for (c, &rv) in ref_value.iter().enumerate() {
             let d = (out.eval[c] - rv).abs();

@@ -59,9 +59,45 @@ pub fn from_material_def(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 
         .unwrap_or(1.5)
         .clamp(1.0, 3.0);
 
+    // The transmissive extensions, mapped to mean what the three.js viewport
+    // already makes them mean, so a part that reads as glass in the browser
+    // reads as the same glass here.
+    //
+    // - `transmission` is `MeshPhysicalMaterial.transmission`, 0..1.
+    // - `attenuationDistance` / `attenuationColor` are Beer-Lambert, in
+    //   millimetres, which is the document's own unit — so they carry over
+    //   unscaled.
+    // - `thickness` is three.js' *volume* thickness, and three's convention is
+    //   that `0` means "no volume": a thin sheet whose refraction is a
+    //   straight pass-through. That is exactly `thin_walled`. An absent
+    //   thickness is not zero — `SceneMesh.tsx` fills in 0.5 — so only an
+    //   explicit zero flips the flag.
+    //
+    // `vcad_ir` has no dispersion field, so `abbe`/`sellmeier` stay off and a
+    // vcad glass is achromatic. A future `MaterialDef::abbe` is all it would
+    // take.
+    let transmission = mat
+        .and_then(|m| m.transmission)
+        .map(|v| v as f32)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let thin_walled = transmission > 0.0 && mat.and_then(|m| m.thickness) == Some(0.0);
+    let attenuation_color = mat
+        .and_then(|m| m.attenuation_color)
+        .map(|c| [c[0] as f32, c[1] as f32, c[2] as f32])
+        .unwrap_or([1.0; 3]);
+    let attenuation_distance = mat
+        .and_then(|m| m.attenuation_distance)
+        .filter(|d| *d > 0.0)
+        .map(|d| d as f32)
+        .unwrap_or(f32::INFINITY);
+
     // Dielectrics that are already glossy get a clearcoat; rough matte
-    // surfaces (sandblasted, as-printed) do not.
-    let clearcoat = if metallic < 0.5 && roughness < 0.5 {
+    // surfaces (sandblasted, as-printed) do not. Glass does not: the
+    // heuristic exists to put a lacquer on an opaque plastic, and a
+    // transmissive material that wants a coat has `clearcoat` in the IR to
+    // say so.
+    let clearcoat = if transmission == 0.0 && metallic < 0.5 && roughness < 0.5 {
         0.35 * (1.0 - roughness / 0.5)
     } else {
         0.0
@@ -93,7 +129,88 @@ pub fn from_material_def(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 
         clearcoat,
         clearcoat_roughness: 0.08,
         ior,
+        transmission,
+        attenuation_color,
+        attenuation_distance,
+        thin_walled,
         emissive: [0.0; 3],
         ..Pbr::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn glass(thickness: Option<f64>) -> vcad_ir::MaterialDef {
+        vcad_ir::MaterialDef {
+            name: "glass".into(),
+            color: [0.95, 0.97, 1.0],
+            metallic: 0.0,
+            roughness: 0.02,
+            transmission: Some(1.0),
+            ior: Some(1.5),
+            thickness,
+            ..Default::default()
+        }
+    }
+
+    /// An opaque document must map exactly as it did before transmission
+    /// existed — the whole point of the extensions being `Option`.
+    #[test]
+    fn an_opaque_material_is_untouched() {
+        let m = vcad_ir::MaterialDef {
+            name: "abs_white".into(),
+            color: [0.9, 0.9, 0.9],
+            metallic: 0.0,
+            roughness: 0.4,
+            ..Default::default()
+        };
+        let p = from_material_def(Some(&m), None);
+        assert_eq!(p.transmission, 0.0);
+        assert!(!p.thin_walled);
+        assert_eq!(p.attenuation_color, [1.0; 3]);
+        assert!(p.attenuation_distance.is_infinite());
+        assert!(p.clearcoat > 0.0, "the glossy-dielectric coat still applies");
+        assert_eq!(from_material_def(None, None).transmission, 0.0);
+    }
+
+    /// The `glass` preset the browser ships: full transmission, IOR 1.5, a
+    /// real volume (thickness 2 mm), no absorption, and no lacquer heuristic
+    /// on top of it.
+    #[test]
+    fn the_glass_preset_becomes_glass() {
+        let p = from_material_def(Some(&glass(Some(2.0))), None);
+        assert_eq!(p.transmission, 1.0);
+        assert_eq!(p.ior, 1.5);
+        assert!(!p.thin_walled);
+        assert_eq!(p.clearcoat, 0.0, "glass does not get the coat heuristic");
+    }
+
+    /// three.js reads `thickness == 0` as "no volume", and so do we.
+    #[test]
+    fn zero_thickness_is_a_thin_wall() {
+        assert!(from_material_def(Some(&glass(Some(0.0))), None).thin_walled);
+        // Absent is not zero: `SceneMesh.tsx` fills in 0.5, so it has volume.
+        assert!(!from_material_def(Some(&glass(None)), None).thin_walled);
+    }
+
+    /// Tinted glass carries its Beer-Lambert pair over in millimetres.
+    #[test]
+    fn tinted_glass_carries_its_absorption() {
+        let m = vcad_ir::MaterialDef {
+            attenuation_distance: Some(25.0),
+            attenuation_color: Some([0.3, 0.45, 0.55]),
+            ..glass(Some(3.0))
+        };
+        let p = from_material_def(Some(&m), None);
+        assert_eq!(p.attenuation_distance, 25.0);
+        assert_eq!(p.attenuation_color, [0.3, 0.45, 0.55]);
+        // One attenuation distance reproduces the colour that named it.
+        let sigma = p.extinction();
+        for c in 0..3 {
+            let t = (-sigma[c] * 25.0).exp();
+            assert!((t - p.attenuation_color[c]).abs() < 1e-6);
+        }
     }
 }
