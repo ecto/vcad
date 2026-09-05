@@ -43,6 +43,7 @@ fn interior_directions(corners: [Vec3; 3], steps: usize) -> Vec<Vec3> {
 
 /// Every spherical corner patch of the filleted plate, with its sphere and
 /// the three unit directions of its loop vertices.
+use vcad_kernel_raytrace::{BrepBvh};
 fn corner_patches(brep: &BRepSolid) -> Vec<(FaceId, vcad_kernel_geom::SphereSurface, [Vec3; 3])> {
     let mut out = Vec::new();
     for (face_id, face) in &brep.topology.faces {
@@ -147,7 +148,7 @@ fn corner_blend_interior_is_never_trimmed_away() {
 fn rays_into_every_corner_hit_the_blend() {
     let brep = filleted_plate();
     let patches = corner_patches(&brep);
-    let bvh = Bvh::build(&brep);
+    let bvh = Bvh::build_brep(&brep);
 
     for (face_id, sph, dirs) in patches {
         for d in interior_directions(dirs, 8) {

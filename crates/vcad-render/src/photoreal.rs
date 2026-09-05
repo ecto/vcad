@@ -14,6 +14,7 @@
 use std::sync::Arc;
 
 use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_raytrace::BrepBvh;
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, Ground, Object, PathTraceOptions, Pbr, Scene,
 };
@@ -125,7 +126,7 @@ pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>,
     let mut untraceable: Vec<String> = Vec::new();
     for s in solids {
         let bvh = match s.solid.as_brep() {
-            Some(brep) => Bvh::build(brep),
+            Some(brep) => Bvh::build_brep(brep),
             None => {
                 let mut mesh = s.solid.to_mesh(0);
                 vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
@@ -138,7 +139,7 @@ pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>,
         }
         objects.push(Object::new(
             Arc::new(bvh),
-            Pbr::from_material_def(s.material.as_ref(), s.tint),
+            vcad_kernel_raytrace::pathtrace::from_material_def(s.material.as_ref(), s.tint),
         ));
     }
     if objects.is_empty() {
@@ -163,7 +164,10 @@ pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>,
 /// The eight corners of an object's BVH root AABB, in world space after
 /// `transform`. These are what framing is computed from.
 pub(crate) fn object_corners(obj: &Object) -> Vec<[f64; 3]> {
-    object_corners_with(obj, &obj.transform)
+    object_corners_with(
+        obj,
+        &vcad_kernel::vcad_kernel_math::Transform { matrix: obj.transform.matrix },
+    )
 }
 
 /// `object_corners` under an explicit transform, so a caller can ask "where
@@ -472,7 +476,7 @@ mod tests {
             crate::materials::builtin("copper").unwrap().color
         );
 
-        let pbr = Pbr::from_material_def(solids[0].material.as_ref(), solids[0].tint);
+        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(solids[0].material.as_ref(), solids[0].tint);
         assert_eq!(pbr.metallic, 1.0, "copper must trace as a metal");
         assert!(
             pbr.base_color[0] > pbr.base_color[2] + 0.3,
@@ -494,7 +498,7 @@ mod tests {
                           "metallic": 0.0, "roughness": 0.9 }"#,
         );
         let solids = evaluate_vcad(&doc).expect("eval");
-        let pbr = Pbr::from_material_def(solids[0].material.as_ref(), solids[0].tint);
+        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(solids[0].material.as_ref(), solids[0].tint);
         assert_eq!(pbr.base_color, [0.0, 1.0, 0.0], "authored def must win");
         assert_eq!(pbr.metallic, 0.0);
     }
@@ -503,7 +507,7 @@ mod tests {
     fn unknown_material_name_still_falls_back_to_clay() {
         let solids = evaluate_vcad(&cube_doc_named("unobtainium", "")).expect("eval");
         assert!(solids[0].material.is_none());
-        let pbr = Pbr::from_material_def(None, solids[0].tint);
+        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(None, solids[0].tint);
         assert_eq!(pbr.base_color, Pbr::default().base_color);
     }
 

@@ -7,8 +7,8 @@ use std::sync::Arc;
 use vcad_kernel_math::{Dir3, Point3, Transform, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 
-use crate::bvh::Bvh;
-use crate::tlas::{transform_from_column_major, Tlas};
+use crate::bvh::{BrepBvh, Bvh};
+use crate::tlas::{transform_from_column_major, BrepTlas, Tlas};
 use crate::Ray;
 
 /// A CPU-based ray tracer for rendering BRep solids.
@@ -27,7 +27,7 @@ impl CpuRenderer {
     /// Builds a BVH for efficient ray tracing.
     pub fn new(solid: &BRepSolid) -> Self {
         Self {
-            bvh: Bvh::build(solid),
+            bvh: Bvh::build_brep(solid),
             material_color: [0.6, 0.7, 0.8], // Default light blue-gray
         }
     }
@@ -811,7 +811,7 @@ mod baked_transform_equivalence {
             [0.0, 0.0, 0.0, 1.0],
         ]);
         let tlas = build_scene_tlas(&[Arc::new(cube.clone())], &m);
-        let baked = Bvh::build(&transform_brep(&cube, &m));
+        let baked = Bvh::build_brep(&transform_brep(&cube, &m));
 
         // Same occupied volume, however the ray gets there.
         let a = tlas.bounds().expect("instance placed");
@@ -829,7 +829,7 @@ mod baked_transform_equivalence {
 
         // And a reflection is volume-preserving: the placed box keeps the
         // part's extents, just permuted by the rotation.
-        let ext = |bb: &vcad_kernel_booleans::bbox::Aabb3| {
+        let ext = |bb: &kosm_render::Aabb| {
             let mut e = [
                 bb.max.x - bb.min.x,
                 bb.max.y - bb.min.y,
@@ -863,7 +863,7 @@ mod baked_transform_equivalence {
             [0.0, 0.0, 0.0, 1.0],
         ]);
         let tlas = build_scene_tlas(&[Arc::new(cyl.clone())], &m);
-        let baked = Bvh::build(&transform_brep(&cyl, &m));
+        let baked = Bvh::build_brep(&transform_brep(&cyl, &m));
 
         let mut compared = 0;
         for i in 0..20 {
@@ -1054,7 +1054,7 @@ mod closed_surface_trace {
     #[test]
     fn full_sphere_traces() {
         let s = make_sphere(10.0, 0);
-        let bvh = Bvh::build(&s);
+        let bvh = Bvh::build_brep(&s);
         let ray = Ray::new(Point3::new(0.0, -50.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
         let hits = bvh.trace(&ray);
         assert_eq!(hits.len(), 2, "ray through center must enter and exit");

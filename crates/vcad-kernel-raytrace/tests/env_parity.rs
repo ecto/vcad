@@ -101,7 +101,7 @@ fn gpu_scene() -> GpuScene {
 fn cpu_scene() -> pathtrace::Scene {
     pathtrace::Scene {
         objects: vec![Object::new(
-            Arc::new(Bvh::build(&make_cube(SX, SX, 4.0))),
+            Arc::new(Bvh::build_brep(&make_cube(SX, SX, 4.0))),
             material(),
         )],
         lights: vec![AreaLight {
@@ -246,6 +246,7 @@ fn the_gpu_matches_the_cpu_under_a_transported_gradient() {
 /// The default state still describes the studio gradient the shader used to
 /// have compiled in, so a caller that never mentions the environment renders
 /// exactly what it rendered before.
+use vcad_kernel_raytrace::{BrepBvh};
 #[test]
 fn the_default_render_state_carries_the_default_gradient() {
     let s = GpuRenderState::new(1);

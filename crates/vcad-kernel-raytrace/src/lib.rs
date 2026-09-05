@@ -19,11 +19,14 @@
 //! # Example
 //!
 //! ```ignore
-//! use vcad_kernel_raytrace::{Ray, Bvh};
+//! use vcad_kernel_math::{Point3, Vec3};
 //! use vcad_kernel_primitives::make_cube;
+//! // `build_brep` lives on the extension trait: the generic hierarchy has
+//! // an inherent `build` that takes the geometry ready-made.
+//! use vcad_kernel_raytrace::{BrepBvh, Bvh, Ray};
 //!
 //! let brep = make_cube(10.0, 10.0, 10.0);
-//! let bvh = Bvh::build(&brep);
+//! let bvh = Bvh::build_brep(&brep);
 //!
 //! let ray = Ray::new(
 //!     Point3::new(-5.0, 5.0, 5.0),
@@ -44,12 +47,11 @@ pub mod trim;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 
-pub use bvh::Bvh;
+pub use bvh::{BrepBvh, BrepGeom, Bvh};
 pub use cpu::{render_scene, render_scene_samples, CpuRenderer};
 pub use pathtrace::{
     render_into, studio_rig, AreaLight, Camera, Environment, Film, Ground, Object,
     PathTraceOptions, Pbr, Scene,
 };
-pub use bvh::BrepGeom;
 pub use ray::{Ray, RayHit};
-pub use tlas::{Instance, InstanceHit, Tlas};
+pub use tlas::{BrepTlas, Instance, InstanceHit, Tlas};

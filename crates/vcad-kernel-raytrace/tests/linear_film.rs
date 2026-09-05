@@ -109,7 +109,7 @@ fn lights_only_state(frame: u32) -> GpuRenderState {
 
 fn cpu_scene() -> pathtrace::Scene {
     let solid = make_sphere(RADIUS, 48);
-    let bvh = Arc::new(Bvh::build(&solid));
+    let bvh = Arc::new(Bvh::build_brep(&solid));
     pathtrace::Scene {
         objects: vec![Object::new(
             bvh,
@@ -435,6 +435,7 @@ fn a_scissored_linear_pass_leaves_the_rest_of_the_film_alone() {
 
 /// What each exit costs per pass at 512x512. Not an assertion — a measurement,
 /// printed with `--nocapture`.
+use vcad_kernel_raytrace::{BrepBvh};
 #[test]
 #[ignore = "requires GPU"]
 fn measure_the_three_exits() {

@@ -76,7 +76,7 @@ fn cpu_coverage(
         objects: vec![Object::placed(
             Arc::clone(solid_bvh),
             Pbr::default(),
-            to_world.clone(),
+            placement(&to_world),
         )],
         lights: Vec::new(),
         env: Environment::default(),
@@ -131,6 +131,7 @@ fn iou(gpu: &[bool], cov: &[f32]) -> (f64, usize, usize) {
 
 /// The one that matters. A torus at several radii and orientations must have
 /// the same outline on the GPU as on the CPU — including its hole.
+use vcad_kernel_raytrace::{tlas::placement, BrepBvh};
 #[test]
 #[ignore = "requires GPU"]
 fn the_gpu_torus_has_the_cpu_torus_silhouette() {
@@ -155,7 +156,7 @@ fn the_gpu_torus_has_the_cpu_torus_silhouette() {
     for (major, minor) in radii {
         let solid = make_torus(major, minor, 64);
         let packed = GpuScene::from_brep(&solid).expect("scene packs");
-        let bvh = Arc::new(Bvh::build(&solid));
+        let bvh = Arc::new(Bvh::build_brep(&solid));
         for (pi, pose) in poses.iter().enumerate() {
             let g = gpu_mask(ctx, &packed.placed(pose), eye, at);
             let c = cpu_coverage(&bvh, pose, eye, at);

@@ -153,7 +153,7 @@ fn bench(count: usize) {
     // Baseline: bake the transform into cloned geometry, one BVH each.
     let t0 = Instant::now();
     let baked: Vec<Bvh> = (0..count)
-        .map(|i| Bvh::build(&transform_brep(&part, &transforms[i * 16..(i + 1) * 16])))
+        .map(|i| Bvh::build_brep(&transform_brep(&part, &transforms[i * 16..(i + 1) * 16])))
         .collect();
     let build_linear = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -235,6 +235,7 @@ fn bench(count: usize) {
 
 /// Primary-hit points, nudged off the surface — the origins a shading pass
 /// would fire shadow rays from.
+use vcad_kernel_raytrace::{BrepBvh, BrepTlas};
 fn shadow_origins(tlas: &Tlas, bounds: Bounds) -> Vec<Point3> {
     let (camera, forward, right, cam_up) = camera_rays(bounds);
     let half = (FOV_DEG.to_radians() / 2.0).tan();

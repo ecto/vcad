@@ -13,6 +13,7 @@ use vcad_kernel_raytrace::{Bvh, Ray};
 
 /// Cylinder r40 h8, rotated 90° about X: axis ends up along -Y, wall spans
 /// y in [-8, 0].
+use vcad_kernel_raytrace::{BrepBvh};
 fn rotated_disc() -> BRepSolid {
     let mut brep = make_cylinder(40.0, 8.0, 32);
     let t = Transform::rotation_x(90f64.to_radians());
@@ -27,7 +28,7 @@ fn rotated_disc() -> BRepSolid {
 
 #[test]
 fn cpu_wall_bounded_along_axis() {
-    let bvh = Bvh::build(&rotated_disc());
+    let bvh = Bvh::build_brep(&rotated_disc());
 
     // Ray aimed at the wall surface but 40mm beyond the disc along its
     // axis — must miss.
@@ -55,7 +56,7 @@ fn cpu_wall_bounded_along_axis() {
 #[test]
 fn cpu_unrotated_wall_bounded_along_axis() {
     // Same defect exists unrotated (axis +Z, wall z in [0, 8]).
-    let bvh = Bvh::build(&make_cylinder(40.0, 8.0, 32));
+    let bvh = Bvh::build_brep(&make_cylinder(40.0, 8.0, 32));
     let beyond = Ray::new(Point3::new(0.0, -100.0, 48.0), Vec3::new(0.0, 1.0, 0.0));
     assert!(bvh.trace_closest(&beyond).is_none());
     let at_disc = Ray::new(Point3::new(0.0, -100.0, 4.0), Vec3::new(0.0, 1.0, 0.0));
@@ -99,7 +100,7 @@ fn gpu_scene_packs_wall_v_range() {
 #[test]
 fn cpu_cap_faces_hit_and_bounded() {
     // Caps lie in the y=0 and y=-8 planes after the 90° X rotation.
-    let bvh = Bvh::build(&rotated_disc());
+    let bvh = Bvh::build_brep(&rotated_disc());
 
     // Straight down the axis, inside the radius — must hit the near cap
     // (y = 0) at t = 100.

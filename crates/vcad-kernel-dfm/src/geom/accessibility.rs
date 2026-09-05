@@ -56,8 +56,9 @@ fn sample_via_normal(brep: &BRepSolid, axis: Vec3) -> Vec<AccessibilitySample> {
 #[cfg(feature = "raytrace")]
 fn sample_via_raycast(brep: &BRepSolid, axis: Vec3) -> Vec<AccessibilitySample> {
     use vcad_kernel_raytrace::{Bvh, Ray};
+    use vcad_kernel_raytrace::BrepBvh;
 
-    let bvh = Bvh::build(brep);
+    let bvh = Bvh::build_brep(brep);
     let face_id_to_idx: std::collections::HashMap<_, _> = brep
         .topology
         .faces

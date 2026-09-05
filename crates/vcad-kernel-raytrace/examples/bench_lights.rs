@@ -5,6 +5,7 @@ use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_cube;
 use vcad_kernel_raytrace::pathtrace::render;
 use vcad_kernel_raytrace::*;
+use vcad_kernel_raytrace::{BrepBvh};
 
 fn main() {
     let n: usize = std::env::args()
@@ -31,13 +32,13 @@ fn main() {
         objects: {
             // Enough occluders that a shadow ray is a real traversal, which
             // is the cost this benchmark is about.
-            let blas = Arc::new(Bvh::build(&cube));
+            let blas = Arc::new(Bvh::build_brep(&cube));
             let mut v = Vec::new();
             for i in 0..6 {
                 for j in 0..6 {
                     let mut o =
                         Object::new(Arc::clone(&blas), Pbr::plastic([0.8, 0.3, 0.2], 0.35, 0.0));
-                    o.transform = vcad_kernel_math::Transform::translation(
+                    o.transform = kosm_render::Transform::translation(
                         i as f64 * 14.0 - 35.0,
                         j as f64 * 14.0 - 35.0,
                         0.0,

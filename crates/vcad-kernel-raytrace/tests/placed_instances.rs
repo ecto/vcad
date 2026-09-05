@@ -186,6 +186,7 @@ fn rotating_a_sphere_about_its_centre_changes_nothing() {
 /// background sentinel. The GPU side gets a silhouette by differencing the
 /// render against the same scene with the instance pushed a kilometre away:
 /// same camera, same sky, so every pixel that changed is the object.
+use vcad_kernel_raytrace::{tlas::placement, BrepBvh};
 #[test]
 #[ignore = "requires GPU"]
 fn a_placed_instance_lands_where_the_cpu_renderer_puts_it() {
@@ -216,9 +217,9 @@ fn a_placed_instance_lands_where_the_cpu_renderer_puts_it() {
         .collect();
 
     // ---- the CPU's, from the same placement
-    let bvh = Arc::new(Bvh::build(&solid));
+    let bvh = Arc::new(Bvh::build_brep(&solid));
     let scene = pathtrace::Scene {
-        objects: vec![Object::placed(bvh, Pbr::default(), to_world.clone())],
+        objects: vec![Object::placed(bvh, Pbr::default(), placement(&to_world))],
         lights: Vec::new(),
         env: Environment::default(),
         ground: None,

@@ -169,38 +169,31 @@ impl Geometry for BrepGeom {
     }
 }
 
-/// Bounding volume hierarchy for accelerated ray-geometry intersection.
+/// Bounding volume hierarchy over a vcad solid.
 ///
-/// Builds over either the trimmed analytic faces of a [`BRepSolid`]
-/// ([`Bvh::build`]) or the triangles of a [`TriangleMesh`]
-/// ([`Bvh::build_mesh`]); tracing is identical for both, and is
-/// [`kosm_render::Bvh`]'s.
-#[derive(Debug, Clone)]
-pub struct Bvh {
-    /// Shared, so placing the same part a hundred times costs a hundred
-    /// `Arc` bumps and one tree.
-    inner: Arc<kosm_render::Bvh<BrepGeom>>,
-}
+/// The hierarchy is [`kosm_render::Bvh`]; what makes it vcad's is the
+/// [`BrepGeom`] it is built over. The B-rep-shaped constructors and queries
+/// live on the [`BrepBvh`] extension trait, so `Bvh::build_brep(&solid)` still
+/// reads the way it always did.
+pub type Bvh = kosm_render::Bvh<BrepGeom>;
 
-impl Bvh {
+/// The B-rep-shaped half of a [`Bvh`]: how to build one from a solid or a
+/// mesh, and how to ask it the questions only vcad can answer.
+pub trait BrepBvh: Sized {
     /// Build a BVH from a BRep solid using SAH construction.
-    pub fn build(brep: &BRepSolid) -> Self {
-        Self::build_shared(Arc::new(brep.clone()))
-    }
+    ///
+    /// Not `build`: `kosm_render::Bvh` has an inherent one that takes the
+    /// geometry ready-made, and an inherent method wins over a trait's.
+    fn build_brep(brep: &BRepSolid) -> Self;
 
     /// Build a BVH over an already-shared BRep solid.
     ///
     /// Skips the clone `build` performs, so N instances of the same part can
     /// share one BLAS (see [`crate::tlas`]).
-    pub fn build_shared(brep: Arc<BRepSolid>) -> Self {
-        let faces: Vec<FaceId> = brep.topology.faces.iter().map(|(id, _)| id).collect();
-        Self {
-            inner: Arc::new(kosm_render::Bvh::build(BrepGeom::BRep { brep, faces })),
-        }
-    }
+    fn build_brep_shared(brep: Arc<BRepSolid>) -> Self;
 
     /// Build a BVH over the triangles of a mesh, using the same SAH
-    /// construction as [`build`](Self::build).
+    /// construction as [`build_brep`](Self::build_brep).
     ///
     /// Mesh-only solids — frozen `topology_optimize` results, imported
     /// STL/GLB parts — carry no analytic surfaces, so they are traced as
@@ -209,7 +202,46 @@ impl Bvh {
     ///
     /// When the mesh carries vertex normals they are interpolated for
     /// smooth shading; otherwise hits report the geometric face normal.
-    pub fn build_mesh(mesh: &TriangleMesh) -> Self {
+    fn build_mesh(mesh: &TriangleMesh) -> Self;
+
+    /// The underlying BRep solid, if this BVH was built over one. `None` for
+    /// mesh-backed BVHs.
+    fn brep(&self) -> Option<&BRepSolid>;
+
+    /// Whether this BVH traces triangles rather than analytic BRep faces.
+    fn is_mesh(&self) -> bool;
+
+    /// The face a hit landed on. `None` for mesh hits, which have no BRep
+    /// face — this is where `RayHit::face_id` went.
+    fn face_id(&self, hit: &RayHit) -> Option<FaceId>;
+
+    /// Solid-space bounds of the whole hierarchy, in vcad's `Aabb3`.
+    fn aabb(&self) -> Option<Aabb3>;
+
+    /// Flatten the BVH into a vector of nodes for GPU upload.
+    ///
+    /// Returns a list of (AABB, is_leaf, left_or_first, right_or_count) tuples:
+    /// - For internal nodes: left_or_first = left child index, right_or_count = right child index
+    /// - For leaf nodes: left_or_first = start face index in faces array, right_or_count = face count
+    ///
+    /// Also returns the list of face IDs in leaf order.
+    ///
+    /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
+    /// A mesh-backed BVH flattens to nothing.
+    fn flatten_faces(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>);
+}
+
+impl BrepBvh for Bvh {
+    fn build_brep(brep: &BRepSolid) -> Self {
+        Self::build_brep_shared(Arc::new(brep.clone()))
+    }
+
+    fn build_brep_shared(brep: Arc<BRepSolid>) -> Self {
+        let faces: Vec<FaceId> = brep.topology.faces.iter().map(|(id, _)| id).collect();
+        kosm_render::Bvh::build(BrepGeom::BRep { brep, faces })
+    }
+
+    fn build_mesh(mesh: &TriangleMesh) -> Self {
         let vertex_count = mesh.vertices.len() / 3;
         // Widened to `f64` once here: the tracer works in `f64` throughout,
         // and casting per intersection test would put it in the inner loop.
@@ -238,101 +270,38 @@ impl Bvh {
             Vec::new()
         };
 
-        Self {
-            inner: Arc::new(kosm_render::Bvh::build(BrepGeom::Mesh(TriMesh::new(
-                positions,
-                normals,
-                &mesh.indices,
-            )))),
-        }
+        kosm_render::Bvh::build(BrepGeom::Mesh(TriMesh::new(
+            positions,
+            normals,
+            &mesh.indices,
+        )))
     }
 
-    /// The geometry this BVH was built over.
-    pub fn geometry(&self) -> &BrepGeom {
-        self.inner.geometry()
-    }
-
-    /// The shared hierarchy underneath, for placing as an instance.
-    pub(crate) fn shared(&self) -> &Arc<kosm_render::Bvh<BrepGeom>> {
-        &self.inner
-    }
-
-    /// Trace a ray through the BVH, returning all intersections sorted by t.
-    pub fn trace(&self, ray: &Ray) -> Vec<RayHit> {
-        self.inner.trace(ray)
-    }
-
-    /// Trace a ray and return only the closest hit.
-    pub fn trace_closest(&self, ray: &Ray) -> Option<RayHit> {
-        self.inner.trace_closest(ray)
-    }
-
-    /// Trace a ray and return the closest hit strictly nearer than `t_max`.
-    pub fn trace_closest_limit(&self, ray: &Ray, t_max: f64) -> Option<RayHit> {
-        self.inner.trace_closest_limit(ray, t_max)
-    }
-
-    /// Trace a ray and return the closest hit in the open interval
-    /// `(t_min, t_max)`.
-    pub fn trace_closest_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<RayHit> {
-        self.inner.trace_closest_range(ray, t_min, t_max)
-    }
-
-    /// Any-hit test: does the ray hit *anything* in `(0, t_max)`?
-    pub fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
-        self.inner.occluded(ray, t_max)
-    }
-
-    /// Any-hit test over the open interval `(t_min, t_max)`.
-    pub fn occluded_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
-        self.inner.occluded_range(ray, t_min, t_max)
-    }
-
-    /// World-space (well, solid-space) bounds of the whole hierarchy.
-    pub fn bounds(&self) -> Option<Aabb3> {
-        self.inner.bounds().map(|a| from_render_aabb(&a))
-    }
-
-    /// Get a reference to the underlying BRep solid, if this BVH was built
-    /// over one. `None` for mesh-backed BVHs.
-    pub fn brep(&self) -> Option<&BRepSolid> {
-        match self.inner.geometry() {
+    fn brep(&self) -> Option<&BRepSolid> {
+        match self.geometry() {
             BrepGeom::BRep { brep, .. } => Some(brep),
             BrepGeom::Mesh(_) => None,
         }
     }
 
-    /// Whether this BVH traces triangles rather than analytic BRep faces.
-    pub fn is_mesh(&self) -> bool {
-        matches!(self.inner.geometry(), BrepGeom::Mesh(_))
+    fn is_mesh(&self) -> bool {
+        matches!(self.geometry(), BrepGeom::Mesh(_))
     }
 
-    /// Get a reference to the root node, if any.
-    pub fn root(&self) -> Option<&BvhNode> {
-        self.inner.root()
+    fn face_id(&self, hit: &RayHit) -> Option<FaceId> {
+        self.geometry().face_id(hit.prim)
     }
 
-    /// The face a hit's primitive index refers to. `None` for mesh hits.
-    pub fn face_id(&self, hit: &RayHit) -> Option<FaceId> {
-        self.inner.geometry().face_id(hit.prim)
+    fn aabb(&self) -> Option<Aabb3> {
+        self.bounds().map(|a| from_render_aabb(&a))
     }
 
-    /// Flatten the BVH into a vector of nodes for GPU upload.
-    ///
-    /// Returns a list of (AABB, is_leaf, left_or_first, right_or_count) tuples:
-    /// - For internal nodes: left_or_first = left child index, right_or_count = right child index
-    /// - For leaf nodes: left_or_first = start face index in faces array, right_or_count = face count
-    ///
-    /// Also returns the list of face IDs in leaf order.
-    ///
-    /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
-    /// A mesh-backed BVH flattens to nothing.
-    pub fn flatten(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>) {
-        let BrepGeom::BRep { faces: face_ids, .. } = self.inner.geometry() else {
+    fn flatten_faces(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>) {
+        let BrepGeom::BRep { faces: face_ids, .. } = self.geometry() else {
             return (Vec::new(), Vec::new());
         };
 
-        let (nodes, prims) = self.inner.flatten();
+        let (nodes, prims) = self.flatten();
         (
             nodes
                 .into_iter()
@@ -342,6 +311,7 @@ impl Bvh {
         )
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,7 +327,7 @@ mod tests {
         use vcad_kernel_primitives::make_cylinder;
 
         let cyl = make_cylinder(5.0, 20.0, 32);
-        let bvh = Bvh::build(&cyl);
+        let bvh = Bvh::build_brep(&cyl);
 
         // Fire at the wall from +X, off-axis in Y so the tangent is not
         // trivially an axis vector.
@@ -390,7 +360,7 @@ mod tests {
         use vcad_kernel_primitives::make_cylinder;
 
         let cyl = make_cylinder(5.0, 20.0, 32);
-        let bvh = Bvh::build(&cyl);
+        let bvh = Bvh::build_brep(&cyl);
         let ray = Ray::new(Point3::new(1.0, 1.0, 40.0), Vec3::new(0.0, 0.0, -1.0));
         let hit = bvh.trace_closest(&ray).expect("ray should hit the top cap");
         let t = hit.dpdu.expect("plane must carry a tangent");
@@ -404,14 +374,14 @@ mod tests {
     #[test]
     fn test_bvh_build() {
         let cube = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&cube);
+        let bvh = Bvh::build_brep(&cube);
         assert!(bvh.root().is_some());
     }
 
     #[test]
     fn test_bvh_trace_cube() {
         let cube = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&cube);
+        let bvh = Bvh::build_brep(&cube);
 
         // Ray from outside, hitting two faces (entry and exit)
         let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
@@ -428,7 +398,7 @@ mod tests {
     #[test]
     fn test_bvh_trace_miss() {
         let cube = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&cube);
+        let bvh = Bvh::build_brep(&cube);
 
         // Ray missing the cube
         let ray = Ray::new(Point3::new(50.0, 50.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
@@ -440,7 +410,7 @@ mod tests {
     #[test]
     fn test_bvh_trace_closest() {
         let cube = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&cube);
+        let bvh = Bvh::build_brep(&cube);
 
         let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
 
@@ -452,7 +422,7 @@ mod tests {
     #[test]
     fn test_bvh_diagonal_ray() {
         let cube = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&cube);
+        let bvh = Bvh::build_brep(&cube);
 
         // Diagonal ray through cube corner
         let ray = Ray::new(Point3::new(-5.0, -5.0, -5.0), Vec3::new(1.0, 1.0, 1.0));
@@ -575,15 +545,15 @@ mod tests {
         // The GPU pipeline traces analytic surfaces only; a mesh BVH must
         // not hand it face IDs it doesn't have.
         let bvh = Bvh::build_mesh(&cube_mesh());
-        let (nodes, faces) = bvh.flatten();
+        let (nodes, faces) = bvh.flatten_faces();
         assert!(nodes.is_empty() && faces.is_empty());
     }
 
     #[test]
     fn brep_flatten_still_round_trips_face_ids() {
         let cube = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&cube);
-        let (nodes, faces) = bvh.flatten();
+        let bvh = Bvh::build_brep(&cube);
+        let (nodes, faces) = bvh.flatten_faces();
         assert!(!nodes.is_empty());
         assert_eq!(faces.len(), cube.topology.faces.len());
         assert!(faces.iter().all(|&f| cube.topology.faces.contains_key(f)));

@@ -811,12 +811,11 @@ fn gpu_surface_tangent_matches_geom_d_du() {
 /// `setMaterial` used to carry only colour/metallic/roughness, so clearcoat,
 /// IOR and anisotropy were silently dropped on the way to the GPU and a
 /// brushed or lacquered part shaded differently in the viewport than under
-/// `--photoreal`. Both now go through `Pbr::from_material_def`; this pins that
+/// `--photoreal`. Both now go through `pathtrace::from_material_def`; this pins that
 /// the GPU packing round-trips it without loss.
 #[test]
 fn gpu_material_round_trips_the_shared_derivation() {
     use vcad_ir::MaterialDef;
-    use vcad_kernel_raytrace::pathtrace::Pbr;
 
     let defs = [
         // Explicit anisotropy wins over the name heuristic.
@@ -848,7 +847,7 @@ fn gpu_material_round_trips_the_shared_derivation() {
     ];
 
     for d in &defs {
-        let cpu = Pbr::from_material_def(Some(d), None);
+        let cpu = vcad_kernel_raytrace::pathtrace::from_material_def(Some(d), None);
         let gpu = GpuMaterial::from_pbr(cpu).to_pbr();
         assert_eq!(
             cpu.metallic, gpu.metallic,
@@ -872,20 +871,20 @@ fn gpu_material_round_trips_the_shared_derivation() {
 
     // The heuristic must actually be doing something, or the assertions above
     // are comparing zero against zero.
-    let turned = Pbr::from_material_def(Some(&defs[1]), None);
+    let turned = vcad_kernel_raytrace::pathtrace::from_material_def(Some(&defs[1]), None);
     assert!(
         turned.anisotropy > 0.5,
         "the name heuristic did not fire for 'turned_shaft' (got {})",
         turned.anisotropy
     );
-    let brushed = Pbr::from_material_def(Some(&defs[0]), None);
+    let brushed = vcad_kernel_raytrace::pathtrace::from_material_def(Some(&defs[0]), None);
     assert!(
         (brushed.anisotropy - -0.4).abs() < 1e-6,
         "explicit anisotropy should win over the name heuristic (got {})",
         brushed.anisotropy
     );
     assert!(
-        Pbr::from_material_def(Some(&defs[2]), None).clearcoat > 0.0,
+        vcad_kernel_raytrace::pathtrace::from_material_def(Some(&defs[2]), None).clearcoat > 0.0,
         "a glossy dielectric should pick up a clearcoat"
     );
 }

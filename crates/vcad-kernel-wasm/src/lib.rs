@@ -4093,7 +4093,7 @@ impl RayTracer {
     /// roughness, so clearcoat, IOR and anisotropy never reached the viewport
     /// and a brushed or lacquered part shaded differently here than under
     /// `vcad-render --photoreal`. This runs the SAME derivation the CPU
-    /// renderer uses (`Pbr::from_material_def`), so both agree by construction.
+    /// renderer uses (`pathtrace::from_material_def`), so both agree by construction.
     ///
     /// `json` is a `MaterialDef` object; pass `null`/empty to fall back to the
     /// optional `tint` (linear RGB) or the neutral default.

@@ -119,7 +119,7 @@ fn gpu_scene() -> GpuScene {
 fn cpu_scene() -> pathtrace::Scene {
     pathtrace::Scene {
         objects: vec![Object::new(
-            Arc::new(Bvh::build(&make_cube(RX, RY, RZ))),
+            Arc::new(Bvh::build_brep(&make_cube(RX, RY, RZ))),
             material(),
         )],
         lights: panels(),
@@ -358,6 +358,7 @@ fn camera_visible_panels_close_the_gap_in_a_sealed_room() {
 
 /// The flag is off unless asked for, so a caller that never mentions it
 /// renders exactly what it rendered before.
+use vcad_kernel_raytrace::{BrepBvh};
 #[test]
 fn camera_visible_lights_is_off_by_default_and_independent_of_raw_sample() {
     let mut s = GpuRenderState::new(1);

@@ -4296,7 +4296,7 @@ mod raytrace {
     use super::raster::{canvas_for, encode_jpeg, encode_png, fit_scale, Frame, BACKGROUND};
     use super::*;
     use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
-    use vcad_kernel_raytrace::{Bvh, Instance, Ray, Tlas};
+    use vcad_kernel_raytrace::{BrepBvh, Bvh, Instance, Ray, Tlas};
 
     /// Stratified supersampling grid per pixel (N × N rays). Analytic
     /// intersection makes interior shading perfectly smooth already; the
@@ -4357,7 +4357,7 @@ mod raytrace {
         let mut untraceable: Vec<String> = Vec::new();
         for s in &tinted {
             let bvh = match s.solid.as_brep() {
-                Some(brep) => Bvh::build(brep),
+                Some(brep) => Bvh::build_brep(brep),
                 None => {
                     let mut mesh = s.solid.to_mesh(0);
                     vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);

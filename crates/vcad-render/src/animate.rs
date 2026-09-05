@@ -344,9 +344,12 @@ pub fn render_photoreal_animation(
         .iter()
         .map(|o| (std::sync::Arc::clone(&o.bvh), o.material))
         .collect();
-    let static_transforms: Vec<_> = objects[..static_count]
+    // Back into the kernel's `Transform`, so the static placements and the
+    // per-frame poses are one type the loop below can choose between.
+    let static_transforms: Vec<vcad_kernel::vcad_kernel_math::Transform> = objects
+        [..static_count]
         .iter()
-        .map(|o| o.transform.clone())
+        .map(|o| vcad_kernel::vcad_kernel_math::Transform { matrix: o.transform.matrix })
         .collect();
 
     for (i, pose) in poses.iter().enumerate() {
@@ -356,14 +359,14 @@ pub fn render_photoreal_animation(
             .enumerate()
             .map(|(k, (bvh, material))| {
                 let transform = if k < static_count {
-                    static_transforms[k].clone()
+                    &static_transforms[k]
                 } else {
-                    pose[k - static_count].clone()
+                    &pose[k - static_count]
                 };
                 vcad_kernel_raytrace::pathtrace::Object::placed(
                     std::sync::Arc::clone(bvh),
                     *material,
-                    transform,
+                    vcad_kernel_raytrace::tlas::placement(transform),
                 )
             })
             .collect();

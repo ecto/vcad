@@ -6,7 +6,7 @@ use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::FaceId;
 
-use crate::bvh::Bvh;
+use crate::bvh::{BrepBvh, Bvh};
 use crate::trim;
 
 /// Maximum number of surfaces supported in a single scene.
@@ -253,7 +253,7 @@ impl GpuMaterial {
 
     /// Build from the CPU reference material.
     ///
-    /// Paired with [`crate::pathtrace::Pbr::from_material_def`], this is what
+    /// Paired with [`crate::pathtrace::from_material_def`], this is what
     /// makes the viewport and `--photoreal` derive the SAME material from the
     /// same IR definition — clearcoat heuristic, IOR and grain included.
     pub fn from_pbr(p: crate::pathtrace::Pbr) -> Self {
@@ -1109,8 +1109,8 @@ impl GpuScene {
         }
 
         // Build BVH first to get the face ordering
-        let bvh = Bvh::build(brep);
-        let (flat_nodes, bvh_faces) = bvh.flatten();
+        let bvh = <Bvh as BrepBvh>::build_brep(brep);
+        let (flat_nodes, bvh_faces) = bvh.flatten_faces();
 
         // Build face list in BVH traversal order (so BVH leaf indices are contiguous)
         let mut faces = Vec::with_capacity(bvh_faces.len());
@@ -1442,7 +1442,7 @@ impl GpuScene {
             self.materials.push(GpuMaterial::default());
         }
         self.materials[0] =
-            GpuMaterial::from_pbr(crate::pathtrace::Pbr::from_material_def(mat, tint));
+            GpuMaterial::from_pbr(crate::pathtrace::from_material_def(mat, tint));
     }
 }
 

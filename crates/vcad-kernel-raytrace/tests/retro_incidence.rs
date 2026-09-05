@@ -123,7 +123,7 @@ fn gpu_scene(m: &Pbr) -> GpuScene {
 fn cpu_scene(m: &Pbr) -> pathtrace::Scene {
     pathtrace::Scene {
         objects: vec![Object::new(
-            Arc::new(Bvh::build(&make_cube(SX, SX, 4.0))),
+            Arc::new(Bvh::build_brep(&make_cube(SX, SX, 4.0))),
             *m,
         )],
         lights: vec![AreaLight {
@@ -158,6 +158,7 @@ fn state(frame: u32) -> GpuRenderState {
 /// eight — are the loosest. A systematic error concentrated at normal
 /// incidence would move one band and leave the rest alone, which no amount of
 /// noise does.
+use vcad_kernel_raytrace::{BrepBvh};
 #[test]
 #[ignore = "requires GPU"]
 fn the_gpu_has_no_ring_at_normal_incidence() {

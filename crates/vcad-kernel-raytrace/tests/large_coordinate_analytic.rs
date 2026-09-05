@@ -164,7 +164,7 @@ fn case(
     let packed = GpuScene::from_brep(solid)
         .expect("scene packs")
         .placed(&Transform::translation(offset, 0.0, 120.0));
-    let bvh = Bvh::build(solid);
+    let bvh = Bvh::build_brep(solid);
 
     let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
     let cam = GpuCamera::new(eye, at, [0.0, 0.0, 1.0], fov, W, H);
@@ -223,6 +223,7 @@ fn case(
 /// twenty metres — and the sphere is the control: milder, because a quadratic
 /// has no depressed coefficients to cancel, but wrong by millimetres at
 /// twenty metres all the same.
+use vcad_kernel_raytrace::{BrepBvh};
 #[test]
 #[ignore = "requires GPU"]
 fn an_analytic_surface_lands_where_the_cpu_puts_it_at_court_coordinates() {

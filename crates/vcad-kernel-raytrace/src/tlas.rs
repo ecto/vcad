@@ -25,8 +25,7 @@ use vcad_kernel_booleans::bbox::Aabb3;
 use vcad_kernel_math::Transform;
 use vcad_kernel_primitives::BRepSolid;
 
-use crate::bvh::{BrepGeom, Bvh};
-use crate::Ray;
+use crate::bvh::{BrepBvh, BrepGeom, Bvh};
 
 /// A hit, tagged with the instance payload that produced it.
 pub use kosm_render::InstanceHit;
@@ -38,92 +37,40 @@ pub type FlatTlasNode = (Aabb3, bool, u32, u32);
 
 /// `vcad_kernel_math::Transform` and `kosm_render::Transform` are the same
 /// `tang::Mat4<f64>` wearing two names; this is the seam between them.
+///
+/// vcad's is affine because the kernel needs non-uniform scale and mirror;
+/// the renderer's is affine for exactly the same reason, and neither has any
+/// business importing the other's crate.
 #[inline]
-pub fn to_render_transform(t: &Transform) -> kosm_render::Transform {
+pub fn placement(t: &Transform) -> kosm_render::Transform {
     kosm_render::Transform { matrix: t.matrix }
 }
 
 /// One placed instance of a shared BLAS.
-#[derive(Debug, Clone)]
-pub struct Instance {
-    inner: kosm_render::Instance<BrepGeom>,
-    blas: Arc<Bvh>,
-}
-
-impl Instance {
-    /// Place a shared BLAS with an object→world transform.
-    ///
-    /// Returns `None` when the BLAS is empty or the transform is singular
-    /// (a ray cannot be mapped into a collapsed space).
-    pub fn new(blas: Arc<Bvh>, to_world: Transform, payload: usize) -> Option<Self> {
-        let inner = kosm_render::Instance::new(
-            Arc::clone(blas.shared()),
-            to_render_transform(&to_world),
-            payload,
-        )?;
-        Some(Self { inner, blas })
-    }
-
-    /// Closest hit on this instance inside `(t_min, t_max)`, world units.
-    pub fn trace_closest(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<InstanceHit> {
-        self.inner.trace_closest(ray, t_min, t_max)
-    }
-
-    /// Any-hit against this instance over `(t_min, t_max)`, world units.
-    pub fn occluded(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
-        self.inner.occluded(ray, t_min, t_max)
-    }
-
-    /// Place a shared BLAS at the identity transform.
-    pub fn identity(blas: Arc<Bvh>, payload: usize) -> Option<Self> {
-        Self::new(blas, Transform::identity(), payload)
-    }
-
-    /// The caller-supplied payload index.
-    pub fn payload(&self) -> usize {
-        self.inner.payload()
-    }
-
-    /// This instance's world-space bounds.
-    pub fn world_aabb(&self) -> Aabb3 {
-        let a = self.inner.world_aabb();
-        Aabb3::new(a.min, a.max)
-    }
-
-    /// The instanced solid, when this instance is BRep-backed. `None` for a
-    /// mesh BLAS, which has no analytic solid behind it.
-    pub fn brep(&self) -> Option<&BRepSolid> {
-        self.blas.brep()
-    }
-}
+pub type Instance = kosm_render::Instance<BrepGeom>;
 
 /// Top-level acceleration structure over placed [`Instance`]s.
-#[derive(Debug, Clone, Default)]
-pub struct Tlas {
-    inner: kosm_render::Tlas<BrepGeom>,
-    /// The same instances, in the same order, still wearing their vcad
-    /// clothes — `instances()` is public API and callers want `brep()`.
-    /// Cloning one is an `Arc` bump and a matrix.
-    instances: Vec<Instance>,
-}
+pub type Tlas = kosm_render::Tlas<BrepGeom>;
 
-impl Tlas {
-    /// Build a TLAS over the given instances using the same SAH search the
-    /// per-solid BVH uses, applied to instance world AABBs.
-    pub fn build(instances: Vec<Instance>) -> Self {
-        Self {
-            inner: kosm_render::Tlas::build(
-                instances.iter().map(|i| i.inner.clone()).collect(),
-            ),
-            instances,
-        }
-    }
-
+/// The vcad-shaped half of a [`Tlas`]: building one out of placed solids,
+/// with `vcad_kernel_math::Transform` for the placements.
+pub trait BrepTlas: Sized {
     /// Build a TLAS from `(solid, transform, payload)` triples, sharing one
     /// BLAS per distinct `Arc<BRepSolid>` (compared by pointer identity, so
     /// callers that clone the `Arc` for each instance get the sharing for
     /// free).
-    pub fn from_placed(placed: &[(Arc<BRepSolid>, Transform, usize)]) -> Self {
+    fn from_placed(placed: &[(Arc<BRepSolid>, Transform, usize)]) -> Self;
+
+    /// World bounds of the whole scene, in vcad's `Aabb3`.
+    fn aabb(&self) -> Option<Aabb3>;
+
+    /// Flatten the top level for GPU upload, mirroring
+    /// [`BrepBvh::flatten_faces`](crate::bvh::BrepBvh::flatten_faces).
+    fn flatten_nodes(&self) -> (Vec<FlatTlasNode>, Vec<u32>);
+}
+
+impl BrepTlas for Tlas {
+    fn from_placed(placed: &[(Arc<BRepSolid>, Transform, usize)]) -> Self {
         let mut blas_cache: Vec<(*const BRepSolid, Arc<Bvh>)> = Vec::new();
         let mut instances = Vec::with_capacity(placed.len());
 
@@ -132,68 +79,25 @@ impl Tlas {
             let blas = match blas_cache.iter().find(|(k, _)| *k == key) {
                 Some((_, blas)) => Arc::clone(blas),
                 None => {
-                    let blas = Arc::new(Bvh::build_shared(Arc::clone(solid)));
+                    let blas = Arc::new(Bvh::build_brep_shared(Arc::clone(solid)));
                     blas_cache.push((key, Arc::clone(&blas)));
                     blas
                 }
             };
-            if let Some(inst) = Instance::new(blas, to_world.clone(), *payload) {
+            if let Some(inst) = Instance::new(blas, placement(to_world), *payload) {
                 instances.push(inst);
             }
         }
 
-        Self::build(instances)
+        Tlas::build(instances)
     }
 
-    /// Number of placed instances (empty or singular ones are dropped at
-    /// build time, so this can be less than what was handed in).
-    pub fn len(&self) -> usize {
-        self.inner.len()
+    fn aabb(&self) -> Option<Aabb3> {
+        self.bounds().map(|a| Aabb3::new(a.min, a.max))
     }
 
-    /// Whether the structure holds no instances.
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    /// The instances, in build order.
-    pub fn instances(&self) -> &[Instance] {
-        &self.instances
-    }
-
-    /// World bounds of the whole scene, if non-empty.
-    pub fn bounds(&self) -> Option<Aabb3> {
-        self.inner.bounds().map(|a| Aabb3::new(a.min, a.max))
-    }
-
-    /// Closest hit in the scene, in world space.
-    pub fn trace_closest(&self, ray: &Ray) -> Option<InstanceHit> {
-        self.inner.trace_closest(ray)
-    }
-
-    /// Closest hit in the scene within the open interval `(t_min, t_max)`.
-    ///
-    /// `t_min` lets a caller skip the surface a ray just left without nudging
-    /// the origin — and because it is pushed down into the BLAS rather than
-    /// applied as a post-filter, a surface hidden behind the skipped one is
-    /// still found.
-    pub fn trace_closest_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<InstanceHit> {
-        self.inner.trace_closest_range(ray, t_min, t_max)
-    }
-
-    /// Any-hit query: is anything in `(0, t_max)` along the ray?
-    pub fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
-        self.inner.occluded(ray, t_max)
-    }
-
-    /// Any-hit query over the open interval `(t_min, t_max)`.
-    pub fn occluded_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
-        self.inner.occluded_range(ray, t_min, t_max)
-    }
-
-    /// Flatten the top level for GPU upload, mirroring [`Bvh::flatten`].
-    pub fn flatten(&self) -> (Vec<FlatTlasNode>, Vec<u32>) {
-        let (nodes, indices) = self.inner.flatten();
+    fn flatten_nodes(&self) -> (Vec<FlatTlasNode>, Vec<u32>) {
+        let (nodes, indices) = self.flatten();
         (
             nodes
                 .into_iter()
@@ -204,6 +108,7 @@ impl Tlas {
     }
 }
 
+
 /// Build a [`Transform`] from a **column-major** 4×4 matrix laid out as 16
 /// contiguous `f64`s — the wire format `render_scene` and the FFI use, and the
 /// one Three.js / glTF produce. The translation therefore lives at indices
@@ -211,20 +116,22 @@ impl Tlas {
 pub fn transform_from_column_major(m: &[f64]) -> Option<Transform> {
     kosm_render::transform_from_column_major(m).map(|t| Transform { matrix: t.matrix })
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Ray;
     use vcad_kernel_math::{Point3, Vec3};
     use vcad_kernel_primitives::{make_cube, make_cylinder, make_sphere};
 
     fn cube_blas() -> Arc<Bvh> {
-        Arc::new(Bvh::build(&make_cube(10.0, 10.0, 10.0)))
+        Arc::new(Bvh::build_brep(&make_cube(10.0, 10.0, 10.0)))
     }
 
     #[test]
     fn identity_instance_matches_bare_bvh() {
         let solid = make_cube(10.0, 10.0, 10.0);
-        let bvh = Bvh::build(&solid);
+        let bvh = Bvh::build_brep(&solid);
         let tlas = Tlas::build(vec![Instance::identity(Arc::new(bvh.clone()), 0).unwrap()]);
 
         let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
@@ -239,10 +146,10 @@ mod tests {
     #[test]
     fn translated_instance_shares_one_blas() {
         let blas = cube_blas();
-        let a = Instance::new(Arc::clone(&blas), Transform::identity(), 0).unwrap();
+        let a = Instance::new(Arc::clone(&blas), placement(&Transform::identity()), 0).unwrap();
         let b = Instance::new(
             Arc::clone(&blas),
-            Transform::translation(100.0, 0.0, 0.0),
+            placement(&Transform::translation(100.0, 0.0, 0.0)),
             1,
         )
         .unwrap();
@@ -265,7 +172,7 @@ mod tests {
     fn scaled_instance_reports_world_t() {
         let blas = cube_blas();
         // 2x scale: the cube spans 0..20 in world.
-        let inst = Instance::new(Arc::clone(&blas), Transform::scale(2.0, 2.0, 2.0), 0).unwrap();
+        let inst = Instance::new(Arc::clone(&blas), placement(&Transform::scale(2.0, 2.0, 2.0)), 0).unwrap();
         let tlas = Tlas::build(vec![inst]);
 
         let ray = Ray::new(Point3::new(10.0, 10.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
@@ -284,7 +191,7 @@ mod tests {
         let blas = cube_blas();
         // Rotate 90° about Z: the +X face (normal +X) becomes the +Y face.
         let rot = Transform::rotation_z(std::f64::consts::FRAC_PI_2);
-        let tlas = Tlas::build(vec![Instance::new(blas, rot, 0).unwrap()]);
+        let tlas = Tlas::build(vec![Instance::new(blas, placement(&rot), 0).unwrap()]);
 
         // Cube now spans x in -10..0, y in 0..10. Shoot -Y at the far face.
         let ray = Ray::new(Point3::new(-5.0, 50.0, 5.0), Vec3::new(0.0, -1.0, 0.0));
@@ -301,7 +208,7 @@ mod tests {
     fn mirrored_instance_normals_point_outward() {
         let blas = cube_blas();
         let mirror = Transform::scale(-1.0, 1.0, 1.0);
-        let tlas = Tlas::build(vec![Instance::new(blas, mirror, 0).unwrap()]);
+        let tlas = Tlas::build(vec![Instance::new(blas, placement(&mirror), 0).unwrap()]);
         assert!(tlas.bounds().unwrap().min.x < -9.0);
 
         // Mirrored cube spans x in -10..0. Hit its -X face from outside.
@@ -318,7 +225,7 @@ mod tests {
         let blas = cube_blas();
         let tlas = Tlas::build(vec![
             Instance::identity(Arc::clone(&blas), 0).unwrap(),
-            Instance::new(blas, Transform::translation(0.0, 0.0, 50.0), 1).unwrap(),
+            Instance::new(blas, placement(&Transform::translation(0.0, 0.0, 50.0)), 1).unwrap(),
         ]);
 
         let ray = Ray::new(Point3::new(5.0, 5.0, -5.0), Vec3::new(0.0, 0.0, 1.0));
@@ -391,11 +298,11 @@ mod tests {
         let tlas = Tlas::from_placed(&placed);
         assert_eq!(tlas.len(), 50);
         // All 50 instances point at the same BLAS allocation.
-        let first: &Bvh = tlas.instances()[0].blas.as_ref();
+        let first: &Bvh = tlas.instances()[0].blas().as_ref();
         assert!(tlas
             .instances()
             .iter()
-            .all(|i| std::ptr::eq(i.blas.as_ref(), first)));
+            .all(|i| std::ptr::eq(i.blas().as_ref(), first)));
     }
 
     /// `t_min` must be a real interval search, not a filter applied to the
@@ -406,7 +313,7 @@ mod tests {
         let blas = cube_blas();
         let tlas = Tlas::build(vec![
             Instance::identity(Arc::clone(&blas), 0).unwrap(),
-            Instance::new(blas, Transform::translation(0.0, 0.0, 40.0), 1).unwrap(),
+            Instance::new(blas, placement(&Transform::translation(0.0, 0.0, 40.0)), 1).unwrap(),
         ]);
 
         // Cube A spans z 0..10, cube B spans z 40..50. Ray starts at z = -5.
@@ -440,7 +347,7 @@ mod tests {
     #[test]
     fn instance_carries_the_surface_tangent() {
         let solid = make_cylinder(6.0, 20.0, 0);
-        let blas = Arc::new(Bvh::build(&solid));
+        let blas = Arc::new(Bvh::build_brep(&solid));
 
         let ray = Ray::new(Point3::new(0.0, -50.0, 10.0), Vec3::new(0.0, 1.0, 0.0));
         let bare = blas.trace_closest(&ray).expect("hits the cylinder");
@@ -461,7 +368,7 @@ mod tests {
         // Rotated instance: the tangent rotates with the geometry, so it stays
         // perpendicular to the normal and is no longer the local one.
         let rot = Transform::rotation_z(std::f64::consts::FRAC_PI_2);
-        let spun = Tlas::build(vec![Instance::new(blas, rot, 0).unwrap()]);
+        let spun = Tlas::build(vec![Instance::new(blas, placement(&rot), 0).unwrap()]);
         let hit = spun.trace_closest(&ray).expect("still hits");
         let t = hit.hit.dpdu.expect("tangent survives rotation");
         let n = hit.hit.normal.into_inner();

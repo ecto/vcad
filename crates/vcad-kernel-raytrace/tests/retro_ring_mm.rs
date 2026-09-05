@@ -126,7 +126,7 @@ fn gpu_scene() -> GpuScene {
 fn cpu_scene() -> pathtrace::Scene {
     pathtrace::Scene {
         objects: vec![Object::new(
-            Arc::new(Bvh::build(&make_cube(RX, RY, RZ))),
+            Arc::new(Bvh::build_brep(&make_cube(RX, RY, RZ))),
             material(),
         )],
         lights: panels(),
@@ -370,6 +370,7 @@ fn the_raw_trace_at_mm_scale_has_no_ring_at_retro_incidence() {
 
 /// The whole device path a viewer drives: raw sample, history, a-trous,
 /// resolve — against the CPU's `render` + `denoise` + `to_srgb8`.
+use vcad_kernel_raytrace::{BrepBvh};
 #[test]
 #[ignore = "requires GPU"]
 fn the_denoised_device_frame_at_mm_scale_has_no_ring_at_retro_incidence() {

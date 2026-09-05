@@ -44,7 +44,7 @@ use vcad_ir::{
 };
 use vcad_kernel::Solid;
 use vcad_kernel_math::{Point3, Vec3};
-use vcad_kernel_raytrace::{Bvh, Ray};
+use vcad_kernel_raytrace::{BrepBvh, Bvh, Ray};
 use vcad_kernel_tessellate::TriangleMesh;
 
 mod err;
@@ -2151,7 +2151,7 @@ pub extern "C" fn vcad_solid_raycast(
         let Some(brep) = s.inner.as_brep() else {
             return miss;
         };
-        let bvh = Bvh::build(brep);
+        let bvh = Bvh::build_brep(brep);
         let ray = Ray::new(Point3::new(o[0], o[1], o[2]), Vec3::new(d[0], d[1], d[2]));
         match bvh.trace_closest(&ray) {
             Some(h) => VcadHit {
