@@ -43,3 +43,10 @@ pub const BSDF_PARITY_HARNESS: &str = include_str!("bsdf_parity.wgsl");
 pub fn compose(body: &str) -> String {
     format!("{BSDF_SHADER}\n{SURFACE_SHADER}\n{ENV_SHADER}\n{body}")
 }
+
+/// Device-side per-pixel history and à-trous denoise.
+///
+/// Self-contained — it shades nothing, so unlike the others it needs no
+/// [`BSDF_SHADER`] prefix. See `gpu/history.rs` for the passes it defines and
+/// the order they run in.
+pub const HISTORY_SHADER: &str = include_str!("history.wgsl");

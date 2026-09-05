@@ -4,6 +4,8 @@
 //! directly without tessellation.
 
 mod buffers;
+#[cfg(feature = "gpu")]
+mod history;
 mod pipeline;
 #[cfg(feature = "gpu")]
 mod resident;
@@ -14,6 +16,8 @@ pub use buffers::{
     GpuScene, GpuSceneError, GpuSurface, GpuVec2, DEFAULT_ENV_INTENSITY, DEFAULT_FIREFLY_CLAMP,
     DEFAULT_MAX_DEPTH, DEFAULT_RR_START,
 };
+#[cfg(feature = "gpu")]
+pub use history::{GpuDenoiseParams, History, HistoryBuffers, HistoryPipeline, MAX_DENOISE_ITERS};
 pub use pipeline::RayTracePipeline;
 #[cfg(feature = "gpu")]
 pub use resident::ResidentScene;

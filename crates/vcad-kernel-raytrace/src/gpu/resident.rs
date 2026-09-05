@@ -36,6 +36,7 @@ use super::buffers::{
     pack_light_power_table, GpuAreaLight, GpuBvhNode, GpuCamera, GpuFace, GpuMaterial,
     GpuRenderState, GpuScene, GpuSurface, GpuVec2,
 };
+use super::history::HistoryBuffers;
 use super::pipeline::{read_back_f32, read_back_rgba, RayTracePipeline};
 use crate::pathtrace::Film;
 
@@ -310,6 +311,10 @@ pub struct ResidentScene {
     /// Cached bind group for the scene's own output texture. Dropped whenever
     /// a buffer or target is replaced.
     bind_group: Option<wgpu::BindGroup>,
+    /// Device-side per-pixel history, built on first use by
+    /// [`RayTracePipeline::accumulate_and_denoise_resident`] and dropped
+    /// whenever the frame is resized.
+    history: Option<HistoryBuffers>,
     /// Scene-derived render-state fields, refreshed on every `update_scene` so
     /// a caller's state cannot disagree with the buffers actually bound.
     light_count: u32,
@@ -367,6 +372,7 @@ impl ResidentScene {
                 mapped_at_creation: false,
             }),
             bind_group: None,
+            history: None,
             light_count: 0,
             env_state: (0, 0, 0, 0.0, 0.0, 0.0),
         };
@@ -471,6 +477,30 @@ impl ResidentScene {
         }
         self.targets = FrameTargets::new(ctx, width, height);
         self.bind_group = None;
+        // A history is per-pixel; at a new size none of it means anything.
+        self.history = None;
+    }
+
+    /// Allocate the device-side history if there isn't one at this size.
+    pub(super) fn ensure_history(&mut self, ctx: &GpuContext, width: u32, height: u32) {
+        if self.history.as_ref().map(HistoryBuffers::size) != Some((width, height)) {
+            self.history = Some(HistoryBuffers::new(ctx, width, height));
+        }
+    }
+
+    /// The device-side history, if a pass has built one.
+    pub fn history(&self) -> Option<&HistoryBuffers> {
+        self.history.as_ref()
+    }
+
+    pub(super) fn history_mut(&mut self) -> Option<&mut HistoryBuffers> {
+        self.history.as_mut()
+    }
+
+    /// The buffers a raw-sample pass wrote: this pass's own linear sample, and
+    /// the three-plane depth/normal buffer whose planes 1 and 2 are the guides.
+    pub(super) fn raw_and_guide_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer) {
+        (&self.targets.accum, &self.targets.depth_normal)
     }
 
     /// Zero the accumulation buffer, so the next pass at `frame_index` 1
@@ -653,6 +683,23 @@ impl RayTracePipeline {
             pass.set_bind_group(0, bind_group, &[]);
             pass.dispatch_workgroups(dw.div_ceil(8), dh.div_ceil(8), 1);
         }
+    }
+
+    /// Encode one raw-sample pass into `encoder`, writing into the scene's own
+    /// accumulation and guide buffers and nothing else.
+    ///
+    /// The device-side history in `gpu/history.rs` drives this: it needs the
+    /// pass's own unweighted sample and the guide planes, and it does its own
+    /// tonemapping, so the output texture is never touched.
+    pub(super) fn encode_raw_sample_into(
+        &self,
+        ctx: &GpuContext,
+        res: &mut ResidentScene,
+        camera: &GpuCamera,
+        state: GpuRenderState,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        self.encode_resident(ctx, res, camera, state, None, encoder);
     }
 
     /// Render a resident scene and read the frame back as RGBA8.
