@@ -536,6 +536,27 @@ pub struct GpuRenderState {
     /// depth/normal buffer. Set it with [`GpuRenderState::set_raw_sample`]
     /// rather than by hand — the name stays for source compatibility.
     pub _pad3: [u32; 1],
+    /// Radiance straight up under the analytic gradient environment, in
+    /// `.rgb`; `.w` is unused.
+    ///
+    /// These three mirror [`crate::pathtrace::GradientEnv`]'s fields, and used
+    /// to be compiled into the shader instead. A CPU scene lit by any gradient
+    /// other than the default — [`crate::pathtrace::Environment::constant`]
+    /// most of all, which is a gradient whose three colours are equal — was
+    /// therefore lit by a different sky on the GPU, however carefully
+    /// `env_intensity` was matched. Set them together with
+    /// [`GpuRenderState::set_gradient_env`]; they default to
+    /// `GradientEnv::default()`, so a caller who says nothing gets the studio
+    /// gradient the shader used to have.
+    ///
+    /// Ignored when `env_mode` is 1: an HDR image carries its own radiance.
+    pub env_zenith: [f32; 4],
+    /// Radiance at the horizon under the analytic gradient. See
+    /// [`GpuRenderState::env_zenith`].
+    pub env_horizon: [f32; 4],
+    /// Radiance straight down under the analytic gradient — the bounce off the
+    /// studio floor. See [`GpuRenderState::env_zenith`].
+    pub env_ground: [f32; 4],
 }
 
 /// Default silhouette line color: near-black, slightly cool.
@@ -555,6 +576,23 @@ pub const DEFAULT_MAX_DEPTH: u32 = 6;
 pub const DEFAULT_RR_START: u32 = 3;
 /// Environment multiplier, matching `Environment::default().intensity`.
 pub const DEFAULT_ENV_INTENSITY: f32 = 0.35;
+
+/// The analytic gradient a render state describes until a caller says
+/// otherwise, matching `GradientEnv::default()` field for field. Duplicated as
+/// a `const` rather than called, because a struct literal's fields must be:
+/// `the_default_render_state_carries_the_default_gradient` in
+/// `tests/env_parity.rs` pins the two together.
+const DEFAULT_GRADIENT: crate::pathtrace::GradientEnv = crate::pathtrace::GradientEnv {
+    zenith: [0.34, 0.42, 0.55],
+    horizon: [0.62, 0.64, 0.68],
+    ground: [0.18, 0.17, 0.16],
+    intensity: DEFAULT_ENV_INTENSITY,
+};
+
+/// Widen an RGB triple to the `vec4` the uniform's layout wants.
+const fn rgba(c: [f32; 3]) -> [f32; 4] {
+    [c[0], c[1], c[2], 0.0]
+}
 /// Indirect-radiance clamp, matching the CPU renderer's firefly clamp.
 pub const DEFAULT_FIREFLY_CLAMP: f32 = 12.0;
 
@@ -644,7 +682,26 @@ impl GpuRenderState {
             scissor_xy: 0,
             scissor_wh: 0,
             _pad3: [0; 1],
+            env_zenith: rgba(DEFAULT_GRADIENT.zenith),
+            env_horizon: rgba(DEFAULT_GRADIENT.horizon),
+            env_ground: rgba(DEFAULT_GRADIENT.ground),
         }
+    }
+
+    /// Light the scene with `g`, the same analytic gradient the CPU renderer
+    /// would integrate.
+    ///
+    /// This is how a caller whose environment is not the studio default — a
+    /// constant sky, a warmer horizon, an unlit white-furnace test — gets the
+    /// GPU to agree with [`crate::pathtrace::render`] on what the sky is. It
+    /// also sets `env_mode` back to the gradient and clears the image fields,
+    /// since the two are alternatives.
+    pub fn set_gradient_env(&mut self, g: &crate::pathtrace::GradientEnv) {
+        self.env_mode = 0;
+        self.env_intensity = g.intensity;
+        self.env_zenith = rgba(g.zenith);
+        self.env_horizon = rgba(g.horizon);
+        self.env_ground = rgba(g.ground);
     }
 
     /// Restrict the pass to `[x, y, w, h]` in pixels.
@@ -797,6 +854,9 @@ impl GpuRenderState {
             scissor_xy: 0,
             scissor_wh: 0,
             _pad3: [0; 1],
+            env_zenith: rgba(DEFAULT_GRADIENT.zenith),
+            env_horizon: rgba(DEFAULT_GRADIENT.horizon),
+            env_ground: rgba(DEFAULT_GRADIENT.ground),
         }
     }
 

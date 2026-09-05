@@ -94,6 +94,13 @@ struct RenderState {
     // running average, and fill the guide half of `depth_normal_buffer`. What
     // a host keeping its own per-pixel history wants out of a pass.
     raw_sample: u32,
+    // The analytic gradient's three radiances, mirroring
+    // pathtrace::GradientEnv. These used to be constants in `env_radiance`,
+    // which meant a scene lit by any other gradient was lit by a different sky
+    // here than on the CPU.
+    env_zenith: vec4<f32>,
+    env_horizon: vec4<f32>,
+    env_ground: vec4<f32>,
 }
 
 struct RayHit {
@@ -1219,22 +1226,21 @@ fn tonemap_aces(x: vec3<f32>) -> vec3<f32> {
 
 // Incoming radiance from the analytic studio environment.
 //
-// Mirrors `pathtrace::GradientEnv::radiance` with the constants from
-// `GradientEnv::default()`, so the GPU and CPU integrate the SAME sky. This is
-// deliberately low-frequency: BSDF sampling alone converges on it, which is
+// Mirrors `pathtrace::GradientEnv::radiance`, taking its three radiances from
+// the render state rather than having `GradientEnv::default()`'s baked in, so
+// the GPU and CPU integrate the SAME sky whatever gradient the caller set. It
+// is deliberately low-frequency: BSDF sampling alone converges on it, which is
 // why the gradient needs no environment CDF.
 //
-// The CPU renderer also supports `Environment::Image` (a lat-long HDRI, with
-// its own CDF). That is NOT ported here — the GPU path always uses the
-// gradient. A document rendered with `--hdri` will therefore not match the
-// viewport; the default studio gradient does.
+// `GpuRenderState::new` fills those three with the studio defaults, so a
+// caller who says nothing gets exactly the sky this function used to hardcode.
 //
 // Distinct from `sky_color`, which is the themed backdrop the viewport DRAWS.
 // Lighting must match the CPU; the visible background is a UI choice.
 fn env_radiance(d: vec3<f32>) -> vec3<f32> {
-    let zenith = vec3<f32>(0.34, 0.42, 0.55);
-    let horizon = vec3<f32>(0.62, 0.64, 0.68);
-    let ground_c = vec3<f32>(0.18, 0.17, 0.16);
+    let zenith = render_state.env_zenith.rgb;
+    let horizon = render_state.env_horizon.rgb;
+    let ground_c = render_state.env_ground.rgb;
 
     if render_state.env_mode == ENV_MODE_IMAGE {
         return env_image_radiance(
