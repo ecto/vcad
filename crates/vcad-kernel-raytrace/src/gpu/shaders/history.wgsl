@@ -6,8 +6,15 @@
 //! an order of magnitude more than the trace it is cleaning up. All three fit
 //! in compute passes over buffers that already live on the device.
 //!
-//! Four entry points, run in this order once per pass:
+//! Five entry points, run in this order once per pass:
 //!
+//! * `reproject` (optional) — carry each pixel's history across a camera
+//!   move: unproject through this pass's depth, project into the previous
+//!   view, and take the previous pixel's mean and count where the previous
+//!   depth and normal agree that it is the same surface. The gather reads
+//!   pixels other invocations would be writing, so it lands in the scratch
+//!   pair rather than in `mean`/`stats`, and `accumulate` reads it from there
+//!   — see `params.reprojected`.
 //! * `accumulate` — fold `raw` into `mean`/`stats`, honouring the caller's
 //!   per-pixel keep mask. A zero mask entry restarts that pixel's history.
 //! * `demodulate` — divide the mean by the albedo guide and prefilter the
@@ -62,7 +69,46 @@ struct HistoryParams {
     // tracing only the part of the frame that moved is asking for.
     scissor_xy: u32,
     scissor_wh: u32,
+
+    // ─── `reproject` only ────────────────────────────────────────────────
+    // Both views, as the ray generator in `raytrace.wgsl` builds them:
+    // `.xyz` is eye / right / up / forward, and `view_params` is
+    // (tan(fov/2), aspect) for the current view then the previous one.
+    cur_eye: vec4<f32>,
+    cur_right: vec4<f32>,
+    cur_up: vec4<f32>,
+    cur_forward: vec4<f32>,
+    prev_eye: vec4<f32>,
+    prev_right: vec4<f32>,
+    prev_up: vec4<f32>,
+    prev_forward: vec4<f32>,
+    view_params: vec4<f32>,
+    // Non-zero when `reproject` ran this pass, in which case `accumulate`
+    // takes each pixel's history out of the scratch pair rather than out of
+    // `mean`/`stats`. Folding the write-back into `accumulate` rather than
+    // giving it a dispatch of its own saves a full-frame round trip.
+    reprojected: u32,
+    // Explicit u32 padding, not a vec3<u32>: a vec3 in WGSL is 16-byte
+    // aligned and would put this struct's size 16 bytes past the Rust one.
+    _pad_reproj0: u32,
+    _pad_reproj1: u32,
+    _pad_reproj2: u32,
 }
+
+// How far this frame's surface point may lie off the plane the previous
+// frame's surface point sat in, as a fraction of the distance to it.
+//
+// Measured along the *normal*, not along the ray. A room seen from inside is
+// mostly grazing — the floor, the ceiling and the side walls all run away
+// from the eye — and on a grazing surface the depth changes by far more than
+// 2% across a single pixel, so a plain depth-ratio test throws away a third
+// of a frame that has not moved. Along the normal there is no such slope:
+// the same wall reads the same distance however obliquely it is seen, and a
+// disocclusion still reads as the whole gap between the two surfaces.
+const REPROJ_DEPTH_TOL: f32 = 0.02;
+
+// How closely the two frames' normals must agree to be the same surface.
+const REPROJ_NORMAL_DOT: f32 = 0.9;
 
 @group(0) @binding(0) var<uniform> params: HistoryParams;
 // This pass's own raw linear sample: the ray tracer's accumulation buffer
@@ -83,6 +129,11 @@ struct HistoryParams {
 @group(0) @binding(6) var<storage, read_write> scratch_src: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> scratch_dst: array<vec4<f32>>;
 @group(0) @binding(8) var out_tex: texture_storage_2d<rgba8unorm, write>;
+// The previous pass's guide plane 1 — (face-forwarded normal, distance from
+// the previous eye) — one vec4 per pixel, copied out of `guides` at the end
+// of the pass that wrote it. Zeroed depth means "the previous pass had
+// nothing there", which reads as a restart.
+@group(0) @binding(9) var<storage, read> prev_guides: array<vec4<f32>>;
 
 fn luminance(c: vec3<f32>) -> f32 {
     return 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
@@ -136,6 +187,96 @@ fn in_scissor(gid: vec3<u32>) -> bool {
     return gid.x >= ox && gid.x < ox + w && gid.y >= oy && gid.y < oy + h;
 }
 
+// ─── pass 0: carry the history across a camera move ───────────────────────
+//
+// Without this, a camera move can only be expressed through the keep mask,
+// and a host with no reprojection of its own uploads an all-restart mask: one
+// orbit throws the whole frame away and every pixel starts again from a
+// single sample. Most of those pixels are the same surface seen from a hair
+// to the left.
+//
+// The test is deliberately conservative — nearest tap, no bilinear blend, and
+// both a depth and a normal gate — because a history carried onto the wrong
+// surface does not look like noise. It looks like the previous frame smeared
+// across this one, and it takes `count_cutoff` samples to wash out.
+
+// The primary ray direction for a pixel centre under one view, matching
+// `ray_origin_and_direction_offset` in `raytrace.wgsl` with a zero offset.
+fn view_ray(right: vec3<f32>, up: vec3<f32>, fwd: vec3<f32>, tan_fov: f32, aspect: f32, x: u32, y: u32) -> vec3<f32> {
+    let ndc = vec2<f32>(
+        (f32(x) + 0.5) / f32(params.width) * 2.0 - 1.0,
+        1.0 - (f32(y) + 0.5) / f32(params.height) * 2.0
+    );
+    return normalize(fwd + right * ndc.x * tan_fov * aspect + up * ndc.y * tan_fov);
+}
+
+@compute @workgroup_size(8, 8)
+fn reproject(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if !in_bounds(gid) {
+        return;
+    }
+    let i = flat_index(gid);
+    // Whatever happens, this pixel's slot in the scratch pair is written, so
+    // `reproject_commit` never copies a stale gather back into the history.
+    scratch_src[i] = vec4<f32>(0.0);
+    scratch_dst[i] = vec4<f32>(0.0);
+
+    let depth = guide_depth(i);
+    if depth <= 0.0 {
+        return; // background: nothing to carry
+    }
+
+    // Where this pixel's surface is, in world space.
+    let dir = view_ray(
+        params.cur_right.xyz, params.cur_up.xyz, params.cur_forward.xyz,
+        params.view_params.x, params.view_params.y, gid.x, gid.y,
+    );
+    let p = params.cur_eye.xyz + depth * dir;
+
+    // ... and where it was on the previous frame's film.
+    let v = p - params.prev_eye.xyz;
+    let z = dot(v, params.prev_forward.xyz);
+    if z <= 0.0 {
+        return; // behind the previous eye
+    }
+    let tan_fov = params.view_params.z;
+    let aspect = params.view_params.w;
+    let ndc_x = dot(v, params.prev_right.xyz) / (z * tan_fov * aspect);
+    let ndc_y = dot(v, params.prev_up.xyz) / (z * tan_fov);
+    let fx = (ndc_x + 1.0) * 0.5 * f32(params.width) - 0.5;
+    let fy = (1.0 - ndc_y) * 0.5 * f32(params.height) - 0.5;
+    let qx = i32(round(fx));
+    let qy = i32(round(fy));
+    if qx < 0 || qy < 0 || qx >= i32(params.width) || qy >= i32(params.height) {
+        return; // it was off the previous frame
+    }
+    let j = u32(qy) * params.width + u32(qx);
+
+    // Was the previous frame looking at *this* surface, or at something in
+    // front of it? Reconstruct the point it had there and ask how far this
+    // frame's point lies off its tangent plane.
+    let prev_depth = prev_guides[j].w;
+    if prev_depth <= 0.0 {
+        return;
+    }
+    let prev_n = prev_guides[j].xyz;
+    let prev_dir = view_ray(
+        params.prev_right.xyz, params.prev_up.xyz, params.prev_forward.xyz,
+        tan_fov, aspect, u32(qx), u32(qy),
+    );
+    let q = params.prev_eye.xyz + prev_depth * prev_dir;
+    let expected = length(v);
+    if abs(dot(p - q, prev_n)) > REPROJ_DEPTH_TOL * expected {
+        return; // disoccluded: something else was there
+    }
+    if dot(guide_normal(i), prev_n) < REPROJ_NORMAL_DOT {
+        return; // the same plane, a different surface — a silhouette edge
+    }
+
+    scratch_src[i] = mean[j];
+    scratch_dst[i] = stats[j];
+}
+
 // ─── pass 1: fold this sample into the history ────────────────────────────
 
 @compute @workgroup_size(8, 8)
@@ -151,8 +292,14 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
     let c = raw[i];
     let l = luminance(c.rgb);
 
+    // Where this pixel's history is: in the buffers, or — if `reproject` ran
+    // this pass — in the scratch pair it gathered into.
     var m = mean[i];
     var st = stats[i];
+    if params.reprojected != 0u {
+        m = scratch_src[i];
+        st = scratch_dst[i];
+    }
     if keep[i] == 0u {
         m = vec4<f32>(0.0);
         st = vec4<f32>(0.0);

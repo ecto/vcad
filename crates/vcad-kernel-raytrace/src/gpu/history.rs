@@ -17,14 +17,19 @@
 //!
 //! # What the caller still owns
 //!
-//! **Reprojection.** A camera move invalidates every pixel's history, and
-//! deciding *which* pixels survive a move — reprojecting last frame's mean
-//! into this frame's pixel grid — stays on the host for now. The device side
-//! takes a **keep mask** instead: one byte per pixel, 1 to keep accumulating
-//! and 0 to restart that pixel. A viewer that does not reproject uploads an
-//! all-zero mask on a camera move and an all-one mask otherwise, which is
-//! exactly the behaviour it had before; a viewer that does reproject uploads
-//! the mask its reprojection produced.
+//! **The keep mask.** The device side takes one byte per pixel, 1 to keep
+//! accumulating and 0 to restart that pixel: everything the device cannot
+//! know, from a re-pose to a region the caller wants re-converged. An empty
+//! slice is all-1.
+//!
+//! **Reprojection** used to be on that list, and a host without one had only
+//! the blunt instrument: upload an all-zero mask on a camera move and watch
+//! every pixel of an orbit restart from a single sample, most of them the
+//! same surface seen from a hair to the left.
+//! [`RayTracePipeline::accumulate_and_denoise_resident_reprojected`] does it
+//! on the device instead — hand it the previous pass's camera and it carries
+//! each pixel's mean and count across the move, restarting only what the move
+//! actually disoccluded. See [`HistoryBuffers`]' `prev_guides`.
 //!
 //! # Parity with the CPU filter
 //!
@@ -118,6 +123,53 @@ struct HistoryParams {
     src_is_b: u32,
     scissor_xy: u32,
     scissor_wh: u32,
+    // `reproject` only; zero elsewhere. Both views as the shader's ray
+    // generator builds them, then (tan(fov/2), aspect) for each.
+    cur_eye: [f32; 4],
+    cur_right: [f32; 4],
+    cur_up: [f32; 4],
+    cur_forward: [f32; 4],
+    prev_eye: [f32; 4],
+    prev_right: [f32; 4],
+    prev_up: [f32; 4],
+    prev_forward: [f32; 4],
+    view_params: [f32; 4],
+    reprojected: u32,
+    _pad_reproj: [u32; 3],
+}
+
+/// The camera basis the shader's ray generator derives from a [`GpuCamera`],
+/// reproduced here so the reprojection pass can be told about a view it is
+/// not currently rendering.
+fn view_basis(cam: &GpuCamera) -> ([f32; 4], [f32; 4], [f32; 4], [f32; 4], f32, f32) {
+    let norm = |v: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        [v[0] / l, v[1] / l, v[2] / l]
+    };
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let eye = [cam.position[0], cam.position[1], cam.position[2]];
+    let fwd = norm([
+        cam.target[0] - eye[0],
+        cam.target[1] - eye[1],
+        cam.target[2] - eye[2],
+    ]);
+    let right = norm(cross(fwd, [cam.up[0], cam.up[1], cam.up[2]]));
+    let up = cross(right, fwd);
+    let v4 = |v: [f32; 3]| [v[0], v[1], v[2], 0.0];
+    (
+        [eye[0], eye[1], eye[2], 1.0],
+        v4(right),
+        v4(up),
+        v4(fwd),
+        (cam.fov * 0.5).tan(),
+        cam.width as f32 / cam.height as f32,
+    )
 }
 
 /// The running mean and sample count read back off the device.
@@ -154,6 +206,12 @@ pub struct HistoryBuffers {
     stats: wgpu::Buffer,
     /// The caller's keep mask, widened to one `u32` per pixel.
     keep: wgpu::Buffer,
+    /// The *previous* pass's guide plane 1 — (normal, distance from that
+    /// pass's eye) — one vec4 per pixel. Copied out of the resident scene's
+    /// depth/normal buffer at the end of every pass, so the next pass's
+    /// reprojection has something to test against. Zeroed until the first
+    /// pass has run, which reads as "restart everything".
+    prev_guides: wgpu::Buffer,
     /// (illumination, variance) ping-pong for the wavelet iterations.
     scratch_a: wgpu::Buffer,
     scratch_b: wgpu::Buffer,
@@ -185,6 +243,7 @@ impl HistoryBuffers {
             mean: mk("History Mean", n * 16),
             stats: mk("History Stats", n * 16),
             keep: mk("History Keep Mask", n * 4),
+            prev_guides: mk("History Previous Guides", n * 16),
             scratch_a: mk("History Scratch A", n * 16),
             scratch_b: mk("History Scratch B", n * 16),
             params: ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -215,6 +274,10 @@ impl HistoryBuffers {
             });
         enc.clear_buffer(&self.mean, 0, None);
         enc.clear_buffer(&self.stats, 0, None);
+        // A reprojection into a history that is gone would carry zeros, which
+        // is harmless, but forgetting the previous view too keeps "cleared"
+        // meaning exactly one thing.
+        enc.clear_buffer(&self.prev_guides, 0, None);
         ctx.queue.submit(Some(enc.finish()));
     }
 }
@@ -225,6 +288,7 @@ impl HistoryBuffers {
 /// Built once and reused; hand it to
 /// [`RayTracePipeline::accumulate_and_denoise_resident`] every pass.
 pub struct HistoryPipeline {
+    reproject: wgpu::ComputePipeline,
     accumulate: wgpu::ComputePipeline,
     demodulate: wgpu::ComputePipeline,
     atrous: wgpu::ComputePipeline,
@@ -288,6 +352,7 @@ impl HistoryPipeline {
                         },
                         count: None,
                     },
+                    storage(9, true), // the previous pass's guide plane
                 ],
             });
 
@@ -312,6 +377,7 @@ impl HistoryPipeline {
         };
 
         Ok(Self {
+            reproject: mk("reproject"),
             accumulate: mk("accumulate"),
             demodulate: mk("demodulate"),
             atrous: mk("atrous"),
@@ -371,6 +437,59 @@ impl RayTracePipeline {
         denoise: &GpuDenoiseParams,
         target: &wgpu::TextureView,
     ) -> Result<(), GpuError> {
+        self.accumulate_and_denoise_resident_reprojected(
+            ctx,
+            history_pipeline,
+            res,
+            camera,
+            state,
+            keep,
+            denoise,
+            target,
+            None,
+        )
+    }
+
+    /// [`RayTracePipeline::accumulate_and_denoise_resident`], plus the
+    /// device-side reprojection.
+    ///
+    /// Pass the camera the *previous* call to this method rendered from as
+    /// `prev_view` and the history is carried across the move: each pixel is
+    /// unprojected through this pass's depth, projected into the previous
+    /// view, and takes the nearest previous pixel's mean and sample count
+    /// where that pixel's depth agrees within 2% and its normal within a dot
+    /// product of 0.9. Everything else — disocclusions, pixels that were off
+    /// the previous film, background — restarts at this pass's sample.
+    ///
+    /// `None` skips the pass entirely and is exactly
+    /// [`RayTracePipeline::accumulate_and_denoise_resident`]. Pass `None` on
+    /// a still frame too: reprojecting a view onto itself is a no-op that
+    /// still costs two dispatches, and passing the *same* camera is
+    /// harmless but pointless.
+    ///
+    /// The keep mask still applies, and applies *after* the reprojection: a
+    /// caller that reprojects on the device wants an empty (all-keep) mask
+    /// and lets this pass decide what survives. Zeroing a pixel's mask entry
+    /// still restarts it, whatever the reprojection found.
+    ///
+    /// Depth is [`crate::pathtrace::Film::depth`]'s convention throughout —
+    /// distance from the eye along the primary ray, zero for background — and
+    /// the reprojection reads the previous pass's copy of that plane, which
+    /// this method keeps for itself. The first pass after a resize therefore
+    /// restarts every pixel, since there is no previous plane to test yet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn accumulate_and_denoise_resident_reprojected(
+        &self,
+        ctx: &GpuContext,
+        history_pipeline: &HistoryPipeline,
+        res: &mut ResidentScene,
+        camera: &GpuCamera,
+        state: GpuRenderState,
+        keep: &[u8],
+        denoise: &GpuDenoiseParams,
+        target: &wgpu::TextureView,
+        prev_view: Option<&GpuCamera>,
+    ) -> Result<(), GpuError> {
         let (w, h) = res.size();
         let n = (w as usize) * (h as usize);
         if !keep.is_empty() && keep.len() != n {
@@ -386,6 +505,11 @@ impl RayTracePipeline {
         // Widen the caller's mask. WGSL has no 8-bit storage type, and one
         // word per pixel is a 590 KB upload at 512x288 — an order of magnitude
         // less than the frame it saves reading back.
+        // The two views the reprojection pass works between. With no
+        // previous view the pass is not dispatched and these are inert.
+        let cur = view_basis(camera);
+        let prev = view_basis(prev_view.unwrap_or(camera));
+
         {
             let hist = res.history_mut().expect("history was just ensured");
             hist.keep_staging.clear();
@@ -420,6 +544,17 @@ impl RayTracePipeline {
                 // never disagree about which pixels this pass refreshed.
                 scissor_xy: state.scissor_xy,
                 scissor_wh: state.scissor_wh,
+                cur_eye: cur.0,
+                cur_right: cur.1,
+                cur_up: cur.2,
+                cur_forward: cur.3,
+                prev_eye: prev.0,
+                prev_right: prev.1,
+                prev_up: prev.2,
+                prev_forward: prev.3,
+                view_params: [cur.4, cur.5, prev.4, prev.5],
+                reprojected: u32::from(prev_view.is_some()),
+                _pad_reproj: [0; 3],
             };
             ctx.queue
                 .write_buffer(&hist.params, 0, bytemuck::bytes_of(&base));
@@ -502,6 +637,10 @@ impl RayTracePipeline {
                         binding: 8,
                         resource: wgpu::BindingResource::TextureView(target),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: hist.prev_guides.as_entire_binding(),
+                    },
                 ],
             })
         };
@@ -520,6 +659,12 @@ impl RayTracePipeline {
                 pass.dispatch_workgroups(groups.0, groups.1, 1);
             };
 
+        // Before anything is folded in: carry what the previous view already
+        // knew about each pixel onto this view's pixel grid.
+        // `accumulate` picks the gather up out of the scratch pair.
+        if prev_view.is_some() {
+            run(&history_pipeline.reproject, &ab, 0, "History Reproject");
+        }
         run(&history_pipeline.accumulate, &ab, 0, "History Accumulate");
         if iters > 0 {
             run(&history_pipeline.demodulate, &ab, 0, "History Demodulate");
@@ -531,6 +676,12 @@ impl RayTracePipeline {
             }
         }
         run(&history_pipeline.resolve, &ab, 0, "History Resolve");
+
+        // Keep this pass's depth/normal plane for the next one to reproject
+        // against. Guide plane 1 starts one plane into the depth/normal
+        // buffer; plane 0 is the shader's own edge-detection copy.
+        let plane = (w as u64) * (h as u64) * 16;
+        encoder.copy_buffer_to_buffer(guides, plane, &hist.prev_guides, 0, plane);
 
         ctx.queue.submit(Some(encoder.finish()));
         Ok(())
