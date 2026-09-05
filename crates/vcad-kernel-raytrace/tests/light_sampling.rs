@@ -271,3 +271,71 @@ fn a_ten_panel_rig_is_energy_stable_under_retiling() {
         rel * 100.0,
     );
 }
+
+/// The compute pass's scissor: a rectangle's pixels must come out exactly as
+/// they do in a full-frame pass, and everything outside it must be left alone.
+///
+/// Bit-identical, not "close": the shader offsets the invocation rather than
+/// re-deriving anything, so a scissored pixel runs the same code with the same
+/// seed. That is the property `render_into` has on the CPU, and it is what
+/// lets a caller re-trace a region into a frame it already has.
+#[test]
+#[ignore = "requires GPU"]
+fn a_scissored_pass_matches_the_full_frame_inside_and_leaves_the_rest() {
+    let Some(ctx) =
+        ctx_or_skip("a_scissored_pass_matches_the_full_frame_inside_and_leaves_the_rest")
+    else {
+        return;
+    };
+    let mut scene = GpuScene::from_brep(&make_sphere(6.0, 32)).expect("scene packs");
+    scene.lights = vec![panel([4.0, -3.0, 22.0], 7.0, [2.4; 3])];
+
+    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let camera = test_camera();
+    let render = |rect: Option<[u32; 4]>| -> Vec<u8> {
+        let mut state = lights_only_state();
+        state.frame_index = 1;
+        if let Some(r) = rect {
+            state.set_scissor(r);
+        }
+        pollster::block_on(
+            pipeline.render_with_render_state(ctx, &scene, &camera, W, H, None, state),
+        )
+        .expect("render")
+        .0
+    };
+
+    let full = render(None);
+    let rect = [17u32, 9, 24, 30];
+    let scissored = render(Some(rect));
+
+    let mut inside = 0usize;
+    let mut differed = 0usize;
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            let within =
+                x >= rect[0] && y >= rect[1] && x < rect[0] + rect[2] && y < rect[1] + rect[3];
+            if within {
+                inside += 1;
+                assert_eq!(
+                    &scissored[i..i + 3],
+                    &full[i..i + 3],
+                    "pixel ({x}, {y}) is inside the scissor but the scissored pass \
+                     and the full frame disagree — the invocation offset is not \
+                     landing on the same pixel's work",
+                );
+            } else if scissored[i..i + 3] != full[i..i + 3] {
+                differed += 1;
+            }
+        }
+    }
+    assert!(inside > 500, "the scissor covered only {inside} px");
+    // Outside the rect the pass wrote nothing, so the texture keeps its clear
+    // value — which is not what the full frame painted there.
+    assert!(
+        differed > 500,
+        "only {differed} px outside the scissor differ from the full frame; the \
+         pass is evidently still covering the whole image",
+    );
+}

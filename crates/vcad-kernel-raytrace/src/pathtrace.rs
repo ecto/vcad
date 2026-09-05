@@ -1892,6 +1892,95 @@ pub struct Film {
     pub variance: Vec<f32>,
 }
 
+/// One pixel's worth of the integrator, writing into the row slices the film
+/// keeps for that scanline.
+///
+/// Factored out of [`render`] so [`render_into`] can drive exactly the same
+/// code on a subset of pixels. The RNG seed is a pure function of the pixel
+/// coordinates and `opts.seed`, which is what makes a masked pass reproduce
+/// the full render's pixels bit for bit — and what makes either of them
+/// independent of how rayon happens to schedule the rows.
+struct PixelOut<'a> {
+    rgb: &'a mut [f32],
+    alpha: &'a mut [f32],
+    normal: &'a mut [f32],
+    depth: &'a mut [f32],
+    albedo: &'a mut [f32],
+    variance: &'a mut [f32],
+}
+
+#[allow(clippy::too_many_arguments)]
+fn trace_pixel(
+    scene: &Scene,
+    accel: &SceneAccel,
+    cam: &Camera,
+    opts: &PathTraceOptions,
+    width: u32,
+    height: u32,
+    px: usize,
+    py: usize,
+    out: &mut PixelOut<'_>,
+) {
+    let aspect = width as f64 / height as f64;
+    let spp = opts.spp.max(1);
+    let mut rng =
+        Rng::new(opts.seed ^ ((py as u64) << 32) ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let mut acc = [0.0f32; 3];
+    let mut cov = 0.0f32;
+    // Running sums for the estimator's own variance.
+    let mut lsum = 0.0f32;
+    let mut lsum2 = 0.0f32;
+
+    for s in 0..spp {
+        // Jittered pixel position.
+        let jx = rng.f64();
+        let jy = rng.f64();
+        let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
+        let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
+        let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
+
+        let ray = cam.ray(sx, sy, aspect, lu, lv);
+        let (l, primary) = radiance(scene, accel, opts, ray, &mut rng);
+        acc = add3(acc, l);
+        let ls = luminance(l);
+        lsum += ls;
+        lsum2 += ls * ls;
+        if primary.hit {
+            cov += 1.0;
+        }
+        if s == 0 {
+            // Guide buffers come from one primary ray, not an average:
+            // averaging normals and depths across samples would soften
+            // exactly the silhouettes the edge-stopping weights exist to
+            // protect.
+            out.normal[px * 3] = primary.normal[0];
+            out.normal[px * 3 + 1] = primary.normal[1];
+            out.normal[px * 3 + 2] = primary.normal[2];
+            out.depth[px] = primary.depth;
+            out.albedo[px * 3] = primary.albedo[0];
+            out.albedo[px * 3 + 1] = primary.albedo[1];
+            out.albedo[px * 3 + 2] = primary.albedo[2];
+        }
+    }
+
+    let inv = 1.0 / spp as f32;
+    out.rgb[px * 3] = acc[0] * inv;
+    out.rgb[px * 3 + 1] = acc[1] * inv;
+    out.rgb[px * 3 + 2] = acc[2] * inv;
+    out.alpha[px] = cov * inv;
+    // Variance of the *mean*: sample variance / spp. A single sample carries
+    // no information about its own spread, so fall back to the estimate
+    // itself as a scale.
+    out.variance[px] = if spp > 1 {
+        let mean = lsum * inv;
+        let sample_var = (lsum2 * inv - mean * mean).max(0.0) * spp as f32 / (spp - 1) as f32;
+        sample_var / spp as f32
+    } else {
+        let mean = lsum;
+        mean * mean
+    };
+}
+
 /// Render `scene` from `cam` into a linear-space [`Film`].
 ///
 /// Scanlines are traced in parallel. Each pixel's RNG is seeded from its
@@ -1909,9 +1998,6 @@ pub fn render(
     opts: &PathTraceOptions,
 ) -> Film {
     use rayon::prelude::*;
-
-    let aspect = width as f64 / height as f64;
-    let spp = opts.spp.max(1);
 
     // One TLAS for the whole frame: every ray, primary and shadow, traverses
     // it instead of scanning `scene.objects` linearly.
@@ -1934,67 +2020,16 @@ pub fn render(
         .zip(variance.par_chunks_mut(w1))
         .enumerate()
         .for_each(|(py, (((((row, arow), nrow), drow), brow), vrow))| {
+            let mut out = PixelOut {
+                rgb: row,
+                alpha: arow,
+                normal: nrow,
+                depth: drow,
+                albedo: brow,
+                variance: vrow,
+            };
             for px in 0..width as usize {
-                let mut rng = Rng::new(
-                    opts.seed
-                        ^ ((py as u64) << 32)
-                        ^ (px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
-                );
-                let mut acc = [0.0f32; 3];
-                let mut cov = 0.0f32;
-                // Running sums for the estimator's own variance.
-                let mut lsum = 0.0f32;
-                let mut lsum2 = 0.0f32;
-
-                for s in 0..spp {
-                    // Jittered pixel position.
-                    let jx = rng.f64();
-                    let jy = rng.f64();
-                    let sx = 2.0 * ((px as f64 + jx) / width as f64) - 1.0;
-                    let sy = 1.0 - 2.0 * ((py as f64 + jy) / height as f64);
-                    let (lu, lv) = concentric_disc(rng.f64(), rng.f64());
-
-                    let ray = cam.ray(sx, sy, aspect, lu, lv);
-                    let (l, primary) = radiance(scene, &accel, opts, ray, &mut rng);
-                    acc = add3(acc, l);
-                    let ls = luminance(l);
-                    lsum += ls;
-                    lsum2 += ls * ls;
-                    if primary.hit {
-                        cov += 1.0;
-                    }
-                    if s == 0 {
-                        // Guide buffers come from one primary ray, not an
-                        // average: averaging normals and depths across
-                        // samples would soften exactly the silhouettes the
-                        // edge-stopping weights exist to protect.
-                        nrow[px * 3] = primary.normal[0];
-                        nrow[px * 3 + 1] = primary.normal[1];
-                        nrow[px * 3 + 2] = primary.normal[2];
-                        drow[px] = primary.depth;
-                        brow[px * 3] = primary.albedo[0];
-                        brow[px * 3 + 1] = primary.albedo[1];
-                        brow[px * 3 + 2] = primary.albedo[2];
-                    }
-                }
-
-                let inv = 1.0 / spp as f32;
-                row[px * 3] = acc[0] * inv;
-                row[px * 3 + 1] = acc[1] * inv;
-                row[px * 3 + 2] = acc[2] * inv;
-                arow[px] = cov * inv;
-                // Variance of the *mean*: sample variance / spp. A single
-                // sample carries no information about its own spread, so fall
-                // back to the estimate itself as a scale.
-                vrow[px] = if spp > 1 {
-                    let mean = lsum * inv;
-                    let sample_var =
-                        (lsum2 * inv - mean * mean).max(0.0) * spp as f32 / (spp - 1) as f32;
-                    sample_var / spp as f32
-                } else {
-                    let mean = lsum;
-                    mean * mean
-                };
+                trace_pixel(scene, &accel, cam, opts, width, height, px, py, &mut out);
             }
         });
 
@@ -2012,6 +2047,106 @@ pub fn render(
         denoise(&mut film, opts);
     }
     film
+}
+
+/// Re-render only the pixels inside `rects`, leaving the rest of `film`
+/// exactly as it was.
+///
+/// Each rect is `[x, y, w, h]` in pixels, top-left origin, and is clipped to
+/// the film. A pixel inside the union is traced with the same seed, the same
+/// sample sequence and the same integrator [`render`] would have given it, so
+/// the result is *bit-identical* to the corresponding pixels of a full render
+/// with the same options — which is the whole point: a caller can re-trace the
+/// region under a moving widget, or a tile the user is zoomed into, and drop
+/// the result straight into the frame it already has without a seam.
+///
+/// Rows within each rect are traced in parallel. Overlapping rects simply
+/// trace their shared pixels more than once, to the same values.
+///
+/// Unlike [`render`] this never denoises. The à-trous filter reads a
+/// neighbourhood well outside any rect, so filtering a masked pass would blend
+/// fresh radiance into stale and put a visible seam at the rect's edge; a
+/// caller that wants a filtered frame runs [`denoise`] over the whole film
+/// once the patches are in. `opts.denoise` is therefore ignored here, and
+/// comparing against a reference means comparing against a `denoise: false`
+/// render.
+///
+/// The film must already be the size the camera is being sampled at —
+/// `film.width` and `film.height` are the resolution, not `rects`.
+pub fn render_into(
+    scene: &Scene,
+    cam: &Camera,
+    film: &mut Film,
+    opts: &PathTraceOptions,
+    rects: &[[u32; 4]],
+) {
+    use rayon::prelude::*;
+
+    let (width, height) = (film.width, film.height);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let accel = SceneAccel::build(scene);
+    let w3 = width as usize * 3;
+    let w1 = width as usize;
+
+    for r in rects {
+        // Clip to the film. A rect that starts past the edge, or is empty,
+        // contributes nothing rather than panicking on a caller's arithmetic.
+        let x0 = r[0].min(width) as usize;
+        let y0 = r[1].min(height) as usize;
+        let x1 = r[0].saturating_add(r[2]).min(width) as usize;
+        let y1 = r[1].saturating_add(r[3]).min(height) as usize;
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+
+        // Row-chunked so every parallel task owns a disjoint slice of each
+        // buffer; the columns outside the rect are simply never written.
+        film.rgb
+            .par_chunks_mut(w3)
+            .zip(film.alpha.par_chunks_mut(w1))
+            .zip(film.normal.par_chunks_mut(w3))
+            .zip(film.depth.par_chunks_mut(w1))
+            .zip(film.albedo.par_chunks_mut(w3))
+            .zip(film.variance.par_chunks_mut(w1))
+            .enumerate()
+            .skip(y0)
+            .take(y1 - y0)
+            .for_each(|(py, (((((row, arow), nrow), drow), brow), vrow))| {
+                let mut out = PixelOut {
+                    rgb: row,
+                    alpha: arow,
+                    normal: nrow,
+                    depth: drow,
+                    albedo: brow,
+                    variance: vrow,
+                };
+                for px in x0..x1 {
+                    trace_pixel(scene, &accel, cam, opts, width, height, px, py, &mut out);
+                }
+            });
+    }
+}
+
+impl Film {
+    /// A black film of `width` x `height`, with every guide buffer zeroed.
+    ///
+    /// [`render`] allocates its own; this is for the caller who holds one
+    /// frame and keeps patching it with [`render_into`].
+    pub fn new(width: u32, height: u32) -> Self {
+        let n = (width as usize) * (height as usize);
+        Self {
+            width,
+            height,
+            rgb: vec![0.0; n * 3],
+            alpha: vec![0.0; n],
+            normal: vec![0.0; n * 3],
+            depth: vec![0.0; n],
+            albedo: vec![0.0; n * 3],
+            variance: vec![0.0; n],
+        }
+    }
 }
 
 // ─── denoising ────────────────────────────────────────────────────────────
@@ -2594,6 +2729,127 @@ mod tests {
                 o[c] / n as f64
             );
         }
+    }
+
+    /// A masked pass must reproduce the full render exactly — not "within
+    /// noise", *bit for bit*. That is only true if the per-pixel seed depends
+    /// on nothing but the pixel, which is the property that lets a caller drop
+    /// a re-traced patch into a frame it already has without a seam.
+    #[test]
+    fn render_into_is_bit_identical_to_the_full_render() {
+        let scene = test_scene();
+        let cam = test_camera();
+        let opts = PathTraceOptions {
+            spp: 3,
+            max_depth: 3,
+            denoise: false,
+            ..Default::default()
+        };
+        let (w, h) = (40u32, 32u32);
+        let full = render(&scene, &cam, w, h, &opts);
+
+        // Rects that clip, touch the edges, and overlap each other.
+        let rects = [
+            [3, 4, 10, 9],
+            [9, 6, 12, 20],
+            [0, 0, 5, 5],
+            [35, 28, 20, 20],
+        ];
+        let mut patched = Film::new(w, h);
+        render_into(&scene, &cam, &mut patched, &opts, &rects);
+
+        let inside = |px: u32, py: u32| {
+            rects
+                .iter()
+                .any(|r| px >= r[0] && py >= r[1] && px < r[0] + r[2] && py < r[1] + r[3])
+        };
+        let mut covered = 0usize;
+        for py in 0..h {
+            for px in 0..w {
+                let i = (py * w + px) as usize;
+                if inside(px, py) {
+                    covered += 1;
+                    for c in 0..3 {
+                        assert_eq!(
+                            patched.rgb[i * 3 + c].to_bits(),
+                            full.rgb[i * 3 + c].to_bits(),
+                            "pixel ({px}, {py}) channel {c}: masked render gave {} \
+                             where the full render gave {}. The per-pixel seed \
+                             must not depend on anything but the pixel.",
+                            patched.rgb[i * 3 + c],
+                            full.rgb[i * 3 + c],
+                        );
+                        assert_eq!(patched.albedo[i * 3 + c], full.albedo[i * 3 + c]);
+                        assert_eq!(patched.normal[i * 3 + c], full.normal[i * 3 + c]);
+                    }
+                    assert_eq!(patched.alpha[i], full.alpha[i]);
+                    assert_eq!(patched.depth[i], full.depth[i]);
+                    assert_eq!(patched.variance[i].to_bits(), full.variance[i].to_bits());
+                } else {
+                    // Outside the union nothing was touched at all.
+                    assert_eq!(
+                        (patched.rgb[i * 3], patched.alpha[i], patched.depth[i]),
+                        (0.0, 0.0, 0.0),
+                        "pixel ({px}, {py}) is outside every rect and was written anyway",
+                    );
+                }
+            }
+        }
+        assert!(covered > 300, "the rects covered only {covered} px");
+        assert!(
+            covered < (w * h) as usize,
+            "the rects covered the whole film"
+        );
+    }
+
+    /// A patched frame is the frame: re-tracing every rect of a partition of
+    /// the film reconstructs the full render exactly.
+    #[test]
+    fn tiling_the_film_with_rects_reconstructs_the_whole_render() {
+        let scene = test_scene();
+        let cam = test_camera();
+        let opts = PathTraceOptions {
+            spp: 2,
+            max_depth: 2,
+            denoise: false,
+            ..Default::default()
+        };
+        let (w, h) = (24u32, 24u32);
+        let full = render(&scene, &cam, w, h, &opts);
+        let rects: Vec<[u32; 4]> = (0..3)
+            .flat_map(|i| (0..3).map(move |j| [i * 8, j * 8, 8, 8]))
+            .collect();
+        let mut patched = Film::new(w, h);
+        render_into(&scene, &cam, &mut patched, &opts, &rects);
+        assert_eq!(patched.rgb, full.rgb);
+        assert_eq!(patched.depth, full.depth);
+    }
+
+    /// Degenerate and out-of-bounds rects are clipped, not panics.
+    #[test]
+    fn render_into_clips_rects_to_the_film() {
+        let scene = test_scene();
+        let cam = test_camera();
+        let opts = PathTraceOptions {
+            spp: 1,
+            max_depth: 1,
+            denoise: false,
+            ..Default::default()
+        };
+        let mut film = Film::new(16, 16);
+        render_into(
+            &scene,
+            &cam,
+            &mut film,
+            &opts,
+            &[
+                [0, 0, 0, 0],
+                [20, 20, 4, 4],
+                [14, 14, u32::MAX, u32::MAX],
+                [0, 0, 16, 16],
+            ],
+        );
+        assert_eq!(film.rgb.len(), 16 * 16 * 3);
     }
 
     fn test_camera() -> Camera {

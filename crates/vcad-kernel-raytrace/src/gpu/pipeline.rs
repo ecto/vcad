@@ -725,6 +725,17 @@ impl RayTracePipeline {
         });
 
         // Dispatch compute shader
+        // A scissored pass dispatches only over its rectangle; the shader adds
+        // the origin back. That is what makes a masked re-render cost in
+        // proportion to what it redraws instead of always paying for the frame.
+        let (dispatch_w, dispatch_h) = match render_state.scissor() {
+            Some([x, y, w, h]) => (
+                w.min(width.saturating_sub(x)),
+                h.min(height.saturating_sub(y)),
+            ),
+            None => (width, height),
+        };
+
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -738,7 +749,7 @@ impl RayTracePipeline {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+            pass.dispatch_workgroups(dispatch_w.div_ceil(8), dispatch_h.div_ceil(8), 1);
         }
 
         // The SSAO pass used to run here. Real multi-bounce GI computes contact
@@ -755,7 +766,7 @@ impl RayTracePipeline {
             });
             pass.set_pipeline(&self.refine_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+            pass.dispatch_workgroups(dispatch_w.div_ceil(8), dispatch_h.div_ceil(8), 1);
         }
 
         // Copy texture to readback buffer

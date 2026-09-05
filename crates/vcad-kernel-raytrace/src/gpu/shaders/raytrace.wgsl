@@ -84,9 +84,13 @@ struct RenderState {
     env_height: u32,
     env_rotation: f32,
     env_marg_int: f32,
+    // Scissor rectangle, packed x | (y << 16) and w | (h << 16). A zero size
+    // means the whole frame. The host dispatches only enough workgroups to
+    // cover the rectangle and each invocation adds the origin, so a masked
+    // pass costs in proportion to the rectangle.
+    scissor_xy: u32,
+    scissor_wh: u32,
     _pad3: u32,
-    _pad4: u32,
-    _pad5: u32,
 }
 
 struct RayHit {
@@ -1904,9 +1908,27 @@ fn heat_color(t: f32) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+// Map an invocation to the pixel it owns, honouring the scissor. Returns the
+// frame size in .zw so the caller can reject out-of-range invocations with one
+// comparison.
+fn scissor_pixel(global_id: vec3<u32>) -> vec4<u32> {
+    if render_state.scissor_wh == 0u {
+        return vec4<u32>(global_id.x, global_id.y, camera.width, camera.height);
+    }
+    let ox = render_state.scissor_xy & 0xFFFFu;
+    let oy = render_state.scissor_xy >> 16u;
+    let w = render_state.scissor_wh & 0xFFFFu;
+    let h = render_state.scissor_wh >> 16u;
+    // Outside the rectangle: hand back a coordinate the bounds check rejects.
+    if global_id.x >= w || global_id.y >= h {
+        return vec4<u32>(camera.width, camera.height, camera.width, camera.height);
+    }
+    return vec4<u32>(ox + global_id.x, oy + global_id.y, camera.width, camera.height);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let pixel = global_id.xy;
+    let pixel = scissor_pixel(global_id).xy;
 
     if pixel.x >= camera.width || pixel.y >= camera.height {
         return;
@@ -2067,7 +2089,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 // Only runs when render_state.refine_sample_count > 0.
 @compute @workgroup_size(8, 8)
 fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let pixel = global_id.xy;
+    let pixel = scissor_pixel(global_id).xy;
 
     if pixel.x >= camera.width || pixel.y >= camera.height {
         return;

@@ -517,8 +517,21 @@ pub struct GpuRenderState {
     pub env_rotation: f32,
     /// Normaliser for the environment's uv-space PDF.
     pub env_marg_int: f32,
+    /// Scissor origin, `x | (y << 16)` in pixels.
+    ///
+    /// The compute pass dispatches only over the scissor and offsets every
+    /// invocation by this, so a masked pass costs in proportion to the
+    /// rectangle rather than the frame. Zero-size means "the whole frame", set
+    /// for you by [`GpuRenderState::new`]; use
+    /// [`GpuRenderState::set_scissor`] rather than packing it by hand.
+    ///
+    /// Carved out of what used to be padding, so the struct's size and the
+    /// layout of every field before it are unchanged.
+    pub scissor_xy: u32,
+    /// Scissor size, `w | (h << 16)` in pixels. Zero means the whole frame.
+    pub scissor_wh: u32,
     /// Padding to a 16-byte multiple (required for uniform buffers).
-    pub _pad3: [u32; 3],
+    pub _pad3: [u32; 1],
 }
 
 /// Default silhouette line color: near-black, slightly cool.
@@ -594,8 +607,47 @@ impl GpuRenderState {
             env_height: 0,
             env_rotation: 0.0,
             env_marg_int: 0.0,
-            _pad3: [0; 3],
+            scissor_xy: 0,
+            scissor_wh: 0,
+            _pad3: [0; 1],
         }
+    }
+
+    /// Restrict the pass to `[x, y, w, h]` in pixels.
+    ///
+    /// The dispatch is sized to the rectangle and every invocation is offset
+    /// into it, so a masked pass does the work of the rectangle and not of the
+    /// frame. Pixels outside keep whatever the accumulation buffer already
+    /// holds; the output texture is likewise only written inside.
+    ///
+    /// Coordinates are packed into 16 bits each, which is the frame size the
+    /// rest of the pipeline can address anyway. A zero-area rect clears the
+    /// scissor rather than rendering nothing — "no restriction" is the useful
+    /// reading of an empty one here, and callers with genuinely nothing to
+    /// draw skip the dispatch.
+    pub fn set_scissor(&mut self, rect: [u32; 4]) {
+        if rect[2] == 0 || rect[3] == 0 {
+            self.scissor_xy = 0;
+            self.scissor_wh = 0;
+            return;
+        }
+        let clamp = |v: u32| v.min(0xFFFF);
+        self.scissor_xy = clamp(rect[0]) | (clamp(rect[1]) << 16);
+        self.scissor_wh = clamp(rect[2]) | (clamp(rect[3]) << 16);
+    }
+
+    /// The scissor as `[x, y, w, h]`, or `None` when the pass covers the whole
+    /// frame.
+    pub fn scissor(&self) -> Option<[u32; 4]> {
+        if self.scissor_wh == 0 {
+            return None;
+        }
+        Some([
+            self.scissor_xy & 0xFFFF,
+            self.scissor_xy >> 16,
+            self.scissor_wh & 0xFFFF,
+            self.scissor_wh >> 16,
+        ])
     }
 
     /// Create a new render state with a specific debug mode.
@@ -708,7 +760,9 @@ impl GpuRenderState {
             env_height: 0,
             env_rotation: 0.0,
             env_marg_int: 0.0,
-            _pad3: [0; 3],
+            scissor_xy: 0,
+            scissor_wh: 0,
+            _pad3: [0; 1],
         }
     }
 

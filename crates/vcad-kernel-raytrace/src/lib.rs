@@ -47,7 +47,8 @@ pub mod gpu;
 pub use bvh::Bvh;
 pub use cpu::{render_scene, render_scene_samples, CpuRenderer};
 pub use pathtrace::{
-    studio_rig, AreaLight, Camera, Environment, Film, Ground, Object, PathTraceOptions, Pbr, Scene,
+    render_into, studio_rig, AreaLight, Camera, Environment, Film, Ground, Object,
+    PathTraceOptions, Pbr, Scene,
 };
 pub use ray::{Ray, RayHit};
 pub use tlas::{Instance, InstanceHit, Tlas};
