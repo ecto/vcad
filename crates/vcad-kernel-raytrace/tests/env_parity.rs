@@ -108,6 +108,7 @@ fn cpu_scene() -> pathtrace::Scene {
             v: Vec3::new(LV[0], LV[1], LV[2]),
             emission: [LE; 3],
         }],
+        sun: None,
         env: Environment::constant(ENV),
         ground: None,
     }
