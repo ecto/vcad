@@ -1,15 +1,25 @@
-//! Bounding Volume Hierarchy for accelerated ray tracing.
+//! The BRep side of the seam: vcad's geometry, told to `kosm-render`.
 //!
-//! Uses Surface Area Heuristic (SAH) for construction.
+//! The hierarchy itself lives in [`kosm_render`] — it is the same SAH tree
+//! whatever it is built over. What is vcad's, and stays here, is the answer
+//! to "what does a ray find when it meets face 7": [`crate::intersect`] for
+//! the analytic surface, [`crate::trim`] for whether the hit is inside the
+//! face's boundary at all.
+//!
+//! [`Bvh`] is a thin wrapper rather than a bare alias for two reasons the
+//! rest of the kernel depends on: it still knows whether it was built over a
+//! solid or a mesh, and it still flattens to `FaceId`s for the GPU upload.
 
 use std::sync::Arc;
 use vcad_kernel_booleans::bbox::{face_aabb, Aabb3};
-use vcad_kernel_math::{Dir3, Point2, Point3, Vec3};
+use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
-use crate::intersect::{intersect_surface, intersect_triangle, surface_tangent};
+use kosm_render::{Aabb, Geometry, TriMesh};
+
+use crate::intersect::{intersect_surface, surface_tangent};
 use crate::trim::{face_normal, point_in_face};
 use crate::{Ray, RayHit};
 
@@ -17,109 +27,159 @@ use crate::{Ray, RayHit};
 /// Contains: (AABB, is_leaf, left_or_first, right_or_count)
 pub type FlatBvhNode = (Aabb3, bool, u32, u32);
 
-/// A BVH node - either a leaf containing primitives or an internal node with
-/// children.
-#[derive(Debug, Clone)]
-pub enum BvhNode {
-    /// Leaf node containing primitive indices.
-    Leaf {
-        /// Axis-aligned bounding box of this node.
-        aabb: Aabb3,
-        /// Indices of the primitives in this leaf, into the owning
-        /// [`Bvh`]'s geometry: BRep faces in build order for a BRep-backed
-        /// BVH, triangles for a mesh-backed one.
-        prims: Vec<u32>,
-    },
-    /// Internal node with two children.
-    Internal {
-        /// Axis-aligned bounding box of this node.
-        aabb: Aabb3,
-        /// Left child node.
-        left: Box<BvhNode>,
-        /// Right child node.
-        right: Box<BvhNode>,
-    },
-}
+/// A node of the hierarchy.
+pub use kosm_render::BvhNode;
 
-/// Triangle geometry backing a mesh BVH.
+/// The geometry a [`Bvh`] was built over, as `kosm-render` sees it.
 ///
-/// Positions and normals are widened to `f64` once at build time — the
-/// tracer works in `f64` throughout, and converting per intersection test
-/// would put a cast in the innermost loop.
+/// Two kinds, because a solid may arrive either way: trimmed analytic faces
+/// when there is a BRep to trace, triangles when there is not (frozen
+/// `topology_optimize` results, imported STL/GLB parts).
 #[derive(Debug, Clone)]
-struct MeshGeom {
-    /// Vertex positions.
-    positions: Vec<Point3>,
-    /// Per-vertex normals, parallel to `positions`. Empty when the source
-    /// mesh carried none, in which case hits report the geometric face
-    /// normal instead.
-    normals: Vec<Vec3>,
-    /// Triangle corner indices into `positions`.
-    tris: Vec<[u32; 3]>,
-}
-
-impl MeshGeom {
-    /// Intersect a ray with one triangle, shading normal included.
-    fn test(&self, ray: &Ray, tri: u32) -> Option<RayHit> {
-        let [i0, i1, i2] = self.tris[tri as usize];
-        let (v0, v1, v2) = (
-            self.positions[i0 as usize],
-            self.positions[i1 as usize],
-            self.positions[i2 as usize],
-        );
-
-        let hit = intersect_triangle(ray, v0, v1, v2)?;
-
-        // Geometric normal. Non-zero by construction: `intersect_triangle`
-        // rejects degenerate triangles, so this is always a usable fallback.
-        let geometric = (v1 - v0).cross(v2 - v0);
-
-        // Smooth shading: barycentric blend of the vertex normals, so a mesh
-        // part doesn't read as faceted next to an analytic one. Falls back
-        // to the geometric normal when the mesh has no normals, or when the
-        // blend cancels (opposed vertex normals on a degenerate crease).
-        let smooth = if self.normals.is_empty() {
-            None
-        } else {
-            let n = self.normals[i0 as usize] * hit.w()
-                + self.normals[i1 as usize] * hit.u
-                + self.normals[i2 as usize] * hit.v;
-            (n.norm() > 1e-12).then_some(n)
-        };
-
-        Some(RayHit::triangle(
-            hit.t,
-            ray.at(hit.t),
-            Dir3::new_normalize(smooth.unwrap_or(geometric)),
-            Point2::new(hit.u, hit.v),
-            tri,
-        ))
-    }
-}
-
-/// The geometry a [`Bvh`] was built over.
-#[derive(Debug, Clone)]
-enum BvhGeom {
+pub enum BrepGeom {
     /// Trimmed analytic faces of a BRep solid.
     BRep {
         /// The solid being traced.
         brep: Arc<BRepSolid>,
-        /// Primitive index -> face ID.
+        /// Primitive index → face ID.
         faces: Vec<FaceId>,
     },
     /// Triangles of a mesh-only solid.
-    Mesh(Arc<MeshGeom>),
+    Mesh(TriMesh),
 }
 
-/// Bounding Volume Hierarchy for accelerated ray-geometry intersection.
+impl BrepGeom {
+    /// The face a primitive index refers to, for a BRep-backed geometry.
+    ///
+    /// This is where `RayHit::face_id` went: a hit carries the primitive it
+    /// landed on, and the geometry says what vcad calls that primitive.
+    pub fn face_id(&self, prim: u32) -> Option<FaceId> {
+        match self {
+            BrepGeom::BRep { faces, .. } => faces.get(prim as usize).copied(),
+            BrepGeom::Mesh(_) => None,
+        }
+    }
+
+    /// The face IDs, in primitive order. Empty for a mesh.
+    pub fn face_ids(&self) -> &[FaceId] {
+        match self {
+            BrepGeom::BRep { faces, .. } => faces,
+            BrepGeom::Mesh(_) => &[],
+        }
+    }
+}
+
+/// vcad's `Aabb3` and kosm-render's `Aabb` are the same two `Point3`s under
+/// different names; these are the two-line translations between them.
+#[inline]
+fn to_render_aabb(a: &Aabb3) -> Aabb {
+    Aabb::new(a.min, a.max)
+}
+
+#[inline]
+fn from_render_aabb(a: &Aabb) -> Aabb3 {
+    Aabb3::new(a.min, a.max)
+}
+
+impl Geometry for BrepGeom {
+    fn len(&self) -> usize {
+        match self {
+            BrepGeom::BRep { faces, .. } => faces.len(),
+            BrepGeom::Mesh(m) => m.len(),
+        }
+    }
+
+    fn bounds(&self, i: usize) -> Aabb {
+        match self {
+            BrepGeom::BRep { brep, faces } => to_render_aabb(&face_aabb(brep, faces[i])),
+            BrepGeom::Mesh(m) => m.bounds(i),
+        }
+    }
+
+    fn intersect(&self, ray: &Ray, i: usize, t_min: f64, t_max: f64) -> Option<RayHit> {
+        match self {
+            BrepGeom::BRep { brep, faces } => {
+                let face_id = faces[i];
+                let face = &brep.topology.faces[face_id];
+                let surface = &brep.geometry.surfaces[face.surface_index];
+
+                let mut closest: Option<RayHit> = None;
+
+                for hit in intersect_surface(ray, surface.as_ref()) {
+                    if hit.t > t_min
+                        && hit.t < t_max
+                        && point_in_face(brep, face_id, hit.uv)
+                        && (closest.is_none() || hit.t < closest.as_ref().unwrap().t)
+                    {
+                        let point = ray.at(hit.t);
+                        let normal = face_normal(brep, face_id, hit.uv);
+                        let tangent = surface_tangent(surface.as_ref(), hit.uv);
+                        closest = Some(
+                            RayHit::new(hit.t, point, normal, hit.uv, i as u32)
+                                .with_tangent(tangent),
+                        );
+                    }
+                }
+
+                closest
+            }
+            BrepGeom::Mesh(m) => m.intersect(ray, i, t_min, t_max),
+        }
+    }
+
+    fn intersect_all(&self, ray: &Ray, i: usize, out: &mut Vec<RayHit>) {
+        match self {
+            BrepGeom::BRep { brep, faces } => {
+                let face_id = faces[i];
+                let face = &brep.topology.faces[face_id];
+                let surface = &brep.geometry.surfaces[face.surface_index];
+
+                for hit in intersect_surface(ray, surface.as_ref()) {
+                    // Only hits inside the face's trim boundary are on the
+                    // solid at all; the rest are on the unbounded surface.
+                    if point_in_face(brep, face_id, hit.uv) {
+                        let point = ray.at(hit.t);
+                        let normal = face_normal(brep, face_id, hit.uv);
+                        let tangent = surface_tangent(surface.as_ref(), hit.uv);
+                        out.push(
+                            RayHit::new(hit.t, point, normal, hit.uv, i as u32)
+                                .with_tangent(tangent),
+                        );
+                    }
+                }
+            }
+            BrepGeom::Mesh(m) => m.intersect_all(ray, i, out),
+        }
+    }
+
+    fn occludes(&self, ray: &Ray, i: usize, t_min: f64, t_max: f64) -> bool {
+        match self {
+            BrepGeom::BRep { brep, faces } => {
+                let face_id = faces[i];
+                let face = &brep.topology.faces[face_id];
+                let surface = &brep.geometry.surfaces[face.surface_index];
+                intersect_surface(ray, surface.as_ref())
+                    .into_iter()
+                    .any(|hit| {
+                        hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
+                    })
+            }
+            BrepGeom::Mesh(m) => m.occludes(ray, i, t_min, t_max),
+        }
+    }
+}
+
+/// Bounding volume hierarchy for accelerated ray-geometry intersection.
 ///
 /// Builds over either the trimmed analytic faces of a [`BRepSolid`]
 /// ([`Bvh::build`]) or the triangles of a [`TriangleMesh`]
-/// ([`Bvh::build_mesh`]); tracing is identical for both.
+/// ([`Bvh::build_mesh`]); tracing is identical for both, and is
+/// [`kosm_render::Bvh`]'s.
 #[derive(Debug, Clone)]
 pub struct Bvh {
-    root: Option<BvhNode>,
-    geom: BvhGeom,
+    /// Shared, so placing the same part a hundred times costs a hundred
+    /// `Arc` bumps and one tree.
+    inner: Arc<kosm_render::Bvh<BrepGeom>>,
 }
 
 impl Bvh {
@@ -133,26 +193,9 @@ impl Bvh {
     /// Skips the clone `build` performs, so N instances of the same part can
     /// share one BLAS (see [`crate::tlas`]).
     pub fn build_shared(brep: Arc<BRepSolid>) -> Self {
-        // Collect all faces with their AABBs
         let faces: Vec<FaceId> = brep.topology.faces.iter().map(|(id, _)| id).collect();
-        let mut prim_data: Vec<PrimData> = faces
-            .iter()
-            .enumerate()
-            .map(|(i, &face_id)| {
-                let aabb = face_aabb(&brep, face_id);
-                (i as u32, aabb, centroid_of(&aabb))
-            })
-            .collect();
-
-        let root = if prim_data.is_empty() {
-            None
-        } else {
-            Some(build_node(&mut prim_data))
-        };
-
         Self {
-            root,
-            geom: BvhGeom::BRep { brep, faces },
+            inner: Arc::new(kosm_render::Bvh::build(BrepGeom::BRep { brep, faces })),
         }
     }
 
@@ -168,6 +211,8 @@ impl Bvh {
     /// smooth shading; otherwise hits report the geometric face normal.
     pub fn build_mesh(mesh: &TriangleMesh) -> Self {
         let vertex_count = mesh.vertices.len() / 3;
+        // Widened to `f64` once here: the tracer works in `f64` throughout,
+        // and casting per intersection test would put it in the inner loop.
         let positions: Vec<Point3> = (0..vertex_count)
             .map(|i| {
                 Point3::new(
@@ -193,331 +238,83 @@ impl Bvh {
             Vec::new()
         };
 
-        let tris: Vec<[u32; 3]> = (0..mesh.indices.len() / 3)
-            .map(|i| {
-                [
-                    mesh.indices[i * 3],
-                    mesh.indices[i * 3 + 1],
-                    mesh.indices[i * 3 + 2],
-                ]
-            })
-            .filter(|t| {
-                if !t.iter().all(|&i| (i as usize) < vertex_count) {
-                    return false;
-                }
-                if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
-                    return false;
-                }
-                // Zero-area (collinear corners) too: such a triangle can
-                // never be hit, so keeping it would inflate the BVH and —
-                // worse — make a fully degenerate mesh look traceable when
-                // it isn't. Same size-relative test the intersector uses,
-                // so build and trace agree on what counts as degenerate.
-                let (a, b, c) = (
-                    positions[t[0] as usize],
-                    positions[t[1] as usize],
-                    positions[t[2] as usize],
-                );
-                let (e1, e2) = (b - a, c - a);
-                e1.cross(e2).norm() > 1e-12 * (e1.norm() * e2.norm()).max(1.0)
-            })
-            .collect();
-
-        let mut prim_data: Vec<PrimData> = tris
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                let mut aabb = Aabb3::empty();
-                for &vi in t {
-                    aabb.include_point(&positions[vi as usize]);
-                }
-                (i as u32, aabb, centroid_of(&aabb))
-            })
-            .collect();
-
-        let root = if prim_data.is_empty() {
-            None
-        } else {
-            Some(build_node(&mut prim_data))
-        };
-
         Self {
-            root,
-            geom: BvhGeom::Mesh(Arc::new(MeshGeom {
+            inner: Arc::new(kosm_render::Bvh::build(BrepGeom::Mesh(TriMesh::new(
                 positions,
                 normals,
-                tris,
-            })),
+                &mesh.indices,
+            )))),
         }
+    }
+
+    /// The geometry this BVH was built over.
+    pub fn geometry(&self) -> &BrepGeom {
+        self.inner.geometry()
+    }
+
+    /// The shared hierarchy underneath, for placing as an instance.
+    pub(crate) fn shared(&self) -> &Arc<kosm_render::Bvh<BrepGeom>> {
+        &self.inner
     }
 
     /// Trace a ray through the BVH, returning all intersections sorted by t.
     pub fn trace(&self, ray: &Ray) -> Vec<RayHit> {
-        let mut hits = Vec::new();
-
-        if let Some(ref root) = self.root {
-            self.trace_node(ray, root, &mut hits);
-        }
-
-        hits.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-        hits
+        self.inner.trace(ray)
     }
 
     /// Trace a ray and return only the closest hit.
     pub fn trace_closest(&self, ray: &Ray) -> Option<RayHit> {
-        self.trace_closest_limit(ray, f64::INFINITY)
+        self.inner.trace_closest(ray)
     }
 
     /// Trace a ray and return the closest hit strictly nearer than `t_max`.
-    ///
-    /// Seeding the search with a known upper bound lets the SAH early-outs
-    /// prune subtrees a caller has already beaten — the basis of TLAS
-    /// traversal, where each instance inherits the best `t` found so far.
     pub fn trace_closest_limit(&self, ray: &Ray, t_max: f64) -> Option<RayHit> {
-        self.trace_closest_range(ray, 0.0, t_max)
+        self.inner.trace_closest_limit(ray, t_max)
     }
 
     /// Trace a ray and return the closest hit in the open interval
     /// `(t_min, t_max)`.
-    ///
-    /// `t_min` is how callers dodge self-intersection without nudging the ray
-    /// origin along the normal — the path tracer's convention. Note this is a
-    /// genuine interval search, not a post-filter: a hit at `t <= t_min` is
-    /// skipped and the search continues past it, so a surface hidden behind
-    /// one is still found.
     pub fn trace_closest_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<RayHit> {
-        let mut closest: Option<RayHit> = None;
-        let mut closest_t = t_max;
-
-        if let Some(ref root) = self.root {
-            self.trace_node_closest(ray, root, t_min, &mut closest, &mut closest_t);
-        }
-
-        closest
+        self.inner.trace_closest_range(ray, t_min, t_max)
     }
 
     /// Any-hit test: does the ray hit *anything* in `(0, t_max)`?
-    ///
-    /// Returns as soon as one hit is found — strictly less work than
-    /// [`Bvh::trace_closest`], which must find the nearest. This is the
-    /// traversal shadow and occlusion rays want.
     pub fn occluded(&self, ray: &Ray, t_max: f64) -> bool {
-        self.occluded_range(ray, 0.0, t_max)
+        self.inner.occluded(ray, t_max)
     }
 
     /// Any-hit test over the open interval `(t_min, t_max)`.
     pub fn occluded_range(&self, ray: &Ray, t_min: f64, t_max: f64) -> bool {
-        match self.root {
-            Some(ref root) => self.occluded_node(ray, root, t_min, t_max),
-            None => false,
-        }
-    }
-
-    fn occluded_node(&self, ray: &Ray, node: &BvhNode, t_min: f64, t_max: f64) -> bool {
-        let Some((enter, exit)) = ray.intersect_aabb(node_aabb_of(node)) else {
-            return false;
-        };
-        // Prune boxes wholly outside the interval on either side.
-        if enter >= t_max || exit <= t_min {
-            return false;
-        }
-        match node {
-            BvhNode::Leaf { prims, .. } => prims
-                .iter()
-                .any(|&prim| self.prim_occludes(ray, prim, t_min, t_max)),
-            BvhNode::Internal { left, right, .. } => {
-                self.occluded_node(ray, left, t_min, t_max)
-                    || self.occluded_node(ray, right, t_min, t_max)
-            }
-        }
-    }
-
-    /// Does this primitive block the ray inside `(t_min, t_max)`? Stops at the
-    /// first qualifying hit rather than ranking them, which is the whole point
-    /// of an any-hit query.
-    fn prim_occludes(&self, ray: &Ray, prim: u32, t_min: f64, t_max: f64) -> bool {
-        match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
-                let face_id = faces[prim as usize];
-                let face = &brep.topology.faces[face_id];
-                let surface = &brep.geometry.surfaces[face.surface_index];
-                intersect_surface(ray, surface.as_ref())
-                    .into_iter()
-                    .any(|hit| {
-                        hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
-                    })
-            }
-            // A triangle is convex: at most one hit, so there is nothing to
-            // short-circuit past.
-            BvhGeom::Mesh(mesh) => mesh
-                .test(ray, prim)
-                .is_some_and(|h| h.t > t_min && h.t < t_max),
-        }
+        self.inner.occluded_range(ray, t_min, t_max)
     }
 
     /// World-space (well, solid-space) bounds of the whole hierarchy.
     pub fn bounds(&self) -> Option<Aabb3> {
-        self.root.as_ref().map(get_aabb)
-    }
-
-    /// Trace a ray through a single node.
-    fn trace_node(&self, ray: &Ray, node: &BvhNode, hits: &mut Vec<RayHit>) {
-        match node {
-            BvhNode::Leaf { aabb, prims } => {
-                if ray.intersect_aabb(aabb).is_some() {
-                    for &prim in prims {
-                        self.test_prim(ray, prim, hits);
-                    }
-                }
-            }
-            BvhNode::Internal { aabb, left, right } => {
-                if ray.intersect_aabb(aabb).is_some() {
-                    self.trace_node(ray, left, hits);
-                    self.trace_node(ray, right, hits);
-                }
-            }
-        }
-    }
-
-    /// Trace a ray, keeping only the closest hit in `(t_min, closest_t)`.
-    fn trace_node_closest(
-        &self,
-        ray: &Ray,
-        node: &BvhNode,
-        t_min: f64,
-        closest: &mut Option<RayHit>,
-        closest_t: &mut f64,
-    ) {
-        let Some((enter, exit)) = ray.intersect_aabb(node_aabb_of(node)) else {
-            return;
-        };
-        // Early out if the box is beyond the current closest, or entirely
-        // behind `t_min`.
-        if enter >= *closest_t || exit <= t_min {
-            return;
-        }
-
-        match node {
-            BvhNode::Leaf { prims, .. } => {
-                for &prim in prims {
-                    if let Some(hit) = self.test_prim_single(ray, prim, t_min) {
-                        if hit.t < *closest_t {
-                            *closest_t = hit.t;
-                            *closest = Some(hit);
-                        }
-                    }
-                }
-            }
-            BvhNode::Internal { left, right, .. } => {
-                // Test children in order of AABB distance
-                let left_t = ray.intersect_aabb(&get_aabb(left)).map(|(t, _)| t);
-                let right_t = ray.intersect_aabb(&get_aabb(right)).map(|(t, _)| t);
-
-                match (left_t, right_t) {
-                    (Some(lt), Some(rt)) => {
-                        if lt < rt {
-                            self.trace_node_closest(ray, left, t_min, closest, closest_t);
-                            self.trace_node_closest(ray, right, t_min, closest, closest_t);
-                        } else {
-                            self.trace_node_closest(ray, right, t_min, closest, closest_t);
-                            self.trace_node_closest(ray, left, t_min, closest, closest_t);
-                        }
-                    }
-                    (Some(_), None) => {
-                        self.trace_node_closest(ray, left, t_min, closest, closest_t);
-                    }
-                    (None, Some(_)) => {
-                        self.trace_node_closest(ray, right, t_min, closest, closest_t);
-                    }
-                    (None, None) => {}
-                }
-            }
-        }
-    }
-
-    /// Test a ray against a single primitive, appending every hit.
-    fn test_prim(&self, ray: &Ray, prim: u32, hits: &mut Vec<RayHit>) {
-        match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
-                let face_id = faces[prim as usize];
-                let face = &brep.topology.faces[face_id];
-                let surface = &brep.geometry.surfaces[face.surface_index];
-
-                let surface_hits = intersect_surface(ray, surface.as_ref());
-
-                for hit in surface_hits {
-                    // Check if the hit is within the face's trim boundaries
-                    if point_in_face(brep, face_id, hit.uv) {
-                        let point = ray.at(hit.t);
-                        let normal = face_normal(brep, face_id, hit.uv);
-                        let tangent = surface_tangent(surface.as_ref(), hit.uv);
-                        hits.push(
-                            RayHit::new(hit.t, point, normal, hit.uv, face_id)
-                                .with_tangent(tangent),
-                        );
-                    }
-                }
-            }
-            BvhGeom::Mesh(mesh) => {
-                if let Some(hit) = mesh.test(ray, prim) {
-                    hits.push(hit);
-                }
-            }
-        }
-    }
-
-    /// Test a ray against a single primitive, returning only the closest hit
-    /// strictly past `t_min`.
-    fn test_prim_single(&self, ray: &Ray, prim: u32, t_min: f64) -> Option<RayHit> {
-        match &self.geom {
-            BvhGeom::BRep { brep, faces } => {
-                let face_id = faces[prim as usize];
-                let face = &brep.topology.faces[face_id];
-                let surface = &brep.geometry.surfaces[face.surface_index];
-
-                let surface_hits = intersect_surface(ray, surface.as_ref());
-
-                let mut closest: Option<RayHit> = None;
-
-                for hit in surface_hits {
-                    if hit.t > t_min
-                        && point_in_face(brep, face_id, hit.uv)
-                        && (closest.is_none() || hit.t < closest.as_ref().unwrap().t)
-                    {
-                        let point = ray.at(hit.t);
-                        let normal = face_normal(brep, face_id, hit.uv);
-                        let tangent = surface_tangent(surface.as_ref(), hit.uv);
-                        closest = Some(
-                            RayHit::new(hit.t, point, normal, hit.uv, face_id)
-                                .with_tangent(tangent),
-                        );
-                    }
-                }
-
-                closest
-            }
-            // A triangle is convex: at most one hit, so "closest" is "the" hit.
-            BvhGeom::Mesh(mesh) => mesh.test(ray, prim).filter(|h| h.t > t_min),
-        }
+        self.inner.bounds().map(|a| from_render_aabb(&a))
     }
 
     /// Get a reference to the underlying BRep solid, if this BVH was built
     /// over one. `None` for mesh-backed BVHs.
     pub fn brep(&self) -> Option<&BRepSolid> {
-        match &self.geom {
-            BvhGeom::BRep { brep, .. } => Some(brep),
-            BvhGeom::Mesh(_) => None,
+        match self.inner.geometry() {
+            BrepGeom::BRep { brep, .. } => Some(brep),
+            BrepGeom::Mesh(_) => None,
         }
     }
 
     /// Whether this BVH traces triangles rather than analytic BRep faces.
     pub fn is_mesh(&self) -> bool {
-        matches!(self.geom, BvhGeom::Mesh(_))
+        matches!(self.inner.geometry(), BrepGeom::Mesh(_))
     }
 
     /// Get a reference to the root node, if any.
     pub fn root(&self) -> Option<&BvhNode> {
-        self.root.as_ref()
+        self.inner.root()
+    }
+
+    /// The face a hit's primitive index refers to. `None` for mesh hits.
+    pub fn face_id(&self, hit: &RayHit) -> Option<FaceId> {
+        self.inner.geometry().face_id(hit.prim)
     }
 
     /// Flatten the BVH into a vector of nodes for GPU upload.
@@ -531,270 +328,20 @@ impl Bvh {
     /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
     /// A mesh-backed BVH flattens to nothing.
     pub fn flatten(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>) {
-        let mut nodes = Vec::new();
-        let mut faces = Vec::new();
-
-        let BvhGeom::BRep {
-            faces: face_ids, ..
-        } = &self.geom
-        else {
-            return (nodes, faces);
+        let BrepGeom::BRep { faces: face_ids, .. } = self.inner.geometry() else {
+            return (Vec::new(), Vec::new());
         };
 
-        if let Some(root) = &self.root {
-            flatten_node(root, face_ids, &mut nodes, &mut faces);
-        }
-
-        (nodes, faces)
+        let (nodes, prims) = self.inner.flatten();
+        (
+            nodes
+                .into_iter()
+                .map(|(aabb, leaf, a, b)| (from_render_aabb(&aabb), leaf, a, b))
+                .collect(),
+            prims.into_iter().map(|p| face_ids[p as usize]).collect(),
+        )
     }
 }
-
-/// Borrow a node's AABB without copying it.
-fn node_aabb_of(node: &BvhNode) -> &Aabb3 {
-    match node {
-        BvhNode::Leaf { aabb, .. } | BvhNode::Internal { aabb, .. } => aabb,
-    }
-}
-
-/// Get the AABB of a node.
-fn get_aabb(node: &BvhNode) -> Aabb3 {
-    match node {
-        BvhNode::Leaf { aabb, .. } => *aabb,
-        BvhNode::Internal { aabb, .. } => *aabb,
-    }
-}
-
-/// Recursively flatten a BVH node into a vector.
-fn flatten_node(
-    node: &BvhNode,
-    face_ids: &[FaceId],
-    nodes: &mut Vec<FlatBvhNode>,
-    faces: &mut Vec<FaceId>,
-) -> usize {
-    let idx = nodes.len();
-
-    match node {
-        BvhNode::Leaf { aabb, prims } => {
-            let start = faces.len() as u32;
-            let count = prims.len() as u32;
-            faces.extend(prims.iter().map(|&p| face_ids[p as usize]));
-            nodes.push((*aabb, true, start, count));
-        }
-        BvhNode::Internal { aabb, left, right } => {
-            // Reserve space for this node
-            nodes.push((*aabb, false, 0, 0));
-
-            // Recursively flatten children
-            let left_idx = flatten_node(left, face_ids, nodes, faces);
-            let right_idx = flatten_node(right, face_ids, nodes, faces);
-
-            // Update this node with child indices
-            nodes[idx].2 = left_idx as u32;
-            nodes[idx].3 = right_idx as u32;
-        }
-    }
-
-    idx
-}
-
-/// One primitive's build-time record: index, bounds, centroid.
-/// A BLAS primitive for the SAH builder: prim index, bounds, centroid.
-/// Spelled as the generic [`SahItem`] so the per-solid BLAS and the scene
-/// TLAS share one split implementation rather than keeping two copies.
-type PrimData = SahItem<u32>;
-
-/// Centre of an AABB.
-fn centroid_of(aabb: &Aabb3) -> Point3 {
-    Point3::new(
-        (aabb.min.x + aabb.max.x) / 2.0,
-        (aabb.min.y + aabb.max.y) / 2.0,
-        (aabb.min.z + aabb.max.z) / 2.0,
-    )
-}
-
-/// Build a BVH node recursively using SAH.
-fn build_node(face_data: &mut [PrimData]) -> BvhNode {
-    let bounds = item_bounds(face_data);
-
-    // Base case: small number of faces -> leaf
-    if face_data.len() <= 4 {
-        return BvhNode::Leaf {
-            aabb: bounds,
-            prims: face_data.iter().map(|(id, _, _)| *id).collect(),
-        };
-    }
-
-    let mid = sah_split(face_data, &bounds);
-    let (left_data, right_data) = face_data.split_at_mut(mid);
-
-    BvhNode::Internal {
-        aabb: bounds,
-        left: Box::new(build_node(left_data)),
-        right: Box::new(build_node(right_data)),
-    }
-}
-
-/// An item to be partitioned by the SAH builder: a payload, its bounds, and
-/// its centroid. Generic over the payload so the same split search serves
-/// both the per-solid BLAS (faces) and the scene TLAS (instances).
-pub(crate) type SahItem<T> = (T, Aabb3, vcad_kernel_math::Point3);
-
-/// Compute the bounds of a slice of SAH items.
-pub(crate) fn item_bounds<T>(items: &[SahItem<T>]) -> Aabb3 {
-    let mut bounds = Aabb3::empty();
-    for (_, aabb, _) in items {
-        bounds.include_point(&aabb.min);
-        bounds.include_point(&aabb.max);
-    }
-    bounds
-}
-
-/// Split a slice of SAH items in two, returning the midpoint index.
-///
-/// Runs the bucketed SAH search and falls back to a median split when the
-/// chosen plane leaves one side empty. Always returns `1..items.len()`, so
-/// callers can recurse unconditionally.
-pub(crate) fn sah_split<T>(items: &mut [SahItem<T>], bounds: &Aabb3) -> usize {
-    let (axis, pos) = find_best_split(items, bounds);
-    let mid = partition_items(items, axis, pos);
-    if mid == 0 || mid == items.len() {
-        items.len() / 2
-    } else {
-        mid
-    }
-}
-
-/// Find the best split axis and position using SAH.
-fn find_best_split<T>(face_data: &[SahItem<T>], bounds: &Aabb3) -> (usize, f64) {
-    const NUM_BUCKETS: usize = 12;
-
-    let extent = Vec3::new(
-        bounds.max.x - bounds.min.x,
-        bounds.max.y - bounds.min.y,
-        bounds.max.z - bounds.min.z,
-    );
-
-    let mut best_cost = f64::INFINITY;
-    let mut best_axis = 0;
-    let mut best_pos = 0.0;
-
-    // Try each axis
-    for axis in 0..3 {
-        let axis_extent = match axis {
-            0 => extent.x,
-            1 => extent.y,
-            _ => extent.z,
-        };
-
-        if axis_extent < 1e-10 {
-            continue;
-        }
-
-        let axis_min = match axis {
-            0 => bounds.min.x,
-            1 => bounds.min.y,
-            _ => bounds.min.z,
-        };
-
-        // Initialize buckets
-        let mut bucket_counts = [0usize; NUM_BUCKETS];
-        let mut bucket_bounds = [Aabb3::empty(); NUM_BUCKETS];
-
-        // Assign faces to buckets
-        for (_, aabb, centroid) in face_data {
-            let c = match axis {
-                0 => centroid.x,
-                1 => centroid.y,
-                _ => centroid.z,
-            };
-
-            let b = ((c - axis_min) / axis_extent * NUM_BUCKETS as f64) as usize;
-            let b = b.min(NUM_BUCKETS - 1);
-
-            bucket_counts[b] += 1;
-            bucket_bounds[b].include_point(&aabb.min);
-            bucket_bounds[b].include_point(&aabb.max);
-        }
-
-        // Sweep to find best split
-        for split in 1..NUM_BUCKETS {
-            let mut left_count = 0;
-            let mut left_bounds = Aabb3::empty();
-            for i in 0..split {
-                left_count += bucket_counts[i];
-                if bucket_counts[i] > 0 {
-                    left_bounds.include_point(&bucket_bounds[i].min);
-                    left_bounds.include_point(&bucket_bounds[i].max);
-                }
-            }
-
-            let mut right_count = 0;
-            let mut right_bounds = Aabb3::empty();
-            for i in split..NUM_BUCKETS {
-                right_count += bucket_counts[i];
-                if bucket_counts[i] > 0 {
-                    right_bounds.include_point(&bucket_bounds[i].min);
-                    right_bounds.include_point(&bucket_bounds[i].max);
-                }
-            }
-
-            if left_count == 0 || right_count == 0 {
-                continue;
-            }
-
-            // SAH cost: traversal + P(left) * N_left + P(right) * N_right
-            let left_area = surface_area(&left_bounds);
-            let right_area = surface_area(&right_bounds);
-            let total_area = surface_area(bounds);
-
-            let cost = 0.125 // traversal cost
-                + left_area / total_area * left_count as f64
-                + right_area / total_area * right_count as f64;
-
-            if cost < best_cost {
-                best_cost = cost;
-                best_axis = axis;
-                best_pos = axis_min + (split as f64 / NUM_BUCKETS as f64) * axis_extent;
-            }
-        }
-    }
-
-    (best_axis, best_pos)
-}
-
-/// Partition items by centroid along an axis.
-fn partition_items<T>(face_data: &mut [SahItem<T>], axis: usize, pos: f64) -> usize {
-    let mut left = 0;
-    let mut right = face_data.len();
-
-    while left < right {
-        let c = match axis {
-            0 => face_data[left].2.x,
-            1 => face_data[left].2.y,
-            _ => face_data[left].2.z,
-        };
-
-        if c < pos {
-            left += 1;
-        } else {
-            right -= 1;
-            face_data.swap(left, right);
-        }
-    }
-
-    left
-}
-
-/// Compute surface area of an AABB.
-fn surface_area(aabb: &Aabb3) -> f64 {
-    let d = Vec3::new(
-        aabb.max.x - aabb.min.x,
-        aabb.max.y - aabb.min.y,
-        aabb.max.z - aabb.min.z,
-    );
-    2.0 * (d.x * d.y + d.y * d.z + d.z * d.x)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,7 +405,7 @@ mod tests {
     fn test_bvh_build() {
         let cube = make_cube(10.0, 10.0, 10.0);
         let bvh = Bvh::build(&cube);
-        assert!(bvh.root.is_some());
+        assert!(bvh.root().is_some());
     }
 
     #[test]
@@ -937,7 +484,9 @@ mod tests {
         assert_eq!(hits.len(), 2, "hits: {hits:?}");
         assert!((hits[0].point.z).abs() < 1e-9);
         assert!((hits[1].point.z - 10.0).abs() < 1e-9);
-        assert!(hits.iter().all(|h| h.tri.is_some()));
+        // Mesh hits carry a triangle index and no face: `face_id` is the
+        // geometry's answer, and a mesh has none.
+        assert!(hits.iter().all(|h| bvh.face_id(h).is_none()));
 
         let closest = bvh.trace_closest(&ray).expect("should hit");
         assert!(closest.point.z.abs() < 1e-9);

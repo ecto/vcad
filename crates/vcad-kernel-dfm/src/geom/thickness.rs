@@ -134,7 +134,7 @@ fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
         // skips it but keep the guard for robustness.)
         let opposing = hits.into_iter().find(|h| {
             face_id_to_idx
-                .get(&h.face_id)
+                .get(&bvh.face_id(h).unwrap_or_default())
                 .copied()
                 .map(|idx| idx != i)
                 .unwrap_or(true)
@@ -142,7 +142,7 @@ fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
         });
         let Some(hit) = opposing else { continue };
         let face_b = face_id_to_idx
-            .get(&hit.face_id)
+            .get(&bvh.face_id(&hit).unwrap_or_default())
             .copied()
             .unwrap_or(usize::MAX);
         samples.push(ThicknessSample {

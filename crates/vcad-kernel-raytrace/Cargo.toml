@@ -8,6 +8,10 @@ repository.workspace = true
 
 [dependencies]
 rayon = "1"
+# The renderer itself lives in Kosm now: rays, hierarchies and the integrator,
+# generic over anything that can be bounded and hit. This crate supplies the
+# BRep half of that seam. Path dep until kosm-render is published.
+kosm-render = { path = "/Users/cam/Developer/kosm/.claude/worktrees/basketball-sim-kosm-67b384/crates/kosm-render" }
 vcad-kernel-math = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel-topo = { workspace = true }

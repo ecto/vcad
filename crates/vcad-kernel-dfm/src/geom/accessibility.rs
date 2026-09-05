@@ -93,7 +93,7 @@ fn sample_via_raycast(brep: &BRepSolid, axis: Vec3) -> Vec<AccessibilitySample> 
         let first = bvh.trace(&ray).into_iter().find(|h| h.t > eps);
         let occluded = match first {
             Some(hit) => face_id_to_idx
-                .get(&hit.face_id)
+                .get(&bvh.face_id(&hit).unwrap_or_default())
                 .copied()
                 .map(|idx| idx != i)
                 .unwrap_or(false),

@@ -50,5 +50,6 @@ pub use pathtrace::{
     render_into, studio_rig, AreaLight, Camera, Environment, Film, Ground, Object,
     PathTraceOptions, Pbr, Scene,
 };
+pub use bvh::BrepGeom;
 pub use ray::{Ray, RayHit};
 pub use tlas::{Instance, InstanceHit, Tlas};
