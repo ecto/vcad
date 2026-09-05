@@ -209,6 +209,11 @@ thiserror = "2"
 # Path-only deps from sibling repos go through path locally; the version is
 # what cargo publish embeds into the registry manifest. Bump these when the
 # sibling repo cuts a release; sync-version.mjs does NOT touch them.
+# kosm-render is the renderer: rays, hierarchies, the path tracer and the wgpu
+# tier, generic over geometry. The path is this machine's Kosm checkout; the
+# `version` is what a published kosm-render will satisfy, so when it lands on
+# crates.io only this line changes.
+kosm-render = { path = "/Users/cam/Developer/kosm/.claude/worktrees/basketball-sim-kosm-67b384/crates/kosm-render", version = "0.1.0" }
 tang = { path = "/Users/cam/Developer/tang/crates/tang", version = "0.2" }
 tang-la = { path = "/Users/cam/Developer/tang/crates/tang-la", version = "0.1" }
 tang-expr = { path = "/Users/cam/Developer/tang/crates/tang-expr", version = "0.1" }

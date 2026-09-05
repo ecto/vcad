@@ -9,7 +9,7 @@ description = "GPU-accelerated geometry operations for vcad"
 [dependencies]
 # The device itself lives in kosm-render now, alongside the path tracer that
 # was the reason for its adapter limits. This crate re-exports it.
-kosm-render = { path = "/Users/cam/Developer/kosm/.claude/worktrees/basketball-sim-kosm-67b384/crates/kosm-render", features = ["gpu"] }
+kosm-render = { workspace = true, features = ["gpu"] }
 tang-expr = { workspace = true }
 wgpu = { workspace = true, features = ["webgpu", "webgl"] }
 bytemuck = { workspace = true }

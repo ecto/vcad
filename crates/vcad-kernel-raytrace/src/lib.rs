@@ -32,7 +32,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use vcad_kernel_math::{Point3, Vec3};
 //! use vcad_kernel_primitives::make_cube;
 //! // `build_brep` lives on the extension trait: the generic hierarchy has
