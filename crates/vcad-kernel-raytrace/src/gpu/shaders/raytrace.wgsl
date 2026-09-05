@@ -234,6 +234,30 @@ fn intersect_aabb(origin: vec3<f32>, inv_dir: vec3<f32>, aabb_min: vec3<f32>, aa
 
 // Ray-surface intersection functions
 
+// The ray parameter at the ray's closest approach to the origin of the frame
+// `oc` is measured in, clamped to the ray's own start.
+//
+// Every analytic solve below re-origins the ray here before forming its
+// polynomial, and this is the whole of why. `GpuScene::placed` bakes each
+// placement into the packed surface frame, so a millimetre scene puts a
+// basketball's seam — a torus of R 74 mm and r 2 mm — ten metres from the eye
+// at a world coordinate of 1e4. Solved from the eye, the quartic's
+// coefficients are built out of |o| ~ 1e4 terms (od, oo, and the depressed
+// `p = b - 3a²/8` that cancels two of them against each other) while the
+// answer they have to resolve is the 2 mm tube. In f32 that leaves nothing:
+// the seam comes back as a burr of spurious hits and misses around the ball.
+//
+// Sliding the origin down the ray to the surface's own neighbourhood costs a
+// dot product and makes every coefficient the size of the surface instead of
+// the size of the scene. `t` is invariant under the shift — it is a rigid
+// translation of the ray along itself — so the root simply comes back with
+// `t0` added, and roots between the shifted origin and the true one are the
+// (still valid) ones at negative local `t`, which is why each solve's
+// acceptance test becomes `t >= -t0` rather than `t >= 0`.
+fn closest_approach(oc: vec3<f32>, dir: vec3<f32>) -> f32 {
+    return max(-dot(oc, dir) / dot(dir, dir), 0.0);
+}
+
 fn intersect_plane(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -> RayHit {
     var hit: RayHit;
     hit.t = MAX_T;
@@ -247,7 +271,13 @@ fn intersect_plane(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
         return hit;
     }
 
-    let t = dot(plane_origin - origin, plane_normal) / denom;
+    // The ray's offset from the plane's own origin. A plane's solve is linear
+    // and needs no re-origining, but its *parameterisation* does: computing
+    // `to_p` as `origin + t*dir - plane_origin` differences two 1e4 world
+    // coordinates and hands the trim test a uv that is a millimetre out.
+    let q = origin - plane_origin;
+
+    let t = -dot(q, plane_normal) / denom;
     if t < 0.0 {
         return hit;
     }
@@ -255,10 +285,9 @@ fn intersect_plane(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     hit.t = t;
 
     // Compute UV
-    let p = origin + t * dir;
     let x_dir = vec3<f32>(params[3], params[4], params[5]);
     let y_dir = vec3<f32>(params[6], params[7], params[8]);
-    let to_p = p - plane_origin;
+    let to_p = q + t * dir;
     hit.uv = vec2<f32>(dot(to_p, x_dir), dot(to_p, y_dir));
 
     return hit;
@@ -272,7 +301,13 @@ fn intersect_sphere(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -
     let center = vec3<f32>(params[0], params[1], params[2]);
     let radius = params[3];
 
-    let oc = origin - center;
+    // Solve in the sphere's own frame, re-origined at the closest approach:
+    // see `closest_approach`. `c = |oc|² - r²` is the cancellation this
+    // spares — at a world coordinate of 2e4 it differences 4e8 against 1.4e4.
+    let oc0 = origin - center;
+    let t0 = closest_approach(oc0, dir);
+    let oc = oc0 + t0 * dir;
+
     let a = dot(dir, dir);
     let b = 2.0 * dot(oc, dir);
     let c = dot(oc, oc) - radius * radius;
@@ -284,22 +319,21 @@ fn intersect_sphere(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -
 
     let sqrt_disc = sqrt(disc);
     var t = (-b - sqrt_disc) / (2.0 * a);
-    if t < 0.0 {
+    if t < -t0 {
         t = (-b + sqrt_disc) / (2.0 * a);
     }
-    if t < 0.0 {
+    if t < -t0 {
         return hit;
     }
 
-    hit.t = t;
+    hit.t = t + t0;
 
     // Compute UV (spherical coordinates)
-    let p = origin + t * dir;
     let ref_dir = vec3<f32>(params[4], params[5], params[6]);
     let axis = vec3<f32>(params[7], params[8], params[9]);
     let y_dir = cross(axis, ref_dir);
 
-    let to_p = normalize((p - center) / radius);
+    let to_p = normalize((oc + t * dir) / radius);
     let z = clamp(dot(to_p, axis), -1.0, 1.0);
     let v = asin(z);
 
@@ -327,16 +361,24 @@ fn intersect_cylinder(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>)
     let ref_dir = vec3<f32>(params[6], params[7], params[8]);
     let radius = params[9];
 
-    let oc = origin - center;
+    let oc0 = origin - center;
 
     // Project onto plane perpendicular to axis
     let d_perp = dir - dot(dir, axis) * axis;
-    let oc_perp = oc - dot(oc, axis) * axis;
 
     let a = dot(d_perp, d_perp);
     if a < EPSILON {
         return hit; // Ray parallel to axis
     }
+
+    // Re-origin at the closest approach to the *axis*, not to the centre: a
+    // cylinder's centre can sit arbitrarily far along its own axis from the
+    // hit, and it is the perpendicular distance the quadratic is about. That
+    // point is the quadratic's own vertex.
+    let oc0_perp = oc0 - dot(oc0, axis) * axis;
+    let t0 = max(-dot(oc0_perp, d_perp) / a, 0.0);
+    let oc = oc0 + t0 * dir;
+    let oc_perp = oc - dot(oc, axis) * axis;
 
     let b = 2.0 * dot(oc_perp, d_perp);
     let c = dot(oc_perp, oc_perp) - radius * radius;
@@ -348,19 +390,18 @@ fn intersect_cylinder(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>)
 
     let sqrt_disc = sqrt(disc);
     var t = (-b - sqrt_disc) / (2.0 * a);
-    if t < 0.0 {
+    if t < -t0 {
         t = (-b + sqrt_disc) / (2.0 * a);
     }
-    if t < 0.0 {
+    if t < -t0 {
         return hit;
     }
 
-    hit.t = t;
+    hit.t = t + t0;
 
     // Compute UV
-    let p = origin + t * dir;
     let y_dir = cross(axis, ref_dir);
-    let to_p = p - center;
+    let to_p = oc + t * dir;
     let v = dot(to_p, axis);
     let proj = to_p - v * axis;
     let x = dot(proj, ref_dir);
@@ -386,7 +427,9 @@ fn intersect_cone(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -> 
     let cos_a = cos(half_angle);
     let cos2 = cos_a * cos_a;
 
-    let co = origin - apex;
+    let co0 = origin - apex;
+    let t0 = closest_approach(co0, dir);
+    let co = co0 + t0 * dir;
     let d_dot_a = dot(dir, axis);
     let co_dot_a = dot(co, axis);
 
@@ -399,14 +442,13 @@ fn intersect_cone(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -> 
         // Linear case
         if abs(b) > EPSILON {
             let t = -c / b;
-            if t >= 0.0 {
-                let point = origin + t * dir;
-                let v = dot(point - apex, axis) / cos_a;
+            if t >= -t0 {
+                let to_p = co + t * dir;
+                let v = dot(to_p, axis) / cos_a;
                 if v >= 0.0 {
-                    hit.t = t;
+                    hit.t = t + t0;
                     // Compute UV
                     let y_dir = cross(axis, ref_dir);
-                    let to_p = point - apex;
                     let height = dot(to_p, axis);
                     let proj = to_p - height * axis;
                     let proj_len = length(proj);
@@ -436,15 +478,14 @@ fn intersect_cone(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -> 
     // Try both solutions, take the closer valid one
     for (var i = 0; i < 2; i++) {
         let t = select(t2, t1, i == 0);
-        if t < 0.0 { continue; }
+        if t < -t0 { continue; }
 
-        let point = origin + t * dir;
-        let to_point = point - apex;
+        let to_point = co + t * dir;
         let height_along_axis = dot(to_point, axis);
         let v = height_along_axis / cos_a;
 
         if v >= 0.0 {
-            hit.t = t;
+            hit.t = t + t0;
             // Compute UV
             let y_dir = cross(axis, ref_dir);
             let proj = to_point - height_along_axis * axis;
@@ -521,7 +562,13 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     let R2 = R * R;
     let r2 = r * r;
 
-    let o = origin - center;
+    // The one that made this necessary: see `closest_approach`. Ferrari's
+    // depressed coefficients are differences of |o|-scale quantities, so a
+    // 2 mm tube solved from ten metres away is below the noise floor of f32.
+    let o0 = origin - center;
+    let t0 = closest_approach(o0, dir);
+    let o = o0 + t0 * dir;
+
     let od = dot(o, dir);
     let oo = dot(o, o);
     let dd = dot(dir, dir);
@@ -572,6 +619,7 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     let sqrt_2u = sqrt(max(2.0 * u, 0.0));
 
     // Two quadratics
+    // Local roots run from -t0 (the true ray origin) upwards.
     var best_t = MAX_T;
     var best_uv = vec2<f32>(0.0, 0.0);
 
@@ -593,8 +641,8 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
             let y2 = (sqrt_2u - sqrt_disc1) / 2.0;
             let t1 = y1 - a_norm / 4.0;
             let t2 = y2 - a_norm / 4.0;
-            if t1 >= 0.0 && t1 < best_t { best_t = t1; }
-            if t2 >= 0.0 && t2 < best_t { best_t = t2; }
+            if t1 >= -t0 && t1 < best_t { best_t = t1; }
+            if t2 >= -t0 && t2 < best_t { best_t = t2; }
         }
 
         // Second quadratic: y^2 + sqrt_2u*y + (alpha - beta)/2 = 0
@@ -605,8 +653,8 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
             let y4 = (-sqrt_2u - sqrt_disc2) / 2.0;
             let t3 = y3 - a_norm / 4.0;
             let t4 = y4 - a_norm / 4.0;
-            if t3 >= 0.0 && t3 < best_t { best_t = t3; }
-            if t4 >= 0.0 && t4 < best_t { best_t = t4; }
+            if t3 >= -t0 && t3 < best_t { best_t = t3; }
+            if t4 >= -t0 && t4 < best_t { best_t = t4; }
         }
     } else {
         // Biquadratic case: y^4 + p*y^2 + rr = 0
@@ -620,25 +668,24 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
                 let y = sqrt(y2_1);
                 let t1 = y - a_norm / 4.0;
                 let t2 = -y - a_norm / 4.0;
-                if t1 >= 0.0 && t1 < best_t { best_t = t1; }
-                if t2 >= 0.0 && t2 < best_t { best_t = t2; }
+                if t1 >= -t0 && t1 < best_t { best_t = t1; }
+                if t2 >= -t0 && t2 < best_t { best_t = t2; }
             }
             if y2_2 >= 0.0 {
                 let y = sqrt(y2_2);
                 let t3 = y - a_norm / 4.0;
                 let t4 = -y - a_norm / 4.0;
-                if t3 >= 0.0 && t3 < best_t { best_t = t3; }
-                if t4 >= 0.0 && t4 < best_t { best_t = t4; }
+                if t3 >= -t0 && t3 < best_t { best_t = t3; }
+                if t4 >= -t0 && t4 < best_t { best_t = t4; }
             }
         }
     }
 
     if best_t < MAX_T {
-        hit.t = best_t;
+        hit.t = best_t + t0;
         // Compute UV
-        let point = origin + best_t * dir;
         let y_dir = cross(axis, ref_dir);
-        let to_point = point - center;
+        let to_point = o + best_t * dir;
         let h = dot(to_point, axis);
         let proj = to_point - h * axis;
         let proj_len = length(proj);
