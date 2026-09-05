@@ -207,7 +207,9 @@ fn a_placed_instance_lands_where_the_cpu_renderer_puts_it() {
     // frames is not: the sky the shader paints is bluish, so "the red or
     // green channel beats the blue one" is exactly the geometry.
     let packed = GpuScene::from_brep(&solid).expect("scene packs");
-    let flat = gpu_render_with(ctx, &packed.placed(&to_world), eye, at, |s| s.debug_mode = 4);
+    let flat = gpu_render_with(ctx, &packed.placed(&to_world), eye, at, |s| {
+        s.debug_mode = 4
+    });
     let gpu_mask: Vec<bool> = flat
         .chunks(4)
         .map(|p| p[0].max(p[1]) as i32 - p[2] as i32 > 40)
@@ -232,7 +234,12 @@ fn a_placed_instance_lands_where_the_cpu_renderer_puts_it() {
         &cam,
         W,
         H,
-        &PathTraceOptions { spp: 4, max_depth: 2, denoise: false, ..Default::default() },
+        &PathTraceOptions {
+            spp: 4,
+            max_depth: 2,
+            denoise: false,
+            ..Default::default()
+        },
     );
     let cpu_mask: Vec<bool> = film.depth.iter().map(|&d| d > 0.0).collect();
 

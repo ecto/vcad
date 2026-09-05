@@ -1,13 +1,16 @@
 //! Timing harness for next-event estimation cost vs light count.
 use std::sync::Arc;
 use std::time::Instant;
-use vcad_kernel_primitives::make_cube;
 use vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_primitives::make_cube;
 use vcad_kernel_raytrace::pathtrace::render;
 use vcad_kernel_raytrace::*;
 
 fn main() {
-    let n: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+    let n: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
     let cube = make_cube(10.0, 10.0, 10.0);
     let center = Point3::new(5.0, 5.0, 5.0);
     let mut lights = Vec::new();
@@ -32,7 +35,8 @@ fn main() {
             let mut v = Vec::new();
             for i in 0..6 {
                 for j in 0..6 {
-                    let mut o = Object::new(Arc::clone(&blas), Pbr::plastic([0.8, 0.3, 0.2], 0.35, 0.0));
+                    let mut o =
+                        Object::new(Arc::clone(&blas), Pbr::plastic([0.8, 0.3, 0.2], 0.35, 0.0));
                     o.transform = vcad_kernel_math::Transform::translation(
                         i as f64 * 14.0 - 35.0,
                         j as f64 * 14.0 - 35.0,
@@ -45,10 +49,26 @@ fn main() {
         },
         lights,
         env: Environment::default(),
-        ground: Some(Ground { z: 0.0, material: Pbr::plastic([0.5, 0.5, 0.55], 0.5, 0.0), shadow_catcher: false }),
+        ground: Some(Ground {
+            z: 0.0,
+            material: Pbr::plastic([0.5, 0.5, 0.55], 0.5, 0.0),
+            shadow_catcher: false,
+        }),
     };
-    let cam = Camera::look_at(Point3::new(30.0, -34.0, 24.0), center, Vec3::new(0.0, 0.0, 1.0), 32.0);
-    let opts = PathTraceOptions { spp: 128, max_depth: 2, rr_start: 99, firefly_clamp: None, denoise: false, ..Default::default() };
+    let cam = Camera::look_at(
+        Point3::new(30.0, -34.0, 24.0),
+        center,
+        Vec3::new(0.0, 0.0, 1.0),
+        32.0,
+    );
+    let opts = PathTraceOptions {
+        spp: 128,
+        max_depth: 2,
+        rr_start: 99,
+        firefly_clamp: None,
+        denoise: false,
+        ..Default::default()
+    };
     let _ = render(&scene, &cam, 64, 64, &opts);
     let mut best = f64::INFINITY;
     let mut sum = 0.0f32;

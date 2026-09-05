@@ -98,13 +98,15 @@ struct RayHit {
 // A rectangular area light. Layout must match GpuAreaLight in buffers.rs,
 // which is built from pathtrace::AreaLight.
 struct GpuAreaLight {
-    // Centre of the rectangle (.w unused).
+    // Centre of the rectangle. .w is this light's probability of being drawn
+    // from the power table (see pack_light_power_table in buffers.rs).
     center: vec4<f32>,
     // Half-extent along the rectangle's first axis (.w unused).
     u: vec4<f32>,
     // Half-extent along the second axis (.w unused).
     v: vec4<f32>,
-    // Emitted radiance (.w unused).
+    // Emitted radiance. .w is the running CDF of the power table, so the
+    // last light's is 1.0.
     emission: vec4<f32>,
 }
 
@@ -1330,8 +1332,25 @@ fn ground_material() -> GpuMaterial {
 
 // ─── next-event estimation ────────────────────────────────────────────────
 
-// Sample every area light once, MIS-weighted against the BSDF strategy with
-// the power heuristic. Mirrors `pathtrace::Scene::sample_lights`.
+// Draw one light from the power-weighted table packed into the light buffer's
+// spare .w lanes. Returns the index; the pick probability is that light's
+// center.w. A linear scan, not a binary search: the table is a handful of
+// softboxes and a branchless walk beats divergent bisection on a warp.
+fn pick_light(u: f32) -> u32 {
+    let n = render_state.light_count;
+    for (var i = 0u; i < n; i = i + 1u) {
+        if u < lights[i].emission.w {
+            return i;
+        }
+    }
+    return n - 1u;
+}
+
+// Sample *one* area light, drawn by power and divided by its pick
+// probability, MIS-weighted against the BSDF strategy with the power
+// heuristic. Mirrors `pathtrace::Scene::sample_lights`: one shadow ray per
+// bounce however many panels the rig has, and the pick probability rides in
+// the light PDF so the BSDF-hits-an-emitter branch below can reconstruct it.
 fn sample_lights(
     p: vec3<f32>,
     frame: mat3x3<f32>,
@@ -1341,47 +1360,54 @@ fn sample_lights(
     pixel: vec2<u32>,
     depth: u32,
 ) -> vec3<f32> {
-    var sum = vec3<f32>(0.0);
-    for (var i = 0u; i < render_state.light_count; i = i + 1u) {
-        let l = lights[i];
-        // Two fresh randoms per light per bounce, decorrelated per frame.
-        let r = rand_uniform2(pixel, 101u + depth * 17u + i * 5u);
-        let lp = l.center.xyz + l.u.xyz * (2.0 * r.x - 1.0) + l.v.xyz * (2.0 * r.y - 1.0);
-        let to_light = lp - p;
-        let dist = length(to_light);
-        if dist < 1e-9 {
-            continue;
-        }
-        let wi_world = to_light / dist;
-        let ln = light_normal(l);
-        let cos_light = -dot(wi_world, ln);
-        if cos_light <= 1e-9 {
-            continue;
-        }
-        let wi_local = to_local(frame, wi_world);
-        if wi_local.z <= 0.0 {
-            continue;
-        }
-
-        let e = bsdf_eval(m, wo_local, wi_local);
-        if max3(e.value) <= 0.0 {
-            continue;
-        }
-
-        // Solid-angle PDF of the area sampling strategy.
-        let light_pdf = dist * dist / (cos_light * light_area(l));
-        if light_pdf <= 0.0 {
-            continue;
-        }
-
-        if occluded(p + n * 1e-4, wi_world, dist) {
-            continue;
-        }
-
-        let w = power_heuristic(light_pdf, e.pdf);
-        sum += e.value * l.emission.rgb * (w / light_pdf);
+    if render_state.light_count == 0u {
+        return vec3<f32>(0.0);
     }
-    return sum;
+    // Three fresh randoms per bounce: one to pick the light, two to place the
+    // sample on it.
+    let rp = rand_uniform2(pixel, 97u + depth * 23u);
+    let idx = pick_light(rp.x);
+    let l = lights[idx];
+    let pick_pdf = l.center.w;
+    if pick_pdf <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let r = rand_uniform2(pixel, 101u + depth * 17u);
+    let lp = l.center.xyz + l.u.xyz * (2.0 * r.x - 1.0) + l.v.xyz * (2.0 * r.y - 1.0);
+    let to_light = lp - p;
+    let dist = length(to_light);
+    if dist < 1e-9 {
+        return vec3<f32>(0.0);
+    }
+    let wi_world = to_light / dist;
+    let ln = light_normal(l);
+    let cos_light = -dot(wi_world, ln);
+    if cos_light <= 1e-9 {
+        return vec3<f32>(0.0);
+    }
+    let wi_local = to_local(frame, wi_world);
+    if wi_local.z <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let e = bsdf_eval(m, wo_local, wi_local);
+    if max3(e.value) <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    // Solid-angle PDF of the full NEE strategy: pick this light, then pick a
+    // point on it.
+    let light_pdf = pick_pdf * dist * dist / (cos_light * light_area(l));
+    if light_pdf <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    if occluded(p + n * 1e-4, wi_world, dist) {
+        return vec3<f32>(0.0);
+    }
+
+    let w = power_heuristic(light_pdf, e.pdf);
+    return e.value * l.emission.rgb * (w / light_pdf);
 }
 
 // Next-event estimation against the environment, MIS-weighted against BSDF
@@ -1481,7 +1507,8 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
             if !specular_chain {
                 let ln = light_normal(light);
                 let cos_light = max(-dot(ray_d, ln), 1e-9);
-                let light_pdf = lh.t * lh.t / (cos_light * light_area(light));
+                let light_pdf =
+                    light.center.w * lh.t * lh.t / (cos_light * light_area(light));
                 w = power_heuristic(prev_bsdf_pdf, light_pdf);
             }
             l += throughput * light.emission.rgb * w;

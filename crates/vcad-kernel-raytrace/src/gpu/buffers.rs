@@ -306,6 +306,10 @@ pub struct GpuAreaLight {
 
 impl GpuAreaLight {
     /// Convert a CPU reference area light to its GPU representation.
+    ///
+    /// The power-table fields (`center.w`, `emission.w`) are left at zero;
+    /// [`pack_light_power_table`] fills them at upload, after the caller has
+    /// finished editing the list.
     pub fn from_area_light(l: &crate::pathtrace::AreaLight) -> Self {
         Self {
             center: [l.center.x as f32, l.center.y as f32, l.center.z as f32, 0.0],
@@ -313,6 +317,46 @@ impl GpuAreaLight {
             v: [l.v.x as f32, l.v.y as f32, l.v.z as f32, 0.0],
             emission: [l.emission[0], l.emission[1], l.emission[2], 0.0],
         }
+    }
+
+    /// Area of the emitting rectangle, matching `AreaLight::area`.
+    fn area(&self) -> f32 {
+        let u = [self.u[0], self.u[1], self.u[2]];
+        let v = [self.v[0], self.v[1], self.v[2]];
+        let c = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        4.0 * (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt()
+    }
+}
+
+/// Fill each light's power-table fields in place: `center.w` gets the
+/// probability of drawing that light, `emission.w` the running CDF.
+///
+/// The shader draws one light per bounce from this table instead of
+/// shadow-raying all of them, exactly as the CPU integrator does. The table
+/// lives in the two spare `w` lanes rather than a binding of its own because
+/// the ten storage-buffer slots browsers guarantee are already spoken for.
+///
+/// Weights come from [`crate::pathtrace::power_table_from_weights`], the same
+/// function `SceneAccel` uses, so a CPU-vs-GPU parity test is comparing two
+/// renderers sampling one distribution and not two tables that merely look
+/// alike.
+pub fn pack_light_power_table(lights: &mut [GpuAreaLight]) {
+    // Rec. 709 luminance, matching `pathtrace::luminance`.
+    let powers: Vec<f32> = lights
+        .iter()
+        .map(|l| {
+            let lum = 0.2126 * l.emission[0] + 0.7152 * l.emission[1] + 0.0722 * l.emission[2];
+            (lum * l.area()).max(0.0)
+        })
+        .collect();
+    let (cdf, pick) = crate::pathtrace::power_table_from_weights(&powers);
+    for (i, l) in lights.iter_mut().enumerate() {
+        l.center[3] = pick[i];
+        l.emission[3] = cdf[i];
     }
 }
 

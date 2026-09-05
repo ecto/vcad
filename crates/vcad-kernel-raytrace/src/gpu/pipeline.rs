@@ -539,11 +539,15 @@ impl RayTracePipeline {
         // Area lights. WGSL cannot bind a zero-length storage array, so an
         // unlit scene still gets one dummy entry; `light_count` is what the
         // shader actually loops over.
-        let lights: Vec<super::buffers::GpuAreaLight> = if scene.lights.is_empty() {
+        let mut lights: Vec<super::buffers::GpuAreaLight> = if scene.lights.is_empty() {
             vec![super::buffers::GpuAreaLight::default()]
         } else {
             scene.lights.clone()
         };
+        // Built here rather than in `GpuScene`, because callers are free to
+        // replace `scene.lights` after the scene is packed — a table baked
+        // earlier would describe a rig that is no longer there.
+        super::buffers::pack_light_power_table(&mut lights);
         let light_buf = ctx
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {

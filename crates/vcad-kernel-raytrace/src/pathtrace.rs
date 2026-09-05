@@ -1432,7 +1432,11 @@ impl SceneAccel {
             Ok(i) | Err(i) => i.min(self.light_cdf.len() - 1),
         };
         let pdf = self.light_pick_pdf[i];
-        if pdf > 0.0 { Some((i, pdf)) } else { None }
+        if pdf > 0.0 {
+            Some((i, pdf))
+        } else {
+            None
+        }
     }
 }
 
@@ -1447,8 +1451,15 @@ pub(crate) fn light_power_table(lights: &[AreaLight]) -> (Vec<f32>, Vec<f32>) {
         .iter()
         .map(|l| (luminance(l.emission) as f64 * l.area()).max(0.0) as f32)
         .collect();
+    power_table_from_weights(&powers)
+}
+
+/// The weight → (CDF, per-entry probability) half of [`light_power_table`],
+/// split out so the GPU scene upload can build the identical table from its
+/// own packed lights.
+pub(crate) fn power_table_from_weights(powers: &[f32]) -> (Vec<f32>, Vec<f32>) {
     let total: f32 = powers.iter().sum();
-    let n = lights.len();
+    let n = powers.len();
     if n == 0 {
         return (Vec::new(), Vec::new());
     }
@@ -2381,7 +2392,12 @@ mod tests {
     /// on emitters — so this compares the unweighted NEE integral by driving
     /// both with `power_heuristic` replaced by 1: i.e. the plain estimator
     /// `f * Le * cos / pdf`, which is what unbiasedness is about.
-    fn nee_unweighted_mean(scene: &Scene, accel: &SceneAccel, pick_one: bool, n: usize) -> [f64; 3] {
+    fn nee_unweighted_mean(
+        scene: &Scene,
+        accel: &SceneAccel,
+        pick_one: bool,
+        n: usize,
+    ) -> [f64; 3] {
         let p = Point3::new(0.0, 0.0, 0.0);
         let nrm = Vec3::new(0.0, 0.0, 1.0);
         let frame = shading_frame(nrm, None);
@@ -2399,7 +2415,15 @@ mod tests {
                 let Some((i, pick_pdf)) = accel.pick_light(rng.f64() as f32) else {
                     continue;
                 };
-                one_light_unweighted(&scene.lights[i], pick_pdf, p, &frame, wo_local, &m, &mut rng)
+                one_light_unweighted(
+                    &scene.lights[i],
+                    pick_pdf,
+                    p,
+                    &frame,
+                    wo_local,
+                    &m,
+                    &mut rng,
+                )
             } else {
                 let mut acc = [0.0f32; 3];
                 for light in &scene.lights {
@@ -2414,11 +2438,7 @@ mod tests {
                 sum[c] += est[c] as f64;
             }
         }
-        [
-            sum[0] / n as f64,
-            sum[1] / n as f64,
-            sum[2] / n as f64,
-        ]
+        [sum[0] / n as f64, sum[1] / n as f64, sum[2] / n as f64]
     }
 
     fn one_light_unweighted(
@@ -2567,7 +2587,12 @@ mod tests {
         // the pick probability), so this is a loose sanity band, not equality.
         for c in 0..3 {
             let rel = (r[c] - o[c]).abs() / (o[c] / n as f64).abs().max(1e-9) / n as f64;
-            assert!(rel < 0.06, "channel {c}: {} vs {} (rel {rel})", r[c] / n as f64, o[c] / n as f64);
+            assert!(
+                rel < 0.06,
+                "channel {c}: {} vs {} (rel {rel})",
+                r[c] / n as f64,
+                o[c] / n as f64
+            );
         }
     }
 

@@ -333,7 +333,9 @@ fn run_pass(
     let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv().expect("map channel").expect("map read");
 
-    let data = slice.get_mapped_range().expect("the buffer was just mapped");
+    let data = slice
+        .get_mapped_range()
+        .expect("the buffer was just mapped");
     let out = data.to_vec();
     drop(data);
     read_buf.unmap();
