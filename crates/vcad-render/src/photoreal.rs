@@ -343,6 +343,9 @@ pub(crate) fn dress_scene(
         objects,
         lights,
         env,
+        // Daylight is a scene fact a `.vcad` document does not state, and a
+        // product render's key light is the softbox rig above.
+        sun: None,
         ground,
     })
 }

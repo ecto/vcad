@@ -124,6 +124,7 @@ fn cpu_scene() -> pathtrace::Scene {
         // Sealed: no ray escapes, so the sky is a formality. Black on both
         // tiers keeps it one, and keeps this test about transport.
         env: Environment::constant([0.0; 3]),
+        sun: None,
         ground: None,
     }
 }

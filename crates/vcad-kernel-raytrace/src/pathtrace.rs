@@ -9,7 +9,7 @@
 pub use kosm_render::pathtrace::{
     denoise, light_power_table, linear_to_srgb, power_table_from_weights, reference_bsdf_eval,
     render, render_into, studio_rig, tonemap_aces, AreaLight, Camera, EnvMap, Environment, Film,
-    GpuEnvPack, GradientEnv, Ground, PathTraceOptions, Pbr,
+    GpuEnvPack, GradientEnv, Ground, PathTraceOptions, Pbr, Sun,
 };
 
 use crate::bvh::BrepGeom;

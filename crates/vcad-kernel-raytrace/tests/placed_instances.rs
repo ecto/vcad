@@ -222,6 +222,7 @@ fn a_placed_instance_lands_where_the_cpu_renderer_puts_it() {
         objects: vec![Object::placed(bvh, Pbr::default(), placement(&to_world))],
         lights: Vec::new(),
         env: Environment::default(),
+        sun: None,
         ground: None,
     };
     let cam = Camera::look_at(

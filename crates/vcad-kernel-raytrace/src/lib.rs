@@ -52,6 +52,11 @@
 
 pub mod bvh;
 pub mod cpu;
+/// Environments the renderer builds for itself: the synthesised studio
+/// HDRIs and the Radiance `.hdr` reader. Re-exported from `kosm-render` —
+/// none of it knew what a B-rep was.
+pub use kosm_render::env;
+
 pub mod intersect;
 pub mod pathtrace;
 mod ray;
@@ -65,7 +70,7 @@ pub use bvh::{BrepBvh, BrepGeom, Bvh};
 pub use cpu::{render_scene, render_scene_samples, CpuRenderer};
 pub use pathtrace::{
     render_into, studio_rig, AreaLight, Camera, Environment, Film, Ground, Object,
-    PathTraceOptions, Pbr, Scene,
+    PathTraceOptions, Pbr, Scene, Sun,
 };
 pub use ray::{Ray, RayHit};
 pub use tlas::{BrepTlas, Instance, InstanceHit, Tlas};

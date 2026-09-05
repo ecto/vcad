@@ -130,6 +130,7 @@ fn cpu_scene() -> pathtrace::Scene {
         )],
         lights: panels(),
         env: Environment::constant([0.0; 3]),
+        sun: None,
         ground: None,
     }
 }

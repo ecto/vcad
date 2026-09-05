@@ -80,6 +80,7 @@ fn cpu_coverage(
         )],
         lights: Vec::new(),
         env: Environment::default(),
+        sun: None,
         ground: None,
     };
     let cam = Camera::look_at(

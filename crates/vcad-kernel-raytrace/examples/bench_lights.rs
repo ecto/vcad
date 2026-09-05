@@ -50,6 +50,7 @@ fn main() {
         },
         lights,
         env: Environment::default(),
+        sun: None,
         ground: Some(Ground {
             z: 0.0,
             material: Pbr::plastic([0.5, 0.5, 0.55], 0.5, 0.0),
