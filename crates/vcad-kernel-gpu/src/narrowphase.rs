@@ -181,11 +181,11 @@ pub async fn clears_batch_async(pairs: &[NarrowPair], margin: f32) -> Result<Vec
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
-    let words: Vec<u32> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+    let words: Vec<u32> = bytemuck::cast_slice(&slice.get_mapped_range().expect("the buffer was just mapped")).to_vec();
     Ok(words.into_iter().map(|w| w == 1).collect())
 }
 

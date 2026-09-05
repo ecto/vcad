@@ -287,18 +287,19 @@ impl GpuConstraintSolver {
         // Initialize wgpu
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            ..Default::default()
         }))
-        .ok_or(GpuConstraintError::NoAdapter)?;
+        .map_err(|_| GpuConstraintError::NoAdapter)?;
 
         let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .map_err(GpuConstraintError::DeviceRequest)?;
 
         // Create bind group layout (shared between residual and Jacobian pipelines)
@@ -340,8 +341,8 @@ impl GpuConstraintSolver {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Constraint Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         // Compile residual shader
@@ -521,12 +522,12 @@ impl GpuConstraintSolver {
             tx.send(result).unwrap();
         });
 
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         rx.recv()
             .unwrap()
             .map_err(|_| GpuConstraintError::BufferMapping)?;
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
         let results: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         staging_buffer.unmap();

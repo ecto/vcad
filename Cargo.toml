@@ -327,7 +327,7 @@ vcad-gdsii = { path = "crates/vcad-gdsii", version = "0.9.4" }
 vcad-process = { path = "crates/vcad-process", version = "0.9.4" }
 
 # GPU stack — version-pin here, each consumer opts into the features it needs.
-wgpu = { version = "23" }
+wgpu = { version = "30" }
 bytemuck = { version = "1.14", features = ["derive"] }
 pollster = "0.4"
 

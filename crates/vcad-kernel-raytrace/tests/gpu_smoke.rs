@@ -43,9 +43,9 @@ fn pipeline_construction_is_validation_clean() {
         return;
     };
 
-    ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let _pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
-    let err = pollster::block_on(ctx.device.pop_error_scope());
+    let err = pollster::block_on(scope.pop());
 
     assert!(
         err.is_none(),

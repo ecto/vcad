@@ -194,8 +194,8 @@ pub async fn decimate_mesh(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Decimation Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
     let init_pipeline =
@@ -355,10 +355,10 @@ async fn read_buffer<T: Pod>(
         tx.send(result).unwrap();
     });
 
-    device.poll(wgpu::Maintain::Wait);
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv().unwrap().map_err(|_| GpuError::BufferMapping)?;
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the buffer was just mapped");
     let result: Vec<T> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     buffer.unmap();

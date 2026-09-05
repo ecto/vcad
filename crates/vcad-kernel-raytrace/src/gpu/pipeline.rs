@@ -214,8 +214,8 @@ impl RayTracePipeline {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Ray Trace Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
             });
 
         let pipeline = ctx
@@ -576,14 +576,14 @@ impl RayTracePipeline {
                 4
             };
             ctx.queue.write_texture(
-                wgpu::ImageCopyTexture {
+                wgpu::TexelCopyTextureInfo {
                     texture: &tex,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
                 bytemuck::cast_slice(data),
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(w * bytes_per_px),
                     rows_per_image: Some(h),
@@ -756,15 +756,15 @@ impl RayTracePipeline {
 
         // Copy texture to readback buffer
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &readback_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
                     rows_per_image: Some(height),
@@ -840,7 +840,7 @@ impl RayTracePipeline {
             });
 
             // Single poll to submit the mapping request
-            ctx.device.poll(wgpu::Maintain::Poll);
+            let _ = ctx.device.poll(wgpu::PollType::Poll);
 
             web_sys::console::log_1(&"[RT] Awaiting buffer mapping...".into());
 
@@ -868,7 +868,7 @@ impl RayTracePipeline {
                 }
             });
 
-            ctx.device.poll(wgpu::Maintain::Wait);
+            let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
 
             if success.load(Ordering::SeqCst) {
                 Ok(())
@@ -884,7 +884,9 @@ impl RayTracePipeline {
         #[cfg(target_arch = "wasm32")]
         web_sys::console::log_1(&"[RT] Reading mapped data...".into());
 
-        let data = buffer_slice.get_mapped_range();
+        let data = buffer_slice
+            .get_mapped_range()
+            .map_err(|_| GpuError::BufferMapping)?;
 
         // Remove padding from rows
         let mut result = Vec::with_capacity(output_size as usize);

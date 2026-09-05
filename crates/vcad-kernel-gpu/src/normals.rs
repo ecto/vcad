@@ -181,8 +181,8 @@ pub async fn compute_creased_normals(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Normal Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
     // Create pipelines for both phases
@@ -262,10 +262,10 @@ pub async fn compute_creased_normals(
         tx.send(result).unwrap();
     });
 
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv().unwrap().map_err(|_| GpuError::BufferMapping)?;
 
-    let data = buffer_slice.get_mapped_range();
+    let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
     let normals: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     staging_buffer.unmap();

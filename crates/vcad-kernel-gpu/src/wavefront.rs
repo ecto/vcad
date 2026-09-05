@@ -238,8 +238,8 @@ pub async fn distance_field_async(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Wavefront Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
     let pipeline = ctx
@@ -325,12 +325,12 @@ pub async fn distance_field_async(
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).unwrap();
     });
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
 
-    let data = buffer_slice.get_mapped_range();
+    let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
     let dist: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     dist_staging.unmap();
@@ -523,8 +523,8 @@ pub async fn distance_field_compacted_async(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Wavefront Compacted Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
     let make_pipeline = |entry: &str| {
         ctx.device
@@ -619,12 +619,12 @@ pub async fn distance_field_compacted_async(
     buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).unwrap();
     });
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
 
-    let data = buffer_slice.get_mapped_range();
+    let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
     let dist: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     dist_staging.unmap();
@@ -638,11 +638,11 @@ fn read_u32(ctx: &GpuContext, staging: &wgpu::Buffer) -> Result<u32, GpuError> {
     slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).unwrap();
     });
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the buffer was just mapped");
     let value = bytemuck::cast_slice::<u8, u32>(&data)[0];
     drop(data);
     staging.unmap();

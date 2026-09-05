@@ -119,7 +119,7 @@ fn run_pass(
     const OUT_BINDINGS: [u32; 3] = [1, 3, 5];
 
     let source = shaders::compose(shaders::BSDF_PARITY_HARNESS);
-    ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = ctx
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -182,14 +182,14 @@ fn run_pass(
             4
         };
         ctx.queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &tex,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             bytemuck::cast_slice(data),
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(w * bpp),
                 rows_per_image: Some(h),
@@ -262,8 +262,8 @@ fn run_pass(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("parity pipeline layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
 
     let pipeline = ctx
@@ -277,7 +277,7 @@ fn run_pass(
             cache: None,
         });
 
-    let validation = pollster::block_on(ctx.device.pop_error_scope());
+    let validation = pollster::block_on(scope.pop());
     assert!(
         validation.is_none(),
         "harness failed WebGPU validation: {validation:?}\n\
@@ -330,10 +330,10 @@ fn run_pass(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv().expect("map channel").expect("map read");
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the buffer was just mapped");
     let out = data.to_vec();
     drop(data);
     read_buf.unmap();

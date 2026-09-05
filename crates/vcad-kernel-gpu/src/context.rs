@@ -79,17 +79,20 @@ impl GpuContext {
         // desktop app gets the compute pipelines too. GL stays as fallback.
         let instance = Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
+        // wgpu 30 reports *why* no adapter came back; this crate has one
+        // failure for all of them.
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                ..Default::default()
             })
             .await
-            .ok_or(GpuError::NoAdapter)?;
+            .map_err(|_| GpuError::NoAdapter)?;
 
         // The raytrace bind group layout needs 10 storage buffers per
         // compute stage; default wgpu limits only allow 8. Inherit the
@@ -97,15 +100,13 @@ impl GpuContext {
         let required_limits = adapter.limits();
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("vcad GPU device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits,
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("vcad GPU device"),
+                required_features: wgpu::Features::empty(),
+                required_limits,
+                memory_hints: wgpu::MemoryHints::default(),
+                ..Default::default()
+            })
             .await?;
 
         // Surface WebGPU validation / out-of-memory errors that don't sit
@@ -115,7 +116,7 @@ impl GpuContext {
         // mode that hid the raytrace WGSL bug for too long. Route them to
         // a place a human will see (browser console on wasm, eprintln
         // otherwise).
-        device.on_uncaptured_error(Box::new(|err| {
+        device.on_uncaptured_error(std::sync::Arc::new(|err| {
             let msg = format!("WebGPU uncaptured error: {err}");
             #[cfg(target_arch = "wasm32")]
             web_sys::console::error_1(&msg.into());
