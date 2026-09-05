@@ -1214,3 +1214,140 @@ impl GpuScene {
             GpuMaterial::from_pbr(crate::pathtrace::Pbr::from_material_def(mat, tint));
     }
 }
+
+// ---- placed instances -------------------------------------------------------
+//
+// `GpuScene::from_brep` packs a solid in the coordinates its BRep is authored
+// in, and `merge` unions two of them without moving either. A scene assembled
+// from *instances* — the same ball drawn at four poses, a court whose parts
+// were each modelled at the origin — needs one more thing: the ability to say
+// where a packed solid sits.
+//
+// The shader is not told about it. Every surface the GPU understands is
+// analytic and given by a frame (an origin or centre, an axis, a reference
+// direction) and a size, and a rigid placement acts on that frame alone:
+// carry the points through as points, the directions as directions, and the
+// radii are untouched. So `placed` moves the packed scene rather than the ray,
+// and the traversal in `raytrace.wgsl` stays a single BVH walk in world space
+// with no per-instance transform lookup. What it costs is a pass over the
+// surface and node arrays per placement, which is cheap next to re-packing a
+// BRep, and what it buys is that `merge` already does the rest.
+//
+// Only rigid placements are meaningful here: a non-uniform scale would turn a
+// sphere into an ellipsoid, which none of these six surface types can express.
+
+/// Which slots of a [`GpuSurface`]'s `params` are points and which are
+/// directions, per surface type. Everything else is a radius or an angle,
+/// which a rigid placement leaves alone.
+const SURFACE_SLOTS: [(&[usize], &[usize]); 6] = [
+    // Plane: origin; x_dir, y_dir, normal
+    (&[0], &[3, 6, 9]),
+    // Cylinder: centre; axis, ref_dir  (radius at 9)
+    (&[0], &[3, 6]),
+    // Sphere: centre (radius at 3); ref_dir, axis
+    (&[0], &[4, 7]),
+    // Cone: apex; axis, ref_dir  (half-angle at 9)
+    (&[0], &[3, 6]),
+    // Torus: centre; axis, ref_dir  (major/minor radius at 9, 10)
+    (&[0], &[3, 6]),
+    // Bilinear: four corners, no directions
+    (&[0, 3, 6, 9], &[]),
+];
+
+/// The eight corners of an AABB, moved, re-bounded. A rotation makes the new
+/// box looser than the old one; that costs traversal, never correctness.
+fn placed_aabb(
+    min: [f32; 4],
+    max: [f32; 4],
+    to_world: &vcad_kernel_math::Transform,
+) -> ([f32; 4], [f32; 4]) {
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for i in 0..8 {
+        let corner = vcad_kernel_math::Point3::new(
+            if i & 1 == 0 { min[0] } else { max[0] } as f64,
+            if i & 2 == 0 { min[1] } else { max[1] } as f64,
+            if i & 4 == 0 { min[2] } else { max[2] } as f64,
+        );
+        let p = to_world.apply_point(&corner);
+        for (k, v) in [p.x, p.y, p.z].iter().enumerate() {
+            lo[k] = lo[k].min(*v as f32);
+            hi[k] = hi[k].max(*v as f32);
+        }
+    }
+    ([lo[0], lo[1], lo[2], 0.0], [hi[0], hi[1], hi[2], 0.0])
+}
+
+impl GpuSurface {
+    /// The same surface, rigidly placed by `to_world`.
+    ///
+    /// A B-spline surface (type 6) is not traced on the GPU at all, so it is
+    /// returned unchanged rather than half-moved.
+    #[must_use]
+    pub fn placed(&self, to_world: &vcad_kernel_math::Transform) -> Self {
+        let Some((points, vectors)) = SURFACE_SLOTS.get(self.surface_type as usize) else {
+            return *self;
+        };
+        let mut out = *self;
+        for &i in *points {
+            let p = vcad_kernel_math::Point3::new(
+                self.params[i] as f64,
+                self.params[i + 1] as f64,
+                self.params[i + 2] as f64,
+            );
+            let q = to_world.apply_point(&p);
+            out.params[i] = q.x as f32;
+            out.params[i + 1] = q.y as f32;
+            out.params[i + 2] = q.z as f32;
+        }
+        for &i in *vectors {
+            let v = vcad_kernel_math::Vec3::new(
+                self.params[i] as f64,
+                self.params[i + 1] as f64,
+                self.params[i + 2] as f64,
+            );
+            let w = to_world.apply_vec(&v);
+            out.params[i] = w.x as f32;
+            out.params[i + 1] = w.y as f32;
+            out.params[i + 2] = w.z as f32;
+        }
+        out
+    }
+}
+
+impl GpuScene {
+    /// The same packed scene, rigidly placed by `to_world` — the GPU
+    /// equivalent of [`crate::pathtrace::Object::placed`].
+    ///
+    /// Pack a solid once with [`Self::from_brep`] and call this per instance;
+    /// the result [`Self::merge`]s with anything else exactly as an unplaced
+    /// scene does. Trim loops are untouched: they live in each surface's own
+    /// UV, and the frame that UV is measured against moved with the surface.
+    ///
+    /// `to_world` must be rigid. A scale would ask a sphere to become an
+    /// ellipsoid, and no surface type here can say that.
+    #[must_use]
+    pub fn placed(&self, to_world: &vcad_kernel_math::Transform) -> Self {
+        let mut out = self.clone();
+        for s in &mut out.surfaces {
+            *s = s.placed(to_world);
+        }
+        for f in &mut out.faces {
+            let (min, max) = placed_aabb(f.aabb_min, f.aabb_max, to_world);
+            f.aabb_min = min;
+            f.aabb_max = max;
+        }
+        for n in &mut out.bvh_nodes {
+            let (min, max) = placed_aabb(n.aabb_min, n.aabb_max, to_world);
+            n.aabb_min = min;
+            n.aabb_max = max;
+        }
+        // Lights are left where they are. The rig `from_brep` attaches is a
+        // studio rig sized to that one solid, and a scene of instances wants
+        // the room's lights, not one per instance — the caller replaces
+        // `lights` after merging. Dragging them along would also mean a
+        // sphere turned about its own centre changed on screen, which is a
+        // strange thing for a placement to do.
+        out
+    }
+}

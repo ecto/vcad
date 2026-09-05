@@ -1892,11 +1892,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Trace ray using BVH acceleration, then test the implicit ground
     // plane and pick whichever is closer.
     var hit = trace_bvh(origin, dir);
-    let ground = intersect_ground(origin, dir);
-    if ground.t < hit.t {
-        hit.t = ground.t;
-        hit.face_idx = FACE_IDX_GROUND;
-        hit.uv = vec2<f32>(ground.fade, 0.0);
+    // `ground_enabled` has to be honoured here, not only on the shadow ray:
+    // a scene that models its own floor (a room, a court) does not want a
+    // second implicit one at z = 0 fighting it for the same pixels.
+    if render_state.ground_enabled != 0u {
+        let ground = intersect_ground(origin, dir);
+        if ground.t < hit.t {
+            hit.t = ground.t;
+            hit.face_idx = FACE_IDX_GROUND;
+            hit.uv = vec2<f32>(ground.fade, 0.0);
+        }
     }
     let new_color = shade(hit, origin, dir, pixel);
 
@@ -2075,11 +2080,13 @@ fn refine(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let dir = ray[1];
 
             var hit = trace_bvh(origin, dir);
-            let ground = intersect_ground(origin, dir);
-            if ground.t < hit.t {
-                hit.t = ground.t;
-                hit.face_idx = FACE_IDX_GROUND;
-                hit.uv = vec2<f32>(ground.fade, 0.0);
+            if render_state.ground_enabled != 0u {
+                let ground = intersect_ground(origin, dir);
+                if ground.t < hit.t {
+                    hit.t = ground.t;
+                    hit.face_idx = FACE_IDX_GROUND;
+                    hit.uv = vec2<f32>(ground.fade, 0.0);
+                }
             }
 
             color_sum += shade(hit, origin, dir, pixel).rgb;
