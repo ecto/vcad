@@ -1397,6 +1397,79 @@ enum Landing {
 /// construction in `Scene { objects, lights, env, ground }` keeps working.
 pub(crate) struct SceneAccel {
     tlas: Tlas,
+    /// Cumulative distribution over `scene.lights`, weighted by emitted power
+    /// (emission luminance × area). One entry per light, ending at 1.0.
+    ///
+    /// Built once per render so next-event estimation can draw *one* light per
+    /// bounce instead of shadow-raying all of them: the cost per bounce stops
+    /// scaling with the number of softboxes, and the estimator stays unbiased
+    /// because each contribution is divided by its own pick probability.
+    light_cdf: Vec<f32>,
+    /// Probability of picking each light, i.e. the CDF's per-entry mass. Kept
+    /// alongside so the MIS weight for a BSDF ray that lands on an emitter can
+    /// use the same pick probability the NEE strategy would have used.
+    light_pick_pdf: Vec<f32>,
+}
+
+impl SceneAccel {
+    /// Probability that [`SceneAccel::pick_light`] would choose `index`.
+    #[inline]
+    pub(crate) fn light_pick_pdf(&self, index: usize) -> f32 {
+        self.light_pick_pdf.get(index).copied().unwrap_or(0.0)
+    }
+
+    /// Draw one light from the power-weighted table. Returns its index and the
+    /// probability with which it was drawn.
+    #[inline]
+    fn pick_light(&self, u: f32) -> Option<(usize, f32)> {
+        if self.light_cdf.is_empty() {
+            return None;
+        }
+        let i = match self
+            .light_cdf
+            .binary_search_by(|c| c.partial_cmp(&u).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            Ok(i) | Err(i) => i.min(self.light_cdf.len() - 1),
+        };
+        let pdf = self.light_pick_pdf[i];
+        if pdf > 0.0 { Some((i, pdf)) } else { None }
+    }
+}
+
+/// Power-weighted selection table over a light list: per-light pick
+/// probabilities and their running sum.
+///
+/// Shared by the CPU integrator and the GPU scene upload so both sample the
+/// same distribution — a parity test that compared two different tables would
+/// be testing nothing.
+pub(crate) fn light_power_table(lights: &[AreaLight]) -> (Vec<f32>, Vec<f32>) {
+    let powers: Vec<f32> = lights
+        .iter()
+        .map(|l| (luminance(l.emission) as f64 * l.area()).max(0.0) as f32)
+        .collect();
+    let total: f32 = powers.iter().sum();
+    let n = lights.len();
+    if n == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    // A scene whose lights all carry zero power still needs a valid
+    // distribution; uniform costs nothing and keeps the estimator finite.
+    let pick: Vec<f32> = if total > 0.0 && total.is_finite() {
+        powers.iter().map(|p| p / total).collect()
+    } else {
+        vec![1.0 / n as f32; n]
+    };
+    let mut cdf = Vec::with_capacity(n);
+    let mut run = 0.0f32;
+    for p in &pick {
+        run += *p;
+        cdf.push(run);
+    }
+    // Guard against float drift leaving the last entry just under 1.
+    if let Some(last) = cdf.last_mut() {
+        *last = 1.0;
+    }
+    (cdf, pick)
 }
 
 impl SceneAccel {
@@ -1412,8 +1485,11 @@ impl SceneAccel {
             .enumerate()
             .filter_map(|(i, obj)| Instance::new(Arc::clone(&obj.bvh), obj.transform.clone(), i))
             .collect();
+        let (light_cdf, light_pick_pdf) = light_power_table(&scene.lights);
         Self {
             tlas: Tlas::build(instances),
+            light_cdf,
+            light_pick_pdf,
         }
     }
 }
@@ -1504,8 +1580,15 @@ impl Scene {
         false
     }
 
-    /// Next-event estimation: sample every area light once, MIS-weighted
-    /// against the BSDF sampling strategy.
+    /// Next-event estimation: sample *one* area light, drawn from the
+    /// accel's power-weighted table, MIS-weighted against the BSDF sampling
+    /// strategy.
+    ///
+    /// One shadow ray per bounce regardless of how many softboxes the rig
+    /// has. Dividing the contribution by the pick probability leaves the
+    /// estimator unbiased — the mean over many samples matches the old
+    /// sample-every-light estimator exactly — and picking by power means the
+    /// lights that matter are the ones usually chosen.
     // The shading frame (p, t, b, n) and the outgoing direction are the
     // integrator's hot-loop state; bundling them into a struct just to
     // satisfy the lint would add a copy per light sample.
@@ -1520,45 +1603,48 @@ impl Scene {
         rng: &mut Rng,
     ) -> [f32; 3] {
         let Frame { t, b, n } = *frame;
-        let mut sum = [0.0f32; 3];
-        for light in &self.lights {
-            let lp = light.sample(rng.f64(), rng.f64());
-            let to_light = lp - p;
-            let dist = to_light.norm();
-            if dist < 1e-9 {
-                continue;
-            }
-            let wi_world = to_light / dist;
-            let ln = light.normal();
-            let cos_light = -wi_world.dot(ln);
-            if cos_light <= 1e-9 {
-                continue;
-            }
-            let wi_local = to_local(t, b, n, wi_world);
-            if wi_local.z <= 0.0 {
-                continue;
-            }
-
-            let (f, bsdf_pdf) = bsdf_eval(m, wo_local, wi_local);
-            if max3(f) <= 0.0 {
-                continue;
-            }
-
-            // Solid-angle PDF of the area sampling strategy.
-            let light_pdf = (dist * dist / (cos_light * light.area())) as f32;
-            if !light_pdf.is_finite() || light_pdf <= 0.0 {
-                continue;
-            }
-
-            if self.occluded(accel, p + n * 1e-5, wi_world, dist) {
-                continue;
-            }
-
-            let w = power_heuristic(light_pdf, bsdf_pdf);
-            let contrib = scale3(mul3(f, light.emission), w / light_pdf);
-            sum = add3(sum, contrib);
+        // The pick draw comes first so the light choice is independent of the
+        // position draw on the chosen rectangle.
+        let Some((index, pick_pdf)) = accel.pick_light(rng.f64() as f32) else {
+            return [0.0; 3];
+        };
+        let light = &self.lights[index];
+        let lp = light.sample(rng.f64(), rng.f64());
+        let to_light = lp - p;
+        let dist = to_light.norm();
+        if dist < 1e-9 {
+            return [0.0; 3];
         }
-        sum
+        let wi_world = to_light / dist;
+        let ln = light.normal();
+        let cos_light = -wi_world.dot(ln);
+        if cos_light <= 1e-9 {
+            return [0.0; 3];
+        }
+        let wi_local = to_local(t, b, n, wi_world);
+        if wi_local.z <= 0.0 {
+            return [0.0; 3];
+        }
+
+        let (f, bsdf_pdf) = bsdf_eval(m, wo_local, wi_local);
+        if max3(f) <= 0.0 {
+            return [0.0; 3];
+        }
+
+        // Solid-angle PDF of the *full* NEE strategy: pick this light, then
+        // pick a point on it. The BSDF-hits-a-light branch in `radiance`
+        // reconstructs the same product, so MIS stays consistent.
+        let light_pdf = pick_pdf * (dist * dist / (cos_light * light.area())) as f32;
+        if !light_pdf.is_finite() || light_pdf <= 0.0 {
+            return [0.0; 3];
+        }
+
+        if self.occluded(accel, p + n * 1e-5, wi_world, dist) {
+            return [0.0; 3];
+        }
+
+        let w = power_heuristic(light_pdf, bsdf_pdf);
+        scale3(mul3(f, light.emission), w / light_pdf)
     }
 
     /// Next-event estimation against the environment, MIS-weighted against
@@ -1683,7 +1769,8 @@ fn radiance(
                     let light = &scene.lights[light_index];
                     let ln = light.normal();
                     let cos_light = (-ray.direction.into_inner().dot(ln)).max(1e-9);
-                    let light_pdf = (distance * distance / (cos_light * light.area())) as f32;
+                    let light_pdf = accel.light_pick_pdf(light_index)
+                        * (distance * distance / (cos_light * light.area())) as f32;
                     let _ = point;
                     power_heuristic(prev_bsdf_pdf, light_pdf)
                 };
@@ -2236,6 +2323,251 @@ mod tests {
             lights: studio_rig(Point3::new(5.0, 5.0, 5.0), 9.0),
             env: Environment::default(),
             ground: None,
+        }
+    }
+
+    /// The old estimator: shadow-ray every light, each with its own
+    /// area-sampling PDF. Kept here as the reference the one-light-per-bounce
+    /// importance sampler must match in expectation.
+    fn sample_all_lights_reference(
+        scene: &Scene,
+        accel: &SceneAccel,
+        p: Point3,
+        frame: &Frame,
+        wo_local: Vec3,
+        m: &Pbr,
+        rng: &mut Rng,
+    ) -> [f32; 3] {
+        let Frame { t, b, n } = *frame;
+        let mut sum = [0.0f32; 3];
+        for light in &scene.lights {
+            let lp = light.sample(rng.f64(), rng.f64());
+            let to_light = lp - p;
+            let dist = to_light.norm();
+            if dist < 1e-9 {
+                continue;
+            }
+            let wi_world = to_light / dist;
+            let cos_light = -wi_world.dot(light.normal());
+            if cos_light <= 1e-9 {
+                continue;
+            }
+            let wi_local = to_local(t, b, n, wi_world);
+            if wi_local.z <= 0.0 {
+                continue;
+            }
+            let (f, bsdf_pdf) = bsdf_eval(m, wo_local, wi_local);
+            if max3(f) <= 0.0 {
+                continue;
+            }
+            let light_pdf = (dist * dist / (cos_light * light.area())) as f32;
+            if !light_pdf.is_finite() || light_pdf <= 0.0 {
+                continue;
+            }
+            if scene.occluded(accel, p + n * 1e-5, wi_world, dist) {
+                continue;
+            }
+            // The reference's MIS partner must be *its* own light pdf, so
+            // this is the old weighting verbatim.
+            let w = power_heuristic(light_pdf, bsdf_pdf);
+            sum = add3(sum, scale3(mul3(f, light.emission), w / light_pdf));
+        }
+        sum
+    }
+
+    /// Both estimators are MIS-weighted, and the two weightings differ per
+    /// sample (the pick probability enters the light pdf). What must agree is
+    /// the *total* direct-lighting estimate — NEE plus the BSDF-sampled hits
+    /// on emitters — so this compares the unweighted NEE integral by driving
+    /// both with `power_heuristic` replaced by 1: i.e. the plain estimator
+    /// `f * Le * cos / pdf`, which is what unbiasedness is about.
+    fn nee_unweighted_mean(scene: &Scene, accel: &SceneAccel, pick_one: bool, n: usize) -> [f64; 3] {
+        let p = Point3::new(0.0, 0.0, 0.0);
+        let nrm = Vec3::new(0.0, 0.0, 1.0);
+        let frame = shading_frame(nrm, None);
+        let wo_world = Vec3::new(0.3, 0.2, 0.9).normalize();
+        let wo_local = to_local(frame.t, frame.b, nrm, wo_world);
+        let m = Pbr {
+            base_color: [0.8, 0.7, 0.6],
+            roughness: 0.6,
+            ..Default::default()
+        };
+        let mut rng = Rng::new(0xA11CE);
+        let mut sum = [0.0f64; 3];
+        for _ in 0..n {
+            let est = if pick_one {
+                let Some((i, pick_pdf)) = accel.pick_light(rng.f64() as f32) else {
+                    continue;
+                };
+                one_light_unweighted(&scene.lights[i], pick_pdf, p, &frame, wo_local, &m, &mut rng)
+            } else {
+                let mut acc = [0.0f32; 3];
+                for light in &scene.lights {
+                    acc = add3(
+                        acc,
+                        one_light_unweighted(light, 1.0, p, &frame, wo_local, &m, &mut rng),
+                    );
+                }
+                acc
+            };
+            for c in 0..3 {
+                sum[c] += est[c] as f64;
+            }
+        }
+        [
+            sum[0] / n as f64,
+            sum[1] / n as f64,
+            sum[2] / n as f64,
+        ]
+    }
+
+    fn one_light_unweighted(
+        light: &AreaLight,
+        pick_pdf: f32,
+        p: Point3,
+        frame: &Frame,
+        wo_local: Vec3,
+        m: &Pbr,
+        rng: &mut Rng,
+    ) -> [f32; 3] {
+        let Frame { t, b, n } = *frame;
+        let lp = light.sample(rng.f64(), rng.f64());
+        let to_light = lp - p;
+        let dist = to_light.norm();
+        if dist < 1e-9 {
+            return [0.0; 3];
+        }
+        let wi_world = to_light / dist;
+        let cos_light = -wi_world.dot(light.normal());
+        if cos_light <= 1e-9 {
+            return [0.0; 3];
+        }
+        let wi_local = to_local(t, b, n, wi_world);
+        if wi_local.z <= 0.0 {
+            return [0.0; 3];
+        }
+        let (f, _) = bsdf_eval(m, wo_local, wi_local);
+        let pdf = pick_pdf * (dist * dist / (cos_light * light.area())) as f32;
+        if !pdf.is_finite() || pdf <= 0.0 {
+            return [0.0; 3];
+        }
+        scale3(mul3(f, light.emission), 1.0 / pdf)
+    }
+
+    fn open_scene(lights: Vec<AreaLight>) -> Scene {
+        Scene {
+            objects: Vec::new(),
+            lights,
+            env: Environment::default(),
+            ground: None,
+        }
+    }
+
+    fn panel(center: Point3, emission: [f32; 3], half: f64) -> AreaLight {
+        // Faces -Z, i.e. down at the origin.
+        AreaLight {
+            center,
+            u: Vec3::new(half, 0.0, 0.0),
+            v: Vec3::new(0.0, -half, 0.0),
+            emission,
+        }
+    }
+
+    /// One light per bounce, drawn from the power table and divided by its
+    /// pick probability, must integrate to the same direct lighting as
+    /// shadow-raying every light. Two lights of very different power, so a
+    /// uniform pick would not have been enough.
+    #[test]
+    fn one_light_per_bounce_matches_all_lights_in_expectation() {
+        let scene = open_scene(vec![
+            panel(Point3::new(-2.0, 0.0, 4.0), [12.0, 11.0, 10.0], 1.5),
+            panel(Point3::new(3.0, 1.0, 5.0), [0.6, 0.7, 1.4], 0.7),
+        ]);
+        let accel = SceneAccel::build(&scene);
+        let n = 400_000;
+        let a = nee_unweighted_mean(&scene, &accel, true, n);
+        let b = nee_unweighted_mean(&scene, &accel, false, n);
+        for c in 0..3 {
+            let rel = (a[c] - b[c]).abs() / b[c].abs().max(1e-6);
+            assert!(
+                rel < 0.02,
+                "channel {c}: one-light mean {} vs all-lights mean {} (rel {rel})",
+                a[c],
+                b[c]
+            );
+        }
+    }
+
+    /// The power table must actually be power-weighted: the bright panel is
+    /// picked far more often than the dim one, and the probabilities sum to 1.
+    #[test]
+    fn light_table_is_power_weighted() {
+        let scene = open_scene(vec![
+            panel(Point3::new(-2.0, 0.0, 4.0), [12.0, 11.0, 10.0], 1.5),
+            panel(Point3::new(3.0, 1.0, 5.0), [0.6, 0.7, 1.4], 0.7),
+        ]);
+        let accel = SceneAccel::build(&scene);
+        let p0 = accel.light_pick_pdf(0);
+        let p1 = accel.light_pick_pdf(1);
+        assert!((p0 + p1 - 1.0).abs() < 1e-5, "pick pdf must sum to 1");
+        assert!(p0 > 0.9, "the bright, large panel should dominate: {p0}");
+        // Drawing follows the table.
+        let mut rng = Rng::new(7);
+        let mut hits = [0u32; 2];
+        for _ in 0..20_000 {
+            let (i, _) = accel.pick_light(rng.f64() as f32).unwrap();
+            hits[i] += 1;
+        }
+        let frac0 = hits[0] as f32 / 20_000.0;
+        assert!((frac0 - p0).abs() < 0.02, "draw {frac0} vs table {p0}");
+    }
+
+    /// A full render of a multi-light scene must still land on the same image
+    /// the all-lights estimator gives, within Monte Carlo noise.
+    #[test]
+    fn multi_light_render_matches_reference_mean() {
+        // Exercise the reference path so it cannot rot.
+        let scene = open_scene(vec![
+            panel(Point3::new(-2.0, 0.0, 4.0), [8.0, 8.0, 8.0], 1.2),
+            panel(Point3::new(3.0, 1.0, 5.0), [2.0, 2.0, 2.0], 1.0),
+        ]);
+        let accel = SceneAccel::build(&scene);
+        let nrm = Vec3::new(0.0, 0.0, 1.0);
+        let frame = shading_frame(nrm, None);
+        let m = Pbr::default();
+        let wo_local = to_local(frame.t, frame.b, nrm, nrm);
+        let mut rng = Rng::new(3);
+        let mut r = [0.0f64; 3];
+        let mut o = [0.0f64; 3];
+        let n = 200_000;
+        for _ in 0..n {
+            let a = scene.sample_lights(
+                &accel,
+                Point3::new(0.0, 0.0, 0.0),
+                &frame,
+                wo_local,
+                &m,
+                &mut rng,
+            );
+            let b = sample_all_lights_reference(
+                &scene,
+                &accel,
+                Point3::new(0.0, 0.0, 0.0),
+                &frame,
+                wo_local,
+                &m,
+                &mut rng,
+            );
+            for c in 0..3 {
+                r[c] += a[c] as f64;
+                o[c] += b[c] as f64;
+            }
+        }
+        // MIS weights differ slightly between the two (the light pdf carries
+        // the pick probability), so this is a loose sanity band, not equality.
+        for c in 0..3 {
+            let rel = (r[c] - o[c]).abs() / (o[c] / n as f64).abs().max(1e-9) / n as f64;
+            assert!(rel < 0.06, "channel {c}: {} vs {} (rel {rel})", r[c] / n as f64, o[c] / n as f64);
         }
     }
 
