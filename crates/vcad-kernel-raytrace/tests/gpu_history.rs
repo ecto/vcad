@@ -534,3 +534,106 @@ fn measure_the_history_pass() {
         t.elapsed().as_secs_f64() * 1000.0 / REPS as f64,
     );
 }
+
+/// A scissored pass accumulates inside its rectangle and nowhere else.
+///
+/// `render_resident_linear` and `encode_raw_sample_into` dispatch only over
+/// the scissor, so outside it the raw buffer still holds whatever the last
+/// full-frame pass wrote. `accumulate` used to run over the whole frame and
+/// fold that stale sample in again as if it were fresh — one sample counted
+/// as many, dragging the pixel's mean towards it and inflating the history
+/// length the filter fades out against. Now it skips those pixels entirely:
+/// their mean, count and variance are exactly what they were.
+///
+/// That is what lets a viewer trace only the part of the frame that moved.
+#[test]
+#[ignore = "requires GPU"]
+fn a_scissored_pass_accumulates_only_inside_its_rectangle() {
+    let Some(ctx) = ctx_or_skip("a_scissored_pass_accumulates_only_inside_its_rectangle") else {
+        return;
+    };
+    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let history = HistoryPipeline::new(ctx).expect("history pipeline");
+    let sc = scene();
+    let mut res = pipeline.resident_scene(ctx, &sc, W, H);
+    let target = Target::new(ctx, W, H);
+    let denoise = GpuDenoiseParams::default();
+
+    // One full-frame pass, so every pixel has a history and the raw buffer is
+    // full of samples a scissored pass must not re-count.
+    pipeline
+        .accumulate_and_denoise_resident(
+            ctx,
+            &history,
+            &mut res,
+            &camera(W, H),
+            state(1),
+            &[],
+            &denoise,
+            &target.view,
+        )
+        .expect("full pass");
+    let before = pollster::block_on(pipeline.read_history(ctx, &mut res))
+        .expect("readback")
+        .expect("a history exists after one pass");
+    assert!(
+        before.count.iter().all(|&c| c == 1),
+        "the full pass is one sample everywhere"
+    );
+
+    // Then a scissored one over a rectangle in the middle of the frame.
+    let rect = [W / 4, H / 4, W / 2, H / 2];
+    let mut scissored = state(2);
+    scissored.set_scissor(rect);
+    assert_eq!(scissored.scissor(), Some(rect));
+    pipeline
+        .accumulate_and_denoise_resident(
+            ctx,
+            &history,
+            &mut res,
+            &camera(W, H),
+            scissored,
+            &[],
+            &denoise,
+            &target.view,
+        )
+        .expect("scissored pass");
+    let after = pollster::block_on(pipeline.read_history(ctx, &mut res))
+        .expect("readback")
+        .expect("a history exists");
+
+    let inside = |x: u32, y: u32| {
+        x >= rect[0] && x < rect[0] + rect[2] && y >= rect[1] && y < rect[1] + rect[3]
+    };
+    let mut n_in = 0usize;
+    for y in 0..H {
+        for x in 0..W {
+            let i = (y * W + x) as usize;
+            if inside(x, y) {
+                n_in += 1;
+                assert_eq!(
+                    after.count[i], 2,
+                    "pixel ({x}, {y}) is inside the scissor and should have \
+                     taken this pass's sample",
+                );
+            } else {
+                assert_eq!(
+                    after.count[i], 1,
+                    "pixel ({x}, {y}) is outside the scissor: its history must \
+                     be untouched, not fed the stale raw sample again",
+                );
+                // Untouched means untouched: the mean itself must not move.
+                for j in 0..3 {
+                    assert_eq!(
+                        after.rgb[i * 3 + j],
+                        before.rgb[i * 3 + j],
+                        "the mean at ({x}, {y}) moved outside the scissor",
+                    );
+                }
+                assert_eq!(after.alpha[i], before.alpha[i]);
+                assert_eq!(after.variance[i], before.variance[i]);
+            }
+        }
+    }
+    assert_eq!(n_in, (rect[2] * rect[3]) as usize);
+}

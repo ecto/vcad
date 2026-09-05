@@ -116,8 +116,8 @@ struct HistoryParams {
     exposure: f32,
     stride: u32,
     src_is_b: u32,
-    _pad0: u32,
-    _pad1: u32,
+    scissor_xy: u32,
+    scissor_wh: u32,
 }
 
 /// The running mean and sample count read back off the device.
@@ -339,6 +339,16 @@ impl RayTracePipeline {
     /// re-converge. Pass an all-1 mask for a still frame. An empty slice is
     /// read as all-1, which is the common case and costs no upload.
     ///
+    /// A **scissor** set on `state` (see `GpuRenderState::set_scissor`) is
+    /// honoured all the way through: the trace pass dispatches only over the
+    /// rectangle, and the accumulate pass folds a sample in only for the
+    /// pixels inside it. Every pixel outside keeps the mean, the sample count
+    /// and the variance it already had — nothing stale is counted as fresh.
+    /// The resolve pass still covers the frame, so the target texture stays
+    /// whole; it simply re-resolves the untouched pixels from their unchanged
+    /// history. That is what lets a viewer trace only the part of the frame
+    /// that moved and keep the rest.
+    ///
     /// `target` must be a view of an `Rgba8Unorm` texture with
     /// `STORAGE_BINDING` usage, at least the resident scene's size.
     ///
@@ -406,8 +416,10 @@ impl RayTracePipeline {
                 // The final iteration lands in scratch_b when the count is
                 // odd, since iteration 0 reads A and writes B.
                 src_is_b: u32::from(iters % 2 == 1),
-                _pad0: 0,
-                _pad1: 0,
+                // Straight from the trace pass's own state, so the two can
+                // never disagree about which pixels this pass refreshed.
+                scissor_xy: state.scissor_xy,
+                scissor_wh: state.scissor_wh,
             };
             ctx.queue
                 .write_buffer(&hist.params, 0, bytemuck::bytes_of(&base));

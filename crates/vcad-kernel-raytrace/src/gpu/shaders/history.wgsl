@@ -50,8 +50,18 @@ struct HistoryParams {
     // `resolve` only: non-zero when the final iteration left its result in
     // `scratch_dst` rather than `scratch_src`.
     src_is_b: u32,
-    _pad0: u32,
-    _pad1: u32,
+    // The trace pass's scissor rectangle, packed x | (y << 16) and
+    // w | (h << 16), as `GpuRenderState` packs it. A zero size means the pass
+    // covered the whole frame.
+    //
+    // `accumulate` needs it because a scissored trace only rewrites `raw`
+    // inside the rectangle: outside it, `raw` still holds whatever the last
+    // unscissored pass left there, and folding that in again would count one
+    // sample as many and drag the mean towards it. Skipping those pixels
+    // leaves their mean and count exactly as they were, which is what a viewer
+    // tracing only the part of the frame that moved is asking for.
+    scissor_xy: u32,
+    scissor_wh: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: HistoryParams;
@@ -114,11 +124,27 @@ fn flat_index(gid: vec3<u32>) -> u32 {
     return gid.y * params.width + gid.x;
 }
 
+// Whether this pixel is one the trace pass just wrote a fresh sample for.
+fn in_scissor(gid: vec3<u32>) -> bool {
+    if params.scissor_wh == 0u {
+        return true;
+    }
+    let ox = params.scissor_xy & 0xFFFFu;
+    let oy = params.scissor_xy >> 16u;
+    let w = params.scissor_wh & 0xFFFFu;
+    let h = params.scissor_wh >> 16u;
+    return gid.x >= ox && gid.x < ox + w && gid.y >= oy && gid.y < oy + h;
+}
+
 // ─── pass 1: fold this sample into the history ────────────────────────────
 
 @compute @workgroup_size(8, 8)
 fn accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
     if !in_bounds(gid) {
+        return;
+    }
+    // Outside the trace pass's scissor there is no new sample to fold in.
+    if !in_scissor(gid) {
         return;
     }
     let i = flat_index(gid);
