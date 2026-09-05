@@ -81,6 +81,10 @@ pub fn from_material_def(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 
         .unwrap_or_else(|| mat.map(|m| anisotropy_from_name(&m.name)).unwrap_or(0.0))
         .clamp(-1.0, 1.0);
 
+    // The principled parameters kosm-render added (EON diffuse roughness,
+    // subsurface, specular/specular_tint, the sheen layer) have no `vcad_ir`
+    // spelling yet, so they stay at their defaults — which are exactly the
+    // values that reproduce the model as it was before they existed.
     Pbr {
         base_color,
         metallic,
@@ -90,5 +94,6 @@ pub fn from_material_def(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 
         clearcoat_roughness: 0.08,
         ior,
         emissive: [0.0; 3],
+        ..Pbr::default()
     }
 }

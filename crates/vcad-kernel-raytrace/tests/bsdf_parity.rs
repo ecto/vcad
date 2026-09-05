@@ -404,7 +404,7 @@ fn test_materials() -> Vec<GpuMaterial> {
             clearcoat_roughness: 0.1,
             ior: 1.5,
             anisotropy: 0.0,
-            _pad: [0.0; 2],
+            ..GpuMaterial::default()
         },
         // High IOR dielectric, strong coat — pushes F0 and coat attenuation.
         GpuMaterial {
@@ -415,7 +415,7 @@ fn test_materials() -> Vec<GpuMaterial> {
             clearcoat_roughness: 0.03,
             ior: 1.8,
             anisotropy: 0.0,
-            _pad: [0.0; 2],
+            ..GpuMaterial::default()
         },
         // Brushed metal — anisotropy swept across both signs and both
         // extremes. The anisotropic D/G/VNDF paths are separate branches from
@@ -445,7 +445,7 @@ fn test_materials() -> Vec<GpuMaterial> {
             clearcoat_roughness: 0.08,
             ior: 1.5,
             anisotropy: 0.5,
-            _pad: [0.0; 2],
+            ..GpuMaterial::default()
         },
     ]
 }
@@ -617,7 +617,7 @@ fn gpu_furnace_conserves_energy() {
         clearcoat_roughness: 0.1,
         ior: 1.5,
         anisotropy: 0.0,
-        _pad: [0.0; 2],
+        ..GpuMaterial::default()
     };
 
     let n = 20_000u32;
