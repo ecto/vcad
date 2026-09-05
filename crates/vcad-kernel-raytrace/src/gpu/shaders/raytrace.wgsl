@@ -818,6 +818,35 @@ fn point_in_face(uv: vec2<f32>, face_idx: u32) -> bool {
     return true;
 }
 
+// ─── scale-aware self-intersection epsilon ────────────────────────────────
+//
+// Every ray that leaves a surface has to clear that surface by more than the
+// float grid at that point, and on the GPU that grid is f32. A model authored
+// in millimetres puts a wall at a coordinate of 2.6e4, where one ulp is about
+// 2e-3 — so the fixed `p + n * 1e-4` this shader used to apply rounded away
+// entirely, the ray started *on* the wall, and the wall shadowed itself. The
+// CPU tier never showed it: f64 has ten million ulps of headroom at the same
+// coordinate.
+//
+// `RAY_EPS_REL` is ~16 ulps of f32 (1 ulp is 2^-23 relative), enough to clear
+// the accumulated error in an intersection while staying far below any
+// feature a renderer resolves. `RAY_EPS_ABS` keeps small scenes — and the
+// origin itself — on the behaviour the small-unit tests pin.
+const RAY_EPS_ABS: f32 = 1e-4;
+const RAY_EPS_REL: f32 = 2e-6;
+
+// The interval floor for a ray leaving `p`: absolute near the origin, relative
+// once coordinates are large.
+fn ray_eps(p: vec3<f32>) -> f32 {
+    let scale = max(max(abs(p.x), abs(p.y)), abs(p.z));
+    return max(RAY_EPS_ABS, scale * RAY_EPS_REL);
+}
+
+// Lift a hit point off its surface along the normal, by the same amount.
+fn offset_origin(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    return p + n * ray_eps(p);
+}
+
 // Debug: trace with bounds checking but without BVH
 fn trace_debug(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
     var best_hit: RayHit;
@@ -847,6 +876,10 @@ fn trace_bvh(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
     best_hit.face_idx = 0xFFFFFFFFu;
 
     let inv_dir = 1.0 / dir;
+    // Reject anything the origin's own float grid cannot separate from the
+    // origin: at millimetre scale `t > 0.0` alone re-finds the surface the
+    // ray just left.
+    let t_floor = ray_eps(origin);
 
     // Stack-based traversal
     var stack: array<u32, 32>;
@@ -872,7 +905,7 @@ fn trace_bvh(origin: vec3<f32>, dir: vec3<f32>) -> RayHit {
                 let face = faces[face_idx];
 
                 let hit = intersect_surface(origin, dir, face.surface_idx);
-                if hit.t < best_hit.t && hit.t > 0.0 {
+                if hit.t < best_hit.t && hit.t > t_floor {
                     // Use proper UV-based point-in-polygon test
                     if point_in_face(hit.uv, face_idx) {
                         best_hit = hit;
@@ -1318,7 +1351,7 @@ fn intersect_lights(origin: vec3<f32>, dir: vec3<f32>) -> LightHit {
             continue;
         }
         let t = dot(n, l.center.xyz - origin) / denom;
-        if t <= 1e-6 || t >= out.t {
+        if t <= ray_eps(origin) || t >= out.t {
             continue;
         }
         let p = origin + dir * t;
@@ -1340,13 +1373,17 @@ fn intersect_lights(origin: vec3<f32>, dir: vec3<f32>) -> LightHit {
 // matching `pathtrace::Scene::occluded`.
 fn occluded(origin: vec3<f32>, dir: vec3<f32>, max_dist: f32) -> bool {
     let o = origin;
+    // Scale-aware on both ends: the near end so the shadow ray does not find
+    // the surface it left, the far end so it does not find the light's own
+    // surface just short of `max_dist`.
+    let eps = ray_eps(o);
     let hit = trace_bvh(o, dir);
-    if hit.face_idx != 0xFFFFFFFFu && hit.t > 1e-6 && hit.t < max_dist - 1e-6 {
+    if hit.face_idx != 0xFFFFFFFFu && hit.t > eps && hit.t < max_dist - eps {
         return true;
     }
     if render_state.ground_enabled != 0u {
         let g = intersect_ground(o, dir);
-        if g.t > 1e-6 && g.t < max_dist - 1e-6 {
+        if g.t > eps && g.t < max_dist - eps {
             return true;
         }
     }
@@ -1449,7 +1486,7 @@ fn sample_lights(
         return vec3<f32>(0.0);
     }
 
-    if occluded(p + n * 1e-4, wi_world, dist) {
+    if occluded(offset_origin(p, n), wi_world, dist) {
         return vec3<f32>(0.0);
     }
 
@@ -1498,7 +1535,7 @@ fn sample_environment(
     }
     // The environment is at infinity: nothing between here and the sky may
     // block, so the shadow ray is unbounded.
-    if occluded(p + n * 1e-4, es.dir, MAX_T) {
+    if occluded(offset_origin(p, n), es.dir, MAX_T) {
         return vec3<f32>(0.0);
     }
     let w = power_heuristic(es.pdf, e.pdf);
@@ -1639,7 +1676,7 @@ fn path_trace(first: RayHit, origin: vec3<f32>, dir: vec3<f32>, pixel: vec2<u32>
         specular_chain = false;
 
         let wi_world = to_world(frame, s.wi);
-        ray_o = surf.point + n * 1e-4;
+        ray_o = offset_origin(surf.point, n);
         ray_d = wi_world;
 
         // Russian roulette.
