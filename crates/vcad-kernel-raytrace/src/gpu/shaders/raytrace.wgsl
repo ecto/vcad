@@ -90,7 +90,10 @@ struct RenderState {
     // pass costs in proportion to the rectangle.
     scissor_xy: u32,
     scissor_wh: u32,
-    _pad3: u32,
+    // Non-zero: write the raw per-pass sample instead of folding it into the
+    // running average, and fill the guide half of `depth_normal_buffer`. What
+    // a host keeping its own per-pixel history wants out of a pass.
+    raw_sample: u32,
 }
 
 struct RayHit {
@@ -126,6 +129,13 @@ struct GpuAreaLight {
 @group(0) @binding(7) var<uniform> render_state: RenderState;
 @group(0) @binding(8) var<storage, read_write> accum_buffer: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read> materials: array<GpuMaterial>;
+// Three vec4 planes of width*height each:
+//   [0 .. n)      (normal, t) in the shader's own convention — background is
+//                 (0,0,0, MAX_T) — read by the denoiser and the Sobel edges.
+//   [n .. 2n)     guide: (face-forwarded world normal, distance from the eye),
+//                 background (0,0,0, 0) — the CPU `Film` convention.
+//   [2n .. 3n)    guide: (denoise albedo, 0), background (0,0,0, 0).
+// The two guide planes are only written when `render_state.raw_sample` is set.
 @group(0) @binding(10) var<storage, read_write> depth_normal_buffer: array<vec4<f32>>;
 // Rectangular area lights ("softboxes"). Intersectable, so both BSDF sampling
 // and NEE find them and combine under MIS — that is what puts correctly-shaped
@@ -1980,16 +1990,49 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Write stable geometry data on the first frame so edge detection has
     // coherent neighbours on frame 2+ (same condition as depth_normal_buffer).
-    if render_state.frame_index <= 1u {
+    // A raw-sample pass rewrites it every time: it is one independent sample,
+    // not a step of an average, so nothing about the previous pass carries.
+    if render_state.frame_index <= 1u || render_state.raw_sample != 0u {
         depth_normal_buffer[pixel_index_i32(pixel_coord)] = depth_normal;
         feature_id_buffer[pixel_index_i32(pixel_coord)] = hit.face_idx;
+    }
+
+    // Guide planes, in the CPU `Film`'s convention rather than this shader's:
+    // the normal is face-forwarded against the view ray (what the path tracer
+    // actually shades with) and the background sentinel for depth is 0, not
+    // MAX_T.
+    if render_state.raw_sample != 0u {
+        let n_px = camera.width * camera.height;
+        let gi = pixel_index_i32(pixel_coord);
+        var g_normal = vec3<f32>(0.0, 0.0, 0.0);
+        var g_depth = 0.0;
+        var g_albedo = vec3<f32>(0.0, 0.0, 0.0);
+        if hit.face_idx != 0xFFFFFFFFu {
+            var gn: vec3<f32>;
+            var gm: GpuMaterial;
+            if hit.face_idx == FACE_IDX_GROUND {
+                gn = vec3<f32>(0.0, 0.0, 1.0);
+                gm = ground_material();
+            } else {
+                gn = compute_normal(hit);
+                gm = materials[faces[hit.face_idx].material_idx];
+            }
+            if dot(gn, -dir) < 0.0 {
+                gn = -gn;
+            }
+            g_normal = gn;
+            g_depth = hit.t;
+            g_albedo = mix(mat_diffuse_albedo(gm), mat_f0(gm), gm.metallic);
+        }
+        depth_normal_buffer[n_px + gi] = vec4<f32>(g_normal, g_depth);
+        depth_normal_buffer[2u * n_px + gi] = vec4<f32>(g_albedo, 0.0);
     }
 
     // Progressive accumulation
     var accumulated: vec4<f32>;
 
-    if render_state.frame_index <= 1u {
-        // First frame: start fresh
+    if render_state.frame_index <= 1u || render_state.raw_sample != 0u {
+        // First frame, or a deliberate raw sample: start fresh.
         accumulated = new_color;
     } else {
         // Blend with previous samples using running average
@@ -2004,7 +2047,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Has to run before edge detection so edges are drawn on the
     // denoised image.
     var final_color = accumulated;
-    if render_state.frame_index >= 2u {
+    if render_state.frame_index >= 2u && render_state.raw_sample == 0u {
         let stored_dn = depth_normal_buffer[pixel_index_i32(pixel_coord)];
         final_color = denoise(pixel_coord, accumulated, stored_dn);
     }
@@ -2087,8 +2130,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Store accumulated color with sample count in alpha (1.0 from main pass).
-    // The refine pass may update this for edge pixels.
-    accumulated.a = 1.0;
+    // The refine pass may update this for edge pixels. A raw-sample pass keeps
+    // `shade`'s coverage instead: nothing is going to average it, and the host
+    // reading the buffer back wants the same alpha the CPU `Film` carries.
+    if render_state.raw_sample == 0u {
+        accumulated.a = 1.0;
+    }
 
     // Store to accumulation buffer and output
     accum_buffer[pixel_index_i32(pixel_coord)] = accumulated;

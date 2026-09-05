@@ -530,7 +530,11 @@ pub struct GpuRenderState {
     pub scissor_xy: u32,
     /// Scissor size, `w | (h << 16)` in pixels. Zero means the whole frame.
     pub scissor_wh: u32,
-    /// Padding to a 16-byte multiple (required for uniform buffers).
+    /// Reserved word, kept for layout. It now carries the raw-sample flag:
+    /// non-zero makes the shader write this pass's own sample instead of
+    /// folding it into the running average, and fill the guide planes of the
+    /// depth/normal buffer. Set it with [`GpuRenderState::set_raw_sample`]
+    /// rather than by hand — the name stays for source compatibility.
     pub _pad3: [u32; 1],
 }
 
@@ -575,6 +579,36 @@ pub fn depth_for_frame(frame_index: u32, ceiling: u32) -> u32 {
 }
 
 impl GpuRenderState {
+    /// Write each pass's own sample rather than a running average.
+    ///
+    /// The shader normally folds every pass into `accum_buffer` as
+    /// `mix(prev, new, 1/frame_index)`, which is what a viewport converging on
+    /// its own wants. A host that keeps its own per-pixel history wants the
+    /// opposite: one independent, unweighted sample per pass, plus the guide
+    /// buffers to reproject it with. Setting this
+    ///
+    /// * writes `new_color` straight to the accumulation buffer, keeping the
+    ///   path tracer's coverage in alpha instead of the sample count,
+    /// * rewrites the depth/normal and feature-ID buffers every pass rather
+    ///   than only on frame 1, and fills the guide planes (face-forwarded
+    ///   normal, distance from the eye, denoise albedo),
+    /// * skips the in-shader spatial denoise, which exists to hide the noise
+    ///   in a *converging* average and would correlate samples the host is
+    ///   about to average itself.
+    ///
+    /// `frame_index` still drives the jitter and the RNG, so successive raw
+    /// passes at increasing `frame_index` are independent samples of the same
+    /// image. Leave `refine_sample_count` at 0: the refinement pass blends
+    /// into the same buffer with weights of its own.
+    pub fn set_raw_sample(&mut self, on: bool) {
+        self._pad3[0] = u32::from(on);
+    }
+
+    /// Whether [`GpuRenderState::set_raw_sample`] is on.
+    pub fn raw_sample(&self) -> bool {
+        self._pad3[0] != 0
+    }
+
     /// Create a new render state for the given frame with default edge style.
     pub fn new(frame_index: u32) -> Self {
         let (jitter_x, jitter_y) = halton_2_3(frame_index);

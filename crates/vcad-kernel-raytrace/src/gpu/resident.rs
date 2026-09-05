@@ -13,13 +13,19 @@
 //! already allocated, so a re-posed frame of the same assembly is pure
 //! `write_buffer` traffic.
 //!
-//! Two ways out: [`RayTracePipeline::render_resident`] reads the frame back to
-//! the CPU as `render_with_render_state` does, and
+//! Three ways out. [`RayTracePipeline::render_resident`] reads the frame back
+//! to the CPU as `render_with_render_state` does, and
 //! [`RayTracePipeline::render_resident_into`] writes into a storage texture the
 //! caller owns and never touches the readback path at all — which is what a
 //! surface presenting the frame itself wants, since a round trip through
 //! system memory just to upload it again is the most expensive thing in the
-//! loop.
+//! loop. Both of those hand back display-referred 8-bit pixels.
+//!
+//! [`RayTracePipeline::render_resident_linear`] is the third, for a host that
+//! keeps a per-pixel history of its own: one raw linear sample per pass plus
+//! the denoiser's guide buffers, packed into the same [`Film`] the CPU
+//! renderer produces. A tonemapped byte is not something you can average or
+//! reproject, which is what makes the other two exits unusable for that.
 
 use vcad_kernel_gpu::{GpuContext, GpuError};
 
@@ -30,7 +36,8 @@ use super::buffers::{
     pack_light_power_table, GpuAreaLight, GpuBvhNode, GpuCamera, GpuFace, GpuMaterial,
     GpuRenderState, GpuScene, GpuSurface, GpuVec2,
 };
-use super::pipeline::{read_back_rgba, RayTracePipeline};
+use super::pipeline::{read_back_f32, read_back_rgba, RayTracePipeline};
+use crate::pathtrace::Film;
 
 /// Usage flags for a storage buffer this module rewrites in place.
 const STORAGE_RW: wgpu::BufferUsages =
@@ -84,6 +91,10 @@ struct FrameTargets {
     depth_normal: wgpu::Buffer,
     feature_id: wgpu::Buffer,
     readback: wgpu::Buffer,
+    /// Staging buffer for the linear exit: the accumulation buffer followed by
+    /// the depth/normal buffer's two guide planes. Allocated on first use, so
+    /// a caller that never asks for linear output never pays for it.
+    linear_readback: Option<wgpu::Buffer>,
 }
 
 impl FrameTargets {
@@ -107,8 +118,10 @@ impl FrameTargets {
         let mk = |label: &str, size: u64| {
             ctx.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
+                // COPY_SRC so the linear exit can read the accumulated
+                // radiance and the guide planes back without a second pass.
                 size,
-                usage: STORAGE_RW,
+                usage: STORAGE_RW.union(wgpu::BufferUsages::COPY_SRC),
                 mapped_at_creation: false,
             })
         };
@@ -120,7 +133,10 @@ impl FrameTargets {
             output,
             output_view,
             accum: mk("Resident Accumulation Buffer", per_pixel_vec4),
-            depth_normal: mk("Resident Depth Normal Buffer", per_pixel_vec4),
+            // Three planes: the shader's own (normal, t), then the two guide
+            // planes a raw-sample pass fills. See the binding's comment in
+            // `raytrace.wgsl`.
+            depth_normal: mk("Resident Depth Normal Buffer", per_pixel_vec4 * 3),
             feature_id: mk(
                 "Resident Feature ID Buffer",
                 (width as u64) * (height as u64) * 4,
@@ -131,7 +147,22 @@ impl FrameTargets {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             }),
+            linear_readback: None,
         }
+    }
+
+    /// The linear staging buffer, allocated on first use.
+    fn linear_staging(&mut self, ctx: &GpuContext) -> &wgpu::Buffer {
+        let bytes = (self.width as u64) * (self.height as u64) * 16;
+        self.linear_readback.get_or_insert_with(|| {
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Resident Linear Readback Buffer"),
+                // accumulation + the two guide planes.
+                size: bytes * 3,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        })
     }
 }
 
@@ -672,6 +703,127 @@ impl RayTracePipeline {
             res.targets.padded_bytes_per_row,
         )
         .await
+    }
+
+    /// Render one pass and read it back in **linear** space, with the
+    /// denoiser's guide buffers, as a [`Film`].
+    ///
+    /// This is the exit for a host that keeps its own per-pixel history. The
+    /// other two write display-referred 8-bit pixels, which cannot be averaged
+    /// or reprojected without undoing a tonemap that is not invertible.
+    ///
+    /// `state` is forced into raw-sample mode
+    /// ([`GpuRenderState::set_raw_sample`]) and its refinement pass is turned
+    /// off, so what comes back is **one unweighted sample** of the image, not
+    /// a step of the shader's running average. `state.frame_index` still
+    /// drives the jitter and the RNG: pass an increasing index and successive
+    /// calls are independent samples of the same picture, which is exactly
+    /// what a caller-side mean wants.
+    ///
+    /// The film matches [`crate::pathtrace::render`]'s conventions field for
+    /// field, so [`crate::pathtrace::denoise`] and any reprojection written
+    /// against the CPU tier work on it unchanged:
+    ///
+    /// * `rgb` — linear radiance, no tonemap, no gamma.
+    /// * `alpha` — the path tracer's coverage, 1 where the primary ray hit.
+    /// * `depth` — distance from the eye along the primary ray, in world
+    ///   units, and **0 for background**. The shader's own depth buffer uses
+    ///   `MAX_T` for background and is left alone; this is converted on the
+    ///   way out.
+    /// * `normal` — world normal at the first hit, face-forwarded against the
+    ///   view ray (what the shading actually used), zero for background.
+    /// * `albedo` — the first hit's `denoise_albedo`: diffuse albedo mixed
+    ///   toward F0 by metallic, zero for background.
+    /// * `variance` — 1 spp carries no spread of its own, so this is the
+    ///   luminance squared, the same fallback `trace_pixel` uses at `spp == 1`.
+    ///
+    /// # Scissor
+    ///
+    /// A scissored pass traces only its rectangle, and the film is read back
+    /// from buffers that persist between calls, so **pixels outside the
+    /// rectangle carry whatever the previous pass left there** — stale, not
+    /// zero, and on the very first pass after allocation, zero. That is
+    /// deliberate: it is what lets a caller re-render a rectangle into a
+    /// history it is otherwise keeping. Call
+    /// [`ResidentScene::reset_accumulation`] if you want the untouched region
+    /// zeroed instead.
+    pub async fn render_resident_linear(
+        &self,
+        ctx: &GpuContext,
+        res: &mut ResidentScene,
+        camera: &GpuCamera,
+        state: GpuRenderState,
+    ) -> Result<Film, GpuError> {
+        let mut state = state;
+        state.set_raw_sample(true);
+        // The refinement pass blends into the accumulation buffer with weights
+        // of its own and would make the readback something other than one
+        // sample.
+        state.refine_sample_count = 0;
+
+        let (w, h) = (res.targets.width, res.targets.height);
+        let n = (w as u64) * (h as u64);
+        let plane = n * 16;
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Resident Linear Ray Trace Encoder"),
+            });
+        self.encode_resident(ctx, res, camera, state, None, &mut encoder);
+        res.targets.linear_staging(ctx);
+        {
+            let staging = res
+                .targets
+                .linear_readback
+                .as_ref()
+                .expect("staging buffer was just allocated");
+            encoder.copy_buffer_to_buffer(&res.targets.accum, 0, staging, 0, plane);
+            // The two guide planes, which start one plane into the depth/normal
+            // buffer — the first plane is the shader's own edge-detection copy.
+            encoder.copy_buffer_to_buffer(
+                &res.targets.depth_normal,
+                plane,
+                staging,
+                plane,
+                plane * 2,
+            );
+        }
+        ctx.queue.submit(Some(encoder.finish()));
+
+        let staging = res
+            .targets
+            .linear_readback
+            .as_ref()
+            .expect("staging buffer was just allocated");
+        let raw = read_back_f32(ctx, staging).await?;
+
+        let n = n as usize;
+        let mut film = Film {
+            width: w,
+            height: h,
+            rgb: vec![0.0; n * 3],
+            alpha: vec![0.0; n],
+            normal: vec![0.0; n * 3],
+            depth: vec![0.0; n],
+            albedo: vec![0.0; n * 3],
+            variance: vec![0.0; n],
+        };
+        for i in 0..n {
+            let c = &raw[i * 4..i * 4 + 4];
+            let g = &raw[(n + i) * 4..(n + i) * 4 + 4];
+            let a = &raw[(2 * n + i) * 4..(2 * n + i) * 4 + 3];
+            film.rgb[i * 3..i * 3 + 3].copy_from_slice(&c[..3]);
+            film.alpha[i] = c[3];
+            film.normal[i * 3..i * 3 + 3].copy_from_slice(&g[..3]);
+            film.depth[i] = g[3];
+            film.albedo[i * 3..i * 3 + 3].copy_from_slice(a);
+            // Matching `trace_pixel`'s single-sample fallback: one sample says
+            // nothing about its own spread, so its magnitude stands in for it.
+            let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+            film.variance[i] = l * l;
+        }
+        Ok(film)
     }
 
     /// Render a resident scene straight into a storage texture the caller

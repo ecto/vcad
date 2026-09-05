@@ -543,10 +543,12 @@ impl RayTracePipeline {
             })
         });
 
-        // Depth/normal buffer for edge detection (vec4 per pixel: normal.xyz, depth).
+        // Depth/normal buffer for edge detection (vec4 per pixel: normal.xyz,
+        // depth), plus the two guide planes a raw-sample pass fills. See the
+        // binding's comment in `raytrace.wgsl`.
         let depth_normal_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Depth Normal Buffer"),
-            size: accum_buf_size,
+            size: accum_buf_size * 3,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -827,6 +829,32 @@ impl RayTracePipeline {
         Ok((result, accum))
     }
 
+    /// One pass in linear space, with the denoiser's guide buffers.
+    ///
+    /// The one-shot twin of [`RayTracePipeline::render_resident_linear`], and
+    /// implemented as one: the scene is uploaded, rendered once and dropped.
+    /// If you are going to call this more than once on the same geometry, keep
+    /// a [`ResidentScene`](super::ResidentScene) instead — this pays the full
+    /// upload every time, which is the cost the resident path exists to avoid.
+    ///
+    /// `state` is forced to raw-sample mode, so the returned radiance is this
+    /// pass's own sample rather than a running average. See
+    /// [`GpuRenderState::set_raw_sample`] for what that means, and
+    /// [`RayTracePipeline::render_resident_linear`] for the Film's conventions.
+    pub async fn render_linear_with_render_state(
+        &self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &GpuCamera,
+        width: u32,
+        height: u32,
+        state: GpuRenderState,
+    ) -> Result<crate::pathtrace::Film, GpuError> {
+        let mut res = self.resident_scene(ctx, scene, width, height);
+        self.render_resident_linear(ctx, &mut res, camera, state)
+            .await
+    }
+
     /// Render a scene to an output texture (single-frame, non-progressive).
     ///
     /// This is a convenience wrapper around render_progressive for backward compatibility.
@@ -857,7 +885,57 @@ pub(super) async fn read_back_rgba(
     height: u32,
     padded_bytes_per_row: u32,
 ) -> Result<Vec<u8>, GpuError> {
-    // Map and read buffer
+    wait_for_map(ctx, readback_buffer).await?;
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[RT] Reading mapped data...".into());
+
+    let buffer_slice = readback_buffer.slice(..);
+    let data = buffer_slice
+        .get_mapped_range()
+        .map_err(|_| GpuError::BufferMapping)?;
+
+    // Remove padding from rows
+    let mut result = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height {
+        let row_start = (row * padded_bytes_per_row) as usize;
+        let row_end = row_start + (width * 4) as usize;
+        result.extend_from_slice(&data[row_start..row_end]);
+    }
+
+    drop(data);
+    readback_buffer.unmap();
+
+    Ok(result)
+}
+
+/// Read a whole mapped buffer back as `f32`s.
+///
+/// The linear exits copy buffer-to-buffer rather than texture-to-buffer, so
+/// there is no 256-byte row padding to strip — the bytes are exactly the
+/// `vec4<f32>` planes the shader wrote.
+#[cfg(feature = "gpu")]
+pub(super) async fn read_back_f32(
+    ctx: &GpuContext,
+    readback_buffer: &wgpu::Buffer,
+) -> Result<Vec<f32>, GpuError> {
+    wait_for_map(ctx, readback_buffer).await?;
+    let buffer_slice = readback_buffer.slice(..);
+    let data = buffer_slice
+        .get_mapped_range()
+        .map_err(|_| GpuError::BufferMapping)?;
+    let out = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
+    drop(data);
+    readback_buffer.unmap();
+    Ok(out)
+}
+
+/// Await `map_async` on a buffer's whole range.
+///
+/// The wasm and native halves of that wait are the only difference between the
+/// two readback paths, so they live here once.
+#[cfg(feature = "gpu")]
+async fn wait_for_map(ctx: &GpuContext, readback_buffer: &wgpu::Buffer) -> Result<(), GpuError> {
     let buffer_slice = readback_buffer.slice(..);
 
     #[cfg(target_arch = "wasm32")]
@@ -945,26 +1023,7 @@ pub(super) async fn read_back_rgba(
     if map_result.is_err() {
         return Err(GpuError::BufferMapping);
     }
-
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::log_1(&"[RT] Reading mapped data...".into());
-
-    let data = buffer_slice
-        .get_mapped_range()
-        .map_err(|_| GpuError::BufferMapping)?;
-
-    // Remove padding from rows
-    let mut result = Vec::with_capacity((width * height * 4) as usize);
-    for row in 0..height {
-        let row_start = (row * padded_bytes_per_row) as usize;
-        let row_end = row_start + (width * 4) as usize;
-        result.extend_from_slice(&data[row_start..row_end]);
-    }
-
-    drop(data);
-    readback_buffer.unmap();
-
-    Ok(result)
+    Ok(())
 }
 
 /// Stub for when GPU feature is not enabled.
