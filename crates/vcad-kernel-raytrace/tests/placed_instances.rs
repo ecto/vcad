@@ -19,7 +19,7 @@ use std::sync::Arc;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel_primitives::{make_cube, make_sphere};
-use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene, RayTracePipeline};
+use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::{self, Camera, Environment, Object, PathTraceOptions, Pbr};
 use vcad_kernel_raytrace::Bvh;
 
@@ -57,7 +57,7 @@ fn gpu_render_with(
     at: [f32; 3],
     tweak: impl FnOnce(&mut GpuRenderState),
 ) -> Vec<u8> {
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let camera = GpuCamera::new(eye, at, [0.0, 0.0, 1.0], 45.0_f32.to_radians(), W, H);
     let mut state = photoreal_state();
     tweak(&mut state);

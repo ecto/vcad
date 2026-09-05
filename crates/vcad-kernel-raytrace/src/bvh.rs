@@ -297,7 +297,10 @@ impl BrepBvh for Bvh {
     }
 
     fn flatten_faces(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>) {
-        let BrepGeom::BRep { faces: face_ids, .. } = self.geometry() else {
+        let BrepGeom::BRep {
+            faces: face_ids, ..
+        } = self.geometry()
+        else {
             return (Vec::new(), Vec::new());
         };
 

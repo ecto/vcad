@@ -30,7 +30,7 @@ mod bench {
                 }
             })
             .collect();
-        let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+        let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
         let cam = GpuCamera::new(
             [26.0, 24.0, 20.0],
             [0.0, 0.0, 0.0],

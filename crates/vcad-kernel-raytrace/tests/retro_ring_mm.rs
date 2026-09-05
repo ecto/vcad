@@ -28,7 +28,6 @@ use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_cube;
 use vcad_kernel_raytrace::gpu::{
     GpuAreaLight, GpuCamera, GpuDenoiseParams, GpuRenderState, GpuScene, HistoryPipeline,
-    RayTracePipeline,
 };
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, GradientEnv, Object, PathTraceOptions, Pbr,
@@ -346,7 +345,7 @@ fn the_raw_trace_at_mm_scale_has_no_ring_at_retro_incidence() {
     let Some(ctx) = ctx_or_skip("the_raw_trace_at_mm_scale_has_no_ring_at_retro_incidence") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let sc = gpu_scene();
     let mut res = pipeline.resident_scene(ctx, &sc, N, N);
     let cam = GpuCamera::new(EYE, AT, [0.0, 0.0, 1.0], FOV.to_radians(), N, N);
@@ -370,7 +369,7 @@ fn the_raw_trace_at_mm_scale_has_no_ring_at_retro_incidence() {
 
 /// The whole device path a viewer drives: raw sample, history, a-trous,
 /// resolve — against the CPU's `render` + `denoise` + `to_srgb8`.
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 #[test]
 #[ignore = "requires GPU"]
 fn the_denoised_device_frame_at_mm_scale_has_no_ring_at_retro_incidence() {
@@ -379,7 +378,7 @@ fn the_denoised_device_frame_at_mm_scale_has_no_ring_at_retro_incidence() {
     else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let history = HistoryPipeline::new(ctx).expect("history pipeline");
     let sc = gpu_scene();
     let mut res = pipeline.resident_scene(ctx, &sc, N, N);

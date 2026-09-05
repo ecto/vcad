@@ -13,7 +13,7 @@
 //! (exact-oracle cell states) is produced by the router crate and handed in
 //! as byte slices, so the legality semantics stay in exactly one place.
 
-use crate::context::{GpuContext, GpuError};
+use crate::{GpuContext, GpuError};
 use std::collections::HashMap;
 
 /// Identity of a rule class a resident raster is built for. Millimeter
@@ -251,9 +251,10 @@ mod tests {
         let slice = staging.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| tx.send(r).unwrap());
-        gpu.device.poll(wgpu::Maintain::Wait);
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
         rx.recv().unwrap().unwrap();
-        let out: Vec<u32> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+        let view = slice.get_mapped_range().unwrap();
+        let out: Vec<u32> = bytemuck::cast_slice(&view).to_vec();
         out
     }
 

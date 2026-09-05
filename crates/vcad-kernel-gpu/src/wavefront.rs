@@ -15,7 +15,7 @@
 //! All three produce bit-identical fields. [`extract_path`] walks any of
 //! them downhill from a goal back to a source.
 
-use crate::context::{GpuContext, GpuError};
+use crate::{GpuContext, GpuError};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -330,7 +330,9 @@ pub async fn distance_field_async(
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
 
-    let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
+    let data = buffer_slice
+        .get_mapped_range()
+        .expect("the buffer was just mapped");
     let dist: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     dist_staging.unmap();
@@ -624,7 +626,9 @@ pub async fn distance_field_compacted_async(
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
 
-    let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
+    let data = buffer_slice
+        .get_mapped_range()
+        .expect("the buffer was just mapped");
     let dist: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     dist_staging.unmap();
@@ -642,7 +646,9 @@ fn read_u32(ctx: &GpuContext, staging: &wgpu::Buffer) -> Result<u32, GpuError> {
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
-    let data = slice.get_mapped_range().expect("the buffer was just mapped");
+    let data = slice
+        .get_mapped_range()
+        .expect("the buffer was just mapped");
     let value = bytemuck::cast_slice::<u8, u32>(&data)[0];
     drop(data);
     staging.unmap();

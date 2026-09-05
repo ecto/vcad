@@ -170,7 +170,7 @@ mod device {
             }
             Err(e) => panic!("GPU init failed unexpectedly: {e}"),
         };
-        let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+        let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
         let metres = mean_luma(ctx, &pipeline, 1.0);
         let millimetres = mean_luma(ctx, &pipeline, 1000.0);
         eprintln!(

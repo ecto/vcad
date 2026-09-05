@@ -849,7 +849,7 @@ pub extern "C" fn vcad_scene_raytrace_gpu(
         let Some(pipeline) = PIPELINE
             .get_or_init(|| {
                 let ctx = vcad_kernel_gpu::GpuContext::init_blocking().ok()?;
-                RayTracePipeline::new(ctx).ok()
+                vcad_kernel_raytrace::gpu::brep_pipeline(ctx).ok()
             })
             .as_ref()
         else {

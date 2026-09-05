@@ -1,23 +1,34 @@
-//! GPU-accelerated ray tracing using wgpu compute shaders.
+//! The BRep half of kosm-render's GPU seam.
 //!
-//! This module provides WebGPU-based ray tracing that renders BRep surfaces
-//! directly without tessellation.
+//! The renderer — the integrator, the BSDF, the environment, the accumulator,
+//! the history and the denoiser — lives in `kosm-render`. This module packs
+//! trimmed analytic faces into the five storage buffers it leaves for
+//! geometry, and supplies the WGSL that traces them. Everything else here is a
+//! re-export, so callers see one API.
 
 mod buffers;
-#[cfg(feature = "gpu")]
-mod history;
-mod pipeline;
-#[cfg(feature = "gpu")]
-mod resident;
+mod geometry;
 pub mod shaders;
 
 pub use buffers::{
-    depth_for_frame, GpuAreaLight, GpuBvhNode, GpuCamera, GpuFace, GpuMaterial, GpuRenderState,
-    GpuScene, GpuSceneError, GpuSurface, GpuVec2, DEFAULT_ENV_INTENSITY, DEFAULT_FIREFLY_CLAMP,
-    DEFAULT_MAX_DEPTH, DEFAULT_RR_START, FLAG_CAMERA_VISIBLE_LIGHTS, FLAG_RAW_SAMPLE,
+    GpuBvhNode, GpuFace, GpuScene, GpuSceneError, GpuSurface, GpuVec2, MAX_BVH_NODES, MAX_FACES,
+    MAX_INNER_LOOPS, MAX_SURFACES, MAX_TRIM_VERTS,
 };
-#[cfg(feature = "gpu")]
-pub use history::{GpuDenoiseParams, History, HistoryBuffers, HistoryPipeline, MAX_DENOISE_ITERS};
-pub use pipeline::RayTracePipeline;
-#[cfg(feature = "gpu")]
-pub use resident::ResidentScene;
+pub use geometry::BrepGeometry;
+
+// The renderer, re-exported. `RayTracePipeline::new` is the one signature that
+// changed: it now takes the geometry module the pipeline is built for, which
+// for this crate is always `BrepGeometry::module()`.
+pub use kosm_render::gpu::{
+    depth_for_frame, GeometryModule, GeometrySlab, GpuAreaLight, GpuCamera, GpuContext,
+    GpuDenoiseParams, GpuError, GpuGeometry, GpuMaterial, GpuRenderState, History, HistoryBuffers,
+    HistoryPipeline, RayTracePipeline, ResidentScene, SceneRef, DEFAULT_ENV_INTENSITY,
+    DEFAULT_FIREFLY_CLAMP, DEFAULT_MAX_DEPTH, DEFAULT_RR_START, FLAG_CAMERA_VISIBLE_LIGHTS,
+    FLAG_RAW_SAMPLE, MAX_DENOISE_ITERS,
+};
+
+/// A [`RayTracePipeline`] over the BRep geometry module — the only kind this
+/// crate builds. Sugar for `crate::gpu::brep_pipeline(ctx, &BrepGeometry::module())`.
+pub fn brep_pipeline(ctx: &GpuContext) -> Result<RayTracePipeline, GpuError> {
+    RayTracePipeline::new(ctx, &BrepGeometry::module())
+}

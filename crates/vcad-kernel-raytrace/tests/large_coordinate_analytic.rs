@@ -39,7 +39,7 @@
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel_primitives::{make_sphere, make_torus};
-use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene, RayTracePipeline};
+use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::GradientEnv;
 use vcad_kernel_raytrace::{Bvh, Ray};
 
@@ -166,7 +166,7 @@ fn case(
         .placed(&Transform::translation(offset, 0.0, 120.0));
     let bvh = Bvh::build_brep(solid);
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let cam = GpuCamera::new(eye, at, [0.0, 0.0, 1.0], fov, W, H);
     let mut res = pipeline.resident_scene(ctx, &packed, W, H);
     let film = pollster::block_on(pipeline.render_resident_linear(ctx, &mut res, &cam, state()))
@@ -223,7 +223,7 @@ fn case(
 /// twenty metres — and the sphere is the control: milder, because a quadratic
 /// has no depressed coefficients to cancel, but wrong by millimetres at
 /// twenty metres all the same.
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 #[test]
 #[ignore = "requires GPU"]
 fn an_analytic_surface_lands_where_the_cpu_puts_it_at_court_coordinates() {

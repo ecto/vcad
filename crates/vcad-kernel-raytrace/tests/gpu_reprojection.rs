@@ -267,7 +267,7 @@ struct Rig {
 
 impl Rig {
     fn new(ctx: &'static GpuContext) -> Self {
-        let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+        let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
         let history = HistoryPipeline::new(ctx).expect("history pipeline");
         let res = pipeline.resident_scene(ctx, &scene(), W, H);
         Self {
@@ -340,7 +340,7 @@ fn a_sub_pixel_camera_move_keeps_the_whole_frame() {
     // Where the rejections fall matters more than how many there are. A
     // reprojection is entitled to be unsure at a silhouette or a wall seam;
     // it is not entitled to be unsure in the middle of a wall.
-    let probe = RayTracePipeline::new(ctx).expect("pipeline");
+    let probe = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let mut pres = probe.resident_scene(ctx, &scene(), W, H);
     let film = pollster::block_on(probe.render_resident_linear(ctx, &mut pres, &c1, state(1)))
         .expect("render");
@@ -398,7 +398,7 @@ fn an_orbit_keeps_the_wall_and_restarts_the_disocclusion() {
 
     // The two depth buffers, taken through the linear exit on a scene of
     // their own so the history rig below is untouched.
-    let probe = RayTracePipeline::new(ctx).expect("pipeline");
+    let probe = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let mut pres = probe.resident_scene(ctx, &scene(), W, H);
     let d0 = pollster::block_on(probe.render_resident_linear(ctx, &mut pres, &c0, state(1)))
         .expect("render")
@@ -508,7 +508,7 @@ fn a_reprojected_mean_is_the_mean_the_moved_view_would_have_converged_to() {
 
     // The far wall, away from the ball's silhouette and the softbox: a large
     // flat population whose mean is well determined at 48 samples.
-    let probe = RayTracePipeline::new(ctx).expect("pipeline");
+    let probe = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let mut pres = probe.resident_scene(ctx, &scene(), W, H);
     let film = pollster::block_on(probe.render_resident_linear(ctx, &mut pres, &c1, state(1)))
         .expect("render");

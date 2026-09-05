@@ -108,7 +108,6 @@ impl BrepTlas for Tlas {
     }
 }
 
-
 /// Build a [`Transform`] from a **column-major** 4×4 matrix laid out as 16
 /// contiguous `f64`s — the wire format `render_scene` and the FFI use, and the
 /// one Three.js / glTF produce. The translation therefore lives at indices
@@ -172,7 +171,12 @@ mod tests {
     fn scaled_instance_reports_world_t() {
         let blas = cube_blas();
         // 2x scale: the cube spans 0..20 in world.
-        let inst = Instance::new(Arc::clone(&blas), placement(&Transform::scale(2.0, 2.0, 2.0)), 0).unwrap();
+        let inst = Instance::new(
+            Arc::clone(&blas),
+            placement(&Transform::scale(2.0, 2.0, 2.0)),
+            0,
+        )
+        .unwrap();
         let tlas = Tlas::build(vec![inst]);
 
         let ray = Ray::new(Point3::new(10.0, 10.0, -5.0), Vec3::new(0.0, 0.0, 1.0));

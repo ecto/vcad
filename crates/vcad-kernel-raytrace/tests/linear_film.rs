@@ -25,9 +25,7 @@ use std::time::Instant;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_sphere;
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuRenderState, GpuScene, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, Object, PathTraceOptions, Pbr,
 };
@@ -209,7 +207,7 @@ fn the_raw_gpu_sample_averages_to_the_cpu_render() {
     };
     const PASSES: u32 = 256;
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let scene = gpu_scene();
     let mut resident = pipeline.resident_scene(ctx, &scene, W, H);
     let cam = gpu_camera(W, H);
@@ -285,7 +283,7 @@ fn the_guide_buffers_match_the_cpu_films() {
     // a percent of its depth across one pixel, which is the pixel grid talking,
     // not the depth convention.
     const N: u32 = 192;
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let scene = gpu_scene();
     let mut resident = pipeline.resident_scene(ctx, &scene, N, N);
     let mut gpu_state = lights_only_state(1);
@@ -384,7 +382,7 @@ fn a_scissored_linear_pass_leaves_the_rest_of_the_film_alone() {
     let Some(ctx) = ctx_or_skip("a_scissored_linear_pass_leaves_the_rest_of_the_film_alone") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let scene = gpu_scene();
     let mut resident = pipeline.resident_scene(ctx, &scene, W, H);
     let cam = gpu_camera(W, H);
@@ -435,7 +433,7 @@ fn a_scissored_linear_pass_leaves_the_rest_of_the_film_alone() {
 
 /// What each exit costs per pass at 512x512. Not an assertion — a measurement,
 /// printed with `--nocapture`.
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 #[test]
 #[ignore = "requires GPU"]
 fn measure_the_three_exits() {
@@ -445,7 +443,7 @@ fn measure_the_three_exits() {
     const N: u32 = 512;
     const REPS: u32 = 20;
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let scene = gpu_scene();
     let cam = gpu_camera(N, N);
     let mut resident = pipeline.resident_scene(ctx, &scene, N, N);

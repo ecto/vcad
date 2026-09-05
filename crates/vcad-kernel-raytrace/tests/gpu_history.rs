@@ -203,7 +203,7 @@ fn the_device_history_is_the_cpu_running_mean() {
     };
     const PASSES: u32 = 24;
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let history = HistoryPipeline::new(ctx).expect("history pipeline");
     let sc = scene();
 
@@ -275,7 +275,7 @@ fn a_keep_mask_restarts_only_the_pixels_it_zeroes() {
     const PASSES: u32 = 8;
     let (rx, ry, rw, rh) = (12u32, 20u32, 25u32, 17u32);
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let history = HistoryPipeline::new(ctx).expect("history pipeline");
     let sc = scene();
     let mut res = pipeline.resident_scene(ctx, &sc, W, H);
@@ -372,7 +372,7 @@ fn the_device_denoise_matches_the_cpu_filter() {
     let Some(ctx) = ctx_or_skip("the_device_denoise_matches_the_cpu_filter") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let history = HistoryPipeline::new(ctx).expect("history pipeline");
     let sc = scene();
     let n = (W * H) as usize;
@@ -457,7 +457,7 @@ fn measure_the_history_pass() {
     const M: u32 = 288;
     const REPS: u32 = 30;
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let history = HistoryPipeline::new(ctx).expect("history pipeline");
     let sc = scene();
     let mut res = pipeline.resident_scene(ctx, &sc, N, M);
@@ -552,7 +552,7 @@ fn a_scissored_pass_accumulates_only_inside_its_rectangle() {
     let Some(ctx) = ctx_or_skip("a_scissored_pass_accumulates_only_inside_its_rectangle") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let history = HistoryPipeline::new(ctx).expect("history pipeline");
     let sc = scene();
     let mut res = pipeline.resident_scene(ctx, &sc, W, H);

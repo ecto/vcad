@@ -32,9 +32,7 @@ use std::sync::Arc;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_cube;
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuRenderState, GpuScene, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, Object, PathTraceOptions, Pbr,
 };
@@ -158,14 +156,14 @@ fn state(frame: u32) -> GpuRenderState {
 /// eight — are the loosest. A systematic error concentrated at normal
 /// incidence would move one band and leave the rest alone, which no amount of
 /// noise does.
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 #[test]
 #[ignore = "requires GPU"]
 fn the_gpu_has_no_ring_at_normal_incidence() {
     let Some(ctx) = ctx_or_skip("the_gpu_has_no_ring_at_normal_incidence") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let cam = GpuCamera::new(EYE, AT, [0.0, 1.0, 0.0], FOV.to_radians(), N, N);
     let n = (N * N) as usize;
 

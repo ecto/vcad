@@ -1,6 +1,6 @@
 //! GPU-accelerated creased normal computation.
 
-use crate::context::{GpuContext, GpuError};
+use crate::{GpuContext, GpuError};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -265,7 +265,9 @@ pub async fn compute_creased_normals(
     let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv().unwrap().map_err(|_| GpuError::BufferMapping)?;
 
-    let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
+    let data = buffer_slice
+        .get_mapped_range()
+        .expect("the buffer was just mapped");
     let normals: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     staging_buffer.unmap();

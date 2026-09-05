@@ -4,8 +4,8 @@ use std::time::Instant;
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_cube;
 use vcad_kernel_raytrace::pathtrace::render;
+use vcad_kernel_raytrace::BrepBvh;
 use vcad_kernel_raytrace::*;
-use vcad_kernel_raytrace::{BrepBvh};
 
 fn main() {
     let n: usize = std::env::args()

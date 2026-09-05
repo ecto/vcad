@@ -21,9 +21,7 @@ use std::sync::Arc;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_cube;
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuRenderState, GpuScene, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, GradientEnv, Object, PathTraceOptions, Pbr,
 };
@@ -143,7 +141,7 @@ fn state(frame: u32, send_gradient: bool) -> GpuRenderState {
 
 /// Mean linear radiance over the pixels both tiers found geometry at.
 fn means(ctx: &GpuContext, send_gradient: bool) -> (f64, f64) {
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let sc = gpu_scene();
     let mut res = pipeline.resident_scene(ctx, &sc, N, N);
     let cam = GpuCamera::new(EYE, AT, [0.0, 0.0, 1.0], FOV.to_radians(), N, N);
@@ -246,7 +244,7 @@ fn the_gpu_matches_the_cpu_under_a_transported_gradient() {
 /// The default state still describes the studio gradient the shader used to
 /// have compiled in, so a caller that never mentions the environment renders
 /// exactly what it rendered before.
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 #[test]
 fn the_default_render_state_carries_the_default_gradient() {
     let s = GpuRenderState::new(1);

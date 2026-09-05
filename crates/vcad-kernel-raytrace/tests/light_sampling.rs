@@ -22,9 +22,7 @@
 
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_primitives::make_sphere;
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuRenderState, GpuScene, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuRenderState, GpuScene};
 
 const W: u32 = 64;
 const H: u32 = 64;
@@ -80,7 +78,7 @@ fn test_camera() -> GpuCamera {
 /// The subject's silhouette, from the flat debug pass: no Monte Carlo noise in
 /// it, and it does not depend on the lighting we are about to measure.
 fn subject_mask(ctx: &GpuContext, scene: &GpuScene) -> Vec<bool> {
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let mut state = lights_only_state();
     state.debug_mode = 4;
     let (px, _) = pollster::block_on(pipeline.render_with_render_state(
@@ -104,7 +102,7 @@ fn subject_mask(ctx: &GpuContext, scene: &GpuScene) -> Vec<bool> {
 /// this is looking for would vanish into it.
 fn converged_mean(ctx: &GpuContext, scene: &GpuScene) -> f64 {
     let mask = subject_mask(ctx, scene);
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let camera = test_camera();
     let mut accum = None;
     let mut pixels = Vec::new();
@@ -290,7 +288,7 @@ fn a_scissored_pass_matches_the_full_frame_inside_and_leaves_the_rest() {
     let mut scene = GpuScene::from_brep(&make_sphere(6.0, 32)).expect("scene packs");
     scene.lights = vec![panel([4.0, -3.0, 22.0], 7.0, [2.4; 3])];
 
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let camera = test_camera();
     let render = |rect: Option<[u32; 4]>| -> Vec<u8> {
         let mut state = lights_only_state();

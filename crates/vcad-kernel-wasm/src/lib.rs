@@ -3786,7 +3786,7 @@ impl RayTracer {
         let ctx = vcad_kernel_gpu::GpuContext::get()
             .ok_or_else(|| JsError::new("GPU not initialized. Call initGpu() first."))?;
 
-        let pipeline = vcad_kernel_raytrace::gpu::RayTracePipeline::new(ctx)
+        let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx)
             .map_err(|e| JsError::new(&format!("Failed to create ray trace pipeline: {}", e)))?;
 
         web_sys::console::log_1(&"[WASM] RayTracer created".into());
@@ -4301,7 +4301,7 @@ impl RayTracer {
             .pipeline
             .render_with_render_state(
                 ctx,
-                &scene,
+                &*scene,
                 &gpu_camera,
                 width,
                 height,

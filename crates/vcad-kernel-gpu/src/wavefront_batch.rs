@@ -7,8 +7,8 @@
 //! path extraction and exact validation stay on the CPU per the charter's
 //! invariant (GPU proposes, oracle disposes).
 
-use crate::context::{GpuContext, GpuError};
 use crate::router_state::pack_u8_words;
+use crate::{GpuContext, GpuError};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -346,7 +346,12 @@ fn read_back_u32(ctx: &GpuContext, src: &wgpu::Buffer, words: usize) -> Result<V
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
-    let out: Vec<u32> = bytemuck::cast_slice(&slice.get_mapped_range().expect("the buffer was just mapped")).to_vec();
+    let out: Vec<u32> = bytemuck::cast_slice(
+        &slice
+            .get_mapped_range()
+            .expect("the buffer was just mapped"),
+    )
+    .to_vec();
     Ok(out)
 }
 

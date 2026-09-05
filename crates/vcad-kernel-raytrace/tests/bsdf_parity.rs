@@ -1163,7 +1163,9 @@ fn gpu_environment_sampling_finds_the_sun() {
 #[test]
 fn render_shader_fits_the_browser_storage_buffer_budget() {
     const BROWSER_LIMIT: usize = 10;
-    let src = shaders::raytrace_shader();
+    let src = kosm_render::gpu::shaders::trace_shader(
+        &vcad_kernel_raytrace::gpu::BrepGeometry::module().wgsl,
+    );
     let count = src
         .lines()
         .filter(|l| {

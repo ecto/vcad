@@ -13,7 +13,7 @@ use vcad_kernel_raytrace::{Bvh, Ray};
 
 /// Cylinder r40 h8, rotated 90° about X: axis ends up along -Y, wall spans
 /// y in [-8, 0].
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 fn rotated_disc() -> BRepSolid {
     let mut brep = make_cylinder(40.0, 8.0, 32);
     let t = Transform::rotation_x(90f64.to_radians());

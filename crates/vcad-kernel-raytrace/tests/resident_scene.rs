@@ -16,9 +16,7 @@
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::Transform;
 use vcad_kernel_primitives::{make_cube, make_sphere};
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuRenderState, GpuScene, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuRenderState, GpuScene};
 
 const W: u32 = 64;
 const H: u32 = 64;
@@ -76,7 +74,7 @@ fn a_resident_scene_renders_what_the_one_shot_path_renders() {
     let Some(ctx) = ctx_or_skip("a_resident_scene_renders_what_the_one_shot_path_renders") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let solid = make_sphere(6.0, 32);
     let scene = lit_scene(&solid);
     let cam = camera();
@@ -121,7 +119,7 @@ fn accumulation_persists_across_resident_passes() {
     let Some(ctx) = ctx_or_skip("accumulation_persists_across_resident_passes") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let solid = make_sphere(6.0, 32);
     let scene = lit_scene(&solid);
     let cam = camera();
@@ -155,7 +153,7 @@ fn a_resident_scene_can_grow() {
     let Some(ctx) = ctx_or_skip("a_resident_scene_can_grow") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let cam = camera();
 
     // Six planes, then a 32-segment sphere: strictly more of everything.
@@ -194,7 +192,7 @@ fn set_lights_reuploads_the_power_table() {
     let Some(ctx) = ctx_or_skip("set_lights_reuploads_the_power_table") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let solid = make_sphere(6.0, 32);
     let scene = lit_scene(&solid);
     let cam = camera();
@@ -233,7 +231,7 @@ fn rendering_into_a_caller_texture_matches_the_readback_path() {
     let Some(ctx) = ctx_or_skip("rendering_into_a_caller_texture_matches_the_readback_path") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let scene = lit_scene(&make_sphere(6.0, 32));
     let cam = camera();
     let mut resident = pipeline.resident_scene(ctx, &scene, W, H);

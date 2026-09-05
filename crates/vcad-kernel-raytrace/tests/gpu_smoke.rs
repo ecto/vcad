@@ -18,7 +18,7 @@
 
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_primitives::{make_cube, make_sphere};
-use vcad_kernel_raytrace::gpu::{GpuCamera, GpuScene, RayTracePipeline};
+use vcad_kernel_raytrace::gpu::{GpuCamera, GpuScene};
 
 /// Skip with a clear message when no adapter is available (e.g. macOS
 /// native where GpuContext only requests WebGPU + GL backends).
@@ -44,7 +44,7 @@ fn pipeline_construction_is_validation_clean() {
     };
 
     let scope = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let _pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let _pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let err = pollster::block_on(scope.pop());
 
     assert!(
@@ -66,7 +66,7 @@ fn render_cube_produces_non_zero_pixels() {
     let Some(ctx) = ctx_or_skip("render_cube_produces_non_zero_pixels") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     let cube = make_cube(10.0, 10.0, 10.0);
     let scene = GpuScene::from_brep(&cube).expect("scene upload");
@@ -110,7 +110,7 @@ fn render_sphere_produces_non_zero_pixels() {
     let Some(ctx) = ctx_or_skip("render_sphere_produces_non_zero_pixels") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     // Sphere centered at the origin with radius 5.
     let sphere = make_sphere(5.0, 32);

@@ -7,7 +7,7 @@
 //! exact CPU oracle — so the prefilter can only ever *reduce* exact work,
 //! never change an outcome.
 
-use crate::context::{GpuContext, GpuError};
+use crate::{GpuContext, GpuError};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -185,7 +185,12 @@ pub async fn clears_batch_async(pairs: &[NarrowPair], margin: f32) -> Result<Vec
     rx.recv()
         .map_err(|_| GpuError::BufferMapping)?
         .map_err(|_| GpuError::BufferMapping)?;
-    let words: Vec<u32> = bytemuck::cast_slice(&slice.get_mapped_range().expect("the buffer was just mapped")).to_vec();
+    let words: Vec<u32> = bytemuck::cast_slice(
+        &slice
+            .get_mapped_range()
+            .expect("the buffer was just mapped"),
+    )
+    .to_vec();
     Ok(words.into_iter().map(|w| w == 1).collect())
 }
 

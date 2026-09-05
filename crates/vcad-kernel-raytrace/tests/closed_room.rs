@@ -30,9 +30,7 @@ use std::sync::Arc;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_cube;
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuRenderState, GpuScene, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, GradientEnv, Object, PathTraceOptions, Pbr,
 };
@@ -172,7 +170,7 @@ fn images(
     rr_start: u32,
     visible_lights: bool,
 ) -> (Vec<f64>, Vec<f32>, Vec<f32>) {
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline");
     let sc = gpu_scene();
     let mut res = pipeline.resident_scene(ctx, &sc, N, N);
     let cam = GpuCamera::new(EYE, AT, [0.0, 0.0, 1.0], FOV.to_radians(), N, N);
@@ -358,7 +356,7 @@ fn camera_visible_panels_close_the_gap_in_a_sealed_room() {
 
 /// The flag is off unless asked for, so a caller that never mentions it
 /// renders exactly what it rendered before.
-use vcad_kernel_raytrace::{BrepBvh};
+use vcad_kernel_raytrace::BrepBvh;
 #[test]
 fn camera_visible_lights_is_off_by_default_and_independent_of_raw_sample() {
     let mut s = GpuRenderState::new(1);

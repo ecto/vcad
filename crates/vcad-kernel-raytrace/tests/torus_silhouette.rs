@@ -19,7 +19,7 @@ use std::sync::Arc;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel_primitives::make_torus;
-use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene, RayTracePipeline};
+use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene};
 use vcad_kernel_raytrace::pathtrace::{self, Camera, Environment, Object, PathTraceOptions, Pbr};
 use vcad_kernel_raytrace::Bvh;
 
@@ -40,7 +40,7 @@ fn ctx_or_skip(test: &str) -> Option<&'static GpuContext> {
 /// The GPU's silhouette, from the flat debug pass: every face painted flat,
 /// the sky left alone, and no Monte Carlo noise in it.
 fn gpu_mask(ctx: &GpuContext, scene: &GpuScene, eye: [f32; 3], at: [f32; 3]) -> Vec<bool> {
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let camera = GpuCamera::new(eye, at, [0.0, 0.0, 1.0], 45.0_f32.to_radians(), W, H);
     let mut state = GpuRenderState::new(1);
     state.enable_edges = 0;

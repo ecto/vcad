@@ -33,7 +33,7 @@ web-sys = { version = "0.3", features = ["console"] }
 
 [features]
 default = []
-gpu = ["dep:vcad-kernel-gpu", "dep:wgpu"]
+gpu = ["dep:vcad-kernel-gpu", "dep:wgpu", "kosm-render/gpu"]
 
 [dev-dependencies]
 vcad-kernel-fillet = { workspace = true }

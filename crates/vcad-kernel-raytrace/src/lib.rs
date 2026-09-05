@@ -1,10 +1,24 @@
 #![warn(missing_docs)]
 
-//! Direct BRep ray tracing for the vcad kernel.
+//! The BRep adapter for `kosm-render`.
 //!
-//! This crate provides ray tracing capabilities that work directly with BRep
-//! surfaces (planes, cylinders, spheres, cones, tori, etc.) without tessellation,
-//! achieving pixel-perfect silhouettes at any zoom level.
+//! The renderer itself — rays, acceleration structures, the path tracer, and
+//! (behind `--features gpu`) the whole wgpu compute pipeline: the BSDF, the
+//! environment, the accumulator, the device-side history and the denoiser —
+//! lives in `kosm-render`, generic over geometry. This crate supplies the BRep
+//! half of that seam and re-exports the rest, so a caller still sees one API.
+//!
+//! What is genuinely here is the B-rep knowledge: intersecting analytic
+//! surfaces (planes, cylinders, spheres, cones, tori, bilinear and B-spline
+//! patches) without tessellation, and deciding whether a hit's *(u, v)* falls
+//! inside a trimmed face's boundary loops. That is what buys pixel-perfect
+//! silhouettes at any zoom level, and it is not a lighting fact.
+//!
+//! On the CPU that means implementing `kosm_render::Geometry` over BRep faces
+//! ([`bvh::BrepGeom`]); on the GPU it means packing those faces into the five
+//! storage buffers kosm-render leaves for geometry and supplying `brep.wgsl`,
+//! which defines the five functions its integrator calls. See
+//! [`gpu::BrepGeometry`] and `kosm_render::gpu::geometry` for the contract.
 //!
 //! # Architecture
 //!

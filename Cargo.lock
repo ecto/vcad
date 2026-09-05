@@ -3026,8 +3026,14 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 name = "kosm-render"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
+ "js-sys",
+ "pollster",
  "rayon",
  "tang",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wgpu 30.0.1",
 ]
 
 [[package]]
@@ -7728,6 +7734,7 @@ name = "vcad-kernel-gpu"
 version = "0.9.4"
 dependencies = [
  "bytemuck",
+ "kosm-render",
  "pollster",
  "tang-expr",
  "thiserror 2.0.18",

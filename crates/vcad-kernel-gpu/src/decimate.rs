@@ -1,6 +1,6 @@
 //! GPU-accelerated mesh decimation using quadric error metrics.
 
-use crate::context::{GpuContext, GpuError};
+use crate::{GpuContext, GpuError};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
@@ -358,7 +358,9 @@ async fn read_buffer<T: Pod>(
     let _ = device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv().unwrap().map_err(|_| GpuError::BufferMapping)?;
 
-    let data = slice.get_mapped_range().expect("the buffer was just mapped");
+    let data = slice
+        .get_mapped_range()
+        .expect("the buffer was just mapped");
     let result: Vec<T> = bytemuck::cast_slice(&data).to_vec();
     drop(data);
     buffer.unmap();
