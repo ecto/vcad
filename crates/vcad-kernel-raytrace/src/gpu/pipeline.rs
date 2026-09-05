@@ -25,6 +25,21 @@ pub struct RayTracePipeline {
 
 #[cfg(feature = "gpu")]
 impl RayTracePipeline {
+    /// The compute pipeline the main pass runs.
+    pub(super) fn compute_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.pipeline
+    }
+
+    /// The edge-refinement pass's pipeline.
+    pub(super) fn refine_compute_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.refine_pipeline
+    }
+
+    /// The bind group layout both passes share.
+    pub(super) fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.bind_group_layout
+    }
+
     /// Create a new ray trace pipeline.
     pub fn new(ctx: &GpuContext) -> Result<Self, GpuError> {
         let shader_module = ctx
@@ -805,114 +820,9 @@ impl RayTracePipeline {
 
         ctx.queue.submit(Some(encoder.finish()));
 
-        // Map and read buffer
-        let buffer_slice = readback_buffer.slice(..);
-
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&"[RT] Calling map_async...".into());
-
-        // On WASM, use a Promise that resolves when the callback fires
-        // This properly yields to the browser event loop
-        #[cfg(target_arch = "wasm32")]
-        let map_result = {
-            use wasm_bindgen::prelude::*;
-            use wasm_bindgen_futures::JsFuture;
-
-            // Create a Promise that resolves when map_async callback fires
-            let (promise, resolve, reject) = {
-                let resolve_ref =
-                    std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
-                let reject_ref =
-                    std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
-                let resolve_clone = resolve_ref.clone();
-                let reject_clone = reject_ref.clone();
-
-                let promise = js_sys::Promise::new(&mut |resolve, reject| {
-                    *resolve_clone.borrow_mut() = Some(resolve);
-                    *reject_clone.borrow_mut() = Some(reject);
-                });
-
-                let resolve = resolve_ref.borrow().clone().unwrap();
-                let reject = reject_ref.borrow().clone().unwrap();
-                (promise, resolve, reject)
-            };
-
-            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                web_sys::console::log_1(
-                    &format!("[RT] map_async callback: {:?}", result.is_ok()).into(),
-                );
-                match result {
-                    Ok(()) => {
-                        let _ = resolve.call0(&JsValue::undefined());
-                    }
-                    Err(_) => {
-                        let _ = reject.call1(
-                            &JsValue::undefined(),
-                            &JsValue::from_str("Buffer mapping failed"),
-                        );
-                    }
-                }
-            });
-
-            // Single poll to submit the mapping request
-            let _ = ctx.device.poll(wgpu::PollType::Poll);
-
-            web_sys::console::log_1(&"[RT] Awaiting buffer mapping...".into());
-
-            // Await the promise - this yields to browser event loop properly
-            match JsFuture::from(promise).await {
-                Ok(_) => {
-                    web_sys::console::log_1(&"[RT] Buffer mapping complete".into());
-                    Ok(())
-                }
-                Err(_) => Err(GpuError::BufferMapping),
-            }
-        };
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let map_result = {
-            use std::sync::atomic::{AtomicBool, Ordering};
-            use std::sync::Arc;
-
-            let success = Arc::new(AtomicBool::new(false));
-            let success_clone = success.clone();
-
-            buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                if result.is_ok() {
-                    success_clone.store(true, Ordering::SeqCst);
-                }
-            });
-
-            let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
-
-            if success.load(Ordering::SeqCst) {
-                Ok(())
-            } else {
-                Err(GpuError::BufferMapping)
-            }
-        };
-
-        if map_result.is_err() {
-            return Err(GpuError::BufferMapping);
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::log_1(&"[RT] Reading mapped data...".into());
-
-        let data = buffer_slice
-            .get_mapped_range()
-            .map_err(|_| GpuError::BufferMapping)?;
-
-        // Remove padding from rows
-        let mut result = Vec::with_capacity(output_size as usize);
-        for row in 0..height {
-            let row_start = (row * padded_bytes_per_row) as usize;
-            let row_end = row_start + (width * 4) as usize;
-            result.extend_from_slice(&data[row_start..row_end]);
-        }
-
-        drop(data);
-        readback_buffer.unmap();
+        let result =
+            read_back_rgba(ctx, &readback_buffer, width, height, padded_bytes_per_row).await?;
+        let _ = output_size;
 
         Ok((result, accum))
     }
@@ -933,6 +843,128 @@ impl RayTracePipeline {
             .await?;
         Ok(pixels)
     }
+}
+
+/// Map a readback buffer and strip wgpu's 256-byte row padding.
+///
+/// Both the one-shot path and the resident one end here, so the wasm/native
+/// split over `map_async` lives in exactly one place.
+#[cfg(feature = "gpu")]
+pub(super) async fn read_back_rgba(
+    ctx: &GpuContext,
+    readback_buffer: &wgpu::Buffer,
+    width: u32,
+    height: u32,
+    padded_bytes_per_row: u32,
+) -> Result<Vec<u8>, GpuError> {
+    // Map and read buffer
+    let buffer_slice = readback_buffer.slice(..);
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[RT] Calling map_async...".into());
+
+    // On WASM, use a Promise that resolves when the callback fires
+    // This properly yields to the browser event loop
+    #[cfg(target_arch = "wasm32")]
+    let map_result = {
+        use wasm_bindgen::prelude::*;
+        use wasm_bindgen_futures::JsFuture;
+
+        // Create a Promise that resolves when map_async callback fires
+        let (promise, resolve, reject) = {
+            let resolve_ref = std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
+            let reject_ref = std::rc::Rc::new(std::cell::RefCell::new(None::<js_sys::Function>));
+            let resolve_clone = resolve_ref.clone();
+            let reject_clone = reject_ref.clone();
+
+            let promise = js_sys::Promise::new(&mut |resolve, reject| {
+                *resolve_clone.borrow_mut() = Some(resolve);
+                *reject_clone.borrow_mut() = Some(reject);
+            });
+
+            let resolve = resolve_ref.borrow().clone().unwrap();
+            let reject = reject_ref.borrow().clone().unwrap();
+            (promise, resolve, reject)
+        };
+
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            web_sys::console::log_1(
+                &format!("[RT] map_async callback: {:?}", result.is_ok()).into(),
+            );
+            match result {
+                Ok(()) => {
+                    let _ = resolve.call0(&JsValue::undefined());
+                }
+                Err(_) => {
+                    let _ = reject.call1(
+                        &JsValue::undefined(),
+                        &JsValue::from_str("Buffer mapping failed"),
+                    );
+                }
+            }
+        });
+
+        // Single poll to submit the mapping request
+        let _ = ctx.device.poll(wgpu::PollType::Poll);
+
+        web_sys::console::log_1(&"[RT] Awaiting buffer mapping...".into());
+
+        // Await the promise - this yields to browser event loop properly
+        match JsFuture::from(promise).await {
+            Ok(_) => {
+                web_sys::console::log_1(&"[RT] Buffer mapping complete".into());
+                Ok(())
+            }
+            Err(_) => Err(GpuError::BufferMapping),
+        }
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let map_result = {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let success = Arc::new(AtomicBool::new(false));
+        let success_clone = success.clone();
+
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            if result.is_ok() {
+                success_clone.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
+
+        if success.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err(GpuError::BufferMapping)
+        }
+    };
+
+    if map_result.is_err() {
+        return Err(GpuError::BufferMapping);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(&"[RT] Reading mapped data...".into());
+
+    let data = buffer_slice
+        .get_mapped_range()
+        .map_err(|_| GpuError::BufferMapping)?;
+
+    // Remove padding from rows
+    let mut result = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height {
+        let row_start = (row * padded_bytes_per_row) as usize;
+        let row_end = row_start + (width * 4) as usize;
+        result.extend_from_slice(&data[row_start..row_end]);
+    }
+
+    drop(data);
+    readback_buffer.unmap();
+
+    Ok(result)
 }
 
 /// Stub for when GPU feature is not enabled.

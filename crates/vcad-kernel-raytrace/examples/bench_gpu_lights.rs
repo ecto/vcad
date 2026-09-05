@@ -65,7 +65,44 @@ mod bench {
             }
             best = best.min(t.elapsed().as_secs_f64());
         }
-        println!("{n} lights: 64 frames at {w}x{h} in {best:.3}s");
+        println!("{n} lights: 64 one-shot frames at {w}x{h} in {best:.3}s");
+
+        // The same work through the resident path: nothing reallocated between
+        // frames.
+        let mut res = pipeline.resident_scene(ctx, &scene, w, h);
+        let mut best_r = f64::INFINITY;
+        for _ in 0..3 {
+            res.reset_accumulation(ctx);
+            let t = Instant::now();
+            for frame in 1..=64u32 {
+                let _ =
+                    pollster::block_on(pipeline.render_resident(ctx, &mut res, &cam, mk(frame)))
+                        .expect("render");
+            }
+            best_r = best_r.min(t.elapsed().as_secs_f64());
+        }
+        println!("{n} lights: 64 resident frames at {w}x{h} in {best_r:.3}s");
+
+        // And with the instances re-placed every frame, which is what an
+        // animation actually does.
+        let mut best_p = f64::INFINITY;
+        for _ in 0..3 {
+            res.reset_accumulation(ctx);
+            let t = Instant::now();
+            for frame in 1..=64u32 {
+                let placed = scene.placed(&vcad_kernel_math::Transform::translation(
+                    frame as f64 * 0.01,
+                    0.0,
+                    0.0,
+                ));
+                res.update_scene(ctx, &placed);
+                let _ =
+                    pollster::block_on(pipeline.render_resident(ctx, &mut res, &cam, mk(frame)))
+                        .expect("render");
+            }
+            best_p = best_p.min(t.elapsed().as_secs_f64());
+        }
+        println!("{n} lights: 64 resident frames + re-place at {w}x{h} in {best_p:.3}s");
     }
 }
 

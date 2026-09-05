@@ -5,6 +5,8 @@
 
 mod buffers;
 mod pipeline;
+#[cfg(feature = "gpu")]
+mod resident;
 pub mod shaders;
 
 pub use buffers::{
@@ -13,3 +15,5 @@ pub use buffers::{
     DEFAULT_MAX_DEPTH, DEFAULT_RR_START,
 };
 pub use pipeline::RayTracePipeline;
+#[cfg(feature = "gpu")]
+pub use resident::ResidentScene;
