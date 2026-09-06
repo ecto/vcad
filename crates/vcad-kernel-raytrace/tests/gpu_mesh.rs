@@ -34,7 +34,6 @@ use vcad_kernel_raytrace::pathtrace::{
 use vcad_kernel_raytrace::{BrepBvh, Bvh};
 use vcad_kernel_tessellate::TriangleMesh;
 
-
 /// Skip with a clear message when no adapter is available.
 fn ctx_or_skip(test_name: &str) -> Option<&'static GpuContext> {
     match pollster::block_on(GpuContext::init()) {

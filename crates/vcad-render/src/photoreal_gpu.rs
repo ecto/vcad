@@ -64,9 +64,7 @@
 use vcad_kernel::vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel::vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_gpu::{GpuContext, GpuError};
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuMaterial, GpuScene, OfflineOptions,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuMaterial, GpuScene, OfflineOptions};
 use vcad_kernel_raytrace::pathtrace::{Environment, Ground, Object, Scene};
 use vcad_kernel_raytrace::{BrepBvh, Bvh};
 
@@ -322,9 +320,8 @@ fn rasterize(
     check_supported(opts, pr)?;
 
     let ctx = context()?;
-    let pipeline =
-        vcad_kernel_raytrace::gpu::brep_pipeline(ctx)
-            .map_err(|e| format!("--gpu: pipeline creation failed: {e}"))?;
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx)
+        .map_err(|e| format!("--gpu: pipeline creation failed: {e}"))?;
 
     let solids = evaluate_vcad(raw_vcad)?;
     if solids.is_empty() {

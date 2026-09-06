@@ -135,9 +135,9 @@ fn render_sphere_produces_non_zero_pixels() {
     let mut accum = None;
     let mut pixels = Vec::new();
     for frame in 1..=8 {
-        let (px, buf) = pollster::block_on(pipeline.render_progressive(
-            ctx, &scene, &camera, w, h, frame, accum,
-        ))
+        let (px, buf) = pollster::block_on(
+            pipeline.render_progressive(ctx, &scene, &camera, w, h, frame, accum),
+        )
         .expect("render");
         pixels = px;
         accum = Some(buf);
