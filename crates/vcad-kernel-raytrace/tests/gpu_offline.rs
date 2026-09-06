@@ -21,11 +21,11 @@ use std::sync::Arc;
 use vcad_kernel_gpu::{GpuContext, GpuError};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::make_sphere;
-use vcad_kernel_raytrace::gpu::{GpuCamera, GpuScene, OfflineOptions, RayTracePipeline};
+use vcad_kernel_raytrace::gpu::{GpuCamera, GpuScene, OfflineOptions};
 use vcad_kernel_raytrace::pathtrace::{
     self, Camera, Environment, Object, PathTraceOptions, Pbr, Scene,
 };
-use vcad_kernel_raytrace::Bvh;
+use vcad_kernel_raytrace::{BrepBvh, Bvh};
 
 /// Skip with a clear message when no adapter is available.
 fn ctx_or_skip(test_name: &str) -> Option<&'static GpuContext> {
@@ -63,6 +63,10 @@ fn gpu_default_material() -> Pbr {
         clearcoat_roughness: 0.1,
         ior: 1.5,
         emissive: [0.0; 3],
+        // The rest of kosm-render's principled parameters keep their defaults,
+        // which are the values that reproduce the model this test was written
+        // against.
+        ..Pbr::default()
     }
 }
 
@@ -91,6 +95,8 @@ fn cpu_scene(bvh: Arc<Bvh>) -> Scene {
         lights: pathtrace::studio_rig(center, radius),
         env: Environment::default(),
         ground: None,
+        sun: None,
+        splats: None,
     }
 }
 
@@ -134,7 +140,7 @@ fn offline_hdr_matches_cpu_mean_luminance() {
     let Some(ctx) = ctx_or_skip("offline_hdr_matches_cpu_mean_luminance") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     let sphere = make_sphere(R, 32);
     let scene = GpuScene::from_brep(&sphere).expect("scene builds");
@@ -194,7 +200,7 @@ fn offline_hdr_matches_cpu_mean_luminance() {
     );
 
     // CPU reference over the same scene, camera and sample count.
-    let bvh = Arc::new(Bvh::build(&sphere));
+    let bvh = Arc::new(Bvh::build_brep(&sphere));
     let cpu = pathtrace::render(
         &cpu_scene(bvh),
         &cpu_camera(),
@@ -202,7 +208,6 @@ fn offline_hdr_matches_cpu_mean_luminance() {
         h,
         &PathTraceOptions {
             spp,
-            adaptive: false,
             denoise: false,
             show_background: true,
             seed: 7,
@@ -252,7 +257,7 @@ fn offline_render_is_deterministic_for_a_fixed_seed() {
     let Some(ctx) = ctx_or_skip("offline_render_is_deterministic_for_a_fixed_seed") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let sphere = make_sphere(R, 32);
     let scene = GpuScene::from_brep(&sphere).expect("scene builds");
 
@@ -289,7 +294,7 @@ fn more_samples_reduce_noise() {
     let Some(ctx) = ctx_or_skip("more_samples_reduce_noise") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let sphere = make_sphere(R, 32);
     let scene = GpuScene::from_brep(&sphere).expect("scene builds");
 
@@ -335,7 +340,7 @@ fn bench_offline_vs_viewport_loop() {
     let Some(ctx) = ctx_or_skip("bench_offline_vs_viewport_loop") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
     let sphere = make_sphere(R, 32);
     let scene = GpuScene::from_brep(&sphere).expect("scene builds");
 

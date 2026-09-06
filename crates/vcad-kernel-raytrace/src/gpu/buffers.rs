@@ -392,6 +392,11 @@ pub enum GpuSceneError {
     TooManyBvhNodes(usize),
     /// Too many trim vertices.
     TooManyTrimVerts(usize),
+    /// The packed hierarchy is deeper than a WGSL traversal stack can hold.
+    ///
+    /// Carries kosm-render's own message, since the limit and the stack are
+    /// both the renderer's.
+    TreeTooDeep(String),
     /// A surface kind the WGSL tracer has no intersection case for.
     ///
     /// Carries the surface's index in `brep.geometry.surfaces` and the packed
@@ -435,6 +440,7 @@ impl std::fmt::Display for GpuSceneError {
             Self::TooManyTrimVerts(n) => {
                 write!(f, "too many trim vertices: {} (max {})", n, MAX_TRIM_VERTS)
             }
+            Self::TreeTooDeep(msg) => write!(f, "{msg}"),
             Self::UnsupportedSurface {
                 index,
                 surface_type,
@@ -488,6 +494,20 @@ impl std::error::Error for GpuSceneError {}
 /// An empty tree still yields one (zeroed) node: WebGPU rejects a zero-sized
 /// storage buffer, and a zero AABB is missed by every ray, so the empty scene
 /// renders as pure background rather than failing to bind.
+/// Refuse a hierarchy the shader's fixed traversal stack cannot walk.
+///
+/// The stack depth is the renderer's, so the check is kosm-render's too — this
+/// only re-spells vcad's `Aabb3`-flavoured nodes in the renderer's `Aabb` so
+/// it can measure them, and re-wraps the message as a `GpuSceneError`.
+fn check_tree_depth(flat_nodes: &[crate::bvh::FlatBvhNode]) -> Result<(), GpuSceneError> {
+    let nodes: Vec<kosm_render::bvh::FlatBvhNode> = flat_nodes
+        .iter()
+        .map(|(a, leaf, x, y)| (kosm_render::Aabb::new(a.min, a.max), *leaf, *x, *y))
+        .collect();
+    kosm_render::gpu::validate_tree_depth(&nodes)
+        .map_err(|e| GpuSceneError::TreeTooDeep(e.to_string()))
+}
+
 fn gpu_bvh_nodes(flat_nodes: &[crate::bvh::FlatBvhNode]) -> Vec<GpuBvhNode> {
     if flat_nodes.is_empty() {
         return vec![GpuBvhNode::zeroed()];
@@ -797,6 +817,7 @@ impl GpuScene {
 
         // Convert flattened BVH to GPU format
         // Faces are now in BVH order, so leaf indices map directly
+        check_tree_depth(&flat_nodes)?;
         let bvh_nodes = gpu_bvh_nodes(&flat_nodes);
 
         if bvh_nodes.len() > MAX_BVH_NODES {
@@ -942,6 +963,7 @@ impl GpuScene {
             });
         }
 
+        check_tree_depth(&flat_nodes)?;
         let mut bvh_nodes = gpu_bvh_nodes(&flat_nodes);
         if let Some(t) = transform {
             for n in bvh_nodes.iter_mut() {
