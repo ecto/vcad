@@ -3025,7 +3025,6 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "kosm-render"
 version = "0.1.0"
-source = "git+https://github.com/ecto/kosm?rev=5c42c28744a17ff75a2e5d5cfc437b9a3ec3da1e#5c42c28744a17ff75a2e5d5cfc437b9a3ec3da1e"
 dependencies = [
  "bytemuck",
  "js-sys",
