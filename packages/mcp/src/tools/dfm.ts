@@ -57,6 +57,9 @@ const pcbProcessEnum = [
 
 const processEnum = [...mechanicalProcessEnum, ...pcbProcessEnum] as const;
 
+/** Named rulesets that layer on a mechanical process. */
+const rulesetEnum = ["hobby-3axis-mill"] as const;
+
 /** Get the PCB from a document — PcbBoard nodes first, then legacy `doc.pcb`. */
 function getDocPcb(doc: Document): Pcb | null {
   const nodeIds = getPcbNodeIds(doc);
@@ -112,6 +115,17 @@ export const dfmCheckSchema = {
         "(min annular ring, drill, trace/space by copper weight, copper-to-edge, soldermask dam/sliver, " +
         "silk-over-pad, acid traps, via-in-pad). Each pack is bundled at lib/dfm/<process>.toml.",
     },
+    ruleset: {
+      type: "string" as const,
+      enum: [...rulesetEnum],
+      description:
+        "Optional named ruleset layered on the process, selected by name. " +
+        "hobby-3axis-mill (process cnc_3axis): a bench mill with a 2 mm minimum end mill, " +
+        "3/4/5/6 reamers, metric tap drills, plate stock and a 300x200x80 envelope — reports " +
+        "pass/fail per rule (R1 internal corner radius, R2 ±Z reachability, R3 hole diameters, " +
+        "R4 plate stock, R5 min wall, R6 envelope, R7 threads/gear teeth) with located examples " +
+        "and affordances. Bundled at lib/dfm/<ruleset>.toml; ignored when rule_pack_toml is given.",
+    },
     rule_pack_toml: {
       type: "string" as const,
       description:
@@ -131,6 +145,7 @@ export async function dfmCheck(
   const documentId = resolvedId ?? "";
   const process = String(args.process ?? "fdm");
   const rulePack = typeof args.rule_pack_toml === "string" ? args.rule_pack_toml : undefined;
+  const ruleset = typeof args.ruleset === "string" && args.ruleset ? args.ruleset : undefined;
 
   // PCB branch: a board document checked against a fab-house capability profile.
   const profile = pcbProfileFor(process);
@@ -179,7 +194,7 @@ export async function dfmCheck(
   }
 
   // Mechanical branch: a solid part checked against a process rule pack.
-  const report = await runDfm(doc, { process: process as DfmProcess, rulePack });
+  const report = await runDfm(doc, { process: process as DfmProcess, rulePack, ruleset });
   // Warm-cache the report only for a real session; the inline path has no id
   // to key on and hands the report straight back for inline follow-ups.
   if (documentId) lastReports.set(documentId, report);
@@ -191,6 +206,7 @@ export async function dfmCheck(
           {
             ...report,
             issue_count: report.issues.length,
+            failed_rules: (report.rule_results ?? []).filter((r) => !r.passed).map((r) => r.rule),
             score: dfmScore(
               report.issues.filter((i) => i.severity === "error").length,
               report.issues.filter((i) => i.severity === "warning").length,

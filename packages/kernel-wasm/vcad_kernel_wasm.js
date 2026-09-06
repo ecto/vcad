@@ -6467,10 +6467,11 @@ export function get_anthropic_tools_json() {
 }
 
 /**
- * Return the bundled default rule pack (TOML) for a process name.
+ * Return the bundled default rule pack (TOML) for a process or ruleset name.
  *
  * Process names: `"cnc_3axis"`, `"fdm"`, `"sla"`, `"injection"`,
- * `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`.
+ * `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`. Named
+ * rulesets: `"hobby-3axis-mill"`.
  * @param {string} process
  * @returns {string}
  */
@@ -10163,7 +10164,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue__wasm_bindgen_22639e9cee8fd77e___JsValue_____(a, state0.b, arg0, arg1);
+                        return wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue__wasm_bindgen_bf9fb98b009f27c1___JsValue_____(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -10748,13 +10749,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3176, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3177, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_22639e9cee8fd77e___closure__destroy___dyn_core_f0fd674eaa06beef___ops__function__FnMut__wgpu_56e928f2b7a75f7a___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wgpu_56e928f2b7a75f7a___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3168, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3169, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_bf9fb98b009f27c1___closure__destroy___dyn_core_ed718c3d60ebd546___ops__function__FnMut__wgpu_7ff40e85e9cae613___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wgpu_7ff40e85e9cae613___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3950, function: Function { arguments: [Externref], shim_idx: 3951, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_22639e9cee8fd77e___closure__destroy___dyn_core_f0fd674eaa06beef___ops__function__FnMut__wasm_bindgen_22639e9cee8fd77e___JsValue____Output_______, wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue_____);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3943, function: Function { arguments: [Externref], shim_idx: 3944, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_bf9fb98b009f27c1___closure__destroy___dyn_core_ed718c3d60ebd546___ops__function__FnMut__wasm_bindgen_bf9fb98b009f27c1___JsValue____Output_______, wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue_____);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -10842,16 +10843,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wgpu_56e928f2b7a75f7a___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wgpu_56e928f2b7a75f7a___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____(arg0, arg1, arg2);
+function wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wgpu_7ff40e85e9cae613___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wgpu_7ff40e85e9cae613___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue_____(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue_____(arg0, arg1, arg2);
+function wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue_____(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue_____(arg0, arg1, arg2);
 }
 
-function wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue__wasm_bindgen_22639e9cee8fd77e___JsValue_____(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen_22639e9cee8fd77e___convert__closures_____invoke___wasm_bindgen_22639e9cee8fd77e___JsValue__wasm_bindgen_22639e9cee8fd77e___JsValue_____(arg0, arg1, arg2, arg3);
+function wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue__wasm_bindgen_bf9fb98b009f27c1___JsValue_____(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue__wasm_bindgen_bf9fb98b009f27c1___JsValue_____(arg0, arg1, arg2, arg3);
 }
 
 

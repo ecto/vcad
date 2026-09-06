@@ -1,0 +1,11 @@
+{
+  "id": "2026-09-06-dfm-hobby-3axis-mill",
+  "version": "0.9.4",
+  "date": "2026-09-06",
+  "category": "feat",
+  "title": "dfm: hobby 3-axis mill ruleset, pass/fail per rule with affordances",
+  "summary": "A named DFM ruleset for a small bench mill — seven rules (corner radius, ±Z reachability, reamer/tap bores, plate stock, min wall, envelope, threads/gear teeth) judged on the exported mesh, each reported pass/fail with located examples and a suggested fix.",
+  "details": "lib/dfm/hobby-3axis-mill.toml (ruleset = hobby_3axis_mill, process cnc_3axis) parameterises a 2 mm minimum end mill, a 3/4/5/6 reamer set, metric tap drills, plate stock thicknesses, ±0.05 tolerance and a 300x200x80 envelope. Unlike the per-process packs it runs in the mesh domain: BReps are tessellated, STLs are taken as-is, and loose-union exports (every additive body its own shell) are unioned first — buried faces dropped, section loops unioned in 2D with T-junction splitting, slits under 0.05 mm bridged, zero-width profile spikes collapsed. R1 fits radii to concave arcs in horizontal sections; R2 casts ±Z rays through an XY grid and separates 'flip the part' from true undercuts; R3 fits circles to internal loops and names the nearest reamer / tap drill ('bore Ø3.80 → ream Ø4 H7'); R7 finds helices by the section centroid orbiting the axis and gear teeth by the dominant angular harmonic. `vcad dfm <stl> --ruleset hobby-3axis-mill`, dfm_check's new `ruleset` argument, and get_default_dfm_pack all select it by name; DfmReport gains rule_results.",
+  "features": ["dfm", "cli", "mcp"],
+  "mcpTools": ["dfm_check"]
+}

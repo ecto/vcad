@@ -7633,6 +7633,7 @@ dependencies = [
  "vcad-kernel-math",
  "vcad-kernel-primitives",
  "vcad-kernel-raytrace",
+ "vcad-kernel-tessellate",
  "vcad-kernel-topo",
 ]
 

@@ -33,7 +33,7 @@ pub mod issue;
 pub mod rules;
 
 pub use cost::estimate_for_process;
-pub use issue::{DfmFix, DfmIssue, DfmReport, DfmSeverity};
+pub use issue::{DfmFix, DfmIssue, DfmReport, DfmSeverity, RuleResult};
 pub use rules::{DefaultPacks, RulePack};
 pub use vcad_kernel_cost::Process;
 
@@ -72,6 +72,18 @@ pub fn run_dfm(
     pack: &RulePack,
 ) -> DfmReport {
     let mut issues = Vec::new();
+    let mut rule_results = Vec::new();
+    if pack.ruleset == rules::hobby_mill::RULESET {
+        rules::hobby_mill::run(brep, pack, &mut issues, &mut rule_results);
+        return DfmReport {
+            process,
+            rule_pack_version: pack.version.clone(),
+            rule_pack_name: pack.name.clone(),
+            issues,
+            cost_estimate: None,
+            rule_results,
+        };
+    }
     match process {
         Process::Cnc3Axis => rules::cnc::run(brep, provenance, pack, &mut issues),
         Process::Fdm | Process::Sla => {
@@ -89,6 +101,29 @@ pub fn run_dfm(
         rule_pack_name: pack.name.clone(),
         issues,
         cost_estimate: None,
+        rule_results,
+    }
+}
+
+/// Run a mesh-domain ruleset against a triangle soup (mm). Only rulesets
+/// that analyse meshes (currently `hobby_3axis_mill`) produce findings;
+/// any other pack returns an empty report with a note in `rule_pack_name`.
+pub fn run_dfm_mesh(tris: &[[[f64; 3]; 3]], pack: &RulePack) -> DfmReport {
+    let mut issues = Vec::new();
+    let mut rule_results = Vec::new();
+    let name = if pack.ruleset == rules::hobby_mill::RULESET {
+        rules::hobby_mill::run_mesh(tris, pack, &mut issues, &mut rule_results);
+        pack.name.clone()
+    } else {
+        format!("{} (mesh-only solid; DFM skipped)", pack.name)
+    };
+    DfmReport {
+        process: pack.process,
+        rule_pack_version: pack.version.clone(),
+        rule_pack_name: name,
+        issues,
+        cost_estimate: None,
+        rule_results,
     }
 }
 
@@ -116,6 +151,7 @@ pub fn run_dfm_for_document(
         rule_pack_name: pack.name.clone(),
         issues: all,
         cost_estimate: None,
+        rule_results: Vec::new(),
     }
 }
 
