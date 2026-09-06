@@ -210,13 +210,14 @@ thiserror = "2"
 # what cargo publish embeds into the registry manifest. Bump these when the
 # sibling repo cuts a release; sync-version.mjs does NOT touch them.
 # kosm-render is the renderer: rays, hierarchies, the path tracer and the wgpu
-# tier, generic over geometry. The path is this machine's Kosm checkout; the
-# `version` is what a published kosm-render will satisfy, so when it lands on
-# crates.io only this line changes.
-kosm-render = { path = "/Users/cam/Developer/kosm/.claude/worktrees/basketball-sim-kosm-67b384/crates/kosm-render", version = "0.1.0" }
-tang = { path = "/Users/cam/Developer/tang/crates/tang", version = "0.2" }
-tang-la = { path = "/Users/cam/Developer/tang/crates/tang-la", version = "0.1" }
-tang-expr = { path = "/Users/cam/Developer/tang/crates/tang-expr", version = "0.1" }
+# tier, generic over geometry. Pinned to a kosm revision (not a branch, so
+# the lockfile does not churn on every kosm merge); the `version` is what a
+# published kosm-render will satisfy, so when it lands on crates.io only this
+# line changes. Bump the rev deliberately when vcad needs newer renderer code.
+kosm-render = { git = "https://github.com/ecto/kosm", rev = "5c42c28744a17ff75a2e5d5cfc437b9a3ec3da1e", version = "0.1.0" }
+tang = { path = "../tang/crates/tang", version = "0.2" }
+tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
+tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
 # phyz is PINNED to a published revision rather than a sibling checkout.
 #
 # As a path dep, every vcad build took whatever happened to be in
@@ -383,9 +384,9 @@ opt-level = 3
 # Mirroring phyz's patch here unifies every tang reference in the graph on
 # the sibling checkout, which is the source of truth for both repos anyway.
 [patch.crates-io]
-tang = { path = "/Users/cam/Developer/tang/crates/tang" }
-tang-la = { path = "/Users/cam/Developer/tang/crates/tang-la" }
-tang-expr = { path = "/Users/cam/Developer/tang/crates/tang-expr" }
+tang = { path = "../tang/crates/tang" }
+tang-la = { path = "../tang/crates/tang-la" }
+tang-expr = { path = "../tang/crates/tang-expr" }
 # clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
 # vendored copy adds the missing libc++ link arms. Identical source otherwise.
 clipper-sys = { path = "third_party/clipper-sys" }

@@ -111,6 +111,7 @@ fn cpu_scene() -> pathtrace::Scene {
         sun: None,
         env: Environment::constant(ENV),
         ground: None,
+        splats: None,
     }
 }
 

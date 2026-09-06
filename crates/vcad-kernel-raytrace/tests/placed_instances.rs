@@ -224,6 +224,7 @@ fn a_placed_instance_lands_where_the_cpu_renderer_puts_it() {
         env: Environment::default(),
         sun: None,
         ground: None,
+        splats: None,
     };
     let cam = Camera::look_at(
         Point3::new(eye[0] as f64, eye[1] as f64, eye[2] as f64),
