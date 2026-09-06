@@ -222,7 +222,7 @@ thiserror = "2"
 # it back to a rev once it merges to kosm's main, so the lockfile stops
 # churning on every kosm commit. The `version` is what a published kosm-render
 # will satisfy, so when it lands on crates.io only this line changes.
-kosm-render = { git = "https://github.com/ecto/kosm", branch = "claude/render-offline", version = "0.1.0" }
+kosm-render = { git = "https://github.com/ecto/kosm", branch = "claude/adaptive-sampling", version = "0.1.0" }
 tang = { version = "0.2" }
 tang-la = { version = "0.1" }
 tang-expr = { version = "0.1" }

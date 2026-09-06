@@ -1376,7 +1376,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -2282,7 +2282,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.18",
- "windows 0.58.0",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -2600,7 +2600,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -3025,7 +3025,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "kosm-render"
 version = "0.1.0"
-source = "git+https://github.com/ecto/kosm?branch=claude%2Frender-offline#701376626cb0b67348eaf17579c4bd9df8a52284"
+source = "git+https://github.com/ecto/kosm?branch=claude%2Fadaptive-sampling#c1e0cd25a3a09724fc7d4e7374ebc0797260cc59"
 dependencies = [
  "bytemuck",
  "js-sys",
@@ -8951,7 +8951,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

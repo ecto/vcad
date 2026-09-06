@@ -464,11 +464,9 @@ pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOption
         show_background: !png || pr.backdrop == Backdrop::Studio,
         seed: pr.seed,
         denoise: pr.denoise,
-        // `pr.adaptive` is accepted and not forwarded: adaptive sampling is a
-        // property of the integrator, and the integrator is kosm-render's now.
-        // It has no `adaptive` knob yet, so `--no-adaptive` is inert until one
-        // lands there. Kept on `PhotorealOptions` so the flag and its
-        // plumbing survive the port.
+        // Adaptive sampling is a property of the integrator, and the
+        // integrator is kosm-render's; `--no-adaptive` turns off its knob.
+        adaptive: pr.adaptive,
         ..PathTraceOptions::default()
     }
 }
