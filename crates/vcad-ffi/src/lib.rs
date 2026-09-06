@@ -13,6 +13,13 @@
 //! `vertices`/`normals` are flat `f32` triples, `indices` are flat `u32` —
 //! a direct match for Metal / RealityKit `LowLevelMesh`, no conversion.
 
+// wgpu 30's handle types nest deeply enough (registry → storage → vec →
+// arc → mutex …) that proving `OnceLock<Option<RayTracePipeline>>: Sync`
+// for the static below exceeds the default recursion limit on nightly
+// (`recursion_depth_exceeding_limit`, rust-lang/rust#159228). Stable is
+// fine today; this keeps it fine when the lint becomes an error.
+#![recursion_limit = "256"]
+
 #![allow(clippy::missing_safety_doc)]
 // Every entry point is a `#[no_mangle] extern "C"` boundary that takes raw
 // pointers from Swift and dereferences them behind explicit null checks +
