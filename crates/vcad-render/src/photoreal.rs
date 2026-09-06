@@ -449,6 +449,9 @@ pub(crate) fn dress_scene(
         // product render's key light is the softbox rig above.
         sun: None,
         ground,
+        // Gaussian splats are a kosm-render scene kind with no `.vcad`
+        // spelling: a document has geometry, not a captured radiance field.
+        splats: None,
     })
 }
 
@@ -461,7 +464,11 @@ pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOption
         show_background: !png || pr.backdrop == Backdrop::Studio,
         seed: pr.seed,
         denoise: pr.denoise,
-        adaptive: pr.adaptive,
+        // `pr.adaptive` is accepted and not forwarded: adaptive sampling is a
+        // property of the integrator, and the integrator is kosm-render's now.
+        // It has no `adaptive` knob yet, so `--no-adaptive` is inert until one
+        // lands there. Kept on `PhotorealOptions` so the flag and its
+        // plumbing survive the port.
         ..PathTraceOptions::default()
     }
 }
