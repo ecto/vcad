@@ -140,7 +140,9 @@ pub fn tris_from_indexed(vertices: &[f32], indices: &[u32]) -> Vec<[[f64; 3]; 3]
         ]
     };
     indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|t| [v(t[0]), v(t[1]), v(t[2])])
         .collect()
 }
