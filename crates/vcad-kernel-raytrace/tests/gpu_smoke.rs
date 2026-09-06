@@ -127,7 +127,21 @@ fn render_sphere_produces_non_zero_pixels() {
         h,
     );
 
-    let pixels = pollster::block_on(pipeline.render(ctx, &scene, &camera, w, h)).expect("render");
+    // Eight accumulated passes, not one: a single sample of a grey sphere
+    // under the sky can land within a few codes of the sky itself, and which
+    // sample it lands on depends on the renderer's default sample pattern.
+    // The question here is whether the sphere traces at all, so ask it of
+    // the mean.
+    let mut accum = None;
+    let mut pixels = Vec::new();
+    for frame in 1..=8 {
+        let (px, buf) = pollster::block_on(pipeline.render_progressive(
+            ctx, &scene, &camera, w, h, frame, accum,
+        ))
+        .expect("render");
+        pixels = px;
+        accum = Some(buf);
+    }
     assert_eq!(pixels.len() as u32, w * h * 4, "pixel buffer wrong size");
 
     // The camera targets the sphere center, so the middle pixel must land on
