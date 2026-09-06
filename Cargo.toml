@@ -206,18 +206,20 @@ repository = "https://github.com/ecto/vcad"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-# Path-only deps from sibling repos go through path locally; the version is
-# what cargo publish embeds into the registry manifest. Bump these when the
-# sibling repo cuts a release; sync-version.mjs does NOT touch them.
+# Sibling-repo deps are declared by registry version and redirected to the
+# sibling checkout by `[patch.crates-io]` below, so a downstream that pulls
+# vcad by git (kosm does) can resolve them -- a `path` outside the repo is
+# unreachable from a git checkout. Bump these when the sibling repo cuts a
+# release; sync-version.mjs does NOT touch them.
 # kosm-render is the renderer: rays, hierarchies, the path tracer and the wgpu
 # tier, generic over geometry. Pinned to a kosm revision (not a branch, so
 # the lockfile does not churn on every kosm merge); the `version` is what a
 # published kosm-render will satisfy, so when it lands on crates.io only this
 # line changes. Bump the rev deliberately when vcad needs newer renderer code.
 kosm-render = { git = "https://github.com/ecto/kosm", rev = "5c42c28744a17ff75a2e5d5cfc437b9a3ec3da1e", version = "0.1.0" }
-tang = { path = "../tang/crates/tang", version = "0.2" }
-tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
-tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
+tang = { version = "0.2" }
+tang-la = { version = "0.1" }
+tang-expr = { version = "0.1" }
 # phyz is PINNED to a published revision rather than a sibling checkout.
 #
 # As a path dep, every vcad build took whatever happened to be in
