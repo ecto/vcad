@@ -392,3 +392,8 @@ tang-expr = { path = "../tang/crates/tang-expr" }
 # clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
 # vendored copy adds the missing libc++ link arms. Identical source otherwise.
 clipper-sys = { path = "third_party/clipper-sys" }
+
+# vcad-loon pins loon-lang by git rev so a downstream can pull vcad by git;
+# local and CI builds still compile against the sibling checkout.
+[patch."https://github.com/ecto/loon"]
+loon-lang = { path = "../loon/crates/loon-lang" }
