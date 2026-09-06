@@ -67,6 +67,19 @@ export interface DfmCostEstimate {
   assumptions: string[];
 }
 
+/** Named rulesets that layer on a process (`get_default_dfm_pack` accepts these too). */
+export type DfmRuleset = "hobby-3axis-mill";
+
+/** Pass/fail verdict for one rule — emitted by rulesets that report per rule. */
+export interface DfmRuleResult {
+  rule: string;
+  label: string;
+  passed: boolean;
+  violation_count: number;
+  summary: string;
+  affordances: string[];
+}
+
 /** Report returned by `runDfm`. */
 export interface DfmReport {
   process: DfmProcess;
@@ -74,6 +87,8 @@ export interface DfmReport {
   rule_pack_version: string;
   issues: DfmIssue[];
   cost_estimate: DfmCostEstimate | null;
+  /** Per-rule verdicts; empty for packs that only emit issues. */
+  rule_results?: DfmRuleResult[];
 }
 
 interface DfmKernelBindings {
@@ -106,6 +121,11 @@ export interface RunDfmOptions {
   process: DfmProcess;
   /** Optional TOML override; falls back to the bundled default. */
   rulePack?: string;
+  /**
+   * Named ruleset bundled at lib/dfm/<ruleset>.toml (e.g. "hobby-3axis-mill").
+   * Loaded in place of the process default when `rulePack` is not given.
+   */
+  ruleset?: DfmRuleset | string;
 }
 
 /**
@@ -122,9 +142,13 @@ export async function runDfm(
   const wasm = await getKernelWasm();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scene = evaluateDocumentTS(doc, wasm as any);
-  const pack = opts.rulePack ?? "";
+  let pack = opts.rulePack ?? "";
+  if (!pack && opts.ruleset) {
+    pack = (wasm as unknown as DfmKernelBindings).get_default_dfm_pack(opts.ruleset);
+  }
 
   const allIssues: DfmIssue[] = [];
+  const ruleResults: DfmRuleResult[] = [];
   let packName = "";
   let packVersion = "1";
   // Visible roots line up with `scene.parts` (same filter as the
@@ -143,6 +167,7 @@ export async function runDfm(
     packName = packName || report.rule_pack_name;
     packVersion = report.rule_pack_version || packVersion;
     allIssues.push(...report.issues);
+    if (report.rule_results) ruleResults.push(...report.rule_results);
   }
   return {
     process: opts.process,
@@ -150,6 +175,7 @@ export async function runDfm(
     rule_pack_version: packVersion,
     issues: allIssues,
     cost_estimate: null,
+    rule_results: ruleResults,
   };
 }
 

@@ -161,6 +161,24 @@ fn stable_id(rule: &str, anchor: &Point3) -> String {
     format!("{}:{}:{}:{}", rule, q(anchor.x), q(anchor.y), q(anchor.z))
 }
 
+/// Pass/fail verdict for one rule of a ruleset that reports per rule
+/// (the hobby-mill ruleset does; the per-process packs only emit issues).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleResult {
+    /// Rule identifier, e.g. `"hobby_mill.r1_internal_corner_radius"`.
+    pub rule: String,
+    /// Short label, e.g. `"R1 internal corner radius"`.
+    pub label: String,
+    /// Whether the rule passed.
+    pub passed: bool,
+    /// Number of located violations (issues carry the examples).
+    pub violation_count: usize,
+    /// One-line summary of what was measured.
+    pub summary: String,
+    /// Suggested affordances ("add corner relief Ø2.2 at 4 corners …").
+    pub affordances: Vec<String>,
+}
+
 /// Full DFM report for a single check run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DfmReport {
@@ -174,6 +192,9 @@ pub struct DfmReport {
     pub issues: Vec<DfmIssue>,
     /// Optional cost estimate.
     pub cost_estimate: Option<CostEstimate>,
+    /// Per-rule verdicts (empty for packs that only emit issues).
+    #[serde(default)]
+    pub rule_results: Vec<RuleResult>,
 }
 
 impl DfmReport {

@@ -3,9 +3,9 @@
 //! Provides both an interactive TUI editor and headless commands for
 //! creating and manipulating 3D CAD models.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod app;
 mod chat_session;
@@ -396,6 +396,20 @@ enum Commands {
     /// wall against the nozzle, and a manifold + closed-sections summary.
     ///
     /// Exit code is 0 when clean and 1 when anything failed, so it gates CI.
+    /// Run a named DFM ruleset over an STL (e.g. the hobby 3-axis mill rules)
+    Dfm {
+        /// Mesh to check (.stl, binary or ASCII)
+        input: PathBuf,
+        /// Ruleset / process name: hobby-3axis-mill, cnc_3axis, fdm, …
+        #[arg(long, default_value = "hobby-3axis-mill")]
+        ruleset: String,
+        /// TOML rule pack overriding the bundled one (same schema as lib/dfm/*.toml)
+        #[arg(long)]
+        pack: Option<PathBuf>,
+        /// Emit the full report as JSON instead of the summary
+        #[arg(long)]
+        json: bool,
+    },
     Check {
         /// Mesh to check (.stl, binary or ASCII)
         input: PathBuf,
@@ -743,6 +757,14 @@ fn main() -> Result<()> {
                 explain,
             )?;
         }
+        Some(Commands::Dfm {
+            input,
+            ruleset,
+            pack,
+            json,
+        }) => {
+            run_dfm_ruleset(&input, &ruleset, pack.as_deref(), json)?;
+        }
         Some(Commands::Check {
             input,
             orientation,
@@ -1019,6 +1041,72 @@ fn export_loon(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// `vcad dfm <stl> --ruleset <name>`: run a named DFM ruleset over a mesh
+/// and print pass/fail per rule with located examples and affordances.
+/// Exit status is non-zero when any rule fails.
+fn run_dfm_ruleset(
+    input: &Path,
+    ruleset: &str,
+    pack_path: Option<&Path>,
+    json: bool,
+) -> Result<()> {
+    use vcad_kernel::vcad_kernel_dfm::{run_dfm_mesh, DfmSeverity, RulePack};
+    use vcad_printcheck::mesh::{Mesh, Orientation};
+
+    let pack = match pack_path {
+        Some(p) => RulePack::from_toml(&std::fs::read_to_string(p)?)
+            .with_context(|| format!("parse rule pack {}", p.display()))?,
+        None => RulePack::named(ruleset)
+            .with_context(|| format!("unknown ruleset '{ruleset}' (try hobby-3axis-mill)"))?,
+    };
+    let mesh = Mesh::load_stl(input, Orientation::ZUp)?;
+    let report = run_dfm_mesh(&mesh.tris, &pack);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "{} — {} ({} triangles)",
+            report.rule_pack_name,
+            input.display(),
+            mesh.tris.len()
+        );
+        for v in &report.rule_results {
+            println!(
+                "  {} {:<28} {}",
+                if v.passed { "PASS" } else { "FAIL" },
+                v.label,
+                v.summary
+            );
+            for a in &v.affordances {
+                println!("       -> {a}");
+            }
+            for issue in report.issues.iter().filter(|i| i.rule == v.rule).take(6) {
+                let tag = match issue.severity {
+                    DfmSeverity::Error => "error",
+                    DfmSeverity::Warning => "warn",
+                    DfmSeverity::Info => "info",
+                };
+                println!("       [{tag}] {}", issue.message);
+            }
+        }
+        if report.rule_results.is_empty() {
+            println!("  (ruleset '{ruleset}' has no mesh-domain rules; nothing checked)");
+        }
+        let failed = report.rule_results.iter().filter(|v| !v.passed).count();
+        println!(
+            "  {} of {} rules pass, score {}",
+            report.rule_results.len() - failed,
+            report.rule_results.len(),
+            report.score()
+        );
+    }
+    if report.rule_results.iter().any(|v| !v.passed) {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

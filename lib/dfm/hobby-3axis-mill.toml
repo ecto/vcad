@@ -1,0 +1,63 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "cnc_3axis"
+ruleset = "hobby_3axis_mill"
+name = "Hobby 3-axis mill"
+notes = "A small bench mill (300 x 200 x 80 envelope) with a 2 mm minimum end mill, a 3/4/5/6 reamer set, metric tap drills, and plate stock. Two-sided (flip) setups are allowed; anything that needs a third side, a thread, or gear teeth finer than the cutter is a buy-out."
+
+# R1 — internal corner radius in pockets / through-cuts >= cutter radius.
+# Detected on horizontal cross-sections: every concave arc (or sharp
+# corner) whose fitted radius is below the cutter radius.
+[rules.r1_internal_corner_radius]
+severity = "error"
+min_tool_dia_mm = 2.0
+# Suggested corner-relief ("mouse ear") diameter as a multiple of the cutter.
+relief_factor = 1.1
+fix = "manual"
+
+# R2 — every face must be reachable along +Z or -Z (two-sided allowed).
+# Faces reachable only from -Z are reported as the flip setup; faces
+# reachable from neither are undercuts.
+[rules.r2_reachability]
+severity = "error"
+two_sided = true
+min_area_mm2 = 1.0
+fix = "manual"
+
+# R3 — cylindrical bores must land on a reamer or tap-drill diameter.
+[rules.r3_hole_diameters]
+severity = "warning"
+reamers_mm = [3.0, 4.0, 5.0, 6.0]
+tap_drills_mm = [2.05, 2.5, 3.3, 4.2, 5.0, 6.8]
+tap_labels = ["M2.5", "M3", "M4", "M5", "M6", "M8"]
+tolerance_mm = 0.02
+# Larger bores are helically interpolated with the end mill, not reamed.
+max_reamed_dia_mm = 6.0
+fix = "manual"
+
+# R4 — plate stock: the part's Z extent must be a stock thickness.
+[rules.r4_plate_stock]
+severity = "error"
+stock_thicknesses_mm = [3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]
+tolerance_mm = 0.05
+# Set true when the traveller documents a facing op to a non-stock height.
+multi_op_documented = false
+fix = "manual"
+
+# R5 — minimum wall / floor.
+[rules.r5_min_wall]
+severity = "error"
+min_wall_mm = 1.0
+fix = "thicken_wall"
+
+# R6 — work envelope (any axis permutation).
+[rules.r6_envelope]
+severity = "error"
+envelope_mm = [300.0, 200.0, 80.0]
+fix = "manual"
+
+# R7 — internal threads and gear teeth finer than the cutter: buy or EDM.
+[rules.r7_threads_and_gears]
+severity = "error"
+min_tool_dia_mm = 2.0
+fix = "manual"

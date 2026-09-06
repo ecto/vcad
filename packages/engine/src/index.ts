@@ -72,6 +72,8 @@ export type {
   DfmFix,
   DfmIssue,
   DfmReport,
+  DfmRuleResult,
+  DfmRuleset,
   DfmCostEstimate,
   RunDfmOptions,
   EstimateCostOptions,
