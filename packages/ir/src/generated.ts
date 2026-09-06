@@ -1574,6 +1574,12 @@ joints?: Array<Joint>,
  */
 groundInstanceId?: string, 
 /**
+ * Declarative mates asserted over the posed assembly. Checked, never
+ * solved: the instance transforms stay the source of truth and a mate
+ * says what they are supposed to achieve. See [`mates`].
+ */
+mates?: Array<Mate>, 
+/**
  * Schematic sheet for electronics design.
  */
 schematic?: SchematicSheet, 
@@ -2235,7 +2241,18 @@ transform?: Transform3D,
 /**
  * Optional material override.
  */
-material?: string, };
+material?: string, 
+/**
+ * Exploded-view offset for this instance, in mm, applied **after** the
+ * instance transform and scaled by an explode factor (0 = assembled,
+ * 1 = fully exploded).
+ *
+ * Exploded views used to be hand-coded once per viewer and once per build
+ * sheet, so they drifted apart from each other and from the assembly.
+ * Carrying the offset on the instance makes the assembly document the one
+ * place it is written down.
+ */
+explode?: Vec3, };
 
 /**
  * IPC-7351 land-pattern fillet goals (mm) used to size pads from terminals.
@@ -2555,6 +2572,88 @@ width: number,
  * Height of the area light.
  */
 height: number, };
+
+/**
+ * A declarative mate between two instances of an assembly.
+ */
+export type Mate = { 
+/**
+ * Unique identifier, used to name the check in reports and receipts.
+ */
+id: string, 
+/**
+ * Optional human-readable name.
+ */
+name?: string, 
+/**
+ * First instance id.
+ */
+instanceA: string, 
+/**
+ * Second instance id.
+ */
+instanceB: string, 
+/**
+ * What is being asserted.
+ */
+kind: MateKind, };
+
+/**
+ * The assertion a [`Mate`] makes.
+ */
+export type MateKind = { "type": "Coaxial", 
+/**
+ * Reference axis in each part's local frame. Normalized on use.
+ */
+axis: Vec3, 
+/**
+ * Maximum permitted perpendicular distance between the axis lines, mm.
+ */
+toleranceMm: number, 
+/**
+ * Maximum permitted angle between the axis directions, degrees.
+ */
+toleranceDeg: number, } | { "type": "PlanarOffset", 
+/**
+ * World-frame axis the offset is measured along. Normalized on use.
+ */
+axis: Vec3, 
+/**
+ * Expected signed distance from A to B along `axis`, mm.
+ */
+offset: number, 
+/**
+ * Maximum permitted deviation from `offset`, mm.
+ */
+toleranceMm: number, } | { "type": "PatternPhase", 
+/**
+ * Number of features in each part's circular pattern. Must be ≥ 1.
+ */
+nFold: number, 
+/**
+ * Pattern axis in each part's local frame. Normalized on use.
+ */
+axis: Vec3, 
+/**
+ * Angular offset of A's first feature from local `+X`, degrees.
+ */
+phaseADeg: number, 
+/**
+ * Angular offset of B's first feature from local `+X`, degrees.
+ */
+phaseBDeg: number, 
+/**
+ * Optional documented clocking. When present, the measured relative
+ * rotation of B about the world axis must equal this (modulo 360)
+ * within `tolerance_deg` — catching a design table and a transform
+ * that have drifted apart, independently of whether the poles happen
+ * to line up.
+ */
+expectedClockDeg?: number, 
+/**
+ * Maximum permitted phase error, degrees.
+ */
+toleranceDeg: number, };
 
 /**
  * PBR material definition.
@@ -3040,7 +3139,21 @@ height: number,
 /**
  * Number of turns.
  */
-turns: number, };
+turns: number, } | { "type": "Cylindrical", 
+/**
+ * Cylinder radius (mm).
+ */
+radius: number, 
+/**
+ * `(angle in degrees, height in mm)` knots as `Vec2 { x: deg, y: z }`,
+ * monotonic in angle, at least two. Height is relative to the
+ * path's own origin, so the first knot's height is usually 0.
+ */
+knots: Array<Vec2>, 
+/**
+ * Angular step between path samples, in degrees. `None` = 0.5°.
+ */
+seg_deg?: number, };
 
 /**
  * A complete PCB design.

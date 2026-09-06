@@ -7136,6 +7136,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
+ "stl_io",
  "tempfile",
  "termview",
  "thiserror 2.0.18",
@@ -7160,10 +7161,12 @@ dependencies = [
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
  "vcad-loon",
+ "vcad-printcheck",
  "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -7402,6 +7405,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-adjoint",
+ "vcad-kernel-booleans",
  "vcad-kernel-diff",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
@@ -7526,6 +7530,18 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-receipt",
+]
+
+[[package]]
+name = "vcad-kernel-assembly"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-eval",
+ "vcad-ir",
+ "vcad-kernel-tessellate",
+ "vcad-loon",
 ]
 
 [[package]]
@@ -7877,6 +7893,7 @@ dependencies = [
  "kosm-render",
  "pollster",
  "rayon",
+ "smallvec",
  "tang",
  "thiserror 2.0.18",
  "vcad-ir",
@@ -7973,6 +7990,8 @@ name = "vcad-kernel-tessellate"
 version = "0.9.4"
 dependencies = [
  "earcutr",
+ "serde",
+ "serde_json",
  "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -8102,6 +8121,7 @@ name = "vcad-loon"
 version = "0.9.4"
 dependencies = [
  "loon-lang",
+ "serde",
  "serde_json",
  "vcad-ir",
  "vcad-parts",
@@ -8114,6 +8134,16 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-ir",
+]
+
+[[package]]
+name = "vcad-printcheck"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stl_io",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8143,12 +8173,17 @@ version = "0.9.3"
 dependencies = [
  "clap",
  "image",
+ "pollster",
+ "rayon",
+ "serde",
  "serde_json",
  "vcad-ecad-pcb",
  "vcad-ecad-symbols",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-export",
+ "vcad-kernel-gpu",
  "vcad-kernel-raytrace",
  "vcad-loon",
 ]

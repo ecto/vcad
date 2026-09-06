@@ -11,7 +11,7 @@ use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
-use vcad_kernel_sweep::{Helix, LoftOptions, SweepOptions};
+use vcad_kernel_sweep::{CylindricalPath, Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
 
@@ -864,6 +864,20 @@ fn evaluate_op_timed(
                     let helix = Helix::new(*radius, *pitch, *height, *turns);
                     Solid::sweep(profile, &helix, options).map_err(EvalError::Sweep)?
                 }
+                PathCurve::Cylindrical {
+                    radius,
+                    knots,
+                    seg_deg,
+                } => {
+                    let mut cyl = CylindricalPath::from_knots(
+                        *radius,
+                        knots.iter().map(|k| (k.x, k.y)).collect(),
+                    );
+                    if let Some(step) = seg_deg {
+                        cyl = cyl.with_seg_deg(*step);
+                    }
+                    Solid::sweep_cylindrical(profile, &cyl, options).map_err(EvalError::Sweep)?
+                }
             };
 
             Ok(Some(solid))
@@ -923,6 +937,7 @@ fn evaluate_op_timed(
                     .map(|n| n.iter().map(|v| *v as f32).collect())
                     .unwrap_or_else(|| vec![0.0; n_verts * 3]),
                 face_kinds: Vec::new(),
+                face_ids: Vec::new(),
             })))
         }
 
@@ -1004,6 +1019,7 @@ fn evaluate_op_timed(
                     .map(|n| n.iter().map(|v| *v as f32).collect())
                     .unwrap_or_else(|| vec![0.0; n_verts * 3]),
                 face_kinds: Vec::new(),
+                face_ids: Vec::new(),
             })))
         }
 
@@ -1129,6 +1145,7 @@ fn evaluate_op_timed(
                     indices: all_indices,
                     normals: vec![],
                     face_kinds: vec![],
+                    face_ids: vec![],
                 };
                 board_solid = Solid::from_mesh(merged);
             }
@@ -1575,6 +1592,7 @@ fn evaluate_text_extrude(
             indices: all_indices,
             normals: all_normals,
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         Some(Solid::from_mesh(merged))
     } else {
@@ -1785,6 +1803,7 @@ fn transform_imported_mesh(data: &ImportedMeshData) -> EvaluatedMesh {
         indices: data.indices.clone(),
         normals,
         face_kinds: None,
+        face_ids: None,
     }
 }
 
@@ -2480,6 +2499,11 @@ fn tri_to_evaluated(tri: &TriangleMesh) -> EvaluatedMesh {
         } else {
             None
         },
+        face_ids: if tri.face_ids.len() == tri.indices.len() / 3 {
+            Some(tri.face_ids.clone())
+        } else {
+            None
+        },
     }
 }
 
@@ -2504,6 +2528,13 @@ fn tri_to_evaluated_render(mut tri: TriangleMesh) -> EvaluatedMesh {
         },
         face_kinds: if tri.face_kinds.len() == tri_count {
             Some(tri.face_kinds)
+        } else {
+            None
+        },
+        // The render bake unindexes (a vertex per triangle corner) but never
+        // reorders triangles, so the per-triangle ids stay aligned.
+        face_ids: if tri.face_ids.len() == tri_count {
+            Some(tri.face_ids)
         } else {
             None
         },

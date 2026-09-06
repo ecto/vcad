@@ -161,6 +161,39 @@ Helical sweep carries a circular profile along a helix — a compression spring 
 
 ![Helical sweep: a five-turn compression spring](/assets/kernel/sweep.jpg)
 
+A cam track, a bayonet slot, a J-slot or a lead-in ramp is dimensioned
+differently — not as turns and a pitch, but as **rise per degree of arc**,
+with named angles for the lead-in, the detent and the pocket. `helix` and
+`sweep` say it that way:
+
+```lisp
+[root [pipe [profile-rect 3.0 2.0]
+            [sweep [helix 34.5 0.0667 0.0 15.0]]] "aluminum"]
+```
+
+That is a 3 mm x 2 mm channel section carried 15 deg around r34.5, rising
+0.0667 mm per degree. The profile's x is the **radial** offset from the path
+radius and its y is the **axial** offset; the cross-section is held in that
+radial/axial plane rather than square to the tangent, which is what a radial
+section of the finished part shows and what makes the swept floor land on
+`path z(theta) + min(profile y)` exactly.
+
+When the height is not a constant rate, add knots. `cam-path` takes a flat
+`#[deg z ...]` list, so a rise-plateau-drop detent or a flat pocket is
+expressed directly rather than approximated by stacked z-bands:
+
+```lisp
+[root [pipe [profile-polyline #[-1.6 0.0  1.6 0.0  1.3 1.6  -1.3 1.6]]
+            [sweep [cam-path 34.5 #[3.6 -0.25  9.6 0.15  10.3 0.25
+                                    11.3 0.25  11.6 0.15  18.4 0.15]]]]
+      "aluminum"]
+```
+
+Knots always land exactly on path samples, so a plateau's corners survive the
+faceting. The step is 0.5 deg by default; `helix-res` and `cam-path-res` take
+it explicitly. The swept solid is capped at both ends, so it is watertight
+standing alone and can be subtracted through a wall.
+
 Loft interpolates a solid through a sequence of cross-sections:
 
 ```lisp
@@ -270,6 +303,18 @@ Honesty: the luminance edge-stopping weight is scaled by the estimator's own var
 - **Drafting** — `vcad-kernel-drafting` generates shop-ready 2D drawings: orthographic projections with hidden-line removal, full and offset (stepped) section views with hatching and cutting-plane callouts, detail views with scale bubbles, dimensions, GD&T annotations, title block / revision table / BOM entities, and deterministic PDF + DXF sheet export with ANSI/ISO line weights.
 
 ## Simulation and Analysis
+
+### Assemblies, Mates, and Interference
+
+`vcad-kernel-assembly` makes a document's instance transforms the single source of truth for where every part is, and then checks that they add up. An instance is a named part reference plus a full pose — translation, Euler rotation, and an exploded-view offset — authored in loon as `[instance-at name part x y z rx ry rz]` or `[instance-exploded … ex ey ez]`. `pose_document` evaluates the geometry once and returns world-space meshes; `PosedAssembly::exploded(factor)` slides each part along its declared offset, so a viewer, a render and a build sheet read one set of numbers instead of each hard-coding their own.
+
+**Mates are checks, not constraints.** Nothing here moves a part or solves a residual: a mate is an assertion about what the transforms are supposed to achieve, re-verified against the poses and reported with the measured value next to the asserted one. Three kinds ship: `mate-coaxial` (two parts' reference axes lie on one line — antiparallel counts, a flipped part is still coaxial), `mate-planar-offset` (a stated distance along an axis: the z-stack of a layered machine, written down once rather than re-derived from design-doc prose and STL extents), and `mate-pattern-phase`.
+
+`mate-pattern-phase` is the one that earns the module. Two parts each carry an *n*-fold circular pattern about a shared axis; pattern features sit every `360/n` degrees, so the check poses both reference directions and reduces their relative clocking **modulo the pattern pitch**. A dual-rotor axial-flux motor specified as "front rotor: flip, clock 60°" carries 10 poles per disc — a 36° pitch — and 60 mod 36 = 24, folding to a **12° pole misalignment** (60° electrical). That shipped, and was caught only later by redoing the arithmetic by hand for the next revision, which clocks 180°: 180 mod 36 = 0, exact alignment. The arithmetic is invisible in prose, trivially wrong by hand, and one modular reduction for a checker that can see both poses. That is also why it is a checker and not a solver — nothing was under-constrained; the number was simply wrong.
+
+`check_interference` sweeps the posed assembly: an AABB broad phase, then `mesh_clearance`'s triangle-BVH branch-and-bound on the survivors, reporting each overlapping pair with an approximate depth and a witness point. The tolerance is part of the design, not a fudge: real models carry deliberate sub-tenth-millimetre overlaps so unions print without a hairline seam, so `InterferenceOptions::tolerance_mm` is the depth below which an overlap is modelling slop rather than a clash, and `ignore_pairs` excuses a press fit that is *supposed* to interfere.
+
+Honesty: **kinematic degrees of freedom are out of scope.** A mate never moves anything and knows nothing about joints; articulation stays with `Joint` and `solve_forward_kinematics`, whose poses this crate consumes when a document has a joint graph. "Backdrive the train and check it still clears" wants a DOF model layered on top of these checks. Mates also do not yet mirror: `mirror-group-*` handles translation-only instances, so a posed instance passes through a mirrored group unchanged.
 
 ### Physics
 

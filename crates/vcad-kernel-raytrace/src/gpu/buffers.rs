@@ -5,6 +5,7 @@ use kosm_render::gpu::{GpuAreaLight, GpuMaterial};
 use vcad_kernel_booleans::bbox::face_aabb;
 use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_primitives::BRepSolid;
+use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
 use crate::bvh::{BrepBvh, Bvh};
@@ -17,10 +18,41 @@ pub const MAX_SURFACES: usize = 1024;
 pub const MAX_FACES: usize = 4096;
 
 /// Maximum BVH nodes.
-pub const MAX_BVH_NODES: usize = 8192;
+///
+/// Raised from the original 8192 when `vcad-render --photoreal --gpu` started
+/// merging one mesh BLAS per solid into a single tree: a real assembly is
+/// hundreds of thousands of triangles and its BVH has roughly one node per
+/// two of them, so 8192 refused every scene bigger than a bracket. Nothing in
+/// the shader is sized by this — the node array is a storage buffer sized
+/// from the data — so the ceiling that actually matters is the device's
+/// `max_storage_buffer_binding_size`, which [`GpuScene::validate`] checks
+/// separately. This is the "obviously absurd" guard, not the real limit.
+pub const MAX_BVH_NODES: usize = 4_000_000;
+
+/// Deepest root-to-leaf path the WGSL tracer can walk.
+///
+/// `trace_bvh` holds its traversal stack in a fixed `array<u32, 64>` and
+/// *silently drops* a push that would overflow it — geometry simply
+/// disappears from the render. [`GpuScene::validate`] measures the packed
+/// tree against this so an over-deep scene is a message instead of a hole.
+pub const MAX_TRAVERSAL_DEPTH: usize = 64;
 
 /// Maximum trim loop vertices.
 pub const MAX_TRIM_VERTS: usize = 32768;
+
+/// Maximum triangles in a single mesh-backed scene.
+///
+/// Deliberately far above [`MAX_FACES`]: those caps are sized for a BRep,
+/// where a "face" is a whole trimmed surface and a few thousand is a large
+/// part. A tessellated mesh counts in the hundreds of thousands for the same
+/// object, so the mesh path gets its own ceiling. At
+/// [`size_of::<GpuSurface>`](GpuSurface) = 144 bytes per triangle this bounds
+/// the surface buffer at ~144 MB, which is above the 128 MB that
+/// `maxStorageBufferBindingSize` defaults to — so a mesh near this cap can
+/// still be refused by the driver. The limit is here to turn an absurd mesh
+/// into a message rather than an OOM, not to certify that everything under it
+/// uploads.
+pub const MAX_MESH_TRIANGLES: usize = 1_000_000;
 
 /// GPU-compatible surface representation.
 ///
@@ -30,7 +62,8 @@ pub const MAX_TRIM_VERTS: usize = 32768;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GpuSurface {
-    /// Surface type: 0=Plane, 1=Cylinder, 2=Sphere, 3=Cone, 4=Torus, 5=Bilinear
+    /// Surface type: 0=Plane, 1=Cylinder, 2=Sphere, 3=Cone, 4=Torus,
+    /// 5=Bilinear, 6=BSpline, 7=Triangle. See [`GpuSurface::type_name`].
     pub surface_type: u32,
     /// Padding for alignment
     pub _pad: [u32; 3],
@@ -172,7 +205,92 @@ impl GpuSurface {
             params,
         }
     }
+
+    /// Pack one mesh triangle into a surface record.
+    ///
+    /// A triangle is not a parametric surface, but the `params` block is 32
+    /// floats of otherwise-idle space and a triangle needs 19 of them, so it
+    /// rides in the surface array rather than in a vertex buffer of its own.
+    /// That choice is what keeps the mesh path inside the browser's cap of
+    /// ten storage-buffer bindings — see the binding block at the top of
+    /// `shaders/raytrace.wgsl`. The cost is that shared vertices are stored
+    /// once per incident triangle: 144 bytes per triangle flat, so a 500k-tri
+    /// mesh is ~72 MB of surface buffer. On unified memory that is a fair
+    /// trade for not forking the shader; a native-only indexed path would be
+    /// roughly 4x leaner and is the obvious follow-up if it ever bites.
+    ///
+    /// Layout, mirrored by `intersect_triangle` and `compute_normal` in the
+    /// WGSL:
+    ///
+    /// ```text
+    ///   [0..3)   v0          [9..12)  n0
+    ///   [3..6)   v1          [12..15) n1
+    ///   [6..9)   v2          [15..18) n2
+    ///   [18]     1.0 when the normals above are real, 0.0 otherwise
+    /// ```
+    pub fn triangle(tri: &crate::bvh::FlatTriangle) -> Self {
+        let mut params = [0.0f32; 32];
+        for (i, p) in tri.positions.iter().enumerate() {
+            params[i * 3..i * 3 + 3].copy_from_slice(p);
+        }
+        // Absent normals stay zero AND are flagged, because zero is a
+        // legitimate-looking vector the shader would happily normalize into
+        // NaN. The flag is what makes the shader take the geometric-normal
+        // fallback instead — the same fallback `MeshGeom::test` takes on the
+        // CPU, so a normal-less mesh shades identically in both renderers.
+        if let Some(normals) = &tri.normals {
+            for (i, n) in normals.iter().enumerate() {
+                params[9 + i * 3..12 + i * 3].copy_from_slice(n);
+            }
+            params[18] = 1.0;
+        }
+
+        Self {
+            surface_type: SURFACE_TYPE_TRIANGLE,
+            _pad: [0; 3],
+            params,
+        }
+    }
+
+    /// Whether the WGSL `intersect_surface` switch has a case for this
+    /// surface type.
+    ///
+    /// Types 0-4 (plane, cylinder, sphere, cone, torus) are traced
+    /// analytically and type 7 (triangle) by Möller-Trumbore. Bilinear (5)
+    /// and B-spline (6) are packed by [`Self::from_surface`] but fall into
+    /// the shader's `default` arm, which returns a miss — such a face would
+    /// silently vanish from the render, so [`GpuScene::from_brep`] rejects a
+    /// scene containing one.
+    pub fn is_gpu_traceable(&self) -> bool {
+        self.surface_type <= SURFACE_TYPE_TORUS || self.surface_type == SURFACE_TYPE_TRIANGLE
+    }
+
+    /// Human-readable name of a packed surface type code.
+    pub fn type_name(surface_type: u32) -> &'static str {
+        match surface_type {
+            0 => "Plane",
+            1 => "Cylinder",
+            2 => "Sphere",
+            3 => "Cone",
+            4 => "Torus",
+            5 => "Bilinear",
+            6 => "BSpline",
+            7 => "Triangle",
+            _ => "Unknown",
+        }
+    }
 }
+
+/// Highest surface type code the WGSL `intersect_surface` switch handles
+/// analytically.
+const SURFACE_TYPE_TORUS: u32 = 4;
+
+/// Surface type code for a mesh triangle.
+///
+/// Deliberately past B-spline (6) rather than reusing a hole: the codes 0-6
+/// are a one-to-one image of [`SurfaceKind`] and a triangle is not one of
+/// those, so it gets its own code and the mapping stays honest.
+pub const SURFACE_TYPE_TRIANGLE: u32 = 7;
 
 /// GPU-compatible face representation.
 #[repr(C)]
@@ -274,6 +392,34 @@ pub enum GpuSceneError {
     TooManyBvhNodes(usize),
     /// Too many trim vertices.
     TooManyTrimVerts(usize),
+    /// A surface kind the WGSL tracer has no intersection case for.
+    ///
+    /// Carries the surface's index in `brep.geometry.surfaces` and the packed
+    /// type name, so the caller can say *which* geometry it cannot render
+    /// instead of handing back a blank frame.
+    UnsupportedSurface {
+        /// Index into `brep.geometry.surfaces`.
+        index: usize,
+        /// Packed surface type code.
+        surface_type: u32,
+        /// Human-readable name of that type.
+        name: &'static str,
+    },
+    /// Too many mesh triangles (exceeds [`MAX_MESH_TRIANGLES`]).
+    TooManyTriangles(usize),
+    /// [`GpuScene::from_mesh_bvh`] was handed a BRep-backed BVH.
+    NotAMeshBvh,
+    /// The packed BVH is deeper than the shader's traversal stack
+    /// ([`MAX_TRAVERSAL_DEPTH`]).
+    BvhTooDeep(usize),
+    /// The largest storage buffer this scene needs is bigger than the
+    /// device's `max_storage_buffer_binding_size`.
+    ExceedsDeviceBinding {
+        /// Bytes the largest single binding would need.
+        bytes: u64,
+        /// The device's limit.
+        cap: u64,
+    },
 }
 
 impl std::fmt::Display for GpuSceneError {
@@ -289,6 +435,43 @@ impl std::fmt::Display for GpuSceneError {
             Self::TooManyTrimVerts(n) => {
                 write!(f, "too many trim vertices: {} (max {})", n, MAX_TRIM_VERTS)
             }
+            Self::UnsupportedSurface {
+                index,
+                surface_type,
+                name,
+            } => write!(
+                f,
+                "surface {index} is a {name} (type {surface_type}), which the GPU tracer \
+                 cannot intersect; faces on it would render as empty space"
+            ),
+            Self::TooManyTriangles(n) => write!(
+                f,
+                "too many mesh triangles: {n} (max {MAX_MESH_TRIANGLES}) -- \
+                 each triangle costs one {tri_bytes}-byte surface record, so \
+                 this mesh would need {mb} MB of surface buffer alone",
+                tri_bytes = std::mem::size_of::<GpuSurface>(),
+                mb = n * std::mem::size_of::<GpuSurface>() / (1024 * 1024),
+            ),
+            Self::BvhTooDeep(d) => write!(
+                f,
+                "merged BVH is {d} levels deep (max {MAX_TRAVERSAL_DEPTH}) -- the \
+                 GPU tracer's traversal stack cannot hold it and would silently \
+                 drop geometry. Render fewer parts per pass, or fall back to the \
+                 CPU tracer (drop --gpu)"
+            ),
+            Self::ExceedsDeviceBinding { bytes, cap } => write!(
+                f,
+                "scene needs a {} MB storage binding but this adapter caps one at \
+                 {} MB -- split the render or drop --gpu to trace on the CPU",
+                bytes / (1024 * 1024),
+                cap / (1024 * 1024),
+            ),
+            Self::NotAMeshBvh => write!(
+                f,
+                "from_mesh_bvh needs a BVH built by Bvh::build_mesh; this one is \
+                 BRep-backed. Use GpuScene::from_brep, which traces its surfaces \
+                 analytically rather than a tessellation of them"
+            ),
         }
     }
 }
@@ -300,6 +483,92 @@ impl std::error::Error for GpuSceneError {}
 /// Delegates to [`crate::pathtrace::studio_rig`] — the SAME function
 /// `vcad-render --photoreal` calls — so the viewport and the CPU renderer are
 /// lit by an identical rig rather than by two hand-tuned approximations.
+/// Convert a flattened BVH into the shader's node layout.
+///
+/// An empty tree still yields one (zeroed) node: WebGPU rejects a zero-sized
+/// storage buffer, and a zero AABB is missed by every ray, so the empty scene
+/// renders as pure background rather than failing to bind.
+fn gpu_bvh_nodes(flat_nodes: &[crate::bvh::FlatBvhNode]) -> Vec<GpuBvhNode> {
+    if flat_nodes.is_empty() {
+        return vec![GpuBvhNode::zeroed()];
+    }
+    flat_nodes
+        .iter()
+        .map(
+            |(aabb, is_leaf, left_or_first, right_or_count)| GpuBvhNode {
+                aabb_min: [aabb.min.x as f32, aabb.min.y as f32, aabb.min.z as f32, 0.0],
+                aabb_max: [aabb.max.x as f32, aabb.max.y as f32, aabb.max.z as f32, 0.0],
+                // For leaves `left_or_first` is a start index into `faces`, which
+                // is built in BVH leaf order, so it maps across directly.
+                left_or_first: *left_or_first,
+                right_or_count: *right_or_count,
+                is_leaf: u32::from(*is_leaf),
+                _pad: 0,
+            },
+        )
+        .collect()
+}
+
+/// A triangle moved into world space by `t`.
+///
+/// Positions go through the full matrix; shading normals through
+/// `apply_normal`, which is the inverse-transpose — under a non-uniform scale
+/// a normal does *not* transform like the surface it sits on, and using the
+/// plain vector transform would light a squashed part as if it were not.
+/// Zero-length results are left alone so the shader's
+/// "normals are real" flag keeps meaning what it says.
+fn place_triangle(
+    tri: &crate::bvh::FlatTriangle,
+    t: &vcad_kernel_math::Transform,
+) -> crate::bvh::FlatTriangle {
+    use vcad_kernel_math::{Point3, Vec3};
+
+    let mut out = *tri;
+    for p in out.positions.iter_mut() {
+        let w = t.apply_point(&Point3::new(p[0] as f64, p[1] as f64, p[2] as f64));
+        *p = [w.x as f32, w.y as f32, w.z as f32];
+    }
+    if let Some(normals) = out.normals.as_mut() {
+        for n in normals.iter_mut() {
+            let w = t.apply_normal(&Vec3::new(n[0] as f64, n[1] as f64, n[2] as f64));
+            let len = w.norm();
+            if len > 1e-12 {
+                *n = [(w.x / len) as f32, (w.y / len) as f32, (w.z / len) as f32];
+            }
+        }
+    }
+    out
+}
+
+/// Re-fit a packed BVH node's AABB around the eight transformed corners of
+/// its old one. Conservative under rotation — the new box is axis-aligned
+/// around a rotated box — which costs some traversal and can never miss a
+/// primitive the old box contained.
+fn place_aabb(node: &mut GpuBvhNode, t: &vcad_kernel_math::Transform) {
+    use vcad_kernel_math::Point3;
+
+    let (lo, hi) = (node.aabb_min, node.aabb_max);
+    if !lo[..3].iter().chain(&hi[..3]).all(|v| v.is_finite()) {
+        return;
+    }
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    for i in 0..8 {
+        let c = Point3::new(
+            if i & 1 == 0 { lo[0] } else { hi[0] } as f64,
+            if i & 2 == 0 { lo[1] } else { hi[1] } as f64,
+            if i & 4 == 0 { lo[2] } else { hi[2] } as f64,
+        );
+        let w = t.apply_point(&c);
+        for (a, v) in [w.x, w.y, w.z].into_iter().enumerate() {
+            min[a] = min[a].min(v as f32);
+            max[a] = max[a].max(v as f32);
+        }
+    }
+    node.aabb_min = [min[0], min[1], min[2], 0.0];
+    node.aabb_max = [max[0], max[1], max[2], 0.0];
+}
+
 fn studio_lights_for_bvh(bvh_nodes: &[GpuBvhNode]) -> Vec<GpuAreaLight> {
     let Some(root) = bvh_nodes.first() else {
         return Vec::new();
@@ -376,6 +645,21 @@ impl GpuScene {
         }
         if surfaces.len() > MAX_SURFACES {
             return Err(GpuSceneError::TooManySurfaces(surfaces.len()));
+        }
+
+        // Fail closed on surface kinds the WGSL tracer has no case for.
+        // Packing them and uploading anyway makes those faces disappear from
+        // the image with no diagnostic at all.
+        if let Some((index, s)) = surfaces
+            .iter()
+            .enumerate()
+            .find(|(_, s)| !s.is_gpu_traceable())
+        {
+            return Err(GpuSceneError::UnsupportedSurface {
+                index,
+                surface_type: s.surface_type,
+                name: GpuSurface::type_name(s.surface_type),
+            });
         }
 
         // Build BVH first to get the face ordering
@@ -513,35 +797,7 @@ impl GpuScene {
 
         // Convert flattened BVH to GPU format
         // Faces are now in BVH order, so leaf indices map directly
-        let mut bvh_nodes = Vec::with_capacity(flat_nodes.len().max(1));
-
-        if flat_nodes.is_empty() {
-            // Empty BVH - add a dummy node
-            bvh_nodes.push(GpuBvhNode::zeroed());
-        } else {
-            for (aabb, is_leaf, left_or_first, right_or_count) in &flat_nodes {
-                if *is_leaf {
-                    // For leaves: left_or_first is start index in faces array (which is now BVH-ordered)
-                    bvh_nodes.push(GpuBvhNode {
-                        aabb_min: [aabb.min.x as f32, aabb.min.y as f32, aabb.min.z as f32, 0.0],
-                        aabb_max: [aabb.max.x as f32, aabb.max.y as f32, aabb.max.z as f32, 0.0],
-                        left_or_first: *left_or_first,
-                        right_or_count: *right_or_count,
-                        is_leaf: 1,
-                        _pad: 0,
-                    });
-                } else {
-                    bvh_nodes.push(GpuBvhNode {
-                        aabb_min: [aabb.min.x as f32, aabb.min.y as f32, aabb.min.z as f32, 0.0],
-                        aabb_max: [aabb.max.x as f32, aabb.max.y as f32, aabb.max.z as f32, 0.0],
-                        left_or_first: *left_or_first,
-                        right_or_count: *right_or_count,
-                        is_leaf: 0,
-                        _pad: 0,
-                    });
-                }
-            }
-        }
+        let bvh_nodes = gpu_bvh_nodes(&flat_nodes);
 
         if bvh_nodes.len() > MAX_BVH_NODES {
             return Err(GpuSceneError::TooManyBvhNodes(bvh_nodes.len()));
@@ -565,6 +821,148 @@ impl GpuScene {
             trim_verts,
             inner_loop_descs,
             face_index_map,
+            environment: None,
+            lights,
+        })
+    }
+
+    /// Build GPU scene data from a triangle mesh.
+    ///
+    /// The counterpart of [`Self::from_brep`] for geometry that has no
+    /// analytic surfaces: frozen `topology_optimize` results, imported
+    /// STL/GLB parts, and the cached tessellations `--photoreal` traces by
+    /// default. Builds the BVH with [`Bvh::build_mesh`] — the *same* BLAS the
+    /// CPU path tracer walks — so the two renderers agree on geometry and
+    /// differ only in arithmetic precision.
+    pub fn from_mesh(mesh: &TriangleMesh) -> Result<Self, GpuSceneError> {
+        Self::from_mesh_bvh(&Bvh::build_mesh(mesh))
+    }
+
+    /// Build GPU scene data from an already-built mesh BVH.
+    ///
+    /// Split out from [`Self::from_mesh`] so a caller that already traces the
+    /// BVH on the CPU can upload that exact tree rather than rebuilding a
+    /// second one that might partition differently.
+    ///
+    /// Rejects a BRep-backed BVH with [`GpuSceneError::NotAMeshBvh`] rather
+    /// than silently producing an empty scene.
+    ///
+    /// Every face gets material 0, the GPU default grey. Use
+    /// [`Self::from_mesh_bvh_placed`] to give the part its own material and
+    /// world placement, which is what a multi-part scene needs.
+    pub fn from_mesh_bvh(bvh: &Bvh) -> Result<Self, GpuSceneError> {
+        Self::from_mesh_bvh_placed(bvh, GpuMaterial::default(), None)
+    }
+
+    /// [`Self::from_mesh_bvh`] with the part's own material and world
+    /// transform.
+    ///
+    /// **The transform is baked into the packed vertices**, not carried as an
+    /// instance: the WGSL tracer walks one flat node array with no instancing
+    /// layer, so there is nowhere to put a per-object matrix. Positions go
+    /// through `apply_point`, shading normals through `apply_normal` (the
+    /// inverse-transpose — a non-uniform scale rotates a normal differently
+    /// from the surface it belongs to, and using `apply_vec` here would shade
+    /// a squashed part wrong), and the BVH node AABBs are re-fitted around
+    /// their transformed corners. Re-fitting corners is conservative rather
+    /// than tight under rotation, which costs a little traversal and cannot
+    /// lose a hit.
+    ///
+    /// Baking means the result is a *static* snapshot: a new pose needs a new
+    /// scene. That is why `--animate` stays on the CPU.
+    pub fn from_mesh_bvh_placed(
+        bvh: &Bvh,
+        material: GpuMaterial,
+        transform: Option<&vcad_kernel_math::Transform>,
+    ) -> Result<Self, GpuSceneError> {
+        let mut scene = Self::pack_mesh_bvh(bvh, transform)?;
+        scene.materials = vec![material];
+        Ok(scene)
+    }
+
+    fn pack_mesh_bvh(
+        bvh: &Bvh,
+        transform: Option<&vcad_kernel_math::Transform>,
+    ) -> Result<Self, GpuSceneError> {
+        let (flat_nodes, prims) = bvh.flatten_prims();
+        let crate::bvh::FlatPrims::Triangles(tris) = prims else {
+            return Err(GpuSceneError::NotAMeshBvh);
+        };
+
+        if tris.len() > MAX_MESH_TRIANGLES {
+            return Err(GpuSceneError::TooManyTriangles(tris.len()));
+        }
+
+        // One surface and one face per triangle, in BVH leaf order, so a
+        // leaf's (first, count) range indexes `faces` directly — exactly as
+        // in the BRep path. The face carries no trim loops: a triangle's
+        // Möller-Trumbore test already answers the containment question that
+        // trimming answers for an analytic surface, and `point_in_face`
+        // short-circuits on the triangle type code rather than running a
+        // winding test over an empty polygon.
+        let mut surfaces = Vec::with_capacity(tris.len());
+        let mut faces = Vec::with_capacity(tris.len());
+        for (i, tri) in tris.iter().enumerate() {
+            let placed;
+            let tri = match transform {
+                None => tri,
+                Some(t) => {
+                    placed = place_triangle(tri, t);
+                    &placed
+                }
+            };
+            surfaces.push(GpuSurface::triangle(tri));
+
+            let mut lo = tri.positions[0];
+            let mut hi = tri.positions[0];
+            for p in &tri.positions[1..] {
+                for a in 0..3 {
+                    lo[a] = lo[a].min(p[a]);
+                    hi[a] = hi[a].max(p[a]);
+                }
+            }
+
+            faces.push(GpuFace {
+                surface_idx: i as u32,
+                // Triangle normals come from the mesh's own winding and
+                // vertex normals; there is no topological orientation to
+                // apply on top, and flipping here would invert the shading
+                // relative to the CPU tracer.
+                orientation: 0,
+                trim_start: 0,
+                trim_count: 0,
+                aabb_min: [lo[0], lo[1], lo[2], 0.0],
+                aabb_max: [hi[0], hi[1], hi[2], 0.0],
+                inner_start: 0,
+                inner_count: 0,
+                inner_loop_count: 0,
+                inner_desc_start: 0,
+                material_idx: 0,
+                _pad2: [0; 3],
+            });
+        }
+
+        let mut bvh_nodes = gpu_bvh_nodes(&flat_nodes);
+        if let Some(t) = transform {
+            for n in bvh_nodes.iter_mut() {
+                place_aabb(n, t);
+            }
+        }
+        let lights = studio_lights_for_bvh(&bvh_nodes);
+
+        Ok(Self {
+            surfaces,
+            faces,
+            materials: vec![GpuMaterial::default()],
+            bvh_nodes,
+            // WebGPU refuses a zero-sized storage buffer, and a mesh scene
+            // has nothing to put in either of these. One dummy element each,
+            // referenced by nothing (every face has trim_count 0).
+            trim_verts: vec![GpuVec2 { x: 0.0, y: 0.0 }],
+            inner_loop_descs: vec![0],
+            // Face IDs are a BRep concept; a triangle has none, so nothing
+            // here can be keyed by one.
+            face_index_map: std::collections::HashMap::new(),
             environment: None,
             lights,
         })
@@ -663,6 +1061,12 @@ impl GpuScene {
         merged_bvh.extend(self.bvh_nodes);
         merged_bvh.extend(adjusted_nodes);
 
+        // Re-derive the studio rig from the combined bounds. Keeping self's
+        // rig would light the merged scene as if only self's half of it
+        // existed — with a mesh part merged alongside a BRep one, the softbox
+        // distances come out wrong for whichever half did not set them.
+        self.lights = studio_lights_for_bvh(&merged_bvh);
+
         self.surfaces.extend(other.surfaces);
         self.faces.extend(adjusted_faces);
         self.materials.extend(other.materials);
@@ -671,6 +1075,122 @@ impl GpuScene {
         self.inner_loop_descs.extend(other.inner_loop_descs);
 
         self
+    }
+
+    /// Fold many scenes into one with a **balanced** tree of merges.
+    ///
+    /// [`Self::merge`] adds exactly one level of depth per call, so folding N
+    /// parts linearly (`a.merge(b).merge(c)…`) costs N-1 levels of traversal
+    /// stack on top of the deepest part's own tree. A pairwise fold costs
+    /// `ceil(log2(N))` instead — for the 60-odd parts of a real assembly that
+    /// is 6 levels rather than 59, which is the difference between fitting in
+    /// the shader's stack and silently dropping geometry.
+    ///
+    /// Returns `None` for an empty input: a scene with nothing in it has no
+    /// root AABB, and every downstream consumer would rather be told than
+    /// handed a zeroed tree.
+    pub fn merge_all(mut scenes: Vec<Self>) -> Option<Self> {
+        if scenes.is_empty() {
+            return None;
+        }
+        while scenes.len() > 1 {
+            let mut next = Vec::with_capacity(scenes.len().div_ceil(2));
+            let mut it = scenes.into_iter();
+            while let Some(a) = it.next() {
+                match it.next() {
+                    Some(b) => next.push(a.merge(b)),
+                    None => next.push(a),
+                }
+            }
+            scenes = next;
+        }
+        scenes.pop()
+    }
+
+    /// Depth of the packed BVH, in nodes from root to deepest leaf.
+    ///
+    /// This is what the shader's traversal stack has to hold. Computed
+    /// iteratively — a merged assembly tree is deep enough that a recursive
+    /// walk is a real stack-overflow risk on the host too — and defensive
+    /// against a malformed tree: a node index that repeats on the current
+    /// path, or points past the array, terminates that branch rather than
+    /// looping forever.
+    pub fn bvh_depth(&self) -> usize {
+        if self.bvh_nodes.is_empty() {
+            return 0;
+        }
+        let mut best = 0usize;
+        // (node index, depth). Depth is 1 at the root.
+        let mut stack = vec![(0u32, 1usize)];
+        let mut visited = vec![false; self.bvh_nodes.len()];
+        while let Some((idx, depth)) = stack.pop() {
+            let Some(node) = self.bvh_nodes.get(idx as usize) else {
+                continue;
+            };
+            if std::mem::replace(&mut visited[idx as usize], true) {
+                continue;
+            }
+            best = best.max(depth);
+            if node.is_leaf == 0 {
+                stack.push((node.left_or_first, depth + 1));
+                stack.push((node.right_or_count, depth + 1));
+            }
+        }
+        best
+    }
+
+    /// Check the packed scene against every limit that would otherwise fail
+    /// silently or as a driver error, *before* anything is uploaded.
+    ///
+    /// `max_binding_bytes` is the device's `max_storage_buffer_binding_size`
+    /// (`ctx.device.limits()`); pass `None` to skip that check.
+    ///
+    /// [`Self::merge`] deliberately does not validate — it is a building
+    /// block, and checking N times while folding N parts would report the
+    /// wrong totals. This is the gate to call once, on the finished scene.
+    pub fn validate(&self, max_binding_bytes: Option<u64>) -> Result<(), GpuSceneError> {
+        let mesh = self.is_mesh_scene();
+        if mesh {
+            if self.surfaces.len() > MAX_MESH_TRIANGLES {
+                return Err(GpuSceneError::TooManyTriangles(self.surfaces.len()));
+            }
+        } else {
+            if self.surfaces.len() > MAX_SURFACES {
+                return Err(GpuSceneError::TooManySurfaces(self.surfaces.len()));
+            }
+            if self.faces.len() > MAX_FACES {
+                return Err(GpuSceneError::TooManyFaces(self.faces.len()));
+            }
+        }
+        if self.bvh_nodes.len() > MAX_BVH_NODES {
+            return Err(GpuSceneError::TooManyBvhNodes(self.bvh_nodes.len()));
+        }
+        if self.trim_verts.len() > MAX_TRIM_VERTS {
+            return Err(GpuSceneError::TooManyTrimVerts(self.trim_verts.len()));
+        }
+        let depth = self.bvh_depth();
+        if depth > MAX_TRAVERSAL_DEPTH {
+            return Err(GpuSceneError::BvhTooDeep(depth));
+        }
+        if let Some(cap) = max_binding_bytes {
+            let bytes = (self.surfaces.len() * std::mem::size_of::<GpuSurface>())
+                .max(self.faces.len() * std::mem::size_of::<GpuFace>())
+                .max(self.bvh_nodes.len() * std::mem::size_of::<GpuBvhNode>())
+                as u64;
+            if bytes > cap {
+                return Err(GpuSceneError::ExceedsDeviceBinding { bytes, cap });
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether this scene's geometry is triangles rather than trimmed
+    /// analytic surfaces. Mesh scenes count in the hundreds of thousands and
+    /// are held to [`MAX_MESH_TRIANGLES`], not to the BRep-scale caps.
+    fn is_mesh_scene(&self) -> bool {
+        self.surfaces
+            .iter()
+            .all(|s| s.surface_type == SURFACE_TYPE_TRIANGLE)
     }
 
     /// Set the material for all faces in the scene.
@@ -849,5 +1369,231 @@ impl GpuScene {
         // sphere turned about its own centre changed on screen, which is a
         // strange thing for a placement to do.
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vcad_kernel_geom::BilinearSurface;
+    use vcad_kernel_math::Point3;
+    use vcad_kernel_primitives::make_cube;
+
+    #[test]
+    fn analytic_surface_types_are_traceable() {
+        for t in 0..=4u32 {
+            let s = GpuSurface {
+                surface_type: t,
+                _pad: [0; 3],
+                params: [0.0; 32],
+            };
+            assert!(s.is_gpu_traceable(), "{} should be traceable", t);
+        }
+    }
+
+    #[test]
+    fn bilinear_and_bspline_are_not_traceable() {
+        // Both are packed by `from_surface` but hit the WGSL `default` arm,
+        // which reports a miss — so they must never reach the GPU.
+        for t in [5u32, 6] {
+            let s = GpuSurface {
+                surface_type: t,
+                _pad: [0; 3],
+                params: [0.0; 32],
+            };
+            assert!(!s.is_gpu_traceable(), "{} must be rejected", t);
+        }
+    }
+
+    #[test]
+    fn cube_builds_a_gpu_scene() {
+        let scene = GpuScene::from_brep(&make_cube(10.0, 10.0, 10.0)).expect("cube is analytic");
+        assert_eq!(scene.faces.len(), 6);
+    }
+
+    #[test]
+    fn unsupported_surface_names_the_offending_geometry() {
+        // Swap one of the cube's planes for a bilinear patch: the shader has
+        // no case for it, so building the scene must fail rather than drop
+        // the face from the image.
+        let mut cube = make_cube(10.0, 10.0, 10.0);
+        cube.geometry.surfaces[2] = Box::new(BilinearSurface::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        ));
+
+        let Err(err) = GpuScene::from_brep(&cube) else {
+            panic!("bilinear surface must be rejected, not silently dropped");
+        };
+        match err {
+            GpuSceneError::UnsupportedSurface { index, name, .. } => {
+                assert_eq!(index, 2);
+                assert_eq!(name, "Bilinear");
+            }
+            other => panic!("wrong error: {other:?}"),
+        }
+        assert!(err.to_string().contains("Bilinear"), "{err}");
+    }
+
+    /// A triangle mesh, tessellated from a cube.
+    fn cube_mesh() -> TriangleMesh {
+        vcad_kernel_tessellate::tessellate_brep(&make_cube(10.0, 10.0, 10.0), 16)
+    }
+
+    #[test]
+    fn triangles_are_traceable() {
+        // The counterpart of `bilinear_and_bspline_are_not_traceable`: the
+        // shader DOES have a case for type 7, and `from_mesh` would reject
+        // its own output if this said otherwise.
+        let s = GpuSurface {
+            surface_type: SURFACE_TYPE_TRIANGLE,
+            _pad: [0; 3],
+            params: [0.0; 32],
+        };
+        assert!(s.is_gpu_traceable());
+        assert_eq!(GpuSurface::type_name(SURFACE_TYPE_TRIANGLE), "Triangle");
+    }
+
+    #[test]
+    fn triangle_packing_round_trips_positions_and_normals() {
+        let tri = crate::bvh::FlatTriangle {
+            positions: [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+            normals: Some([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]),
+        };
+        let s = GpuSurface::triangle(&tri);
+
+        assert_eq!(s.surface_type, SURFACE_TYPE_TRIANGLE);
+        // Positions in slots 0..9, normals in 9..18, flag in 18. The WGSL
+        // reads these by literal index, so the layout is load-bearing.
+        assert_eq!(
+            &s.params[0..9],
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        );
+        assert_eq!(
+            &s.params[9..18],
+            &[0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]
+        );
+        assert_eq!(s.params[18], 1.0);
+        // Nothing may spill past the documented block.
+        assert!(s.params[19..].iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn triangle_without_normals_clears_the_flag() {
+        // The shader cannot distinguish an absent normal from a zero one, so
+        // the flag is the only thing standing between a normal-less mesh and
+        // normalize(vec3(0)) — i.e. NaN across the whole surface.
+        let tri = crate::bvh::FlatTriangle {
+            positions: [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: None,
+        };
+        let s = GpuSurface::triangle(&tri);
+        assert_eq!(s.params[18], 0.0);
+        assert!(s.params[9..18].iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn mesh_builds_a_gpu_scene_of_triangles() {
+        let mesh = cube_mesh();
+        let scene = GpuScene::from_mesh(&mesh).expect("mesh scene builds");
+
+        let tris = mesh.indices.len() / 3;
+        assert_eq!(scene.faces.len(), tris);
+        assert_eq!(scene.surfaces.len(), tris);
+        assert!(scene
+            .surfaces
+            .iter()
+            .all(|s| s.surface_type == SURFACE_TYPE_TRIANGLE));
+
+        // One surface per face, in step. A face pointing at the wrong
+        // surface would render the wrong triangle in the right BVH slot,
+        // which is exactly the kind of bug the image tests see only as noise.
+        assert!(scene
+            .faces
+            .iter()
+            .enumerate()
+            .all(|(i, f)| f.surface_idx == i as u32));
+
+        // Triangles carry no trim loops; the shader short-circuits on the
+        // type code instead. If a nonzero count ever appeared here, every
+        // mesh hit would be rejected by the winding test.
+        assert!(scene.faces.iter().all(|f| f.trim_count == 0));
+        assert!(scene.faces.iter().all(|f| f.inner_loop_count == 0));
+
+        // Every BVH leaf must address the face array it was built alongside.
+        for n in &scene.bvh_nodes {
+            if n.is_leaf == 1 {
+                assert!(
+                    (n.left_or_first + n.right_or_count) as usize <= scene.faces.len(),
+                    "leaf range runs past the end of the face array"
+                );
+            }
+        }
+
+        // WebGPU rejects zero-sized storage buffers, so even the unused
+        // trim arrays must carry a dummy element.
+        assert!(!scene.trim_verts.is_empty());
+        assert!(!scene.inner_loop_descs.is_empty());
+
+        // The rig has to be sized to the mesh, or a mesh-only scene renders
+        // unlit.
+        assert!(!scene.lights.is_empty());
+    }
+
+    #[test]
+    fn from_mesh_bvh_rejects_a_brep_bvh() {
+        // A BRep BVH flattens to face IDs, not triangles. Building a mesh
+        // scene from it would produce an empty one; say so instead.
+        let bvh = Bvh::build_brep(&make_cube(10.0, 10.0, 10.0));
+        let Err(err) = GpuScene::from_mesh_bvh(&bvh) else {
+            panic!("a BRep-backed BVH is not a mesh");
+        };
+        assert!(matches!(err, GpuSceneError::NotAMeshBvh));
+        assert!(err.to_string().contains("from_brep"), "{err}");
+    }
+
+    #[test]
+    fn merging_a_mesh_into_an_analytic_scene_rebases_every_index() {
+        let brep = GpuScene::from_brep(&make_cube(10.0, 10.0, 10.0)).expect("analytic half");
+        let mesh = GpuScene::from_mesh(&cube_mesh()).expect("mesh half");
+        let (brep_faces, brep_surfaces) = (brep.faces.len(), brep.surfaces.len());
+        let (mesh_faces, mesh_surfaces) = (mesh.faces.len(), mesh.surfaces.len());
+        let mesh_nodes = mesh.bvh_nodes.len();
+
+        let merged = brep.merge(mesh);
+
+        assert_eq!(merged.faces.len(), brep_faces + mesh_faces);
+        assert_eq!(merged.surfaces.len(), brep_surfaces + mesh_surfaces);
+
+        // The merged tree gains a new root spanning both halves.
+        assert_eq!(merged.bvh_nodes[0].is_leaf, 0);
+
+        // No index may dangle after rebasing — this is the whole risk of the
+        // merge, and a dangling one reads out of bounds in the shader.
+        for f in &merged.faces {
+            assert!((f.surface_idx as usize) < merged.surfaces.len());
+            assert!((f.material_idx as usize) < merged.materials.len());
+        }
+        for n in &merged.bvh_nodes {
+            if n.is_leaf == 1 {
+                assert!((n.left_or_first + n.right_or_count) as usize <= merged.faces.len());
+            } else {
+                assert!((n.left_or_first as usize) < merged.bvh_nodes.len());
+                assert!((n.right_or_count as usize) < merged.bvh_nodes.len());
+            }
+        }
+
+        // The mesh half's triangles must still be triangles, and must still
+        // be reachable from the faces that were rebased onto them.
+        let mesh_tris = merged.faces[brep_faces..]
+            .iter()
+            .filter(|f| {
+                merged.surfaces[f.surface_idx as usize].surface_type == SURFACE_TYPE_TRIANGLE
+            })
+            .count();
+        assert_eq!(mesh_tris, mesh_faces, "merge lost track of the triangles");
+        assert!(mesh_nodes > 0);
     }
 }

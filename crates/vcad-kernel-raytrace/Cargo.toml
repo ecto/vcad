@@ -13,6 +13,10 @@ rayon = "1"
 # BRep half of that seam. See the workspace dep for the path-now/version-later
 # story.
 kosm-render = { workspace = true }
+# Ray-surface intersection returns at most a handful of hits (four, on a
+# torus) and is called millions of times per frame; a heap allocation per
+# test is pure overhead.
+smallvec = "1"
 vcad-kernel-math = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel-topo = { workspace = true }

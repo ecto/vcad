@@ -520,6 +520,67 @@ fn intersect_torus(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) ->
     return hit;
 }
 
+// Möller-Trumbore ray/triangle test.
+//
+// Ports `kosm_render::intersect_triangle`, the CPU tracer's intersector, with
+// two deliberate differences forced by f32:
+//
+//   * the degeneracy guard is 1e-8 relative rather than 1e-12 — at f32
+//     precision 1e-12 is below the noise floor of the determinant itself, so
+//     it would admit near-parallel rays whose barycentrics are pure rounding
+//     error;
+//   * the barycentric slack is 1e-6 rather than 1e-12, for the same reason.
+//     Slack matters here: a shared edge must be inclusive from both sides, or
+//     a mesh grows a lace of single-pixel holes along every triangle border.
+//
+// Returns barycentrics in `uv`, which `compute_normal` then interpolates the
+// vertex normals with. `hit.uv` is (u, v); the third weight is 1 - u - v.
+fn intersect_triangle(origin: vec3<f32>, dir: vec3<f32>, params: array<f32, 32>) -> RayHit {
+    var hit: RayHit;
+    hit.t = MAX_T;
+    hit.face_idx = 0xFFFFFFFFu;
+
+    let v0 = vec3<f32>(params[0], params[1], params[2]);
+    let v1 = vec3<f32>(params[3], params[4], params[5]);
+    let v2 = vec3<f32>(params[6], params[7], params[8]);
+
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+
+    let pvec = cross(dir, e2);
+    let det = dot(e1, pvec);
+
+    // Size-relative: an absolute epsilon is meaningless when the model might
+    // be dimensioned in millimetres or in metres.
+    let scale = length(e1) * length(e2);
+    if abs(det) <= 1e-8 * max(scale, 1.0) {
+        return hit;
+    }
+
+    let inv_det = 1.0 / det;
+    let tvec = origin - v0;
+
+    let u = dot(tvec, pvec) * inv_det;
+    if u < -1e-6 || u > 1.0 + 1e-6 {
+        return hit;
+    }
+
+    let qvec = cross(tvec, e1);
+    let v = dot(dir, qvec) * inv_det;
+    if v < -1e-6 || u + v > 1.0 + 1e-6 {
+        return hit;
+    }
+
+    let t = dot(e2, qvec) * inv_det;
+    if t <= 0.0 {
+        return hit;
+    }
+
+    hit.t = t;
+    hit.uv = vec2<f32>(u, v);
+    return hit;
+}
+
 fn intersect_surface(origin: vec3<f32>, dir: vec3<f32>, surface_idx: u32) -> RayHit {
     let surface = surfaces[surface_idx];
 
@@ -538,6 +599,9 @@ fn intersect_surface(origin: vec3<f32>, dir: vec3<f32>, surface_idx: u32) -> Ray
         }
         case SURFACE_TORUS: {
             return intersect_torus(origin, dir, surface.params);
+        }
+        case SURFACE_TRIANGLE: {
+            return intersect_triangle(origin, dir, surface.params);
         }
         default: {
             var hit: RayHit;
@@ -621,6 +685,14 @@ fn uv_in_trim_bounds(uv: vec2<f32>, start: u32, count: u32) -> bool {
 // Point-in-polygon test with inner loops (holes)
 fn point_in_face(uv: vec2<f32>, face_idx: u32) -> bool {
     let face = faces[face_idx];
+
+    // A triangle carries no trim loops: `intersect_triangle` already answered
+    // the containment question that trimming answers for an analytic surface,
+    // so a mesh hit is in-face by construction. Without this bypass the
+    // winding test below would reject every mesh hit (trim_count is 0).
+    if surfaces[face.surface_idx].surface_type == SURFACE_TRIANGLE {
+        return true;
+    }
 
     // Check outer loop - point must be inside
     if face.trim_count < 3u {
@@ -767,6 +839,33 @@ fn compute_normal(hit: RayHit) -> vec3<f32> {
     var normal: vec3<f32>;
 
     switch surface.surface_type {
+        case SURFACE_TRIANGLE: {
+            let v0 = vec3<f32>(surface.params[0], surface.params[1], surface.params[2]);
+            let v1 = vec3<f32>(surface.params[3], surface.params[4], surface.params[5]);
+            let v2 = vec3<f32>(surface.params[6], surface.params[7], surface.params[8]);
+
+            // Geometric normal. Non-zero by construction: `Bvh::build_mesh`
+            // drops zero-area triangles, so this is always a usable fallback.
+            let geometric = cross(v1 - v0, v2 - v0);
+
+            // Smooth shading: barycentric blend of the vertex normals, so a
+            // mesh part doesn't read as faceted next to an analytic one.
+            // Mirrors `TriMesh::intersect` on the CPU, including both of its
+            // fallbacks — no normal array (params[18] == 0), and a blend that
+            // cancels (opposed vertex normals across a degenerate crease).
+            normal = geometric;
+            if surface.params[18] > 0.5 {
+                let n0 = vec3<f32>(surface.params[9], surface.params[10], surface.params[11]);
+                let n1 = vec3<f32>(surface.params[12], surface.params[13], surface.params[14]);
+                let n2 = vec3<f32>(surface.params[15], surface.params[16], surface.params[17]);
+                let u = hit.uv.x;
+                let v = hit.uv.y;
+                let blended = n0 * (1.0 - u - v) + n1 * u + n2 * v;
+                if length(blended) > 1e-6 {
+                    normal = blended;
+                }
+            }
+        }
         case SURFACE_PLANE: {
             normal = vec3<f32>(surface.params[9], surface.params[10], surface.params[11]);
         }

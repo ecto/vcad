@@ -1,6 +1,6 @@
 //! Ray-cylinder intersection (quadratic equation).
 
-use super::SurfaceHit;
+use super::{SurfaceHit, SurfaceHits};
 use crate::Ray;
 use vcad_kernel_geom::CylinderSurface;
 use vcad_kernel_math::Point2;
@@ -9,7 +9,7 @@ use vcad_kernel_math::Point2;
 ///
 /// Returns up to 2 intersections (entry and exit points), sorted by t.
 /// Only intersections with t >= 0 are returned.
-pub fn intersect_cylinder(ray: &Ray, cylinder: &CylinderSurface) -> Vec<SurfaceHit> {
+pub fn intersect_cylinder(ray: &Ray, cylinder: &CylinderSurface) -> SurfaceHits {
     let axis = cylinder.axis.as_ref();
     let d = ray.direction.as_ref();
     let oc = ray.origin - cylinder.center;
@@ -27,19 +27,19 @@ pub fn intersect_cylinder(ray: &Ray, cylinder: &CylinderSurface) -> Vec<SurfaceH
 
     // Ray is parallel to axis
     if a.abs() < 1e-12 {
-        return Vec::new();
+        return SurfaceHits::new();
     }
 
     let discriminant = b * b - 4.0 * a * c;
     if discriminant < 0.0 {
-        return Vec::new();
+        return SurfaceHits::new();
     }
 
     let sqrt_disc = discriminant.sqrt();
     let t1 = (-b - sqrt_disc) / (2.0 * a);
     let t2 = (-b + sqrt_disc) / (2.0 * a);
 
-    let mut hits = Vec::new();
+    let mut hits = SurfaceHits::new();
 
     for t in [t1, t2] {
         if t < 0.0 {

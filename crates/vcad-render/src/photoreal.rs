@@ -3,13 +3,16 @@
 //! Where the drafting path projects tessellated triangles onto a tonal ramp
 //! and the `--raytrace` path swaps in analytic intersection but keeps the
 //! same ramp, this path solves the rendering equation properly: a
-//! physically-based path tracer over the untessellated BRep, lit by a
-//! three-softbox studio rig and an analytic sky, viewed through a camera with
-//! a real focal length and aperture.
+//! physically-based path tracer lit by a three-softbox studio rig and an
+//! analytic sky, viewed through a camera with a real focal length and
+//! aperture.
 //!
-//! The geometry advantage carries over — silhouettes and specular highlights
-//! on fillets come from analytic ray–surface intersection, so they are exact
-//! at any resolution with no facet banding.
+//! **Geometry comes from a tessellation by default** ([`MESH_SEGMENTS`]), so
+//! the content-addressed root-mesh cache can serve it and a re-render pays
+//! only for path tracing rather than re-evaluating every BRep. `--exact`
+//! ([`PhotorealOptions::exact`]) swaps in analytic ray–surface intersection,
+//! which is exact at any resolution with no facet banding on curved
+//! silhouettes, at the price of a full kernel evaluation every run.
 
 use std::sync::Arc;
 
@@ -72,6 +75,74 @@ pub struct PhotorealOptions {
     /// On by default: it is worth far more per second of render time than the
     /// equivalent extra samples. Turn it off for reference renders.
     pub denoise: bool,
+    /// Stop sampling a pixel early once its own variance says the rest of the
+    /// budget cannot move it visibly (`--no-adaptive` turns this off).
+    ///
+    /// On by default. `spp` becomes a ceiling rather than a fixed count; the
+    /// stopping decision is per-pixel and made from that pixel's own running
+    /// sums, so a fixed `--seed` still gives a byte-stable image.
+    pub adaptive: bool,
+    /// Intersect the analytic BRep surfaces instead of a tessellation of them
+    /// (`--exact`).
+    ///
+    /// **Off by default.** A `vcad_kernel::Solid` has no serialized form, so
+    /// a BRep can only ever come from re-evaluating the document — which for
+    /// a real assembly is most of the wall time of a moderate-`--spp` render,
+    /// and is paid again on every invocation. Tracing triangles at
+    /// [`MESH_SEGMENTS`] instead lets the content-addressed root-mesh cache
+    /// (`vcad_eval::cache`) supply the geometry, leaving only the path
+    /// tracing to redo.
+    ///
+    /// The cost is curved silhouettes. At 128 segments adjacent facets differ
+    /// by 2.8°, which is invisible on flat sheet and on large-radius bosses,
+    /// but reads as a stair-step along the rim of a small cylinder at hero
+    /// resolutions — on rose-pro at `--size 1200` it is plain on the D55
+    /// actuator cans. That is what `exact` is for.
+    ///
+    /// Two further differences are worth knowing before diffing two renders:
+    ///
+    /// * **Framing shifts slightly.** The camera fits the objects' BVH root
+    ///   AABBs, and a tessellation is inscribed in the surface it approximates,
+    ///   so the subject's bounds are a hair smaller in mesh mode and the fit
+    ///   lands at a marginally different scale. Nothing is clipped; the two
+    ///   images simply do not overlay pixel-for-pixel anywhere, not just on
+    ///   curves.
+    /// * **Shading is not uniformly worse.** Mesh mode goes through
+    ///   `render_bake`'s crease-aware normals, which resolve plate edges more
+    ///   cleanly than analytic evaluation of the same BRep does; `exact` in
+    ///   exchange shows faint banding across some large planar faces. Mesh
+    ///   mode loses on curves and wins on creases.
+    ///
+    /// Note this is a *pixel* switch, not only a speed one, and it is
+    /// deliberately not conditioned on whether a cache happens to be
+    /// installed: a render must not change its output depending on the state
+    /// of an accelerator. Mesh mode therefore tessellates on a cache miss
+    /// too, so a cold render and a warm one are identical.
+    pub exact: bool,
+}
+
+/// Segment count the default (non-[`exact`](PhotorealOptions::exact))
+/// photoreal path tessellates curved faces at.
+///
+/// This is the raster path's hi-res count, but — unlike the raster path — it
+/// is used at *every* canvas size rather than scaling with it. Two reasons:
+/// the path tracer resolves a silhouette far more sharply than the flat
+/// raster shader (a specular highlight tracks facet normals; a tonal ramp
+/// mostly doesn't), so the coarser 64-segment count shows at sizes the raster
+/// path gets away with; and the extra triangles cost almost nothing here,
+/// since BVH traversal is logarithmic in triangle count while the
+/// tessellation itself is cached.
+///
+/// A size-independent count also means one cache entry per root serves every
+/// `--size`, instead of one entry per size bucket.
+pub const MESH_SEGMENTS: u32 = crate::raster::RASTER_SEGMENTS_HIRES;
+
+impl PhotorealOptions {
+    /// Segment count to tessellate BRep-backed solids at before tracing, or
+    /// `None` when [`Self::exact`] asks for analytic surfaces.
+    pub(crate) fn mesh_segments(&self) -> Option<u32> {
+        (!self.exact).then_some(MESH_SEGMENTS)
+    }
 }
 
 impl Default for PhotorealOptions {
@@ -88,6 +159,8 @@ impl Default for PhotorealOptions {
             backdrop: Backdrop::Studio,
             seed: 0x5eed_1234,
             denoise: true,
+            adaptive: true,
+            exact: false,
         }
     }
 }
@@ -116,23 +189,50 @@ pub fn render_photoreal_png_str(
 
 /// Build one BVH per solid, world-placed at the identity.
 ///
-/// BRep-backed solids trace analytically; mesh-only parts (frozen
-/// topology-optimization results, imported STL/GLB) trace as crease-baked
-/// triangles, same as the `--raytrace` path. Fails closed when any part has
-/// no traceable geometry — a silently missing part reads as a design that
-/// doesn't have it.
-pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>, String> {
-    let mut objects: Vec<Object> = Vec::new();
-    let mut untraceable: Vec<String> = Vec::new();
-    for s in solids {
-        let bvh = match s.solid.as_brep() {
-            Some(brep) => Bvh::build_brep(brep),
-            None => {
-                let mut mesh = s.solid.to_mesh(0);
+/// `mesh_segments` picks the geometry representation, and comes from
+/// [`PhotorealOptions::mesh_segments`]:
+///
+/// * `Some(n)` — the default. Every solid traces as crease-baked triangles,
+///   BRep-backed ones tessellated at `n` segments. A solid that arrived
+///   mesh-backed (a root-mesh cache hit, a frozen topology-optimization
+///   result, an imported STL/GLB) already carries its triangles and `n` is
+///   moot for it, which is exactly why cold and warm renders agree.
+/// * `None` — `--exact`. BRep-backed solids intersect analytically; mesh-only
+///   parts still trace as triangles, since there is nothing else to trace.
+///
+/// Fails closed when any part has no traceable geometry — a silently missing
+/// part reads as a design that doesn't have it.
+///
+/// BVH construction is the one genuinely parallel-friendly stage of scene
+/// setup (each solid is independent, and for a many-root assembly it is the
+/// bulk of the time between evaluation and the first traced ray), so the
+/// builds fan out over rayon. Results are re-zipped with `solids` afterwards,
+/// so object order — and therefore the untraceable-part diagnostics — is
+/// unchanged from the serial version.
+pub(crate) fn build_objects(
+    solids: &[crate::SceneSolid],
+    mesh_segments: Option<u32>,
+) -> Result<Vec<Object>, String> {
+    use rayon::prelude::*;
+
+    let bvhs: Vec<Bvh> = solids
+        .par_iter()
+        .map(|s| match (mesh_segments, s.solid.as_brep()) {
+            (None, Some(brep)) => Bvh::build_brep(brep),
+            (segments, _) => {
+                // `to_mesh` ignores the segment count for a mesh-backed
+                // solid, so `unwrap_or(0)` keeps --exact's mesh-only branch
+                // byte-identical to what it did before this parameter existed.
+                let mut mesh = s.solid.to_mesh(segments.unwrap_or(0));
                 vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
                 Bvh::build_mesh(&mesh)
             }
-        };
+        })
+        .collect();
+
+    let mut objects: Vec<Object> = Vec::new();
+    let mut untraceable: Vec<String> = Vec::new();
+    for (s, bvh) in solids.iter().zip(bvhs) {
         if bvh.root().is_none() {
             untraceable.push(s.name.clone().unwrap_or_else(|| s.id.clone()));
             continue;
@@ -361,6 +461,7 @@ pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOption
         show_background: !png || pr.backdrop == Backdrop::Studio,
         seed: pr.seed,
         denoise: pr.denoise,
+        adaptive: pr.adaptive,
         ..PathTraceOptions::default()
     }
 }
@@ -406,7 +507,7 @@ fn rasterize(
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
-    let objects = build_objects(&solids)?;
+    let objects = build_objects(&solids, pr.mesh_segments())?;
     let corners: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
     let framing = frame_view(&corners, opts, pr)?;
     let scene = dress_scene(objects, &framing, pr)?;

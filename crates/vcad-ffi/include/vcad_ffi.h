@@ -105,6 +105,16 @@ VcadEdges *vcad_mesh_edges(const VcadMesh *mesh, float angle_deg);
 VcadEdgesView vcad_edges_view(const VcadEdges *edges);
 void vcad_edges_free(VcadEdges *edges);
 
+/* Per-triangle FACE ids for a scene part: one u32 per triangle of
+ * vcad_scene_part_mesh, naming which face of the solid produced it (ordinal
+ * within the shell). UINT32_MAX marks a triangle with no face (bridging fill).
+ * Writes the count to out_len; returns NULL when the part carries no tags
+ * (e.g. a frozen or imported mesh with no B-rep), so face picking is an
+ * optional capability. Borrows the scene; valid until the scene is freed.
+ * NOT durable across edits — any change to the B-rep renumbers the ordinals. */
+const uint32_t *vcad_scene_part_face_ids(const VcadScene *scene, size_t index,
+                                         size_t *out_len);
+
 /* Direct BRep ray tracing (pixel-perfect mode): rays hit analytic surfaces,
  * no tessellation. Kernel coords (Z-up, mm); colors = 3 f32 per part
  * (linear RGB); RGBA8 row-major output. CPU renderer today, signature is

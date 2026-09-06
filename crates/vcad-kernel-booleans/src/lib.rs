@@ -33,9 +33,10 @@ mod validate;
 
 // Re-export public API
 pub use api::{
-    boolean_op, boolean_op_reported, BooleanError, BooleanOp, BooleanReport, BooleanResult,
-    DegradeReason, Fidelity,
+    boolean_op, boolean_op_reported, repair_export_mesh, BooleanError, BooleanOp, BooleanReport,
+    BooleanResult, DegradeReason, Fidelity,
 };
+pub use mesh::csg::manifold_csg;
 pub use mesh::is_triangle_soup;
 pub use mesh::point_in_mesh;
 pub use mesh::MeshRayIndex;

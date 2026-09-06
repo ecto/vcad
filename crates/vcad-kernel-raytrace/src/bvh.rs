@@ -30,6 +30,54 @@ pub type FlatBvhNode = (Aabb3, bool, u32, u32);
 /// A node of the hierarchy.
 pub use kosm_render::BvhNode;
 
+/// One triangle, resolved out of the mesh's index/vertex arrays and narrowed
+/// to `f32` for GPU upload.
+///
+/// The BVH stores triangles as indices into shared vertex arrays, which is how
+/// you want them in memory but not how the shader reads them: the WGSL tracer
+/// has no spare storage-buffer binding for a vertex array (the browser cap of
+/// ten is already spent), so each triangle travels self-contained inside a
+/// `GpuSurface`'s parameter block. De-indexing happens here, once, at flatten
+/// time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlatTriangle {
+    /// The three corner positions, in winding order.
+    pub positions: [[f32; 3]; 3],
+    /// Per-corner shading normals, or `None` when the source mesh carried
+    /// none — in which case consumers fall back to the geometric normal, the
+    /// same fallback [`kosm_render::Bvh::trace`] applies on the CPU.
+    pub normals: Option<[[f32; 3]; 3]>,
+}
+
+/// What a flattened BVH's leaves index into.
+///
+/// A leaf's `(first, count)` range addresses this list whichever arm it is.
+/// The two arms are the two things a [`Bvh`] can be built over, so a consumer
+/// learns from the value itself whether it is holding trimmed analytic faces
+/// or triangles, rather than having to ask the BVH again.
+#[derive(Debug, Clone)]
+pub enum FlatPrims {
+    /// Trimmed analytic faces, in leaf order. From a BRep-backed BVH.
+    Faces(Vec<FaceId>),
+    /// De-indexed triangles, in leaf order. From a mesh-backed BVH.
+    Triangles(Vec<FlatTriangle>),
+}
+
+impl FlatPrims {
+    /// Number of primitives, whichever kind they are.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Faces(f) => f.len(),
+            Self::Triangles(t) => t.len(),
+        }
+    }
+
+    /// Whether the BVH flattened to no primitives at all.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// The geometry a [`Bvh`] was built over, as `kosm-render` sees it.
 ///
 /// Two kinds, because a solid may arrive either way: trimmed analytic faces
@@ -45,7 +93,17 @@ pub enum BrepGeom {
         faces: Vec<FaceId>,
     },
     /// Triangles of a mesh-only solid.
-    Mesh(TriMesh),
+    Mesh {
+        /// The triangles, as `kosm-render` traces them.
+        mesh: TriMesh,
+        /// Per-vertex shading normals, parallel to the mesh's positions, or
+        /// empty when the source mesh carried none.
+        ///
+        /// A second copy of what `TriMesh` already holds, because it keeps
+        /// its normals private and de-indexing at flatten time needs them
+        /// per corner. Drop this the day `TriMesh` exposes an accessor.
+        normals: Vec<Vec3>,
+    },
 }
 
 impl BrepGeom {
@@ -56,7 +114,7 @@ impl BrepGeom {
     pub fn face_id(&self, prim: u32) -> Option<FaceId> {
         match self {
             BrepGeom::BRep { faces, .. } => faces.get(prim as usize).copied(),
-            BrepGeom::Mesh(_) => None,
+            BrepGeom::Mesh { .. } => None,
         }
     }
 
@@ -64,7 +122,7 @@ impl BrepGeom {
     pub fn face_ids(&self) -> &[FaceId] {
         match self {
             BrepGeom::BRep { faces, .. } => faces,
-            BrepGeom::Mesh(_) => &[],
+            BrepGeom::Mesh { .. } => &[],
         }
     }
 }
@@ -85,14 +143,14 @@ impl Geometry for BrepGeom {
     fn len(&self) -> usize {
         match self {
             BrepGeom::BRep { faces, .. } => faces.len(),
-            BrepGeom::Mesh(m) => m.len(),
+            BrepGeom::Mesh { mesh, .. } => mesh.len(),
         }
     }
 
     fn bounds(&self, i: usize) -> Aabb {
         match self {
             BrepGeom::BRep { brep, faces } => to_render_aabb(&face_aabb(brep, faces[i])),
-            BrepGeom::Mesh(m) => m.bounds(i),
+            BrepGeom::Mesh { mesh, .. } => mesh.bounds(i),
         }
     }
 
@@ -123,7 +181,7 @@ impl Geometry for BrepGeom {
 
                 closest
             }
-            BrepGeom::Mesh(m) => m.intersect(ray, i, t_min, t_max),
+            BrepGeom::Mesh { mesh, .. } => mesh.intersect(ray, i, t_min, t_max),
         }
     }
 
@@ -148,7 +206,7 @@ impl Geometry for BrepGeom {
                     }
                 }
             }
-            BrepGeom::Mesh(m) => m.intersect_all(ray, i, out),
+            BrepGeom::Mesh { mesh, .. } => mesh.intersect_all(ray, i, out),
         }
     }
 
@@ -164,7 +222,7 @@ impl Geometry for BrepGeom {
                         hit.t > t_min && hit.t < t_max && point_in_face(brep, face_id, hit.uv)
                     })
             }
-            BrepGeom::Mesh(m) => m.occludes(ray, i, t_min, t_max),
+            BrepGeom::Mesh { mesh, .. } => mesh.occludes(ray, i, t_min, t_max),
         }
     }
 }
@@ -229,6 +287,15 @@ pub trait BrepBvh: Sized {
     /// BRep-backed BVHs only — the GPU pipeline traces analytic surfaces.
     /// A mesh-backed BVH flattens to nothing.
     fn flatten_faces(&self) -> (Vec<FlatBvhNode>, Vec<FaceId>);
+
+    /// Flatten the BVH for GPU upload, whichever kind of primitive it holds.
+    ///
+    /// Same node list as [`flatten_faces`](Self::flatten_faces), but the
+    /// primitives come back as a [`FlatPrims`]: face IDs from a BRep-backed
+    /// BVH, de-indexed [`FlatTriangle`]s from a mesh-backed one. A leaf's
+    /// `(first, count)` range addresses that list either way, so the GPU
+    /// leaf walk is the same walk for both.
+    fn flatten_prims(&self) -> (Vec<FlatBvhNode>, FlatPrims);
 }
 
 impl BrepBvh for Bvh {
@@ -270,22 +337,21 @@ impl BrepBvh for Bvh {
             Vec::new()
         };
 
-        kosm_render::Bvh::build(BrepGeom::Mesh(TriMesh::new(
-            positions,
+        kosm_render::Bvh::build(BrepGeom::Mesh {
+            mesh: TriMesh::new(positions, normals.clone(), &mesh.indices),
             normals,
-            &mesh.indices,
-        )))
+        })
     }
 
     fn brep(&self) -> Option<&BRepSolid> {
         match self.geometry() {
             BrepGeom::BRep { brep, .. } => Some(brep),
-            BrepGeom::Mesh(_) => None,
+            BrepGeom::Mesh { .. } => None,
         }
     }
 
     fn is_mesh(&self) -> bool {
-        matches!(self.geometry(), BrepGeom::Mesh(_))
+        matches!(self.geometry(), BrepGeom::Mesh { .. })
     }
 
     fn face_id(&self, hit: &RayHit) -> Option<FaceId> {
@@ -312,6 +378,49 @@ impl BrepBvh for Bvh {
                 .collect(),
             prims.into_iter().map(|p| face_ids[p as usize]).collect(),
         )
+    }
+
+    fn flatten_prims(&self) -> (Vec<FlatBvhNode>, FlatPrims) {
+        let (nodes, prims) = self.flatten();
+        let nodes: Vec<FlatBvhNode> = nodes
+            .into_iter()
+            .map(|(aabb, leaf, a, b)| (from_render_aabb(&aabb), leaf, a, b))
+            .collect();
+
+        let prims = match self.geometry() {
+            BrepGeom::BRep { faces, .. } => {
+                FlatPrims::Faces(prims.into_iter().map(|p| faces[p as usize]).collect())
+            }
+            BrepGeom::Mesh { mesh, normals } => {
+                let positions = mesh.positions();
+                let tris = mesh.triangles();
+                FlatPrims::Triangles(
+                    prims
+                        .into_iter()
+                        .map(|p| {
+                            let [i0, i1, i2] = tris[p as usize];
+                            let pos = |i: u32| {
+                                let v = positions[i as usize];
+                                [v.x as f32, v.y as f32, v.z as f32]
+                            };
+                            let nrm = (!normals.is_empty()).then(|| {
+                                let n = |i: u32| {
+                                    let v = normals[i as usize];
+                                    [v.x as f32, v.y as f32, v.z as f32]
+                                };
+                                [n(i0), n(i1), n(i2)]
+                            });
+                            FlatTriangle {
+                                positions: [pos(i0), pos(i1), pos(i2)],
+                                normals: nrm,
+                            }
+                        })
+                        .collect(),
+                )
+            }
+        };
+
+        (nodes, prims)
     }
 }
 
@@ -485,6 +594,7 @@ mod tests {
             // the same direction — the test isolates "vertex or geometric?".
             normals: vec![0.0, 0.6, 0.8, 0.0, 0.6, 0.8, 0.0, 0.6, 0.8],
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let bvh = Bvh::build_mesh(&mesh);
 
@@ -510,6 +620,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let bvh = Bvh::build_mesh(&mesh);
 
@@ -528,6 +639,7 @@ mod tests {
             indices: vec![0, 1, 2, 0, 0, 1, 0, 1, 99],
             normals: Vec::new(),
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let bvh = Bvh::build_mesh(&mesh);
 

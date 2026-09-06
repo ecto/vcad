@@ -22,8 +22,17 @@ pub use torus::intersect_torus;
 pub use triangle::{intersect_triangle, TriangleHit};
 
 use crate::Ray;
+use smallvec::SmallVec;
 use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_math::{Point2, Vec3};
+
+/// Hits from one ray-surface test, sorted by `t`.
+///
+/// Inline capacity 4 covers every analytic surface exactly — a torus is the
+/// worst case at four roots — so the hot path never touches the allocator.
+/// A B-spline can in principle exceed it and spills to the heap, which is
+/// the right trade: that case is already dominated by Newton iteration.
+pub type SurfaceHits = SmallVec<[SurfaceHit; 4]>;
 
 /// Result of a ray-surface intersection (before trim testing).
 #[derive(Debug, Clone, Copy)]
@@ -73,13 +82,13 @@ pub fn surface_tangent(surface: &dyn Surface, uv: Point2) -> Option<Vec3> {
 /// Intersect a ray with a surface, returning all intersections sorted by t.
 ///
 /// This dispatches to the appropriate intersector based on surface type.
-pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
+pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> SurfaceHits {
     match surface.surface_type() {
         SurfaceKind::Plane => {
             if let Some(plane) = surface.as_any().downcast_ref::<vcad_kernel_geom::Plane>() {
                 intersect_plane(ray, plane).into_iter().collect()
             } else {
-                Vec::new()
+                SurfaceHits::new()
             }
         }
         SurfaceKind::Cylinder => {
@@ -89,7 +98,7 @@ pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
             {
                 intersect_cylinder(ray, cyl)
             } else {
-                Vec::new()
+                SurfaceHits::new()
             }
         }
         SurfaceKind::Sphere => {
@@ -99,7 +108,7 @@ pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
             {
                 intersect_sphere(ray, sph)
             } else {
-                Vec::new()
+                SurfaceHits::new()
             }
         }
         SurfaceKind::Cone => {
@@ -109,7 +118,7 @@ pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
             {
                 intersect_cone(ray, cone)
             } else {
-                Vec::new()
+                SurfaceHits::new()
             }
         }
         SurfaceKind::Torus => {
@@ -119,7 +128,7 @@ pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
             {
                 intersect_torus(ray, torus)
             } else {
-                Vec::new()
+                SurfaceHits::new()
             }
         }
         SurfaceKind::Bilinear => {
@@ -129,7 +138,7 @@ pub fn intersect_surface(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
             {
                 intersect_bilinear(ray, bil)
             } else {
-                Vec::new()
+                SurfaceHits::new()
             }
         }
         SurfaceKind::BSpline => {

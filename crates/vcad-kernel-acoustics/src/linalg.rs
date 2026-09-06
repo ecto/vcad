@@ -86,8 +86,8 @@ impl Lu {
         assert_eq!(b.len(), n);
         let mut x = b.to_vec();
         // Apply the row permutation.
-        for k in 0..n {
-            x.swap(k, self.piv[k]);
+        for (k, &pk) in self.piv.iter().enumerate() {
+            x.swap(k, pk);
         }
         // Forward substitution (unit lower L).
         for i in 0..n {

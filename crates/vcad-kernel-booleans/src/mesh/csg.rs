@@ -42,6 +42,7 @@
 //! so deep tessellations cannot overflow the call stack.
 
 use vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_tessellate::manifold::{make_manifold, DEFAULT_WELD_EPS};
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::api::BooleanOp;
@@ -473,7 +474,62 @@ fn polygons_to_mesh(polys: &[Polygon]) -> TriangleMesh {
         }
     }
     collapse_degenerate_triangles(&mut mesh);
+    cancel_duplicate_triangles(&mut mesh);
     mesh
+}
+
+/// Cancel coincident triangles left by the split/classify pass.
+///
+/// A coplanar contact between the operands can survive classification
+/// twice — once from each operand's fragment — and an opposed pair is a
+/// ZERO-THICKNESS FLAP: it adds nothing to the volume (which is why the
+/// volume oracle waves it through) but every edge it touches ends up
+/// shared by four triangles. Slicers call that a non-manifold edge, and
+/// auto-repair resolves it by filling: a printed rotor came back with its
+/// shaft bore solid.
+///
+/// Same-orientation duplicates are simply redundant copies of one facet.
+/// Both are removed by keeping, for each vertex triple, |forward −
+/// backward| copies of whichever orientation dominates.
+fn cancel_duplicate_triangles(mesh: &mut TriangleMesh) {
+    let mut seen: std::collections::HashMap<[u32; 3], (i32, usize)> =
+        std::collections::HashMap::new();
+    for (t, tri) in mesh.indices.chunks(3).enumerate() {
+        let mut key = [tri[0], tri[1], tri[2]];
+        key.sort_unstable();
+        // Orientation relative to the sorted key: even permutation = +1.
+        let sign =
+            if (tri[0] < tri[1]) as u8 + (tri[1] < tri[2]) as u8 + (tri[0] < tri[2]) as u8 == 2 {
+                1
+            } else {
+                -1
+            };
+        let e = seen.entry(key).or_insert((0, t));
+        e.0 += sign;
+    }
+    if seen.values().all(|&(net, _)| net.abs() == 1) {
+        return;
+    }
+    let mut out = Vec::with_capacity(mesh.indices.len());
+    for tri in mesh.indices.chunks(3) {
+        let mut key = [tri[0], tri[1], tri[2]];
+        key.sort_unstable();
+        let sign =
+            if (tri[0] < tri[1]) as u8 + (tri[1] < tri[2]) as u8 + (tri[0] < tri[2]) as u8 == 2 {
+                1
+            } else {
+                -1
+            };
+        let Some(slot) = seen.get_mut(&key) else {
+            continue;
+        };
+        // Emit while this orientation still has an uncancelled surplus.
+        if slot.0 * sign > 0 {
+            slot.0 -= sign;
+            out.extend_from_slice(tri);
+        }
+    }
+    mesh.indices = out;
 }
 
 /// Weld away triangles whose f32-stored vertices are (near-)collinear.
@@ -605,7 +661,13 @@ fn fill_small_holes(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32, u32)
         }
     }
     let mut done: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    let starts: Vec<u32> = succ.keys().copied().collect();
+    // Sorted, not hash order: which loop a chain is walked from decides
+    // which loops get capped when two share a vertex, so an unsorted
+    // `succ.keys()` made the output differ run to run. Callers diff STLs
+    // across regenerations, so the cap order has to be a function of the
+    // input alone.
+    let mut starts: Vec<u32> = succ.keys().copied().collect();
+    starts.sort_unstable();
     for start in starts {
         if done.contains(&start) {
             continue;
@@ -674,8 +736,50 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
     }
     // `polygons_to_mesh` already heals t-junctions, snaps near-coincident
     // boundary vertices, caps residual pinholes and collapses degenerate
-    // triangles; all that remains is to pin the global orientation.
+    // triangles. What it cannot reach are *redundant patches*: whole
+    // sliver strips that double-cover the surface along seam circles
+    // (classification keeps both operands' fragments of the chord-vs-arc
+    // lune where one operand's cap crosses the other's chordal wall).
+    // Peel those, then pin the global orientation.
+    // No repair passes run here — deliberately. The caller's quadric
+    // projection decides per-vertex constraints from incident triangle
+    // normals, so even a pure deletion (peeling a zero-area flap) before
+    // it flips pinning decisions and strands seam vertices off their
+    // carriers (measured 0.36 mm off a R25 sphere). `mesh_fallback` runs
+    // the repair pipeline between two projection passes instead.
     orient_outward(polygons_to_mesh(&out))
+}
+
+/// Boolean of two closed triangle meshes, repaired into a manifold shell.
+///
+/// [`mesh_csg`] deliberately runs no repair passes, because callers that
+/// reproject vertices onto analytic carriers must see the raw fragment
+/// topology. Callers who just want a solid to export want the opposite,
+/// and got neither: the raw result is watertight but *branches* wherever
+/// two tool boundaries nearly coincide — classification correctly keeps a
+/// fragment from each operand covering the same surface, leaving edges
+/// with four incident triangles. A slicer's ray parity reads those as
+/// interior cracks, which is the failure mode ecto/vcad#840 was filed for.
+///
+/// This is the export-facing entry point: [`mesh_csg`] followed by
+/// [`make_manifold`], which welds the seam copies, drops slivers and
+/// cancels the double covers. It is deterministic and volume-preserving —
+/// a cancelling patch pair contributes nothing to the divergence integral,
+/// so repair cannot quietly change the part.
+///
+/// Chain it directly for multi-tool parts: differencing N tools one at a
+/// time keeps every intermediate a valid solid, so a failure is localised
+/// to the tool that caused it rather than surfacing at the end.
+pub fn manifold_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> TriangleMesh {
+    let mut out = mesh_csg(mesh_a, mesh_b, op);
+    // Strip double covers that `make_manifold` cannot see. Its cancellation
+    // matches triangles by vertex set, which catches a patch and its exact
+    // mirror but not two patches covering the same surface with *different*
+    // triangulations — the shape a difference leaves where a tool's face
+    // grazes an existing wall. This pass classifies by ray casting instead,
+    // so the triangulations need not agree.
+    super::remove_interior_membranes(&mut out);
+    make_manifold(&out, DEFAULT_WELD_EPS)
 }
 
 /// Pin the global orientation: a bounded solid — outer shells minus any

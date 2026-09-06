@@ -1,6 +1,6 @@
 //! Ray-BSpline surface intersection (Newton iteration with subdivision fallback).
 
-use super::SurfaceHit;
+use super::{SurfaceHit, SurfaceHits};
 use crate::Ray;
 use vcad_kernel_geom::Surface;
 use vcad_kernel_math::Point2;
@@ -16,11 +16,11 @@ const MAX_SUBDIVISION: usize = 4;
 ///
 /// Uses Newton iteration with subdivision fallback for robustness.
 /// This is a general method that works with any surface type via the Surface trait.
-pub fn intersect_bspline(ray: &Ray, surface: &dyn Surface) -> Vec<SurfaceHit> {
+pub fn intersect_bspline(ray: &Ray, surface: &dyn Surface) -> SurfaceHits {
     let ((u_min, u_max), (v_min, v_max)) = surface.domain();
 
     // Use subdivision to find initial guesses, then refine with Newton
-    let mut hits = Vec::new();
+    let mut hits = SurfaceHits::new();
     subdivide_and_intersect(ray, surface, u_min, u_max, v_min, v_max, 0, &mut hits);
 
     // Remove duplicates
@@ -40,7 +40,7 @@ fn subdivide_and_intersect(
     v_min: f64,
     v_max: f64,
     depth: usize,
-    hits: &mut Vec<SurfaceHit>,
+    hits: &mut SurfaceHits,
 ) {
     // Check if the ray might intersect this patch by testing corner bounding box
     let corners = [

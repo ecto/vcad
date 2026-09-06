@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-25-animate-drafting-style",
+  "version": "0.9.4",
+  "date": "2026-08-25",
+  "category": "feat",
+  "title": "Animate in any style, not just photoreal",
+  "summary": "vcad-render --animate now works without --photoreal: drafting line art by default, --raytrace as a middle tier, with one camera pinned across the whole sequence.",
+  "details": "--animate used to require --photoreal, so the cheapest and most legible style — the default drafting line art — could not be animated at all, and a sequence meant tens of seconds a frame. It is now a style-agnostic path: the front half (resolve the timeline, evaluate the document exactly once, sample the sequence, bake one pose vector per frame) is shared, and three back ends turn a pose into pixels — drafting (default), --raytrace, and --photoreal. The drafting tier tessellates each part once and only re-poses the cached meshes per frame, which puts a 37-part machine at ~0.35 s a frame instead of minutes. Every tier now frames its camera once, on the union of all posed bounds, and hands that same framing to every frame, so all PNGs share one canvas size and scale and the assembly no longer swims about; --auto-aspect resolves once against that union. --trim is refused with --animate (a per-frame crop is per-frame sizing, the drift the shared camera prevents) and names the flag to drop.",
+  "features": ["rendering", "animation", "assemblies", "joints", "cli"]
+}

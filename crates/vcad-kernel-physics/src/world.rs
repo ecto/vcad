@@ -1929,6 +1929,7 @@ impl PhysicsWorld {
                     indices: indices.clone(),
                     normals: normals_f32,
                     face_kinds: Vec::new(),
+                    face_ids: Vec::new(),
                 }))
             }
             _ => Ok(None),
@@ -2204,6 +2205,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "cam_inst".to_string(),
@@ -2212,6 +2214,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
         doc.joints = Some(vec![Joint {
@@ -2331,6 +2334,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "arm_inst".to_string(),
@@ -2339,6 +2343,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
 
@@ -2616,6 +2621,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             vcad_ir::Instance {
                 id: "arm_inst".into(),
@@ -2624,6 +2630,7 @@ mod tests {
                 tags: Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
         doc.joints = Some(vec![vcad_ir::Joint {
@@ -2731,6 +2738,7 @@ mod tests {
                 ..Default::default()
             }),
             material: None,
+            explode: None,
         };
         doc.instances = Some(vec![
             inst("i-base", "base", 500.0),
@@ -2968,6 +2976,7 @@ mod tests {
                 tags: std::vec::Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "crate_inst".to_string(),
@@ -2976,6 +2985,7 @@ mod tests {
                 tags: std::vec::Vec::new(),
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
         doc.joints = Some(std::vec::Vec::new());

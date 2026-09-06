@@ -13,9 +13,12 @@ use vcad_ir::Document;
 
 mod convert;
 pub mod fastener;
+pub mod gear;
 pub mod modules;
 pub mod params;
 pub mod recover;
+mod rootnames;
+pub mod variants;
 pub use convert::{value_to_document, value_to_document_in};
 pub use modules::{lib_dirs, LibPathProvider, LIB_PATH_VAR};
 
@@ -137,7 +140,10 @@ fn parse_program(source: &str) -> Result<Vec<loon_lang::ast::Expr>, String> {
     // top-level value expression is collected into the document.
     let user_source = collect_top_level_values(source);
     let full_source = format!("{VCAD_LIB_SOURCE}\n\n{user_source}");
-    loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())
+    let mut exprs = loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())?;
+    // `[root wheel "steel"]` keeps the binding name on the root node.
+    rootnames::capture(&mut exprs);
+    Ok(exprs)
 }
 
 /// Evaluate a parsed program with the given module resolver.
@@ -411,6 +417,37 @@ mod tests {
         let doc = eval_vcad("[root [cube 10.0 10.0 10.0] \"steel\"]", None).unwrap();
         assert_eq!(doc.roots.len(), 1);
         assert_eq!(doc.roots[0].material, "steel");
+    }
+
+    #[test]
+    fn root_captures_binding_name() {
+        let source = r#"
+[let wheel [cylinder 10.0 5.0]]
+[root wheel "steel"]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.roots.len(), 1);
+        let node = &doc.nodes[&doc.roots[0].root];
+        assert_eq!(node.name.as_deref(), Some("wheel"));
+    }
+
+    #[test]
+    fn root_of_expression_has_no_name() {
+        let doc = eval_vcad("[root [cylinder 10.0 5.0] \"steel\"]", None).unwrap();
+        assert_eq!(doc.nodes[&doc.roots[0].root].name, None);
+    }
+
+    #[test]
+    fn root_named_takes_explicit_name() {
+        let source = r#"
+[let wheel [cylinder 10.0 5.0]]
+[root-named wheel "steel" "front-wheel"]
+"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(
+            doc.nodes[&doc.roots[0].root].name.as_deref(),
+            Some("front-wheel")
+        );
     }
 
     #[test]
@@ -816,6 +853,76 @@ mod tests {
 "#;
         let doc = eval_vcad(source, None).unwrap();
         assert_eq!(doc.nodes.len(), 2); // sketch + sweep
+    }
+
+    /// The two forms issue #842 asked for, from source text through the
+    /// prelude to the IR: a helix path and a `sweep` that takes it.
+    #[test]
+    fn eval_helix_sweep() {
+        let source = r#"[pipe [profile-rect 3.0 2.0] [sweep [helix 34.5 0.0667 0.0 15.0]]]"#;
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.nodes.len(), 2); // profile + sweep
+        let path = doc
+            .nodes
+            .values()
+            .find_map(|n| match &n.op {
+                vcad_ir::CsgOp::Sweep { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .expect("a Sweep node");
+        match path {
+            vcad_ir::PathCurve::Cylindrical {
+                radius,
+                knots,
+                seg_deg,
+            } => {
+                assert_eq!(radius, 34.5);
+                assert_eq!(seg_deg, Some(0.5));
+                assert_eq!(knots.len(), 2);
+                assert_eq!(knots[0].x, 0.0);
+                assert_eq!(knots[1].x, 15.0);
+                // rate x arc, so the drawing's rise falls out of the source.
+                assert!((knots[1].y - 0.0667 * 15.0).abs() < 1e-12);
+            }
+            other => panic!("expected a cylindrical path, got {other:?}"),
+        }
+    }
+
+    /// A detent is knots, not a separate mechanism.
+    #[test]
+    fn eval_cam_path_detent() {
+        let source = r#"[pipe [profile-polyline #[-1.6 0.0  1.6 0.0  1.3 1.6  -1.3 1.6]]
+            [sweep [cam-path 34.5 #[3.6 -0.25  9.6 0.15  10.3 0.25  11.3 0.25
+                                    11.6 0.15  18.4 0.15]]]]"#;
+        let doc = eval_vcad(source, None).unwrap();
+        let path = doc
+            .nodes
+            .values()
+            .find_map(|n| match &n.op {
+                vcad_ir::CsgOp::Sweep { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .expect("a Sweep node");
+        match path {
+            vcad_ir::PathCurve::Cylindrical { knots, .. } => assert_eq!(knots.len(), 6),
+            other => panic!("expected a cylindrical path, got {other:?}"),
+        }
+    }
+
+    /// The generated loon for a cylindrical sweep has to be loon the reader
+    /// can re-evaluate, not just something that looks like it.
+    #[test]
+    fn cylindrical_sweep_round_trips_through_to_loon() {
+        let source = r#"[pipe [profile-polyline #[-1.6 0.0  1.6 0.0  1.3 1.6  -1.3 1.6]]
+            [sweep [cam-path 34.5 #[3.6 -0.25  9.6 0.15  11.6 0.15]]]]"#;
+        let doc = eval_vcad(source, None).unwrap();
+        let text = vcad_ir::to_loon::document_to_loon(&doc);
+        assert!(
+            text.contains("cam-path-res"),
+            "generated loon has no path form:\n{text}"
+        );
+        let again = eval_vcad(&text, None).expect("generated loon does not re-evaluate");
+        assert_eq!(again.nodes.len(), doc.nodes.len());
     }
 
     #[test]

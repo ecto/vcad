@@ -12,6 +12,7 @@ mod chat_session;
 mod fabprep;
 mod input;
 mod keybinding_adapter;
+mod kit;
 mod log_capture;
 #[cfg(feature = "print-server")]
 mod print_server;
@@ -46,6 +47,19 @@ enum Commands {
     Tui {
         /// Path to a .vcad file to open
         file: Option<PathBuf>,
+    },
+
+    /// Lay parts out on print plates and write a Bambu/Prusa 3MF kit
+    ///
+    /// The spec is JSON: a list of parts (mesh path, plate index, XY centre),
+    /// optional bed size and per-plate names. Parts are dropped to the plate
+    /// in Z; overlaps and off-bed placements are errors, not warnings.
+    Kit {
+        /// Path to the kit spec JSON
+        spec: PathBuf,
+        /// Output .3mf (defaults to the spec path with a .3mf extension)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Interactive REPL for building geometry
@@ -234,6 +248,20 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Resolve and compare variant parameter tables
+    ///
+    /// A design family — a full-size part and its scaled print mules — is one
+    /// base table plus per-variant overlays, declared in a `.params.loon`
+    /// file with `[deftable ...]` and `[defvariant ... :from ... :scale ...]`.
+    /// `resolve` flattens one variant to concrete values, each carrying the
+    /// source it came from; `diff` shows what two variants disagree on and
+    /// whether the disagreement is an own override, an inherited value, or
+    /// the envelope scale.
+    Params {
+        #[command(subcommand)]
+        command: ParamsCommands,
+    },
+
     /// Take a routed .pcb.json to a complete fab package plus a DRC-delta receipt
     ///
     /// Runs the whole fab-prep pipeline in one command: (optionally) calibrate
@@ -358,12 +386,74 @@ enum Commands {
         explain: bool,
     },
 
+    /// Lint an EXPORTED mesh for FDM printability, in a chosen orientation
+    ///
+    /// Printability is a property of the shipped file, not of the model that
+    /// produced it: a shell can pass its author's analytic profile check while
+    /// the discretised STL carries 0.05 mm cracks. So this reads triangles and
+    /// casts rays at them, reporting floating regions and mid-air islands,
+    /// interior cracks, the overhang census, bridge spans with lengths, min
+    /// wall against the nozzle, and a manifold + closed-sections summary.
+    ///
+    /// Exit code is 0 when clean and 1 when anything failed, so it gates CI.
+    Check {
+        /// Mesh to check (.stl, binary or ASCII)
+        input: PathBuf,
+        /// Which model axis points up on the plate: z, -z, x, -x, y, -y
+        #[arg(long, default_value = "z")]
+        orientation: String,
+        /// Nozzle width in mm — nothing thinner can be extruded
+        #[arg(long, default_value = "0.4")]
+        nozzle: f64,
+        /// Longest unsupported span accepted without support material, mm
+        #[arg(long, default_value = "4")]
+        max_bridge: f64,
+        /// Material gaps below this are cracks, not channels. Never waived.
+        #[arg(long, default_value = "0.15")]
+        crack_threshold: f64,
+        /// Self-support limit in degrees from vertical
+        #[arg(long, default_value = "45")]
+        max_overhang: f64,
+        /// Fail on the overhang census instead of warning
+        #[arg(long)]
+        strict_overhangs: bool,
+        /// Distance between raycast columns, mm (default: the nozzle width)
+        #[arg(long)]
+        pitch: Option<f64>,
+        /// Section sampling pitch in mm
+        #[arg(long, default_value = "0.4")]
+        section_step: f64,
+        /// Accept unsupported spans in a height range, e.g. `--allow-bridge
+        /// 1.75:2.65`. Repeatable. Documented bridges only — a crack is never
+        /// waived by this.
+        #[arg(long = "allow-bridge", value_name = "Z0:Z1")]
+        allow_bridge: Vec<String>,
+        /// Emit the report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Start the print relay server for web app → printer communication
     #[cfg(feature = "print-server")]
     PrintServer {
         /// Port to listen on
         #[arg(long, default_value = "7878")]
         port: u16,
+    },
+
+    /// Run a probe suite: material/void and clearance assertions against a
+    /// posed assembly, with a nonzero exit code on any failure.
+    ///
+    /// The suite is a JSON file listing named parts (mesh + pose) and the
+    /// assertions made against them; mesh paths resolve relative to it. See
+    /// `vcad_kernel_tessellate::probe` for the schema.
+    Probe {
+        /// Path to the probe suite JSON.
+        file: PathBuf,
+
+        /// Print only the failures and the tally.
+        #[arg(long)]
+        quiet: bool,
     },
 
     /// Sign in so the chat panel uses your account's quota instead of
@@ -377,6 +467,48 @@ enum Commands {
 
     /// Remove the stored chat auth token.
     Logout,
+}
+
+#[derive(Subcommand)]
+enum ParamsCommands {
+    /// Flatten one variant to a resolved table (JSON on stdout)
+    Resolve {
+        /// Variant (or base table) name
+        variant: String,
+        /// Parameter-table file (default: `params.loon` in the working
+        /// directory, or $VCAD_PARAMS)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Print an aligned table instead of JSON
+        #[arg(long)]
+        table: bool,
+    },
+
+    /// Show what differs between two variants, and why
+    Diff {
+        /// Left variant
+        a: String,
+        /// Right variant
+        b: String,
+        /// Parameter-table file (default: `params.loon` in the working
+        /// directory, or $VCAD_PARAMS)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+        /// Emit JSON instead of the human-readable rendering
+        #[arg(long)]
+        json: bool,
+        /// Exit 1 when the variants differ (for CI gates)
+        #[arg(long)]
+        exit_code: bool,
+    },
+
+    /// List the tables and variants a parameter-table file declares
+    List {
+        /// Parameter-table file (default: `params.loon` in the working
+        /// directory, or $VCAD_PARAMS)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -522,6 +654,12 @@ fn main() -> Result<()> {
         Some(Commands::Info { file }) => {
             show_info(&file)?;
         }
+        Some(Commands::Kit { spec, output }) => {
+            kit::run(&kit::KitArgs { spec, output })?;
+        }
+        Some(Commands::Params { command }) => {
+            run_params(command)?;
+        }
         Some(Commands::FabPrep {
             input,
             output,
@@ -605,10 +743,40 @@ fn main() -> Result<()> {
                 explain,
             )?;
         }
+        Some(Commands::Check {
+            input,
+            orientation,
+            nozzle,
+            max_bridge,
+            crack_threshold,
+            max_overhang,
+            strict_overhangs,
+            pitch,
+            section_step,
+            allow_bridge,
+            json,
+        }) => {
+            run_check(
+                &input,
+                &orientation,
+                nozzle,
+                max_bridge,
+                crack_threshold,
+                max_overhang,
+                strict_overhangs,
+                pitch,
+                section_step,
+                &allow_bridge,
+                json,
+            )?;
+        }
         #[cfg(feature = "print-server")]
         Some(Commands::PrintServer { port }) => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(print_server::start_server(port))?;
+        }
+        Some(Commands::Probe { file, quiet }) => {
+            run_probe(&file, quiet)?;
         }
         Some(Commands::Login { token }) => {
             run_login(token)?;
@@ -622,6 +790,36 @@ fn main() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// `vcad probe` — run a probe suite and gate CI on the result.
+///
+/// Exits with status 1 when any assertion fails, so a suite can sit in a
+/// build pipeline the way rana ran `probe-60c.py` by hand.
+fn run_probe(file: &std::path::Path, quiet: bool) -> Result<()> {
+    let report =
+        vcad_kernel_tessellate::run_probe_file(file).map_err(|e| anyhow::anyhow!("{e}"))?;
+    for outcome in &report.outcomes {
+        if quiet && outcome.passed {
+            continue;
+        }
+        println!(
+            "  {} {}: {}",
+            if outcome.passed { "PASS" } else { "FAIL" },
+            outcome.name,
+            outcome.detail
+        );
+    }
+    println!(
+        "{} passed, {} failed, {} total",
+        report.passed(),
+        report.failed(),
+        report.outcomes.len()
+    );
+    if !report.ok() {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -1099,6 +1297,7 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
             name: scene_name,
             meshes,
             animation: None,
+            scene_extras: None,
         },
         &f32_data,
         &u32_data,
@@ -1384,6 +1583,120 @@ fn load_vcad_document_raw(file: &PathBuf) -> Result<vcad_ir::Document> {
                 .map_err(|e| anyhow::anyhow!("unrecognized .vcad file format (VCode parse: {e})"))
         }
     }
+}
+
+/// Locate the parameter-table file: the `--file` argument, else `$VCAD_PARAMS`,
+/// else `params.loon` in the working directory.
+fn params_file(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(p) = explicit {
+        return Ok(p);
+    }
+    if let Ok(p) = std::env::var("VCAD_PARAMS") {
+        return Ok(PathBuf::from(p));
+    }
+    let default = PathBuf::from("params.loon");
+    if default.exists() {
+        return Ok(default);
+    }
+    anyhow::bail!(
+        "no parameter-table file — pass --file <path>, set VCAD_PARAMS, or put a \
+         params.loon in the working directory"
+    )
+}
+
+fn load_variant_set(file: Option<PathBuf>) -> Result<(PathBuf, vcad_loon::variants::VariantSet)> {
+    let path = params_file(file)?;
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    let set = vcad_loon::variants::parse(&source)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    Ok((path, set))
+}
+
+fn run_params(command: ParamsCommands) -> Result<()> {
+    match command {
+        ParamsCommands::Resolve {
+            variant,
+            file,
+            table,
+        } => {
+            let (path, set) = load_variant_set(file)?;
+            let resolved = set
+                .resolve(&variant)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+            if table {
+                println!(
+                    "{} ({}), effective scale {}",
+                    resolved.name,
+                    resolved.chain.join(" → "),
+                    resolved.effective_scale
+                );
+                let w = resolved
+                    .params
+                    .iter()
+                    .map(|p| p.name.len())
+                    .max()
+                    .unwrap_or(0);
+                for p in &resolved.params {
+                    let value = format!("{}{}", p.value, p.unit.as_deref().unwrap_or(""));
+                    println!(
+                        "  {:<w$}  {:>10}  {}",
+                        p.name,
+                        value,
+                        p.source.explain(),
+                        w = w
+                    );
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&resolved)?);
+            }
+        }
+        ParamsCommands::Diff {
+            a,
+            b,
+            file,
+            json,
+            exit_code,
+        } => {
+            let (path, set) = load_variant_set(file)?;
+            let diff = set
+                .diff(&a, &b)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&diff)?);
+            } else {
+                print!("{}", diff.render());
+            }
+            if exit_code && !diff.entries.is_empty() {
+                std::process::exit(1);
+            }
+        }
+        ParamsCommands::List { file } => {
+            let (path, set) = load_variant_set(file)?;
+            println!("{}", path.display());
+            let mut tables: Vec<_> = set.tables.values().collect();
+            tables.sort_by(|a, b| a.name.cmp(&b.name));
+            for t in tables {
+                println!("  table {} ({} parameters)", t.name, t.order.len());
+            }
+            let mut variants: Vec<_> = set.variants.values().collect();
+            variants.sort_by(|a, b| a.name.cmp(&b.name));
+            for v in variants {
+                let scale = match v.scale {
+                    Some(s) => format!(", scale {s}"),
+                    None => String::new(),
+                };
+                println!(
+                    "  variant {} (from {}{}, {} overlays)",
+                    v.name,
+                    v.parent,
+                    scale,
+                    v.overlays.len()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn show_info(file: &PathBuf) -> Result<()> {
@@ -1705,6 +2018,73 @@ pub fn export_file_from_doc(doc: &vcad_ir::Document, output: &PathBuf) -> Result
     Ok(())
 }
 
+/// `vcad check` — printability lint on an exported mesh.
+///
+/// Exits the process with 1 on a dirty verdict rather than returning an error,
+/// so CI sees a lint failure (findings already printed) and not a crash.
+#[allow(clippy::too_many_arguments)]
+fn run_check(
+    input: &std::path::Path,
+    orientation: &str,
+    nozzle: f64,
+    max_bridge: f64,
+    crack_threshold: f64,
+    max_overhang: f64,
+    strict_overhangs: bool,
+    pitch: Option<f64>,
+    section_step: f64,
+    allow_bridge: &[String],
+    json: bool,
+) -> Result<()> {
+    use vcad_printcheck::{check_file, render_text, Options, Orientation};
+
+    let orientation = Orientation::parse(orientation).ok_or_else(|| {
+        anyhow::anyhow!("unknown orientation `{orientation}` (expected one of z, -z, x, -x, y, -y)")
+    })?;
+    let mut allow_bridges = Vec::new();
+    for spec in allow_bridge {
+        let (a, b) = spec
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("--allow-bridge wants Z0:Z1, got `{spec}`"))?;
+        let lo: f64 = a
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--allow-bridge: `{a}` is not a number"))?;
+        let hi: f64 = b
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--allow-bridge: `{b}` is not a number"))?;
+        if hi < lo {
+            anyhow::bail!("--allow-bridge {spec}: the range runs backwards");
+        }
+        allow_bridges.push((lo, hi));
+    }
+
+    let opts = Options {
+        orientation,
+        nozzle,
+        max_bridge,
+        crack_threshold,
+        max_overhang,
+        strict_overhangs,
+        pitch: pitch.unwrap_or(nozzle),
+        section_step,
+        allow_bridges,
+        ..Default::default()
+    };
+    let report = check_file(input, &opts)?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", render_text(&report));
+    }
+    if !report.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn slice_file(
     input: &PathBuf,
@@ -1745,6 +2125,7 @@ fn slice_file(
         indices: combined_idxs,
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
 
     // Resolve printer profile

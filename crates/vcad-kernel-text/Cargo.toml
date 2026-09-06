@@ -13,6 +13,8 @@ vcad-kernel-math = { workspace = true }
 vcad-kernel-sketch = { workspace = true }
 
 [features]
+# Drop the include_bytes!() of assets/NotoSans-Regular.ttf (~27 KB) for builds
+# that never render text. `Font::default()` then yields an empty font.
 no-builtin-font = []
 
 [dev-dependencies]

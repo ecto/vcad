@@ -2,7 +2,7 @@
 //!
 //! Uses Ferrari's method to solve the quartic polynomial analytically.
 
-use super::SurfaceHit;
+use super::{SurfaceHit, SurfaceHits};
 use crate::Ray;
 use std::f64::consts::PI;
 use vcad_kernel_geom::TorusSurface;
@@ -12,7 +12,7 @@ use vcad_kernel_math::Point2;
 ///
 /// Returns up to 4 intersections, sorted by t.
 /// Only intersections with t >= 0 are returned.
-pub fn intersect_torus(ray: &Ray, torus: &TorusSurface) -> Vec<SurfaceHit> {
+pub fn intersect_torus(ray: &Ray, torus: &TorusSurface) -> SurfaceHits {
     let r = torus.major_radius;
     let r2 = r * r;
     let a = torus.minor_radius;
@@ -48,7 +48,7 @@ pub fn intersect_torus(ray: &Ray, torus: &TorusSurface) -> Vec<SurfaceHit> {
     // Solve the quartic
     let roots = solve_quartic(c4, c3, c2, c1, c0);
 
-    let mut hits: Vec<SurfaceHit> = roots
+    let mut hits: SurfaceHits = roots
         .into_iter()
         .filter(|&t| t >= 0.0)
         .map(|t| {

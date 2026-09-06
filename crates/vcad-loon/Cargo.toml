@@ -12,4 +12,5 @@ publish = false
 loon-lang = { git = "https://github.com/ecto/loon", rev = "c12ef566613995f913012c79773bab825950566f" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-parts = { path = "../vcad-parts" }
+serde.workspace = true
 serde_json.workspace = true

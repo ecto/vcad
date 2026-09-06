@@ -1,0 +1,10 @@
+{
+  "id": "2026-08-25-measure-joint-sweep",
+  "version": "0.9.4",
+  "date": "2026-08-25",
+  "category": "feat",
+  "title": "measure sweeps a mechanism's range of motion",
+  "summary": "measure now takes joint_state and sweep: the worst distance across a joint's travel plus the full per-pose margin curve; check_clearance gains include_samples and out-of-limits warnings.",
+  "features": ["measure", "clearance", "assembly", "joints", "kinematics"],
+  "mcpTools": ["measure", "check_clearance"]
+}

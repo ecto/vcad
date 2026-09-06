@@ -31,3 +31,4 @@ stl_io = "0.8"
 [dev-dependencies]
 vcad-loon.workspace = true
 vcad-kernel-fillet.workspace = true
+vcad-kernel-booleans.workspace = true

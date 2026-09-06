@@ -1389,6 +1389,26 @@ impl Solid {
         })
     }
 
+    /// Sweep a profile along a cylindrical (cam-track) path.
+    ///
+    /// The cross-section is held in the radial/axial plane rather than
+    /// perpendicular to the tangent, so the swept floor lands exactly on the
+    /// path's own height function — see
+    /// [`vcad_kernel_sweep::CylindricalPath`].
+    pub fn sweep_cylindrical(
+        profile: vcad_kernel_sketch::SketchProfile,
+        path: &vcad_kernel_sweep::CylindricalPath,
+        options: vcad_kernel_sweep::SweepOptions,
+    ) -> Result<Self, vcad_kernel_sweep::SweepError> {
+        let brep = vcad_kernel_sweep::sweep_cylindrical(&profile, path, options)?;
+        Ok(Solid {
+            names: None,
+            provenance: Vec::new(),
+            repr: SolidRepr::BRep(Box::new(brep)),
+            segments: 32,
+        })
+    }
+
     /// Create a solid by lofting between multiple profiles.
     ///
     /// # Arguments
@@ -1527,7 +1547,14 @@ impl Solid {
     pub fn to_mesh(&self, segments: u32) -> TriangleMesh {
         match &self.repr {
             SolidRepr::Empty => TriangleMesh::new(),
-            SolidRepr::BRep(brep) => tessellate_brep(brep.as_ref(), segments),
+            SolidRepr::BRep(brep) => {
+                let mut mesh = tessellate_brep(brep.as_ref(), segments);
+                // Export boundary: consumers of this mesh slice, print and
+                // ray-trace it, so close what the splitters left open —
+                // and keep repaired vertices on their analytic carriers.
+                vcad_kernel_booleans::repair_export_mesh(brep.as_ref(), &mut mesh);
+                mesh
+            }
             SolidRepr::Mesh(m) => m.clone(),
         }
     }
@@ -2661,6 +2688,7 @@ mod tests {
             indices: vec![0, 1, 2],
             normals: vec![0.0; 9],
             face_kinds: Vec::new(),
+            face_ids: Vec::new(),
         };
         let com = compute_center_of_mass(&mesh);
         let (min, max) = compute_bounding_box(&mesh);

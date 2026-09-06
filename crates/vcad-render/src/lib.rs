@@ -40,6 +40,9 @@
 
 #[cfg(feature = "raytrace")]
 pub mod animate;
+/// `--assembly` / `--explode`: several posed parts as one scene.
+#[cfg(feature = "cli")]
+pub mod assembly;
 #[cfg(feature = "raytrace")]
 pub mod envmap;
 mod exact;
@@ -47,6 +50,9 @@ pub mod materials;
 pub mod pcb;
 #[cfg(feature = "raytrace")]
 pub mod photoreal;
+#[cfg(feature = "photoreal-gpu")]
+pub mod photoreal_gpu;
+pub mod web;
 
 /// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
 /// checked in node-id order, then the legacy top-level `pcb` field.
@@ -569,6 +575,7 @@ fn xml_escape(s: &str) -> String {
 /// The colour tints the shading ramp; `name` feeds the optional part-label
 /// annotation; `labels` (node name, instance id/name, part-def id) drive
 /// `--focus`.
+#[derive(Clone)]
 struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
@@ -620,9 +627,20 @@ pub fn tessellation_segments(raster_size_px: Option<u32>) -> u32 {
 /// `segments` (see [`tessellation_segments`]).
 ///
 /// A cache hit yields a mesh-backed `Solid` (no BRep), which the tessellated
-/// raster and SVG paths render identically to a freshly evaluated root. The
-/// ray-traced, photoreal and `--section` paths need analytic surfaces, so
-/// callers must not wrap those in a cache scope.
+/// raster and SVG paths render identically to a freshly evaluated root.
+///
+/// The photoreal path is cacheable too, and by default is: it traces
+/// triangles at `photoreal::MESH_SEGMENTS`, so a cached mesh is all the
+/// geometry it wants, and it tessellates on a miss as well so cold and warm
+/// renders agree. Wrap it in a scope built with those segments —
+/// [`tessellation_segments`] answers for the raster and SVG paths, not for
+/// this one.
+///
+/// `--raytrace`, `--section` and photoreal's `--exact`
+/// (`PhotorealOptions::exact`) do need analytic BRep surfaces,
+/// which a cached mesh cannot supply. Callers must not wrap those in a cache
+/// scope: they would pay to populate a cache they can never read, and a hit
+/// would silently downgrade them to triangles.
 pub fn with_root_cache<T>(
     cache: std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>,
     segments: u32,
@@ -832,6 +850,7 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
                         indices: p.mesh.indices.clone(),
                         normals: p.mesh.normals.clone().unwrap_or_default(),
                         face_kinds: p.mesh.face_kinds.clone().unwrap_or_default(),
+                        face_ids: p.mesh.face_ids.clone().unwrap_or_default(),
                     })
                 })
             });
@@ -920,6 +939,7 @@ fn evaluate_assembly_instances(
                                 indices: pd.mesh.indices.clone(),
                                 normals: pd.mesh.normals.clone().unwrap_or_default(),
                                 face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                                face_ids: pd.mesh.face_ids.clone().unwrap_or_default(),
                             })
                         })
                 })
@@ -2152,9 +2172,79 @@ pub fn render_svg_str_opts(
     scale: f64,
     opts: &SvgOptions,
 ) -> Result<String, String> {
-    let mut scene = evaluate_vcad(raw_vcad)?;
+    render_scene(evaluate_vcad(raw_vcad)?, scale, opts)
+}
+
+/// One part of an assembly, already posed into world space.
+///
+/// The assembly's transforms are the single source of truth (see #844): this
+/// type is what a caller hands the renderer *after* applying them, so nothing
+/// downstream re-derives a pose. `name` is what `--focus` and `--highlight`
+/// match against, and what `--labels` prints.
+pub struct PosedPart {
+    /// The part's geometry, already transformed into world space.
+    pub solid: Solid,
+    /// Instance name, for focus/highlight selection and labels.
+    pub name: Option<String>,
+}
+
+/// Render already-posed assembly parts as one scene.
+///
+/// [`render_svg_str_opts`] evaluates a single document; this takes parts that
+/// have already been placed, so an assembly — or an exploded view of one —
+/// goes through exactly the same projection, hidden-line and section
+/// machinery as a single part, rather than through a separate code path that
+/// can drift from it.
+pub fn render_svg_posed(
+    parts: Vec<PosedPart>,
+    scale: f64,
+    opts: &SvgOptions,
+) -> Result<String, String> {
+    if parts.is_empty() {
+        return Err("assembly has no parts".to_string());
+    }
+    let scene: Vec<SceneSolid> = parts
+        .into_iter()
+        .map(|p| SceneSolid {
+            solid: p.solid,
+            tint: None,
+            material: None,
+            id: p.name.clone().unwrap_or_default(),
+            labels: p.name.iter().cloned().collect(),
+            name: p.name,
+        })
+        .collect();
+    render_scene(scene, scale, opts)
+}
+
+/// Section, select and draw an already-evaluated scene. Shared by the
+/// document and posed-assembly entry points so both honour `--section`,
+/// `--focus` and `--highlight` identically.
+fn render_scene(
+    mut scene: Vec<SceneSolid>,
+    scale: f64,
+    opts: &SvgOptions,
+) -> Result<String, String> {
     if let Some(plane) = opts.section {
+        let before = scene.len();
         scene = apply_section(scene, plane, opts.view);
+        // A plane that misses the model entirely leaves nothing to draw. The
+        // generic "no solids produced" that used to surface here reads as a
+        // broken document rather than as a section plane placed outside it,
+        // which is the usual cause (vcad primitives sit base-on-z=0, so
+        // `z=0` is the underside, not the middle).
+        if scene.is_empty() && before > 0 {
+            return Err(format!(
+                "section {}={} removed every part — the plane is outside the model \
+                 or on the camera side of all of it",
+                match plane.axis {
+                    Axis::X => "x",
+                    Axis::Y => "y",
+                    Axis::Z => "z",
+                },
+                plane.coord
+            ));
+        }
     }
     let accents: Vec<bool> = scene
         .iter()
@@ -2989,7 +3079,8 @@ fn emit_svg_axes(out: &mut String, view: View, h: f64) {
 
 #[cfg(feature = "raster")]
 pub use raster::{
-    render_jpeg_solids, render_jpeg_str, render_png_solids, render_png_str, RasterOptions,
+    render_jpeg_solids, render_jpeg_str, render_png_solids, render_png_str, FixedFraming,
+    FramingBuilder, RasterOptions,
 };
 
 #[cfg(feature = "raster")]
@@ -3008,7 +3099,9 @@ mod raster {
     /// Segment count for canvases at or above [`HIRES_THRESHOLD_PX`].
     /// Adjacent facets differ by 2.8°, still well under the ~10° coplanar
     /// tolerance, so no facet stripes appear.
-    const RASTER_SEGMENTS_HIRES: u32 = 128;
+    /// Also the photoreal path's fixed count — see
+    /// `photoreal::MESH_SEGMENTS`.
+    pub(crate) const RASTER_SEGMENTS_HIRES: u32 = 128;
 
     /// The segment count a raster canvas of `size_px` tessellates at.
     pub(super) fn segments_for(size_px: u32) -> u32 {
@@ -3107,6 +3200,99 @@ mod raster {
                 mask,
                 canvas: out,
             }
+        }
+    }
+
+    /// A camera framing computed once and reused for every frame of a
+    /// sequence.
+    ///
+    /// A single still frames itself: the projected bounds of what it draws
+    /// pick the canvas, the scale, and the depth-cue range. An *animation*
+    /// cannot do that per frame — the subject's projected bounds change as
+    /// the machine moves, so each frame would get its own canvas size and
+    /// its own scale, and the assembly would swim about (and, with
+    /// `auto_aspect`, the PNGs would not even agree on their dimensions,
+    /// which no muxer will accept). Computing this once over the union of
+    /// every posed frame and handing the same value to all of them pins the
+    /// camera: identical canvas, identical scale, identical shading ladder.
+    #[derive(Debug, Clone, Copy)]
+    pub struct FixedFraming {
+        /// Screen-plane (mm) lower bound, in the view's right/down basis.
+        pub screen_min: [f64; 2],
+        /// Screen-plane (mm) upper bound.
+        pub screen_max: [f64; 2],
+        /// 3D bounding-box diagonal (mm) — drives the hidden-line depth bias.
+        pub diag: f64,
+        /// Depth (toward the camera, mm) range for the depth cue.
+        pub depth: (f64, f64),
+    }
+
+    /// Accumulates world points into a [`FixedFraming`]. Callers feed it
+    /// every vertex of every pose; the projection math here is the same the
+    /// raster path uses, so a fixed framing frames exactly as a still would
+    /// have framed that union.
+    #[derive(Debug, Clone)]
+    pub struct FramingBuilder {
+        right: [f64; 3],
+        down: [f64; 3],
+        cam: [f64; 3],
+        min: [f64; 2],
+        max: [f64; 2],
+        lo3: [f64; 3],
+        hi3: [f64; 3],
+        dmin: f64,
+        dmax: f64,
+    }
+
+    impl FramingBuilder {
+        /// Start an empty framing for `view`.
+        pub fn new(view: View) -> Self {
+            FramingBuilder {
+                right: normalize(view.right()),
+                down: normalize(view.down()),
+                cam: view.cam(),
+                min: [f64::INFINITY; 2],
+                max: [f64::NEG_INFINITY; 2],
+                lo3: [f64::INFINITY; 3],
+                hi3: [f64::NEG_INFINITY; 3],
+                dmin: f64::INFINITY,
+                dmax: f64::NEG_INFINITY,
+            }
+        }
+
+        /// Fold one world-space point into the framing.
+        pub fn add(&mut self, v: [f64; 3]) {
+            let s = [dot(v, self.right), dot(v, self.down)];
+            for (i, si) in s.iter().enumerate() {
+                self.min[i] = self.min[i].min(*si);
+                self.max[i] = self.max[i].max(*si);
+            }
+            for (i, vi) in v.iter().enumerate() {
+                self.lo3[i] = self.lo3[i].min(*vi);
+                self.hi3[i] = self.hi3[i].max(*vi);
+            }
+            let d = dot(v, self.cam);
+            self.dmin = self.dmin.min(d);
+            self.dmax = self.dmax.max(d);
+        }
+
+        /// Finish, failing closed on an empty or degenerate accumulation
+        /// rather than handing the renderer an infinite canvas.
+        pub fn finish(self) -> Result<FixedFraming, String> {
+            let extent = (self.max[0] - self.min[0]).max(self.max[1] - self.min[1]);
+            if !extent.is_finite() || extent < 1e-9 {
+                return Err("degenerate projection (no extent) across the sequence".to_string());
+            }
+            let d = (0..3)
+                .map(|i| (self.hi3[i] - self.lo3[i]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            Ok(FixedFraming {
+                screen_min: self.min,
+                screen_max: self.max,
+                diag: d,
+                depth: (self.dmin, self.dmax),
+            })
         }
     }
 
@@ -3269,7 +3455,7 @@ mod raster {
             .map(|f| focus_mask(&scene, f))
             .transpose()?;
         encode_jpeg(
-            rasterize(&solids, &tints, &names, opts, mask.as_deref(), false)?,
+            rasterize(&solids, &tints, &names, opts, mask.as_deref(), false, None)?,
             opts,
         )
     }
@@ -3281,7 +3467,7 @@ mod raster {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
         encode_jpeg(
-            rasterize(solids, &no_tints, &no_names, opts, None, false)?,
+            rasterize(solids, &no_tints, &no_names, opts, None, false, None)?,
             opts,
         )
     }
@@ -3301,7 +3487,28 @@ mod raster {
             .map(|f| focus_mask(&scene, f))
             .transpose()?;
         encode_png(
-            rasterize(&solids, &tints, &names, opts, mask.as_deref(), true)?,
+            rasterize(&solids, &tints, &names, opts, mask.as_deref(), true, None)?,
+            opts,
+        )
+    }
+
+    /// Render pre-evaluated, already-placed solids to RGBA PNG bytes using a
+    /// framing computed elsewhere — the animation path's per-frame entry
+    /// point.
+    ///
+    /// Everything else matches [`render_png_str`]; only the camera framing
+    /// (canvas, scale, depth-cue range) comes from `framing` instead of from
+    /// this frame's own bounds, which is what keeps every frame of a
+    /// sequence the same size with the subject nailed in place.
+    pub(crate) fn render_png_solids_framed(
+        solids: &[Solid],
+        tints: &[Option<[f64; 3]>],
+        names: &[Option<String>],
+        opts: &RasterOptions,
+        framing: &FixedFraming,
+    ) -> Result<Vec<u8>, String> {
+        encode_png(
+            rasterize(solids, tints, names, opts, None, true, Some(framing))?,
             opts,
         )
     }
@@ -3312,7 +3519,7 @@ mod raster {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
         encode_png(
-            rasterize(solids, &no_tints, &no_names, opts, None, true)?,
+            rasterize(solids, &no_tints, &no_names, opts, None, true, None)?,
             opts,
         )
     }
@@ -3364,6 +3571,13 @@ mod raster {
     /// labels solid `i` when the `labels` annotation is on. Returns the RGB
     /// frame plus a per-pixel coverage mask (255 where geometry, an edge
     /// stroke, or an annotation was drawn, 0 over untouched background).
+    ///
+    /// `framing`, when given, replaces this frame's own projected bounds
+    /// (and the 3D diagonal and depth range derived from them) with a
+    /// pre-computed camera — see [`FixedFraming`]. `None` frames the frame
+    /// on itself, which is what every single-image caller does and what
+    /// makes their output byte-identical to before this parameter existed.
+    #[allow(clippy::too_many_arguments)]
     fn rasterize(
         solids: &[Solid],
         tints: &[Option<[f64; 3]>],
@@ -3371,6 +3585,7 @@ mod raster {
         opts: &RasterOptions,
         focus: Option<&[bool]>,
         png: bool,
+        framing: Option<&FixedFraming>,
     ) -> Result<Frame, String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
@@ -3465,6 +3680,11 @@ mod raster {
                 }
             }
         }
+        // A pinned camera (animation) overrides the self-framing above.
+        if let Some(f) = framing {
+            min = f.screen_min;
+            max = f.screen_max;
+        }
         let extent = (max[0] - min[0]).max(max[1] - min[1]);
         if !extent.is_finite() || extent < 1e-9 {
             return Err(if focus.is_some() {
@@ -3473,9 +3693,13 @@ mod raster {
                 "degenerate projection (no extent)".to_string()
             });
         }
-        let diag =
-            ((hi3[0] - lo3[0]).powi(2) + (hi3[1] - lo3[1]).powi(2) + (hi3[2] - lo3[2]).powi(2))
-                .sqrt();
+        let diag = match framing {
+            Some(f) => f.diag,
+            None => {
+                ((hi3[0] - lo3[0]).powi(2) + (hi3[1] - lo3[1]).powi(2) + (hi3[2] - lo3[2]).powi(2))
+                    .sqrt()
+            }
+        };
 
         let canvas = canvas_for(opts, max[0] - min[0], max[1] - min[1]);
         // The subject fills `fill_frac` of whichever canvas axis binds
@@ -3524,7 +3748,8 @@ mod raster {
         let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; sc.len()];
         let mut mask: Vec<u8> = vec![0; sc.len()];
 
-        // Depth range for depth cueing (below).
+        // Depth range for depth cueing (below). Pinned across an animation
+        // so a part doesn't change shade merely because another part moved.
         let mut dmin = f64::INFINITY;
         let mut dmax = f64::NEG_INFINITY;
         for art in &arts {
@@ -3533,6 +3758,9 @@ mod raster {
                 dmin = dmin.min(d);
                 dmax = dmax.max(d);
             }
+        }
+        if let Some(f) = framing {
+            (dmin, dmax) = f.depth;
         }
         let dspan = (dmax - dmin).max(1e-9);
 
@@ -4279,6 +4507,8 @@ mod raster {
 // ─── raytrace path (feature-gated) ────────────────────────────────────────
 
 #[cfg(feature = "raytrace")]
+pub(crate) use raytrace::render_raytrace_png_solids_framed;
+#[cfg(feature = "raytrace")]
 pub use raytrace::{render_raytrace_jpeg_str, render_raytrace_png_str};
 
 /// Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output with
@@ -4334,6 +4564,29 @@ mod raytrace {
     /// tessellated path's `encode_jpeg` / `encode_png`.
     fn rasterize_rt(raw_vcad: &str, opts: &RasterOptions, png: bool) -> Result<Frame, String> {
         let tinted = evaluate_vcad(raw_vcad)?;
+        rasterize_rt_scene(&tinted, opts, png, None)
+    }
+
+    /// Ray-trace already-placed scene solids to RGBA PNG bytes with a
+    /// camera pinned by `framing` — the `--raytrace --animate` per-frame
+    /// entry point. See [`FixedFraming`](super::FixedFraming).
+    pub(crate) fn render_raytrace_png_solids_framed(
+        scene: &[SceneSolid],
+        opts: &RasterOptions,
+        framing: &FixedFraming,
+    ) -> Result<Vec<u8>, String> {
+        encode_png(rasterize_rt_scene(scene, opts, true, Some(framing))?, opts)
+    }
+
+    /// The body of [`rasterize_rt`], over an already-evaluated scene so an
+    /// animation can re-pose the same document without re-evaluating it,
+    /// and with an optional pinned camera.
+    fn rasterize_rt_scene(
+        tinted: &[SceneSolid],
+        opts: &RasterOptions,
+        png: bool,
+        framing: Option<&FixedFraming>,
+    ) -> Result<Frame, String> {
         if tinted.is_empty() {
             return Err("no solids produced".to_string());
         }
@@ -4355,7 +4608,7 @@ mod raytrace {
         let mut ramps: Vec<Option<[[u8; 3]; 4]>> = Vec::new();
         let mut instances = Vec::new();
         let mut untraceable: Vec<String> = Vec::new();
-        for s in &tinted {
+        for s in tinted {
             let bvh = match s.solid.as_brep() {
                 Some(brep) => Bvh::build_brep(brep),
                 None => {
@@ -4424,6 +4677,13 @@ mod raytrace {
                 dmin = dmin.min(d);
                 dmax = dmax.max(d);
             }
+        }
+        // A pinned camera (animation) overrides the self-framing above, so
+        // every frame of a sequence shares one canvas, scale, and depth cue.
+        if let Some(f) = framing {
+            min = f.screen_min;
+            max = f.screen_max;
+            (dmin, dmax) = f.depth;
         }
         let extent = (max[0] - min[0]).max(max[1] - min[1]);
         if !extent.is_finite() || extent < 1e-9 {

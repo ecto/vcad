@@ -103,6 +103,7 @@ fn front_view_shows_near_geometry_and_back_view_hides_it() {
         indices: Vec::new(),
         normals: Vec::new(),
         face_kinds: Vec::new(),
+        face_ids: Vec::new(),
     };
     // Big slab behind (y ∈ [10, 20]).
     push_box(&mut mesh, [0.0, 10.0, 0.0], [20.0, 20.0, 20.0]);

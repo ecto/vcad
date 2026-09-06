@@ -777,6 +777,7 @@ mod tests {
                 tags: vec!["base".into()],
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "l1_inst".into(),
@@ -785,6 +786,7 @@ mod tests {
                 tags: vec![],
                 transform: None,
                 material: None,
+                explode: None,
             },
             Instance {
                 id: "l2_inst".into(),
@@ -793,6 +795,7 @@ mod tests {
                 tags: vec!["tip".into()],
                 transform: None,
                 material: None,
+                explode: None,
             },
         ]);
 
