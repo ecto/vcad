@@ -14,6 +14,7 @@ use crate::DfmError;
 pub mod casting;
 pub mod cnc;
 pub mod fdm;
+pub mod hobby_mill;
 pub mod mold;
 pub mod sheet;
 
@@ -34,6 +35,10 @@ pub struct RulePack {
     /// Optional notes shown in the UI ("assumes 6 mm end mill", etc.).
     #[serde(default)]
     pub notes: String,
+    /// Optional named ruleset that overrides the per-process check module
+    /// (e.g. `"hobby_3axis_mill"`). Empty = the process default.
+    #[serde(default)]
+    pub ruleset: String,
     /// Rule table — keyed by rule id (`"thin_wall"`, `"draft"`, …).
     #[serde(default)]
     pub rules: HashMap<String, Rule>,
@@ -80,6 +85,40 @@ impl Rule {
             .unwrap_or(fallback)
     }
 
+    /// Look up a numeric array parameter (empty if missing / not an array).
+    pub fn nums(&self, key: &str) -> Vec<f64> {
+        self.params
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Look up a string array parameter (empty if missing / not an array).
+    pub fn strings(&self, key: &str) -> Vec<String> {
+        self.params
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Look up a boolean parameter, with a fallback.
+    pub fn flag(&self, key: &str, fallback: bool) -> bool {
+        self.params
+            .get(key)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(fallback)
+    }
+
     /// Look up an optional string parameter.
     pub fn string(&self, key: &str) -> Option<String> {
         self.params
@@ -110,6 +149,14 @@ impl RulePack {
         Self::from_toml(src).expect("bundled default rule pack must parse")
     }
 
+    /// Bundled pack by name — either a process name (`"fdm"`, `"cnc_3axis"`)
+    /// or a named ruleset (`"hobby-3axis-mill"`).
+    pub fn named(name: &str) -> Result<Self, DfmError> {
+        let src = DefaultPacks::by_name(name)
+            .ok_or_else(|| DfmError::UnknownProcess(name.to_string()))?;
+        Self::from_toml(src)
+    }
+
     /// Look up a rule by id (returns `None` if it isn't enabled in this pack).
     pub fn rule(&self, id: &str) -> Option<&Rule> {
         self.rules.get(id)
@@ -124,7 +171,21 @@ impl RulePack {
 /// Access to the bundled default rule pack TOML sources.
 pub struct DefaultPacks;
 
+/// Named rulesets that live alongside the per-process defaults.
+pub const NAMED_RULESETS: &[&str] = &["hobby-3axis-mill"];
+
 impl DefaultPacks {
+    /// Raw TOML source for a pack by name: a process name (`"fdm"`,
+    /// `"cnc_3axis"`, …) or a named ruleset from [`NAMED_RULESETS`]
+    /// (`"hobby-3axis-mill"` / `"hobby_3axis_mill"`).
+    pub fn by_name(name: &str) -> Option<&'static str> {
+        let norm = name.trim().to_ascii_lowercase().replace('-', "_");
+        match norm.as_str() {
+            "hobby_3axis_mill" => Some(include_str!("../../../../lib/dfm/hobby-3axis-mill.toml")),
+            other => Process::from_str(other).map(Self::source),
+        }
+    }
+
     /// Raw TOML source for a process's default pack.
     pub fn source(process: Process) -> &'static str {
         match process {
@@ -160,6 +221,22 @@ mod tests {
             assert_eq!(pack.process, p);
             assert!(!pack.rules.is_empty(), "{:?} pack has no rules", p);
         }
+    }
+
+    #[test]
+    fn named_ruleset_loads() {
+        let pack = RulePack::named("hobby-3axis-mill").unwrap();
+        assert_eq!(pack.process, Process::Cnc3Axis);
+        assert_eq!(pack.ruleset, "hobby_3axis_mill");
+        assert_eq!(
+            pack.rule("r3_hole_diameters")
+                .unwrap()
+                .nums("reamers_mm")
+                .len(),
+            4
+        );
+        assert!(RulePack::named("fdm").is_ok());
+        assert!(RulePack::named("nope").is_err());
     }
 
     #[test]

@@ -21,6 +21,7 @@ vcad-kernel-topo = { workspace = true }
 vcad-kernel-geom = { workspace = true }
 vcad-kernel-primitives = { workspace = true }
 vcad-kernel-cost = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
 vcad-ir = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

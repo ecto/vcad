@@ -430,15 +430,16 @@ pub fn render_pcb_svg_opts(
 // DFM (Design for Manufacturing)
 // =============================================================================
 
-/// Return the bundled default rule pack (TOML) for a process name.
+/// Return the bundled default rule pack (TOML) for a process or ruleset name.
 ///
 /// Process names: `"cnc_3axis"`, `"fdm"`, `"sla"`, `"injection"`,
-/// `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`.
+/// `"sheet_metal"`, `"casting_sand"`, `"casting_investment"`. Named
+/// rulesets: `"hobby-3axis-mill"`.
 #[wasm_bindgen]
 pub fn get_default_dfm_pack(process: &str) -> Result<String, JsError> {
-    let p = vcad_kernel::vcad_kernel_dfm::Process::from_str(process)
-        .ok_or_else(|| JsError::new(&format!("unknown process: {}", process)))?;
-    Ok(vcad_kernel::vcad_kernel_dfm::DefaultPacks::source(p).to_string())
+    vcad_kernel::vcad_kernel_dfm::DefaultPacks::by_name(process)
+        .map(str::to_string)
+        .ok_or_else(|| JsError::new(&format!("unknown process or ruleset: {}", process)))
 }
 
 /// Estimate manufacturing cost for the supplied process + material.
@@ -1898,8 +1899,19 @@ impl Solid {
                 .map_err(|e| JsError::new(&format!("rule pack parse: {}", e)))?
         };
         let Some(brep) = self.inner.as_brep() else {
+            // Mesh-domain rulesets (hobby_3axis_mill) still run on a
+            // mesh-only solid; the per-process packs need the BRep.
+            if !pack.ruleset.is_empty() {
+                let mesh = self.inner.to_mesh(32);
+                let tris = vcad_kernel::vcad_kernel_dfm::rules::hobby_mill::tris_from_indexed(
+                    &mesh.vertices,
+                    &mesh.indices,
+                );
+                let report = vcad_kernel::vcad_kernel_dfm::run_dfm_mesh(&tris, &pack);
+                return serde_json::to_string(&report).map_err(|e| JsError::new(&e.to_string()));
+            }
             return Ok(format!(
-                r#"{{"process":"{}","rule_pack_name":"(mesh-only solid; DFM skipped)","rule_pack_version":"1","issues":[],"cost_estimate":null}}"#,
+                r#"{{"process":"{}","rule_pack_name":"(mesh-only solid; DFM skipped)","rule_pack_version":"1","issues":[],"cost_estimate":null,"rule_results":[]}}"#,
                 p.as_str()
             ));
         };
