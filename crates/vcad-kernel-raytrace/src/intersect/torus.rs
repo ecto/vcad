@@ -129,24 +129,33 @@ fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
     let mut roots = Vec::new();
 
     if sqrt_2u.abs() > 1e-12 {
-        // Two quadratics
+        // Ferrari's factorisation. With u a positive root of the resolvent,
+        //
+        //   y⁴ + a2·y² + a1·y + a0 = (y² + a2/2 + u)² − 2u·(y − a1/(4u))²
+        //
+        // so the quartic splits into the two quadratics below. Their *signs
+        // are not interchangeable*: the `+ beta` constant belongs to the
+        // `− sqrt(2u)·y` factor and the `− beta` constant to the `+ sqrt(2u)·y`
+        // one. Pairing them the other way still produces four plausible
+        // numbers — they are simply not roots, which is invisible in a
+        // through-the-axis test where a1 vanishes and the two pairings agree.
         let alpha = a2 + 2.0 * u;
         let beta = a1 / sqrt_2u;
 
-        // y^2 + sqrt(2u)*y + (alpha + beta)/2 = 0
+        // y² − sqrt(2u)·y + (alpha + beta)/2 = 0
         let disc1 = sqrt_2u * sqrt_2u - 2.0 * (alpha + beta);
         if disc1 >= 0.0 {
             let sqrt_disc1 = disc1.sqrt();
-            roots.push((-sqrt_2u + sqrt_disc1) / 2.0 - p / 4.0);
-            roots.push((-sqrt_2u - sqrt_disc1) / 2.0 - p / 4.0);
+            roots.push((sqrt_2u + sqrt_disc1) / 2.0 - p / 4.0);
+            roots.push((sqrt_2u - sqrt_disc1) / 2.0 - p / 4.0);
         }
 
-        // y^2 - sqrt(2u)*y + (alpha - beta)/2 = 0
+        // y² + sqrt(2u)·y + (alpha − beta)/2 = 0
         let disc2 = sqrt_2u * sqrt_2u - 2.0 * (alpha - beta);
         if disc2 >= 0.0 {
             let sqrt_disc2 = disc2.sqrt();
-            roots.push((sqrt_2u + sqrt_disc2) / 2.0 - p / 4.0);
-            roots.push((sqrt_2u - sqrt_disc2) / 2.0 - p / 4.0);
+            roots.push((-sqrt_2u + sqrt_disc2) / 2.0 - p / 4.0);
+            roots.push((-sqrt_2u - sqrt_disc2) / 2.0 - p / 4.0);
         }
     } else {
         // u ≈ 0, special case: y^4 + a2*y^2 + a0 = 0 (biquadratic)
@@ -325,6 +334,112 @@ mod tests {
         let uv3 = compute_torus_uv(&torus, &Point3::new(0.0, 13.0, 0.0));
         assert!((uv3.x - PI / 2.0).abs() < 1e-10);
         assert!(uv3.y.abs() < 1e-10);
+    }
+
+    /// Every `t` the intersector returns must actually be on the torus.
+    ///
+    /// The existing tests all fire along the axis, where the depressed
+    /// quartic's cubic term vanishes and Ferrari's two quadratics agree
+    /// whichever way their signs are paired. An oblique ray does not let that
+    /// pass: mispair them and the solver returns four numbers that satisfy
+    /// nothing, and a renderer draws a torus half again as big as the real
+    /// one out of them.
+    #[test]
+    fn oblique_ray_roots_are_on_the_torus() {
+        let (big_r, r) = (10.0, 1.0);
+        let torus = TorusSurface::new(big_r, r);
+        let eye = Point3::new(26.0, 22.0, 18.0);
+        let mut hit_count = 0;
+        for i in 0..24 {
+            for j in 0..24 {
+                let x = -0.6 + 1.2 * (i as f64 + 0.5) / 24.0;
+                let y = -0.6 + 1.2 * (j as f64 + 0.5) / 24.0;
+                let dir = ((Point3::origin() - eye).normalize()
+                    + Vec3::new(x, 0.0, 0.0)
+                    + Vec3::new(0.0, y, 0.0))
+                .normalize();
+                for hit in intersect_torus(&Ray::new(eye, dir), &torus) {
+                    hit_count += 1;
+                    let p = eye + dir * hit.t;
+                    let s = (p.x * p.x + p.y * p.y).sqrt() - big_r;
+                    let resid = s * s + p.z * p.z - r * r;
+                    assert!(
+                        resid.abs() < 1e-6,
+                        "t = {} is not on the torus: (sqrt(x²+y²) − R)² + z² − r² = {resid:.6}",
+                        hit.t,
+                    );
+                }
+            }
+        }
+        assert!(
+            hit_count > 100,
+            "only {hit_count} hits — the sweep missed the torus"
+        );
+    }
+
+    /// And it must not *miss*: a marching reference over the same rays finds
+    /// the same first hit. A solver that returns nothing has no bad roots to
+    /// catch it out.
+    #[test]
+    fn oblique_ray_finds_the_hits_a_marching_reference_finds() {
+        let (big_r, r) = (6.0, 1.5);
+        let torus = TorusSurface::new(big_r, r);
+        let eye = Point3::new(14.0, -11.0, 9.0);
+        let f = |o: Point3, d: Vec3, t: f64| {
+            let p = o + d * t;
+            let s = (p.x * p.x + p.y * p.y).sqrt() - big_r;
+            s * s + p.z * p.z - r * r
+        };
+        let mut checked = 0;
+        for i in 0..16 {
+            for j in 0..16 {
+                let x = -0.5 + 1.0 * (i as f64 + 0.5) / 16.0;
+                let y = -0.5 + 1.0 * (j as f64 + 0.5) / 16.0;
+                let dir = ((Point3::origin() - eye).normalize()
+                    + Vec3::new(0.0, 0.0, y)
+                    + Vec3::new(-x * 0.6, -x * 0.8, 0.0))
+                .normalize();
+                // March for the first sign change.
+                let mut reference = None;
+                let (mut t, mut prev) = (0.0, f(eye, dir, 0.0));
+                while t < 40.0 {
+                    let nt = t + 0.005;
+                    let cur = f(eye, dir, nt);
+                    if prev.signum() != cur.signum() {
+                        let (mut lo, mut hi) = (t, nt);
+                        for _ in 0..60 {
+                            let m = 0.5 * (lo + hi);
+                            if f(eye, dir, lo).signum() == f(eye, dir, m).signum() {
+                                lo = m;
+                            } else {
+                                hi = m;
+                            }
+                        }
+                        reference = Some(0.5 * (lo + hi));
+                        break;
+                    }
+                    prev = cur;
+                    t = nt;
+                }
+                let got = intersect_torus(&Ray::new(eye, dir), &torus)
+                    .first()
+                    .map(|h| h.t);
+                match (reference, got) {
+                    (Some(a), Some(b)) => {
+                        checked += 1;
+                        assert!(
+                            (a - b).abs() < 1e-4,
+                            "first hit at {b} where marching says {a}",
+                        );
+                    }
+                    (None, None) => {}
+                    (a, b) => {
+                        panic!("disagreement on whether the ray hits: marching {a:?}, solver {b:?}")
+                    }
+                }
+            }
+        }
+        assert!(checked > 40, "only {checked} rays actually hit the torus");
     }
 
     #[test]

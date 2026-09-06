@@ -17,8 +17,6 @@ const SURFACE_BILINEAR: u32 = 5u;
 // an isotropic BSDF wants anyway.
 const SURFACE_TRIANGLE: u32 = 7u;
 
-const MAX_T: f32 = 1e10;
-const EPSILON: f32 = 1e-6;
 
 // Layout must match GpuSurface in buffers.rs.
 struct GpuSurface {
@@ -95,19 +93,3 @@ fn surface_dpdu(surface_type: u32, params: array<f32, 32>, uv: vec2<f32>) -> vec
 
 // Shading tangent frame around a unit normal.
 //
-// Mirrors `pathtrace::shading_frame`: when the hit carries a surface tangent it
-// is Gram-Schmidt orthogonalised against the (face-forwarded) normal and used
-// as the frame's x axis, so the anisotropic lobe follows the surface's own
-// parameterisation. Otherwise fall back to the arbitrary `onb` basis — which is
-// exactly what an isotropic material wants, since its BSDF is invariant to the
-// choice.
-fn shading_frame(n: vec3<f32>, dpdu: vec3<f32>) -> mat3x3<f32> {
-    let t_raw = dpdu - n * dot(dpdu, n);
-    // A tangent (numerically) parallel to the normal carries no direction;
-    // fall back rather than normalising noise.
-    if length(t_raw) > 1e-9 {
-        let t = normalize(t_raw);
-        return mat3x3<f32>(t, cross(n, t), n);
-    }
-    return onb(n);
-}

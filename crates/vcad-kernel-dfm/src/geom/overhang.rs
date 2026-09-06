@@ -35,7 +35,8 @@ pub fn sample(brep: &BRepSolid, max_overhang_deg: f64) -> Vec<OverhangSample> {
     let mut out = Vec::new();
 
     #[cfg(feature = "raytrace")]
-    let bvh = vcad_kernel_raytrace::Bvh::build(brep);
+    use vcad_kernel_raytrace::BrepBvh;
+    let bvh = vcad_kernel_raytrace::Bvh::build_brep(brep);
     #[cfg(feature = "raytrace")]
     let face_id_to_idx: std::collections::HashMap<_, _> = brep
         .topology
@@ -69,7 +70,7 @@ pub fn sample(brep: &BRepSolid, max_overhang_deg: f64) -> Vec<OverhangSample> {
             let next = bvh.trace(&ray).into_iter().find(|h| {
                 h.t > eps
                     && face_id_to_idx
-                        .get(&h.face_id)
+                        .get(&bvh.face_id(h).unwrap_or_default())
                         .copied()
                         .map(|idx| idx != i)
                         .unwrap_or(true)

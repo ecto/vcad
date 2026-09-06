@@ -82,7 +82,7 @@ fn subdivide_and_intersect(
     max_pt.y += expand;
     max_pt.z += expand;
 
-    let aabb = vcad_kernel_booleans::bbox::Aabb3::new(min_pt, max_pt);
+    let aabb = kosm_render::Aabb::new(min_pt, max_pt);
     if ray.intersect_aabb(&aabb).is_none() {
         return; // Ray misses this patch
     }

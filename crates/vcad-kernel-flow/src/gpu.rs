@@ -258,8 +258,8 @@ pub async fn preview_async(
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("LBM PL"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
     let make_pipeline = |entry: &str| {
         ctx.device
@@ -343,11 +343,16 @@ pub async fn preview_async(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    ctx.device.poll(wgpu::Maintain::Wait);
+    let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
     rx.recv()
         .map_err(|_| PreviewError::Gpu(GpuError::BufferMapping))?
         .map_err(|_| PreviewError::Gpu(GpuError::BufferMapping))?;
-    let data: Vec<f32> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+    let data: Vec<f32> = bytemuck::cast_slice(
+        &slice
+            .get_mapped_range()
+            .expect("the buffer was just mapped"),
+    )
+    .to_vec();
     staging.unmap();
 
     let vel_scale = (scaling.dx_m / scaling.dt_s) as f32;

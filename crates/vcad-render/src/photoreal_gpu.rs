@@ -64,11 +64,9 @@
 use vcad_kernel::vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel::vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_gpu::{GpuContext, GpuError};
-use vcad_kernel_raytrace::gpu::{
-    GpuAreaLight, GpuCamera, GpuMaterial, GpuScene, OfflineOptions, RayTracePipeline,
-};
+use vcad_kernel_raytrace::gpu::{GpuAreaLight, GpuCamera, GpuMaterial, GpuScene, OfflineOptions};
 use vcad_kernel_raytrace::pathtrace::{Environment, Ground, Object, Scene};
-use vcad_kernel_raytrace::Bvh;
+use vcad_kernel_raytrace::{BrepBvh, Bvh};
 
 use super::photoreal::{self, Backdrop, Framing, PhotorealOptions};
 use super::raster::{encode_jpeg, encode_png, Frame};
@@ -211,7 +209,13 @@ fn object_scene(obj: &Object) -> Result<GpuScene, String> {
     // photoreal path never places anything); skipping the bake there keeps
     // the packed vertices bit-identical to the un-transformed ones rather
     // than round-tripping every coordinate through an f64 matrix multiply.
-    let transform = (!is_identity(&obj.transform)).then_some(&obj.transform);
+    // `Object::transform` is the renderer's `Transform`; the packer takes
+    // vcad's. Same matrix under two names, so this re-spells rather than
+    // converts.
+    let placement = Transform {
+        matrix: obj.transform.matrix,
+    };
+    let transform = (!is_identity(&placement)).then_some(&placement);
     GpuScene::from_mesh_bvh_placed(&obj.bvh, GpuMaterial::from_pbr(obj.material), transform)
         .map_err(|e| format!("--gpu: cannot upload part geometry: {e}"))
 }
@@ -316,8 +320,8 @@ fn rasterize(
     check_supported(opts, pr)?;
 
     let ctx = context()?;
-    let pipeline =
-        RayTracePipeline::new(ctx).map_err(|e| format!("--gpu: pipeline creation failed: {e}"))?;
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx)
+        .map_err(|e| format!("--gpu: pipeline creation failed: {e}"))?;
 
     let solids = evaluate_vcad(raw_vcad)?;
     if solids.is_empty() {

@@ -5,7 +5,11 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-loon-lang = { path = "../../../loon/crates/loon-lang" }
+# Pinned to a loon revision (like phyz in the root manifest) rather than the
+# sibling path, so vcad resolves when pulled by git; the root's
+# [patch."https://github.com/ecto/loon"] builds local checkouts and CI against
+# ../loon, the same clone they always used.
+loon-lang = { git = "https://github.com/ecto/loon", rev = "c12ef566613995f913012c79773bab825950566f" }
 vcad-ir = { path = "../vcad-ir" }
 vcad-parts = { path = "../vcad-parts" }
 serde.workspace = true

@@ -17,7 +17,9 @@ struct ParityInput {
 }
 
 struct ParityOutput {
-    // bsdf_eval(m, wo, wi): .xyz = f*cos, .w = pdf.
+    // bsdf_eval(m, wo, wi, eta, lambda_nm): .xyz = f*cos, .w = pdf. The
+    // wavelength is 0 — the RGB sentinel — because nothing in this harness
+    // is spectral.
     eval: vec4<f32>,
     // bsdf_sample(...): .xyz = sampled wi, .w = returned pdf.
     sample_dir: vec4<f32>,
@@ -43,10 +45,15 @@ fn bsdf_parity(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var out: ParityOutput;
 
-    let e = bsdf_eval(m, wo, inp.wi.xyz);
+    // These materials are opaque, so the dielectric lobe is off and `eta` is
+    // whatever an unused parameter wants to be. `tests/gpu_bsdf.rs` over in
+    // kosm-render is where transmission's own parity is checked.
+    let eta = 1.0;
+
+    let e = bsdf_eval(m, wo, inp.wi.xyz, eta, 0.0);
     out.eval = vec4<f32>(e.value, e.pdf);
 
-    let s = bsdf_sample(m, wo, inp.rnd.x, inp.rnd.y, inp.rnd.z);
+    let s = bsdf_sample(m, wo, eta, 0.0, inp.rnd.x, inp.rnd.y, inp.rnd.z, inp.rnd.w);
     out.sample_dir = vec4<f32>(s.wi, s.pdf);
     var ok = 0.0;
     if s.ok {
@@ -54,7 +61,7 @@ fn bsdf_parity(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     out.sample_value = vec4<f32>(s.value, ok);
 
-    let re = bsdf_eval(m, wo, s.wi);
+    let re = bsdf_eval(m, wo, s.wi, eta, 0.0);
     out.resampled = vec4<f32>(re.pdf, re.value.x, re.value.y, re.value.z);
 
     parity_out[i] = out;

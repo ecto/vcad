@@ -105,9 +105,10 @@ fn sample_via_pairs(brep: &BRepSolid, cos_threshold: f64) -> Vec<ThicknessSample
 #[cfg(feature = "raytrace")]
 fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
     use vcad_kernel_math::Vec3;
+    use vcad_kernel_raytrace::BrepBvh;
     use vcad_kernel_raytrace::{Bvh, Ray};
 
-    let bvh = Bvh::build(brep);
+    let bvh = Bvh::build_brep(brep);
     let n = brep.topology.faces.len();
     // Build the face_id ↔ index lookup once so we can map RayHit.face_id
     // back to a stable usize index for ThicknessSample.
@@ -134,7 +135,7 @@ fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
         // skips it but keep the guard for robustness.)
         let opposing = hits.into_iter().find(|h| {
             face_id_to_idx
-                .get(&h.face_id)
+                .get(&bvh.face_id(h).unwrap_or_default())
                 .copied()
                 .map(|idx| idx != i)
                 .unwrap_or(true)
@@ -142,7 +143,7 @@ fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
         });
         let Some(hit) = opposing else { continue };
         let face_b = face_id_to_idx
-            .get(&hit.face_id)
+            .get(&bvh.face_id(&hit).unwrap_or_default())
             .copied()
             .unwrap_or(usize::MAX);
         samples.push(ThicknessSample {

@@ -13,6 +13,12 @@
 //! `vertices`/`normals` are flat `f32` triples, `indices` are flat `u32` —
 //! a direct match for Metal / RealityKit `LowLevelMesh`, no conversion.
 
+// wgpu 30's handle types nest deeply enough (registry → storage → vec →
+// arc → mutex …) that proving `OnceLock<Option<RayTracePipeline>>: Sync`
+// for the static below exceeds the default recursion limit on nightly
+// (`recursion_depth_exceeding_limit`, rust-lang/rust#159228). Stable is
+// fine today; this keeps it fine when the lint becomes an error.
+#![recursion_limit = "256"]
 #![allow(clippy::missing_safety_doc)]
 // Every entry point is a `#[no_mangle] extern "C"` boundary that takes raw
 // pointers from Swift and dereferences them behind explicit null checks +
@@ -44,7 +50,7 @@ use vcad_ir::{
 };
 use vcad_kernel::Solid;
 use vcad_kernel_math::{Point3, Vec3};
-use vcad_kernel_raytrace::{Bvh, Ray};
+use vcad_kernel_raytrace::{BrepBvh, Bvh, Ray};
 use vcad_kernel_tessellate::TriangleMesh;
 
 mod err;
@@ -918,7 +924,7 @@ pub extern "C" fn vcad_scene_raytrace_gpu(
         let Some(pipeline) = PIPELINE
             .get_or_init(|| {
                 let ctx = vcad_kernel_gpu::GpuContext::init_blocking().ok()?;
-                RayTracePipeline::new(ctx).ok()
+                vcad_kernel_raytrace::gpu::brep_pipeline(ctx).ok()
             })
             .as_ref()
         else {
@@ -2220,7 +2226,7 @@ pub extern "C" fn vcad_solid_raycast(
         let Some(brep) = s.inner.as_brep() else {
             return miss;
         };
-        let bvh = Bvh::build(brep);
+        let bvh = Bvh::build_brep(brep);
         let ray = Ray::new(Point3::new(o[0], o[1], o[2]), Vec3::new(d[0], d[1], d[2]));
         match bvh.trace_closest(&ray) {
             Some(h) => VcadHit {

@@ -39,7 +39,7 @@ vcad-ecad-pcb = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"], optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "hdr"], optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 vcad-kernel-raytrace = { workspace = true, optional = true }
 vcad-loon = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }

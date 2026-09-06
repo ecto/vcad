@@ -1,13 +1,14 @@
-//! GPU buffer management for ray tracing data.
+//! Packing BRep solids into the buffers kosm-render's geometry seam binds.
 
 use bytemuck::{Pod, Zeroable};
+use kosm_render::gpu::{GpuAreaLight, GpuMaterial};
 use vcad_kernel_booleans::bbox::face_aabb;
 use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_topo::FaceId;
 
-use crate::bvh::Bvh;
+use crate::bvh::{BrepBvh, Bvh};
 use crate::trim;
 
 /// Maximum number of surfaces supported in a single scene.
@@ -291,149 +292,6 @@ const SURFACE_TYPE_TORUS: u32 = 4;
 /// those, so it gets its own code and the mapping stays honest.
 pub const SURFACE_TYPE_TRIANGLE: u32 = 7;
 
-/// GPU-compatible material representation (PBR).
-///
-/// Mirrors [`crate::pathtrace::Pbr`] field-for-field so the GPU path tracer and
-/// the CPU reference shade identically. The WGSL `GpuMaterial` struct in
-/// `shaders/raytrace.wgsl` must match this layout exactly.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct GpuMaterial {
-    /// Base color (linear RGB + alpha).
-    pub color: [f32; 4],
-    /// Metallic factor (0 = dielectric, 1 = metal).
-    pub metallic: f32,
-    /// Roughness factor (0 = smooth, 1 = rough).
-    pub roughness: f32,
-    /// Strength of the clearcoat layer (0 = none, 1 = full).
-    pub clearcoat: f32,
-    /// Perceptual roughness of the clearcoat layer.
-    pub clearcoat_roughness: f32,
-    /// Dielectric index of refraction, drives the base specular reflectance.
-    pub ior: f32,
-    /// Signed anisotropy in -1..1: positive stretches the specular highlight
-    /// along the local tangent, negative along the bitangent, 0 = isotropic.
-    pub anisotropy: f32,
-    /// Padding for 16-byte alignment.
-    pub _pad: [f32; 2],
-}
-
-impl Default for GpuMaterial {
-    fn default() -> Self {
-        Self {
-            color: [0.7, 0.7, 0.7, 1.0], // Neutral gray
-            metallic: 0.0,
-            roughness: 0.5,
-            clearcoat: 0.0,
-            clearcoat_roughness: 0.1,
-            ior: 1.5,
-            anisotropy: 0.0,
-            _pad: [0.0; 2],
-        }
-    }
-}
-
-impl GpuMaterial {
-    /// Create a new material with the given color.
-    pub fn with_color(r: f32, g: f32, b: f32) -> Self {
-        Self {
-            color: [r, g, b, 1.0],
-            ..Default::default()
-        }
-    }
-
-    /// Create a metallic material.
-    pub fn metal(r: f32, g: f32, b: f32, roughness: f32) -> Self {
-        Self {
-            color: [r, g, b, 1.0],
-            metallic: 1.0,
-            roughness,
-            ..Default::default()
-        }
-    }
-
-    /// Create a plastic material, optionally clearcoated.
-    pub fn plastic(r: f32, g: f32, b: f32, roughness: f32) -> Self {
-        Self {
-            color: [r, g, b, 1.0],
-            metallic: 0.0,
-            roughness,
-            ..Default::default()
-        }
-    }
-
-    /// Add a clearcoat layer of the given strength and roughness.
-    pub fn with_clearcoat(mut self, clearcoat: f32, clearcoat_roughness: f32) -> Self {
-        self.clearcoat = clearcoat;
-        self.clearcoat_roughness = clearcoat_roughness;
-        self
-    }
-
-    /// Build from the CPU reference material.
-    ///
-    /// Paired with [`crate::pathtrace::Pbr::from_material_def`], this is what
-    /// makes the viewport and `--photoreal` derive the SAME material from the
-    /// same IR definition — clearcoat heuristic, IOR and grain included.
-    pub fn from_pbr(p: crate::pathtrace::Pbr) -> Self {
-        Self {
-            color: [p.base_color[0], p.base_color[1], p.base_color[2], 1.0],
-            metallic: p.metallic,
-            roughness: p.roughness,
-            clearcoat: p.clearcoat,
-            clearcoat_roughness: p.clearcoat_roughness,
-            ior: p.ior,
-            anisotropy: p.anisotropy,
-            _pad: [0.0; 2],
-        }
-    }
-
-    /// Convert to the CPU reference material, for cross-checking the two
-    /// shading paths against each other.
-    pub fn to_pbr(self) -> crate::pathtrace::Pbr {
-        crate::pathtrace::Pbr {
-            base_color: [self.color[0], self.color[1], self.color[2]],
-            metallic: self.metallic,
-            roughness: self.roughness,
-            clearcoat: self.clearcoat,
-            clearcoat_roughness: self.clearcoat_roughness,
-            ior: self.ior,
-            anisotropy: self.anisotropy,
-            emissive: [0.0; 3],
-        }
-    }
-}
-
-/// GPU-compatible rectangular area light ("softbox").
-///
-/// Mirrors the WGSL `GpuAreaLight`. Built from [`crate::pathtrace::AreaLight`]
-/// via [`GpuAreaLight::from_area_light`] so the GPU and CPU renderers light the
-/// scene with the same rig — that is what makes specular highlights on metal
-/// match between the viewport and `--photoreal`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct GpuAreaLight {
-    /// Centre of the rectangle (w unused).
-    pub center: [f32; 4],
-    /// Half-extent along the rectangle's first axis (w unused).
-    pub u: [f32; 4],
-    /// Half-extent along the second axis (w unused).
-    pub v: [f32; 4],
-    /// Emitted radiance (w unused).
-    pub emission: [f32; 4],
-}
-
-impl GpuAreaLight {
-    /// Convert a CPU reference area light to its GPU representation.
-    pub fn from_area_light(l: &crate::pathtrace::AreaLight) -> Self {
-        Self {
-            center: [l.center.x as f32, l.center.y as f32, l.center.z as f32, 0.0],
-            u: [l.u.x as f32, l.u.y as f32, l.u.z as f32, 0.0],
-            v: [l.v.x as f32, l.v.y as f32, l.v.z as f32, 0.0],
-            emission: [l.emission[0], l.emission[1], l.emission[2], 0.0],
-        }
-    }
-}
-
 /// GPU-compatible face representation.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -492,478 +350,6 @@ pub struct GpuVec2 {
     pub y: f32,
 }
 
-/// Camera parameters for the ray tracer.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct GpuCamera {
-    /// Camera position.
-    pub position: [f32; 4],
-    /// Look-at target.
-    pub target: [f32; 4],
-    /// Up vector.
-    pub up: [f32; 4],
-    /// World direction mapping to screen +x. Only read when
-    /// [`basis_mode`](Self::basis_mode) is [`CAMERA_BASIS_EXPLICIT`].
-    pub right: [f32; 4],
-    /// Field of view in radians.
-    pub fov: f32,
-    /// Image width.
-    pub width: u32,
-    /// Image height.
-    pub height: u32,
-    /// How the shader builds the screen basis.
-    ///
-    /// * [`CAMERA_BASIS_DERIVED`] — build it right-handedly from `position`,
-    ///   `target` and `up` (`right = forward × up`). What the viewport has
-    ///   always done, and what [`GpuCamera::new`] still sets.
-    /// * [`CAMERA_BASIS_EXPLICIT`] — use [`right`](Self::right) and
-    ///   [`up`](Self::up) *verbatim*, with `forward = normalize(target -
-    ///   position)`.
-    ///
-    /// The explicit mode exists because [`crate::pathtrace::Camera`] can
-    /// carry a **mirrored** (left-handed) screen basis — `View::Isometric`
-    /// and the named CAD views in `vcad-render` all do — and no
-    /// `look_at`-plus-up-hint construction can reproduce one. Rebuilding such
-    /// a view right-handedly flips the image left-for-right.
-    pub basis_mode: u32,
-}
-
-/// [`GpuCamera::basis_mode`]: derive the screen basis from the up hint.
-pub const CAMERA_BASIS_DERIVED: u32 = 0;
-
-/// [`GpuCamera::basis_mode`]: use the supplied `right`/`up` verbatim, so a
-/// mirrored basis survives the trip to the shader.
-pub const CAMERA_BASIS_EXPLICIT: u32 = 1;
-
-/// Render state for progressive rendering.
-///
-/// Layout (128 bytes, 16-byte aligned — matches `RenderState` in raytrace.wgsl):
-/// offset  0–31:  eight u32/f32 scalars (frame_index … theme)
-/// offset 32–47:  path tracing (max_depth, rr_start, light_count, env_intensity)
-/// offset 48–63:  refine_sample_count, firefly_clamp, ground_enabled, stylize
-/// offset 64–79:  silhouette_color vec4
-/// offset 80–95:  crease_color vec4
-/// offset 96–111: boundary_color vec4
-/// offset 112–127: four f32 width/softness scalars
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct GpuRenderState {
-    /// Current frame index for accumulation (1-based).
-    pub frame_index: u32,
-    /// Jitter X offset for anti-aliasing (-0.5 to 0.5).
-    pub jitter_x: f32,
-    /// Jitter Y offset for anti-aliasing (-0.5 to 0.5).
-    pub jitter_y: f32,
-    /// Edge-type bit-flags: 0=off, bit0=silhouette, bit1=crease, bit2=boundary.
-    pub enable_edges: u32,
-    /// Edge detection threshold for depth discontinuity.
-    pub edge_depth_threshold: f32,
-    /// Edge detection threshold for normal discontinuity (degrees).
-    pub edge_normal_threshold: f32,
-    /// Debug render mode: 0=normal, 1=show normals, 2=show face_id, 3=show n_dot_l,
-    /// 4=show orientation, 5=sample-count heatmap (blue=1 ray, red=max rays).
-    pub debug_mode: u32,
-    /// Theme: 0 = dark (default), 1 = light. Drives the visible background
-    /// palette in `sky_color`; the IBL panels and direct lighting stay
-    /// constant across themes so the model itself looks the same.
-    pub theme: u32,
-    // Path tracing
-    /// Maximum path length (1 = direct lighting only). Escalated by the
-    /// refinement scheduler: shallow on the draft frame, deeper as
-    /// accumulation proceeds, so the first frame stays interactive.
-    pub max_depth: u32,
-    /// Depth at which Russian roulette begins.
-    pub rr_start: u32,
-    /// Number of valid entries in the area-light buffer.
-    pub light_count: u32,
-    /// Overall multiplier on the analytic studio environment.
-    pub env_intensity: f32,
-    // refinement + path tracing continued
-    /// Number of additional refinement rays per edge pixel (0 = disabled).
-    /// Actual rays fired = floor(sqrt(refine_sample_count))^2.
-    pub refine_sample_count: u32,
-    /// Clamp on indirect radiance to kill fireflies (0 = disabled).
-    pub firefly_clamp: f32,
-    /// Whether the implicit ground plane participates in the path trace.
-    pub ground_enabled: u32,
-    /// Non-zero enables non-photoreal stylisation (the Sobel edge overlay).
-    /// Off in a photoreal viewport: edge lines fight photorealism.
-    pub stylize: u32,
-    // --- edge style (added for Fusion-style edge lines) ---
-    /// Silhouette line color (RGBA linear, depth-gradient edges).
-    pub silhouette_color: [f32; 4],
-    /// Crease line color (RGBA linear, face-ID boundary edges).
-    pub crease_color: [f32; 4],
-    /// Boundary line color (RGBA linear, foreground→background edges).
-    pub boundary_color: [f32; 4],
-    /// Silhouette line apparent width (1.0 = one pixel).
-    pub silhouette_width: f32,
-    /// Crease line apparent width.
-    pub crease_width: f32,
-    /// Boundary line apparent width.
-    pub boundary_width: f32,
-    /// Sub-pixel softness factor (higher = softer AA transition).
-    pub edge_softness: f32,
-    /// Environment mode: 0 = analytic gradient, 1 = lat-long HDR image.
-    pub env_mode: u32,
-    /// Environment image width in texels (image mode only).
-    pub env_width: u32,
-    /// Environment image height in texels (image mode only).
-    pub env_height: u32,
-    /// Environment rotation about +Z, in radians.
-    pub env_rotation: f32,
-    /// Normaliser for the environment's uv-space PDF.
-    pub env_marg_int: f32,
-    /// Extra decorrelation term folded into the WGSL per-pixel RNG seed.
-    ///
-    /// The shader's hash is `pixel.x*1973 + pixel.y*9277 + sample*26699 +
-    /// frame_index*12345 + seed*2654435761 + 1`. Zero — the value the
-    /// viewport uses and the value every existing constructor sets —
-    /// reproduces the pre-seed behaviour bit for bit, so the browser path is
-    /// unchanged. An offline render sets it to get a different but
-    /// *reproducible* sample sequence for the same frame indices.
-    ///
-    /// Occupies what used to be the first padding word, so the uniform is
-    /// still 128 bytes.
-    pub seed: u32,
-    /// What a camera ray that hits nothing returns.
-    ///
-    /// * [`BACKGROUND_SKY`] (0) — `sky_color`, the *themed viewport backdrop*.
-    ///   The historical behaviour, and what every viewport constructor sets.
-    /// * [`BACKGROUND_ENVIRONMENT`] (1) — `env_radiance`, the same sky the
-    ///   integrator lights with. This is what `vcad-render --photoreal`
-    ///   shows behind the subject, so an offline render asks for it.
-    ///
-    /// It has to be a shader-side choice rather than a CPU composite: a pixel
-    /// on the subject's silhouette averages background and surface samples
-    /// together, and once that mean exists the two contributions cannot be
-    /// separated again.
-    ///
-    /// Occupies what used to be the first word of `_pad3`, so the uniform is
-    /// still 128 bytes.
-    pub background_mode: u32,
-    /// Padding to a 16-byte multiple (required for uniform buffers).
-    pub _pad3: u32,
-}
-
-/// [`GpuRenderState::background_mode`]: draw the themed viewport backdrop.
-pub const BACKGROUND_SKY: u32 = 0;
-
-/// [`GpuRenderState::background_mode`]: draw the lighting environment, as the
-/// CPU renderer does with `PathTraceOptions::show_background`.
-pub const BACKGROUND_ENVIRONMENT: u32 = 1;
-
-/// [`GpuRenderState::background_mode`]: leave the backdrop black, matching
-/// the CPU renderer with `show_background` off. Paired with the film's
-/// coverage alpha this is what makes a transparent PNG.
-pub const BACKGROUND_BLACK: u32 = 2;
-
-/// Default silhouette line color: near-black, slightly cool.
-const DEFAULT_SILHOUETTE_COLOR: [f32; 4] = [0.08, 0.08, 0.10, 1.0];
-/// Default crease line color: slightly lighter than silhouette.
-const DEFAULT_CREASE_COLOR: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
-/// Default boundary line color: darkest of the three types.
-const DEFAULT_BOUNDARY_COLOR: [f32; 4] = [0.06, 0.06, 0.08, 1.0];
-
-/// All three edge types on: bits 0 (silhouette) | 1 (crease) | 2 (boundary).
-const EDGES_ALL: u32 = 7;
-
-/// Full path depth, matching `PathTraceOptions::default().max_depth` so the
-/// converged viewport image matches `vcad-render --photoreal`.
-pub const DEFAULT_MAX_DEPTH: u32 = 6;
-/// Depth at which Russian roulette begins, matching the CPU renderer.
-pub const DEFAULT_RR_START: u32 = 3;
-/// Environment multiplier, matching `Environment::default().intensity`.
-pub const DEFAULT_ENV_INTENSITY: f32 = 0.35;
-/// Indirect-radiance clamp, matching the CPU renderer's firefly clamp.
-pub const DEFAULT_FIREFLY_CLAMP: f32 = 12.0;
-
-/// Path depth to trace on a given accumulation frame.
-///
-/// Full path tracing is too slow for the viewport's draft frame, so depth
-/// escalates with accumulation: the first frame traces shallow (direct
-/// lighting plus one bounce) and lands fast, and by the time the `high` tier
-/// is accumulating we are at the full depth that matches the CPU renderer.
-/// The refinement scheduler in `RayTracedViewport.tsx` resets `frame_index` on
-/// every camera change, so each gesture gets a cheap first frame.
-///
-/// Depth only ever increases, and the accumulation buffer is a running average,
-/// so early shallow frames are progressively outweighed by deeper ones.
-pub fn depth_for_frame(frame_index: u32, ceiling: u32) -> u32 {
-    let d = match frame_index {
-        0 | 1 => 2,
-        2..=4 => 4,
-        _ => DEFAULT_MAX_DEPTH,
-    };
-    d.min(ceiling.max(1))
-}
-
-impl GpuRenderState {
-    /// Create a new render state for the given frame with default edge style.
-    pub fn new(frame_index: u32) -> Self {
-        let (jitter_x, jitter_y) = halton_2_3(frame_index);
-        Self {
-            frame_index,
-            jitter_x,
-            jitter_y,
-            enable_edges: EDGES_ALL,
-            edge_depth_threshold: 0.1,
-            edge_normal_threshold: 30.0,
-            debug_mode: 0,
-            theme: 0,
-            max_depth: depth_for_frame(frame_index, DEFAULT_MAX_DEPTH),
-            rr_start: DEFAULT_RR_START,
-            light_count: 0,
-            env_intensity: DEFAULT_ENV_INTENSITY,
-            refine_sample_count: 0,
-            firefly_clamp: DEFAULT_FIREFLY_CLAMP,
-            ground_enabled: 1,
-            stylize: 1,
-            silhouette_color: DEFAULT_SILHOUETTE_COLOR,
-            crease_color: DEFAULT_CREASE_COLOR,
-            boundary_color: DEFAULT_BOUNDARY_COLOR,
-            silhouette_width: 1.0,
-            crease_width: 0.75,
-            boundary_width: 1.25,
-            edge_softness: 1.5,
-            env_mode: 0,
-            env_width: 0,
-            env_height: 0,
-            env_rotation: 0.0,
-            env_marg_int: 0.0,
-            seed: 0,
-            background_mode: BACKGROUND_SKY,
-            _pad3: 0,
-        }
-    }
-
-    /// Create a new render state with a specific debug mode.
-    pub fn with_debug_mode(frame_index: u32, debug_mode: u32) -> Self {
-        let mut state = Self::new(frame_index);
-        state.debug_mode = debug_mode;
-        state
-    }
-
-    /// Create a render state with edge detection disabled.
-    #[allow(dead_code)]
-    pub fn without_edges(frame_index: u32) -> Self {
-        let mut state = Self::new(frame_index);
-        state.enable_edges = 0;
-        state
-    }
-
-    /// Create a render state with custom edge settings.
-    pub fn with_edge_settings(
-        frame_index: u32,
-        debug_mode: u32,
-        enable_edges: bool,
-        edge_depth_threshold: f32,
-        edge_normal_threshold: f32,
-    ) -> Self {
-        Self::with_full_settings(
-            frame_index,
-            debug_mode,
-            enable_edges,
-            edge_depth_threshold,
-            edge_normal_threshold,
-            0,
-            0,
-        )
-    }
-
-    /// Create a render state with all settings including theme and refinement.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_full_settings(
-        frame_index: u32,
-        debug_mode: u32,
-        enable_edges: bool,
-        edge_depth_threshold: f32,
-        edge_normal_threshold: f32,
-        theme: u32,
-        refine_sample_count: u32,
-    ) -> Self {
-        let mut state = Self::new(frame_index);
-        state.enable_edges = if enable_edges { EDGES_ALL } else { 0 };
-        state.edge_depth_threshold = edge_depth_threshold;
-        state.edge_normal_threshold = edge_normal_threshold;
-        state.debug_mode = debug_mode;
-        state.theme = theme;
-        state.refine_sample_count = refine_sample_count;
-        state
-    }
-
-    /// Create a fully-styled render state.
-    ///
-    /// `enable_silhouette`, `enable_crease`, `enable_boundary` control which
-    /// edge types are rendered independently.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_styled(
-        frame_index: u32,
-        debug_mode: u32,
-        enable_silhouette: bool,
-        enable_crease: bool,
-        enable_boundary: bool,
-        edge_depth_threshold: f32,
-        edge_normal_threshold: f32,
-        theme: u32,
-        silhouette_color: [f32; 4],
-        crease_color: [f32; 4],
-        boundary_color: [f32; 4],
-        silhouette_width: f32,
-        crease_width: f32,
-        boundary_width: f32,
-        edge_softness: f32,
-    ) -> Self {
-        let (jitter_x, jitter_y) = halton_2_3(frame_index);
-        let enable_edges = (enable_silhouette as u32)
-            | ((enable_crease as u32) << 1)
-            | ((enable_boundary as u32) << 2);
-        Self {
-            frame_index,
-            jitter_x,
-            jitter_y,
-            enable_edges,
-            edge_depth_threshold,
-            edge_normal_threshold,
-            debug_mode,
-            theme,
-            max_depth: depth_for_frame(frame_index, DEFAULT_MAX_DEPTH),
-            rr_start: DEFAULT_RR_START,
-            light_count: 0,
-            env_intensity: DEFAULT_ENV_INTENSITY,
-            refine_sample_count: 0,
-            firefly_clamp: DEFAULT_FIREFLY_CLAMP,
-            ground_enabled: 1,
-            stylize: 1,
-            silhouette_color,
-            crease_color,
-            boundary_color,
-            silhouette_width,
-            crease_width,
-            boundary_width,
-            edge_softness,
-            env_mode: 0,
-            env_width: 0,
-            env_height: 0,
-            env_rotation: 0.0,
-            env_marg_int: 0.0,
-            seed: 0,
-            background_mode: BACKGROUND_SKY,
-            _pad3: 0,
-        }
-    }
-
-    /// Create a render state with adaptive refinement enabled.
-    pub fn with_refinement(
-        frame_index: u32,
-        debug_mode: u32,
-        enable_edges: bool,
-        edge_depth_threshold: f32,
-        edge_normal_threshold: f32,
-        theme: u32,
-        refine_sample_count: u32,
-    ) -> Self {
-        Self::with_full_settings(
-            frame_index,
-            debug_mode,
-            enable_edges,
-            edge_depth_threshold,
-            edge_normal_threshold,
-            theme,
-            refine_sample_count,
-        )
-    }
-}
-
-/// Sub-pixel jitter for one accumulation frame, in `[-0.5, 0.5]`.
-///
-/// The same low-discrepancy offsets [`GpuRenderState::new`] bakes in, exposed
-/// so the offline sample loop can advance the jitter without rebuilding the
-/// whole render state each sample.
-pub fn halton_jitter(frame_index: u32) -> (f32, f32) {
-    halton_2_3(frame_index)
-}
-
-/// Generate Halton sequence sample for bases 2 and 3.
-/// Returns values in range [-0.5, 0.5] for sub-pixel jittering.
-fn halton_2_3(index: u32) -> (f32, f32) {
-    (halton(index, 2) - 0.5, halton(index, 3) - 0.5)
-}
-
-/// Halton sequence generator for a given base.
-fn halton(mut index: u32, base: u32) -> f32 {
-    let mut f = 1.0f32;
-    let mut r = 0.0f32;
-    let base_f = base as f32;
-    while index > 0 {
-        f /= base_f;
-        r += f * (index % base) as f32;
-        index /= base;
-    }
-    r
-}
-
-impl GpuCamera {
-    /// Create a new camera for rendering.
-    pub fn new(
-        position: [f32; 3],
-        target: [f32; 3],
-        up: [f32; 3],
-        fov: f32,
-        width: u32,
-        height: u32,
-    ) -> Self {
-        Self {
-            position: [position[0], position[1], position[2], 1.0],
-            target: [target[0], target[1], target[2], 1.0],
-            up: [up[0], up[1], up[2], 0.0],
-            // Unread in derived mode; zero rather than a made-up axis so a
-            // stale value can never be mistaken for a real basis.
-            right: [0.0; 4],
-            fov,
-            width,
-            height,
-            basis_mode: CAMERA_BASIS_DERIVED,
-        }
-    }
-
-    /// Create a camera from an explicit — possibly mirrored — screen basis.
-    ///
-    /// `forward`, `right` and `up` are used as given (the shader normalises
-    /// them but does not re-orthogonalise), so a left-handed CAD view reaches
-    /// the GPU unflipped. `focus_dist` only positions the `target` point the
-    /// shader derives `forward` from; it does not focus anything, since the
-    /// GPU tracer is a pinhole.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_basis(
-        position: [f32; 3],
-        forward: [f32; 3],
-        right: [f32; 3],
-        up: [f32; 3],
-        fov: f32,
-        focus_dist: f32,
-        width: u32,
-        height: u32,
-    ) -> Self {
-        let d = focus_dist.max(1.0);
-        Self {
-            position: [position[0], position[1], position[2], 1.0],
-            target: [
-                position[0] + forward[0] * d,
-                position[1] + forward[1] * d,
-                position[2] + forward[2] * d,
-                1.0,
-            ],
-            up: [up[0], up[1], up[2], 0.0],
-            right: [right[0], right[1], right[2], 0.0],
-            fov,
-            width,
-            height,
-            basis_mode: CAMERA_BASIS_EXPLICIT,
-        }
-    }
-}
-
 /// Maximum inner loop descriptors.
 #[allow(dead_code)]
 pub const MAX_INNER_LOOPS: usize = 8192;
@@ -1006,6 +392,11 @@ pub enum GpuSceneError {
     TooManyBvhNodes(usize),
     /// Too many trim vertices.
     TooManyTrimVerts(usize),
+    /// The packed hierarchy is deeper than a WGSL traversal stack can hold.
+    ///
+    /// Carries kosm-render's own message, since the limit and the stack are
+    /// both the renderer's.
+    TreeTooDeep(String),
     /// A surface kind the WGSL tracer has no intersection case for.
     ///
     /// Carries the surface's index in `brep.geometry.surfaces` and the packed
@@ -1049,6 +440,7 @@ impl std::fmt::Display for GpuSceneError {
             Self::TooManyTrimVerts(n) => {
                 write!(f, "too many trim vertices: {} (max {})", n, MAX_TRIM_VERTS)
             }
+            Self::TreeTooDeep(msg) => write!(f, "{msg}"),
             Self::UnsupportedSurface {
                 index,
                 surface_type,
@@ -1102,6 +494,20 @@ impl std::error::Error for GpuSceneError {}
 /// An empty tree still yields one (zeroed) node: WebGPU rejects a zero-sized
 /// storage buffer, and a zero AABB is missed by every ray, so the empty scene
 /// renders as pure background rather than failing to bind.
+/// Refuse a hierarchy the shader's fixed traversal stack cannot walk.
+///
+/// The stack depth is the renderer's, so the check is kosm-render's too — this
+/// only re-spells vcad's `Aabb3`-flavoured nodes in the renderer's `Aabb` so
+/// it can measure them, and re-wraps the message as a `GpuSceneError`.
+fn check_tree_depth(flat_nodes: &[crate::bvh::FlatBvhNode]) -> Result<(), GpuSceneError> {
+    let nodes: Vec<kosm_render::bvh::FlatBvhNode> = flat_nodes
+        .iter()
+        .map(|(a, leaf, x, y)| (kosm_render::Aabb::new(a.min, a.max), *leaf, *x, *y))
+        .collect();
+    kosm_render::gpu::validate_tree_depth(&nodes)
+        .map_err(|e| GpuSceneError::TreeTooDeep(e.to_string()))
+}
+
 fn gpu_bvh_nodes(flat_nodes: &[crate::bvh::FlatBvhNode]) -> Vec<GpuBvhNode> {
     if flat_nodes.is_empty() {
         return vec![GpuBvhNode::zeroed()];
@@ -1277,11 +683,8 @@ impl GpuScene {
         }
 
         // Build BVH first to get the face ordering
-        let bvh = Bvh::build(brep);
-        let (flat_nodes, prims) = bvh.flatten();
-        let crate::bvh::FlatPrims::Faces(bvh_faces) = prims else {
-            unreachable!("Bvh::build always produces a BRep-backed BVH")
-        };
+        let bvh = <Bvh as BrepBvh>::build_brep(brep);
+        let (flat_nodes, bvh_faces) = bvh.flatten_faces();
 
         // Build face list in BVH traversal order (so BVH leaf indices are contiguous)
         let mut faces = Vec::with_capacity(bvh_faces.len());
@@ -1414,6 +817,7 @@ impl GpuScene {
 
         // Convert flattened BVH to GPU format
         // Faces are now in BVH order, so leaf indices map directly
+        check_tree_depth(&flat_nodes)?;
         let bvh_nodes = gpu_bvh_nodes(&flat_nodes);
 
         if bvh_nodes.len() > MAX_BVH_NODES {
@@ -1501,7 +905,7 @@ impl GpuScene {
         bvh: &Bvh,
         transform: Option<&vcad_kernel_math::Transform>,
     ) -> Result<Self, GpuSceneError> {
-        let (flat_nodes, prims) = bvh.flatten();
+        let (flat_nodes, prims) = bvh.flatten_prims();
         let crate::bvh::FlatPrims::Triangles(tris) = prims else {
             return Err(GpuSceneError::NotAMeshBvh);
         };
@@ -1559,6 +963,7 @@ impl GpuScene {
             });
         }
 
+        check_tree_depth(&flat_nodes)?;
         let mut bvh_nodes = gpu_bvh_nodes(&flat_nodes);
         if let Some(t) = transform {
             for n in bvh_nodes.iter_mut() {
@@ -1848,8 +1253,144 @@ impl GpuScene {
         if self.materials.is_empty() {
             self.materials.push(GpuMaterial::default());
         }
-        self.materials[0] =
-            GpuMaterial::from_pbr(crate::pathtrace::Pbr::from_material_def(mat, tint));
+        self.materials[0] = GpuMaterial::from_pbr(crate::pathtrace::from_material_def(mat, tint));
+    }
+}
+
+// ---- placed instances -------------------------------------------------------
+//
+// `GpuScene::from_brep` packs a solid in the coordinates its BRep is authored
+// in, and `merge` unions two of them without moving either. A scene assembled
+// from *instances* — the same ball drawn at four poses, a court whose parts
+// were each modelled at the origin — needs one more thing: the ability to say
+// where a packed solid sits.
+//
+// The shader is not told about it. Every surface the GPU understands is
+// analytic and given by a frame (an origin or centre, an axis, a reference
+// direction) and a size, and a rigid placement acts on that frame alone:
+// carry the points through as points, the directions as directions, and the
+// radii are untouched. So `placed` moves the packed scene rather than the ray,
+// and the traversal in `raytrace.wgsl` stays a single BVH walk in world space
+// with no per-instance transform lookup. What it costs is a pass over the
+// surface and node arrays per placement, which is cheap next to re-packing a
+// BRep, and what it buys is that `merge` already does the rest.
+//
+// Only rigid placements are meaningful here: a non-uniform scale would turn a
+// sphere into an ellipsoid, which none of these six surface types can express.
+
+/// Which slots of a [`GpuSurface`]'s `params` are points and which are
+/// directions, per surface type. Everything else is a radius or an angle,
+/// which a rigid placement leaves alone.
+const SURFACE_SLOTS: [(&[usize], &[usize]); 6] = [
+    // Plane: origin; x_dir, y_dir, normal
+    (&[0], &[3, 6, 9]),
+    // Cylinder: centre; axis, ref_dir  (radius at 9)
+    (&[0], &[3, 6]),
+    // Sphere: centre (radius at 3); ref_dir, axis
+    (&[0], &[4, 7]),
+    // Cone: apex; axis, ref_dir  (half-angle at 9)
+    (&[0], &[3, 6]),
+    // Torus: centre; axis, ref_dir  (major/minor radius at 9, 10)
+    (&[0], &[3, 6]),
+    // Bilinear: four corners, no directions
+    (&[0, 3, 6, 9], &[]),
+];
+
+/// The eight corners of an AABB, moved, re-bounded. A rotation makes the new
+/// box looser than the old one; that costs traversal, never correctness.
+fn placed_aabb(
+    min: [f32; 4],
+    max: [f32; 4],
+    to_world: &vcad_kernel_math::Transform,
+) -> ([f32; 4], [f32; 4]) {
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for i in 0..8 {
+        let corner = vcad_kernel_math::Point3::new(
+            if i & 1 == 0 { min[0] } else { max[0] } as f64,
+            if i & 2 == 0 { min[1] } else { max[1] } as f64,
+            if i & 4 == 0 { min[2] } else { max[2] } as f64,
+        );
+        let p = to_world.apply_point(&corner);
+        for (k, v) in [p.x, p.y, p.z].iter().enumerate() {
+            lo[k] = lo[k].min(*v as f32);
+            hi[k] = hi[k].max(*v as f32);
+        }
+    }
+    ([lo[0], lo[1], lo[2], 0.0], [hi[0], hi[1], hi[2], 0.0])
+}
+
+impl GpuSurface {
+    /// The same surface, rigidly placed by `to_world`.
+    ///
+    /// A B-spline surface (type 6) is not traced on the GPU at all, so it is
+    /// returned unchanged rather than half-moved.
+    #[must_use]
+    pub fn placed(&self, to_world: &vcad_kernel_math::Transform) -> Self {
+        let Some((points, vectors)) = SURFACE_SLOTS.get(self.surface_type as usize) else {
+            return *self;
+        };
+        let mut out = *self;
+        for &i in *points {
+            let p = vcad_kernel_math::Point3::new(
+                self.params[i] as f64,
+                self.params[i + 1] as f64,
+                self.params[i + 2] as f64,
+            );
+            let q = to_world.apply_point(&p);
+            out.params[i] = q.x as f32;
+            out.params[i + 1] = q.y as f32;
+            out.params[i + 2] = q.z as f32;
+        }
+        for &i in *vectors {
+            let v = vcad_kernel_math::Vec3::new(
+                self.params[i] as f64,
+                self.params[i + 1] as f64,
+                self.params[i + 2] as f64,
+            );
+            let w = to_world.apply_vec(&v);
+            out.params[i] = w.x as f32;
+            out.params[i + 1] = w.y as f32;
+            out.params[i + 2] = w.z as f32;
+        }
+        out
+    }
+}
+
+impl GpuScene {
+    /// The same packed scene, rigidly placed by `to_world` — the GPU
+    /// equivalent of [`crate::pathtrace::Object::placed`].
+    ///
+    /// Pack a solid once with [`Self::from_brep`] and call this per instance;
+    /// the result [`Self::merge`]s with anything else exactly as an unplaced
+    /// scene does. Trim loops are untouched: they live in each surface's own
+    /// UV, and the frame that UV is measured against moved with the surface.
+    ///
+    /// `to_world` must be rigid. A scale would ask a sphere to become an
+    /// ellipsoid, and no surface type here can say that.
+    #[must_use]
+    pub fn placed(&self, to_world: &vcad_kernel_math::Transform) -> Self {
+        let mut out = self.clone();
+        for s in &mut out.surfaces {
+            *s = s.placed(to_world);
+        }
+        for f in &mut out.faces {
+            let (min, max) = placed_aabb(f.aabb_min, f.aabb_max, to_world);
+            f.aabb_min = min;
+            f.aabb_max = max;
+        }
+        for n in &mut out.bvh_nodes {
+            let (min, max) = placed_aabb(n.aabb_min, n.aabb_max, to_world);
+            n.aabb_min = min;
+            n.aabb_max = max;
+        }
+        // Lights are left where they are. The rig `from_brep` attaches is a
+        // studio rig sized to that one solid, and a scene of instances wants
+        // the room's lights, not one per instance — the caller replaces
+        // `lights` after merging. Dragging them along would also mean a
+        // sphere turned about its own centre changed on screen, which is a
+        // strange thing for a placement to do.
+        out
     }
 }
 
@@ -2027,7 +1568,7 @@ mod tests {
     fn from_mesh_bvh_rejects_a_brep_bvh() {
         // A BRep BVH flattens to face IDs, not triangles. Building a mesh
         // scene from it would produce an empty one; say so instead.
-        let bvh = Bvh::build(&make_cube(10.0, 10.0, 10.0));
+        let bvh = Bvh::build_brep(&make_cube(10.0, 10.0, 10.0));
         let Err(err) = GpuScene::from_mesh_bvh(&bvh) else {
             panic!("a BRep-backed BVH is not a mesh");
         };

@@ -3802,7 +3802,7 @@ impl RayTracer {
         let ctx = vcad_kernel_gpu::GpuContext::get()
             .ok_or_else(|| JsError::new("GPU not initialized. Call initGpu() first."))?;
 
-        let pipeline = vcad_kernel_raytrace::gpu::RayTracePipeline::new(ctx)
+        let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx)
             .map_err(|e| JsError::new(&format!("Failed to create ray trace pipeline: {}", e)))?;
 
         web_sys::console::log_1(&"[WASM] RayTracer created".into());
@@ -4109,7 +4109,7 @@ impl RayTracer {
     /// roughness, so clearcoat, IOR and anisotropy never reached the viewport
     /// and a brushed or lacquered part shaded differently here than under
     /// `vcad-render --photoreal`. This runs the SAME derivation the CPU
-    /// renderer uses (`Pbr::from_material_def`), so both agree by construction.
+    /// renderer uses (`pathtrace::from_material_def`), so both agree by construction.
     ///
     /// `json` is a `MaterialDef` object; pass `null`/empty to fall back to the
     /// optional `tint` (linear RGB) or the neutral default.
@@ -4317,7 +4317,7 @@ impl RayTracer {
             .pipeline
             .render_with_render_state(
                 ctx,
-                &scene,
+                &*scene,
                 &gpu_camera,
                 width,
                 height,

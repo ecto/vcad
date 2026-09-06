@@ -8,6 +8,11 @@ repository.workspace = true
 
 [dependencies]
 rayon = "1"
+# The renderer itself lives in Kosm now: rays, hierarchies and the integrator,
+# generic over anything that can be bounded and hit. This crate supplies the
+# BRep half of that seam. See the workspace dep for the path-now/version-later
+# story.
+kosm-render = { workspace = true }
 # Ray-surface intersection returns at most a handful of hits (four, on a
 # torus) and is called millions of times per frame; a heap allocation per
 # test is pure overhead.
@@ -19,7 +24,6 @@ vcad-kernel-geom = { workspace = true }
 vcad-kernel-primitives = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-booleans = { workspace = true }
-vcad-kernel-gpu = { workspace = true, optional = true }
 wgpu = { workspace = true, features = ["webgpu", "wgsl"], optional = true }
 bytemuck = { workspace = true }
 thiserror.workspace = true
@@ -33,10 +37,14 @@ web-sys = { version = "0.3", features = ["console"] }
 
 [features]
 default = []
-gpu = ["dep:vcad-kernel-gpu", "dep:wgpu"]
+# The library needs no device of its own — it packs buffers and hands them
+# to kosm-render. `vcad-kernel-gpu` is only how the tests get a `GpuContext`,
+# so it lives in dev-dependencies.
+gpu = ["dep:wgpu", "kosm-render/gpu"]
 
 [dev-dependencies]
 vcad-kernel-fillet = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 pollster = { workspace = true }
+vcad-kernel-gpu = { workspace = true }

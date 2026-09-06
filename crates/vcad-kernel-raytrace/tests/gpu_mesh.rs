@@ -31,10 +31,8 @@ use vcad_kernel_raytrace::gpu::{GpuCamera, GpuScene, OfflineOptions, OfflineResu
 use vcad_kernel_raytrace::pathtrace::{
     self, Camera, Environment, Object, PathTraceOptions, Pbr, Scene,
 };
-use vcad_kernel_raytrace::Bvh;
+use vcad_kernel_raytrace::{BrepBvh, Bvh};
 use vcad_kernel_tessellate::TriangleMesh;
-
-use vcad_kernel_raytrace::gpu::RayTracePipeline;
 
 /// Skip with a clear message when no adapter is available.
 fn ctx_or_skip(test_name: &str) -> Option<&'static GpuContext> {
@@ -69,6 +67,10 @@ fn gpu_default_material() -> Pbr {
         clearcoat_roughness: 0.1,
         ior: 1.5,
         emissive: [0.0; 3],
+        // The rest of kosm-render's principled parameters keep their defaults,
+        // which are the values that reproduce the model this test was written
+        // against.
+        ..Pbr::default()
     }
 }
 
@@ -120,6 +122,8 @@ fn cpu_scene(bvhs: Vec<Arc<Bvh>>) -> Scene {
         lights: pathtrace::studio_rig(center, radius),
         env: Environment::default(),
         ground: None,
+        sun: None,
+        splats: None,
     }
 }
 
@@ -157,7 +161,6 @@ fn offline_opts(w: u32, h: u32, spp: u32) -> OfflineOptions {
 fn cpu_opts(spp: u32) -> PathTraceOptions {
     PathTraceOptions {
         spp,
-        adaptive: false,
         denoise: false,
         show_background: true,
         seed: 7,
@@ -231,7 +234,7 @@ fn mesh_render_matches_cpu_reference() {
     let Some(ctx) = ctx_or_skip("mesh_render_matches_cpu_reference") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     let mesh = mesh_sphere(48);
     let bvh = Arc::new(Bvh::build_mesh(&mesh));
@@ -311,7 +314,7 @@ fn interpolated_normals_change_the_shading() {
     let Some(ctx) = ctx_or_skip("interpolated_normals_change_the_shading") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     // Coarse on purpose: at high tessellation smooth and faceted converge,
     // and the difference this test looks for would vanish into the noise.
@@ -375,7 +378,7 @@ fn merged_brep_and_mesh_scene_shows_both() {
     let Some(ctx) = ctx_or_skip("merged_brep_and_mesh_scene_shows_both") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     // Analytic sphere at the origin, mesh cube well clear of it to the +x
     // side. The cube is displaced by editing its mesh vertices rather than
@@ -428,7 +431,7 @@ fn merged_brep_and_mesh_scene_shows_both() {
     // scene for the geometry check and the GPU render for the parity one.
     let cpu = pathtrace::render(
         &cpu_scene(vec![
-            Arc::new(Bvh::build(&sphere)),
+            Arc::new(Bvh::build_brep(&sphere)),
             Arc::new(Bvh::build_mesh(&cube_mesh)),
         ]),
         &Camera::look_at(
@@ -478,7 +481,7 @@ fn bench_mesh_gpu_vs_cpu() {
     let Some(ctx) = ctx_or_skip("bench_mesh_gpu_vs_cpu") else {
         return;
     };
-    let pipeline = RayTracePipeline::new(ctx).expect("pipeline creation");
+    let pipeline = vcad_kernel_raytrace::gpu::brep_pipeline(ctx).expect("pipeline creation");
 
     let mesh = mesh_sphere(300);
     let tris = mesh.indices.len() / 3;

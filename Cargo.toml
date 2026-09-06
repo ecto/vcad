@@ -210,12 +210,22 @@ repository = "https://github.com/ecto/vcad"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-# Path-only deps from sibling repos go through path locally; the version is
-# what cargo publish embeds into the registry manifest. Bump these when the
-# sibling repo cuts a release; sync-version.mjs does NOT touch them.
-tang = { path = "../tang/crates/tang", version = "0.2" }
-tang-la = { path = "../tang/crates/tang-la", version = "0.1" }
-tang-expr = { path = "../tang/crates/tang-expr", version = "0.1" }
+# Sibling-repo deps are declared by registry version and redirected to the
+# sibling checkout by `[patch.crates-io]` below, so a downstream that pulls
+# vcad by git (kosm does) can resolve them -- a `path` outside the repo is
+# unreachable from a git checkout. Bump these when the sibling repo cuts a
+# release; sync-version.mjs does NOT touch them.
+# kosm-render is the renderer: rays, hierarchies, the path tracer and the wgpu
+# tier, generic over geometry. On a branch rather than a rev while the offline
+# render lands there -- vcad's GPU path sits on `render_offline`, the explicit
+# camera basis and `MAX_TRAVERSAL_DEPTH`, which exist only on that branch. Pin
+# it back to a rev once it merges to kosm's main, so the lockfile stops
+# churning on every kosm commit. The `version` is what a published kosm-render
+# will satisfy, so when it lands on crates.io only this line changes.
+kosm-render = { git = "https://github.com/ecto/kosm", branch = "claude/adaptive-sampling", version = "0.1.0" }
+tang = { version = "0.2" }
+tang-la = { version = "0.1" }
+tang-expr = { version = "0.1" }
 # phyz is PINNED to a published revision rather than a sibling checkout.
 #
 # As a path dep, every vcad build took whatever happened to be in
@@ -333,7 +343,7 @@ vcad-gdsii = { path = "crates/vcad-gdsii", version = "0.9.4" }
 vcad-process = { path = "crates/vcad-process", version = "0.9.4" }
 
 # GPU stack — version-pin here, each consumer opts into the features it needs.
-wgpu = { version = "23" }
+wgpu = { version = "30" }
 bytemuck = { version = "1.14", features = ["derive"] }
 pollster = "0.4"
 
@@ -390,3 +400,8 @@ tang-expr = { path = "../tang/crates/tang-expr" }
 # clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
 # vendored copy adds the missing libc++ link arms. Identical source otherwise.
 clipper-sys = { path = "third_party/clipper-sys" }
+
+# vcad-loon pins loon-lang by git rev so a downstream can pull vcad by git;
+# local and CI builds still compile against the sibling checkout.
+[patch."https://github.com/ecto/loon"]
+loon-lang = { path = "../loon/crates/loon-lang" }
