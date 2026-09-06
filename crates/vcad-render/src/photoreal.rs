@@ -14,10 +14,10 @@
 use std::sync::Arc;
 
 use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
-use vcad_kernel_raytrace::BrepBvh;
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, Ground, Object, PathTraceOptions, Pbr, Scene,
 };
+use vcad_kernel_raytrace::BrepBvh;
 use vcad_kernel_raytrace::Bvh;
 
 use super::envmap::{self, EnvSource};
@@ -166,7 +166,9 @@ pub(crate) fn build_objects(solids: &[crate::SceneSolid]) -> Result<Vec<Object>,
 pub(crate) fn object_corners(obj: &Object) -> Vec<[f64; 3]> {
     object_corners_with(
         obj,
-        &vcad_kernel::vcad_kernel_math::Transform { matrix: obj.transform.matrix },
+        &vcad_kernel::vcad_kernel_math::Transform {
+            matrix: obj.transform.matrix,
+        },
     )
 }
 
@@ -479,7 +481,10 @@ mod tests {
             crate::materials::builtin("copper").unwrap().color
         );
 
-        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(solids[0].material.as_ref(), solids[0].tint);
+        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(
+            solids[0].material.as_ref(),
+            solids[0].tint,
+        );
         assert_eq!(pbr.metallic, 1.0, "copper must trace as a metal");
         assert!(
             pbr.base_color[0] > pbr.base_color[2] + 0.3,
@@ -501,7 +506,10 @@ mod tests {
                           "metallic": 0.0, "roughness": 0.9 }"#,
         );
         let solids = evaluate_vcad(&doc).expect("eval");
-        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(solids[0].material.as_ref(), solids[0].tint);
+        let pbr = vcad_kernel_raytrace::pathtrace::from_material_def(
+            solids[0].material.as_ref(),
+            solids[0].tint,
+        );
         assert_eq!(pbr.base_color, [0.0, 1.0, 0.0], "authored def must win");
         assert_eq!(pbr.metallic, 0.0);
     }

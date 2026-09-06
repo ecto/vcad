@@ -346,10 +346,11 @@ pub fn render_photoreal_animation(
         .collect();
     // Back into the kernel's `Transform`, so the static placements and the
     // per-frame poses are one type the loop below can choose between.
-    let static_transforms: Vec<vcad_kernel::vcad_kernel_math::Transform> = objects
-        [..static_count]
+    let static_transforms: Vec<vcad_kernel::vcad_kernel_math::Transform> = objects[..static_count]
         .iter()
-        .map(|o| vcad_kernel::vcad_kernel_math::Transform { matrix: o.transform.matrix })
+        .map(|o| vcad_kernel::vcad_kernel_math::Transform {
+            matrix: o.transform.matrix,
+        })
         .collect();
 
     for (i, pose) in poses.iter().enumerate() {

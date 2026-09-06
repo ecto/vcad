@@ -527,7 +527,9 @@ impl GpuConstraintSolver {
             .unwrap()
             .map_err(|_| GpuConstraintError::BufferMapping)?;
 
-        let data = buffer_slice.get_mapped_range().expect("the buffer was just mapped");
+        let data = buffer_slice
+            .get_mapped_range()
+            .expect("the buffer was just mapped");
         let results: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         staging_buffer.unmap();

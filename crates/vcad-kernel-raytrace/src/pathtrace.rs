@@ -171,7 +171,10 @@ mod tests {
         assert!(!p.thin_walled);
         assert_eq!(p.attenuation_color, [1.0; 3]);
         assert!(p.attenuation_distance.is_infinite());
-        assert!(p.clearcoat > 0.0, "the glossy-dielectric coat still applies");
+        assert!(
+            p.clearcoat > 0.0,
+            "the glossy-dielectric coat still applies"
+        );
         assert_eq!(from_material_def(None, None).transmission, 0.0);
     }
 

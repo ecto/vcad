@@ -105,8 +105,8 @@ fn sample_via_pairs(brep: &BRepSolid, cos_threshold: f64) -> Vec<ThicknessSample
 #[cfg(feature = "raytrace")]
 fn sample_via_raycast(brep: &BRepSolid) -> Vec<ThicknessSample> {
     use vcad_kernel_math::Vec3;
-    use vcad_kernel_raytrace::{Bvh, Ray};
     use vcad_kernel_raytrace::BrepBvh;
+    use vcad_kernel_raytrace::{Bvh, Ray};
 
     let bvh = Bvh::build_brep(brep);
     let n = brep.topology.faces.len();

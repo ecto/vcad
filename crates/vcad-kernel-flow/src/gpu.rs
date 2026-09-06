@@ -347,7 +347,12 @@ pub async fn preview_async(
     rx.recv()
         .map_err(|_| PreviewError::Gpu(GpuError::BufferMapping))?
         .map_err(|_| PreviewError::Gpu(GpuError::BufferMapping))?;
-    let data: Vec<f32> = bytemuck::cast_slice(&slice.get_mapped_range().expect("the buffer was just mapped")).to_vec();
+    let data: Vec<f32> = bytemuck::cast_slice(
+        &slice
+            .get_mapped_range()
+            .expect("the buffer was just mapped"),
+    )
+    .to_vec();
     staging.unmap();
 
     let vel_scale = (scaling.dx_m / scaling.dt_s) as f32;
