@@ -127,17 +127,17 @@ export class PhysicsSim {
      */
     observe(): any;
     /**
-     * Reset the environment to initial state.
-     *
-     * Returns the initial observation as JSON.
-     */
-    reset(): any;
-    /**
      * Reset with a new seed: re-seeds the domain-randomization stream
      * (episode counter rewinds to 0) and resets. Returns the initial
      * observation as JSON.
      */
     resetSeeded(seed: bigint): any;
+    /**
+     * Reset the environment to initial state.
+     *
+     * Returns the initial observation as JSON.
+     */
+    reset(): any;
     /**
      * Set explicit per-joint PD gains, overriding the inertia-scaled
      * defaults for position and velocity servos.
@@ -309,7 +309,6 @@ export class RayTracer {
      * the sub-pixel anti-aliasing transition width.
      */
     setEdgeStyle(enable_silhouette: boolean, enable_crease: boolean, enable_boundary: boolean, silhouette_r: number, silhouette_g: number, silhouette_b: number, silhouette_a: number, crease_r: number, crease_g: number, crease_b: number, crease_a: number, boundary_r: number, boundary_g: number, boundary_b: number, boundary_a: number, silhouette_width: number, crease_width: number, boundary_width: number, edge_softness: number): void;
-    setMaterial(r: number, g: number, b: number, metallic: number, roughness: number): void;
     /**
      * Set the material for all faces in the scene.
      *
@@ -323,12 +322,13 @@ export class RayTracer {
      * roughness, so clearcoat, IOR and anisotropy never reached the viewport
      * and a brushed or lacquered part shaded differently here than under
      * `vcad-render --photoreal`. This runs the SAME derivation the CPU
-     * renderer uses (`Pbr::from_material_def`), so both agree by construction.
+     * renderer uses (`pathtrace::from_material_def`), so both agree by construction.
      *
      * `json` is a `MaterialDef` object; pass `null`/empty to fall back to the
      * optional `tint` (linear RGB) or the neutral default.
      */
     setMaterialFromDef(json?: string | null, tint?: Float64Array | null): void;
+    setMaterial(r: number, g: number, b: number, metallic: number, roughness: number): void;
     /**
      * Set the path tracer's quality ceiling and stylisation mode.
      *
@@ -361,6 +361,12 @@ export class RayTracer {
      */
     setTheme(theme: number): void;
     /**
+     * Upload a solid with its own material. Each uploaded solid's faces
+     * keep a distinct material slot (`GpuScene::merge` offsets material
+     * indices), so assemblies render per-part materials in one pass.
+     */
+    uploadSolidWithMaterial(solid: Solid, r: number, g: number, b: number, metallic: number, roughness: number): void;
+    /**
      * Upload a solid's BRep representation for ray tracing.
      *
      * First call after clearScene seeds the GPU scene. Subsequent calls
@@ -369,12 +375,6 @@ export class RayTracer {
      * in a single ray-trace pass.
      */
     uploadSolid(solid: Solid): void;
-    /**
-     * Upload a solid with its own material. Each uploaded solid's faces
-     * keep a distinct material slot (`GpuScene::merge` offsets material
-     * indices), so assemblies render per-part materials in one pass.
-     */
-    uploadSolidWithMaterial(solid: Solid, r: number, g: number, b: number, metallic: number, roughness: number): void;
 }
 
 /**
@@ -552,18 +552,18 @@ export class Solid {
      */
     static empty(): Solid;
     /**
-     * Create a solid by extruding a 2D sketch profile.
-     *
-     * Takes a sketch profile and extrusion direction as JS objects.
-     */
-    static extrude(profile_json: string, direction: Float64Array): Solid;
-    /**
      * Create a solid by extruding a 2D sketch profile with twist and/or scale.
      *
      * Takes a sketch profile, extrusion direction, twist angle (radians),
      * and scale factor at the end (1.0 = no taper).
      */
     static extrudeWithOptions(profile_json: string, direction: Float64Array, twist_angle: number, scale_end: number): Solid;
+    /**
+     * Create a solid by extruding a 2D sketch profile.
+     *
+     * Takes a sketch profile and extrusion direction as JS objects.
+     */
+    static extrude(profile_json: string, direction: Float64Array): Solid;
     /**
      * Fillet all edges of the solid with the given radius.
      *
@@ -1163,13 +1163,13 @@ export class WasmSketchSession {
      */
     cancelPending(): void;
     /**
-     * Clear every entity and constraint.
-     */
-    clear(): void;
-    /**
      * Clear the selection.
      */
     clearSelection(): void;
+    /**
+     * Clear every entity and constraint.
+     */
+    clear(): void;
     /**
      * Construct a new session on the given plane.
      *
@@ -3547,41 +3547,188 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
+    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
+    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
+    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
+    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
+    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
+    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly __wbg_physicssim_free: (a: number, b: number) => void;
     readonly __wbg_raytracer_free: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
+    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
+    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
     readonly __wbg_solid_free: (a: number, b: number) => void;
     readonly __wbg_wasmannotationlayer_free: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
+    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
+    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
+    readonly analyzeForPrinting: (a: number) => [number, number, number];
     readonly analyzeStaticsBox: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly analyzeStaticsMesh: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly antennaAnalyze: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly atoms_inspect: (a: number, b: number) => [number, number, number, number];
+    readonly atoms_minimize: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly atoms_parse_xyz: (a: number, b: number) => [number, number, number, number];
+    readonly atoms_write_xyz: (a: number, b: number) => [number, number, number, number];
+    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly buildGlbBytes: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly buildPart: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly buildStlBytes: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly build_chat_system_prompt: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
+    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly checkDesignConstraints: (a: number, b: number) => [number, number, number, number];
+    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
+    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly circuitAcResponse: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly circuitDcOperatingPoint: (a: number, b: number) => [number, number, number];
+    readonly circuitFromSchematic: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitSensitivities: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly circuitTransient: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitTune: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
     readonly computeCreasedNormalsGpu: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly computeMeshProperties: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly computeMeshVolume: (a: number, b: number, c: number, d: number) => number;
+    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly createDetailView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly decimateMeshGpu: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly deriveParts: (a: number, b: number) => [number, number, number];
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly documentDiff: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly documentDiffApply: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly documentDiffHuman: (a: number, b: number) => [number, number, number, number];
+    readonly documentMerge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly documentParameterGradient: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly documentSensitivities: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly documentToLoonChecked: (a: number, b: number) => [number, number, number];
     readonly documentToStepBuffer: (a: number, b: number) => [number, number, number, number];
     readonly drawingSheetToPdf: (a: number, b: number) => [number, number, number, number];
+    readonly ecadAirgapFluxDensity: (a: number, b: number) => [number, number, number];
+    readonly ecadAirgapSolve: (a: number, b: number) => [number, number, number];
+    readonly ecadBuildReceipt: (a: number, b: number) => [number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckDrcInRegion: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
+    readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
+    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
+    readonly ecadFabPrep: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
+    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadJellybeanManifest: () => [number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadLengthMatch: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadNetContinuity: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadPartsManifest: () => [number, number];
+    readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
+    readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
+    readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
+    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSearchParts: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly emSimulate: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly embroideryDesignToMesh: (a: number, b: number) => [number, number, number];
+    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
+    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly estimate_cost_for_process: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly eulerXyzDegToQuat: (a: number, b: number, c: number) => [number, number];
     readonly evalVcadSource: (a: number, b: number) => [number, number, number];
     readonly evalVcadSourceParametric: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly evalVcadSourceWithModules: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly evaluateDocument: (a: number, b: number, c: number) => [number, number, number];
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
     readonly evaluateVCode: (a: number, b: number) => [number, number, number];
+    readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
+    readonly exportKicadProject: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
     readonly exportProjectedViewToDxf: (a: number, b: number) => [number, number, number, number];
+    readonly exprEvalAst: (a: any, b: any) => [number, number, number];
+    readonly exprEvaluate: (a: number, b: number, c: any) => [number, number, number];
+    readonly exprParse: (a: number, b: number) => [number, number, number];
     readonly feaAnalyzeMesh: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly feaCheckBeam: (a: number, b: number) => [number, number, number];
+    readonly flattenSolidToSheetMetal: (a: number, b: number) => [number, number];
+    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly getCompiledModule: () => any;
     readonly getPartsManifest: () => [number, number];
+    readonly getSheetMetalBendTable: () => [number, number];
+    readonly getSheetMetalMaterials: () => [number, number];
+    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
+    readonly getSlicerPrinterProfiles: () => [number, number, number];
     readonly get_anthropic_tools_json: () => [number, number];
     readonly get_default_dfm_pack: (a: number, b: number) => [number, number, number, number];
     readonly get_kernel_version: () => [number, number];
@@ -3593,11 +3740,23 @@ export interface InitOutput {
     readonly init: () => void;
     readonly initGpu: () => any;
     readonly inspectDocumentFaces: (a: number, b: number) => [number, number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly isEcadAvailable: () => number;
+    readonly isEmbroideryAvailable: () => number;
     readonly isGpuAvailable: () => number;
     readonly isPhysicsAvailable: () => number;
+    readonly isSlicerAvailable: () => number;
     readonly latticeGaugeSimulate: (a: number, b: number) => [number, number, number];
+    readonly mdsim_moleculeJson: (a: number) => [number, number, number, number];
+    readonly mdsim_new: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly mdsim_observe: (a: number) => [number, number, number, number];
+    readonly mdsim_reset: (a: number) => [number, number, number, number];
+    readonly mdsim_run: (a: number, b: number) => [number, number, number, number];
     readonly mesh_clearance: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
     readonly neutronicsSimulate: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly noteToHz: (a: number, b: number) => [number, number, number];
     readonly offsetSectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly op_chamfer: (a: number, b: number) => [number, number, number];
     readonly op_circular_pattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
@@ -3608,6 +3767,11 @@ export interface InitOutput {
     readonly op_shell: (a: number, b: number) => [number, number, number];
     readonly op_sweep_helix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
     readonly op_sweep_line: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
+    readonly parseAltiumAsciiPcb: (a: number, b: number) => [number, number, number];
+    readonly parseAltiumPcbDoc: (a: number, b: number) => [number, number, number];
+    readonly parseAltiumPcbLib: (a: number, b: number) => [number, number, number];
+    readonly parseEagleBrd: (a: number, b: number) => [number, number, number];
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
     readonly parseVCode: (a: number, b: number) => [number, number, number, number];
     readonly parseVcadFile: (a: number, b: number) => [number, number, number];
     readonly particleOptimize: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
@@ -3653,6 +3817,9 @@ export interface InitOutput {
     readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly raytracer_uploadSolidWithMaterial: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly registerStepSource: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly renderBomTable: (a: number, b: number) => any;
@@ -3666,13 +3833,40 @@ export interface InitOutput {
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly render_svg_view_highlight: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg_view_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly resolveDocumentJson: (a: number, b: number) => [number, number, number, number];
+    readonly resolveParametersJson: (a: number, b: number) => [number, number, number, number];
     readonly sample_timeline_sequence: (a: number, b: number) => [number, number, number, number];
     readonly sample_timeline_track: (a: number, b: number, c: number) => [number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
+    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
+    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
     readonly simulateFlow: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly simulateStrikeKernel: (a: number, b: number) => [number, number, number, number];
+    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
+    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
+    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
+    readonly sliceresult_filamentGrams: (a: number) => number;
+    readonly sliceresult_filamentMm: (a: number) => number;
+    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
+    readonly sliceresult_layerCount: (a: number) => number;
+    readonly sliceresult_printTimeSeconds: (a: number) => number;
+    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
+    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly slicersettings_new: () => number;
     readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
     readonly solid_boundingBox: (a: number) => [number, number];
+    readonly solid_canExportStep: (a: number) => number;
     readonly solid_centerOfMass: (a: number) => [number, number];
+    readonly solid_chamfer: (a: number, b: number) => [number, number, number];
+    readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly solid_clearance: (a: number, b: number) => [number, number, number];
     readonly solid_cone: (a: number, b: number, c: number, d: number) => number;
     readonly solid_cube: (a: number, b: number, c: number) => number;
@@ -3682,20 +3876,24 @@ export interface InitOutput {
     readonly solid_empty: () => number;
     readonly solid_extrude: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly solid_extrudeWithOptions: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly solid_fillet: (a: number, b: number) => [number, number, number];
     readonly solid_fromRegisteredStep: (a: number, b: number, c: number) => [number, number, number];
     readonly solid_getMesh: (a: number, b: number) => any;
     readonly solid_horizontalSection: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
     readonly solid_intersection: (a: number, b: number) => [number, number, number];
     readonly solid_isEmpty: (a: number) => number;
+    readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly solid_loft: (a: number, b: number, c: number) => [number, number, number];
     readonly solid_mirror: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly solid_numTriangles: (a: number) => number;
     readonly solid_prism: (a: number, b: number, c: number) => number;
     readonly solid_projectView: (a: number, b: number, c: number, d: number) => any;
+    readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly solid_rotate: (a: number, b: number, c: number, d: number) => number;
     readonly solid_runDfm: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
     readonly solid_scale: (a: number, b: number, c: number, d: number) => number;
     readonly solid_sectionView: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+    readonly solid_shell: (a: number, b: number) => [number, number, number];
     readonly solid_sphere: (a: number, b: number) => number;
     readonly solid_surfaceArea: (a: number) => number;
     readonly solid_sweepHelix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
@@ -3707,7 +3905,9 @@ export interface InitOutput {
     readonly solid_union: (a: number, b: number) => [number, number, number];
     readonly solid_volume: (a: number) => number;
     readonly solid_wedge: (a: number, b: number, c: number) => number;
+    readonly solveDesignConstraints: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly solveForwardKinematics: (a: number, b: number) => [number, number, number];
+    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly stepSourceRegistered: (a: number, b: number) => number;
     readonly textBounds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly thermalSolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
@@ -3730,217 +3930,8 @@ export interface InitOutput {
     readonly wasmannotationlayer_isEmpty: (a: number) => number;
     readonly wasmannotationlayer_new: () => number;
     readonly wasmannotationlayer_renderAll: (a: number, b: number, c: number) => any;
-    readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
-    readonly solid_revolve: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
-    readonly solid_canExportStep: (a: number) => number;
-    readonly solid_circularPattern: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
-    readonly solid_chamfer: (a: number, b: number) => [number, number, number];
-    readonly solid_fillet: (a: number, b: number) => [number, number, number];
-    readonly solid_shell: (a: number, b: number) => [number, number, number];
-    readonly getCompiledModule: () => any;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly checkDesignConstraints: (a: number, b: number) => [number, number, number, number];
-    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
-    readonly exprEvalAst: (a: any, b: any) => [number, number, number];
-    readonly exprEvaluate: (a: number, b: number, c: any) => [number, number, number];
-    readonly exprParse: (a: number, b: number) => [number, number, number];
-    readonly flattenSolidToSheetMetal: (a: number, b: number) => [number, number];
-    readonly getSheetMetalBendTable: () => [number, number];
-    readonly getSheetMetalMaterials: () => [number, number];
-    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
-    readonly isCamAvailable: () => number;
-    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
-    readonly resolveDocumentJson: (a: number, b: number) => [number, number, number, number];
-    readonly resolveParametersJson: (a: number, b: number) => [number, number, number, number];
-    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
-    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
-    readonly solveDesignConstraints: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
-    readonly buildCalibrationReportJson: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly calibrationDefaultTolerance: (a: number, b: number, c: number) => [number, number, number];
-    readonly calibrationFingerprintDocument: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_component_extents: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_connectors: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_derive_board: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly enclosure_features: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly enclosure_fit: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_mounting_holes: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_outline_aabb: (a: number, b: number) => [number, number, number, number];
-    readonly enclosure_to_world: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
-    readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
-    readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
-    readonly __wbg_get_slicersettings_layer_height: (a: number) => number;
-    readonly __wbg_get_slicersettings_line_width: (a: number) => number;
-    readonly __wbg_get_slicersettings_nozzle_diameter: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_angle: (a: number) => number;
-    readonly __wbg_get_slicersettings_support_enabled: (a: number) => number;
-    readonly __wbg_get_slicersettings_wall_count: (a: number) => number;
-    readonly __wbg_set_slicersettings_first_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_density: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_infill_pattern: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_layer_height: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_line_width: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_nozzle_diameter: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_angle: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_support_enabled: (a: number, b: number) => void;
-    readonly __wbg_set_slicersettings_wall_count: (a: number, b: number) => void;
-    readonly __wbg_sliceresult_free: (a: number, b: number) => void;
-    readonly __wbg_slicersettings_free: (a: number, b: number) => void;
-    readonly analyzeForPrinting: (a: number) => [number, number, number];
-    readonly checkPrintability: (a: number, b: number, c: number) => [number, number, number];
-    readonly circuitAcResponse: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly circuitDcOperatingPoint: (a: number, b: number) => [number, number, number];
-    readonly circuitFromSchematic: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitSensitivities: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly circuitTransient: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitTune: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly circuitsim_dt: (a: number) => number;
-    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
-    readonly circuitsim_observe: (a: number) => [number, number, number];
-    readonly circuitsim_reset: (a: number) => void;
-    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
-    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
-    readonly ecadAirgapFluxDensity: (a: number, b: number) => [number, number, number];
-    readonly ecadAirgapSolve: (a: number, b: number) => [number, number, number];
-    readonly ecadBuildReceipt: (a: number, b: number) => [number, number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckDrcInRegion: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
-    readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
-    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
-    readonly ecadFabPrep: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
-    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadJellybeanManifest: () => [number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadLengthMatch: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadNetContinuity: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadPartsManifest: () => [number, number];
-    readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
-    readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
-    readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
-    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSearchParts: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly estimatePrintCost: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
-    readonly exportKicadProject: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
-    readonly generate3mf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly generate3mfWithGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-    readonly generateGcode: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly getSlicerPrinterProfiles: () => [number, number, number];
-    readonly isEcadAvailable: () => number;
-    readonly parseAltiumAsciiPcb: (a: number, b: number) => [number, number, number];
-    readonly parseAltiumPcbDoc: (a: number, b: number) => [number, number, number];
-    readonly parseAltiumPcbLib: (a: number, b: number) => [number, number, number];
-    readonly parseEagleBrd: (a: number, b: number) => [number, number, number];
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly recommendPrintSettings: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly sliceMesh: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sliceMeshWithProgress: (a: number, b: number, c: number, d: number, e: number, f: any) => [number, number, number];
-    readonly sliceSolid: (a: number, b: number, c: number) => [number, number, number];
-    readonly sliceresult_filamentGrams: (a: number) => number;
-    readonly sliceresult_filamentMm: (a: number) => number;
-    readonly sliceresult_getLayerPreview: (a: number, b: number) => [number, number, number];
-    readonly sliceresult_layerCount: (a: number) => number;
-    readonly sliceresult_printTimeSeconds: (a: number) => number;
-    readonly sliceresult_statsJson: (a: number) => [number, number, number, number];
-    readonly slicersettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly slicersettings_new: () => number;
-    readonly isSlicerAvailable: () => number;
-    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
-    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
-    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
-    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_cancelPending: (a: number) => void;
-    readonly wasmsketchsession_clear: (a: number) => void;
-    readonly wasmsketchsession_clearSelection: (a: number) => void;
-    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
-    readonly wasmsketchsession_onClick: (a: number) => [number, number];
-    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
-    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
-    readonly wasmsketchsession_redo: (a: number) => number;
-    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
-    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
-    readonly wasmsketchsession_solve: (a: number) => number;
-    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
-    readonly wasmsketchsession_undo: (a: number) => number;
-    readonly __wbg_wasmdocumentengine_free: (a: number, b: number) => void;
-    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly documentDiff: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly documentDiffApply: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly documentDiffHuman: (a: number, b: number) => [number, number, number, number];
-    readonly documentMerge: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
-    readonly embroideryDesignToMesh: (a: number, b: number) => [number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly noteToHz: (a: number, b: number) => [number, number, number];
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly simulateStrikeKernel: (a: number, b: number) => [number, number, number, number];
     readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
     readonly wasmdocumentengine_can_redo: (a: number) => number;
     readonly wasmdocumentengine_can_undo: (a: number) => number;
@@ -3981,31 +3972,42 @@ export interface InitOutput {
     readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
     readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
+    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_cancelPending: (a: number) => void;
+    readonly wasmsketchsession_clear: (a: number) => void;
+    readonly wasmsketchsession_clearSelection: (a: number) => void;
+    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
+    readonly wasmsketchsession_onClick: (a: number) => [number, number];
+    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
+    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
+    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
+    readonly wasmsketchsession_redo: (a: number) => number;
+    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
+    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
+    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
+    readonly wasmsketchsession_solve: (a: number) => number;
+    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
+    readonly wasmsketchsession_undo: (a: number) => number;
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly __wbg_mdsim_free: (a: number, b: number) => void;
-    readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-    readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly atoms_inspect: (a: number, b: number) => [number, number, number, number];
-    readonly atoms_minimize: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly atoms_parse_xyz: (a: number, b: number) => [number, number, number, number];
-    readonly atoms_write_xyz: (a: number, b: number) => [number, number, number, number];
-    readonly mdsim_moleculeJson: (a: number) => [number, number, number, number];
-    readonly mdsim_new: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly mdsim_observe: (a: number) => [number, number, number, number];
-    readonly mdsim_reset: (a: number) => [number, number, number, number];
-    readonly mdsim_run: (a: number, b: number) => [number, number, number, number];
-    readonly wasm_bindgen_bf9fb98b009f27c1___closure__destroy___dyn_core_ed718c3d60ebd546___ops__function__FnMut__wgpu_7ff40e85e9cae613___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______: (a: number, b: number) => void;
-    readonly wasm_bindgen_bf9fb98b009f27c1___closure__destroy___dyn_core_ed718c3d60ebd546___ops__function__FnMut__wasm_bindgen_bf9fb98b009f27c1___JsValue____Output_______: (a: number, b: number) => void;
-    readonly wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue__wasm_bindgen_bf9fb98b009f27c1___JsValue_____: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wgpu_7ff40e85e9cae613___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_bf9fb98b009f27c1___convert__closures_____invoke___wasm_bindgen_bf9fb98b009f27c1___JsValue_____: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_acf9c2f2c9dd69b6___convert__closures_____invoke___js_sys_a7eb04f8bd1805db___Function_fn_wasm_bindgen_acf9c2f2c9dd69b6___JsValue_____wasm_bindgen_acf9c2f2c9dd69b6___sys__Undefined___js_sys_a7eb04f8bd1805db___Function_fn_wasm_bindgen_acf9c2f2c9dd69b6___JsValue_____wasm_bindgen_acf9c2f2c9dd69b6___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_acf9c2f2c9dd69b6___convert__closures_____invoke___wasm_bindgen_acf9c2f2c9dd69b6___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_acf9c2f2c9dd69b6___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_acf9c2f2c9dd69b6___convert__closures_____invoke___wasm_bindgen_acf9c2f2c9dd69b6___sys__JsNullable_wgpu_13387fd488b29474___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_acf9c2f2c9dd69b6___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_acf9c2f2c9dd69b6___convert__closures_____invoke___wasm_bindgen_acf9c2f2c9dd69b6___sys__JsNullable_wgpu_13387fd488b29474___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_acf9c2f2c9dd69b6___JsError___true__440: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_acf9c2f2c9dd69b6___convert__closures_____invoke___wasm_bindgen_acf9c2f2c9dd69b6___sys__JsNullable_wgpu_13387fd488b29474___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_ed718c3d60ebd546___result__Result_____wasm_bindgen_acf9c2f2c9dd69b6___JsError___true__441: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_acf9c2f2c9dd69b6___convert__closures_____invoke___wgpu_13387fd488b29474___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true_: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;

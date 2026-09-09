@@ -3025,7 +3025,8 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "kosm-render"
 version = "0.2.0"
-source = "git+https://github.com/ecto/kosm?tag=kosm-render-v0.2.0#8c63aeeeb2a271712652657785b598933d0263db"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f34e90e3f7552416125f7652e504526e79269fb7b9c1abe4db1b68396ffae87"
 dependencies = [
  "bytemuck",
  "js-sys",
@@ -5947,8 +5948,9 @@ dependencies = [
 
 [[package]]
 name = "tang"
-version = "0.2.0"
-source = "git+https://github.com/ecto/tang?rev=c9ef210498e5e3e14ee69257108f8112837de913#c9ef210498e5e3e14ee69257108f8112837de913"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01222e2be85bd48a1b129975a3b4045f425adaceb6ecda6e7a97cdb8dd96a75a"
 dependencies = [
  "paste",
  "robust",
@@ -5956,16 +5958,18 @@ dependencies = [
 
 [[package]]
 name = "tang-expr"
-version = "0.1.0"
-source = "git+https://github.com/ecto/tang?rev=c9ef210498e5e3e14ee69257108f8112837de913#c9ef210498e5e3e14ee69257108f8112837de913"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f1fdb85a4a0335eb38eac4635d080d54f2cb093e66ef54ce0c5460d35457e90"
 dependencies = [
  "tang",
 ]
 
 [[package]]
 name = "tang-la"
-version = "0.1.0"
-source = "git+https://github.com/ecto/tang?rev=c9ef210498e5e3e14ee69257108f8112837de913#c9ef210498e5e3e14ee69257108f8112837de913"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a1cf961cd2968a09fb079624db1eae07390acbe238fe61f075555b5302009d"
 dependencies = [
  "tang",
 ]
