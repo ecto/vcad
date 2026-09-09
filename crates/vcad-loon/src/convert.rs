@@ -1549,20 +1549,41 @@ impl ConvertCtx {
             // two documented approximations.
             //
             // [Gear module teeth face-width backlash internal]
-            "Gear" => {
-                assert_fields(tag, fields, 5)?;
+            // [GearN module teeth face-width backlash internal flank-samples]
+            //
+            // `GearN` is `Gear` with the facet-density knob given explicitly:
+            // points per involute flank, with the tip and root arcs scaled to
+            // match. See `crate::gear::FLANK_SAMPLES` for what it trades.
+            "Gear" | "GearN" => {
+                let dense = tag == "GearN";
+                assert_fields(tag, fields, if dense { 6 } else { 5 })?;
                 let teeth = self.f64_val(&fields[1])?;
                 if teeth.fract() != 0.0 || teeth < 0.0 || teeth > u32::MAX as f64 {
                     return Err(format!(
                         "gear tooth count must be a whole number, got {teeth}"
                     ));
                 }
+                let flank_samples = if dense {
+                    let n = self.f64_val(&fields[5])?;
+                    if n.fract() != 0.0 || n < 0.0 || n > crate::gear::MAX_FLANK_SAMPLES as f64 {
+                        return Err(format!(
+                            "gear flank samples must be a whole number \
+                             {}..={}, got {n}",
+                            crate::gear::MIN_FLANK_SAMPLES,
+                            crate::gear::MAX_FLANK_SAMPLES,
+                        ));
+                    }
+                    Some(n as usize)
+                } else {
+                    None
+                };
                 let spec = crate::gear::GearSpec {
                     module: self.f64_val(&fields[0])?,
                     teeth: teeth as u32,
                     face_width: self.f64_val(&fields[2])?,
                     backlash: self.f64_val(&fields[3])?,
                     internal: self.bool_val(&fields[4])?,
+                    flank_samples,
                 };
                 let segments = spec.sketch_segments()?;
                 // Base on z = 0, extruding up the face width. This matches

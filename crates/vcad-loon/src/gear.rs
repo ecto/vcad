@@ -48,12 +48,29 @@ pub const ADDENDUM: f64 = 1.0;
 /// Dedendum, in modules. The extra 0.25 is the standard bottom clearance
 /// that keeps a mating tip off this root — see [`GearDims::root_diameter`].
 pub const DEDENDUM: f64 = 1.25;
-/// Points sampled along each involute flank.
+/// Points sampled along each involute flank, by default.
+///
+/// This is the facet-density knob's default, not a fixed property of the
+/// primitive: [`GearSpec::flank_samples`] overrides it, and
+/// [`GearSpec::tip_samples`] and [`GearSpec::root_samples`] scale with it so
+/// one number controls the whole profile. A gear shop that wants the flank
+/// inside a tighter chordal tolerance raises it; a preview that wants a fast
+/// tessellation lowers it.
 pub const FLANK_SAMPLES: usize = 14;
-/// Points sampled along each tip arc.
+/// Points sampled along each tip arc at [`FLANK_SAMPLES`] density.
 pub const TIP_SAMPLES: usize = 5;
-/// Points sampled along each root arc (the gap between two teeth).
+/// Points sampled along each root arc (the gap between two teeth) at
+/// [`FLANK_SAMPLES`] density.
 pub const ROOT_SAMPLES: usize = 7;
+/// Fewest points that can describe a flank: its two ends.
+pub const MIN_FLANK_SAMPLES: usize = 2;
+/// Most points allowed on a flank.
+///
+/// A gear is `teeth * (2 * flank + tip + root)` points, and the sketch
+/// extruder builds one wall quad per point. At 200 teeth this cap is already
+/// a six-figure face count; past it the author wants a different
+/// representation, not a denser polyline.
+pub const MAX_FLANK_SAMPLES: usize = 512;
 
 /// Involute function: `inv(a) = tan(a) - a`.
 fn inv(a: f64) -> f64 {
@@ -120,9 +137,33 @@ pub struct GearSpec {
     pub backlash: f64,
     /// True for a ring gear — see the module docs, this yields the bore.
     pub internal: bool,
+    /// Points sampled along each involute flank.
+    ///
+    /// The documented facet-density knob. `None` means [`FLANK_SAMPLES`].
+    /// The flanks are exact involutes evaluated at these points and chorded
+    /// between them, so this trades face count against how far the chord
+    /// departs from the true curve — halving the departure costs roughly
+    /// sqrt(2) times the points.
+    pub flank_samples: Option<usize>,
 }
 
 impl GearSpec {
+    /// Points on each involute flank: the knob, or [`FLANK_SAMPLES`].
+    pub fn flank_samples(&self) -> usize {
+        self.flank_samples.unwrap_or(FLANK_SAMPLES)
+    }
+
+    /// Points on each tip arc, scaled from [`Self::flank_samples`] so the
+    /// whole profile densifies together.
+    pub fn tip_samples(&self) -> usize {
+        scale_samples(self.flank_samples(), TIP_SAMPLES)
+    }
+
+    /// Points on each root arc, scaled from [`Self::flank_samples`].
+    pub fn root_samples(&self) -> usize {
+        scale_samples(self.flank_samples(), ROOT_SAMPLES)
+    }
+
     /// The analytic diameters for this spec.
     pub fn dims(&self) -> GearDims {
         GearDims {
@@ -142,6 +183,13 @@ impl GearSpec {
         }
         if self.teeth < 4 {
             return Err(format!("gear needs at least 4 teeth, got {}", self.teeth));
+        }
+        if let Some(n) = self.flank_samples {
+            if !(MIN_FLANK_SAMPLES..=MAX_FLANK_SAMPLES).contains(&n) {
+                return Err(format!(
+                    "gear flank samples must be {MIN_FLANK_SAMPLES}..={MAX_FLANK_SAMPLES}, got {n}"
+                ));
+            }
         }
         if self.face_width.is_nan() || self.face_width <= 0.0 {
             return Err(format!(
@@ -192,6 +240,9 @@ impl GearSpec {
     pub fn profile(&self) -> Result<Vec<[f64; 2]>, String> {
         self.validate()?;
         let d = self.dims();
+        let flank_samples = self.flank_samples();
+        let tip_samples = self.tip_samples();
+        let root_samples = self.root_samples();
         let rb = d.base_diameter() / 2.0;
         let r_tip = d.tip_diameter() / 2.0;
         let r_root = d.root_diameter() / 2.0;
@@ -235,20 +286,20 @@ impl GearSpec {
                 pts.push(polar(r_near, theta - a_lo));
             }
             // Trailing flank, near -> far.
-            for i in 0..FLANK_SAMPLES {
-                let t = i as f64 / (FLANK_SAMPLES - 1) as f64;
+            for i in 0..flank_samples {
+                let t = i as f64 / (flank_samples - 1) as f64;
                 let r = r_lo + (r_far - r_lo) * t;
                 pts.push(polar(r, theta - self.half_angle_at(r)));
             }
             // Tip arc.
             let a_far = self.half_angle_at(r_far);
-            for i in 1..TIP_SAMPLES {
-                let t = i as f64 / TIP_SAMPLES as f64;
+            for i in 1..tip_samples {
+                let t = i as f64 / tip_samples as f64;
                 pts.push(polar(r_far, theta - a_far + 2.0 * a_far * t));
             }
             // Leading flank, far -> near.
-            for i in 0..FLANK_SAMPLES {
-                let t = i as f64 / (FLANK_SAMPLES - 1) as f64;
+            for i in 0..flank_samples {
+                let t = i as f64 / (flank_samples - 1) as f64;
                 let r = r_far + (r_lo - r_far) * t;
                 pts.push(polar(r, theta + self.half_angle_at(r)));
             }
@@ -258,8 +309,8 @@ impl GearSpec {
             // Root arc across to the next tooth.
             let start = theta + a_lo;
             let end = theta + tau - a_lo;
-            for i in 1..ROOT_SAMPLES {
-                let t = i as f64 / ROOT_SAMPLES as f64;
+            for i in 1..root_samples {
+                let t = i as f64 / root_samples as f64;
                 pts.push(polar(r_near, start + (end - start) * t));
             }
         }
@@ -296,6 +347,16 @@ impl GearSpec {
     }
 }
 
+/// Scale an arc's sample count with the flank density.
+///
+/// `at_default` is that arc's count at [`FLANK_SAMPLES`]; the result holds
+/// the same ratio at any density, never dropping below the two points an arc
+/// needs to exist.
+fn scale_samples(flank: usize, at_default: usize) -> usize {
+    let scaled = (flank * at_default).div_ceil(FLANK_SAMPLES);
+    scaled.max(MIN_FLANK_SAMPLES)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,7 +368,87 @@ mod tests {
             face_width: 6.0,
             backlash: 0.0,
             internal,
+            flank_samples: None,
         }
+    }
+
+    /// The same spec with the facet-density knob turned to `n`.
+    fn spec_dense(module: f64, teeth: u32, internal: bool, n: usize) -> GearSpec {
+        GearSpec {
+            flank_samples: Some(n),
+            ..spec(module, teeth, internal)
+        }
+    }
+
+    /// The knob changes the point count and nothing else: a denser profile
+    /// still spans exactly the analytic tip and root diameters, because the
+    /// extra points are evaluations of the same involute rather than a
+    /// different curve.
+    #[test]
+    fn flank_samples_densify_without_moving_the_profile() {
+        let sparse = spec_dense(0.5, 20, false, MIN_FLANK_SAMPLES);
+        let dense = spec_dense(0.5, 20, false, 60);
+
+        let n_sparse = sparse.profile().expect("sparse profile").len();
+        let n_dense = dense.profile().expect("dense profile").len();
+        assert!(
+            n_dense > n_sparse * 4,
+            "60 points per flank should be far denser than {MIN_FLANK_SAMPLES}: \
+             {n_dense} vs {n_sparse}",
+        );
+
+        let d = dense.dims();
+        let radius = |p: &[f64; 2]| p[0].hypot(p[1]);
+        for spec in [sparse, dense] {
+            let pts = spec.profile().expect("profile");
+            let max = pts.iter().map(radius).fold(f64::MIN, f64::max);
+            let min = pts.iter().map(radius).fold(f64::MAX, f64::min);
+            assert!(
+                (max - d.tip_diameter() / 2.0).abs() < 1e-9,
+                "tip radius moved at {:?} samples",
+                spec.flank_samples,
+            );
+            assert!(
+                (min - d.root_diameter() / 2.0).abs() < 1e-9,
+                "root radius moved at {:?} samples",
+                spec.flank_samples,
+            );
+        }
+    }
+
+    /// The tip and root arcs densify with the flanks rather than staying at
+    /// their default counts, so one knob controls the whole profile.
+    #[test]
+    fn arc_samples_scale_with_flank_samples() {
+        let default = spec(0.5, 20, false);
+        assert_eq!(default.tip_samples(), TIP_SAMPLES);
+        assert_eq!(default.root_samples(), ROOT_SAMPLES);
+
+        let doubled = spec_dense(0.5, 20, false, FLANK_SAMPLES * 2);
+        assert_eq!(doubled.tip_samples(), TIP_SAMPLES * 2);
+        assert_eq!(doubled.root_samples(), ROOT_SAMPLES * 2);
+
+        // An arc never collapses below its two endpoints.
+        let minimal = spec_dense(0.5, 20, false, MIN_FLANK_SAMPLES);
+        assert_eq!(minimal.tip_samples(), MIN_FLANK_SAMPLES);
+        assert_eq!(minimal.root_samples(), MIN_FLANK_SAMPLES);
+    }
+
+    /// Out-of-range densities are hard errors, like every other bad gear
+    /// field — a silently clamped facet count is how a gear ships with a
+    /// profile nobody chose.
+    #[test]
+    fn out_of_range_flank_samples_are_rejected() {
+        assert!(spec_dense(0.5, 20, false, 1).validate().is_err());
+        assert!(spec_dense(0.5, 20, false, MAX_FLANK_SAMPLES + 1)
+            .validate()
+            .is_err());
+        assert!(spec_dense(0.5, 20, false, MIN_FLANK_SAMPLES)
+            .validate()
+            .is_ok());
+        assert!(spec_dense(0.5, 20, false, MAX_FLANK_SAMPLES)
+            .validate()
+            .is_ok());
     }
 
     #[test]
