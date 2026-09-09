@@ -216,13 +216,14 @@ thiserror = "2"
 # unreachable from a git checkout. Bump these when the sibling repo cuts a
 # release; sync-version.mjs does NOT touch them.
 # kosm-render is the renderer: rays, hierarchies, the path tracer and the wgpu
-# tier, generic over geometry. On a branch rather than a rev while the offline
-# render lands there -- vcad's GPU path sits on `render_offline`, the explicit
-# camera basis and `MAX_TRAVERSAL_DEPTH`, which exist only on that branch. Pin
-# it back to a rev once it merges to kosm's main, so the lockfile stops
-# churning on every kosm commit. The `version` is what a published kosm-render
-# will satisfy, so when it lands on crates.io only this line changes.
-kosm-render = { git = "https://github.com/ecto/kosm", branch = "claude/adaptive-sampling", version = "0.1.0" }
+# tier, generic over geometry. A tag now, not a branch: `claude/adaptive-sampling`
+# moved under every build and churned the lockfile on each kosm commit, and kosm
+# carried a `[patch]` back-edge onto a local path to keep one copy of the crate
+# in the graph. `kosm-render-v0.2.0` pins both ends -- the offline render, the
+# explicit camera basis and `MAX_TRAVERSAL_DEPTH` are all in it. The `version` is
+# what a published kosm-render will satisfy, so when it lands on crates.io only
+# this line changes.
+kosm-render = { git = "https://github.com/ecto/kosm", tag = "kosm-render-v0.2.0", version = "0.2.0" }
 tang = { version = "0.2" }
 tang-la = { version = "0.1" }
 tang-expr = { version = "0.1" }
