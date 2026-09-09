@@ -1,6 +1,6 @@
 //! Rule pack loader and the per-process check modules.
 //!
-//! A [`RulePack`] is a process-specific TOML file in `lib/dfm/` that
+//! A [`RulePack`] is a process-specific TOML file in this crate's `rules/` that
 //! lists rule thresholds and severity. Default packs are bundled into
 //! the binary via `include_str!` so the WASM build doesn't need to fetch
 //! them at runtime.
@@ -181,7 +181,7 @@ impl DefaultPacks {
     pub fn by_name(name: &str) -> Option<&'static str> {
         let norm = name.trim().to_ascii_lowercase().replace('-', "_");
         match norm.as_str() {
-            "hobby_3axis_mill" => Some(include_str!("../../../../lib/dfm/hobby-3axis-mill.toml")),
+            "hobby_3axis_mill" => Some(include_str!("../../rules/hobby-3axis-mill.toml")),
             other => Process::from_str(other).map(Self::source),
         }
     }
@@ -189,14 +189,14 @@ impl DefaultPacks {
     /// Raw TOML source for a process's default pack.
     pub fn source(process: Process) -> &'static str {
         match process {
-            Process::Cnc3Axis => include_str!("../../../../lib/dfm/cnc-3axis.toml"),
-            Process::Fdm => include_str!("../../../../lib/dfm/fdm.toml"),
-            Process::Sla => include_str!("../../../../lib/dfm/sla.toml"),
-            Process::Injection => include_str!("../../../../lib/dfm/injection-molding.toml"),
-            Process::SheetMetal => include_str!("../../../../lib/dfm/sheet-metal.toml"),
-            Process::CastingSand => include_str!("../../../../lib/dfm/casting-sand.toml"),
+            Process::Cnc3Axis => include_str!("../../rules/cnc-3axis.toml"),
+            Process::Fdm => include_str!("../../rules/fdm.toml"),
+            Process::Sla => include_str!("../../rules/sla.toml"),
+            Process::Injection => include_str!("../../rules/injection-molding.toml"),
+            Process::SheetMetal => include_str!("../../rules/sheet-metal.toml"),
+            Process::CastingSand => include_str!("../../rules/casting-sand.toml"),
             Process::CastingInvestment => {
-                include_str!("../../../../lib/dfm/casting-investment.toml")
+                include_str!("../../rules/casting-investment.toml")
             }
         }
     }

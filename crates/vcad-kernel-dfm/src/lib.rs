@@ -5,7 +5,7 @@
 //! `vcad-kernel-dfm` is the generic, process-aware home for
 //! manufacturability checks. Each `Process` (CNC, FDM, injection,
 //! sheet-metal, casting, …) gets a `RulePack` loaded from a TOML file
-//! in `lib/dfm/`. The crate runs the enabled rules over a BRep, then
+//! in the crate's `rules/` directory. The crate runs the enabled rules over a BRep, then
 //! emits a [`DfmReport`] containing structured [`DfmIssue`]s, each with
 //! provenance back to the offending faces (and, when available, the
 //! [`vcad_ir::NodeId`] that produced them).

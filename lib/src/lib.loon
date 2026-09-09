@@ -515,7 +515,7 @@
 [let sheet-bend-relief-sized [fn [width depth s] [SheetBendRelief s width depth]]]
 
 ; ---------------------------------------------------------------------------
-; Snap-fit design rules (lib/dfm/fdm.toml [rules.snap_fit])
+; Snap-fit design rules (crates/vcad-kernel-dfm/rules/fdm.toml [rules.snap_fit])
 ; ---------------------------------------------------------------------------
 ;
 ; Cantilever snap-fits fail in four ways, and a CAD kernel can check all

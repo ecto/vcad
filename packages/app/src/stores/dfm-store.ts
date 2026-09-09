@@ -4,7 +4,7 @@
  * as the user scrubs parameters.
  *
  * The store deliberately doesn't own the rule pack TOML — that lives in
- * `cad-lib/dfm/<process>.toml` and is sourced via the kernel's
+ * `crates/vcad-kernel-dfm/rules/<process>.toml` and is sourced via the kernel's
  * `getDefaultDfmPack`. A future "advanced" panel can let the user
  * override the TOML per session.
  */

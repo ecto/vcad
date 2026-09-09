@@ -113,7 +113,7 @@ export const dfmCheckSchema = {
         "PCB fab profiles: pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer — these run " +
         "when the document is a PCB and check the board against that fab's published process capability " +
         "(min annular ring, drill, trace/space by copper weight, copper-to-edge, soldermask dam/sliver, " +
-        "silk-over-pad, acid traps, via-in-pad). Each pack is bundled at lib/dfm/<process>.toml.",
+        "silk-over-pad, acid traps, via-in-pad). Each pack is bundled at crates/vcad-ecad-pcb/rules/<process>.toml.",
     },
     ruleset: {
       type: "string" as const,
@@ -124,12 +124,12 @@ export const dfmCheckSchema = {
         "3/4/5/6 reamers, metric tap drills, plate stock and a 300x200x80 envelope — reports " +
         "pass/fail per rule (R1 internal corner radius, R2 ±Z reachability, R3 hole diameters, " +
         "R4 plate stock, R5 min wall, R6 envelope, R7 threads/gear teeth) with located examples " +
-        "and affordances. Bundled at lib/dfm/<ruleset>.toml; ignored when rule_pack_toml is given.",
+        "and affordances. Bundled at crates/vcad-kernel-dfm/rules/<ruleset>.toml; ignored when rule_pack_toml is given.",
     },
     rule_pack_toml: {
       type: "string" as const,
       description:
-        "Optional TOML rule pack to override the bundled default. Same schema as lib/dfm/<process>.toml.",
+        "Optional TOML rule pack to override the bundled default. Same schema as crates/vcad-kernel-dfm/rules/<process>.toml.",
     },
   },
   required: ["process"],
@@ -455,7 +455,7 @@ export const toolDefs: ToolDef[] = [
     name: "dfm_check",
     pack: "dfm",
     description:
-      "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+      "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at crates/vcad-kernel-dfm/rules/<process>.toml — pass `rule_pack_toml` to override.",
     inputSchema: dfmCheckSchema,
     handler: (a, c) => dfmCheck(a, c.engine),
     behavior: behavior({}),
