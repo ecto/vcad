@@ -228,9 +228,10 @@ kosm-render = { git = "https://github.com/ecto/kosm", tag = "kosm-render-v0.2.0"
 # tang is a plain registry dep. Caveat until tang cuts its next release: the
 # published tang-la 0.1.0 and tang-expr 0.1.0 depend on tang *0.1.0*, so a bare
 # resolve pulls two tangs (0.1.0 and 0.2.0) into the graph and `ExprId: Scalar`
-# stops holding. Use `.cargo/config.toml.example` locally until tang publishes
-# 0.2.1 with tang-la 0.1.1 / tang-expr 0.1.1 — those depend on tang 0.2, and the
-# requirements below then resolve to one tang with no change to this file.
+# stops holding. The `[patch.crates-io]` at the bottom of this file redirects all
+# three at one tang git rev in the meantime; when tang publishes 0.2.1 with
+# tang-la 0.1.1 / tang-expr 0.1.1 — those depend on tang 0.2 — the requirements
+# below resolve to one tang and the patch table goes away.
 tang = { version = "0.2" }
 tang-la = { version = "0.1" }
 tang-expr = { version = "0.1" }
@@ -390,15 +391,15 @@ strip = true
 [profile.dev.package.vcad-kernel-fea]
 opt-level = 3
 
-# The only committed patch is inside this repo. Sibling checkouts (../tang,
-# ../loon) used to be patched in here, which meant a fresh clone without those
-# directories could not even resolve. Per-developer overrides now live in an
-# untracked `.cargo/config.toml` — copy `.cargo/config.toml.example`.
-#
-# The tang unification the old patch bought is now bought by the registry:
-# vcad and phyz both declare `tang = "0.2"`, and once tang publishes 0.2.1 both
-# resolve to the same registry crate. Until then, use the example config.
+# Committed patches point inside this repo or at a git rev — never at a sibling
+# checkout, which a fresh clone would not have. Per-developer path overrides live
+# in an untracked `.cargo/config.toml` — copy `.cargo/config.toml.example`.
 [patch.crates-io]
+# interim until tang publishes tang 0.2.1 and tang-la/-expr/-ad 0.1.1 that depend
+# on tang 0.2; then delete this table
+tang = { git = "https://github.com/ecto/tang", rev = "c9ef210498e5e3e14ee69257108f8112837de913" }
+tang-la = { git = "https://github.com/ecto/tang", rev = "c9ef210498e5e3e14ee69257108f8112837de913" }
+tang-expr = { git = "https://github.com/ecto/tang", rev = "c9ef210498e5e3e14ee69257108f8112837de913" }
 # clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
 # vendored copy adds the missing libc++ link arms. Identical source otherwise.
 # In-repo, so it works on a bare clone.

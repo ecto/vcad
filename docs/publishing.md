@@ -56,20 +56,23 @@ index.
 Each is annotated in the root manifest with the `-> <crate> <version>` it turns
 into.
 
-### The committed `[patch]`s are gone
+### The committed path `[patch]`s are gone
 
 `[patch.crates-io]` pointed `tang`, `tang-la` and `tang-expr` at `../tang`, and
 `[patch."https://github.com/ecto/loon"]` pointed `loon-lang` at `../loon`. A
-clone without those sibling directories could not resolve. Both are removed;
-`.cargo/config.toml.example` carries the same paths for whoever wants them, and
-`.cargo/config.toml` is gitignored. Only `clipper-sys` stays patched — it points
-inside `third_party/`, so it works on a bare clone.
+clone without those sibling directories could not resolve. Both path patches are
+removed; `.cargo/config.toml.example` carries the same paths for whoever wants
+them, and `.cargo/config.toml` is gitignored. `clipper-sys` stays patched — it
+points inside `third_party/`, so it works on a bare clone.
 
 One live consequence: the published `tang-la 0.1.0` and `tang-expr 0.1.0` depend
-on `tang 0.1.0`, so a bare resolve now pulls two tangs and `ExprId: Scalar` stops
-holding. Use the example config until tang publishes 0.2.1 with tang-la 0.1.1 and
-tang-expr 0.1.1 (which depend on tang 0.2) — at which point vcad's existing
-`"0.1"` requirements resolve to one tang with no manifest change.
+on `tang 0.1.0`, so a bare resolve pulls two tangs and `ExprId: Scalar` stops
+holding. So the root manifest keeps an interim `[patch.crates-io]` that points
+`tang`, `tang-la` and `tang-expr` at one `github.com/ecto/tang` rev — a git
+patch carries no machine paths, so a bare clone and CI both resolve it. It goes
+away when tang publishes 0.2.1 with tang-la 0.1.1 and tang-expr 0.1.1 (which
+depend on tang 0.2): vcad's existing `"0.2"`/`"0.1"` requirements then resolve to
+one tang and the table is deleted, with no other manifest change.
 
 ## Publish order
 

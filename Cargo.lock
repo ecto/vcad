@@ -3031,7 +3031,7 @@ dependencies = [
  "js-sys",
  "pollster",
  "rayon",
- "tang 0.2.0",
+ "tang",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wgpu 30.0.1",
@@ -4216,7 +4216,7 @@ dependencies = [
  "phyz-math",
  "phyz-model",
  "phyz-rigid",
- "tang 0.2.0",
+ "tang",
  "tang-expr",
  "tang-la",
 ]
@@ -4240,7 +4240,7 @@ name = "phyz-math"
 version = "0.3.1"
 source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
 dependencies = [
- "tang 0.2.0",
+ "tang",
  "tang-la",
 ]
 
@@ -5947,18 +5947,8 @@ dependencies = [
 
 [[package]]
 name = "tang"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b456c6de7b7973349c5514c93aff1e27b90c3e084cee9fb7bad825a0a0a0ebcf"
-dependencies = [
- "paste",
-]
-
-[[package]]
-name = "tang"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efa8e2b78b3663072ac393470faf0bbe7344a66b4ba267618a4d65a610841a58"
+source = "git+https://github.com/ecto/tang?rev=c9ef210498e5e3e14ee69257108f8112837de913#c9ef210498e5e3e14ee69257108f8112837de913"
 dependencies = [
  "paste",
  "robust",
@@ -5967,19 +5957,17 @@ dependencies = [
 [[package]]
 name = "tang-expr"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf977f66fd51110e47c42c7277322a703293256f1b7ce1023a929e1af827bca1"
+source = "git+https://github.com/ecto/tang?rev=c9ef210498e5e3e14ee69257108f8112837de913#c9ef210498e5e3e14ee69257108f8112837de913"
 dependencies = [
- "tang 0.1.0",
+ "tang",
 ]
 
 [[package]]
 name = "tang-la"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bca47f564d520057ddf29fe7bdfc110fac86c4a81bcdf4ca90f9704485b4c21"
+source = "git+https://github.com/ecto/tang?rev=c9ef210498e5e3e14ee69257108f8112837de913#c9ef210498e5e3e14ee69257108f8112837de913"
 dependencies = [
- "tang 0.1.0",
+ "tang",
 ]
 
 [[package]]
@@ -7098,7 +7086,7 @@ dependencies = [
  "base64 0.22.1",
  "gltf",
  "serde",
- "tang 0.2.0",
+ "tang",
  "thiserror 2.0.18",
  "toml 0.8.23",
  "vcad-ir",
@@ -7244,7 +7232,7 @@ dependencies = [
 name = "vcad-ecad-diff"
 version = "0.9.4"
 dependencies = [
- "tang 0.2.0",
+ "tang",
  "tang-expr",
  "tang-la",
  "vcad-ecad-sim",
@@ -7340,7 +7328,7 @@ name = "vcad-ecad-sim"
 version = "0.9.4"
 dependencies = [
  "serde",
- "tang 0.2.0",
+ "tang",
  "tang-expr",
  "thiserror 2.0.18",
  "vcad-ecad-schematic",
@@ -7618,7 +7606,7 @@ dependencies = [
  "criterion",
  "pollster",
  "slotmap",
- "tang 0.2.0",
+ "tang",
  "tang-expr",
  "tang-la",
  "thiserror 2.0.18",
@@ -7657,7 +7645,7 @@ dependencies = [
 name = "vcad-kernel-diff"
 version = "0.9.4"
 dependencies = [
- "tang 0.2.0",
+ "tang",
  "vcad-kernel",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
@@ -7720,7 +7708,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
- "tang 0.2.0",
+ "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
@@ -7759,7 +7747,7 @@ dependencies = [
 name = "vcad-kernel-geom"
 version = "0.9.4"
 dependencies = [
- "tang 0.2.0",
+ "tang",
  "vcad-kernel-math",
 ]
 
@@ -7791,7 +7779,7 @@ dependencies = [
 name = "vcad-kernel-math"
 version = "0.9.4"
 dependencies = [
- "tang 0.2.0",
+ "tang",
 ]
 
 [[package]]
@@ -7817,7 +7805,7 @@ dependencies = [
 name = "vcad-kernel-nurbs"
 version = "0.9.4"
 dependencies = [
- "tang 0.2.0",
+ "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
 ]
@@ -7912,7 +7900,7 @@ dependencies = [
  "pollster",
  "rayon",
  "smallvec",
- "tang 0.2.0",
+ "tang",
  "thiserror 2.0.18",
  "vcad-ir",
  "vcad-kernel-booleans",
@@ -8010,7 +7998,7 @@ dependencies = [
  "earcutr",
  "serde",
  "serde_json",
- "tang 0.2.0",
+ "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
