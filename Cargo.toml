@@ -212,11 +212,11 @@ thiserror = "2"
 # unreachable from a git checkout. Bump these when the sibling repo cuts a
 # release; sync-version.mjs does NOT touch them.
 # kosm-render is the renderer: rays, hierarchies, the path tracer and the wgpu
-# tier, generic over geometry. Pinned to a kosm revision (not a branch, so
-# the lockfile does not churn on every kosm merge); the `version` is what a
-# published kosm-render will satisfy, so when it lands on crates.io only this
-# line changes. Bump the rev deliberately when vcad needs newer renderer code.
-kosm-render = { git = "https://github.com/ecto/kosm", rev = "5c42c28744a17ff75a2e5d5cfc437b9a3ec3da1e", version = "0.1.0" }
+# tier, generic over geometry. It comes from crates.io like any other
+# dependency; kosm itself keeps one copy in its graph with a `[patch.crates-io]`
+# onto its in-repo crate, and a consumer that wants a development kosm-render
+# does the same in an untracked .cargo/config.toml.
+kosm-render = "0.2"
 tang = { version = "0.2" }
 tang-la = { version = "0.1" }
 tang-expr = { version = "0.1" }
