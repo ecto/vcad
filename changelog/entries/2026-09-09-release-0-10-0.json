@@ -1,0 +1,10 @@
+{
+  "id": "2026-09-09-release-0-10-0",
+  "version": "0.10.0",
+  "date": "2026-09-09",
+  "category": "feat",
+  "title": "0.10.0: wgpu 30, kosm-render, a publishable closure",
+  "summary": "The GPU stack moves to wgpu 30, the ray tracer's renderer moves out to kosm-render, and the whole crate closure vcad and kosm consume is publishable on crates.io.",
+  "details": "Three changes make up 0.10.0. The GPU crates are on wgpu 30, so vcad-kernel-gpu and vcad-kernel-raytrace share one wgpu with the rest of the stack. The renderer itself left vcad: vcad-kernel-raytrace now consumes kosm-render (tag kosm-render-v0.2.0, version 0.2), with vcad a client of it rather than its home. And the 56-crate dependency closure that vcad and kosm consume is publishable — nine crates that were publish = false (vcad-eval, vcad-render, vcad-gdsii, vcad-kernel-cost, vcad-kernel-dfm, vcad-ecad-{package,pcb,schematic,sim}) now carry readme, keywords, categories and include lists, sibling deps carry a version alongside their interim git source, and the committed path [patch] tables are gone. vcad-loon stays unpublished until loon ships. scripts/publish.sh walks the topological order in docs/publishing.md.",
+  "features": ["kernel", "render", "gpu"]
+}

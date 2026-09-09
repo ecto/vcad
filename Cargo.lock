@@ -6473,7 +6473,7 @@ dependencies = [
 
 [[package]]
 name = "termview"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -7084,7 +7084,7 @@ dependencies = [
 
 [[package]]
 name = "vcad"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7101,7 +7101,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-app"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -7116,7 +7116,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-chat"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -7133,7 +7133,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-cli"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -7180,7 +7180,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-crdt"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "js-sys",
  "serde",
@@ -7189,7 +7189,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-design-constraints"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7200,7 +7200,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-desktop"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "cocoa",
@@ -7234,7 +7234,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-diff"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "tang",
  "tang-expr",
@@ -7245,7 +7245,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-diff-wasm"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7255,7 +7255,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-export"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "thiserror 2.0.18",
  "vcad-ecad-pcb",
@@ -7264,7 +7264,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-fabprep"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "log",
  "serde",
@@ -7278,14 +7278,14 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-package"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "vcad-ir",
 ]
 
 [[package]]
 name = "vcad-ecad-parts"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7295,7 +7295,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-pcb"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "env_logger",
  "log",
@@ -7319,7 +7319,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-schematic"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7329,7 +7329,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-sim"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "tang",
@@ -7344,7 +7344,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-source"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "vcad-ir",
@@ -7352,7 +7352,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-symbols"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "cfb",
  "nom",
@@ -7366,7 +7366,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-verify"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "vcad-ecad-package",
@@ -7377,7 +7377,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-embroidery"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -7385,7 +7385,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-embroidery-dst"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -7394,7 +7394,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-embroidery-pes"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -7403,7 +7403,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-eval"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7428,7 +7428,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ffi"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "pollster",
  "serde",
@@ -7448,7 +7448,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-gdsii"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "geo",
  "thiserror 2.0.18",
@@ -7457,7 +7457,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-i18n"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7465,7 +7465,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ir"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7475,7 +7475,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7516,7 +7516,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-acoustics"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7525,7 +7525,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-adjoint"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7534,7 +7534,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-antenna"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7543,7 +7543,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-assembly"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7555,7 +7555,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-atoms"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "phyz-md",
  "serde",
@@ -7567,7 +7567,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-booleans"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "criterion",
  "rayon",
@@ -7582,7 +7582,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-calibration"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "ryu",
  "serde",
@@ -7591,7 +7591,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-cam"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "geo",
  "geo-clipper",
@@ -7603,7 +7603,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-constraints"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "approx",
  "bytemuck",
@@ -7621,7 +7621,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-cost"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7629,7 +7629,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-dfm"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7647,7 +7647,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-diff"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "tang",
  "vcad-kernel",
@@ -7663,7 +7663,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-drafting"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "vcad-kernel-math",
@@ -7672,7 +7672,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-em"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7682,7 +7682,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-enclosure"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7690,7 +7690,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-export"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7698,7 +7698,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-fea"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7708,7 +7708,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-features"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7722,7 +7722,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-fillet"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -7734,7 +7734,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-flow"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "bytemuck",
  "pollster",
@@ -7749,7 +7749,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-geom"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "tang",
  "vcad-kernel-math",
@@ -7757,7 +7757,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-gpu"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "bytemuck",
  "kosm-render",
@@ -7772,7 +7772,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-magnetostatic"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7781,14 +7781,14 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-math"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "tang",
 ]
 
 [[package]]
 name = "vcad-kernel-naming"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -7798,7 +7798,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-neutronics"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7807,7 +7807,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-nurbs"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "tang",
  "vcad-kernel-geom",
@@ -7816,7 +7816,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-optics"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7825,7 +7825,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-orbit"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7834,7 +7834,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-particle"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7847,7 +7847,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-photonics"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7857,7 +7857,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-physics"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "phyz",
  "rand 0.8.5",
@@ -7879,7 +7879,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-primitives"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -7888,7 +7888,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-qcd"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7896,7 +7896,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-raytrace"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "bytemuck",
  "js-sys",
@@ -7923,7 +7923,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-sheet"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7933,7 +7933,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-shell"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -7944,7 +7944,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-sketch"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "thiserror 2.0.18",
  "vcad-kernel-booleans",
@@ -7957,7 +7957,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-step"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "stepperoni",
  "thiserror 2.0.18",
@@ -7972,7 +7972,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-stocksim"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -7983,7 +7983,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-sweep"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "rustc-hash 1.1.0",
  "thiserror 2.0.18",
@@ -7997,7 +7997,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-tessellate"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "earcutr",
  "serde",
@@ -8012,7 +8012,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-text"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "thiserror 2.0.18",
  "ttf-parser",
@@ -8022,7 +8022,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-thermal"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8031,7 +8031,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-tolerance"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8041,7 +8041,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-topo"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "slotmap",
  "vcad-kernel-math",
@@ -8049,7 +8049,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-topopt"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8058,7 +8058,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-urdf"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "quick-xml 0.37.5",
  "serde",
@@ -8069,7 +8069,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-wasm"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "console_error_panic_hook",
@@ -8128,7 +8128,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-loon"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "loon-lang",
  "serde",
@@ -8139,7 +8139,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-parts"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8148,7 +8148,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-printcheck"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8158,7 +8158,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-process"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "geo",
  "serde",
@@ -8170,7 +8170,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-receipt"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8179,7 +8179,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-render"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "clap",
  "image",
@@ -8200,7 +8200,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-sim"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "phyz",
  "phyz-gpu",
@@ -8218,7 +8218,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-slicer"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "approx",
  "rayon",
@@ -8236,7 +8236,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-slicer-bambu"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "base64 0.22.1",
  "md5",
@@ -8258,7 +8258,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-slicer-gcode"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "approx",
  "serde",
@@ -8269,7 +8269,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-tool-derive"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8278,7 +8278,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-torture"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8484,7 +8484,7 @@ dependencies = [
 
 [[package]]
 name = "wasmosis"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "wasm-bindgen",
  "wasmosis-macro",
@@ -8492,7 +8492,7 @@ dependencies = [
 
 [[package]]
 name = "wasmosis-macro"
-version = "0.9.4"
+version = "0.10.0"
 dependencies = [
  "proc-macro2",
  "quote",

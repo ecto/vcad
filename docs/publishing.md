@@ -8,13 +8,13 @@ manifest.
 ## Version plan: 0.10.0
 
 crates.io has `vcad` 0.1.0 and nothing else. The plan publishes the whole kernel
-surface at **0.10.0**, in step with `[workspace.package] version` (0.9.4 today).
+surface at **0.10.0**, in step with `[workspace.package] version`.
 
-**The version is not bumped in this branch, on purpose.** vcad's release
-convention is a release commit — `chore: release v0.9.4` — whose numbers come
-from the newest entry under `changelog/entries/` and are pushed into every
-manifest by `scripts/sync-version.mjs`. The manifests say "don't hand-edit
-them". So the release runs:
+**The version is bumped by a release commit, not by hand.** vcad's convention is
+a release commit — `chore: release v0.10.0` — whose numbers come from the newest
+entry under `changelog/entries/` and are pushed into every manifest by
+`scripts/sync-version.mjs`. The manifests say "don't hand-edit them". So the
+release runs:
 
 ```sh
 # add changelog/entries/<date>-<slug>.json with "version": "0.10.0"
@@ -22,6 +22,9 @@ npm run version:sync
 git commit -am 'chore: release v0.10.0'
 git tag v0.10.0
 ```
+
+That commit is `chore: release v0.10.0 — wgpu 30, kosm-render, a publishable
+closure`, on `claude/release-0.10.0`.
 
 Everything in the publish set then carries 0.10.0: `vcad`, `vcad-kernel`, every
 `vcad-kernel-*` in the list below, `vcad-ir`, `vcad-eval`, `vcad-render`, and the
@@ -74,27 +77,63 @@ away when tang publishes 0.2.1 with tang-la 0.1.1 and tang-expr 0.1.1 (which
 depend on tang 0.2): vcad's existing `"0.2"`/`"0.1"` requirements then resolve to
 one tang and the table is deleted, with no other manifest change.
 
+## Prerequisites
+
+`scripts/publish.sh` cannot run until every sibling vcad depends on by version
+is on crates.io:
+
+| crate | needed version | why |
+| --- | --- | --- |
+| `tang` | 0.2.1 | with `tang-la` 0.1.1 and `tang-expr` 0.1.1 depending on tang 0.2, so a bare resolve gets **one** tang |
+| `phyz` | 0.4.0 | `phyz`, `phyz-gpu`, `phyz-model`, `phyz-math`, `phyz-md` |
+| `kosm-render` | 0.2.0 | consumed by `vcad-kernel-raytrace` |
+
+When tang lands, **delete the interim `[patch.crates-io]` table** in the root
+`Cargo.toml` — vcad's existing `"0.2"`/`"0.1"` requirements then resolve to one
+tang with no other manifest change. The `clipper-sys` patch stays: it points
+inside `third_party/`, so a bare clone resolves it.
+
+The `phyz*` requirement is still `version = "0.3"` alongside the pinned git rev,
+because that rev *is* phyz 0.3.1 — asking for `"0.4"` fails to resolve today.
+Flip it to `version = "0.4"` and drop `git`/`rev` in the same commit that phyz
+0.4.0 publishes. `kosm-render` already carries `version = "0.2"` next to tag
+`kosm-render-v0.2.0`; publishing uses the version and ignores the git source, so
+the interim git dependency can stay until 0.2.0 is on the index.
+
 ## Publish order
 
-Within vcad, dependency order — leaves first:
+`scripts/publish.sh` walks this list — the topological order of the publishable
+closure, straight out of `cargo metadata`, leaves first — running
+`cargo publish -p <crate>` with 30s between uploads and stopping on the first
+failure. `vcad-loon` is excluded: it depends on `loon-lang`, a git rev in a repo
+that has never published, so it stays `publish = false` and kosm keeps pulling
+it by git.
 
 ```
-vcad-kernel-math -> vcad-kernel-topo -> vcad-kernel-geom
-  -> vcad-kernel-{naming,primitives,nurbs,sketch,tessellate}
-  -> vcad-kernel-{booleans,fillet,sweep,shell,sheet,text,step,export}
-  -> vcad-kernel -> vcad-ir
-  -> vcad-kernel-{diff,adjoint,constraints,drafting,calibration,tolerance}
-  -> vcad-kernel-{em,optics,acoustics,antenna,neutronics,particle,qcd,
-                  magnetostatic,photonics,orbit,thermal,flow,fea,atoms,
-                  enclosure,cam,stocksim,topopt,assembly,urdf,cost,dfm}
-  -> vcad-kernel-gpu -> vcad-kernel-raytrace
-  -> vcad-parts, vcad-receipt, vcad-gdsii, stepperoni, vcad-tool-derive
-  -> vcad-ecad-{package,schematic,pcb,sim}
-  -> vcad-eval -> vcad-render -> vcad
+stepperoni vcad-tool-derive vcad-ir
+vcad-receipt vcad-kernel-acoustics vcad-kernel-antenna
+vcad-kernel-math vcad-kernel-geom vcad-kernel-topo
+vcad-kernel-primitives vcad-kernel-tessellate vcad-kernel-booleans
+vcad-kernel-calibration vcad-kernel-cam vcad-kernel-sketch
+vcad-kernel-constraints vcad-kernel-cost vcad-kernel-raytrace
+vcad-kernel-dfm vcad-kernel-em vcad-kernel-enclosure
+vcad-kernel-fea vcad-kernel-nurbs vcad-kernel-fillet
+vcad-kernel-adjoint vcad-kernel-gpu vcad-kernel-thermal
+vcad-kernel-flow vcad-kernel-naming vcad-kernel-neutronics
+vcad-kernel-particle vcad-gdsii vcad-kernel-photonics
+vcad-kernel-qcd vcad-kernel-sheet vcad-kernel-shell
+vcad-kernel-step vcad-kernel-stocksim vcad-kernel-sweep
+vcad-kernel-text vcad-kernel-tolerance vcad-kernel-topopt
+vcad-kernel vcad-kernel-drafting vcad-kernel-export
+vcad vcad-ecad-package vcad-ecad-schematic
+vcad-ecad-sim vcad-ecad-pcb vcad-kernel-diff
+vcad-eval vcad-kernel-optics vcad-parts
+vcad-render
 ```
 
-`cargo publish` in that order; the exact list is the 56-crate closure minus
-`vcad-loon`. Let the index settle between uploads.
+55 crates. `scripts/publish-crates.mjs` does the same walk with resume,
+skip-if-already-published and crates.io index polling; `scripts/publish.sh` is
+the blunt, auditable version of the same order.
 
 ## Position in the stack
 
