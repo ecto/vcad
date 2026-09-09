@@ -478,6 +478,7 @@ pub fn evaluate_node(
 
     let mut result = evaluate_op(&node.op, nodes, cache)?;
     scope_primitive_names(node_id, &node.op, &mut result);
+    attribute_losses(node_id, &mut result);
     cache.insert(node_id, result.clone());
     Ok(result)
 }
@@ -499,6 +500,7 @@ fn evaluate_node_timed(
     let t0 = clock.map(|c| c.now_ms());
     let mut result = evaluate_op_timed(&node.op, nodes, cache, clock, timings)?;
     scope_primitive_names(node_id, &node.op, &mut result);
+    attribute_losses(node_id, &mut result);
     if let Some(t0) = t0 {
         let eval_ms = clock.unwrap().now_ms() - t0;
         timings.insert(
@@ -611,6 +613,40 @@ fn evaluate_op_timed(
         }
 
         CsgOp::Difference { left, right } => {
+            // A left-leaning chain `((base - t1) - t2) - ... - tn` whose
+            // tools do not touch each other is cut in ONE difference against
+            // their union rather than n chained ones. See
+            // `collect_difference_chain` for why that is worth the trouble.
+            let (base_id, tool_ids) = collect_difference_chain(*left, *right, nodes);
+            if tool_ids.len() > 1 {
+                let base = eval_child(base_id, cache)?;
+                let mut tools = Vec::with_capacity(tool_ids.len());
+                for id in &tool_ids {
+                    if let Some(t) = eval_child(*id, cache)? {
+                        tools.push(t);
+                    }
+                }
+                if let Some(base) = base {
+                    if tools.is_empty() {
+                        return Ok(Some(base));
+                    }
+                    if tools_are_pairwise_disjoint(&tools) {
+                        let mut merged = tools[0].clone();
+                        for t in &tools[1..] {
+                            merged = merged.union(t);
+                        }
+                        return Ok(Some(base.difference(&merged)));
+                    }
+                    // Not disjoint: fall back to the chained form, which is
+                    // what the tree already says.
+                    let mut acc = base;
+                    for t in &tools {
+                        acc = acc.difference(t);
+                    }
+                    return Ok(Some(acc));
+                }
+                return Ok(None);
+            }
             let l = eval_child(*left, cache)?;
             let r = eval_child(*right, cache)?;
             match (l, r) {
@@ -1866,6 +1902,86 @@ fn kernel_blend_keys(
 /// document node id so names stay unique across the DAG (`cube:top` →
 /// `n3:top`) and stable across rebuilds (node ids persist in the .vcad
 /// document).
+/// Flatten a left-leaning chain of `Difference` nodes into its base and the
+/// tools cut from it, innermost first.
+///
+/// `((base - t1) - t2) - t3` becomes `(base, [t1, t2, t3])`. Only the LEFT
+/// spine is followed: a difference whose subtrahend is itself a difference
+/// keeps that subtrahend whole, because the tool is then a compound solid
+/// rather than another step in the chain.
+///
+/// # Why
+///
+/// The boolean pipeline's splitters degrade when a face they have already
+/// trimmed is trimmed again. Cutting twenty milled pockets one at a time
+/// re-trims the disc's top plane twenty times; measured on the rana-60-cnc
+/// rotor, the second cut came out 15 % short of the volume it should have
+/// removed, the missed-cut guard correctly condemned it, and the mesh
+/// fallback that replaced it made every one of the remaining eighteen cuts
+/// inherit triangle soup — 190 468 planar faces in the exported STEP.
+///
+/// Cutting the same twenty pockets as one difference against their union
+/// trims that plane once. The result is a true B-rep: 103 surfaces (102
+/// planes and the outer cylinder) instead of 190 468 facets.
+///
+/// The rewrite is only valid when the tools do not touch one another, which
+/// [`tools_are_pairwise_disjoint`] checks: `A - B - C = A - (B ∪ C)` holds
+/// unconditionally as a set identity, but a union of OVERLAPPING tools is
+/// itself a boolean that can degrade, which would trade one problem for
+/// another.
+fn collect_difference_chain(
+    left: NodeId,
+    right: NodeId,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> (NodeId, Vec<NodeId>) {
+    let mut tools = vec![right];
+    let mut base = left;
+    while let Some(node) = nodes.get(&base) {
+        match &node.op {
+            CsgOp::Difference {
+                left: l,
+                right: r,
+            } => {
+                tools.push(*r);
+                base = *l;
+            }
+            _ => break,
+        }
+    }
+    tools.reverse();
+    (base, tools)
+}
+
+/// Do none of these tools touch any other?
+///
+/// A conservative axis-aligned test: touching bounding boxes count as
+/// overlapping even when the solids inside them do not, which costs nothing
+/// but the rewrite.
+fn tools_are_pairwise_disjoint(tools: &[Solid]) -> bool {
+    for (i, a) in tools.iter().enumerate() {
+        for b in &tools[i + 1..] {
+            if a.aabb_overlaps(b) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Stamp the evaluating node's id onto every representation loss this node
+/// introduced.
+///
+/// Losses inherited from operand solids were already attributed when their
+/// own node was evaluated, so they keep the id of the node that actually
+/// caused them. Without this, a STEP-export warning can only say
+/// "`difference` fell back to the mesh boolean" with no way to find which
+/// difference in a 30-node pipe it was.
+fn attribute_losses(node_id: NodeId, result: &mut Option<Solid>) {
+    if let Some(solid) = result {
+        solid.attribute_to(node_id.to_string());
+    }
+}
+
 fn scope_primitive_names(node_id: NodeId, op: &CsgOp, result: &mut Option<Solid>) {
     let is_primitive = matches!(
         op,

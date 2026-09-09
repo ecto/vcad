@@ -601,6 +601,15 @@ pub fn boolean_op_reported(
     let doubled_difference = op == BooleanOp::Difference
         && result_open_edges >= 4
         && result_structure.overused_edges >= 3;
+    if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
+        eprintln!(
+            "vcad boolean: {op:?} swap gate: flagged={flagged} sphere={sphere_unrepresentable} \
+             inverted={inverted} wide_cracks={wide_cracks} (gap {:.6}) missed_cut={missed_cut} \
+             doubled={doubled_difference} open={result_open_edges} over={}",
+            max_open_edge_gap(&result_mesh),
+            result_structure.overused_edges
+        );
+    }
     if !(flagged
         || sphere_unrepresentable
         || inverted
@@ -683,14 +692,29 @@ pub fn repair_export_mesh(brep: &BRepSolid, mesh: &mut TriangleMesh) {
 /// order of magnitude clear of both neighbours.
 const WIDE_CRACK_GAP: f64 = 0.5;
 
-/// The widest gap between an open edge and the rest of the open-edge set.
+/// The typical gap between an open edge and the rest of the open-edge set.
 ///
 /// For each unpaired (net directed count ≠ 0) edge, measure the distance
-/// from its midpoint to the nearest other open edge; return the maximum.
-/// A hairline crack's two rails are nearly coincident, so every open edge
-/// has a close partner and the maximum stays tiny. An open edge with no
-/// partner within [`ISOLATED_OPEN_EDGE`] is a pinhole, not a slit, and
-/// contributes nothing — a slit always has two rails.
+/// from its midpoint to the nearest other open edge; return the MEDIAN of
+/// those samples. A hairline crack's two rails are nearly coincident, so
+/// every open edge has a close partner and the median stays tiny. An open
+/// edge with no partner within [`ISOLATED_OPEN_EDGE`] is a pinhole, not a
+/// slit, and contributes nothing — a slit always has two rails.
+///
+/// The median, not the maximum. A maximum lets ONE stray edge condemn an
+/// otherwise-clean result, and that is not hypothetical: a disc with two
+/// milled pockets comes out of the splitters with three unpaired edges —
+/// two coincident seam rails and one lone T-junction 2.0 mm away. The
+/// maximum read 2.0 mm, tripped the wide-crack gate, and traded 23
+/// analytic faces for 2 010 facets; every later pocket then inherited the
+/// soup, so a 20-pocket rotor exported 190 468 planes. The defect this
+/// gate exists for (the shell-ring multi-tool trim mismatch) is a genuine
+/// HOLE: its rails are many and all far apart, so its median is as wide
+/// as its maximum was.
+///
+/// Fewer than [`MIN_CRACK_RAILS`] open edges cannot establish a hole at
+/// all — a slit is bounded by two rails of at least two edges each — so
+/// such a set reports no gap.
 fn max_open_edge_gap(mesh: &TriangleMesh) -> f64 {
     const ISOLATED_OPEN_EDGE: f64 = 5.0;
     let quantum = 1e-5;
@@ -743,7 +767,10 @@ fn max_open_edge_gap(mesh: &TriangleMesh) -> f64 {
         let q = [a[0] + t * ab[0], a[1] + t * ab[1], a[2] + t * ab[2]];
         ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt()
     };
-    let mut widest = 0.0_f64;
+    if open.len() < MIN_CRACK_RAILS {
+        return 0.0;
+    }
+    let mut gaps: Vec<f64> = Vec::with_capacity(open.len());
     for (i, &(a, b)) in open.iter().enumerate() {
         let mid = [
             (a[0] + b[0]) / 2.0,
@@ -757,11 +784,20 @@ fn max_open_edge_gap(mesh: &TriangleMesh) -> f64 {
             }
         }
         if nearest.is_finite() && nearest <= ISOLATED_OPEN_EDGE {
-            widest = widest.max(nearest);
+            gaps.push(nearest);
         }
     }
-    widest
+    if gaps.is_empty() {
+        return 0.0;
+    }
+    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    gaps[gaps.len() / 2]
 }
+
+/// Fewest open edges that can bound a genuine slit: two rails, two edges
+/// each. Below this the set is pinholes and T-junctions, which say nothing
+/// about missing material.
+const MIN_CRACK_RAILS: usize = 4;
 
 /// Fraction of tool∩subject sample points still inside a difference's
 /// result above which the cut is judged partially skipped.
@@ -814,6 +850,12 @@ fn difference_left_tool_material(
                 }
             }
         }
+    }
+    if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
+        eprintln!(
+            "vcad boolean: missed-cut probe: expected_removed={expected_removed} \
+             still_present={still_present}"
+        );
     }
     expected_removed >= 20 && (still_present as f64) > MISSED_CUT_FRACTION * expected_removed as f64
 }
