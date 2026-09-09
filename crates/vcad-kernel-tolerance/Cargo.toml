@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-tolerance"
 description = "Dimensional tolerance stackup analysis: worst-case, RSS, and seeded Monte Carlo over assembly chains, with exact sensitivities, process capability, GD&T bonus tolerance, and cost-based tolerance allocation"
+readme = "README.md"
+keywords = ["cad", "kernel", "tolerance", "brep", "geometry"]
+categories = ["science", "simulation", "hardware-support"]
+include = ["src/**/*", "README.md", "examples/**/*", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

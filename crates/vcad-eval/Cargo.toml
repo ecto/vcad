@@ -5,7 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Canonical document evaluator for vcad IR"
-publish = false
+readme = "README.md"
+keywords = ["cad", "eval", "brep", "geometry"]
+categories = ["compilers", "data-structures"]
+include = ["src/**/*", "README.md", "tests/**/*", "build.rs"]
 build = "build.rs"
 
 [dependencies]
@@ -29,6 +32,9 @@ sha2 = "0.10"
 stl_io = "0.8"
 
 [dev-dependencies]
-vcad-loon.workspace = true
+# Path-only, no version: vcad-loon is publish = false (unpublished loon-lang),
+# and a versioned dev-dep would make `cargo publish -p vcad-eval` look for it
+# on the index. Cargo strips path-only dev-deps from the uploaded manifest.
+vcad-loon = { path = "../vcad-loon" }
 vcad-kernel-fillet.workspace = true
 vcad-kernel-booleans.workspace = true

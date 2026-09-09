@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-particle"
 description = "Charged-particle optics: axisymmetric electrostatics, ring-coil magnetics, Boris tracing, and electrode figures of merit"
+readme = "README.md"
+keywords = ["cad", "kernel", "particle", "brep", "geometry"]
+categories = ["science", "simulation", "mathematics"]
+include = ["src/**/*", "README.md", "examples/**/*", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

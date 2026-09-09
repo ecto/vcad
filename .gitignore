@@ -63,3 +63,6 @@ npm-dist/
 
 # STEP import byte cache written by the MCP server at runtime
 .vcad-step-cache/
+
+# Local-only sibling path overrides (see .cargo/config.toml.example)
+/.cargo/config.toml

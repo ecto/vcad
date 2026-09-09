@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-optics"
 description = "Sequential ray-tracing lens design: exact conic-surface tracing, Sellmeier dispersion, paraxial cross-checks, spot-size figures of merit"
+readme = "README.md"
+keywords = ["cad", "kernel", "optics", "brep", "geometry"]
+categories = ["science", "simulation", "mathematics"]
+include = ["src/**/*", "README.md", "examples/**/*", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

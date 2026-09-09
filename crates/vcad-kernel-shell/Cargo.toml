@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-shell"
 description = "Shell (hollow) operation for the vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "shell", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

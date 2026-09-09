@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Render pixel buffers to any terminal — Kitty, Sixel, iTerm2, halfblock, braille"
+# a terminal-rendering helper for vcad-cli, not a supported public crate
 publish = false
 
 [dependencies]

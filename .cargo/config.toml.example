@@ -1,0 +1,36 @@
+# Local development against sibling checkouts.
+#
+# The committed manifests resolve on a bare clone: sibling crates come from
+# crates.io versions or pinned git revs, never from a path outside this repo.
+# To build against your own tree instead, copy this file to
+# `.cargo/config.toml` (gitignored) and keep the paths that apply:
+#
+#     cp .cargo/config.toml.example .cargo/config.toml
+#
+# `paths` overrides sources by package name, so a local crate replaces the
+# registry or git one. The local version must match what the manifest asks for,
+# otherwise cargo silently ignores the override.
+
+paths = [
+    # tang: vcad and phyz both declare `tang = "0.2"`. Overriding here unifies
+    # every tang in the graph on one checkout — without it a phyz built from a
+    # git rev can pull a second, older tang from the registry and `ExprId` stops
+    # implementing `Scalar`.
+    "../tang/crates/tang",
+    "../tang/crates/tang-la",
+    "../tang/crates/tang-expr",
+
+    # loon: vcad-loon pins loon-lang by git rev.
+    "../loon/crates/loon-lang",
+
+    # kosm-render: pinned to tag kosm-render-v0.2.0 by vcad-kernel-raytrace and
+    # vcad-kernel-gpu. Point it at a kosm worktree to iterate on the renderer.
+    "../kosm/crates/kosm-render",
+
+    # phyz: pinned by rev in [workspace.dependencies].
+    "../phyz/crates/phyz",
+    "../phyz/crates/phyz-gpu",
+    "../phyz/crates/phyz-model",
+    "../phyz/crates/phyz-math",
+    "../phyz/crates/phyz-md",
+]

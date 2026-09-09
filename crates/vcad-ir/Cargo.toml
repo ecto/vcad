@@ -1,6 +1,10 @@
 [package]
 name = "vcad-ir"
 description = "Intermediate representation for the vcad CAD ecosystem"
+readme = "README.md"
+keywords = ["cad", "ir", "brep", "geometry"]
+categories = ["compilers", "data-structures"]
+include = ["src/**/*", "README.md", "examples/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

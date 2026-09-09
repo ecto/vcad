@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# ECAD DRC/ERC is app-facing; only the ECAD crates vcad-eval needs are published
 publish = false
 
 [dependencies]

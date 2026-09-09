@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-photonics"
 description = "2D FDTD electromagnetics with adjoint inverse design for photonics"
+readme = "README.md"
+keywords = ["cad", "kernel", "photonics", "brep", "geometry"]
+categories = ["science", "simulation", "mathematics"]
+include = ["src/**/*", "README.md", "examples/**/*", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

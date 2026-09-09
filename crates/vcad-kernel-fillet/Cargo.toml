@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-fillet"
 description = "Fillet and chamfer operations for the vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "fillet", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

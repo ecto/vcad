@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-adjoint"
 description = "Coupled discrete-adjoint seam: cross-term ledger, block-Jacobi adjoint driver, sensitivity vocabulary, and finite-difference validation harness"
+readme = "README.md"
+keywords = ["cad", "kernel", "adjoint", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

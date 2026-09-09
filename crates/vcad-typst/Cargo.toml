@@ -2,6 +2,7 @@
 name = "vcad-typst"
 version = "0.1.0"
 edition = "2021"
+# builds the docs PDFs; a tool, not a library
 publish = false
 description = "Typst WASM plugin: render, sheet, and inspect .vcad documents and loon source at document compile time."
 

@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "GPU-accelerated geometry operations for vcad"
+readme = "README.md"
+keywords = ["cad", "kernel", "gpu", "brep", "geometry"]
+categories = ["rendering", "graphics"]
+include = ["src/**/*", "README.md"]
 
 [dependencies]
 # The device itself lives in kosm-render now, alongside the path tracer that

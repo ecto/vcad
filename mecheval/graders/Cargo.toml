@@ -2,6 +2,7 @@
 name = "mecheval-grader"
 version = "0.0.1"
 edition = "2021"
+# mecheval graders, an evaluation harness rather than a library
 publish = false
 description = "MechEval grader — loads task JSON, dispatches checks against a .vcad file, emits a run blob"
 

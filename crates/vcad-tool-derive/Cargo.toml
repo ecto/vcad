@@ -1,6 +1,10 @@
 [package]
 name = "vcad-tool-derive"
 description = "Derive macro for generating JSON Schema tool definitions from CsgOp"
+readme = "README.md"
+keywords = ["cad", "tool", "derive", "brep", "geometry"]
+categories = ["development-tools::procedural-macro-helpers"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

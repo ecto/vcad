@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-cam"
 description = "CAM toolpath generation for vcad"
+readme = "README.md"
+keywords = ["cad", "kernel", "cam", "brep", "geometry"]
+categories = ["science", "simulation", "hardware-support"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

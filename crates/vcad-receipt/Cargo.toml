@@ -1,6 +1,10 @@
 [package]
 name = "vcad-receipt"
 description = "Unified, versioned, fail-closed verification receipt schema for vcad documents"
+readme = "README.md"
+keywords = ["cad", "receipt", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
