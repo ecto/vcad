@@ -1981,13 +1981,30 @@ fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
 /// Fuse `tools` into one solid, or `None` if the fusion is not itself a
 /// clean B-rep — in which case cutting with it would degrade the result no
 /// matter how well the difference behaved.
+///
+/// # Shape of the reduction
+///
+/// Pairwise, in halves, not `fold` down a running accumulator. A fold
+/// unions tool `k` into a result already carrying the faces of the first
+/// `k - 1`, so the work is quadratic in the tool count; halving keeps each
+/// union between two operands of comparable size and the total near-linear.
+/// On the rana-60-cnc rotor — a disc with twenty pockets and a further two
+/// dozen holes and counterbores in one chain — the fold took over 24 minutes
+/// and had not finished; the same reduction in halves is a fraction of that.
+///
+/// Degradation stops the reduction where it happens: once any partial union
+/// has left analytic representation, no amount of further unioning brings it
+/// back, and the caller is going to discard the result anyway.
 fn union_all(tools: &[Solid]) -> Option<Solid> {
-    let (first, rest) = tools.split_first()?;
-    let mut merged = first.clone();
-    for t in rest {
-        merged = merged.union(t);
+    match tools {
+        [] => None,
+        [only] => (only.fidelity() == SolidFidelity::Analytic).then(|| only.clone()),
+        _ => {
+            let (left, right) = tools.split_at(tools.len() / 2);
+            let merged = union_all(left)?.union(&union_all(right)?);
+            (merged.fidelity() == SolidFidelity::Analytic).then_some(merged)
+        }
     }
-    (merged.fidelity() == SolidFidelity::Analytic).then_some(merged)
 }
 
 /// Stamp the evaluating node's id onto every representation loss this node
