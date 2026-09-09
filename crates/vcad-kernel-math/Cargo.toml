@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-math"
 description = "Math types for the vcad B-rep kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "math", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

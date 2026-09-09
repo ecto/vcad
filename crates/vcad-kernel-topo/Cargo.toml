@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-topo"
 description = "Half-edge B-rep topology for the vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "topo", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

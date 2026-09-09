@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# G-code backend for the app; nothing downstream pins it
 publish = false
 
 [dependencies]

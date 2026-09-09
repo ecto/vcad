@@ -2,6 +2,10 @@
 name = "vcad-loon"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "loon-lang front end for vcad: parametric CAD scripts to vcad IR"
+# depends on unpublished loon-lang (git rev); publishable once loon ships
 publish = false
 
 [dependencies]

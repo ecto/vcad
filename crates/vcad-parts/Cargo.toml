@@ -1,6 +1,10 @@
 [package]
 name = "vcad-parts"
 description = "Built-in parametric parts library (stdlib) for vcad."
+readme = "README.md"
+keywords = ["cad", "parts", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md", "tests/**/*", "thumbs/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

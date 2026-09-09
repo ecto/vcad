@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-fea"
 description = "Static structural FEA on BRep geometry: lattice tet fill of the tessellated interior, linear-elastic solve (PCG), von Mises / displacement / safety-factor QoIs with fail-closed mesh-convergence gating"
+readme = "README.md"
+keywords = ["cad", "kernel", "fea", "brep", "geometry"]
+categories = ["science", "simulation", "mathematics"]
+include = ["src/**/*", "README.md", "examples/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

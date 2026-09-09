@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-sweep"
 description = "Sweep and loft operations for vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "sweep", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-export"
 description = "Mesh-level GLB (binary glTF 2.0) and binary STL writers for vcad"
+readme = "README.md"
+keywords = ["cad", "kernel", "export", "brep", "geometry"]
+categories = ["encoding", "graphics"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,11 +1,14 @@
 [package]
 name = "vcad-kernel-cost"
 description = "Shared manufacturing cost model for the vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "cost", "brep", "geometry"]
+categories = ["science", "simulation", "hardware-support"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
 
 [dependencies]
 serde = { workspace = true }

@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "2D sketch constraint solver for vcad kernel using Levenberg-Marquardt optimization"
+readme = "README.md"
+keywords = ["cad", "kernel", "constraints", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md", "benches/**/*"]
 
 [features]
 default = []

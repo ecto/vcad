@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-naming"
 description = "Persistent topological naming for the vcad BRep kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "naming", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

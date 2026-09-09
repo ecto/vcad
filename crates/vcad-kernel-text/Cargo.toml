@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-text"
 description = "Text to geometry conversion for vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "text", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md", "assets/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

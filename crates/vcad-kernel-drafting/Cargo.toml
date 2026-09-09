@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-drafting"
 description = "2D drafting and technical drawing generation for the vcad kernel"
+readme = "README.md"
+keywords = ["cad", "kernel", "drafting", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md", "examples/**/*", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

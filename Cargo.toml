@@ -238,8 +238,10 @@ tang-expr = { version = "0.1" }
 # irrelevant. Bump the rev deliberately, in its own commit, so a physics
 # change to vcad is always attributable.
 #
-# phyz moved every crate onto its workspace version (0.3.1); the sub-crates
-# are no longer independently 0.1.x.
+# phyz moved every crate onto its workspace version; the sub-crates are no
+# longer independently 0.1.x. phyz is releasing 0.4.0 for the whole workspace:
+#   -> phyz 0.4, phyz-gpu 0.4, phyz-model 0.4, phyz-math 0.4, phyz-md 0.4
+# When that lands, drop the `git`/`rev` keys and raise `version` to "0.4".
 phyz = { git = "https://github.com/ecto/phyz.git", rev = "7c8ac59c7659ed64f7218e0504b0487f90ec68ef", version = "0.3" }
 phyz-gpu = { git = "https://github.com/ecto/phyz.git", rev = "7c8ac59c7659ed64f7218e0504b0487f90ec68ef", version = "0.3" }
 phyz-model = { git = "https://github.com/ecto/phyz.git", rev = "7c8ac59c7659ed64f7218e0504b0487f90ec68ef", version = "0.3" }
@@ -378,28 +380,11 @@ strip = true
 [profile.dev.package.vcad-kernel-fea]
 opt-level = 3
 
-# The sibling repos (phyz, tang) depend on each other through crates.io
-# versions, and phyz redirects tang to its own sibling checkout with a
-# `[patch.crates-io]` of its own. Cargo only honours the patch table of the
-# workspace ROOT being built, so when vcad builds phyz as a path dependency
-# phyz's patch is ignored and its `tang-expr = "0.1.0"` resolves from the
-# registry — while vcad's own tang comes from `../tang`. Two tangs in one
-# graph, and the published tang-expr is older than the tang it must satisfy:
-#
-#   error[E0277]: the trait bound `ExprId: Scalar` is not satisfied
-#     --> phyz/crates/phyz-diff/src/symbolic.rs:234
-#
-# Mirroring phyz's patch here unifies every tang reference in the graph on
-# the sibling checkout, which is the source of truth for both repos anyway.
+# Committed patches point inside this repo or at a git rev — never at a sibling
+# checkout, which a fresh clone would not have. Per-developer path overrides live
+# in an untracked `.cargo/config.toml` — copy `.cargo/config.toml.example`.
 [patch.crates-io]
-tang = { path = "../tang/crates/tang" }
-tang-la = { path = "../tang/crates/tang-la" }
-tang-expr = { path = "../tang/crates/tang-expr" }
 # clipper-sys 0.7.2's build.rs panics on tier-3 Apple targets (visionOS); the
 # vendored copy adds the missing libc++ link arms. Identical source otherwise.
+# In-repo, so it works on a bare clone.
 clipper-sys = { path = "third_party/clipper-sys" }
-
-# vcad-loon pins loon-lang by git rev so a downstream can pull vcad by git;
-# local and CI builds still compile against the sibling checkout.
-[patch."https://github.com/ecto/loon"]
-loon-lang = { path = "../loon/crates/loon-lang" }

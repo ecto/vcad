@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-stocksim"
 description = "Stock simulation and material removal for vcad CAM"
+readme = "README.md"
+keywords = ["cad", "kernel", "stocksim", "brep", "geometry"]
+categories = ["science", "simulation", "hardware-support"]
+include = ["src/**/*", "README.md"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

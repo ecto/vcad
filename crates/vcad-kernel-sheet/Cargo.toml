@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-sheet"
 description = "Sheet-metal modeling for the vcad kernel: flanges, bends, lossless unfold"
+readme = "README.md"
+keywords = ["cad", "kernel", "sheet", "brep", "geometry"]
+categories = ["mathematics", "graphics", "science"]
+include = ["src/**/*", "README.md", "tests/**/*", "data/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

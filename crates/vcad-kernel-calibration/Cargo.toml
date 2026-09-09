@@ -1,6 +1,10 @@
 [package]
 name = "vcad-kernel-calibration"
 description = "Print-then-measure calibration statistics: prediction/measurement joins, axis-scale fits, printer-profile suggestions"
+readme = "README.md"
+keywords = ["cad", "kernel", "calibration", "brep", "geometry"]
+categories = ["science", "simulation", "hardware-support"]
+include = ["src/**/*", "README.md", "tests/**/*"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
