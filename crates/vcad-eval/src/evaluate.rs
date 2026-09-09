@@ -8,7 +8,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
-use vcad_kernel::Solid;
+use vcad_kernel::{Solid, SolidFidelity};
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
 use vcad_kernel_sweep::{CylindricalPath, Helix, LoftOptions, SweepOptions};
@@ -630,20 +630,7 @@ fn evaluate_op_timed(
                     if tools.is_empty() {
                         return Ok(Some(base));
                     }
-                    if tools_are_pairwise_disjoint(&tools) {
-                        let mut merged = tools[0].clone();
-                        for t in &tools[1..] {
-                            merged = merged.union(t);
-                        }
-                        return Ok(Some(base.difference(&merged)));
-                    }
-                    // Not disjoint: fall back to the chained form, which is
-                    // what the tree already says.
-                    let mut acc = base;
-                    for t in &tools {
-                        acc = acc.difference(t);
-                    }
-                    return Ok(Some(acc));
+                    return Ok(Some(cut_chain(base, &tools)));
                 }
                 return Ok(None);
             }
@@ -1924,11 +1911,10 @@ fn kernel_blend_keys(
 /// trims that plane once. The result is a true B-rep: 103 surfaces (102
 /// planes and the outer cylinder) instead of 190 468 facets.
 ///
-/// The rewrite is only valid when the tools do not touch one another, which
-/// [`tools_are_pairwise_disjoint`] checks: `A - B - C = A - (B ∪ C)` holds
-/// unconditionally as a set identity, but a union of OVERLAPPING tools is
-/// itself a boolean that can degrade, which would trade one problem for
-/// another.
+/// `A - B - C = A - (B ∪ C)` is an unconditional set identity, so the
+/// rewrite is always *correct*; whether it is an improvement is decided
+/// afterwards, by [`cut_chain`], from the fidelity of what each form
+/// actually produced.
 fn collect_difference_chain(
     left: NodeId,
     right: NodeId,
@@ -1938,10 +1924,7 @@ fn collect_difference_chain(
     let mut base = left;
     while let Some(node) = nodes.get(&base) {
         match &node.op {
-            CsgOp::Difference {
-                left: l,
-                right: r,
-            } => {
+            CsgOp::Difference { left: l, right: r } => {
                 tools.push(*r);
                 base = *l;
             }
@@ -1952,20 +1935,59 @@ fn collect_difference_chain(
     (base, tools)
 }
 
-/// Do none of these tools touch any other?
+/// Cut `tools` out of `base`, batched into one difference when that keeps
+/// the result analytic and chained one-at-a-time when it does not.
 ///
-/// A conservative axis-aligned test: touching bounding boxes count as
-/// overlapping even when the solids inside them do not, which costs nothing
-/// but the rewrite.
-fn tools_are_pairwise_disjoint(tools: &[Solid]) -> bool {
-    for (i, a) in tools.iter().enumerate() {
-        for b in &tools[i + 1..] {
-            if a.aabb_overlaps(b) {
-                return false;
-            }
+/// # Why not simply decide up front
+///
+/// The obvious gate is "batch when the tools do not touch", and the obvious
+/// cheap test for that is pairwise AABB overlap. It does not work: the shape
+/// this rewrite exists for is a ring of milled pockets, and a rectangular
+/// pocket rotated about the part axis has an axis-aligned bounding box far
+/// larger than itself. Twenty pockets spaced 18° apart on a 50 mm bolt
+/// circle are pairwise disjoint as solids and pairwise overlapping as AABBs,
+/// so the gate declined every single case it was written for — the exported
+/// rotor stayed at five figures of facets with the batching code sitting
+/// right there, never once firing.
+///
+/// A tighter geometric predicate would be its own project, and any predicate
+/// still only guesses at what the boolean pipeline will make of the shape.
+/// So this does not predict. It builds the batched form, asks the kernel
+/// what it got, and keeps it only if the answer is a true B-rep.
+///
+/// # Cost
+///
+/// In the good case — the case that motivates this — the batched form is
+/// both cheaper and better: `n` unions plus one difference against a
+/// compound tool, versus `n` differences each re-trimming faces the last
+/// one already trimmed. In the bad case the chained form is evaluated as
+/// well and the batched work is wasted. That trade is deliberate: a wasted
+/// pass costs seconds, and the alternative outcome is a STEP file that no
+/// CAM package can put a tool on.
+fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
+    let batched = union_all(tools).map(|merged| base.difference(&merged));
+    if let Some(batched) = batched {
+        if batched.fidelity() == SolidFidelity::Analytic {
+            return batched;
         }
     }
-    true
+    let mut acc = base;
+    for t in tools {
+        acc = acc.difference(t);
+    }
+    acc
+}
+
+/// Fuse `tools` into one solid, or `None` if the fusion is not itself a
+/// clean B-rep — in which case cutting with it would degrade the result no
+/// matter how well the difference behaved.
+fn union_all(tools: &[Solid]) -> Option<Solid> {
+    let (first, rest) = tools.split_first()?;
+    let mut merged = first.clone();
+    for t in rest {
+        merged = merged.union(t);
+    }
+    (merged.fidelity() == SolidFidelity::Analytic).then_some(merged)
 }
 
 /// Stamp the evaluating node's id onto every representation loss this node
