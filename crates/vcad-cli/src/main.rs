@@ -403,7 +403,7 @@ enum Commands {
         /// Ruleset / process name: hobby-3axis-mill, cnc_3axis, fdm, …
         #[arg(long, default_value = "hobby-3axis-mill")]
         ruleset: String,
-        /// TOML rule pack overriding the bundled one (same schema as lib/dfm/*.toml)
+        /// TOML rule pack overriding the bundled one (same schema as vcad-kernel-dfm's rules/*.toml)
         #[arg(long)]
         pack: Option<PathBuf>,
         /// Emit the full report as JSON instead of the summary

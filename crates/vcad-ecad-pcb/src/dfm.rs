@@ -5,7 +5,7 @@
 //! process capability*: a board can pass DRC (its own clearance is 0.15 mm) yet
 //! be unmanufacturable on a budget process that only etches 0.2 mm.
 //!
-//! Each fab profile is a TOML rule pack in `lib/dfm/pcb-<profile>.toml`, bundled
+//! Each fab profile is a TOML rule pack in this crate's `rules/pcb-<profile>.toml`, bundled
 //! into the binary with `include_str!` exactly like the mechanical packs in
 //! `vcad-kernel-dfm`. A pack lists tunable thresholds — min annular ring, min
 //! drill, min trace/space by copper weight, copper-to-edge, soldermask dam /
@@ -86,10 +86,10 @@ impl PcbFabProfile {
     /// Raw bundled TOML source for this profile's default pack.
     pub fn pack_toml(self) -> &'static str {
         match self {
-            Self::Jlcpcb => include_str!("../../../lib/dfm/pcb-jlcpcb.toml"),
-            Self::Pcbway => include_str!("../../../lib/dfm/pcb-pcbway.toml"),
-            Self::Generic2Layer => include_str!("../../../lib/dfm/pcb-generic-2layer.toml"),
-            Self::Generic4Layer => include_str!("../../../lib/dfm/pcb-generic-4layer.toml"),
+            Self::Jlcpcb => include_str!("../rules/pcb-jlcpcb.toml"),
+            Self::Pcbway => include_str!("../rules/pcb-pcbway.toml"),
+            Self::Generic2Layer => include_str!("../rules/pcb-generic-2layer.toml"),
+            Self::Generic4Layer => include_str!("../rules/pcb-generic-4layer.toml"),
         }
     }
 

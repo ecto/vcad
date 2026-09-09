@@ -122,7 +122,7 @@ export interface RunDfmOptions {
   /** Optional TOML override; falls back to the bundled default. */
   rulePack?: string;
   /**
-   * Named ruleset bundled at lib/dfm/<ruleset>.toml (e.g. "hobby-3axis-mill").
+   * Named ruleset bundled at crates/vcad-kernel-dfm/rules/<ruleset>.toml (e.g. "hobby-3axis-mill").
    * Loaded in place of the process default when `rulePack` is not given.
    */
   ruleset?: DfmRuleset | string;

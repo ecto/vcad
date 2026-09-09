@@ -220,7 +220,7 @@ material. Use these for surgical edits, `create_cad_loon` for whole parts.
 - `dfm_check` — run process-specific manufacturability checks
   (`cnc_3axis`, `fdm`, `sla`, `injection`, `sheet_metal`, `casting_sand`,
   `casting_investment`) against a session document; thresholds come from
-  TOML rule packs at `lib/dfm/<process>.toml`.
+  TOML rule packs at `crates/vcad-kernel-dfm/rules/<process>.toml`.
 - `dfm_explain` / `dfm_suggest_fix` / `dfm_apply_fix` — long-form rationale
   for an issue, a suggested patch, and (for `set_param` patches) applying
   it to the document. Re-run `dfm_check` to confirm the issue cleared.

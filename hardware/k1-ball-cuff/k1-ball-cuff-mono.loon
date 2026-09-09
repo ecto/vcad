@@ -234,7 +234,7 @@
     [difference hinge-gap]]]
 
 ; --- DFM: the latch is checked, not asserted by prose ----------------------
-; lib/dfm/fdm.toml [rules.snap_fit], enforced by lib/src/lib.loon. Every
+; crates/vcad-kernel-dfm/rules/fdm.toml [rules.snap_fit], enforced by lib/src/lib.loon. Every
 ; number below is measured off the geometry above; a violation fails the
 ; export. Run against the two revisions that printed dead, this refuses
 ; both: E.2.2's hook overlapped its catch teeth by 1.00 mm (clearance),
