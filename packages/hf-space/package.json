@@ -1,6 +1,6 @@
 {
   "name": "cad0-demo",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "render": "node render.mjs"

@@ -1,6 +1,6 @@
 {
   "name": "@vcad/mcp",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "description": "MCP server for vcad CAD operations",
   "type": "module",
   "main": "dist/index.js",
