@@ -247,7 +247,7 @@ the parametric DAG into BReps and building a BVH over each part) belongs
 outside the frame loop. `--animate` puts it there:
 
 ```bash
-vcad-render assembly.loon --photoreal --animate cycle.json \
+vcad-render assembly.vcad --photoreal --animate cycle.json \
     --spp 16 --size 640 --azimuth 258 --elevation 14 -o frames/
 ```
 

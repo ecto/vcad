@@ -22,6 +22,13 @@ impl TempDir {
         std::fs::write(&p, body).unwrap();
         p
     }
+    /// Evaluate loon source and write it out as the `.vcad` IR JSON the
+    /// renderer takes. `vcad-loon` is a dev-dependency only: the binary
+    /// refuses `.loon` input, so tests do the build step themselves.
+    fn loon(&self, name: &str, src: &str) -> PathBuf {
+        let doc = vcad_loon::eval_vcad(src, None).expect("loon eval");
+        self.write(name, &serde_json::to_string(&doc).expect("serialize document"))
+    }
     fn path(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
@@ -56,8 +63,8 @@ fn section_of_a_tube_hatches_the_annulus() {
     let dir = TempDir::new("tube");
     // Outer r10, bore r6, 40 tall. Primitives sit base-on-z=0, so z=20 is
     // the middle of the wall.
-    let input = dir.write(
-        "tube.loon",
+    let input = dir.loon(
+        "tube.vcad",
         "[difference [cylinder 6.0 40.0] [cylinder 10.0 40.0]]",
     );
     let svg = svg_of(&render(&[
@@ -138,7 +145,7 @@ fn section_of_a_tube_hatches_the_annulus() {
 #[test]
 fn section_outside_the_model_explains_itself() {
     let dir = TempDir::new("miss");
-    let input = dir.write("cyl.loon", "[cylinder 10.0 40.0]");
+    let input = dir.loon("cyl.vcad", "[cylinder 10.0 40.0]");
     let out = render(&[input.to_str().unwrap(), "--view", "top", "--section", "z=0"]);
     assert!(
         !out.status.success(),
@@ -149,14 +156,14 @@ fn section_outside_the_model_explains_itself() {
 }
 
 fn two_part_assembly(dir: &TempDir) -> PathBuf {
-    dir.write("base.loon", "[cylinder 10.0 5.0]");
-    dir.write("cap.loon", "[cylinder 8.0 4.0]");
+    dir.loon("base.vcad", "[cylinder 10.0 5.0]");
+    dir.loon("cap.vcad", "[cylinder 8.0 4.0]");
     dir.write(
         "asm.json",
         r#"{
           "parts": [
-            { "name": "base", "source": "base.loon" },
-            { "name": "cap",  "source": "cap.loon" }
+            { "name": "base", "source": "base.vcad" },
+            { "name": "cap",  "source": "cap.vcad" }
           ],
           "instances": [
             { "name": "base-1", "part": "base", "x": 0, "y": 0, "z": 0,
@@ -258,10 +265,10 @@ fn every_instance_reaches_the_render() {
 #[test]
 fn an_unknown_part_reference_is_an_error() {
     let dir = TempDir::new("badref");
-    dir.write("base.loon", "[cylinder 10.0 5.0]");
+    dir.loon("base.vcad", "[cylinder 10.0 5.0]");
     let spec = dir.write(
         "asm.json",
-        r#"{"parts": [{"name": "base", "source": "base.loon"}],
+        r#"{"parts": [{"name": "base", "source": "base.vcad"}],
             "instances": [{"name": "x", "part": "nope"}]}"#,
     );
     let out = render(&["--assembly", spec.to_str().unwrap()]);
@@ -277,7 +284,7 @@ fn an_unknown_part_reference_is_an_error() {
 #[test]
 fn explode_requires_assembly_and_output_is_written() {
     let dir = TempDir::new("usage");
-    let input = dir.write("cyl.loon", "[cylinder 10.0 5.0]");
+    let input = dir.loon("cyl.vcad", "[cylinder 10.0 5.0]");
     let out = render(&[input.to_str().unwrap(), "--explode", "0.5"]);
     assert!(!out.status.success(), "--explode alone should be rejected");
 

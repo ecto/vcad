@@ -1,13 +1,12 @@
-//! `vcad-render` CLI — project `.vcad` documents (or the `.loon` source they
-//! are built from) to static line art or a raster render.
+//! `vcad-render` CLI — project `.vcad` documents to static line art or a
+//! raster render.
 //!
-//! Inputs are dispatched on extension: `.vcad` parses as IR JSON, `.loon`
-//! evaluates through `vcad-loon` first, with `[use ...]` module imports
-//! resolved against the input file's own directory. Everything downstream is
-//! identical, so every flag below works on either.
+//! The input is IR JSON: a `.vcad` document. `.loon` source is not evaluated
+//! here — the loon interpreter ships with the `vcad` CLI, so build the
+//! document there (`vcad build`) and render the result.
 //!
 //! Usage:
-//!   vcad-render <path.vcad|path.loon> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
+//!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
 //!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
 //!   vcad-render --assembly <asm.json> [--explode <factor>] [--view ...] [--section ...]
 //!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
@@ -158,15 +157,15 @@ impl Format {
 #[derive(Parser)]
 #[command(name = "vcad-render", version)]
 struct Cli {
-    /// Input `.vcad` or `.loon` file(s); a directory expands to its
-    /// `*.vcad`/`*.loon` files. Not needed with `--assembly`, which names
-    /// its own parts.
+    /// Input `.vcad` file(s); a directory expands to its `*.vcad` files.
+    /// Not needed with `--assembly`, which names its own parts. `.loon`
+    /// source is refused — build it with the `vcad` CLI first.
     #[arg(required_unless_present = "assembly")]
     inputs: Vec<PathBuf>,
 
     /// Render a posed assembly instead of a single document.
     ///
-    /// The file is JSON: `parts` (name + `.loon`/`.vcad` source) and
+    /// The file is JSON: `parts` (name + `.vcad` source) and
     /// `instances` (name, part, x/y/z, rx/ry/rz, ex/ey/ez). The fields are
     /// #844's `PosedInstanceEntry` verbatim, so this converges on the
     /// assembly document when that lands.
@@ -527,7 +526,7 @@ impl Cli {
     }
 }
 
-/// Expand directory inputs to their `*.vcad`/`*.loon` files (sorted); pass files
+/// Expand directory inputs to their `*.vcad` files (sorted); pass files
 /// through untouched.
 fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
@@ -540,12 +539,12 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
                     p.is_file()
                         && matches!(
                             p.extension().and_then(|e| e.to_str()),
-                            Some("vcad") | Some("loon")
+                            Some("vcad")
                         )
                 })
                 .collect();
             if found.is_empty() {
-                return Err(format!("no .vcad or .loon files in {}", input.display()));
+                return Err(format!("no .vcad files in {}", input.display()));
             }
             found.sort();
             out.extend(found);
@@ -946,18 +945,19 @@ fn render_pcb_view(pcb: &vcad_ir::ecad::Pcb, cli: &Cli) -> String {
     )
 }
 
-/// Read an input as `.vcad` IR JSON. A `.loon` input is evaluated first, so
-/// the renderer works on source rather than on a build artifact; `[use ...]`
-/// module imports resolve against the input file's own directory.
+/// Read an input as `.vcad` IR JSON. `.loon` source is refused: evaluating it
+/// needs the loon interpreter, which lives in the (unpublished) `vcad` CLI.
 fn read_document(input: &Path) -> Result<String, String> {
+    if is_loon(input) {
+        return Err(format!(
+            "{}: `.loon` source needs the vcad CLI — run `vcad build` and \
+             render the exported `.vcad` document instead",
+            input.display()
+        ));
+    }
     let raw =
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
-    if !is_loon(input) {
-        return Ok(anchor_mesh_paths(&raw, input));
-    }
-    let doc = vcad_loon::eval_vcad(raw.trim(), input.parent())
-        .map_err(|e| format!("{}: {}", input.display(), e))?;
-    serde_json::to_string(&doc).map_err(|e| format!("{}: serialize: {}", input.display(), e))
+    Ok(anchor_mesh_paths(&raw, input))
 }
 
 /// Rewrite relative `MeshImport` paths against the document's own directory.

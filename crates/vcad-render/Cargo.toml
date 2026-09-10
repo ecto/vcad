@@ -15,9 +15,11 @@ default = ["raster", "cli", "raytrace"]
 # Raster (JPEG/PNG) output. Off for the WASM build, which only needs SVG.
 raster = ["dep:image"]
 # The vcad-render binary. Off for the WASM build, which only needs the lib.
-# Pulls in vcad-loon so the CLI can render `.loon` source directly (module
-# imports resolve against the input file's directory — a native-only trick).
-cli = ["dep:clap", "dep:vcad-loon"]
+# `.loon` source is *not* evaluated here: vcad-loon is `publish = false` (it
+# depends on a git rev of loon-lang), and cargo makes every entry under
+# `[dependencies]` — optional or not — resolve from the registry. So a `.loon`
+# input is a clear error, and the `vcad` CLI is what evaluates one.
+cli = ["dep:clap"]
 # Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output via
 # vcad-kernel-raytrace. Off for the WASM build so it doesn't grow.
 # vcad-kernel-raytrace already pulls rayon in for the tracer itself; the
@@ -46,7 +48,6 @@ serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 vcad-kernel-raytrace = { workspace = true, optional = true }
-vcad-loon = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }
 vcad-kernel-gpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
@@ -61,8 +62,9 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
-# Also a (feature-gated) normal dep for the CLI's `.loon` input support; tests
-# need it unconditionally.
+# `vcad-loon` is `publish = false`, so it cannot be a normal dependency — but a
+# versionless path dev-dependency is stripped when packaging, so tests may
+# still evaluate `.loon` fixtures here.
 vcad-loon = { path = "../vcad-loon" }
 vcad-ecad-symbols = { path = "../vcad-ecad-symbols" }
 # Integration tests decode the PNGs the renderer emits. `image` is an
