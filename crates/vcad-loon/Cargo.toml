@@ -14,7 +14,7 @@ publish = false
 # [patch."https://github.com/ecto/loon"] builds local checkouts and CI against
 # ../loon, the same clone they always used.
 loon-lang = { git = "https://github.com/ecto/loon", rev = "c12ef566613995f913012c79773bab825950566f" }
-vcad-ir = { path = "../vcad-ir" }
-vcad-parts = { path = "../vcad-parts" }
+vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
+vcad-parts = { path = "../vcad-parts", version = "0.10.0" }
 serde.workspace = true
 serde_json.workspace = true

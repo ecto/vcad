@@ -14,21 +14,21 @@ path = "src/main.rs"
 
 [dependencies]
 # Core crates
-vcad-ir = { path = "../vcad-ir" }
+vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
 vcad-loon = { workspace = true }
-vcad-diff = { path = "../vcad-diff" }
-vcad-crdt = { path = "../vcad-crdt" }
-vcad-kernel = { path = "../vcad-kernel" }
-vcad-app = { path = "../vcad-app" }
+vcad-diff = { path = "../vcad-diff", version = "0.10.0" }
+vcad-crdt = { path = "../vcad-crdt", version = "0.10.0" }
+vcad-kernel = { path = "../vcad-kernel", version = "0.10.0" }
+vcad-app = { path = "../vcad-app", version = "0.10.0" }
 vcad-i18n = { path = "../vcad-i18n" }
-vcad-chat = { path = "../vcad-chat" }
-vcad-eval = { path = "../vcad-eval" }
-vcad-kernel-urdf = { path = "../vcad-kernel-urdf" }
-vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
-vcad-kernel-constraints = { path = "../vcad-kernel-constraints" }
-vcad-kernel-physics = { path = "../vcad-kernel-physics" }
-vcad-kernel-cam = { path = "../vcad-kernel-cam" }
-vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace" }
+vcad-chat = { path = "../vcad-chat", version = "0.10.0" }
+vcad-eval = { path = "../vcad-eval", version = "0.10.0" }
+vcad-kernel-urdf = { path = "../vcad-kernel-urdf", version = "0.10.0" }
+vcad-kernel-sketch = { path = "../vcad-kernel-sketch", version = "0.10.0" }
+vcad-kernel-constraints = { path = "../vcad-kernel-constraints", version = "0.10.0" }
+vcad-kernel-physics = { path = "../vcad-kernel-physics", version = "0.10.0" }
+vcad-kernel-cam = { path = "../vcad-kernel-cam", version = "0.10.0" }
+vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace", version = "0.10.0" }
 vcad-kernel-features = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-export = { workspace = true }
@@ -37,10 +37,10 @@ vcad-ecad-fabprep = { workspace = true }
 # `log`; without a subscriber the terminal shows nothing until it finishes.
 env_logger = "0.11"
 vcad-render = { path = "../vcad-render", default-features = false }
-vcad-slicer = { path = "../vcad-slicer" }
-vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
+vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
+vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.10.0" }
 vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
-vcad-printcheck = { path = "../vcad-printcheck" }
+vcad-printcheck = { path = "../vcad-printcheck", version = "0.10.0" }
 
 # Print server (optional feature)
 axum = { version = "0.8", optional = true }

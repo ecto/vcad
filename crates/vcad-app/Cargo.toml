@@ -9,10 +9,10 @@ description = "Shared application core for vcad — evaluation, undo/redo, camer
 publish = false
 
 [dependencies]
-vcad-ir = { path = "../vcad-ir" }
-vcad-crdt = { path = "../vcad-crdt" }
-vcad-kernel = { path = "../vcad-kernel" }
-vcad-kernel-math = { path = "../vcad-kernel-math" }
+vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
+vcad-crdt = { path = "../vcad-crdt", version = "0.10.0" }
+vcad-kernel = { path = "../vcad-kernel", version = "0.10.0" }
+vcad-kernel-math = { path = "../vcad-kernel-math", version = "0.10.0" }
 vcad-i18n = { path = "../vcad-i18n" }
 
 serde.workspace = true

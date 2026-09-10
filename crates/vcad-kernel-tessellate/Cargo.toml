@@ -21,4 +21,4 @@ vcad-kernel-geom = { workspace = true }
 vcad-kernel-primitives = { workspace = true }
 
 [dev-dependencies]
-vcad-kernel-step = { path = "../vcad-kernel-step" }   # path-only: dev-dep cycle with step; cargo strips it on publish
+vcad-kernel-step = { path = "../vcad-kernel-step", version = "0.10.0" }   # path-only: dev-dep cycle with step; cargo strips it on publish

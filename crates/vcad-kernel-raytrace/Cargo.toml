@@ -47,8 +47,8 @@ default = []
 gpu = ["dep:wgpu", "kosm-render/gpu"]
 
 [dev-dependencies]
-vcad-kernel-fillet = { path = "../vcad-kernel-fillet" }
+vcad-kernel-fillet = { path = "../vcad-kernel-fillet", version = "0.10.0" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 pollster = { workspace = true }
-vcad-kernel-gpu = { path = "../vcad-kernel-gpu" }
+vcad-kernel-gpu = { path = "../vcad-kernel-gpu", version = "0.10.0" }
