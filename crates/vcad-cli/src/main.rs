@@ -83,6 +83,11 @@ enum Commands {
         input: PathBuf,
         /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf)
         output: PathBuf,
+        /// Refuse to write a STEP that contains tessellated (triangle-soup)
+        /// faces. Without this flag such a fallback is a stderr warning
+        /// naming the node and the reason; with it, it is an error.
+        #[arg(long)]
+        strict_brep: bool,
     },
 
     /// Import a STEP file to .vcad format
@@ -569,8 +574,12 @@ fn main() -> Result<()> {
         Some(Commands::New { file, template }) => {
             create_new(&file, &template)?;
         }
-        Some(Commands::Export { input, output }) => {
-            export_file(&input, &output)?;
+        Some(Commands::Export {
+            input,
+            output,
+            strict_brep,
+        }) => {
+            export_file(&input, &output, strict_brep)?;
         }
         Some(Commands::Import {
             input,
@@ -965,7 +974,7 @@ fn run_merge(
     }
 }
 
-fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
+fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<()> {
     use std::fs;
 
     let doc = load_vcad_document(input)?;
@@ -1004,7 +1013,7 @@ fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {
             );
         }
         "step" | "stp" => {
-            export_step(&doc, output)?;
+            export_step(&doc, output, strict_brep)?;
         }
         "urdf" => {
             export_urdf(&doc, output)?;
@@ -1395,8 +1404,8 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
     Ok(count)
 }
 
-fn export_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
-    let count = write_step(doc, output)?;
+fn export_step(doc: &vcad_ir::Document, output: &PathBuf, strict_brep: bool) -> Result<()> {
+    let count = write_step_strict(doc, output, strict_brep)?;
     println!(
         "Exported STEP ({} solid{}) to {}",
         count,
@@ -1410,6 +1419,21 @@ fn export_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
 /// of solids written. Mesh-only roots are refused by name (existing policy);
 /// print-free so the TUI can surface the error in its status line.
 fn write_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
+    write_step_strict(doc, output, false)
+}
+
+/// [`write_step`], with the option to refuse a tessellated result.
+///
+/// Every root whose solid is not a clean analytic B-rep is reported on
+/// stderr, naming the document node and the reason the writer fell back to
+/// facets. With `strict_brep` the same finding is an error instead: a CAM
+/// deliverable that silently arrives as 200 000 triangles is worse than one
+/// that fails to build.
+fn write_step_strict(
+    doc: &vcad_ir::Document,
+    output: &PathBuf,
+    strict_brep: bool,
+) -> Result<usize> {
     use vcad_kernel::Solid;
 
     // Evaluate the document through the kernel: booleans, transforms,
@@ -1448,6 +1472,45 @@ fn write_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
             mesh_only.len(),
             roots.len(),
             mesh_only.join(", ")
+        );
+    }
+
+    // Loud fallback: name every root that will serialize as facets, the
+    // node that lost the representation, and why. This used to be
+    // completely silent — a 265 MB "STEP" of one-triangle planes looked
+    // exactly like a successful export.
+    let mut degraded_roots: Vec<String> = Vec::new();
+    for (i, root) in roots.iter().enumerate() {
+        let Some(solid) = root.solid.as_ref() else {
+            continue;
+        };
+        let label = match &root.name {
+            Some(name) => format!("'{name}' (node {})", root.node_id),
+            None => format!("node {} (part_{})", root.node_id, i + 1),
+        };
+        if solid.fidelity() != vcad_kernel::SolidFidelity::Analytic {
+            let why = solid
+                .why_not_brep()
+                .unwrap_or_else(|| "no analytic surfaces".to_string());
+            eprintln!("warning: STEP export of {label} is tessellated, not B-rep: {why}");
+            for event in solid.degradations() {
+                eprintln!("  - {event}");
+            }
+            degraded_roots.push(label);
+        } else {
+            // Wrong-geometry events do not degrade the *representation*,
+            // but they mean a cut was skipped: still worth saying.
+            for event in solid.wrong_geometry_events() {
+                eprintln!("warning: {label}: {event}");
+            }
+        }
+    }
+    if strict_brep && !degraded_roots.is_empty() {
+        anyhow::bail!(
+            "--strict-brep: {} of {} root(s) would be written as tessellated facets: {}",
+            degraded_roots.len(),
+            roots.len(),
+            degraded_roots.join(", ")
         );
     }
 
@@ -2094,7 +2157,7 @@ pub fn export_file_from_doc(doc: &vcad_ir::Document, output: &PathBuf) -> Result
             std::fs::write(output, stl_bytes)?;
         }
         "step" | "stp" => {
-            export_step(doc, output)?;
+            export_step(doc, output, false)?;
         }
         "urdf" => {
             export_urdf(doc, output)?;

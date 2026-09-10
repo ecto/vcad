@@ -58,6 +58,8 @@
   [Prism f64 f64 f64]
   ; [Gear module teeth face-width backlash internal?]
   [Gear f64 f64 f64 f64 Bool]
+  ; [GearN module teeth face-width backlash internal? flank-samples]
+  [GearN f64 f64 f64 f64 Bool f64]
   ; Empty (identity for union)
   Empty
   ; Booleans
@@ -228,12 +230,29 @@
 ;
 ; Centre distance for an external pair is m (z1 + z2) / 2; for a planet
 ; inside a ring it is m (z-ring - z-planet) / 2.
+;
+; FACET DENSITY. The flanks are exact involutes evaluated at a fixed number
+; of points and chorded between them, so a gear reaches STEP as a polyline
+; extrusion: planar walls, not spline surfaces. The `-n` forms take that
+; number — points per flank, 2..=512, default 14 — and the tip and root arcs
+; densify with it. This is the knob to reach for when a gear shop wants the
+; profile inside a tighter chordal tolerance than the default holds, and the
+; one to turn DOWN for a preview: face count is linear in it, and a gear is
+; teeth x (2 x flank + tip + root) walls.
 [let gear [fn [module teeth face-width] [Gear module teeth face-width 0.0 false]]]
 [let gear-backlash [fn [module teeth face-width backlash]
   [Gear module teeth face-width backlash false]]]
 [let ring-gear [fn [module teeth face-width] [Gear module teeth face-width 0.0 true]]]
 [let ring-gear-backlash [fn [module teeth face-width backlash]
   [Gear module teeth face-width backlash true]]]
+[let gear-n [fn [module teeth face-width flank-samples]
+  [GearN module teeth face-width 0.0 false flank-samples]]]
+[let ring-gear-n [fn [module teeth face-width flank-samples]
+  [GearN module teeth face-width 0.0 true flank-samples]]]
+[let gear-backlash-n [fn [module teeth face-width backlash flank-samples]
+  [GearN module teeth face-width backlash false flank-samples]]]
+[let ring-gear-backlash-n [fn [module teeth face-width backlash flank-samples]
+  [GearN module teeth face-width backlash true flank-samples]]]
 
 ; Faceted prisms, sized the way a print is dimensioned. `polygon-prism` is
 ; `prism` under a name that says what it makes; `hex-prism` takes the

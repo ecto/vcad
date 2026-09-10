@@ -5,10 +5,11 @@
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::time::{Duration, Instant};
 
 use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
-use vcad_kernel::Solid;
+use vcad_kernel::{Solid, SolidFidelity};
 use vcad_kernel_geom::Line3d;
 use vcad_kernel_math::{Transform, Vec3};
 use vcad_kernel_sweep::{CylindricalPath, Helix, LoftOptions, SweepOptions};
@@ -478,6 +479,7 @@ pub fn evaluate_node(
 
     let mut result = evaluate_op(&node.op, nodes, cache)?;
     scope_primitive_names(node_id, &node.op, &mut result);
+    attribute_losses(node_id, &mut result);
     cache.insert(node_id, result.clone());
     Ok(result)
 }
@@ -499,6 +501,7 @@ fn evaluate_node_timed(
     let t0 = clock.map(|c| c.now_ms());
     let mut result = evaluate_op_timed(&node.op, nodes, cache, clock, timings)?;
     scope_primitive_names(node_id, &node.op, &mut result);
+    attribute_losses(node_id, &mut result);
     if let Some(t0) = t0 {
         let eval_ms = clock.unwrap().now_ms() - t0;
         timings.insert(
@@ -611,6 +614,27 @@ fn evaluate_op_timed(
         }
 
         CsgOp::Difference { left, right } => {
+            // A left-leaning chain `((base - t1) - t2) - ... - tn` whose
+            // tools do not touch each other is cut in ONE difference against
+            // their union rather than n chained ones. See
+            // `collect_difference_chain` for why that is worth the trouble.
+            let (base_id, tool_ids) = collect_difference_chain(*left, *right, nodes);
+            if tool_ids.len() > 1 {
+                let base = eval_child(base_id, cache)?;
+                let mut tools = Vec::with_capacity(tool_ids.len());
+                for id in &tool_ids {
+                    if let Some(t) = eval_child(*id, cache)? {
+                        tools.push(t);
+                    }
+                }
+                if let Some(base) = base {
+                    if tools.is_empty() {
+                        return Ok(Some(base));
+                    }
+                    return Ok(Some(cut_chain(base, &tools)));
+                }
+                return Ok(None);
+            }
             let l = eval_child(*left, cache)?;
             let r = eval_child(*right, cache)?;
             match (l, r) {
@@ -1866,6 +1890,216 @@ fn kernel_blend_keys(
 /// document node id so names stay unique across the DAG (`cube:top` →
 /// `n3:top`) and stable across rebuilds (node ids persist in the .vcad
 /// document).
+/// Flatten a left-leaning chain of `Difference` nodes into its base and the
+/// tools cut from it, innermost first.
+///
+/// `((base - t1) - t2) - t3` becomes `(base, [t1, t2, t3])`. Only the LEFT
+/// spine is followed: a difference whose subtrahend is itself a difference
+/// keeps that subtrahend whole, because the tool is then a compound solid
+/// rather than another step in the chain.
+///
+/// # Why
+///
+/// The boolean pipeline's splitters degrade when a face they have already
+/// trimmed is trimmed again. Cutting twenty milled pockets one at a time
+/// re-trims the disc's top plane twenty times; measured on the rana-60-cnc
+/// rotor, the second cut came out 15 % short of the volume it should have
+/// removed, the missed-cut guard correctly condemned it, and the mesh
+/// fallback that replaced it made every one of the remaining eighteen cuts
+/// inherit triangle soup — 190 468 planar faces in the exported STEP.
+///
+/// Cutting the same twenty pockets as one difference against their union
+/// trims that plane once. The result is a true B-rep: 103 surfaces (102
+/// planes and the outer cylinder) instead of 190 468 facets.
+///
+/// `A - B - C = A - (B ∪ C)` is an unconditional set identity, so the
+/// rewrite is always *correct*; whether it is an improvement is decided
+/// afterwards, by [`cut_chain`], from the fidelity of what each form
+/// actually produced.
+fn collect_difference_chain(
+    left: NodeId,
+    right: NodeId,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> (NodeId, Vec<NodeId>) {
+    let mut tools = vec![right];
+    let mut base = left;
+    while let Some(node) = nodes.get(&base) {
+        match &node.op {
+            CsgOp::Difference { left: l, right: r } => {
+                tools.push(*r);
+                base = *l;
+            }
+            _ => break,
+        }
+    }
+    tools.reverse();
+    (base, tools)
+}
+
+/// Cut `tools` out of `base`, batched into one difference when that keeps
+/// the result analytic and chained one-at-a-time when it does not.
+///
+/// # Why not simply decide up front
+///
+/// The obvious gate is "batch when the tools do not touch", and the obvious
+/// cheap test for that is pairwise AABB overlap. It does not work: the shape
+/// this rewrite exists for is a ring of milled pockets, and a rectangular
+/// pocket rotated about the part axis has an axis-aligned bounding box far
+/// larger than itself. Twenty pockets spaced 18° apart on a 50 mm bolt
+/// circle are pairwise disjoint as solids and pairwise overlapping as AABBs,
+/// so the gate declined every single case it was written for — the exported
+/// rotor stayed at five figures of facets with the batching code sitting
+/// right there, never once firing.
+///
+/// A tighter geometric predicate would be its own project, and any predicate
+/// still only guesses at what the boolean pipeline will make of the shape.
+/// So this does not predict. It builds the batched form, asks the kernel
+/// what it got, and keeps it only if the answer is a true B-rep.
+///
+/// # Cost is bounded, because correctness never depended on it
+///
+/// `A - B - C = A - (B u C)` holds unconditionally, so the batched form may
+/// be abandoned at any point without changing the answer. Batching is purely
+/// a performance policy, and this is the policy.
+///
+/// ## All the tools, or none of them
+///
+/// The obvious way to bound the cost is to cut the tools in groups — batch
+/// twelve at a time rather than forty. Measured, that is the worst of both
+/// worlds. The whole saving comes from trimming the base's faces *once*; a
+/// chain split into `k` groups trims them `k` times, which is exactly the
+/// degradation the batching exists to prevent, and it pays for `k` unions on
+/// top. On the rana-60-cnc `can`, thirty tools in one chain:
+///
+/// | policy | time | `ADVANCED_FACE` |
+/// |---|---|---|
+/// | no batching (main) | 539 s | 247 002 |
+/// | groups of <= 12 tools | > 300 s, killed | — |
+/// | one batch of all thirty | 109 s | 379 |
+///
+/// So there is no tool-count cap and no fused-face cap. Either the whole
+/// chain batches or none of it does.
+///
+/// ## The bound is wall clock, spent where it can be checked
+///
+/// What is capped is time, by [`BATCH_BUDGET`]. The budget is checked inside
+/// [`union_all`]'s reduction — between pairs, where the work is actually
+/// divisible — and once more before committing to the final difference.
+/// That placement is the point: the union reduction is where an expensive
+/// tool set announces itself. The rana-60-cnc `rotor` fuses twenty
+/// 100-segment extruded sketches, and it is the *union* of those that
+/// explodes, not the difference against it, so the deadline fires during the
+/// reduction and the chain is cut as written. The `can`'s thirty cylinders
+/// and boxes fuse well inside the budget and keep their win.
+///
+/// A single `Solid::difference` call cannot be interrupted, so the budget
+/// cannot bound one that has already started. It does not need to: on every
+/// part measured, a tool set whose union is cheap has a cheap difference
+/// too, and one whose union is expensive never reaches the difference.
+///
+/// ## Fidelity, as before
+///
+/// A batched result that is not a true B-rep is discarded and the chain cut
+/// one tool at a time — the check that was already here, unchanged.
+fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
+    let deadline = Instant::now() + batch_budget();
+
+    if let Some(merged) = union_all(tools, deadline) {
+        // The union came in under budget; spending what is left on the one
+        // difference it was built for is the whole point of having built it.
+        if Instant::now() < deadline {
+            let batched = base.difference(&merged);
+            if batched.fidelity() == SolidFidelity::Analytic {
+                return batched;
+            }
+        }
+    }
+
+    let mut acc = base;
+    for t in tools {
+        acc = acc.difference(t);
+    }
+    acc
+}
+
+/// Wall-clock budget for the batched attempt on one difference chain.
+///
+/// 20 s. Every chain measured either fuses far inside it (the rana-60-cnc
+/// `can`'s thirty tools) or runs orders of magnitude past it (the `rotor`'s
+/// twenty extruded sketches, which had not finished in 30 minutes), so the
+/// exact figure is not delicate — anything from a few seconds to a minute
+/// separates the two populations. It sits at the high end of that range
+/// because a batched win is worth waiting for: the `can` goes from 539 s and
+/// 247 002 facets to 109 s and 379 analytic faces.
+///
+/// Override with `VCAD_BATCH_BUDGET_MS` when profiling.
+const BATCH_BUDGET: Duration = Duration::from_secs(20);
+
+fn batch_budget() -> Duration {
+    let ms = std::env::var("VCAD_BATCH_BUDGET_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_else(|| BATCH_BUDGET.as_millis() as u64);
+    Duration::from_millis(ms)
+}
+
+/// Fuse `tools` into one solid, or `None` if the fusion is not itself a
+/// clean B-rep — in which case cutting with it would degrade the result no
+/// matter how well the difference behaved.
+///
+/// # Shape of the reduction
+///
+/// A left fold, in authored order, with the budget checked immediately
+/// before each union. A pairwise halving reduction keeps each union between
+/// operands of comparable size and is asymptotically the better shape, but
+/// it cannot carry this guard: halving recurses to the leaves first and does
+/// its unions on the way back up, so a deadline can only be tested on the
+/// way down, before any of the expensive merges have started. The fold puts
+/// a check in front of every single union, which is what makes the budget
+/// actually bound the work.
+///
+/// That matters more here than the asymptotics do. The fold's quadratic term
+/// only bites on tool sets large enough that the budget stops the reduction
+/// anyway, and when it does the caller falls back to the plain chain — the
+/// same place the halving reduction would have left it, just detected
+/// instead of endured.
+///
+/// Degradation stops the reduction where it happens: once any partial union
+/// has left analytic representation, no amount of further unioning brings it
+/// back, and the caller is going to discard the result anyway. `deadline`
+/// stops it for the same reason from the other direction: a reduction still
+/// running past the chain's batching budget has already cost more than the
+/// re-trims it was going to save, so it gives up and lets the caller cut the
+/// tools one at a time.
+fn union_all(tools: &[Solid], deadline: Instant) -> Option<Solid> {
+    let (first, rest) = tools.split_first()?;
+    let mut merged = (first.fidelity() == SolidFidelity::Analytic).then(|| first.clone())?;
+    for t in rest {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        merged = merged.union(t);
+        if merged.fidelity() != SolidFidelity::Analytic {
+            return None;
+        }
+    }
+    Some(merged)
+}
+
+/// Stamp the evaluating node's id onto every representation loss this node
+/// introduced.
+///
+/// Losses inherited from operand solids were already attributed when their
+/// own node was evaluated, so they keep the id of the node that actually
+/// caused them. Without this, a STEP-export warning can only say
+/// "`difference` fell back to the mesh boolean" with no way to find which
+/// difference in a 30-node pipe it was.
+fn attribute_losses(node_id: NodeId, result: &mut Option<Solid>) {
+    if let Some(solid) = result {
+        solid.attribute_to(node_id.to_string());
+    }
+}
+
 fn scope_primitive_names(node_id: NodeId, op: &CsgOp, result: &mut Option<Solid>) {
     let is_primitive = matches!(
         op,

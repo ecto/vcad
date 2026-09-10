@@ -36,5 +36,11 @@ stl_io = "0.8"
 # and a versioned dev-dep would make `cargo publish -p vcad-eval` look for it
 # on the index. Cargo strips path-only dev-deps from the uploaded manifest.
 vcad-loon = { path = "../vcad-loon" }
+# Path-only, no version: vcad-kernel-step publishes after vcad-eval, so a
+# versioned dev-dep would make `cargo publish -p vcad-eval` look for a
+# version of it that does not exist yet. Cargo strips path-only dev-deps
+# from the uploaded manifest.
+vcad-kernel-step = { path = "../vcad-kernel-step" }
+vcad-kernel-geom.workspace = true
 vcad-kernel-fillet.workspace = true
 vcad-kernel-booleans.workspace = true
