@@ -11,7 +11,7 @@
 //!
 //! ```json
 //! {
-//!   "parts":     [ { "name": "shell", "source": "shell.loon" } ],
+//!   "parts":     [ { "name": "shell", "source": "shell.vcad" } ],
 //!   "instances": [ { "name": "shell-1", "part": "shell",
 //!                    "x": 0, "y": 0, "z": 0,
 //!                    "rx": 0, "ry": 0, "rz": 0,
@@ -44,7 +44,7 @@ use crate::PosedPart;
 /// A parts-and-poses assembly.
 #[derive(Debug, Deserialize)]
 pub struct AssemblySpec {
-    /// Part definitions, each naming a `.loon` or `.vcad` source.
+    /// Part definitions, each naming a `.vcad` source.
     pub parts: Vec<PartDef>,
     /// Posed instances of those parts.
     pub instances: Vec<Instance>,
@@ -55,7 +55,7 @@ pub struct AssemblySpec {
 pub struct PartDef {
     /// Part name, referenced by [`Instance::part`].
     pub name: String,
-    /// Path to the part's `.loon` or `.vcad` source, relative to the spec.
+    /// Path to the part's `.vcad` document, relative to the spec.
     pub source: PathBuf,
 }
 
@@ -110,17 +110,19 @@ impl Instance {
     }
 }
 
-/// Read a part source as `.vcad` IR JSON, evaluating `.loon` first. Mirrors
-/// the binary's own input handling so a part renders the same whether it is
-/// named on the command line or referenced from an assembly.
+/// Read a part source as `.vcad` IR JSON. Mirrors the binary's own input
+/// handling so a part renders the same whether it is named on the command
+/// line or referenced from an assembly — including refusing `.loon` source,
+/// which only the `vcad` CLI can evaluate.
 fn read_source(path: &Path) -> Result<String, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    if path.extension().and_then(|e| e.to_str()) != Some("loon") {
-        return Ok(raw);
+    if path.extension().and_then(|e| e.to_str()) == Some("loon") {
+        return Err(format!(
+            "{}: `.loon` source needs the vcad CLI — run `vcad build` and \
+             reference the exported `.vcad` document instead",
+            path.display()
+        ));
     }
-    let doc = vcad_loon::eval_vcad(raw.trim(), path.parent())
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    serde_json::to_string(&doc).map_err(|e| format!("{}: serialize: {e}", path.display()))
+    std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
 }
 
 /// Load `spec_path` and pose every instance, exploding by `factor`.

@@ -1,8 +1,9 @@
-//! The CLI renders `.loon` source directly, with `[use ...]` module imports
-//! resolved against the input file's own directory — the native renderer is
-//! the one place file-based imports work (the WASM/MCP path evaluates with no
-//! base dir at all). Without this, "see my model" meant hand-writing a
-//! loon → IR converter first.
+//! `.loon` source is *not* evaluated by this binary. The loon interpreter
+//! lives in `vcad-loon`, which is unpublished (it depends on a git rev of
+//! loon-lang), and cargo makes every `[dependencies]` entry resolve from the
+//! registry — so vcad-render cannot carry it and stay publishable. A `.loon`
+//! input is therefore a clear error pointing at the `vcad` CLI, rather than a
+//! parse failure on IR JSON that reads like a corrupt document.
 #![cfg(feature = "cli")]
 
 use std::path::PathBuf;
@@ -41,9 +42,28 @@ fn render(input: &PathBuf) -> std::process::Output {
 }
 
 #[test]
-fn renders_loon_source_directly() {
+fn loon_input_is_refused_with_a_pointer_to_the_vcad_cli() {
     let dir = TempDir::new("plain");
     let input = dir.write("part.loon", "[cube 30.0 20.0 10.0]");
+
+    let out = render(&input);
+    assert!(!out.status.success(), "`.loon` input must not render");
+    assert!(out.stdout.is_empty(), "no partial SVG on stdout");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("vcad CLI") && err.contains(".vcad"),
+        "the error should name the way out, got {err}"
+    );
+}
+
+#[test]
+fn a_vcad_document_still_renders() {
+    let dir = TempDir::new("doc");
+    let doc = vcad_loon::eval_vcad("[cube 30.0 20.0 10.0]", None).expect("loon eval");
+    let input = dir.write(
+        "part.vcad",
+        &serde_json::to_string(&doc).expect("serialize document"),
+    );
 
     let out = render(&input);
     assert!(
@@ -53,30 +73,4 @@ fn renders_loon_source_directly() {
     );
     let svg = String::from_utf8(out.stdout).expect("utf-8 svg");
     assert!(svg.contains("<svg"), "expected an SVG, got {svg:.80}");
-}
-
-#[test]
-fn resolves_use_imports_against_the_input_directory() {
-    let dir = TempDir::new("modules");
-    dir.write("parts.loon", "[pub let widget [cube 30.0 20.0 10.0]]");
-    let input = dir.write("main.loon", "[use parts]\n[root parts.widget \"steel\"]");
-
-    let out = render(&input);
-    assert!(
-        out.status.success(),
-        "module import failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(String::from_utf8_lossy(&out.stdout).contains("<svg"));
-}
-
-#[test]
-fn loon_errors_exit_nonzero_on_stderr() {
-    let dir = TempDir::new("bad");
-    let input = dir.write("bad.loon", "[cube 1.0");
-
-    let out = render(&input);
-    assert!(!out.status.success(), "a broken document must not succeed");
-    assert!(out.stdout.is_empty(), "no partial SVG on stdout");
-    assert!(!out.stderr.is_empty(), "the error belongs on stderr");
 }
