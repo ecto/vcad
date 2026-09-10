@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::time::{Duration, Instant};
 
 use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
@@ -1955,27 +1956,91 @@ fn collect_difference_chain(
 /// So this does not predict. It builds the batched form, asks the kernel
 /// what it got, and keeps it only if the answer is a true B-rep.
 ///
-/// # Cost
+/// # Cost is bounded, because correctness never depended on it
 ///
-/// In the good case — the case that motivates this — the batched form is
-/// both cheaper and better: `n` unions plus one difference against a
-/// compound tool, versus `n` differences each re-trimming faces the last
-/// one already trimmed. In the bad case the chained form is evaluated as
-/// well and the batched work is wasted. That trade is deliberate: a wasted
-/// pass costs seconds, and the alternative outcome is a STEP file that no
-/// CAM package can put a tool on.
+/// `A - B - C = A - (B u C)` holds unconditionally, so the batched form may
+/// be abandoned at any point without changing the answer. Batching is purely
+/// a performance policy, and this is the policy.
+///
+/// ## All the tools, or none of them
+///
+/// The obvious way to bound the cost is to cut the tools in groups — batch
+/// twelve at a time rather than forty. Measured, that is the worst of both
+/// worlds. The whole saving comes from trimming the base's faces *once*; a
+/// chain split into `k` groups trims them `k` times, which is exactly the
+/// degradation the batching exists to prevent, and it pays for `k` unions on
+/// top. On the rana-60-cnc `can`, thirty tools in one chain:
+///
+/// | policy | time | `ADVANCED_FACE` |
+/// |---|---|---|
+/// | no batching (main) | 539 s | 247 002 |
+/// | groups of <= 12 tools | > 300 s, killed | — |
+/// | one batch of all thirty | 109 s | 379 |
+///
+/// So there is no tool-count cap and no fused-face cap. Either the whole
+/// chain batches or none of it does.
+///
+/// ## The bound is wall clock, spent where it can be checked
+///
+/// What is capped is time, by [`BATCH_BUDGET`]. The budget is checked inside
+/// [`union_all`]'s reduction — between pairs, where the work is actually
+/// divisible — and once more before committing to the final difference.
+/// That placement is the point: the union reduction is where an expensive
+/// tool set announces itself. The rana-60-cnc `rotor` fuses twenty
+/// 100-segment extruded sketches, and it is the *union* of those that
+/// explodes, not the difference against it, so the deadline fires during the
+/// reduction and the chain is cut as written. The `can`'s thirty cylinders
+/// and boxes fuse well inside the budget and keep their win.
+///
+/// A single `Solid::difference` call cannot be interrupted, so the budget
+/// cannot bound one that has already started. It does not need to: on every
+/// part measured, a tool set whose union is cheap has a cheap difference
+/// too, and one whose union is expensive never reaches the difference.
+///
+/// ## Fidelity, as before
+///
+/// A batched result that is not a true B-rep is discarded and the chain cut
+/// one tool at a time — the check that was already here, unchanged.
 fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
-    let batched = union_all(tools).map(|merged| base.difference(&merged));
-    if let Some(batched) = batched {
-        if batched.fidelity() == SolidFidelity::Analytic {
-            return batched;
+    let deadline = Instant::now() + batch_budget();
+
+    if let Some(merged) = union_all(tools, deadline) {
+        // The union came in under budget; spending what is left on the one
+        // difference it was built for is the whole point of having built it.
+        if Instant::now() < deadline {
+            let batched = base.difference(&merged);
+            if batched.fidelity() == SolidFidelity::Analytic {
+                return batched;
+            }
         }
     }
+
     let mut acc = base;
     for t in tools {
         acc = acc.difference(t);
     }
     acc
+}
+
+/// Wall-clock budget for the batched attempt on one difference chain.
+///
+/// 20 s. Every chain measured either fuses far inside it (the rana-60-cnc
+/// `can`'s thirty tools) or runs orders of magnitude past it (the `rotor`'s
+/// twenty extruded sketches, which had not finished in 30 minutes), so the
+/// exact figure is not delicate — anything from a few seconds to a minute
+/// separates the two populations. It sits at the high end of that range
+/// because a batched win is worth waiting for: the `can` goes from 539 s and
+/// 247 002 facets to 109 s and 379 analytic faces.
+///
+/// Override with `VCAD_BATCH_BUDGET_MS` when profiling.
+const BATCH_BUDGET: Duration = Duration::from_secs(20);
+
+fn batch_budget() -> Duration {
+    let ms = std::env::var("VCAD_BATCH_BUDGET_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or_else(|| BATCH_BUDGET.as_millis() as u64);
+    Duration::from_millis(ms)
 }
 
 /// Fuse `tools` into one solid, or `None` if the fusion is not itself a
@@ -1984,27 +2049,41 @@ fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
 ///
 /// # Shape of the reduction
 ///
-/// Pairwise, in halves, not `fold` down a running accumulator. A fold
-/// unions tool `k` into a result already carrying the faces of the first
-/// `k - 1`, so the work is quadratic in the tool count; halving keeps each
-/// union between two operands of comparable size and the total near-linear.
-/// On the rana-60-cnc rotor — a disc with twenty pockets and a further two
-/// dozen holes and counterbores in one chain — the fold took over 24 minutes
-/// and had not finished; the same reduction in halves is a fraction of that.
+/// A left fold, in authored order, with the budget checked immediately
+/// before each union. A pairwise halving reduction keeps each union between
+/// operands of comparable size and is asymptotically the better shape, but
+/// it cannot carry this guard: halving recurses to the leaves first and does
+/// its unions on the way back up, so a deadline can only be tested on the
+/// way down, before any of the expensive merges have started. The fold puts
+/// a check in front of every single union, which is what makes the budget
+/// actually bound the work.
+///
+/// That matters more here than the asymptotics do. The fold's quadratic term
+/// only bites on tool sets large enough that the budget stops the reduction
+/// anyway, and when it does the caller falls back to the plain chain — the
+/// same place the halving reduction would have left it, just detected
+/// instead of endured.
 ///
 /// Degradation stops the reduction where it happens: once any partial union
 /// has left analytic representation, no amount of further unioning brings it
-/// back, and the caller is going to discard the result anyway.
-fn union_all(tools: &[Solid]) -> Option<Solid> {
-    match tools {
-        [] => None,
-        [only] => (only.fidelity() == SolidFidelity::Analytic).then(|| only.clone()),
-        _ => {
-            let (left, right) = tools.split_at(tools.len() / 2);
-            let merged = union_all(left)?.union(&union_all(right)?);
-            (merged.fidelity() == SolidFidelity::Analytic).then_some(merged)
+/// back, and the caller is going to discard the result anyway. `deadline`
+/// stops it for the same reason from the other direction: a reduction still
+/// running past the chain's batching budget has already cost more than the
+/// re-trims it was going to save, so it gives up and lets the caller cut the
+/// tools one at a time.
+fn union_all(tools: &[Solid], deadline: Instant) -> Option<Solid> {
+    let (first, rest) = tools.split_first()?;
+    let mut merged = (first.fidelity() == SolidFidelity::Analytic).then(|| first.clone())?;
+    for t in rest {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        merged = merged.union(t);
+        if merged.fidelity() != SolidFidelity::Analytic {
+            return None;
         }
     }
+    Some(merged)
 }
 
 /// Stamp the evaluating node's id onto every representation loss this node
