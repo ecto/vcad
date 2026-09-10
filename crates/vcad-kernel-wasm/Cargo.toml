@@ -21,7 +21,7 @@ vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-export = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-crdt = { workspace = true }
-vcad-diff = { path = "../vcad-diff", version = "0.10.0" }
+vcad-diff = { path = "../vcad-diff" }
 vcad-app = { workspace = true }
 vcad-chat = { path = "../vcad-chat", default-features = false }
 vcad-eval = { workspace = true }
