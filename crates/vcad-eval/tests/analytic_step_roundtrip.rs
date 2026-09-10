@@ -32,6 +32,8 @@
 //! the other three fixtures passed there already and are here to keep them
 //! passing.
 
+use std::time::Instant;
+
 use vcad_eval::{evaluate_document, EvalOptions};
 use vcad_kernel::{Solid, SolidFidelity};
 use vcad_kernel_geom::SurfaceKind;
@@ -165,6 +167,12 @@ fn slotted_tube_stays_analytic() {
 /// 12 174 `ADVANCED_FACE`, every one of them a `PLANE`.
 #[test]
 fn disc_with_twenty_pockets_stays_analytic() {
+    assert_analytic_roundtrip("disc with 20 pockets", &pocketed_disc(), 2_000);
+}
+
+/// Twenty rectangular pockets on a bolt circle, cut from one disc in one
+/// left-leaning difference chain.
+fn pocketed_disc() -> String {
     let mut src = String::from("[pipe [cylinder-n 40.0 10.0 96]");
     for i in 0..20 {
         let deg = 360.0 * f64::from(i) / 20.0;
@@ -175,6 +183,52 @@ fn disc_with_twenty_pockets_stays_analytic() {
         ));
     }
     src.push(']');
+    src
+}
 
-    assert_analytic_roundtrip("disc with 20 pockets", &src, 2_000);
+/// Wall-clock ceiling for the pocketed disc, evaluation through STEP write.
+///
+/// Deliberately enormous next to what this actually costs — about a second
+/// in release, a handful in a debug test binary — because it is not a
+/// performance assertion, it is a hang detector. The regression it exists
+/// for is a batched difference whose cost is unbounded in the tool set: on
+/// the rana-60-cnc rotor an unbounded batch ran past 30 minutes where the
+/// chained path took 339 s. A bound that tracked the real number would flake
+/// on a loaded CI runner; a bound of three minutes cannot be reached by any
+/// amount of ordinary slowness and is reached instantly by an unbounded
+/// batch.
+const TIME_BUDGET_SECS: u64 = 180;
+
+/// The pocketed disc must stay analytic *and* stay fast.
+///
+/// `cut_chain` batches `A - B - C - ...` into `A - (B u C u ...)`, which is
+/// what makes this fixture analytic at all — but a fused tool costs more the
+/// more faces it carries, so the batching is capped by tool count, by fused
+/// face count, and by a wall-clock budget, and falls back to the plain chain
+/// whenever a cap is hit. This test pins the two halves of that policy
+/// together: removing the caps would keep it passing on fidelity and blow
+/// the time bound on bigger parts; removing the batching would keep it fast
+/// and fail on fidelity.
+#[test]
+fn disc_with_twenty_pockets_exports_in_bounded_time() {
+    let start = Instant::now();
+
+    let solid = evaluate(&pocketed_disc());
+    assert_eq!(
+        solid.fidelity(),
+        SolidFidelity::Analytic,
+        "pocketed disc lost its B-rep: {}",
+        solid
+            .why_not_brep()
+            .unwrap_or_else(|| "no reason recorded".to_string()),
+    );
+    write_step_to_buffer(solid.as_brep().expect("analytic solid carries a BRep"))
+        .expect("STEP write");
+
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed.as_secs() < TIME_BUDGET_SECS,
+        "pocketed disc took {elapsed:?}, over the {TIME_BUDGET_SECS} s budget — \
+         the difference batching is no longer cost-bounded",
+    );
 }
