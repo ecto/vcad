@@ -16,7 +16,7 @@ path = "src/main.rs"
 # Core crates
 vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
 vcad-loon = { workspace = true }
-vcad-diff = { path = "../vcad-diff", version = "0.10.0" }
+vcad-diff = { path = "../vcad-diff" }
 vcad-crdt = { path = "../vcad-crdt", version = "0.10.0" }
 vcad-kernel = { path = "../vcad-kernel", version = "0.10.0" }
 vcad-app = { path = "../vcad-app", version = "0.10.0" }
