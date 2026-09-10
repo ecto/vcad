@@ -9,6 +9,6 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-vcad-embroidery = { path = "../vcad-embroidery" }
+vcad-embroidery = { path = "../vcad-embroidery", version = "0.10.0" }
 thiserror = { workspace = true }
 serde = { workspace = true }

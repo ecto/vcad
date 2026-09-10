@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-vcad-slicer = { path = "../vcad-slicer" }
+vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
 vcad-kernel-math = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }

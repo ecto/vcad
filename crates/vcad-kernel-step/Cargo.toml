@@ -20,5 +20,5 @@ stepperoni = { workspace = true }
 thiserror.workspace = true
 
 [dev-dependencies]
-vcad-kernel-booleans = { path = "../vcad-kernel-booleans" }
-vcad-kernel-tessellate = { path = "../vcad-kernel-tessellate" }
+vcad-kernel-booleans = { path = "../vcad-kernel-booleans", version = "0.10.0" }
+vcad-kernel-tessellate = { path = "../vcad-kernel-tessellate", version = "0.10.0" }

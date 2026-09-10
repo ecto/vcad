@@ -28,10 +28,10 @@ log = "0.4"
 # IPC-2141 impedance closed forms — the same model behind the
 # calc_impedance / size_impedance tools. Per-layer controlled-impedance
 # geometry inverts it; it is not re-derived here.
-vcad-ecad-sim = { path = "../vcad-ecad-sim" }
+vcad-ecad-sim = { path = "../vcad-ecad-sim", version = "0.10.0" }
 
 [dev-dependencies]
-vcad-ecad-export = { path = "../vcad-ecad-export" }
+vcad-ecad-export = { path = "../vcad-ecad-export", version = "0.10.0" }
 vcad-ecad-symbols = { workspace = true }
 env_logger = "0.11"
 

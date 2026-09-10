@@ -13,8 +13,8 @@ default = ["network"]
 network = ["dep:tokio", "dep:rumqttc", "dep:rustls", "dep:webpki-roots", "dep:suppaftp"]
 
 [dependencies]
-vcad-slicer = { path = "../vcad-slicer" }
-vcad-slicer-gcode = { path = "../vcad-slicer-gcode" }
+vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
+vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.10.0" }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

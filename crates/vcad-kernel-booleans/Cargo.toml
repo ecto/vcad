@@ -24,7 +24,7 @@ rayon = "1.10"
 
 [dev-dependencies]
 slotmap = { workspace = true }
-vcad-kernel-sketch = { path = "../vcad-kernel-sketch" }
+vcad-kernel-sketch = { path = "../vcad-kernel-sketch", version = "0.10.0" }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
