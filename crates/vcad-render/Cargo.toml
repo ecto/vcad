@@ -63,8 +63,8 @@ required-features = ["cli"]
 [dev-dependencies]
 # Also a (feature-gated) normal dep for the CLI's `.loon` input support; tests
 # need it unconditionally.
-vcad-loon = { workspace = true }
-vcad-ecad-symbols = { workspace = true }
+vcad-loon = { path = "../vcad-loon" }
+vcad-ecad-symbols = { path = "../vcad-ecad-symbols" }
 # Integration tests decode the PNGs the renderer emits. `image` is an
 # *optional* normal dependency (behind `raster`), which an integration test
 # cannot reach through the library, so it is named again here.
