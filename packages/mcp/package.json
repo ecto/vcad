@@ -29,7 +29,7 @@
     "build:npm": "node scripts/build-npm.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@vcad/core": "*",
     "@vcad/engine": "*",
     "@vcad/ir": "*"
