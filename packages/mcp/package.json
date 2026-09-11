@@ -43,7 +43,7 @@
     "@supabase/supabase-js": "^2.45.0",
     "@types/node": "^22",
     "@types/three": "^0.184.1",
-    "three": "^0.184.0",
+    "three": "^0.185.1",
     "typescript": "^5.7",
     "vite": "^8.0.16",
     "vite-plugin-singlefile": "^2.3.3",
