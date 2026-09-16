@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Keep nightly compatibility coverage without doubling every PR build.
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+# A newer PR commit supersedes its previous checks. Main/scheduled runs get
+# unique groups so merges and cache-warming runs are never cancelled here.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Default-deny: CI only needs to read the repo. Narrower than the
 # implicit permissions so a compromised action in any job gets the
@@ -29,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, nightly]
+        toolchain: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["stable", "nightly"]' || '["stable"]') }}
     steps:
       # The full workspace build now overflows the stock runner disk
       # ("No space left on device" during linking) — drop the big
@@ -59,6 +69,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-workspace-crates: true
+          # Preserve the expensive compilation when a later test fails.
+          cache-on-failure: true
       # `cargo fmt --all` would traverse into the path-dep workspaces
       # (tang/phyz/loon, cloned above). Format only vcad workspace members
       # explicitly so external repos don't gate our CI.
@@ -68,12 +80,24 @@ jobs:
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(p['name'] for p in d['packages']))" \
             | xargs -n 1 -I{} cargo fmt -p {} --check
       - run: cargo clippy --workspace --exclude vcad-desktop -- -D warnings
-      # --no-fail-fast: `cargo test` otherwise stops at the FIRST failing test
-      # binary, so a single red crate hides every failure behind it. That is how
-      # 5 broken tests sat undetected on main behind the torr catalogue — CI
-      # only ever reached 38 of ~200 binaries, and each fix revealed one more
-      # failure instead of turning the job green. Run everything, report everything.
-      - run: cargo test --workspace --exclude vcad-desktop --no-fail-fast
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.122
+      # Separate compilation from execution so timing reports identify the
+      # actual bottleneck. Keep optimized test builds: the numerics tests are
+      # dramatically slower without them.
+      - name: Compile Rust tests
+        run: cargo nextest run --workspace --exclude vcad-desktop --profile ci --no-run --timings
+      # Schedule tests across binaries instead of serializing entire binaries.
+      # Keep collecting failures across the full workspace, with no retries.
+      - name: Run Rust tests
+        id: rust-tests
+        run: cargo nextest run --workspace --exclude vcad-desktop --profile ci --no-fail-fast
+      # nextest does not execute doctests; retain cargo's coverage explicitly.
+      - name: Rust doctests
+        if: ${{ !cancelled() && (success() || steps.rust-tests.outcome == 'failure') }}
+        run: cargo test --workspace --exclude vcad-desktop --doc --no-fail-fast
       - run: cargo build --workspace --exclude vcad-desktop --examples
       - run: cargo doc --workspace --exclude vcad-desktop --no-deps
       # packages/ir/src/generated.ts is generated from the Rust `vcad-ir` types
@@ -91,6 +115,16 @@ jobs:
       - name: IR types in sync (Rust → TS codegen)
         if: matrix.toolchain == 'stable'
         run: npm run ir:check
+      - name: Upload Rust timing and test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-reports-${{ matrix.toolchain }}
+          path: |
+            target/cargo-timings/
+            target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Real-KiCad verification of the .kicad_sch/.kicad_pcb exporters: the
   # ignored tests in vcad-ecad-symbols run kicad-cli (ERC gate + netlist
