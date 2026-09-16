@@ -536,11 +536,7 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
                 .map_err(|e| format!("read dir {}: {}", input.display(), e))?
                 .filter_map(|entry| entry.ok().map(|e| e.path()))
                 .filter(|p| {
-                    p.is_file()
-                        && matches!(
-                            p.extension().and_then(|e| e.to_str()),
-                            Some("vcad")
-                        )
+                    p.is_file() && matches!(p.extension().and_then(|e| e.to_str()), Some("vcad"))
                 })
                 .collect();
             if found.is_empty() {

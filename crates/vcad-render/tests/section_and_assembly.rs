@@ -27,7 +27,10 @@ impl TempDir {
     /// refuses `.loon` input, so tests do the build step themselves.
     fn loon(&self, name: &str, src: &str) -> PathBuf {
         let doc = vcad_loon::eval_vcad(src, None).expect("loon eval");
-        self.write(name, &serde_json::to_string(&doc).expect("serialize document"))
+        self.write(
+            name,
+            &serde_json::to_string(&doc).expect("serialize document"),
+        )
     }
     fn path(&self, name: &str) -> PathBuf {
         self.0.join(name)
