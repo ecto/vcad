@@ -182,7 +182,7 @@ impl Pocket2D {
 
         loop {
             // Offset inward (negative value)
-            let offset_distance = -current_offset * scale;
+            let offset_distance = -current_offset; // geo-clipper applies scale internally.
 
             let result = polygon.offset(
                 offset_distance,

@@ -28,6 +28,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Connect to your CNC controller to show machine status and send toolpaths.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.graphics-design</string>
 </dict>

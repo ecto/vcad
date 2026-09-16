@@ -14,6 +14,10 @@
       "dependsOn": ["^build"],
       "inputs": ["src/**", "package.json", "tsconfig.json"]
     },
+    "@vcad/mcp#typecheck": {
+      "dependsOn": ["build"],
+      "inputs": ["$TURBO_DEFAULT$", "../../lib/parts/mechanical.json"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

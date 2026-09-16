@@ -225,7 +225,7 @@ impl Contour2D {
         let scale = 1000.0;
 
         let result = polygon.offset(
-            offset * scale,
+            offset, // geo-clipper applies the coordinate scale internally.
             geo_clipper::JoinType::Round(10.0),
             geo_clipper::EndType::ClosedPolygon,
             scale,

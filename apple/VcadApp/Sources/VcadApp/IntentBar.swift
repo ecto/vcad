@@ -214,7 +214,7 @@ struct CommandBar: View {
         switch engine.phase {
         case .idle:
             Image(systemName: "sparkles").font(.system(size: 12)).foregroundStyle(.tint)
-            TextField("Describe a part…", text: $engine.draft)
+            TextField("Describe a change…", text: $engine.draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($focused)
