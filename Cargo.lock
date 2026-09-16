@@ -7438,6 +7438,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-cam",
  "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-physics",

@@ -206,6 +206,8 @@ struct GenStats {
 @MainActor
 @Observable
 final class EditorModel {
+    let cnc = CNCWorkspace()
+    var isWindowed = false
     init() {
         bridgeSimulationToRenderer()
     }
@@ -214,6 +216,9 @@ final class EditorModel {
     var azimuth: Float = .pi / 5
     var elevation: Float = .pi / 7
     var distance: Float = 1.5
+
+    var electronicsShown = false
+    let electronics = ElectronicsWorkspace()
 
     var source: GeometrySource = .sandbox {
         didSet {
@@ -1326,6 +1331,11 @@ final class EditorModel {
     // MARK: save
 
     func saveDocument() {
+        if source.isSandbox, documentJSON != nil {
+            let panel = NSSavePanel(); panel.nameFieldStringValue = "Untitled.vcad"
+            if panel.runModal() == .OK, let url = panel.url { saveDocumentAs(url) }
+            return
+        }
         guard case let .document(path, _) = source,
               let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
         if (try? data.write(to: URL(fileURLWithPath: path))) != nil { documentDirty = false }
@@ -1440,6 +1450,7 @@ final class EditorModel {
     private func restore(_ data: Data) {
         guard let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         documentJSON = dict
+        documentDirty = true
         if let g = DocumentGraph.parse(dict) { documentGraph = g; featureNodes = g.featureRoots() }
         hiddenParts.removeAll(); isolatedPart = nil
         suppressMaterializePop = true
@@ -2151,7 +2162,7 @@ final class EditorModel {
 
     func buildScene() -> RenderScene {
         switch source {
-        case .sandbox: return sandboxScene()
+        case .sandbox: return documentJSON == nil ? sandboxScene() : documentScene(path: "")
         case .document(let path, _): return documentScene(path: path)
         case .generated(let loon, _): return generatedScene(loon: loon)
         case .gripper: return gripperScene()
@@ -2556,4 +2567,13 @@ final class EditorModel {
         NSColor(red: 0.45, green: 0.62, blue: 0.82, alpha: 1.0),
         NSColor(red: 0.72, green: 0.46, blue: 0.46, alpha: 1.0),
     ]
+}
+
+extension EditorModel {
+    func editElectronics(_ mutate: (inout ECObject) -> Void) {
+        if documentJSON == nil {
+            documentJSON = ["version": "0.1", "nodes": ECObject(), "materials": ECObject(), "part_materials": ECObject(), "roots": [ECObject]()]
+        }
+        applyEdit(snapshot: true, reeval: .rebuild, mutate)
+    }
 }

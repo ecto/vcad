@@ -31,11 +31,8 @@ extension View {
 }
 
 #if os(macOS)  // mac window root + document menu
-/// The app's only mode is release-to-desktop: the parts float over the desktop
-/// in a borderless transparent overlay (see ReleasedDesktop.swift). This view is
-/// the WindowGroup's root only because SwiftUI needs one — it owns the model and
-/// the intent engine, hides its own window before it can ever paint, and hands
-/// both to the overlay controller.
+/// SwiftUI lifecycle host. The visible editor lives in a single AppKit window
+/// that can switch between a desktop overlay and a normal resizable window.
 struct EditorView: View {
     let model: EditorModel
     let intent: IntentEngine
@@ -51,6 +48,13 @@ struct EditorView: View {
                     // the cross-domain gripper (used to verify without driving the UI).
                     let env = ProcessInfo.processInfo.environment
                     AppInstance.currentModel = model
+                    // Offline native CNC smoke hook. Never contacts hardware.
+                    if env["VCAD_CNC_DEMO"] == "1" {
+                        model.cnc.shown = true
+                        model.cnc.select(.operation(model.cnc.selectedOperation.id))
+                        model.cnc.generate()
+                        model.cnc.machine.connect(simulated: true)
+                    }
                     // Pick up documents other instances opened while this one
                     // was already running.
                     model.refreshRecents()
@@ -196,6 +200,11 @@ struct DocumentCommands: Commands {
                 .keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!model.canRedo)
         }
         CommandMenu("View") {
+            Button(model.isWindowed ? "Release to Desktop" : "Open in Window") {
+                ReleaseWindowController.shared.setWindowed(!model.isWindowed)
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+            Divider()
             Button(model.showsPalette ? "Hide Components" : "Show Components") {
                 model.showsPalette.toggle()
             }
@@ -657,9 +666,10 @@ struct SketchHintBar: View {
 
 struct FeatureTreeView: View {
     @Bindable var model: EditorModel
+    var embedded = false
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            header
+            if !embedded { header }
             if model.usesDocumentTree {
                 ForEach(model.featureNodes) { node in
                     FeatureRowView(model: model, node: node, depth: 0)
@@ -684,7 +694,7 @@ struct FeatureTreeView: View {
             }
         }
         .padding(6)
-        .glassCard()
+        .modifier(DesignTreeSurface(embedded: embedded))
         .animation(Motion.snappy, value: model.selectedFeatureID)
         .animation(Motion.snappy, value: model.expandedFeatureIDs)
         .animation(Motion.snappy, value: model.hiddenParts)

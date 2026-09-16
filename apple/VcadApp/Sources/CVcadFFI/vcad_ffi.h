@@ -14,6 +14,11 @@
 extern "C" {
 #endif
 
+/* Rectangular CAM: JSON request -> owned UTF-8 JSON (gcode, moves).
+ * Null on failure; read vcad_last_error. Free only with vcad_cam_free. */
+char *vcad_cam_generate(const char *request_json);
+void vcad_cam_free(char *json);
+
 typedef struct VcadSolid VcadSolid;
 typedef struct VcadMesh VcadMesh;
 typedef struct VcadScene VcadScene;

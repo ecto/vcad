@@ -50,7 +50,7 @@ struct VcadApp: App {
     }
 
     /// The document lives at app scope, not in the window: the WindowGroup's
-    /// window is hidden at launch (release-to-desktop is the only mode), and the
+    /// lifecycle host is hidden; the visible AppKit editor supports both modes. The
     /// menu bar commands need the same model the floating overlay is editing.
     @State private var model = EditorModel()
     @State private var intent = IntentEngine()

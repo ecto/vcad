@@ -16,9 +16,21 @@ import SwiftUI
 
 /// Borderless windows refuse key status by default, which starves SwiftUI
 /// gestures inside them — opt back in.
-final class KeyableWindow: NSWindow {
+final class KeyableWindow: NSWindow, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    func alignTitlebarButtons() {
+        guard styleMask.contains(.titled), !styleMask.contains(.fullScreen) else { return }
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = standardWindowButton(type), let container = button.superview else { continue }
+            let center = container.convert(NSPoint(x: 0, y: frame.height - 26), from: nil)
+            button.setFrameOrigin(NSPoint(x: button.frame.minX, y: center.y - button.frame.height / 2))
+        }
+    }
+    func windowDidResize(_ notification: Notification) { alignTitlebarButtons() }
+    func windowDidBecomeKey(_ notification: Notification) { alignTitlebarButtons() }
+    func windowDidExitFullScreen(_ notification: Notification) { alignTitlebarButtons() }
 }
 
 @MainActor
@@ -26,6 +38,7 @@ final class ReleaseWindowController {
     static let shared = ReleaseWindowController()
     private var window: NSWindow?
     private var mainWindow: NSWindow?
+    private var savedWindowFrame: NSRect?
     private var mouseMonitors: [Any] = []
     /// Set by ReleasedARView so the pass-through hit test can raycast the scene.
     weak var arView: ARView?
@@ -60,6 +73,8 @@ final class ReleaseWindowController {
         let frame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let w = KeyableWindow(contentRect: frame, styleMask: [.borderless],
                               backing: .buffered, defer: false)
+        w.delegate = w
+        w.isReleasedWhenClosed = false
         w.isOpaque = false
         w.backgroundColor = .clear
         w.hasShadow = false
@@ -68,6 +83,9 @@ final class ReleaseWindowController {
         w.contentView = NSHostingView(rootView: ReleasedOverlayView(model: model, intent: intent))
         w.makeKeyAndOrderFront(nil)
         window = w
+        if ProcessInfo.processInfo.environment["VCAD_WINDOWED"] == "1" {
+            setWindowed(true)
+        }
         DockIcon.shared.follow(model: model)
         mainWindow?.orderOut(nil)
 
@@ -83,7 +101,7 @@ final class ReleaseWindowController {
         // scene: over a tool window the event has to reach its ScrollView, and
         // over the desktop the window is already transparent to the mouse.
         mouseMonitors.append(NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] e in
-            guard let self else { return e }
+            guard let self, e.window === self.window else { return e }
             // Precise (trackpad / Magic Mouse) deltas are already in points and
             // arrive in a fine stream; a notched wheel sends few, large ticks.
             // Scaling them the same way makes the wheel unusable. Read the event
@@ -95,6 +113,58 @@ final class ReleaseWindowController {
             return consumed ? nil : e
         } as Any)
         updatePassThrough()
+    }
+
+    /// Change the existing window in place: the renderer, document, camera,
+    /// selection and CNC connection remain alive throughout the transition.
+    func setWindowed(_ windowed: Bool) {
+        guard let w = window, let model, model.isWindowed != windowed else { return }
+        if !windowed { savedWindowFrame = w.frame }
+        model.isWindowed = windowed
+        w.ignoresMouseEvents = false
+        w.styleMask = windowed ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView] : [.borderless]
+        w.titlebarAppearsTransparent = windowed
+        w.titleVisibility = .hidden
+        updateDocumentWindow()
+        w.isOpaque = windowed
+        w.backgroundColor = windowed ? .windowBackgroundColor : .clear
+        w.hasShadow = windowed
+        w.collectionBehavior = windowed ? [.fullScreenPrimary] : [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let screen = w.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        if windowed {
+            w.minSize = NSSize(width: 800, height: 600)
+            let width = min(1240, screen.width * 0.88)
+            let height = min(840, screen.height * 0.88)
+            let initial = NSRect(x: screen.midX - width / 2, y: screen.midY - height / 2,
+                                 width: width, height: height)
+            let restored = savedWindowFrame.map { NSIntersectionRect($0, screen) }
+            w.setFrame(restored.flatMap { $0.width >= 800 && $0.height >= 600 ? $0 : nil } ?? initial,
+                       display: true)
+        } else {
+            w.minSize = .zero
+            w.setFrame(screen, display: true)
+        }
+        updateCNCWindowMinimum()
+        (w as? KeyableWindow)?.alignTitlebarButtons()
+        w.makeKeyAndOrderFront(nil)
+        updatePassThrough()
+    }
+
+    func updateDocumentWindow() {
+        guard let window, let model else { return }
+        window.title = model.source.label
+        window.isDocumentEdited = model.documentDirty
+        if case let .document(path, _) = model.source {
+            window.representedURL = URL(fileURLWithPath: path)
+        } else {
+            window.representedURL = nil
+        }
+    }
+
+    func updateCNCWindowMinimum() {
+        guard let w = window, let model, model.isWindowed else { return }
+        w.contentMinSize = (model.cnc.shown || model.electronicsShown) ? NSSize(width: 1020, height: 660) : NSSize(width: 800, height: 560)
     }
 
     /// Where a part sits on screen, in overlay view coords (top-left origin).
@@ -156,7 +226,15 @@ final class ReleaseWindowController {
             return
         }
         let winPoint = w.convertPoint(fromScreen: NSEvent.mouseLocation)
-        let topLeft = CGPoint(x: winPoint.x, y: w.frame.height - winPoint.y)
+        guard let content = w.contentView else { return }
+        let contentPoint = content.convert(winPoint, from: nil)
+        guard content.bounds.contains(contentPoint) else {
+            pointerOverScene = false
+            if model?.isWindowed == true { w.ignoresMouseEvents = false }
+            return
+        }
+        let topLeft = CGPoint(x: contentPoint.x,
+                              y: content.isFlipped ? contentPoint.y : content.bounds.height - contentPoint.y)
         if chromeRects.values.contains(where: { $0.insetBy(dx: -8, dy: -8).contains(topLeft) }) {
             w.ignoresMouseEvents = false
             pointerOverScene = false
@@ -175,8 +253,8 @@ final class ReleaseWindowController {
         // Annotated: ARView's RealityKit hitTest overload and NSView's own
         // hitTest(_:) are both in scope, and the inferred winner is the NSView.
         let hits: [CollisionCastHit] = ar.hitTest(viewPoint)
-        w.ignoresMouseEvents = hits.isEmpty
-        pointerOverScene = !hits.isEmpty
+        w.ignoresMouseEvents = model?.isWindowed != true && hits.isEmpty
+        pointerOverScene = !hits.isEmpty || model?.isWindowed == true
         updateHover(hits)
     }
 
@@ -395,6 +473,14 @@ final class ReleaseWindowController {
         model.pinchBaseline = model.distance
     }
 
+    func followCNCTool() {
+        guard let model, model.cnc.shown, model.cnc.followSpindle,
+              model.cnc.machine.g54Active, model.cnc.machine.status.isFresh,
+              let position = model.cnc.machine.status.work, let parent = centeringEntity else { return }
+        model.stopSpin()
+        model.panOffset = parent.convert(position: model.cnc.origin.floats + position.floats, to: nil)
+    }
+
     func hide() {
         DockIcon.shared.stop()
         mouseMonitors.forEach { NSEvent.removeMonitor($0) }
@@ -437,6 +523,7 @@ struct ChromeRegion: ViewModifier {
         content.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
             ReleaseWindowController.shared.chromeRects[key] = $0
         }
+        .onDisappear { ReleaseWindowController.shared.chromeRects.removeValue(forKey: key) }
     }
 }
 
@@ -470,7 +557,70 @@ struct ReleasedOverlayView: View {
         return parts.joined(separator: "|")
     }
 
+    private var studio: Bool { model.cnc.shown }
+
     var body: some View {
+        VStack(spacing: 0) {
+            if model.isWindowed {
+                WorkspaceHeader(model: model).background(.bar)
+                    .modifier(ChromeRegion(key: "workspaceHeader"))
+                Divider()
+            } else {
+                WorkspaceHeader(model: model).frame(maxWidth: 920).cncFloatingPanel()
+                    .modifier(ChromeRegion(key: "workspaceHeader"))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+            }
+            if model.electronicsShown {
+                NativeElectronicsView(model: model)
+                    .modifier(ChromeRegion(key: "electronicsWorkspace"))
+            } else {
+            if !studio {
+                DesignModelingTools(model: model).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18).padding(.vertical, 8).background(.bar)
+                    .modifier(ChromeRegion(key: "designCommands"))
+            }
+            viewport.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    if studio {
+                        GeometryReader { geo in
+                            VStack(spacing: 12) {
+                                HStack(alignment: .top, spacing: 12) {
+                                    if model.cnc.leftPanelShown {
+                                        CNCStudioOutline(cnc: model.cnc)
+                                            .cncFloatingPanel()
+                                            .modifier(ChromeRegion(key: "cncOutline"))
+                                    }
+                                    Spacer(minLength: 0)
+                                    if model.cnc.rightPanelShown {
+                                        CNCStudioMachinePanel(cnc: model.cnc)
+                                            .cncFloatingPanel()
+                                            .modifier(ChromeRegion(key: "cncMachine"))
+                                    }
+                                }.frame(maxHeight: .infinity, alignment: .top)
+                                VStack(spacing: 0) {
+                                    if model.cnc.bottomPanelShown {
+                                        CNCStudioInspectorDock(model: model)
+                                            .frame(height: min(180, geo.size.height * 0.25))
+                                        Divider()
+                                    }
+                                    CNCStudioTransport(cnc: model.cnc)
+                                }.cncFloatingPanel()
+                                    .modifier(ChromeRegion(key: "cncBottom"))
+                            }.padding(12)
+                        }
+                    }
+                }
+        }
+        }
+        .ignoresSafeArea(.container, edges: .top)
+        .onAppear { ReleaseWindowController.shared.updateDocumentWindow() }
+        .onChange(of: model.source) { _, _ in ReleaseWindowController.shared.updateDocumentWindow() }
+        .onChange(of: model.documentDirty) { _, _ in ReleaseWindowController.shared.updateDocumentWindow() }
+        .onChange(of: model.electronicsShown) { _, _ in ReleaseWindowController.shared.updateCNCWindowMinimum() }
+        .onChange(of: studio) { _, _ in ReleaseWindowController.shared.updateCNCWindowMinimum() }
+    }
+
+    private var viewport: some View {
         ZStack(alignment: .topLeading) {
             ReleasedScene(model: model,
                           cameraPosition: model.cameraPosition,
@@ -527,13 +677,10 @@ struct ReleasedOverlayView: View {
             }
             // BCB-style tool windows, hosted in the overlay itself (separate
             // NSPanels break SwiftUI hit testing after auto-resize).
+            if !studio {
             VStack(alignment: .leading, spacing: 12) {
-                if model.showsPalette {
-                    ComponentPaletteWindow(model: model)
-                        .modifier(ChromeRegion(key: "palette"))
-                }
                 if model.showsTree {
-                    FeatureTreeWindow(model: model)
+                    DesignModelNavigator(model: model)
                         .modifier(ChromeRegion(key: "tree"))
                 }
                 // Dynamics, as its own tool window. Released mode floats over
@@ -545,6 +692,7 @@ struct ReleasedOverlayView: View {
                 }
             }
             .padding(16)
+            }
             // The Object Inspector floats beside whatever it inspects: it
             // tracks the selected part's projected screen position (and so
             // follows it through orbits and drags), parking under the palette
@@ -562,17 +710,12 @@ struct ReleasedOverlayView: View {
                 .disabled(!model.hasSelection || model.sketching || model.armedShape != nil)
         }
         .overlay(alignment: .topTrailing) {
+            if !studio {
             // The right rail: identity + the inspector, docked to the screen
             // edge. (It used to chase the selected part around the viewport,
             // which reads as clever for one part and as a moving target for a
             // real assembly — CAD inspectors live in a fixed rail.)
             VStack(alignment: .trailing, spacing: 12) {
-                HStack(spacing: 10) {
-                    IdentityStatusBar(model: model)
-                        .modifier(ChromeRegion(key: "identity"))
-                    PanelsPill(model: model)
-                        .modifier(ChromeRegion(key: "pill"))
-                }
                 if model.showsInspector {
                     if model.source.isGripper {
                         ReceiptLedgerWindow(model: model)
@@ -586,17 +729,30 @@ struct ReleasedOverlayView: View {
             .padding(16)
             .animation(Motion.panel, value: model.showsInspector)
             .animation(Motion.panel, value: model.source.isGripper)
+            }
         }
         .overlay(alignment: .top) {
             // Cross-domain gripper receipt — the released twin of the studio's
             // top-center verification pill.
-            if model.source.isGripper {
+            if !studio && model.source.isGripper {
                 GripperReceiptPill(model: model)
                     .padding(.top, 16)
                     .modifier(ChromeRegion(key: "gripper"))
             }
         }
+        .overlay(alignment: .top) {
+            if !studio && !model.source.isGripper {
+                DesignBreadcrumb(model: model).padding(.top, 16)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if !studio {
+                DesignViewportTools(model: model).padding(16)
+                    .modifier(ChromeRegion(key: "designViewportTools"))
+            }
+        }
         .overlay(alignment: .bottom) {
+            if !studio {
             // Bottom cluster: the AI command bar (the app's spine) plus the
             // kinematic transport when a timeline is loaded. Same views, same
             // model/engine bindings as the studio — just floated over the desktop.
@@ -615,11 +771,7 @@ struct ReleasedOverlayView: View {
                         SimBar(model: model)
                             .modifier(ChromeRegion(key: "simBar"))
                     }
-                    if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
-                        ExampleChips(intent: intent)
-                            .modifier(ChromeRegion(key: "examples"))
-                    }
-                    ComposerBar(engine: intent, model: model)
+                    CommandBar(engine: intent, model: model)
                         .modifier(ChromeRegion(key: "composer"))
                 }
             }
@@ -627,7 +779,24 @@ struct ReleasedOverlayView: View {
             .animation(Motion.smooth, value: intent.draft.isEmpty)
             .animation(Motion.smooth, value: model.timeline == nil)
             .animation(Motion.panel, value: model.sketching)
+            }
         }
+        .overlay(alignment: .topLeading) {
+            if model.cnc.shown && !studio {
+                CNCPanel(cnc: model.cnc)
+                    .padding(.leading, 16).padding(.top, 64)
+                    .modifier(ChromeRegion(key: "cncPanel"))
+            }
+        }
+        .overlay {
+            if studio {
+                CNCStudioViewportChrome(model: model)
+                    .padding(.leading, model.cnc.leftPanelShown ? 210 : 0)
+                    .padding(.trailing, model.cnc.rightPanelShown ? 298 : 0)
+                    .padding(.bottom, model.cnc.bottomPanelShown ? 320 : 108)
+            }
+        }
+        .background(model.isWindowed ? Color(nsColor: .windowBackgroundColor) : Color.clear)
         .onChange(of: model.hoveredInstances) { _, _ in
             // The feature tree can set the hover too; the renderer only ever
             // heard from the pointer.
@@ -973,6 +1142,12 @@ struct ReleasedARView: NSViewRepresentable {
     /// rest pose and sit there while the simulation ran behind it. The studio
     /// gets this for free because a `RealityView`'s update closure observes the
     /// model directly.
+    let cncDisplayKey: String
+    let cncTick: Int
+    let cncRevision: Int
+    let cncOrigin: CNCVector
+    let cncOverlay: Bool
+    let cncStock: Double
     let poseTick: Int
     /// The model's own "the geometry changed" flag, the same one the studio
     /// rebuilt on. `geometryKey` alone cannot carry a document swap: opening a
@@ -990,6 +1165,7 @@ struct ReleasedARView: NSViewRepresentable {
         var camera: PerspectiveCamera?
         var anchor: AnchorEntity?
         var builtKey = ""
+        var framedCNCRevision = -1
         var builtSelection: Set<Int> = []
         var builtInstances: Set<Int> = []
         var builtVisibility = VisibilityState(hidden: [], isolated: nil)
@@ -1076,6 +1252,16 @@ struct ReleasedARView: NSViewRepresentable {
         if geometryDirty || context.coordinator.builtKey != geometryKey {
             rebuild(in: context.coordinator.anchor, coordinator: context.coordinator)
             applyLighting(ar)
+        }
+        if let parent = ReleaseWindowController.shared.centeringEntity {
+            syncCNCOverlay(model.cnc, in: parent, model: model)
+            if model.cnc.shown && model.cnc.autoFit && !model.cnc.followSpindle && context.coordinator.framedCNCRevision != cncRevision {
+                context.coordinator.framedCNCRevision = cncRevision
+                Task { @MainActor in
+                    guard model.cnc.shown, model.cnc.autoFit, !model.cnc.followSpindle else { return }
+                    ReleaseWindowController.shared.frame(entityNamed: "cncRoot")
+                }
+            }
         }
         applyInstancePoses(context.coordinator)
         syncCamera(context.coordinator)
@@ -1483,31 +1669,34 @@ struct ComponentPaletteWindow: View {
 /// the document's named parameters, camera, and measurements.
 struct ObjectInspectorWindow: View {
     @Bindable var model: EditorModel
-
+    @State private var measurementsShown = false
+    private var title: String {
+        model.selectedFeatureNode?.name ?? model.features.first { $0.id == model.selectedFeatureID }?.name ?? "Inspector"
+    }
     var body: some View {
-        ToolWindow(title: "Object Inspector", onClose: { model.showsInspector = false }) {
-            VStack(alignment: .leading, spacing: 8) {
-                if model.usesDocumentTree {
-                    documentSections
-                } else {
-                    sandboxSection
-                }
-                if !model.docParameters.isEmpty {
-                    Divider()
-                    header("Document Parameters")
-                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                        docParameterRows
-                    }
-                }
-                Divider()
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                    viewRows
-                    Divider().gridCellUnsizedAxes(.horizontal)
-                    measurementRows
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+                Button { model.showsInspector = false } label: { Image(systemName: "sidebar.right") }
+                    .buttonStyle(.borderless).help("Hide inspector").accessibilityLabel("Hide inspector")
             }
-            .frame(width: 236, alignment: .leading)
-        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if model.usesDocumentTree { documentSections } else { sandboxSection }
+                    if !model.docParameters.isEmpty {
+                        Divider()
+                        header("Document Parameters")
+                        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) { docParameterRows }
+                    }
+                    Divider()
+                    DisclosureGroup("Measurements", isExpanded: $measurementsShown) {
+                        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) { measurementRows }
+                            .padding(.top, 8)
+                    }.font(.caption)
+                }
+            }.frame(maxHeight: 420).fixedSize(horizontal: false, vertical: true)
+        }.padding(16).frame(width: 268).cncFloatingPanel()
     }
 
     // MARK: document (a .vcad's feature tree)
@@ -1594,8 +1783,12 @@ struct ObjectInspectorWindow: View {
                         Slider(value: $model.modifierValue, in: 0...12)
                             .controlSize(.mini)
                             .frame(width: 108)
-                        Text(String(format: "%.1f mm", model.modifierValue))
-                            .font(.system(size: 11).monospacedDigit())
+                        TextField("Radius", value: $model.modifierValue, format: .number.precision(.fractionLength(1...3)))
+                            .textFieldStyle(.roundedBorder).frame(width: 60)
+                            .onChange(of: model.modifierValue) { _, value in
+                                if !value.isFinite || !(0...12).contains(value) { model.modifierValue = value.isFinite ? min(12, max(0, value)) : 0 }
+                            }
+                        Text("mm").font(.caption).foregroundStyle(.secondary)
                     }
                 }
             } else if model.modifier != .none {
@@ -1827,6 +2020,12 @@ struct ReleasedScene: View {
         ReleasedARView(model: model,
                        cameraPosition: cameraPosition,
                        lookAt: lookAt,
+                       cncDisplayKey: model.cnc.displayKey,
+                       cncTick: model.cnc.machine.tick + model.cnc.previewTick,
+                       cncRevision: model.cnc.revision,
+                       cncOrigin: model.cnc.origin,
+                       cncOverlay: model.cnc.overlay,
+                       cncStock: model.cnc.stockThickness,
                        poseTick: model.poseTick,
                        geometryDirty: model.geometryDirty,
                        // Selection and visibility are appearance, not geometry:
@@ -1841,9 +2040,7 @@ struct ReleasedScene: View {
 }
 
 
-/// The only chrome that is never closable: show/hide the tool windows. (It
-/// replaces the old "Return to Studio" pill — there is no studio to return to,
-/// release-to-desktop being the app's only mode.)
+/// Show or hide the tool panels in either window presentation.
 struct PanelsPill: View {
     @Bindable var model: EditorModel
 

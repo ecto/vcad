@@ -18,6 +18,7 @@ default = ["no-builtin-font"]
 no-builtin-font = ["vcad-kernel/no-builtin-font"]
 
 [dependencies]
+vcad-kernel-cam = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-physics = { workspace = true }
 vcad-sim = { workspace = true }
