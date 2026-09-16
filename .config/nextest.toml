@@ -1,0 +1,10 @@
+# No test exclusions or retries: preserve the existing non-ignored suite.
+[profile.ci]
+fail-fast = false
+retries = 0
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"
