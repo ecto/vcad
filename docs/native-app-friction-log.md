@@ -41,15 +41,15 @@ is open.
 
 ## Kernel cost on the stator
 
-11. **Fixed (volume), open (fidelity).** The stator is one root: a 50-stage
-    `[pipe …]` of unions and differences on a 256-segment ring, every operand
-    sharing the same top and bottom planes. On `main` it does not finish
-    (40+ min, memory past 16 GB). Reference volume, grid-integrated straight
-    from the CSG source: **7848 mm³**. It now solves to **7831 mm³ (−0.2%)**
-    in 34 s cold in a release build (0.00 s from the cache) — but as triangle
-    soup, ~103k triangles,
-    because one union is handed to the mesh boolean (see the last bullet).
-    Six separate causes, found with `VCAD_UNION_TRACE=1` (per-union fidelity,
+11. **Fixed.** The stator is one root: a 50-stage `[pipe …]` of unions and
+    differences on a 256-segment ring, every operand sharing the same top and
+    bottom planes. On `main` it did not finish (40+ min, memory past 16 GB).
+    Reference volume, grid-integrated straight from the CSG source:
+    **7848 mm³**. It now solves to **7853 mm³ (+0.06%)**, fully `Analytic`,
+    ~11.7k triangles, in about 24 s (debug build). An intermediate state got
+    the volume right only as ~105k-triangle soup; the last two bullets are
+    what kept it analytic.
+    Eight separate causes, found with `VCAD_UNION_TRACE=1` (per-union fidelity,
     time and volumes), `sample`, and rasterising the result's caps against
     the reference:
     - *A split refused without a word — the root cause.*
@@ -80,16 +80,24 @@ is open.
     - *Naming was the 40 minutes.* ~100% of a chained soup boolean was
       `vcad_kernel_naming::propagate_boolean` sorting thousands of sibling
       names per coplanar cap triangle. **Fixed**.
-    - **Open:** unioning a many-lump operand (the 11 fused posts) into the
-      ring still loses the caps over the overlap regions on the analytic path
-      (1309 open edges, −0.7%); the referee catches it and the part goes to
-      soup. `ring ∪ post` is exact but `post ∪ ring` is not (+5.4 mm³, 30 open
-      edges) — the B-rep pipeline is operand-order sensitive. Chained mesh
-      booleans still re-split each other's coplanar caps without any re-merge
-      (the authored 50-step fold had not finished after 9 minutes). And the
-      mesh fallback is not bit-reproducible across processes: the same union
-      returns 8118.6 mm³ closed on most runs and 8150.6 mm³ with 12 open edges
-      on some.
+    - *Coincidence judged one-sidedly.* A small cap patch lying inside a large
+      coplanar cap read `OnSame`, but the large cap read `Outside` against the
+      patch, so with the small solid as operand A both copies survived:
+      `ring ∪ post` exact, `post ∪ ring` +5.44 mm³. **Fixed**: a one-sided
+      match (`OnSameInner`) lets the larger face win.
+    - *Phantom full-width chords.* Every post plane handed the ring's cap a
+      chord across the whole face though the post reaches 0.5 mm into the
+      wall; two posts' chords cross inside the cap and the pieces classify
+      incoherently (12 plain posts lost 9.3%). **Fixed**: a line split of a
+      planar face is skipped when the cutter face ends flush on that plane and
+      the other solid's coplanar, same-facing face is contained in it. Also
+      fixed on the way: a line crossing a notched face in several spans always
+      cut the FIRST span (the sheet-metal bend-relief discrepancy).
+    - **Open:** ~100 unpaired edges remain on the stator (tangent fillet
+      rims) — analytic and inside tolerance, not watertight. Chained mesh
+      booleans still re-split each other's coplanar caps without any re-merge,
+      and the mesh fallback is not bit-reproducible across processes (neither
+      matters to this part any more, both still matter).
 12. **Retracted.** An earlier revision of this log claimed the stator was
     fixed: reassociating the union chain (smallest operands first, re-pairing
     around a non-analytic pair) took it to 52 s, all `Analytic`. That result
@@ -163,8 +171,8 @@ is open.
     reopen crashed inside `NSPersistentUIRestorer` restoring the hidden SwiftUI
     host window. The app owns its windows and layout, so it now opts out of
     AppKit state restoration (`ApplePersistenceIgnoreState`).
-30. A degraded solid looks exactly like a good one. The stator opens as
-    triangle soup (faces are no longer selectable) and the viewport says nothing;
+30. A degraded solid looks exactly like a good one: a part that falls back to
+    triangle soup (faces no longer selectable) opens and the viewport says nothing;
     the kernel already records the loss (`Solid::provenance`,
     `BooleanReport`), the app just never surfaces it.
 31. Verifying the app blind is slow: the editor window is borderless, so it

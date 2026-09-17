@@ -722,6 +722,55 @@ fn point_to_segment_dist(p: &Point3, a: &Point3, b: &Point3) -> f64 {
     (p - proj).norm()
 }
 
+/// Pick which of a line's crossings with a polygon bound the cut to make.
+///
+/// `crossings` is sorted along the line, so consecutive pairs bound the spans
+/// that lie inside the polygon. A convex face offers exactly one span and this
+/// is a no-op — but a notched face offers several, and the SSI records one
+/// trimmed segment per span. `hint_a`/`hint_b` are that segment's endpoints;
+/// the span they overlap is the one this split is for. Taking `crossings[0..2]`
+/// for every segment instead cut the same (first) span three times and left the
+/// other two uncut: the bend-relief plate in `vcad-eval`'s `loon_sheet_metal`
+/// kept a 2.13 mm² membrane of its top face inside the bend sector, worth
+/// 1.07 mm³ of the 162 mm³ relief delta the test measures.
+///
+/// Falls back to the first span when the hint overlaps none (a sub-face that no
+/// longer contains the recorded segment), which is the behaviour every
+/// single-span face already had.
+fn select_crossing_span(
+    crossings: &[Point3],
+    hint_a: &Point3,
+    hint_b: &Point3,
+) -> (Point3, Point3) {
+    let fallback = (crossings[0], crossings[1]);
+    if crossings.len() < 4 {
+        return fallback;
+    }
+    let axis = *crossings.last().unwrap() - crossings[0];
+    let len = axis.norm();
+    if len < 1e-12 {
+        return fallback;
+    }
+    let axis = axis / len;
+    let t = |p: &Point3| (*p - crossings[0]).dot(axis);
+    let (h_lo, h_hi) = {
+        let (ta, tb) = (t(hint_a), t(hint_b));
+        (ta.min(tb), ta.max(tb))
+    };
+    let mut best: Option<(f64, usize)> = None;
+    for k in 0..crossings.len() / 2 {
+        let (lo, hi) = (t(&crossings[2 * k]), t(&crossings[2 * k + 1]));
+        let overlap = h_hi.min(hi) - h_lo.max(lo);
+        if overlap > 0.0 && best.is_none_or(|(b, _)| overlap > b) {
+            best = Some((overlap, k));
+        }
+    }
+    match best {
+        Some((_, k)) => (crossings[2 * k], crossings[2 * k + 1]),
+        None => fallback,
+    }
+}
+
 /// Find where an infinite line crosses the edges of a 3D polygon.
 ///
 /// The polygon vertices must be coplanar. Returns the crossing points
@@ -3032,9 +3081,9 @@ pub fn split_planar_face(
             let crossings = find_line_polygon_crossings(&loop_verts, line);
 
             if crossings.len() >= 2 {
-                // Use the first two crossings as entry/exit
-                let actual_entry = crossings[0];
-                let actual_exit = crossings[1];
+                // Cut the span the recorded trimmed segment sits on — the
+                // first one unless the face is notched (see the helper).
+                let (actual_entry, actual_exit) = select_crossing_span(&crossings, entry, exit);
                 // A grazing line (both crossings at one vertex) is a
                 // zero-length cut: "splitting" would emit a copy of the
                 // face plus a degenerate sliver.
