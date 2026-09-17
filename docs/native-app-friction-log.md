@@ -282,9 +282,13 @@ way, none by looking at the preview.
     the bounding square by hand from the sender while watching a camera. A
     "trace bounds at safe Z" action, and the sweep square (tool included)
     drawn on the stock, would have shown it in the app.
-54. First cut (2026-09-17): 1 mm aluminium sheet on a doubled-MDF riser, Ø2
-    2-flute, F250 / plunge F40 / 0.17 mm passes, 0.15 mm onion skin plus three
-    4 × 0.42 mm tabs, sent from ncSender. 14 min, cutter survived, profile
-    clean. The first start cut air: the paper touch-off was 0.81 mm high. The
-    skin broke through to the MDF along the back slots (sheet not flat without
-    tape), but nothing came loose.
+54. First cut (2026-09-17): a 1 mm copper plate (teal-coated; taken for
+    aluminium from the camera until the owner said otherwise) on a
+    doubled-MDF riser, Ø2 2-flute, F250 / plunge F40 / 0.17 mm passes,
+    0.15 mm onion skin plus three 4 × 0.42 mm tabs, sent from ncSender.
+    14 min, cutter survived, profile clean. The first start cut air: the
+    paper touch-off was 0.81 mm high. Copper-coloured slots and dust were
+    first read as the skin breaking through to the MDF; with a copper plate
+    that is just the cut metal, so whether the skin held is unverified.
+    Nothing came loose. The app has no material setting at all — feeds were
+    typed by hand for a material that turned out to be a different one.
