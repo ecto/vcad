@@ -636,6 +636,39 @@ pub fn boolean_op_reported(
     let doubled_difference = op == BooleanOp::Difference
         && result_open_edges >= 4
         && result_structure.overused_edges >= 3;
+    // A retained face that is not on the result's boundary: the trim that
+    // should have removed it did not happen, so the result encloses that
+    // material twice and its volume comes out high — with every face
+    // analytic and the shell looking fine. This is the only gate that sees
+    // it: the volume bound is far too loose, and edge counts cannot separate
+    // it from a healthy part (the stator carries 642 unpaired edges and is
+    // right to 0.06%; a fillet drawn 0.01 mm off tangency carries 6 and is
+    // 7.9 mm³ wrong). Set semantics can. See `validate::buried_retained_face`.
+    //
+    // OFF BY DEFAULT — `VCAD_BURIED_FACE_CHECK=1` turns it on. It catches the
+    // case it was built for (a fillet drawn 0.01 mm off tangency: +0.167%,
+    // reported `Analytic`, caught at depth 0.0120 mm and routed to the
+    // fallback) but still reports six known-good coplanar-contact results in
+    // this crate's own suite as buried. Shipping it on would trade one silent
+    // wrong answer for six correct results turned to soup, which is the same
+    // trade the earlier probe-grid oracle was removed for
+    // (`ValidityError::BadVolume`'s doc comment). It is wired and measurable
+    // so the remaining calibration is a matter of running it, not rebuilding
+    // it; see `docs/boolean-multilump-union-diagnosis.md`.
+    let buried = (std::env::var_os("VCAD_BURIED_FACE_CHECK").is_some())
+        .then(|| {
+            operands.as_ref().and_then(|(a, b)| {
+                let BooleanResult::BRep(brep) = &result;
+                crate::validate::buried_retained_face(brep.as_ref(), a, b, op)
+            })
+        })
+        .flatten();
+    if let (Some(b), true) = (buried, std::env::var_os("VCAD_BOOLEAN_WARN").is_some()) {
+        eprintln!(
+            "vcad boolean: retained face buried at {:?}, depth {:.4} mm",
+            b.at, b.depth
+        );
+    }
     if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
         eprintln!(
             "vcad boolean: {op:?} swap gate: flagged={flagged} sphere={sphere_unrepresentable} \
@@ -723,6 +756,7 @@ pub fn boolean_op_reported(
         }
     }
     if !(flagged
+        || buried.is_some()
         || sphere_unrepresentable
         || inverted
         || wide_cracks
@@ -734,7 +768,10 @@ pub fn boolean_op_reported(
     let Some((mesh_a, mesh_b)) = &operands else {
         return Ok(keep(result));
     };
-    if result_open_edges == 0 && result_structure.overused_edges == 0 {
+    // A buried face is a semantic defect: a clean-looking shell is exactly
+    // how it presents, so the "no structural damage, do not re-litigate"
+    // shortcut must not swallow it.
+    if buried.is_none() && result_open_edges == 0 && result_structure.overused_edges == 0 {
         return Ok(keep(result));
     }
     let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true) else {

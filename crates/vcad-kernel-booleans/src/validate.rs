@@ -540,3 +540,234 @@ mod tests {
         assert!(!difference_removed_nothing(&mesh_a, &mesh_a, &mesh_b));
     }
 }
+
+/// A retained face that is not on the result's boundary: the trim that should
+/// have removed it did not happen.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BuriedFace {
+    /// A sample point on the face that is buried.
+    pub at: Point3,
+    /// How deep the sample stayed inside the other operand, mm — the largest
+    /// nudge at which parity still said "inside".
+    pub depth: f64,
+}
+
+/// Depths at which a sample is pushed out along its face's normal.
+///
+/// A face that merely TOUCHES the other operand is normal and correct — every
+/// coplanar contact does it — so parity at a point on the surface says
+/// nothing. The sample has to still read "inside" at every step; a grazing
+/// face stops at the first. The last step is where a tessellated curved
+/// neighbour can still legitimately bulge past a planar face of the other
+/// operand, so it is the deepest that proves anything.
+const BURIED_STEPS: [f64; 3] = [1e-3, 4e-3, 1.2e-2];
+
+/// Distance a sample must keep from its face's boundary, mm.
+///
+/// Slivers must not vote. A sample near an edge sits in the tolerance band
+/// where the two operands' surfaces are indistinguishable, and would report
+/// every legitimate coplanar seam as buried. A face with no point this far
+/// inside it is a sliver and is skipped: its area is too small to carry the
+/// kind of error this check exists for.
+const SAMPLE_INSET: f64 = 5e-3;
+
+/// How far a sample must be from an operand's surface before "inside" means
+/// buried rather than touching, mm.
+///
+/// Sized above the chordal sag the operand meshes carry at the radii this
+/// kernel works at (a 256-segment rim at r 28.75 sags 2.2e-3 mm) so a face
+/// resting on a tessellated curve is never mistaken for one inside it, and
+/// well below the depth at which a missing trim shows up — the near-miss
+/// fillet's surviving stretch reads 1.2e-2 mm deep.
+const CONTACT_TOL: f64 = 6e-3;
+
+/// Does the result keep a face that is not on its boundary?
+///
+/// The failure this catches is a MISSING TRIM: a stretch of one operand's
+/// face that should have been cut away survives inside the other, so the
+/// result encloses that material twice and its volume comes out high — while
+/// every face is analytic, the shell looks fine, and the volume bound
+/// (`max(A,B) <= vol <= A+B`) is far too loose to notice. Measured: a fillet
+/// block drawn 0.01 mm off tangency gives a union of 4734.78 mm3 against a
+/// closed form of 4726.91, +0.167%, reported `Analytic`.
+///
+/// Unpaired-edge counts cannot separate that from a healthy result — the
+/// rana-60 stator carries 642 of them as doubled slivers of negligible area
+/// and is correct to 0.06%, while this case has 6 and is 7.9 mm3 wrong. What
+/// separates them is set semantics: after a union, no point just outside a
+/// retained face may lie inside either operand; after a difference, the
+/// material just outside a retained face is the removed material, which lies
+/// inside BOTH.
+///
+/// Containment is judged against the OPERAND meshes, which are valid solids,
+/// by the same three-ray parity vote the mesh boolean trusts — parity is
+/// robust on t-junction soup where BSP leaf classification is not.
+pub(crate) fn buried_retained_face(
+    result: &vcad_kernel_primitives::BRepSolid,
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+    op: BooleanOp,
+) -> Option<BuriedFace> {
+    if matches!(op, BooleanOp::Intersection) {
+        // An intersection's faces are bounded by BOTH operands, so "just
+        // outside a retained face" is inside neither by construction and the
+        // test degenerates. Left to the other gates.
+        return None;
+    }
+    if mesh_a.indices.is_empty() || mesh_b.indices.is_empty() {
+        return None;
+    }
+    let member_a = crate::mesh::csg::Membership::new(mesh_a);
+    let member_b = crate::mesh::csg::Membership::new(mesh_b);
+    let (index_a, index_b) = (member_a.index(), member_b.index());
+    // Parity alone cannot tell a face that LIES ON the other operand from one
+    // strictly inside it, and every sound boolean produces the first: a
+    // coplanar contact, a tangent fillet, two rings stacked face to face. All
+    // of them read "inside" on one side and "inside" on the other, because
+    // both sides are material. Distance separates them — a contact face is
+    // ON the other operand's surface, a buried one is `CONTACT_TOL` away from
+    // it — and this is the single guard that took the check from seven false
+    // positives on known-good results to none.
+    let (Some(dist_a), Some(dist_b)) = (
+        vcad_kernel_tessellate::MeshDistance::new(mesh_a),
+        vcad_kernel_tessellate::MeshDistance::new(mesh_b),
+    ) else {
+        return None;
+    };
+
+    for (face_id, face) in &result.topology.faces {
+        let loop_pts: Vec<Point3> = result
+            .topology
+            .loop_half_edges(face.outer_loop)
+            .map(|he| result.topology.vertices[result.topology.half_edges[he].origin].point)
+            .collect();
+        if loop_pts.len() < 3 {
+            continue;
+        }
+        let Some(normal) = newell_normal(&loop_pts) else {
+            continue;
+        };
+        // Orientation-free on purpose. Whether a loop's winding encodes the
+        // outward side is exactly the sort of assumption that makes a
+        // validity oracle report every second face, so the test does not use
+        // it: a face ON the boundary has result-material on one side and void
+        // on the other, and a BURIED face has it on both. That is the whole
+        // invariant, and it needs no normal direction, only a normal line.
+        let inside = |p: &Point3| -> bool {
+            let (a, b) = (
+                crate::mesh::csg::contains(&index_a, p),
+                crate::mesh::csg::contains(&index_b, p),
+            );
+            match op {
+                BooleanOp::Union => a || b,
+                BooleanOp::Difference => a && !b,
+                BooleanOp::Intersection => a && b,
+            }
+        };
+
+        for sample in interior_samples(result, face_id, &loop_pts) {
+            let sample = project_to_face(result, face, sample);
+            // The sample sits on its own operand. To be BURIED it has to be
+            // well inside the other one, not resting against it.
+            let at = [sample.x, sample.y, sample.z];
+            let clear_of_contact = dist_a.distance(at).max(dist_b.distance(at)) > CONTACT_TOL;
+            if !clear_of_contact {
+                continue;
+            }
+            let mut depth = 0.0;
+            let mut buried = true;
+            for &step in &BURIED_STEPS {
+                buried &= inside(&(sample + normal * step)) && inside(&(sample - normal * step));
+                if !buried {
+                    break;
+                }
+                depth = step;
+            }
+            if buried {
+                return Some(BuriedFace { at: sample, depth });
+            }
+        }
+    }
+    None
+}
+
+/// Pull a sample onto the face's own surface.
+///
+/// The candidates are built from loop vertices, so on a CURVED face they are
+/// chord interiors — inside the solid by the chordal sag, which reads
+/// "material on both sides" for every cylinder in the model and was the whole
+/// of this check's false-positive rate. On a plane the projection is a no-op.
+fn project_to_face(
+    brep: &vcad_kernel_primitives::BRepSolid,
+    face: &vcad_kernel_topo::Face,
+    p: Point3,
+) -> Point3 {
+    let surface = &brep.geometry.surfaces[face.surface_index];
+    let uv = crate::trim::project_point_to_uv(surface.as_ref(), &p);
+    let on = surface.evaluate(uv);
+    // A projection that lands far away means the parameterisation failed
+    // (a seam, a pole); the unprojected point is the better guess then.
+    if (on - p).norm() < 1.0 {
+        on
+    } else {
+        p
+    }
+}
+
+/// Newell normal of a polygon, `None` when degenerate.
+fn newell_normal(pts: &[Point3]) -> Option<vcad_kernel_math::Vec3> {
+    let mut n = vcad_kernel_math::Vec3::zeros();
+    for i in 0..pts.len() {
+        let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+        n += (a - Point3::origin()).cross(b - Point3::origin());
+    }
+    (n.norm() > 1e-12).then(|| n.normalize())
+}
+
+/// A few points strictly inside a face, each at least [`SAMPLE_INSET`] from
+/// its boundary. Empty for a sliver.
+fn interior_samples(
+    brep: &vcad_kernel_primitives::BRepSolid,
+    face_id: vcad_kernel_topo::FaceId,
+    pts: &[Point3],
+) -> Vec<Point3> {
+    let n = pts.len();
+    let centre = {
+        let mut c = vcad_kernel_math::Vec3::zeros();
+        for p in pts {
+            c += p - Point3::origin();
+        }
+        Point3::origin() + c / n as f64
+    };
+    // Fan triangle centroids, pulled toward the face centre so a sample of a
+    // non-convex face's spurious fan triangle still lands in the face.
+    let mut out = Vec::new();
+    let stride = n.div_ceil(6).max(1);
+    for i in (0..n).step_by(stride) {
+        let (a, b) = (pts[i], pts[(i + 1) % n]);
+        let tri_centroid = Point3::origin()
+            + ((a - Point3::origin()) + (b - Point3::origin()) + (centre - Point3::origin())) / 3.0;
+        for pull in [0.0, 0.5] {
+            let p = tri_centroid + (centre - tri_centroid) * pull;
+            if !crate::trim::point_in_face(brep, face_id, &p) {
+                continue;
+            }
+            let clear = (0..n).all(|k| {
+                let (u, v) = (pts[k], pts[(k + 1) % n]);
+                let uv = v - u;
+                let len2 = uv.norm_squared();
+                let t = if len2 < 1e-18 {
+                    0.0
+                } else {
+                    ((p - u).dot(uv) / len2).clamp(0.0, 1.0)
+                };
+                (p - (u + uv * t)).norm() > SAMPLE_INSET
+            });
+            if clear {
+                out.push(p);
+                break;
+            }
+        }
+    }
+    out
+}

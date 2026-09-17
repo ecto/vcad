@@ -271,7 +271,7 @@ fn a_fillet_clear_of_the_bore_is_closed() {
 /// arrangements or failing closed on them; either way this test should then
 /// assert the volume rather than document the error.
 #[test]
-#[ignore = "known defect: a near-tangent fillet gives a silently wrong volume (see the doc comment)"]
+#[ignore = "passes only with VCAD_BURIED_FACE_CHECK=1, which still false-positives on six coplanar-contact results — see the doc comment"]
 fn a_near_miss_fillet_is_not_silently_wrong() {
     let r = ring();
     let d = 0.01;

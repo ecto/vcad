@@ -246,6 +246,51 @@ on the same case moves **1.97 mm**, over 6.12 % of the surface.)
 Making the floor sag-relative, or nudging it to 0.05 mm to admit this one
 move, would be tuning the rule to the corpus.
 
+## Open item: the buried-face check, built and 80 % calibrated
+
+A union of a fillet block drawn **0.01 mm off tangency** comes back
+`Analytic` at 4734.78 mm³ against a closed form of 4726.91 — **+0.167 %** —
+with 6 unpaired edges and nothing catching it. The volume bound
+(`max(A,B) ≤ vol ≤ A+B`) is orders of magnitude too loose, and edge counts
+cannot separate it from a healthy part: the stator carries 642 unpaired edges
+and is right to 0.06 %, this carries 6 and is 7.9 mm³ wrong. Any part with a
+fillet authored slightly off tangency — most hand-written CSG — is exposed.
+
+The failure is a **missing trim**: a stretch of face that should have been cut
+away survives inside the other operand, so the result encloses that material
+twice. `validate::buried_retained_face` tests exactly that, orientation-free:
+a face ON the result's boundary has material on one side and void on the
+other; a buried one has material on both. Containment is judged against the
+operand meshes (valid solids) by the same three-ray parity vote the mesh
+boolean trusts.
+
+**It works on the case it was built for** — caught at depth 0.0120 mm, routed
+to the fallback, `a_near_miss_fillet_is_not_silently_wrong` passes with
+`VCAD_BURIED_FACE_CHECK=1`. **It is off by default** because it still reports
+six known-good coplanar-contact results in this crate's own suite as buried:
+
+    overhanging_teeth_have_no_doubled_surface
+    a_contained_coplanar_patch_does_not_double_the_larger_face
+    boss_ring_overhanging_the_bore
+    stacked_rings_face_to_face
+    stacked_rings_interpenetrating
+    zz_blade_union_no_duplicate_faces
+
+Shipping it on would trade one silent wrong answer for six correct results
+turned to soup — the same trade the earlier probe-grid oracle was removed for
+(see `ValidityError::BadVolume`'s doc comment).
+
+Two false-positive causes have already been found and fixed, and they are the
+pattern for the rest: samples built from loop vertices are **chord interiors
+on a curved face**, inside the solid by the chordal sag (fixed by projecting
+each sample onto its face's own surface — this alone recovered
+`twelve_filleted_posts_stay_analytic`), and a sample resting ON the other
+operand is not inside it (fixed by `CONTACT_TOL`). What remains is the
+coplanar-contact family, where both sides of a legitimately retained face are
+operand material. The next step is to dump, for one of those six, which face
+and which sample fires — the same way the post-root corner was pinned to
+three specific resolutions — rather than to widen a tolerance.
+
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 
 Separate from the seam, and not addressed here. The mesh-boolean path repairs
